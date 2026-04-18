@@ -1,0 +1,5 @@
+  FAILS: carry_u <= cm
+  FAILS: cm==0 ==> carry_u==0
+  HOLDS: cm==1 ==> mask==1
+  HOLDS: c1.m==1 ==> cm1 XOR ubc1
+  HOLDS: cv1==1 ==> cm1==ubc1

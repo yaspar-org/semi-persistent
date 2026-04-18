@@ -1,0 +1,9 @@
+(datatype Math
+  (Num i64)
+  (Add Math Math))
+
+(rewrite (Add (Num x) (Num y)) (Num (i64::+ x y)))
+
+(let expr (Add (Num 3) (Num 5)))
+(run 10)
+(check (= expr (Num 8)))

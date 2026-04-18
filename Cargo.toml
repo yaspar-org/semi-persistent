@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "semi-persistent",
+    "containers",
+    "egraph",
+    "traversals",
+    "traversals/derive",
+    "abstract-domains",
+]
+resolver = "3"
+
+[workspace.dependencies]
+winnow = "1"
+proptest = "1"
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+hashbrown = { version = "0.17", features = ["raw-entry"] }
+ordered-float = "5"
+rapidhash = "4"
+criterion = { version = "0.8", features = ["html_reports"] }

@@ -1,0 +1,7 @@
+;; EXPECT: ok
+;; TYPES: machine
+(datatype Math (Num f64) (Add Math Math))
+(rewrite (Add (Num x) (Num y)) (Num (f64::+ x y)))
+(let e (Add (Num 1.5) (Num 2.5)))
+(run 10)
+(check (= e (Num 4.0)))
