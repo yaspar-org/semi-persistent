@@ -1,0 +1,22 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Tests global variable references in LHS, RHS, and check
+(datatype E (V i64) (Add E E) (Pair E E))
+
+;; Define globals
+(let a (V 1))
+(let b (V 2))
+
+;; LHS: a is global (sort E), x is pattern var
+;; RHS: b is global, x is pattern var
+(rewrite (Add a x) (Pair b x))
+
+;; First child IS global a → rewrite fires, x binds to b
+(let t (Add a b))
+(run 10)
+(check (= t (Pair (V 2) (V 2))))
+
+;; First child is (V 3), NOT in a's e-class → rewrite does NOT fire
+(let u (Add (V 3) (V 4)))
+(run 10)
+(check (!= u t))

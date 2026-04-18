@@ -1,0 +1,38 @@
+;; EXPECT: ok
+;; TYPES: machine
+(datatype S (Wrap String))
+(datatype Expr (Concat S S) (Len S) (Result S) (N usize))
+(datatype BExpr (Contains S S) (BResult bool))
+
+;; concat
+(rewrite (Concat (Wrap x) (Wrap y)) (Result (Wrap (String::concat x y))))
+(let cat (Concat (Wrap "hello ") (Wrap "world")))
+(run 10)
+(check (= cat (Result (Wrap "hello world"))))
+
+;; len — 5 is now parsed as usize because N expects usize
+(rewrite (Len (Wrap x)) (N (String::len x)))
+(let l (Len (Wrap "hello")))
+(run 10)
+(check (= l (N 5)))
+
+;; contains
+(rewrite (Contains (Wrap x) (Wrap y)) (BResult (String::contains x y)))
+(let has (Contains (Wrap "hello world") (Wrap "world")))
+(run 10)
+(check (= has (BResult true)))
+
+(let nope (Contains (Wrap "hello") (Wrap "xyz")))
+(run 10)
+(check (= nope (BResult false)))
+
+;; equality
+(datatype EqExpr (StrEq S S) (EqResult bool))
+(rewrite (StrEq (Wrap x) (Wrap y)) (EqResult (String::== x y)))
+(let eq1 (StrEq (Wrap "abc") (Wrap "abc")))
+(run 10)
+(check (= eq1 (EqResult true)))
+
+(let eq2 (StrEq (Wrap "abc") (Wrap "def")))
+(run 10)
+(check (= eq2 (EqResult false)))

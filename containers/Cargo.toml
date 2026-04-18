@@ -1,0 +1,13 @@
+[package]
+name = "semi-persistent-containers"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+hashbrown.workspace = true
+rapidhash.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true

@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Tests :subsume — subsumed node excluded from future matches
+(datatype E (A i64 i64) (B i64 i64) (C i64 i64) (RN i64))
+
+;; A rewrites to B and subsumes the A node
+(rewrite (A x y) (B x y) :subsume)
+;; B rewrites to C (only fires if B is visible)
+(rewrite (B x y) (C x y))
+
+(let a (A 1 2))
+(run 10)
+;; A was subsumed, B was created, C was created from B
+(check (= a (C 1 2)))
+;; B should also be equal (union chain)
+(check (= a (B 1 2)))

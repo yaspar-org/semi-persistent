@@ -1,0 +1,19 @@
+;; EXPECT: ok
+;; AC multiplicity: variable binding consumes all
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function A () E)
+(function B () E)
+(function Got (E E) E)
+
+;; Add(A, A, A, B, B) → {A:3, B:2}
+(let t (Add (A) (A) (A) (B) (B)))
+
+;; x:k>=2 should match A (k=3) and B (k=2)
+(rewrite (Add x:k>=2 ..rest) (Got x (Add ..rest)))
+(run 1)
+
+;; Both should fire
+(check (= t (Got (A) (Add (B) (B)))))
+(check (= t (Got (B) (Add (A) (A) (A)))))

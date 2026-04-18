@@ -1,0 +1,16 @@
+name: Nightly Rustc
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --exclude semi-persistent-abstract-domains
+      - run: cargo test --workspace --exclude semi-persistent-abstract-domains

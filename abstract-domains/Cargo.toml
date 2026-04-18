@@ -1,0 +1,28 @@
+[package]
+name = "semi-persistent-abstract-domains"
+version = "0.1.0"
+edition = "2024"
+publish = false
+autobins = false
+
+[[bin]]
+name = "semi-persistent-abstract-domains"
+path = "src/main.rs"
+required-features = ["bin"]
+
+[features]
+bin = []
+
+[dependencies]
+vstd = "=0.0.0-2026-04-12-0118"
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }
+
+[dev-dependencies]
+rand = "0.10.1"

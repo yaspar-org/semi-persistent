@@ -1,0 +1,36 @@
+;; Test: extraction with AC and ACI operators + rest comprehensions
+
+(sort Expr)
+
+;; ACI operator (set union — idempotent)
+(function or (Expr) Expr :assoc-comm-idem)
+
+;; AC operator (multiset addition)
+(function add (Expr) Expr :assoc-comm)
+
+;; plain constructors
+(function f (Expr) Expr)
+(function not (Expr) Expr)
+(function zero () Expr)
+(function one () Expr)
+(function two () Expr)
+(function three () Expr)
+
+;; --- ACI: double negation elimination ---
+(rewrite (or (not (not x)) ..rest) (or x ..rest))
+
+(let p (or (not (not (one))) (two)))
+(run 10)
+
+(check (= (not (not (one))) (one)))
+(extract p)
+;; expected: (or (one) (two)) or (or (two) (one))
+
+;; --- AC: additive identity ---
+(rewrite (add (zero) ..rest) (add ..rest))
+
+(let q (add (zero) (three)))
+(run 10)
+(check (= q (three)))
+(extract q)
+;; expected: (three)
