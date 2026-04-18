@@ -1,0 +1,18 @@
+# Ignore the `build/` directory in the package root.
+/build
+.DS_Store
+target/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.pdf
+
+# Kiro
+.kiro/

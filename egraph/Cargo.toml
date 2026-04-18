@@ -1,0 +1,49 @@
+[package]
+name = "semi-persistent-egraph"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "semi_persistent_egraph"
+path = "src/lib.rs"
+
+[[bin]]
+name = "semi-persistent"
+path = "src/main.rs"
+
+[dependencies]
+semi-persistent-containers = { path = "../containers" }
+clap = { version = "4.6.0", features = ["derive"] }
+num-bigint.workspace = true
+num-rational.workspace = true
+num-traits.workspace = true
+hashbrown.workspace = true
+ordered-float.workspace = true
+rapidhash.workspace = true
+winnow.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+croaring = "2.6"
+
+[[bench]]
+name = "vec_bench"
+harness = false
+
+[[bench]]
+name = "iter_bench"
+harness = false
+
+[[bench]]
+name = "index_bench"
+harness = false
+
+[[bench]]
+name = "split_bench"
+harness = false
+
+[[bench]]
+name = "lca_bench"
+harness = false

@@ -1,0 +1,29 @@
+;; EXPECT: ok
+;; AC multiplicity: exact semantics
+;; x:1 means multiplicity must be exactly 1
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function A () E)
+(function B () E)
+(function Marker () E)
+
+;; Add(A, A, B) → AC node {A:2, B:1}
+(let t (Add (A) (A) (B)))
+
+;; (B) with implicit :1 should match B:1 (exact mult 1)
+;; (A) with implicit :1 should NOT match A:2
+(rewrite (Add (B) ..rest) (Marker))
+(run 10)
+
+;; Marker should exist (B matched, mult 1 == 1)
+(check (= t (Marker)))
+
+;; Now test that (A):1 does NOT match A:2
+;; We use a separate marker to verify the A-rule does NOT fire
+(function MarkerA () E)
+(rewrite (Add (A) ..rest) (MarkerA))
+(run 10)
+
+;; MarkerA should NOT be equal to t, because A has mult 2, not 1
+(check (!= t (MarkerA)))

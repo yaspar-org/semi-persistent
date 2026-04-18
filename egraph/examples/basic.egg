@@ -1,0 +1,13 @@
+(datatype Math
+  (Num IBig)
+  (Add Math Math)
+  (Mul Math Math))
+
+(rewrite (Add a b) (Add b a))
+(rewrite (Mul a b) (Mul b a))
+(rewrite (Add (Num x) (Num y)) (Num (IBig::+ x y)))
+(rewrite (Mul (Num x) (Num y)) (Num (IBig::* x y)))
+
+(let expr (Mul (Num 2) (Add (Num 1) (Num 3))))
+(run 10)
+(check (= expr (Num 8)))

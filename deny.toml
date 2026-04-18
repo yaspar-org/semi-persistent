@@ -1,0 +1,77 @@
+[advisories]
+unmaintained = "workspace"
+unsound = "all"
+yanked = "warn"
+
+[licenses]
+allow = [
+    "AFL-2.1",
+    "AFL-3.0",
+    "Apache-1.1",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "Artistic-1.0",
+    "Artistic-1.0-Perl",
+    "BSL-1.0",
+    "0BSD",
+    "BSD-2-Clause",
+    "BSD-2-Clause-Patent",
+    "BSD-3-Clause",
+    "CPAL-1.0",
+    "CC-BY-2.0",
+    "CC-BY-2.5",
+    "CC-BY-3.0",
+    "CC-BY-4.0",
+    "CC0-1.0",
+    "curl",
+    "EFL-2.0",
+    "FTL",
+    "HPND-sell-variant",
+    "ImageMagick",
+    "ISC",
+    "IJG",
+    "MS-PL",
+    "MIT",
+    "MIT-CMU",
+    "MulanPSL-2.0",
+    "OLDAP-2.8",
+    "OpenSSL",
+    "PDDL-1.0",
+    "PHP-3.01",
+    "PostgreSQL",
+    "PSF-2.0",
+    "Ruby",
+    "OFL-1.1",
+    "TCL",
+    "NCSA",
+    "Unlicense",
+    "Vim",
+    "W3C",
+    "W3C-19980720",
+    "W3C-20150513",
+    "WTFPL",
+    "Zlib",
+    "ZPL-2.1",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+unused-allowed-license = "allow"
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = true
+registries = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+skip = [
+    # verus_state_machines_macros depends on indexmap 1.x which requires hashbrown 0.12
+    { crate = "hashbrown@0.12", reason = "pinned by verus transitive deps" },
+]
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

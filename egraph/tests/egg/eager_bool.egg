@@ -1,0 +1,9 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Bool ops in ground terms
+(datatype Expr (B bool))
+
+(check (= (B (and true false)) (B false)))
+(check (= (B (or false true)) (B true)))
+(check (= (B (not true)) (B false)))
+(check (= (B (bool::if true true false)) (B true)))

@@ -1,0 +1,15 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; String ops in ground terms
+(datatype Expr (S String) (N usize) (B bool))
+
+(check (= (S (String::concat "hello " "world")) (S "hello world")))
+(check (= (B (String::contains "abcdef" "cde")) (B true)))
+(check (= (B (String::contains "abc" "xyz")) (B false)))
+(check (= (S (String::replace "hello world" "world" "rust")) (S "hello rust")))
+(check (= (B (String::== "abc" "abc")) (B true)))
+(check (= (B (String::!= "abc" "def")) (B true)))
+(check (= (N (String::len "hello")) (N 5)))
+(check (= (S (String::substr "hello world" 6 5)) (S "world")))
+(check (= (S (String::at "hello" 0)) (S "h")))
+(check (= (S (String::if true "yes" "no")) (S "yes")))

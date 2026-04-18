@@ -1,0 +1,183 @@
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/domains.rs:277:27
+    |
+277 |                 #[inline] pub fn add(&self, t: &ExecTnum) -> (r: ExecTnum)
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+899 | abstract_domain!(d8, u8, 8u32, 0xFFu8);
+    | -------------------------------------- in this macro invocation
+    |
+    = note: this note originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:318:32
+    |
+318 |                         assert(chop(ub_s, w) == ub as nat);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+899 | abstract_domain!(d8, u8, 8u32, 0xFFu8);
+    | -------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:330:104
+    |
+330 |                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
+    |                                                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+899 | abstract_domain!(d8, u8, 8u32, 0xFFu8);
+    | -------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/domains.rs:277:27
+    |
+277 |                   #[inline] pub fn add(&self, t: &ExecTnum) -> (r: ExecTnum)
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+903 | / abstract_domain!(
+904 | |     d128,
+905 | |     u128,
+906 | |     128u32,
+907 | |     0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128
+908 | | );
+    | |_- in this macro invocation
+    |
+    = note: this note originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:318:32
+    |
+318 |                           assert(chop(ub_s, w) == ub as nat);
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+903 | / abstract_domain!(
+904 | |     d128,
+905 | |     u128,
+906 | |     128u32,
+907 | |     0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128
+908 | | );
+    | |_- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:330:104
+    |
+330 |                           assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
+    |                                                                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+903 | / abstract_domain!(
+904 | |     d128,
+905 | |     u128,
+906 | |     128u32,
+907 | |     0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128
+908 | | );
+    | |_- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/domains.rs:277:27
+    |
+277 |                 #[inline] pub fn add(&self, t: &ExecTnum) -> (r: ExecTnum)
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+900 | abstract_domain!(d16, u16, 16u32, 0xFFFFu16);
+    | -------------------------------------------- in this macro invocation
+    |
+    = note: this note originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:318:32
+    |
+318 |                         assert(chop(ub_s, w) == ub as nat);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+900 | abstract_domain!(d16, u16, 16u32, 0xFFFFu16);
+    | -------------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:330:104
+    |
+330 |                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
+    |                                                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+900 | abstract_domain!(d16, u16, 16u32, 0xFFFFu16);
+    | -------------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/domains.rs:277:27
+    |
+277 |                 #[inline] pub fn add(&self, t: &ExecTnum) -> (r: ExecTnum)
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+901 | abstract_domain!(d32, u32, 32u32, 0xFFFF_FFFFu32);
+    | ------------------------------------------------- in this macro invocation
+    |
+    = note: this note originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:318:32
+    |
+318 |                         assert(chop(ub_s, w) == ub as nat);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+901 | abstract_domain!(d32, u32, 32u32, 0xFFFF_FFFFu32);
+    | ------------------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:330:104
+    |
+330 |                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
+    |                                                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+901 | abstract_domain!(d32, u32, 32u32, 0xFFFF_FFFFu32);
+    | ------------------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: function body check: not all errors may have been reported; rerun with a higher value for --multiple-errors to find other potential errors in this function
+   --> src/domains.rs:277:27
+    |
+277 |                 #[inline] pub fn add(&self, t: &ExecTnum) -> (r: ExecTnum)
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+902 | abstract_domain!(d64, u64, 64u32, 0xFFFF_FFFF_FFFF_FFFFu64);
+    | ----------------------------------------------------------- in this macro invocation
+    |
+    = note: this note originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:318:32
+    |
+318 |                         assert(chop(ub_s, w) == ub as nat);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+902 | abstract_domain!(d64, u64, 64u32, 0xFFFF_FFFF_FFFF_FFFFu64);
+    | ----------------------------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: assertion failed
+   --> src/domains.rs:330:104
+    |
+330 |                         assert forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) implies r.has(c1.wrapping_add(c2)) by {
+    |                                                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed
+...
+902 | abstract_domain!(d64, u64, 64u32, 0xFFFF_FFFF_FFFF_FFFFu64);
+    | ----------------------------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `abstract_domain` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+verification results:: 919 verified, 5 errors
+error: aborting due to 10 previous errors
+

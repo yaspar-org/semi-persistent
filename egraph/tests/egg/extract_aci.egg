@@ -1,0 +1,18 @@
+;; Test: ACI matching + double negation + extraction
+
+(sort E)
+(function Or (E) E :assoc-comm-idem)
+(function Not (E) E)
+(function A () E)
+(function B () E)
+(function C () E)
+
+;; double negation elimination
+(rewrite (Not (Not x)) x)
+
+;; build (Or A (Or (Not (Not B)) C))
+(let p (Or (A) (Or (Not (Not (B))) (C))))
+(run 10)
+
+(check (= (Not (Not (B))) (B)))
+(extract p)
