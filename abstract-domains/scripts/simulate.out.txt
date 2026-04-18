@@ -1,0 +1,3 @@
+
+6561 cases checked, 0 mismatches
+ALL MATCH: plus_bv == plus_c for all 4-bit Tnums

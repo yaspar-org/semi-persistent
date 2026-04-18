@@ -1,0 +1,43 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Primitive ops in ground terms — eager evaluation
+(datatype Math (Num i64) (Add Math Math))
+
+;; Direct primitive op in constructor arg
+(let a (Num (i64::+ 3 5)))
+(check (= a (Num 8)))
+
+;; Nested primitive ops
+(let b (Num (i64::* (i64::+ 2 3) (i64::- 10 4))))
+(check (= b (Num 30)))
+
+;; Primitive op in check
+(check (= (Num (i64::+ 1 1)) (Num 2)))
+
+;; All checked ops
+(check (= (Num (i64::- 10 3)) (Num 7)))
+(check (= (Num (i64::* 6 7)) (Num 42)))
+(check (= (Num (i64::/ 20 3)) (Num 6)))
+(check (= (Num (i64::% 20 3)) (Num 2)))
+(check (= (Num (i64::neg 5)) (Num -5)))
+(check (= (Num (i64::abs -7)) (Num 7)))
+(check (= (Num (i64::min 3 7)) (Num 3)))
+(check (= (Num (i64::max 3 7)) (Num 7)))
+
+;; Comparison ops produce bool
+(datatype Expr (B bool))
+(check (= (B (i64::< 3 7)) (B true)))
+(check (= (B (i64::< 7 3)) (B false)))
+(check (= (B (i64::<= 3 3)) (B true)))
+(check (= (B (i64::> 7 3)) (B true)))
+(check (= (B (i64::>= 3 3)) (B true)))
+(check (= (B (i64::== 5 5)) (B true)))
+(check (= (B (i64::!= 5 6)) (B true)))
+
+;; if
+(check (= (Num (i64::if true 10 20)) (Num 10)))
+(check (= (Num (i64::if false 10 20)) (Num 20)))
+
+;; Wrapping
+(check (= (Num (i64::wrapping_add 9223372036854775807 1)) (Num -9223372036854775808)))
+(check (= (Num (i64::saturating_add 9223372036854775807 1)) (Num 9223372036854775807)))

@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; f64 ops in ground terms
+(datatype Expr (F f64) (B bool))
+
+(check (= (F (f64::+ 1.5 2.5)) (F 4.0)))
+(check (= (F (f64::- 5.0 2.5)) (F 2.5)))
+(check (= (F (f64::* 3.0 2.0)) (F 6.0)))
+(check (= (F (f64::/ 7.0 2.0)) (F 3.5)))
+(check (= (F (f64::neg 3.5)) (F -3.5)))
+(check (= (F (f64::abs -2.5)) (F 2.5)))
+(check (= (F (f64::min 1.5 3.5)) (F 1.5)))
+(check (= (F (f64::max 1.5 3.5)) (F 3.5)))
+(check (= (B (f64::< 1.0 2.0)) (B true)))
+(check (= (B (f64::== 1.5 1.5)) (B true)))
+(check (= (F (f64::if true 1.0 2.0)) (F 1.0)))

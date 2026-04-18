@@ -1,0 +1,97 @@
+name: Verus Verification
+on:
+  pull_request:
+    paths: ['abstract-domains/**']
+  push:
+    branches: [main]
+    paths: ['abstract-domains/**']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            verus-asset: verus-x86-linux
+          - os: macos-latest
+            verus-asset: verus-arm64-macos
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read pinned Verus version
+        id: version
+        run: echo "verus=$(cat abstract-domains/.verus-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Download Verus
+        id: verus
+        env:
+          VERUS_VERSION: ${{ steps.version.outputs.verus }}
+          VERUS_ASSET: ${{ matrix.verus-asset }}
+        run: |
+          set -euo pipefail
+          ASSET_URL="https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-${VERUS_ASSET#verus-}.zip"
+          echo "Downloading: $ASSET_URL"
+          curl -fL --retry 3 --retry-delay 2 -o /tmp/verus.zip "$ASSET_URL"
+          unzip -q /tmp/verus.zip -d /tmp/verus-unpack
+          rm /tmp/verus.zip
+          # Move the single extracted directory
+          mv /tmp/verus-unpack/verus-* ./verus
+          # Detect the Rust toolchain Verus needs
+          rust_toolchain=""
+          if [ -f verus/version.json ]; then
+            rust_toolchain="$(python3 -c 'import json; print(json.load(open("verus/version.json")).get("verus", {}).get("toolchain", ""))' 2>/dev/null || true)"
+          fi
+          if [ -z "$rust_toolchain" ]; then
+            rust_toolchain="$(./verus/verus 2>&1 | grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n1 || true)"
+          fi
+          if [ -z "$rust_toolchain" ]; then
+            echo "::error::Could not detect Verus Rust toolchain"
+            exit 1
+          fi
+          echo "Detected Rust toolchain: $rust_toolchain"
+          echo "rust_toolchain=$rust_toolchain" >> "$GITHUB_OUTPUT"
+
+      - name: Allow Verus through macOS Gatekeeper
+        if: runner.os == 'macOS'
+        run: |
+          if [ -f verus/macos_allow_gatekeeper.sh ]; then
+            bash verus/macos_allow_gatekeeper.sh || true
+          fi
+
+      - name: Setup Rust (Verus toolchain)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.verus.outputs.rust_toolchain }}
+
+      - name: Add Verus to PATH
+        run: echo "${{ github.workspace }}/verus" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: abstract-domains
+
+      - name: Verify abstract-domains
+        working-directory: abstract-domains
+        run: |
+          verus --version
+          cargo verus verify -- --trace
+
+  # abstract-domains fuzz tests run with regular stable rustc
+  fuzz-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p semi-persistent-abstract-domains

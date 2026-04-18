@@ -1,0 +1,15 @@
+;; EXPECT: ok
+;; TYPES: bignum
+(datatype Math (Num IBig) (Add Math Math))
+(rewrite (Add (Num x) (Num y)) (Num (IBig::+ x y)))
+
+(push)
+(let a (Add (Num 1) (Num 2)))
+(run 10)
+(check (= a (Num 3)))
+(pop)
+
+;; After pop, 'a' is gone. New terms start fresh.
+(let b (Add (Num 10) (Num 20)))
+(run 10)
+(check (= b (Num 30)))

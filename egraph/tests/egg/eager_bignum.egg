@@ -1,0 +1,39 @@
+;; EXPECT: ok
+;; TYPES: bignum
+;; Bignum ops in ground terms
+(datatype I (IV IBig))
+(datatype U (UV UBig))
+(datatype R (RV RBig))
+(datatype Expr (B bool))
+
+;; IBig
+(check (= (IV (IBig::+ 100 200)) (IV 300)))
+(check (= (IV (IBig::- 200 50)) (IV 150)))
+(check (= (IV (IBig::* 12 12)) (IV 144)))
+(check (= (IV (IBig::/ 100 7)) (IV 14)))
+(check (= (IV (IBig::% 100 7)) (IV 2)))
+(check (= (IV (IBig::neg 42)) (IV -42)))
+(check (= (IV (IBig::abs -99)) (IV 99)))
+(check (= (IV (IBig::min 3 7)) (IV 3)))
+(check (= (IV (IBig::max 3 7)) (IV 7)))
+(check (= (B (IBig::< 3 7)) (B true)))
+(check (= (B (IBig::== 5 5)) (B true)))
+(check (= (IV (IBig::if true 10 20)) (IV 10)))
+
+;; Large numbers
+(check (= (IV (IBig::* 1000000000000 1000000000000)) (IV 1000000000000000000000000)))
+
+;; UBig
+(check (= (UV (UBig::+ 100 200)) (UV 300)))
+(check (= (UV (UBig::- 200 50)) (UV 150)))
+(check (= (UV (UBig::* 12 12)) (UV 144)))
+(check (= (B (UBig::< 3 7)) (B true)))
+
+;; RBig
+(check (= (RV (RBig::+ 1/2 1/3)) (RV 5/6)))
+(check (= (RV (RBig::- 1/2 1/3)) (RV 1/6)))
+(check (= (RV (RBig::* 2/3 3/4)) (RV 1/2)))
+(check (= (RV (RBig::/ 1/2 1/3)) (RV 3/2)))
+(check (= (RV (RBig::neg 3/4)) (RV -3/4)))
+(check (= (RV (RBig::abs -3/4)) (RV 3/4)))
+(check (= (B (RBig::< 1/3 2/3)) (B true)))

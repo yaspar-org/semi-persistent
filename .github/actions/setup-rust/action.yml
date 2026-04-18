@@ -1,0 +1,20 @@
+name: Setup Rust
+description: Install Rust toolchain using the channel pinned in rust-toolchain.toml
+inputs:
+  components:
+    description: Comma-separated list of additional components (e.g. "clippy,rustfmt")
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Read toolchain channel
+      id: channel
+      shell: bash
+      run: |
+        CHANNEL=$(grep '^channel' rust-toolchain.toml | cut -d '"' -f 2)
+        echo "toolchain=$CHANNEL" >> "$GITHUB_OUTPUT"
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.channel.outputs.toolchain }}
+        components: ${{ inputs.components }}

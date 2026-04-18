@@ -1,0 +1,17 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; u64 ops in ground terms
+(datatype Expr (U u64) (B bool))
+
+(check (= (U (u64::+ 10 20)) (U 30)))
+(check (= (U (u64::- 20 7)) (U 13)))
+(check (= (U (u64::* 6 7)) (U 42)))
+(check (= (U (u64::/ 20 3)) (U 6)))
+(check (= (U (u64::% 20 3)) (U 2)))
+(check (= (U (u64::min 3 7)) (U 3)))
+(check (= (U (u64::max 3 7)) (U 7)))
+(check (= (B (u64::< 3 7)) (B true)))
+(check (= (B (u64::== 5 5)) (B true)))
+(check (= (U (u64::if true 10 20)) (U 10)))
+(check (= (U (u64::wrapping_add 18446744073709551615 1)) (U 0)))
+(check (= (U (u64::saturating_sub 0 1)) (U 0)))

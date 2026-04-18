@@ -1,0 +1,19 @@
+name: Cargo Update
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # weekly Monday
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-rust
+      - run: cargo update --workspace
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: 'chore: cargo update'
+          title: 'chore: weekly cargo update'
+          branch: automation/cargo-update
+          delete-branch: true

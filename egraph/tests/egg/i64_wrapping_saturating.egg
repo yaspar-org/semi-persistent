@@ -1,0 +1,28 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Tests i64 wrapping/saturating ops via rewrites
+(datatype E (WA i64 i64) (WS i64 i64) (WM i64 i64) (WN i64) (WAbs i64)
+            (SA i64 i64) (SS i64 i64) (SM i64 i64) (SN i64) (SAbs i64)
+            (RN i64))
+
+(rewrite (WA x y)  (RN (i64::wrapping_add x y)))
+(rewrite (WS x y)  (RN (i64::wrapping_sub x y)))
+(rewrite (WM x y)  (RN (i64::wrapping_mul x y)))
+(rewrite (WN x)    (RN (i64::wrapping_neg x)))
+(rewrite (WAbs x)  (RN (i64::wrapping_abs x)))
+(rewrite (SA x y)  (RN (i64::saturating_add x y)))
+(rewrite (SS x y)  (RN (i64::saturating_sub x y)))
+(rewrite (SM x y)  (RN (i64::saturating_mul x y)))
+(rewrite (SN x)    (RN (i64::saturating_neg x)))
+(rewrite (SAbs x)  (RN (i64::saturating_abs x)))
+
+(let a (WA 9223372036854775807 1))  (run 10) (check (= a (RN -9223372036854775808)))
+(let b (WS -9223372036854775808 1)) (run 10) (check (= b (RN 9223372036854775807)))
+(let c (WM 9223372036854775807 2))  (run 10) (check (= c (RN -2)))
+(let d (WN -9223372036854775808))   (run 10) (check (= d (RN -9223372036854775808)))
+(let e (WAbs -9223372036854775808)) (run 10) (check (= e (RN -9223372036854775808)))
+(let f (SA 9223372036854775807 1))  (run 10) (check (= f (RN 9223372036854775807)))
+(let g (SS -9223372036854775808 1)) (run 10) (check (= g (RN -9223372036854775808)))
+(let h (SM 9223372036854775807 2))  (run 10) (check (= h (RN 9223372036854775807)))
+(let i (SN -9223372036854775808))   (run 10) (check (= i (RN 9223372036854775807)))
+(let j (SAbs -9223372036854775808)) (run 10) (check (= j (RN 9223372036854775807)))

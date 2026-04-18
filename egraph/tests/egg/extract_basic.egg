@@ -1,0 +1,20 @@
+;; Test: optimal term extraction
+;; After rewriting, (extract ...) should print the smallest equivalent term.
+
+(datatype Expr
+  (a)
+  (b)
+  (f Expr Expr)
+  (g Expr))
+
+(let x (f (g (a)) (b)))
+
+;; g(a) rewrites to b
+(rewrite (g (a)) (b))
+(run 10)
+
+;; x = (f (g (a)) (b)), but g(a) = b, so (f b b) is smaller
+(extract x)
+;; expected output: (f b b)
+
+(check (= (g (a)) (b)))
