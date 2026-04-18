@@ -1,0 +1,29 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Tests String ops via rewrites
+(datatype E
+  (Concat String String) (Contains String String) (Replace String String String)
+  (SEq String String) (SNe String String) (SIf bool String String)
+  (Len String) (Substr String usize usize) (At String usize)
+  (RS String) (RN usize) (RB bool))
+
+(rewrite (Concat x y)     (RS (String::concat x y)))
+(rewrite (Contains x y)   (RB (String::contains x y)))
+(rewrite (Replace s f t)  (RS (String::replace s f t)))
+(rewrite (SEq x y)        (RB (String::== x y)))
+(rewrite (SNe x y)        (RB (String::!= x y)))
+(rewrite (SIf c x y)      (RS (String::if c x y)))
+(rewrite (Len x)           (RN (String::len x)))
+(rewrite (Substr s i l)   (RS (String::substr s i l)))
+(rewrite (At s i)          (RS (String::at s i)))
+
+(let a (Concat "hello " "world")) (run 10) (check (= a (RS "hello world")))
+(let b (Contains "abcdef" "cde")) (run 10) (check (= b (RB true)))
+(let c (Contains "abc" "xyz"))    (run 10) (check (= c (RB false)))
+(let d (Replace "hello world" "world" "rust")) (run 10) (check (= d (RS "hello rust")))
+(let e (SEq "abc" "abc"))         (run 10) (check (= e (RB true)))
+(let f (SNe "abc" "def"))         (run 10) (check (= f (RB true)))
+(let g (SIf true "yes" "no"))     (run 10) (check (= g (RS "yes")))
+(let h (Len "hello"))             (run 10) (check (= h (RN 5)))
+(let i (Substr "hello world" 6 5)) (run 10) (check (= i (RS "world")))
+(let j (At "hello" 0))            (run 10) (check (= j (RS "h")))

@@ -1,0 +1,20 @@
+;; EXPECT: ok
+;; AC multiplicity: non-linear variables require equal multiplicities
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function A () E)
+(function B () E)
+(function C () E)
+(function Balanced (E E) E)
+
+;; Add(A, A, B, B, C, C, C) → {A:2, B:2, C:3}
+(let t (Add (A) (A) (B) (B) (C) (C) (C)))
+
+;; x:k y:k means x and y must have the same multiplicity
+;; Only A:2 and B:2 qualify (both mult 2). C:3 has no partner.
+(rewrite (Add x:k y:k ..rest) (Balanced x y))
+(run 1)
+
+(check (= t (Balanced (A) (B))))
+(check (= t (Balanced (B) (A))))

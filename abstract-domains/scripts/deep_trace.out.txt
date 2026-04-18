@@ -1,0 +1,63 @@
+==========================================================================================
+self=Tn(0101,0010) t=Tn(0001,0100)
+  Level 0: sv=1 sm=0 tv=1 tm=0 cv=0 cm=0
+    rv0=0 cv1=1 rm0=0 cm1=0 ubc1=0 ubc=1
+    maskv=0 maskc=0 c1=(1,0)
+    NR: rv=0 mask=14
+  Level 1: sv=0 sm=1 tv=0 tm=0 cv=1 cm=0
+    rv0=1 cv1=0 rm0=1 cm1=0 ubc1=1 ubc=1
+    maskv=1 maskc=1 c1=(0,1)
+    NR: rv=0 mask=7
+    *** c1.m=1: cm1=0 ubc1=1 cm1 XOR ubc1 = 1
+  Level 2: sv=1 sm=0 tv=0 tm=1 cv=0 cm=1
+    rv0=1 cv1=0 rm0=0 cm1=1 ubc1=0 ubc=1
+    maskv=1 maskc=1 c1=(0,1)
+    NR: rv=0 mask=3
+    *** c1.m=1: cm1=1 ubc1=0 cm1 XOR ubc1 = 1
+
+==========================================================================================
+self=Tn(0011,0100) t=Tn(0101,0010)
+  Level 0: sv=1 sm=0 tv=1 tm=0 cv=0 cm=0
+    rv0=0 cv1=1 rm0=0 cm1=0 ubc1=0 ubc=1
+    maskv=0 maskc=0 c1=(1,0)
+    NR: rv=8 mask=6
+  Level 1: sv=1 sm=0 tv=0 tm=1 cv=1 cm=0
+    rv0=0 cv1=1 rm0=1 cm1=0 ubc1=0 ubc=1
+    maskv=1 maskc=0 c1=(1,0)
+    NR: rv=4 mask=3
+  Level 2: sv=0 sm=1 tv=1 tm=0 cv=1 cm=0
+    rv0=0 cv1=1 rm0=1 cm1=0 ubc1=0 ubc=1
+    maskv=1 maskc=0 c1=(1,0)
+    NR: rv=2 mask=1
+
+==========================================================================================
+self=Tn(0110,0001) t=Tn(0110,0001)
+  Level 0: sv=0 sm=1 tv=0 tm=1 cv=0 cm=0
+    rv0=0 cv1=0 rm0=0 cm1=1 ubc1=0 ubc=1
+    maskv=1 maskc=1 c1=(0,1)
+    NR: rv=12 mask=3
+    *** c1.m=1: cm1=1 ubc1=0 cm1 XOR ubc1 = 1
+  Level 1: sv=1 sm=0 tv=1 tm=0 cv=0 cm=1
+    rv0=0 cv1=1 rm0=1 cm1=0 ubc1=0 ubc=1
+    maskv=1 maskc=0 c1=(1,0)
+    NR: rv=6 mask=1
+  Level 2: sv=1 sm=0 tv=1 tm=0 cv=1 cm=0
+    rv0=1 cv1=1 rm0=0 cm1=0 ubc1=0 ubc=1
+    maskv=0 maskc=0 c1=(1,0)
+    NR: rv=3 mask=0
+
+==========================================================================================
+self=Tn(0111,0000) t=Tn(0001,0110)
+  Level 0: sv=1 sm=0 tv=1 tm=0 cv=0 cm=0
+    rv0=0 cv1=1 rm0=0 cm1=0 ubc1=0 ubc=1
+    maskv=0 maskc=0 c1=(1,0)
+    NR: rv=8 mask=6
+  Level 1: sv=1 sm=0 tv=0 tm=1 cv=1 cm=0
+    rv0=0 cv1=1 rm0=1 cm1=0 ubc1=0 ubc=1
+    maskv=1 maskc=0 c1=(1,0)
+    NR: rv=4 mask=3
+  Level 2: sv=1 sm=0 tv=0 tm=1 cv=1 cm=0
+    rv0=0 cv1=1 rm0=1 cm1=0 ubc1=0 ubc=1
+    maskv=1 maskc=0 c1=(1,0)
+    NR: rv=2 mask=1
+

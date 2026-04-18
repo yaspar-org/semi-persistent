@@ -1,0 +1,37 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Tests f64 ops via rewrites
+(datatype E
+  (Add f64 f64) (Sub f64 f64) (Mul f64 f64) (Div f64 f64)
+  (Neg f64) (Abs f64) (Min f64 f64) (Max f64 f64)
+  (Lt f64 f64) (Le f64 f64) (Gt f64 f64) (Ge f64 f64) (Eq f64 f64) (Ne f64 f64)
+  (If bool f64 f64)
+  (RN f64) (RB bool))
+
+(rewrite (Add x y) (RN (f64::+ x y)))
+(rewrite (Sub x y) (RN (f64::- x y)))
+(rewrite (Mul x y) (RN (f64::* x y)))
+(rewrite (Div x y) (RN (f64::/ x y)))
+(rewrite (Neg x)   (RN (f64::neg x)))
+(rewrite (Abs x)   (RN (f64::abs x)))
+(rewrite (Min x y) (RN (f64::min x y)))
+(rewrite (Max x y) (RN (f64::max x y)))
+(rewrite (Lt x y)  (RB (f64::< x y)))
+(rewrite (Le x y)  (RB (f64::<= x y)))
+(rewrite (Gt x y)  (RB (f64::> x y)))
+(rewrite (Ge x y)  (RB (f64::>= x y)))
+(rewrite (Eq x y)  (RB (f64::== x y)))
+(rewrite (Ne x y)  (RB (f64::!= x y)))
+(rewrite (If c x y) (RN (f64::if c x y)))
+
+(let a (Add 1.5 2.5))   (run 10) (check (= a (RN 4.0)))
+(let b (Sub 5.0 2.5))   (run 10) (check (= b (RN 2.5)))
+(let c (Mul 3.0 2.0))   (run 10) (check (= c (RN 6.0)))
+(let d (Div 7.0 2.0))   (run 10) (check (= d (RN 3.5)))
+(let e (Neg 3.5))        (run 10) (check (= e (RN -3.5)))
+(let f (Abs -2.5))       (run 10) (check (= f (RN 2.5)))
+(let g (Min 1.5 3.5))   (run 10) (check (= g (RN 1.5)))
+(let h (Max 1.5 3.5))   (run 10) (check (= h (RN 3.5)))
+(let i (Lt 1.0 2.0))    (run 10) (check (= i (RB true)))
+(let j (Eq 1.5 1.5))    (run 10) (check (= j (RB true)))
+(let k (If true 1.0 2.0)) (run 10) (check (= k (RN 1.0)))

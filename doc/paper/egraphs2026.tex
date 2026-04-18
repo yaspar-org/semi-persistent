@@ -1,0 +1,495 @@
+\documentclass[sigplan,nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray},
+  columns=fullflexible,
+  keepspaces=true,
+  literate={→}{$\rightarrow$}1 {←}{$\leftarrow$}1 {≡}{$\equiv$}1
+           {≤}{$\leq$}1 {≥}{$\geq$}1,
+}
+
+\begin{document}
+
+\title{A Semi-Persistent E-Graph with Native AC Canonization and Leapfrog AC Matching}
+
+\author{R\'{e}mi Delmas}
+\affiliation{%
+  \institution{Amazon Web Services, Automated Reasoning Group}
+  \country{USA}
+}
+\email{delmasrd@amazon.com}
+
+\begin{abstract}\sloppy
+We present SP-Egraph, an e-graph engine with three contributions.
+First, pervasive semi-persistence built from a single vector
+primitive with O(1) snapshots and O($k$) restore, enabling
+equality saturation inside backtracking search algorithms.
+Second, native support for associative~(A),
+associative-commutative~(AC), and AC-idempotent~(ACI) operators
+with an extension of leapfrog triejoin to multiset matching
+using maximum partition semantics.
+Third, proof logging via copy-on-first-re-canonization with
+Euler-tour LCA for batch extraction.
+Both semi-persistence and proof logging are compile-time opt-out
+with zero residual overhead.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+E-graphs have become a central data structure in program optimization
+and verification, driven by the practical success of
+\textsc{egg}~\cite{egg} and \textsc{egglog}~\cite{egglog}.
+Building on these foundations, and taking inspiration from the
+AC(X) decision procedure in the Alt-Ergo SMT
+solver~\cite{iguernlala}, SP-Egraph makes semi-persistence and
+native algebraic theory support its primary design concerns.
+
+Semi-persistence allows the e-graph to be embedded in backtracking
+search algorithms: each decision point is a generation, and
+rollback restores the e-graph to a prior state in O($k$) time,
+where $k$ is the number of distinct cells modified since the
+snapshot.  Native support for associative (A),
+associative-commutative (AC), and AC-idempotent (ACI) operators
+prevents the combinatorial blowup that occurs when these properties
+are modeled as rewrite rules.
+
+To our knowledge, leapfrog-style worst-case-optimal join algorithms
+have not previously been adapted to AC matching.  SP-Egraph
+integrates AC multiset decomposition directly into the relational
+e-matching engine introduced by \textsc{egglog}~\cite{egglog,veldhuizen}.
+
+\medskip
+
+SP-Egraph's design rests on three contributions:
+
+\emph{Pervasive semi-persistence.}  Every data structure is built
+from a semi-persistent vector whose mark/restore
+protocol logs only the first mutation to each cell per frame.
+Inspired by Conchon and Filli\^{a}tre~\cite{conchon-filliatre}, but
+with a first-write-wins invariant that bounds the diff by distinct
+cells touched.  All higher-level containers (union-find, hash-cons
+caches, node stores, registries) compose from this primitive and
+inherit snapshot semantics automatically.
+
+\emph{Leapfrog triejoin extended to A/AC/ACI.}  Egglog introduced
+relational e-matching via leapfrog triejoin~\cite{veldhuizen} for
+plain operators.  SP-Egraph extends the join framework with
+subsequence matching for A, sub-multiset matching with maximum
+partition semantics for AC, and subset matching for ACI, all
+integrated into the same cost-based scheduling engine.
+
+\emph{Proof logging with compile-time opt-out.}  A dual-parent-pointer
+union-find with copy-on-first-re-canonization preserves original node
+structure for proof reconstruction.  Euler-tour LCA enables
+O($n$)-preprocessing, O(1)-per-query batch proof extraction.  A \texttt{const PROOFS: bool} generic
+eliminates all proof machinery at compile time when proofs are not
+needed.
+
+\emph{Extensible literal model.}  The e-graph is parameterized over
+the representation of literal values and their operations.  Users
+provide parsing, interning, and evaluation functions for their own
+types (machine integers, arbitrary-precision arithmetic, strings,
+intervals, etc.)\ via a \texttt{LitModel} trait.  Literal values are
+auto-lifted into the e-graph as dedicated lift nodes rather than
+being baked into child references via union types as in
+\textsc{egglog}~\cite{egglog}.  This keeps the node representation
+uniform and allows new sorts to be added without modifying the
+engine.
+
+\section{Semi-Persistent E-Graph}
+
+\subsection{The Diff-Log Protocol}
+
+The entire e-graph state is built from semi-persistent vectors:
+\begin{itemize}
+\item \emph{Union-find:} two parent vectors (a path-compressed fast
+  path and an uncompressed proof path) plus rank and justification
+  vectors.
+\item \emph{E-classes:} represented by a circular list buffer
+  (arena-allocated) for e-class members with O(1) splicing on merge,
+  and a sparse set (three vectors, swap-and-pop) for e-class
+  representatives with O(1) add, remove, membership test, and direct
+  enumeration of all current roots.
+\item \emph{Use-lists:} singly-linked lists stored in a vector arena,
+  tracking which parent e-nodes reference each e-class (the worklist
+  for rebuild).
+\item \emph{Node caches:} partitioned by node type (arity 0--3,
+  commutative, A, AC, ACI, literal).  A global routing table maps
+  global e-node ids to cache-local ids within each partition.  Each
+  partition stores nodes in a semi-persistent vector alongside a
+  transient \texttt{HashMap} index that is rebuilt from the vector
+  after each restore.
+\item \emph{Variadic children:} variable-arity nodes (A, AC, ACI)
+  store headers in one vector and children in a separate pool vector.
+\item \emph{Proof history:} when proof logging is enabled, original
+  node contents before re-canonization are saved in append-only
+  vectors (one per cache partition).
+\item \emph{Registries and literal store:} semi-persistent maps
+  (append-only vector + transient index) for sorts, operators, rules,
+  and interned literal values.
+\end{itemize}
+
+All data structures are marked and restored together.  Marking
+triggers a full rebuild first, so only fully congruence-closed states
+are ever snapshotted.
+
+Each vector records negative diffs: before overwriting a slot, the
+old value is pushed onto a per-frame diff stack.  \texttt{mark()}
+pushes a frame in O(1); \texttt{restore()} replays the diff log in
+reverse in O($k$), where $k$ is the number of distinct cells
+modified since the mark.  The first-write-wins invariant ensures each
+slot is logged at most once per frame, bounding the diff size by the
+size of the data structure --- but in practice much smaller,
+typically proportional to the number of new e-nodes and merges in the
+current generation.
+
+For dense identifier types (31-bit ids), the capture flag is the MSB
+of the stored representation, costing zero extra memory.
+
+The implementation uses arena-style allocation with deterministic
+truncation on restore, avoiding GC pauses.  This contrasts with
+Conchon and Filli\^{a}tre's OCaml formulation~\cite{conchon-filliatre},
+which relies on the GC to reclaim abandoned patch chains.
+
+\subsection{Compile-Time Opt-Out}
+
+A \texttt{const TRACK: bool} generic on the semi-persistent vector
+controls all diff-log machinery.  When \texttt{false}, the compiler
+eliminates capture flags, diff stacks, and frame bookkeeping
+entirely, reducing the vector to a plain \texttt{Vec} with zero
+residual overhead.  This allows the same generic code to be used in
+both backtracking and non-backtracking contexts.
+
+\subsection{Source-of-Truth vs.\ Derived State}
+
+The e-graph separates source-of-truth containers (node stores,
+union-find, literal store, registries) from derived containers
+(hash-cons indices, sorted indexes for pattern matching).  Only
+source-of-truth containers participate in the diff-log protocol.
+Derived structures are rebuilt from source-of-truth after each
+restore, avoiding diff-tracking overhead on high-churn index
+structures.
+
+\subsection{Stratified Negation}
+
+Because \texttt{mark()} always snapshots a fully rebuilt state,
+the generational structure directly supports stratified negation:
+stratum $k$ saturates, then \texttt{mark()} rebuilds and snapshots;
+stratum $k{+}1$ writes into a new generation while negative lookups
+query the frozen snapshot.
+
+\section{Native Algebraic Theories}
+
+\subsection{Canonical Representations}
+
+SP-Egraph handles A, C, AC, and ACI properties structurally through
+canonical node representations, not rewrite rules.
+
+\begin{table}[t]
+\caption{Canonical forms by operator kind.}
+\label{tab:canon}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Kind & Children & Canonical form & Merge \\
+\midrule
+Plain & $[c_0, \ldots, c_n]$ & Order preserved & In place \\
+C     & $[c_0, c_1]$         & Sorted pair     & Re-sort \\
+A     & $[c_0, \ldots, c_n]$ & Order preserved & In place \\
+AC    & $[(id, m), \ldots]$  & Sorted by id    & Sum mults \\
+ACI   & $[id, \ldots]$       & Sorted, unique  & Dedup \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+AC nodes store sorted multisets of (id, multiplicity) pairs.  When
+two entries acquire the same canonical id after a merge, their
+multiplicities are summed.  ACI nodes store sorted sets; duplicates
+are removed.  This prevents the combinatorial blowup that occurs
+when commutativity and associativity are encoded as rewrite rules.
+
+\subsection{Surface Syntax for Variadic Matching}
+
+The surface language provides rest variables and splicing for
+matching and constructing variadic (A/AC/ACI) terms.  Rest variables
+bind the unmatched residual of a variadic operator.
+
+\begin{lstlisting}
+;; Sorts and operators with algebraic attributes
+(sort Expr)
+(function Add (Expr) Expr :assoc-comm)
+(function Mul (Expr Expr) Expr)
+(function Or (Expr) Expr :assoc-comm-idem)
+(sort List)
+(function Nil () List)
+(function Concat (List) List :assoc)
+
+;; AC: remove zero from sum (any multiplicity)
+(rewrite (Add (Zero):k ..rest)
+         (Add ..rest))
+
+;; AC: distribute multiplication over sum
+(rewrite (Mul a (Add ..rest))
+         (Add ..{(Mul a x) for x in rest}))
+
+;; ACI: remove false from disjunction
+(rewrite (Or (False) ..rest)
+         (Or ..rest))
+
+;; A: remove empty list from concatenation
+(rewrite (Concat ..pre (Nil) ..suf)
+         (Concat ..pre ..suf))
+\end{lstlisting}
+
+Rest variables (\texttt{..rest}, \texttt{..pre}, \texttt{..suf})
+bind the unmatched residual of a variadic operator.  For AC
+operators, the multiplicity annotation \texttt{x:k} binds both the
+element and its count.  Multiplicity constraints (\texttt{x:k>=2},
+\texttt{x:k<5}) are compiled to intervals; when a multiplicity
+variable appears multiple times in a pattern (non-linear), the
+intervals are intersected and the match fails early if the
+intersection is empty.
+
+
+\section{Relational E-Matching}
+
+\subsection{Index Construction}
+
+Four sorted index families are rebuilt each saturation iteration:
+\texttt{by\_op} (operator $\to$ nodes), \texttt{by\_repr}
+(representative $\to$ nodes), \texttt{by\_child\_pos} ((class,
+position) $\to$ parent nodes), and \texttt{by\_contains} (class
+$\to$ variadic parents).  All are sorted vectors; binary search on
+contiguous memory outperforms incrementally maintained trees.
+
+\subsection{Leapfrog Triejoin}
+
+Patterns compile to flat relational atoms joined by worst-case-optimal
+leapfrog triejoin~\cite{veldhuizen} over the sorted indexes.  A
+cost-based scheduler orders variables by estimated selectivity each
+iteration.  The scheduler binds variables in any order (top-down,
+bottom-up, or middle-out) because the flattened atom representation
+decouples pattern structure from execution plan.
+
+\subsection{Extending Leapfrog to AC Matching}
+
+Standard leapfrog triejoin handles plain operators where each child
+occupies a fixed position.  AC operators store sorted multisets of
+(id, multiplicity) pairs, so the pattern matcher must decompose a
+multiset into bound elements and a residual, rather than extracting
+children by position.
+
+The AC matching algorithm proceeds in two phases within the
+backtracking DFS engine:
+
+\paragraph{Phase 1: Join.}  The query plan first binds the AC
+node's e-class representative via a standard leapfrog join over
+\texttt{by\_op} and \texttt{by\_repr} indexes.  This identifies
+which AC nodes to decompose.
+
+\paragraph{Phase 2: Decompose.}  For each matched AC node, the
+engine extracts the sorted multiset of (representative, multiplicity)
+pairs and runs a recursive decomposition:
+
+\begin{enumerate}
+\item Initialize the \emph{residual pool}: the full multiset of
+  (id, multiplicity) pairs after canonicalizing each child through
+  \texttt{find}.
+
+\item For each pattern element in order:
+  \begin{itemize}
+  \item If the pattern variable is already bound (from an earlier
+    join step or a non-linear occurrence), look up the bound
+    representative in the residual pool.  If found with sufficient
+    multiplicity, subtract the required amount and continue.
+    Otherwise, fail this branch.
+  \item If unbound, iterate over all residual entries with nonzero
+    multiplicity.  For each candidate, bind the variable to that
+    representative, subtract the multiplicity, and recurse to the
+    next pattern element.  On backtrack, restore the multiplicity.
+  \end{itemize}
+
+\item After all pattern elements are bound, handle the rest variable
+  (if present): collect all residual entries with nonzero multiplicity
+  into a multiset and bind the rest variable.  If no rest variable
+  exists, verify that the residual is empty (exact match).
+\end{enumerate}
+
+\paragraph{Maximum partition semantics.}  When binding an unbound
+variable to a residual entry, the engine takes the \emph{entire}
+available multiplicity of that element, not just one copy.
+This is the maximum partition: each distinct element is assigned to
+exactly one pattern variable with its full multiplicity.  This avoids
+enumerating the exponentially many ways to split copies of the same
+element across variables.  The branching factor is the number of
+distinct elements in the residual, not the total multiplicity.
+
+Given term \texttt{(op a:4 b:3 c:2 d:1)} and pattern
+\texttt{(op a:i y:j ..rest)}, where \texttt{a} is a ground e-class
+and \texttt{y} is a pattern variable, the matcher:
+\begin{enumerate}
+\item Looks up ground \texttt{a} in the residual pool, binds
+  \texttt{i}=4, removes $a^4$ from pool.
+\item Enumerates unbound \texttt{y} over remaining elements:
+  \begin{itemize}
+  \item \texttt{y}=$b$, \texttt{j}=3 $\Rightarrow$
+    \texttt{..rest}=$\{c^2, d^1\}$
+  \item \texttt{y}=$c$, \texttt{j}=2 $\Rightarrow$
+    \texttt{..rest}=$\{b^3, d^1\}$
+  \item \texttt{y}=$d$, \texttt{j}=1 $\Rightarrow$
+    \texttt{..rest}=$\{b^3, c^2\}$
+  \end{itemize}
+\end{enumerate}
+The ground lookup is O(1); branching is only over the 3 remaining
+distinct elements, independent of multiplicities.  For a multiset
+with $d$ distinct elements and $p$ pattern variables, the search
+space is $O(d^p)$, independent of multiplicities.
+
+\paragraph{Multiplicity constraints.}  Each pattern element may
+carry a constraint on its multiplicity (e.g., \texttt{a:k>=2}).
+The constraint is checked when binding: if the available multiplicity
+does not satisfy the constraint, the candidate is skipped.  If a
+multiplicity variable appears multiple times in the pattern
+(non-linear), all occurrences must bind to the same value.
+Constraints compile to interval intersections; if the intersection
+is empty, the entire query is statically unsatisfiable.
+
+\paragraph{A and ACI variants.}  For A (associative, ordered)
+operators, the decomposition enumerates contiguous subsequences
+instead of sub-multisets: prefix and suffix rest variables capture
+the unmatched head and tail.  For ACI (idempotent) operators,
+multiplicities are always 1, so the decomposition simplifies to
+subset enumeration.
+
+\section{Proof Logging}
+
+\subsection{Copy-on-First-Re-Canonization}
+
+Rebuild re-canonizes nodes in place, destroying original child
+pointers that proof chains need.  SP-Egraph resolves this with a
+history bit on each e-node (the MSB of the operator field).  During
+rebuild, before updating a node's children, the engine checks the
+history bit.  If clear, the original children are saved to a proof
+buffer and the bit is set.  If already set, the copy is skipped.
+This ensures proof reconstruction can recover pre-merge structure at
+a cost of at most one copy per node over its entire lifetime.
+
+\subsection{Dual-Parent-Pointer Union-Find}
+
+The union-find maintains two parent arrays.  The fast path uses path
+compression for O($\alpha(n)$) find.  The proof path is never
+compressed: it preserves the original merge tree.  Each union records
+a justification (rewrite, congruence, or axiom) alongside the
+proof-path edge.
+
+\subsection{Euler-Tour LCA for Batch Extraction}
+
+To explain $a \equiv b$, the engine finds their LCA in the proof
+forest.  For single queries, a naive walk-up costs O(depth).  For
+batch proof export, the Bender--Farach-Colton
+algorithm~\cite{bfc} achieves O($n$) preprocessing and O(1) per
+LCA query via Euler tour, exploiting the $\pm 1$ depth property for
+block-decomposed RMQ.
+
+Two implementations are provided: a naive walk-up for single queries
+(O(depth)) and Euler-tour LCA for batch extraction (O($n$)
+preprocessing, O(1) per query).
+
+\subsection{Compile-Time Opt-Out}
+
+A \texttt{const PROOFS: bool} generic on \texttt{EGraph} controls
+all proof machinery.  When \texttt{false}, the compiler eliminates
+proof arrays, history bits, justification vectors, and proof buffers
+entirely.  The non-proof configuration has no residual overhead.
+
+\section{Implementation and Status}
+
+SP-Egraph is implemented in approximately 19{,}000 lines of Rust (plus 10{,}000 lines of tests).
+The semi-persistent containers, e-graph core, pattern matching
+engine, compilation pipeline, proof logging, and saturation loop are
+fully implemented and tested.  The design is parameterized so that
+every e-class reference (enode children, union-find links, match
+bindings) can carry an edge label describing how bound variables
+route between parent and child scopes.  The default label type is
+unit (no binders, zero overhead).  Future work will instantiate this
+with director matrices and slot maps to support alpha-equivalence,
+following the approach of slotted e-graphs~\cite{slotted} and
+director strings~\cite{sinot}.  Other planned extensions include
+cost-based extraction via partial weighted Max-SAT and stratified
+negation using the generational structure as stratum boundaries.
+
+\section{Conclusion}
+
+SP-Egraph's design rests on three contributions: pervasive
+semi-persistence built from a single vector primitive with O(1)
+snapshots and O($k$) restore; an extension of leapfrog triejoin to
+A/AC/ACI matching with maximum partition semantics and multiplicity
+constraints; and proof logging via copy-on-first-re-canonization
+with Euler-tour LCA, with a compile-time generic that eliminates
+all proof overhead when not needed.  Both semi-persistence and proof
+logging are compile-time opt-out via \texttt{const} generics
+(\texttt{TRACK} and \texttt{PROOFS}), with zero residual overhead
+when disabled.  Semi-persistence is the
+unifying mechanism: the same generational protocol that yields O(1)
+snapshots also supplies stratum boundaries for stratified negation
+and rollback for exploratory search.
+
+\bibliographystyle{ACM-Reference-Format}
+\begin{thebibliography}{10}
+
+\bibitem{egg}
+M.~Willsey, C.~Nandi, Y.~R. Wang, O.~Flatt, Z.~Tatlock, and
+P.~Panchekha.
+\newblock egg: Fast and extensible equality saturation.
+\newblock In \emph{Proc.\ ACM Program.\ Lang.}, 5(POPL), 2021.
+
+\bibitem{egglog}
+Y.~Zhang, Y.~R. Wang, O.~Flatt, D.~Cao, P.~Zucker, E.~Roesner,
+M.~Willsey, and Z.~Tatlock.
+\newblock Better together: Unifying {D}atalog and equality saturation.
+\newblock In \emph{Proc.\ ACM Program.\ Lang.}, 7(PLDI), 2023.
+
+\bibitem{veldhuizen}
+T.~L. Veldhuizen.
+\newblock Leapfrog triejoin: A simple, worst-case optimal join
+algorithm.
+\newblock In \emph{Proc.\ ICDT}, 2014.
+
+\bibitem{conchon-filliatre}
+S.~Conchon and J.-C. Filli\^{a}tre.
+\newblock Semi-persistent data structures.
+\newblock In \emph{Proc.\ ESOP}, 2008.
+
+\bibitem{iguernlala}
+M.~Iguernlala.
+\newblock \emph{Strengthening the Heart of an SMT-Solver: Design and
+Implementation of Efficient Decision Procedures}.
+\newblock PhD thesis, Universit\'{e} Paris-Sud, 2013.
+
+\bibitem{bfc}
+M.~A. Bender and M.~Farach-Colton.
+\newblock The {LCA} problem revisited.
+\newblock In \emph{Proc.\ LATIN}, 2000.
+
+\bibitem{slotted}
+R.~Schneider, M.~Rossel, A.~Shaikhha, A.~Goens, and M.~Steuwer.
+\newblock Slotted e-graphs: First-class support for (bound) variables
+in e-graphs.
+\newblock In \emph{Proc.\ ACM Program.\ Lang.}, 9(PLDI), 2025.
+
+\bibitem{sinot}
+F.-R. Sinot, M.~Fern\'{a}ndez, and I.~Mackie.
+\newblock Lambda-calculus with director strings.
+\newblock \emph{Appl.\ Algebra Eng.\ Commun.\ Comput.}, 15:393--437,
+2005.
+
+\end{thebibliography}
+
+\end{document}

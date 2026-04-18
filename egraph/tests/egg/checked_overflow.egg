@@ -1,0 +1,6 @@
+;; EXPECT: panic
+;; TYPES: machine
+(datatype Math (Num i64) (Add Math Math))
+(rewrite (Add (Num x) (Num y)) (Num (i64::+ x y)))
+(let e (Add (Num 9223372036854775807) (Num 1)))
+(run 10)

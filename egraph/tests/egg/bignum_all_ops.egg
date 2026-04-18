@@ -1,0 +1,72 @@
+;; EXPECT: ok
+;; TYPES: bignum
+;; Tests IBig, UBig, RBig ops via rewrites
+(datatype I (IAdd IBig IBig) (ISub IBig IBig) (IMul IBig IBig) (IDiv IBig IBig) (IRem IBig IBig)
+            (INeg IBig) (IAbs IBig) (IMin IBig IBig) (IMax IBig IBig)
+            (ILt IBig IBig) (IEq IBig IBig) (INe IBig IBig)
+            (IIf bool IBig IBig)
+            (IR IBig) (IB bool))
+
+(rewrite (IAdd x y) (IR (IBig::+ x y)))
+(rewrite (ISub x y) (IR (IBig::- x y)))
+(rewrite (IMul x y) (IR (IBig::* x y)))
+(rewrite (IDiv x y) (IR (IBig::/ x y)))
+(rewrite (IRem x y) (IR (IBig::% x y)))
+(rewrite (INeg x)   (IR (IBig::neg x)))
+(rewrite (IAbs x)   (IR (IBig::abs x)))
+(rewrite (IMin x y) (IR (IBig::min x y)))
+(rewrite (IMax x y) (IR (IBig::max x y)))
+(rewrite (ILt x y)  (IB (IBig::< x y)))
+(rewrite (IEq x y)  (IB (IBig::== x y)))
+(rewrite (INe x y)  (IB (IBig::!= x y)))
+(rewrite (IIf c x y) (IR (IBig::if c x y)))
+
+(let a (IAdd 100 200))  (run 10) (check (= a (IR 300)))
+(let b (ISub 200 50))   (run 10) (check (= b (IR 150)))
+(let mul_result (IMul 12 12))    (run 10) (check (= mul_result (IR 144)))
+(let d (IDiv 100 7))    (run 10) (check (= d (IR 14)))
+(let e (IRem 100 7))    (run 10) (check (= e (IR 2)))
+(let f (INeg 42))       (run 10) (check (= f (IR -42)))
+(let g (IAbs -99))      (run 10) (check (= g (IR 99)))
+(let h (IMin 3 7))      (run 10) (check (= h (IR 3)))
+(let i (IMax 3 7))      (run 10) (check (= i (IR 7)))
+(let j (ILt 3 7))       (run 10) (check (= j (IB true)))
+(let k (IEq 5 5))       (run 10) (check (= k (IB true)))
+(let l (IIf true 10 20)) (run 10) (check (= l (IR 10)))
+
+;; Large numbers
+(let m (IMul 1000000000000 1000000000000)) (run 10) (check (= m (IR 1000000000000000000000000)))
+
+;; UBig
+(datatype U (UAdd UBig UBig) (ULt UBig UBig) (UIf bool UBig UBig)
+            (UR UBig) (UB bool))
+(rewrite (UAdd x y) (UR (UBig::+ x y)))
+(rewrite (ULt x y)  (UB (UBig::< x y)))
+(rewrite (UIf c x y) (UR (UBig::if c x y)))
+
+(let n (UAdd 100 200))  (run 10) (check (= n (UR 300)))
+(let o (ULt 3 7))       (run 10) (check (= o (UB true)))
+(let p (UIf false 10 20)) (run 10) (check (= p (UR 20)))
+
+;; RBig
+(datatype R (RAdd RBig RBig) (RSub RBig RBig) (RMul RBig RBig) (RDiv RBig RBig)
+            (RNeg RBig) (RAbs RBig) (RLt RBig RBig)
+            (RIf bool RBig RBig)
+            (RR RBig) (RBool bool))
+(rewrite (RAdd x y) (RR (RBig::+ x y)))
+(rewrite (RSub x y) (RR (RBig::- x y)))
+(rewrite (RMul x y) (RR (RBig::* x y)))
+(rewrite (RDiv x y) (RR (RBig::/ x y)))
+(rewrite (RNeg x)   (RR (RBig::neg x)))
+(rewrite (RAbs x)   (RR (RBig::abs x)))
+(rewrite (RLt x y)  (RBool (RBig::< x y)))
+(rewrite (RIf c x y) (RR (RBig::if c x y)))
+
+(let q (RAdd 1/2 1/3))  (run 10) (check (= q (RR 5/6)))
+(let r (RSub 1/2 1/3))  (run 10) (check (= r (RR 1/6)))
+(let s (RMul 2/3 3/4))  (run 10) (check (= s (RR 1/2)))
+(let t (RDiv 1/2 1/3))  (run 10) (check (= t (RR 3/2)))
+(let u (RNeg 3/4))      (run 10) (check (= u (RR -3/4)))
+(let v (RAbs -3/4))     (run 10) (check (= v (RR 3/4)))
+(let w (RLt 1/3 2/3))   (run 10) (check (= w (RBool true)))
+(let x (RIf true 1/2 3/4)) (run 10) (check (= x (RR 1/2)))

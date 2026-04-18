@@ -1,0 +1,11 @@
+[package]
+name = "semi-persistent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Semi-persistent data structures, e-graphs, and recursion schemes"
+
+[dependencies]
+semi-persistent-containers = { path = "../containers" }
+semi-persistent-egraph = { path = "../egraph" }
+semi-persistent-traversals = { path = "../traversals" }

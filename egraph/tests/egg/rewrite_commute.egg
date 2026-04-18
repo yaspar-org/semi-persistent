@@ -1,0 +1,7 @@
+;; EXPECT: ok
+;; TYPES: bignum
+(datatype Math (Num IBig) (Add Math Math))
+(rewrite (Add a b) (Add b a))
+(let e (Add (Num 1) (Num 2)))
+(run 10)
+(check (= (Add (Num 1) (Num 2)) (Add (Num 2) (Num 1))))

@@ -1,0 +1,15 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Auto-lift: bare literal where constructor sort expected
+(datatype Math (Num i64) (Add Math Math))
+
+;; Primitive op result (i64) used where Math expected — needs auto-lift via Num
+(rewrite (Add (Num x) (Num y)) (Num (i64::+ x y)))
+(let e (Add (Num 3) (Num 5)))
+(run 10)
+(check (= e (Num 8)))
+
+;; Mixing eager eval with rewrites
+(let f (Add (Num (i64::+ 1 2)) (Num (i64::* 3 4))))
+(run 10)
+(check (= f (Num 15)))
