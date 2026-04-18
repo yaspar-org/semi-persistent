@@ -8,7 +8,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
       - run: cargo update --workspace
       - uses: peter-evans/create-pull-request@v7
