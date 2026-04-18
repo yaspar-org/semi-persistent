@@ -1,0 +1,3 @@
+;; EXPECT: parse-error
+;; TYPES: bignum
+(sort Math

@@ -1,0 +1,50 @@
+;; EXPECT: ok
+;; TYPES: bignum
+;; Deep nested expression with all arithmetic ops and constant folding.
+;; Tests multi-level propagation through the e-graph.
+
+(datatype E
+  (Num IBig)
+  (Add E E)
+  (Sub E E)
+  (Mul E E)
+  (Neg E))
+
+;; constant folding rules
+(rewrite (Add (Num x) (Num y)) (Num (IBig::+ x y)))
+(rewrite (Sub (Num x) (Num y)) (Num (IBig::- x y)))
+(rewrite (Mul (Num x) (Num y)) (Num (IBig::* x y)))
+(rewrite (Neg (Num x))         (Num (IBig::neg x)))
+
+;; commutativity (needed for propagation)
+(rewrite (Add a b) (Add b a))
+(rewrite (Mul a b) (Mul b a))
+
+;; depth 1: inner leaves
+;;   Add(2,3) = 5
+;;   Mul(4,5) = 20
+;;   Sub(10,3) = 7
+;;   Neg(8) = -8
+;; depth 2:
+;;   Mul(5, 20) = 100
+;;   Add(7, -8) = -1
+;; depth 3:
+;;   Sub(100, -1) = 101
+
+(let e
+  (Sub
+    (Mul
+      (Add (Num 2) (Num 3))
+      (Mul (Num 4) (Num 5)))
+    (Add
+      (Sub (Num 10) (Num 3))
+      (Neg (Num 8)))))
+
+(run 30)
+(check (= e (Num 101)))
+
+;; Also check intermediate values are reachable
+(check (= (Add (Num 2) (Num 3)) (Num 5)))
+(check (= (Mul (Num 4) (Num 5)) (Num 20)))
+(check (= (Sub (Num 10) (Num 3)) (Num 7)))
+(check (= (Neg (Num 8)) (Num -8)))

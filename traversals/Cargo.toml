@@ -1,0 +1,11 @@
+[package]
+name = "semi-persistent-traversals"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+semi-persistent-traversals-derive = { path = "derive", version = "0.1.0" }
+winnow.workspace = true
+rustc-hash = "2"
+smallvec = "1"

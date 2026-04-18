@@ -1,0 +1,16 @@
+name: Security Audit
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # weekly Monday
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-rust
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit

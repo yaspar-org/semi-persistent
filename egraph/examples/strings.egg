@@ -1,0 +1,5 @@
+(datatype Expr
+  (Str String)
+  (Len Expr))
+
+(let s (Str "hello"))
