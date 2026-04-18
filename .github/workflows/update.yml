@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-rust
       - run: cargo update --workspace
-      - uses: peter-evans/create-pull-request@v7
+      - uses: peter-evans/create-pull-request@v8
         with:
           commit-message: 'chore: cargo update'
           title: 'chore: weekly cargo update'
