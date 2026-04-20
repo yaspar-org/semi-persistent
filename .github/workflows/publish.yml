@@ -12,7 +12,9 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - run: cargo test --workspace
       - uses: rust-lang/crates-io-auth-action@v1
