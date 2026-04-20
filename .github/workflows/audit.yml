@@ -4,6 +4,9 @@ on:
     - cron: '0 0 * * 1'  # weekly Monday
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
