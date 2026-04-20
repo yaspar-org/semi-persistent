@@ -75,9 +75,13 @@ jobs:
           fi
 
       - name: Setup Rust (Verus toolchain)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.verus.outputs.rust_toolchain }}
+        env:
+          VERUS_RUST_TOOLCHAIN: ${{ steps.verus.outputs.rust_toolchain }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$VERUS_RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$VERUS_RUST_TOOLCHAIN"
 
       - name: Add Verus to PATH
         run: echo "${{ github.workspace }}/verus" >> "$GITHUB_PATH"
