@@ -13,7 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --exclude semi-persistent-abstract-domains
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
