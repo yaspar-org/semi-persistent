@@ -19,7 +19,9 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt
@@ -28,7 +30,9 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
@@ -42,7 +46,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace
@@ -51,7 +57,9 @@ jobs:
   deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - uses: taiki-e/install-action@v2
         with:
