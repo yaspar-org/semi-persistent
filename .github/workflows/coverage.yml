@@ -18,7 +18,7 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      - run: cargo llvm-cov --workspace --exclude semi-persistent-abstract-domains --lcov --output-path lcov.info
+      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - run: cargo llvm-cov report --summary-only
       - uses: codecov/codecov-action@v6
         with:
