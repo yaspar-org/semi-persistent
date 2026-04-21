@@ -1,11 +1,12 @@
 name: Verus Verification
 on:
   pull_request:
-    paths: ['abstract-domains/**']
   push:
     branches: [main]
-    paths: ['abstract-domains/**']
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +28,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Read pinned Verus version
         id: version
@@ -70,14 +73,18 @@ jobs:
           fi
 
       - name: Setup Rust (Verus toolchain)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.verus.outputs.rust_toolchain }}
+        env:
+          VERUS_RUST_TOOLCHAIN: ${{ steps.verus.outputs.rust_toolchain }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$VERUS_RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$VERUS_RUST_TOOLCHAIN"
 
       - name: Add Verus to PATH
         run: echo "${{ github.workspace }}/verus" >> "$GITHUB_PATH"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: abstract-domains
 
@@ -91,7 +98,9 @@ jobs:
   fuzz-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo test -p semi-persistent-abstract-domains

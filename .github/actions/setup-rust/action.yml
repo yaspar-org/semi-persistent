@@ -8,13 +8,14 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Read toolchain channel
-      id: channel
-      shell: bash
+    - shell: bash
       run: |
+        set -euo pipefail
         CHANNEL=$(grep '^channel' rust-toolchain.toml | cut -d '"' -f 2)
-        echo "toolchain=$CHANNEL" >> "$GITHUB_OUTPUT"
-    - uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ steps.channel.outputs.toolchain }}
-        components: ${{ inputs.components }}
+        rustup toolchain install "$CHANNEL" --profile minimal --no-self-update
+        rustup default "$CHANNEL"
+        if [ -n "$COMPONENTS" ]; then
+          rustup component add --toolchain "$CHANNEL" ${COMPONENTS//,/ }
+        fi
+      env:
+        COMPONENTS: ${{ inputs.components }}
