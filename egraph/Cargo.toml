@@ -2,7 +2,9 @@
 name = "semi-persistent-egraph"
 version = "0.1.0"
 edition = "2024"
-publish = false
+license = "Apache-2.0"
+description = "Semi-persistent equality saturation engine with e-matching, rewrite scheduling, and proof logging"
+repository = "https://github.com/yaspar-org/semi-persistent"
 
 [lib]
 name = "semi_persistent_egraph"
@@ -13,7 +15,7 @@ name = "semi-persistent"
 path = "src/main.rs"
 
 [dependencies]
-semi-persistent-containers = { path = "../containers" }
+semi-persistent-containers = { path = "../containers", version = "0.1.0" }
 clap = { version = "4.6.0", features = ["derive"] }
 num-bigint.workspace = true
 num-rational.workspace = true
