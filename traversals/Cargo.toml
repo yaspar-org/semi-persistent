@@ -2,7 +2,9 @@
 name = "semi-persistent-traversals"
 version = "0.1.0"
 edition = "2024"
-publish = false
+license = "Apache-2.0"
+description = "Arena-based recursion schemes: stack-safe folds, unfolds, transforms, and zippers"
+repository = "https://github.com/yaspar-org/semi-persistent"
 
 [dependencies]
 semi-persistent-traversals-derive = { path = "derive", version = "0.1.0" }

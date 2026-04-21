@@ -2,10 +2,11 @@
 name = "semi-persistent"
 version = "0.1.0"
 edition = "2024"
-publish = false
+license = "Apache-2.0"
 description = "Semi-persistent data structures, e-graphs, and recursion schemes"
+repository = "https://github.com/yaspar-org/semi-persistent"
 
 [dependencies]
-semi-persistent-containers = { path = "../containers" }
-semi-persistent-egraph = { path = "../egraph" }
-semi-persistent-traversals = { path = "../traversals" }
+semi-persistent-containers = { path = "../containers", version = "0.1.0" }
+semi-persistent-egraph = { path = "../egraph", version = "0.1.0" }
+semi-persistent-traversals = { path = "../traversals", version = "0.1.0" }
