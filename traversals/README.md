@@ -64,6 +64,15 @@ let result = s.fold(
 let rendered: String = result.unwrap_stmt();
 ```
 
+The word *sort* in this crate means "one of the categories in a family of
+mutually recursive definitions" — `Stmt` and `Expr` above are the two
+sorts. Each sort produces a set of Rust types with suffixes: `StmtNode`
+(the enum stored in the arena), `StmtId` (a typed handle into that
+arena), `StmtNodeMapped<A_stmt, A_expr>` (what an algebra receives,
+child IDs replaced by results). Parameter order on the mapped enums
+follows sort declaration order, family-wide. [TUTORIAL §1](TUTORIAL.md)
+walks through the full macro expansion for this example.
+
 ## Calling convention
 
 Every scheme takes **one closure per sort, in declaration order**. With N
