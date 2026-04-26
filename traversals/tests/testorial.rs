@@ -169,7 +169,10 @@ mod tests {
                 ExprNodeMapped::Block(s, e) => format!("{{ {s}; {e} }}"),
             },
         );
-        match r { LangStoreFoldResult::Stmt(v) => v, LangStoreFoldResult::Expr(v) => v }
+        match r {
+            LangStoreFoldResult::Stmt(v) => v,
+            LangStoreFoldResult::Expr(v) => v,
+        }
     }
 
     // ====================================================================
@@ -195,7 +198,9 @@ mod tests {
             },
             |expr: ExprNodeMapped<usize, usize>| match expr {
                 ExprNodeMapped::Var(_) | ExprNodeMapped::Lit(_) | ExprNodeMapped::Bool(_) => 1,
-                ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) | ExprNodeMapped::Eq(l, r) => 1 + l + r,
+                ExprNodeMapped::Add(l, r)
+                | ExprNodeMapped::Mul(l, r)
+                | ExprNodeMapped::Eq(l, r) => 1 + l + r,
                 ExprNodeMapped::Neg(e) => 1 + e,
                 ExprNodeMapped::Block(s, e) => 1 + s + e,
             },
@@ -212,16 +217,22 @@ mod tests {
         let (s, root) = sample();
         let found = s.fold_short(
             root,
-            |stmt: StmtNodeMapped<bool, bool>| Ok(match stmt {
-                StmtNodeMapped::Let(_, e) | StmtNodeMapped::Print(e) => e,
-                StmtNodeMapped::Seq(l, r) | StmtNodeMapped::If(_, l, r) => l || r,
-                StmtNodeMapped::While(c, b) => c || b,
-                StmtNodeMapped::Noop => false,
-            }),
+            |stmt: StmtNodeMapped<bool, bool>| {
+                Ok(match stmt {
+                    StmtNodeMapped::Let(_, e) | StmtNodeMapped::Print(e) => e,
+                    StmtNodeMapped::Seq(l, r) | StmtNodeMapped::If(_, l, r) => l || r,
+                    StmtNodeMapped::While(c, b) => c || b,
+                    StmtNodeMapped::Noop => false,
+                })
+            },
             |expr: ExprNodeMapped<bool, bool>| match expr {
                 ExprNodeMapped::Var(name) if name == "y" => Err(true),
-                ExprNodeMapped::Var(_) | ExprNodeMapped::Lit(_) | ExprNodeMapped::Bool(_) => Ok(false),
-                ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) | ExprNodeMapped::Eq(l, r) => Ok(l || r),
+                ExprNodeMapped::Var(_) | ExprNodeMapped::Lit(_) | ExprNodeMapped::Bool(_) => {
+                    Ok(false)
+                }
+                ExprNodeMapped::Add(l, r)
+                | ExprNodeMapped::Mul(l, r)
+                | ExprNodeMapped::Eq(l, r) => Ok(l || r),
                 ExprNodeMapped::Neg(e) | ExprNodeMapped::Block(_, e) => Ok(e),
             },
         );
@@ -237,7 +248,11 @@ mod tests {
     type TyExpr = Rc<dyn Fn(&TyEnv) -> Ty>;
 
     #[derive(Clone, Debug, PartialEq)]
-    enum Ty { Int, Bool, Unknown }
+    enum Ty {
+        Int,
+        Bool,
+        Unknown,
+    }
 
     #[test]
     fn ch09_type_inference() {
@@ -266,9 +281,15 @@ mod tests {
                 match expr {
                     ExprNodeMapped::Lit(_) => Rc::new(|_| Ty::Int),
                     ExprNodeMapped::Bool(_) => Rc::new(|_| Ty::Bool),
-                    ExprNodeMapped::Var(name) => Rc::new(move |env| env.get(&name).cloned().unwrap_or(Ty::Unknown)),
+                    ExprNodeMapped::Var(name) => {
+                        Rc::new(move |env| env.get(&name).cloned().unwrap_or(Ty::Unknown))
+                    }
                     ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) => Rc::new(move |env| {
-                        if l(env) == Ty::Int && r(env) == Ty::Int { Ty::Int } else { Ty::Unknown }
+                        if l(env) == Ty::Int && r(env) == Ty::Int {
+                            Ty::Int
+                        } else {
+                            Ty::Unknown
+                        }
                     }),
                     ExprNodeMapped::Neg(e) => Rc::new(move |env| e(env)),
                     ExprNodeMapped::Eq(_, _) => Rc::new(|_| Ty::Bool),
@@ -302,11 +323,18 @@ mod tests {
                         e
                     }),
                     StmtNodeMapped::Seq(l, r) => Rc::new(move |env| r(&l(env))),
-                    StmtNodeMapped::Print(v) => Rc::new(move |env| { let _ = v(env); env.clone() }),
-                    StmtNodeMapped::If(c, t, e) => Rc::new(move |env| if c(env) != 0 { t(env) } else { e(env) }),
+                    StmtNodeMapped::Print(v) => Rc::new(move |env| {
+                        let _ = v(env);
+                        env.clone()
+                    }),
+                    StmtNodeMapped::If(c, t, e) => {
+                        Rc::new(move |env| if c(env) != 0 { t(env) } else { e(env) })
+                    }
                     StmtNodeMapped::While(c, b) => Rc::new(move |env| {
                         let mut e = env.clone();
-                        while c(&e) != 0 { e = b(&e); }
+                        while c(&e) != 0 {
+                            e = b(&e);
+                        }
                         e
                     }),
                     StmtNodeMapped::Noop => Rc::new(|env| env.clone()),
@@ -320,7 +348,9 @@ mod tests {
                     ExprNodeMapped::Add(l, r) => Rc::new(move |env| l(env) + r(env)),
                     ExprNodeMapped::Mul(l, r) => Rc::new(move |env| l(env) * r(env)),
                     ExprNodeMapped::Neg(e) => Rc::new(move |env| -e(env)),
-                    ExprNodeMapped::Eq(l, r) => Rc::new(move |env| if l(env) == r(env) { 1 } else { 0 }),
+                    ExprNodeMapped::Eq(l, r) => {
+                        Rc::new(move |env| if l(env) == r(env) { 1 } else { 0 })
+                    }
                     ExprNodeMapped::Block(s, e) => Rc::new(move |env| e(&s(env))),
                 }
             },
@@ -347,13 +377,23 @@ mod tests {
                     StmtNodeMapped::Let(name, ef) => (HashSet::from([name]), ef),
                     StmtNodeMapped::Seq((ld, lf), (rd, rf)) => {
                         let rf: Frees = rf.difference(&ld).cloned().collect();
-                        (ld.union(&rd).cloned().collect(), lf.union(&rf).cloned().collect())
+                        (
+                            ld.union(&rd).cloned().collect(),
+                            lf.union(&rf).cloned().collect(),
+                        )
                     }
                     StmtNodeMapped::Print(ef) => (HashSet::new(), ef),
-                    StmtNodeMapped::While(cf, (_, bf)) => (HashSet::new(), cf.union(&bf).cloned().collect()),
+                    StmtNodeMapped::While(cf, (_, bf)) => {
+                        (HashSet::new(), cf.union(&bf).cloned().collect())
+                    }
                     StmtNodeMapped::If(cf, (_, tf), (_, ef)) => (
                         HashSet::new(),
-                        cf.union(&tf).cloned().collect::<Frees>().union(&ef).cloned().collect(),
+                        cf.union(&tf)
+                            .cloned()
+                            .collect::<Frees>()
+                            .union(&ef)
+                            .cloned()
+                            .collect(),
                     ),
                     StmtNodeMapped::Noop => (HashSet::new(), HashSet::new()),
                 }
@@ -362,7 +402,9 @@ mod tests {
                 match expr {
                     ExprNodeMapped::Var(n) => HashSet::from([n]),
                     ExprNodeMapped::Lit(_) | ExprNodeMapped::Bool(_) => HashSet::new(),
-                    ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) | ExprNodeMapped::Eq(l, r) => l.union(&r).cloned().collect(),
+                    ExprNodeMapped::Add(l, r)
+                    | ExprNodeMapped::Mul(l, r)
+                    | ExprNodeMapped::Eq(l, r) => l.union(&r).cloned().collect(),
                     ExprNodeMapped::Neg(e) => e,
                     ExprNodeMapped::Block((def, sf), ef) => {
                         let ef: Frees = ef.difference(&def).cloned().collect();
@@ -441,13 +483,15 @@ mod tests {
             },
             |node, new: &mut LangStore| match node {
                 ExprNode::Add(l, r) => {
-                    if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r)) {
+                    if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r))
+                    {
                         return new.push_expr(ExprNode::Lit(a + b));
                     }
                     new.push_expr(ExprNode::Add(l, r))
                 }
                 ExprNode::Mul(l, r) => {
-                    if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r)) {
+                    if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r))
+                    {
                         return new.push_expr(ExprNode::Lit(a * b));
                     }
                     new.push_expr(ExprNode::Mul(l, r))
@@ -459,7 +503,8 @@ mod tests {
                     new.push_expr(ExprNode::Neg(e))
                 }
                 ExprNode::Eq(l, r) => {
-                    if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r)) {
+                    if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r))
+                    {
                         return new.push_expr(ExprNode::Bool(a == b));
                     }
                     new.push_expr(ExprNode::Eq(l, r))
@@ -514,7 +559,10 @@ mod tests {
         let body = print_(&mut s, x2);
         let root = while_(&mut s, cond, body);
 
-        assert_eq!(show(&s, LangStoreRoot::Stmt(root)), "while ((x == 0)) print(x)");
+        assert_eq!(
+            show(&s, LangStoreRoot::Stmt(root)),
+            "while ((x == 0)) print(x)"
+        );
 
         let (s2, r2) = s.rewrite(
             LangStoreRoot::Stmt(root),
@@ -542,17 +590,14 @@ mod tests {
     #[test]
     fn ch05_generate_ast() {
         let mut s = LangStore::new();
-        let root = s.unfold(
-            LangStoreSeed::Expr(3u32),
-            |seed| match seed {
-                LangStoreSeed::Expr(0) => LangStoreLayer::Expr(ExprNode::Lit(1), vec![]),
-                LangStoreSeed::Expr(n) => LangStoreLayer::Expr(
-                    ExprNode::Add(ExprId(0), ExprId(0)),
-                    vec![LangStoreSeed::Expr(n - 1), LangStoreSeed::Expr(n - 1)],
-                ),
-                LangStoreSeed::Stmt(_) => unreachable!(),
-            },
-        );
+        let root = s.unfold(LangStoreSeed::Expr(3u32), |seed| match seed {
+            LangStoreSeed::Expr(0) => LangStoreLayer::Expr(ExprNode::Lit(1), vec![]),
+            LangStoreSeed::Expr(n) => LangStoreLayer::Expr(
+                ExprNode::Add(ExprId(0), ExprId(0)),
+                vec![LangStoreSeed::Expr(n - 1), LangStoreSeed::Expr(n - 1)],
+            ),
+            LangStoreSeed::Stmt(_) => unreachable!(),
+        });
         let val = s.fold(
             root,
             |_: StmtNodeMapped<i64, i64>| 0i64,
@@ -573,20 +618,20 @@ mod tests {
     fn ch06_build_with_reuse() {
         let mut s = LangStore::new();
         let shared = lit(&mut s, 42);
-        let root = s.unfold_short(
-            LangStoreSeed::Expr(2u32),
-            |seed| match seed {
-                LangStoreSeed::Expr(0) => LangStoreApoLayer::Expr(
-                    ExprNode::Neg(ExprId(0)),
-                    vec![LangStoreApoSeed::DoneExpr(shared)],
-                ),
-                LangStoreSeed::Expr(n) => LangStoreApoLayer::Expr(
-                    ExprNode::Add(ExprId(0), ExprId(0)),
-                    vec![LangStoreApoSeed::Continue(LangStoreSeed::Expr(n - 1)), LangStoreApoSeed::Continue(LangStoreSeed::Expr(n - 1))],
-                ),
-                LangStoreSeed::Stmt(_) => unreachable!(),
-            },
-        );
+        let root = s.unfold_short(LangStoreSeed::Expr(2u32), |seed| match seed {
+            LangStoreSeed::Expr(0) => LangStoreApoLayer::Expr(
+                ExprNode::Neg(ExprId(0)),
+                vec![LangStoreApoSeed::DoneExpr(shared)],
+            ),
+            LangStoreSeed::Expr(n) => LangStoreApoLayer::Expr(
+                ExprNode::Add(ExprId(0), ExprId(0)),
+                vec![
+                    LangStoreApoSeed::Continue(LangStoreSeed::Expr(n - 1)),
+                    LangStoreApoSeed::Continue(LangStoreSeed::Expr(n - 1)),
+                ],
+            ),
+            LangStoreSeed::Stmt(_) => unreachable!(),
+        });
         let val = s.fold(
             root,
             |_: StmtNodeMapped<i64, i64>| 0i64,
@@ -619,16 +664,26 @@ mod tests {
             },
             |expr: ExprNodeMapped<Ann<usize>, Ann<usize>>| {
                 let penalty = match &expr {
-                    ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) | ExprNodeMapped::Eq(l, r) => {
+                    ExprNodeMapped::Add(l, r)
+                    | ExprNodeMapped::Mul(l, r)
+                    | ExprNodeMapped::Eq(l, r) => {
                         let l_deep = !l.children.is_empty();
                         let r_deep = !r.children.is_empty();
-                        if l_deep && r_deep { 2 } else if l_deep || r_deep { 1 } else { 0 }
+                        if l_deep && r_deep {
+                            2
+                        } else if l_deep || r_deep {
+                            1
+                        } else {
+                            0
+                        }
                     }
                     _ => 0,
                 };
                 let base = match expr {
                     ExprNodeMapped::Var(_) | ExprNodeMapped::Lit(_) | ExprNodeMapped::Bool(_) => 1,
-                    ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) | ExprNodeMapped::Eq(l, r) => 1 + l.value + r.value,
+                    ExprNodeMapped::Add(l, r)
+                    | ExprNodeMapped::Mul(l, r)
+                    | ExprNodeMapped::Eq(l, r) => 1 + l.value + r.value,
                     ExprNodeMapped::Neg(e) | ExprNodeMapped::Block(_, e) => 1 + e.value,
                 };
                 base + penalty
@@ -658,7 +713,11 @@ mod tests {
                 ExprNodeMapped::Lit(_) => "int",
                 ExprNodeMapped::Bool(_) => "bool",
                 ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) => {
-                    if l == "int" && r == "int" { "int" } else { "err" }
+                    if l == "int" && r == "int" {
+                        "int"
+                    } else {
+                        "err"
+                    }
                 }
                 _ => "unknown",
             },
@@ -666,8 +725,20 @@ mod tests {
             |_: StmtNodeMapped<(i64, &str), (i64, &str)>| 0i64,
             |expr: ExprNodeMapped<(i64, &str), (i64, &str)>| match expr {
                 ExprNodeMapped::Lit(n) => n,
-                ExprNodeMapped::Add((l, lt), (r, rt)) => if lt == "int" && rt == "int" { l + r } else { -1 },
-                ExprNodeMapped::Mul((l, lt), (r, rt)) => if lt == "int" && rt == "int" { l * r } else { -1 },
+                ExprNodeMapped::Add((l, lt), (r, rt)) => {
+                    if lt == "int" && rt == "int" {
+                        l + r
+                    } else {
+                        -1
+                    }
+                }
+                ExprNodeMapped::Mul((l, lt), (r, rt)) => {
+                    if lt == "int" && rt == "int" {
+                        l * r
+                    } else {
+                        -1
+                    }
+                }
                 _ => 0,
             },
         );
@@ -694,8 +765,14 @@ mod tests {
             // expr A alg: clamped value
             |expr: ExprNodeMapped<(i64, bool), (i64, bool)>| match expr {
                 ExprNodeMapped::Lit(n) => n,
-                ExprNodeMapped::Add((l, _), (r, _)) => { let s = l + r; if s > 127 { 127 } else { s } }
-                ExprNodeMapped::Mul((l, _), (r, _)) => { let p = l * r; if p > 127 { 127 } else { p } }
+                ExprNodeMapped::Add((l, _), (r, _)) => {
+                    let s = l + r;
+                    if s > 127 { 127 } else { s }
+                }
+                ExprNodeMapped::Mul((l, _), (r, _)) => {
+                    let p = l * r;
+                    if p > 127 { 127 } else { p }
+                }
                 ExprNodeMapped::Neg((v, _)) => -v,
                 _ => 0,
             },
@@ -859,7 +936,9 @@ mod tests {
         assert!(z.down(1));
         assert!(z.down(0));
         match z.focus() {
-            LangStoreRoot::Expr(id) => assert!(matches!(store.get_expr(id), ExprNode::Var(n) if n == "y")),
+            LangStoreRoot::Expr(id) => {
+                assert!(matches!(store.get_expr(id), ExprNode::Var(n) if n == "y"))
+            }
             _ => panic!("expected Expr"),
         }
 
@@ -871,7 +950,9 @@ mod tests {
         // Left sibling should be Let("y", ...)
         assert!(z.down(0));
         match z.focus() {
-            LangStoreRoot::Stmt(id) => assert!(matches!(store.get_stmt(id), StmtNode::Let(n, _) if n == "y")),
+            LangStoreRoot::Stmt(id) => {
+                assert!(matches!(store.get_stmt(id), StmtNode::Let(n, _) if n == "y"))
+            }
             _ => panic!("expected Stmt"),
         }
     }
@@ -895,10 +976,10 @@ mod tests {
             z.down(1); // Mul
             z.down(1); // Neg
             z.down(0); // Lit(30)
-            if let LangStoreRoot::Expr(id) = z.focus() {
-                if let ExprNode::Lit(n) = z.store.get_expr(id).clone() {
-                    z.set_focus_expr(ExprNode::Lit(-n));
-                }
+            if let LangStoreRoot::Expr(id) = z.focus()
+                && let ExprNode::Lit(n) = z.store.get_expr(id).clone()
+            {
+                z.set_focus_expr(ExprNode::Lit(-n));
             }
         }
 
@@ -1000,7 +1081,10 @@ mod tests {
             |n, new: &mut LangStore| new.push_stmt(n),
             |n, new: &mut LangStore| new.push_expr(n),
         );
-        assert_eq!(show(&dense_store, dense_root), show(&sparse_store, sparse_root));
+        assert_eq!(
+            show(&dense_store, dense_root),
+            show(&sparse_store, sparse_root)
+        );
     }
 
     // ====================================================================
@@ -1093,7 +1177,9 @@ mod tests {
             |orig: &ExprNode, mapped: ExprNodeMapped<usize, usize>| {
                 let child_cost = match mapped {
                     ExprNodeMapped::Var(_) | ExprNodeMapped::Lit(_) | ExprNodeMapped::Bool(_) => 0,
-                    ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) | ExprNodeMapped::Eq(l, r) => l + r,
+                    ExprNodeMapped::Add(l, r)
+                    | ExprNodeMapped::Mul(l, r)
+                    | ExprNodeMapped::Eq(l, r) => l + r,
                     ExprNodeMapped::Neg(e) | ExprNodeMapped::Block(_, e) => e,
                 };
                 let own = match orig {
@@ -1113,9 +1199,16 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq)]
     enum Op {
-        Push(i64), Load(String), Store(String),
-        Add, Mul, Neg, Eq,
-        JumpIfFalse(isize), Jump(isize), Print,
+        Push(i64),
+        Load(String),
+        Store(String),
+        Add,
+        Mul,
+        Neg,
+        Eq,
+        JumpIfFalse(isize),
+        Jump(isize),
+        Print,
     }
 
     #[test]
@@ -1124,9 +1217,18 @@ mod tests {
         let result = s.fold(
             root,
             |stmt: StmtNodeMapped<Vec<Op>, Vec<Op>>| match stmt {
-                StmtNodeMapped::Let(name, mut val) => { val.push(Op::Store(name)); val }
-                StmtNodeMapped::Seq(mut l, mut r) => { l.append(&mut r); l }
-                StmtNodeMapped::Print(mut v) => { v.push(Op::Print); v }
+                StmtNodeMapped::Let(name, mut val) => {
+                    val.push(Op::Store(name));
+                    val
+                }
+                StmtNodeMapped::Seq(mut l, mut r) => {
+                    l.append(&mut r);
+                    l
+                }
+                StmtNodeMapped::Print(mut v) => {
+                    v.push(Op::Print);
+                    v
+                }
                 StmtNodeMapped::If(mut cond, mut t, mut e) => {
                     cond.push(Op::JumpIfFalse(t.len() as isize + 1));
                     cond.append(&mut t);
@@ -1147,22 +1249,55 @@ mod tests {
                 ExprNodeMapped::Lit(n) => vec![Op::Push(n)],
                 ExprNodeMapped::Bool(b) => vec![Op::Push(if b { 1 } else { 0 })],
                 ExprNodeMapped::Var(name) => vec![Op::Load(name)],
-                ExprNodeMapped::Add(mut l, mut r) => { l.append(&mut r); l.push(Op::Add); l }
-                ExprNodeMapped::Mul(mut l, mut r) => { l.append(&mut r); l.push(Op::Mul); l }
-                ExprNodeMapped::Neg(mut e) => { e.push(Op::Neg); e }
-                ExprNodeMapped::Eq(mut l, mut r) => { l.append(&mut r); l.push(Op::Eq); l }
-                ExprNodeMapped::Block(mut s, mut e) => { s.append(&mut e); s }
+                ExprNodeMapped::Add(mut l, mut r) => {
+                    l.append(&mut r);
+                    l.push(Op::Add);
+                    l
+                }
+                ExprNodeMapped::Mul(mut l, mut r) => {
+                    l.append(&mut r);
+                    l.push(Op::Mul);
+                    l
+                }
+                ExprNodeMapped::Neg(mut e) => {
+                    e.push(Op::Neg);
+                    e
+                }
+                ExprNodeMapped::Eq(mut l, mut r) => {
+                    l.append(&mut r);
+                    l.push(Op::Eq);
+                    l
+                }
+                ExprNodeMapped::Block(mut s, mut e) => {
+                    s.append(&mut e);
+                    s
+                }
             },
         );
         let bytecode = result.unwrap_stmt();
-        assert_eq!(bytecode, vec![
-            Op::Push(1), Op::Push(2), Op::Push(3), Op::Mul, Op::Add, Op::Store("x".into()),
-            Op::Load("x".into()), Op::Neg, Op::Store("y".into()),
-            Op::Load("x".into()), Op::Push(7), Op::Eq,
-            Op::JumpIfFalse(3),
-            Op::Load("y".into()), Op::Print, Op::Jump(2),
-            Op::Load("x".into()), Op::Print,
-        ]);
+        assert_eq!(
+            bytecode,
+            vec![
+                Op::Push(1),
+                Op::Push(2),
+                Op::Push(3),
+                Op::Mul,
+                Op::Add,
+                Op::Store("x".into()),
+                Op::Load("x".into()),
+                Op::Neg,
+                Op::Store("y".into()),
+                Op::Load("x".into()),
+                Op::Push(7),
+                Op::Eq,
+                Op::JumpIfFalse(3),
+                Op::Load("y".into()),
+                Op::Print,
+                Op::Jump(2),
+                Op::Load("x".into()),
+                Op::Print,
+            ]
+        );
     }
 
     // ====================================================================
