@@ -223,7 +223,7 @@ them:
    `bool`, any user type) becomes a data field stored inline in the
    node. Any type that matches a sort name becomes a typed child ID.
    A third form, `Variadic<Sort>`, declares a variable-length list of
-   children of that sort, covered in §N below.
+   children of that sort, covered in §14 below.
 
 ## 2. Build an AST
 
@@ -692,7 +692,112 @@ let root = s.postunfold(
 );
 ```
 
-## 14. Hash-consing with `new_dedup`
+## 14. Variadic children
+
+Fixed-arity nodes like `Add(Expr, Expr)` work well for most AST shapes,
+but some constructs have a variable number of children. A function call
+`f(a, b, c, ...)` takes any number of arguments; a function type
+`(T1, T2, ...) -> T` takes any number of parameter types; a block `{ s1;
+s2; ...; sn }` contains any number of statements. Declaring these as
+fixed arity would force you to nest them artificially (a right-leaning
+chain of `Cons` cells, say), and folding them then forces every algebra
+to reassemble the list.
+
+`Variadic<Sort>` in a variant declares a variable-length list of
+children of that sort.
+
+```rust
+rec_family! {
+    family Lang2 => Lang2Store;
+
+    enum Stmt {
+        Block(Variadic<Stmt>),
+        Call(String, Variadic<Expr>),
+    }
+
+    enum Expr {
+        Lit(i64),
+        Var(String),
+        FnType(Variadic<Expr>, Expr),
+    }
+}
+```
+
+The store gains one allocation helper per pair of `(owning_sort,
+child_sort)`. For the family above it would be
+`alloc_stmt_stmt(&[StmtId])` (for `Block`'s child list),
+`alloc_stmt_expr(&[ExprId])` (for `Call`'s arguments), and
+`alloc_expr_expr(&[ExprId])` (for `FnType`'s parameters). Each helper
+copies the slice into an internal pool and returns a `Variadic<SortId>`
+value that you embed in the node:
+
+```rust
+let x = s.push_expr(ExprNode::Lit(1));
+let y = s.push_expr(ExprNode::Lit(2));
+let z = s.push_expr(ExprNode::Lit(3));
+let args = s.alloc_stmt_expr(&[x, y, z]);
+let call = s.push_stmt(StmtNode::Call("f".into(), args));
+```
+
+Storage is pool-backed to avoid heap allocations for small lists. Under
+the hood, a `Variadic` value is either a pair `(start, len)` pointing
+into a per-(owning-sort, child-sort) pool, or a short inline list for
+lists built during a traversal. The user never sees this distinction;
+all operations go through the typed helpers.
+
+### Variadic children in algebras
+
+Inside a fold, a variadic child list appears as `Variadic<A>` where `A`
+is the child sort's result type. Iterate with `.iter()`:
+
+```rust
+let result = s.fold(
+    root,
+    |stmt: StmtNodeMapped<String, String>| match stmt {
+        StmtNodeMapped::Block(body) => {
+            let parts: Vec<&str> = body.iter().map(String::as_str).collect();
+            format!("{{ {} }}", parts.join("; "))
+        }
+        StmtNodeMapped::Call(name, args) => {
+            let parts: Vec<&str> = args.iter().map(String::as_str).collect();
+            format!("{}({})", name, parts.join(", "))
+        }
+    },
+    |expr: ExprNodeMapped<String, String>| match expr {
+        ExprNodeMapped::FnType(params, ret) => {
+            let ps: Vec<&str> = params.iter().map(String::as_str).collect();
+            format!("({}) -> {}", ps.join(", "), ret)
+        }
+        ExprNodeMapped::Lit(n) => n.to_string(),
+        ExprNodeMapped::Var(n) => n,
+    },
+);
+```
+
+`.iter()` returns an iterator of `&A`; `.len()` gives the length;
+`IntoIterator` is implemented so you can consume a `Variadic<A>`
+directly if you own it. The length is inherent to the list, so
+algebras do not need a separate "arity" parameter.
+
+### Constraints
+
+Variadic children have the same typed-ID discipline as fixed-arity
+children. A `Variadic<Expr>` slot cannot be filled with `StmtId`s. The
+allocator helper's name encodes both sorts, and passing a slice of the
+wrong typed-ID produces a compile error.
+
+A single variant can mix data, fixed-arity children, and variadic
+children in any order. `Call(String, Variadic<Expr>)` puts the name
+first and the arguments second; the generated
+`StmtNodeMapped::Call(String, Variadic<A_expr>)` preserves that
+ordering.
+
+Variadic children participate in hash-consing normally. A deduplicating
+store compares variadic child lists by value, so
+`Call("f", [a, b])` deduplicates with another `Call("f", [a, b])` that
+happens to use the same argument IDs.
+
+## 15. Hash-consing with `new_dedup`
 
 A plain store appends every pushed node, even if it is structurally
 identical to an existing one. `LangStore::new_dedup()` adds a per-sort
@@ -717,7 +822,7 @@ Dedup trades construction time for memory. See
 [`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for
 numbers and guidance.
 
-## 15. Memoization strategies
+## 16. Memoization strategies
 
 `fold` uses dense memoization by default: a vector sized to the number
 of nodes in the store, indexed by node ID. Two alternatives are
@@ -737,7 +842,7 @@ everything. `memo::None` skips dedup checks entirely and assumes the
 input is a pure tree. It is faster than dense on trees but produces
 wrong results on DAGs. The design doc covers the tradeoffs.
 
-## 16. Zippers: cursor-based navigation
+## 17. Zippers: cursor-based navigation
 
 Schemes like `fold` and `rewrite` are good at doing the same thing
 everywhere. When you need to navigate to a specific location in the
@@ -785,7 +890,7 @@ let z = LangStoreZipperCow::new(&s, root);
 let (new_store, new_root) = z.set_focus_expr(ExprNode::Lit(3));
 ```
 
-## 17. The full chapter list
+## 18. The full chapter list
 
 [`tests/testorial.rs`](tests/testorial.rs) contains one chapter per
 scheme applied to a realistic piece of a compiler pipeline. Each
