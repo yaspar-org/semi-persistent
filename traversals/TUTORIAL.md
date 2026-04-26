@@ -10,8 +10,15 @@ The full, tested version of every example lives in
 
 ## 1. Define the family
 
-`rec_family!` declares a family of mutually recursive types and generates
-a per-sort arena store:
+A *family* is a set of types that reference each other. In a small
+imperative language, statements can contain expressions (think `print(x)`)
+and expressions can contain statements (think `{ x = 1; x + 2 }`); neither
+makes sense on its own. `rec_family!` declares all the types of a family
+in one place and generates the machinery to store them: one arena per
+type, typed IDs that prevent you from mixing them up, and a full suite of
+traversals that cross between types automatically.
+
+Here's the full declaration for a language we'll use throughout:
 
 ```rust
 use semi_persistent_traversals_derive::rec_family;
@@ -41,68 +48,187 @@ rec_family! {
 }
 ```
 
-### The header line
+Before diving into the syntax, a word on vocabulary.
+
+### Sorts vs types
+
+The word *sort* means "one of the categories in a family of mutually
+recursive definitions". The word *type* means what it normally means in
+Rust.
+
+These documents keep the two separate because the macro does. A single
+sort produces several Rust types, and mixing the words up makes the
+generated API hard to read.
+
+For the family above, `Stmt` and `Expr` are the two sorts. The word
+`Stmt` appearing on line `enum Stmt { ... }` is a sort label, not a
+Rust type; `Stmt` doesn't exist as a Rust type anywhere. Nor does
+`Expr`. What *does* exist, after the macro runs, is a collection of
+Rust types derived from each sort, shown next.
+
+### What the macro generates
+
+For this family, the macro expands to (abbreviated):
+
+```rust
+// --- IDs: one newtype per sort ---
+pub struct StmtId(pub usize);
+pub struct ExprId(pub usize);
+
+// --- Nodes: one enum per sort, what lives in the arena ---
+pub enum StmtNode {
+    Let(String, ExprId),                // "Expr" in the macro became ExprId
+    Seq(StmtId, StmtId),
+    Print(ExprId),
+    If(ExprId, StmtId, StmtId),
+    While(ExprId, StmtId),
+    Noop,
+}
+
+pub enum ExprNode {
+    Var(String),
+    Lit(i64),
+    Bool(bool),
+    Add(ExprId, ExprId),
+    Mul(ExprId, ExprId),
+    Neg(ExprId),
+    Eq(ExprId, ExprId),
+    Block(StmtId, ExprId),              // cross-sort: Stmt became StmtId
+}
+
+// --- Mapped nodes: what algebras see, with children replaced by results ---
+pub enum StmtNodeMapped<A_stmt, A_expr> {
+    Let(String, A_expr),
+    Seq(A_stmt, A_stmt),
+    Print(A_expr),
+    If(A_expr, A_stmt, A_stmt),
+    While(A_expr, A_stmt),
+    Noop,
+}
+
+pub enum ExprNodeMapped<A_stmt, A_expr> {
+    Var(String),
+    Lit(i64),
+    Bool(bool),
+    Add(A_expr, A_expr),
+    Mul(A_expr, A_expr),
+    Neg(A_expr),
+    Eq(A_expr, A_expr),
+    Block(A_stmt, A_expr),
+}
+
+// --- Sort-tagged handles ---
+pub enum LangStoreRoot {
+    Stmt(StmtId),
+    Expr(ExprId),
+}
+
+pub enum LangStoreFoldResult<A_stmt, A_expr> {
+    Stmt(A_stmt),
+    Expr(A_expr),
+}
+
+// --- The store: one arena per sort, plus all the scheme methods ---
+pub struct LangStore { /* private: Vec<StmtNode>, Vec<ExprNode>, ... */ }
+
+impl LangStore {
+    pub fn new() -> Self { ... }
+    pub fn new_dedup() -> Self { ... }
+
+    pub fn push_stmt(&mut self, node: StmtNode) -> StmtId { ... }
+    pub fn push_expr(&mut self, node: ExprNode) -> ExprId { ... }
+    pub fn get_stmt(&self, id: StmtId) -> &StmtNode { ... }
+    pub fn get_expr(&self, id: ExprId) -> &ExprNode { ... }
+    pub fn len_stmt(&self) -> usize { ... }
+    pub fn len_expr(&self) -> usize { ... }
+
+    pub fn mark(&self) -> LangStoreMark { ... }
+    pub fn restore(&mut self, mark: &LangStoreMark) { ... }
+
+    pub fn fold<A_stmt: Clone, A_expr: Clone>(
+        &self,
+        root: LangStoreRoot,
+        alg_stmt: impl Fn(StmtNodeMapped<A_stmt, A_expr>) -> A_stmt,
+        alg_expr: impl Fn(ExprNodeMapped<A_stmt, A_expr>) -> A_expr,
+    ) -> LangStoreFoldResult<A_stmt, A_expr> { ... }
+
+    // ... every other scheme: fold_short, fold_with_history, fold_with_aux,
+    //     fold_with_original, fold_pair, prefold, unfold, unfold_short,
+    //     postunfold, transform, rewrite, rewrite_down, fold_all
+}
+```
+
+A few things to notice.
+
+**The enum name gets a `Node` suffix.** The sort is `Stmt`; the Rust enum
+is `StmtNode`. Keeping them distinct means you can have your own type
+called `Stmt` in the same module if you want, and it also reflects the
+distinction above: `Stmt` is a category, `StmtNode` is the concrete
+representation.
+
+**Cross-sort fields in the original declaration become typed IDs in the
+generated enum.** When you wrote `Let(String, Expr)` inside the macro,
+`Expr` wasn't a Rust type — it was a sort label. The macro resolved it
+to `ExprId`, the typed handle for `Expr` nodes. `StmtNode::Let` therefore
+holds a `String` and an `ExprId`. Passing a `StmtId` to
+`StmtNode::Let(..., stmt_id)` is a compile error.
+
+**The mapped enum has one generic parameter per sort in the family.**
+Both `StmtNodeMapped` and `ExprNodeMapped` take `<A_stmt, A_expr>` —
+always in the order the sorts were declared. This is because any sort
+can contain children of any other sort: `Expr::Block(Stmt, Expr)` has
+both a `Stmt` child and an `Expr` child, so `ExprNodeMapped` needs the
+result-type for each. Even if a sort happens not to reference another
+sort in some variant, the parameter order stays consistent family-wide
+so that the same two algebras can carry the same two result types
+through both enums. The macro prunes *completely unused* parameters
+(a sort that references no other sort in any variant), but in any
+realistic mutually-recursive family all sort parameters are present.
+
+**Variant payload order changes when children of different sorts appear.**
+Compare `StmtNode::Let(String, ExprId)` to
+`StmtNodeMapped::Let(String, A_expr)`: the data field stays put, and
+only the ID gets replaced by the algebra's result. That's why the same
+variant pattern works in both contexts.
+
+### Reading the header line
 
 ```rust
 family Lang => LangStore;
 ```
 
-- `family` is a keyword that starts the declaration.
-- `Lang` is the **family name**. It's a label used in the macro's internal
-  bookkeeping and shows up in the names of generated companion types
-  (`LangSeed`, `LangLayer`, `LangApoSeed`, `LangApoLayer` for the unfold
-  schemes). You rarely type `Lang` directly in user code.
+- `family` is a keyword that opens the declaration.
+- `Lang` is the *family name*. It shows up as a prefix on a small number
+  of generated types used by the unfold schemes: `LangSeed`, `LangLayer`,
+  `LangApoSeed`, `LangApoLayer`. You rarely write `Lang` directly.
 - `=>` separates the family name from the store name.
-- `LangStore` is the **store type** the macro generates for you. It owns
-  the per-sort arenas. You create one with `LangStore::new()` or
-  `LangStore::new_dedup()` and call every scheme method on it. The store
-  name is also the prefix for generated companion types: `LangStoreRoot`
-  (sort-tagged handle), `LangStoreFoldResult<A, B, …>` (sort-tagged fold
-  return), `LangStoreMark` (snapshot handle), `LangStoreZipper` (and
-  `ZipperMut` / `ZipperCow` variants).
-- The trailing `;` ends the header.
+- `LangStore` is the *store type*. This is what you instantiate
+  (`LangStore::new()`) and call every scheme method on. It's also the
+  prefix for `LangStoreRoot`, `LangStoreFoldResult`, `LangStoreMark`,
+  `LangStoreZipper`, `LangStoreZipperMut`, and `LangStoreZipperCow`.
 
-The family name and store name can be anything you want; keep them
-descriptive. For an e-graph AST you might write `family Egraph => ENodes`
-and get `ENodes::new()`, `ENodesRoot`, `ENodesFoldResult`, etc.
+The family name and store name can be anything; keep them descriptive.
+An e-graph AST might be `family Egraph => ENodes` and you'd instantiate
+`ENodes::new()`, get back an `ENodesRoot`, and so on.
 
-### The enum declarations
+### Declaring sorts and their variants
 
-Each `enum` under the header declares one **sort** in the family. Sort
-order matters: it determines the argument order for every multi-algebra
-scheme (`fold`, `rewrite`, `prefold`, …) — one closure per sort, in the
-order the sorts were declared.
+Each `enum` under the header declares one sort. Two rules:
 
-Variant fields can be:
+1. **Sort declaration order is the argument order for every multi-algebra
+   scheme.** The `Stmt` algebra comes first in `fold(..., alg_stmt,
+   alg_expr)` because `enum Stmt` came first in the macro. That order
+   also fixes the order of generic parameters on every mapped enum
+   (`<A_stmt, A_expr>`) and the variant order of `LangStoreFoldResult`.
+   Once set, it cascades everywhere.
 
-- A **data field** (`String`, `i64`, `bool`, any type not mentioned as
-  a sort name in this family): stored inline in the node.
-- A **child field** referring to a sort name in the same family
-  (`Stmt`, `Expr`): stored as a typed ID. `Stmt(Stmt, Expr)` means
-  "contains one child of sort Stmt and one of sort Expr"; the macro
-  generates `StmtNode::Seq(StmtId, ExprId)` where those IDs point
-  into the appropriate per-sort arena.
-- A **variadic child field** spelled `Variadic<Sort>`: a variable-length
-  list of children, stored inline for short lists and pooled for longer
-  ones. See [section on Variadic](#variadic-children-optional) below.
-
-### Generated types per sort
-
-For every sort `S` (e.g. `Stmt`, `Expr`), the macro generates:
-
-- `SNode` — the concrete node enum stored in the arena. Cross-sort
-  references are typed IDs: `StmtNode::Let(String, ExprId)`.
-- `SId` — a newtype wrapping `usize`. Using an `ExprId` where a `StmtId`
-  is expected is a compile error.
-- `SNodeMapped<A, B, …>` — the "mapped" node where child IDs have been
-  replaced by algebra results. Generic only over the sort result types
-  it actually references: if `Stmt` never contains an `Expr`,
-  `StmtNodeMapped` is generic only in `A_stmt`.
-
-The store provides per-sort methods: `push_stmt(StmtNode) -> StmtId`,
-`get_stmt(StmtId) -> &StmtNode`, `len_stmt() -> usize`, plus `mark()`,
-`restore(&mark)`, and the scheme methods covered in the rest of this
-tutorial.
+2. **A variant field is either data or a child.** The macro distinguishes
+   the two by matching field types against the sort names. `String`,
+   `i64`, `bool`, `MyCustomStruct` — anything not mentioned as a sort
+   name becomes a data field stored inline. `Stmt`, `Expr` — anything
+   matching a sort name becomes a typed child ID. A third form,
+   `Variadic<Sort>`, declares a variable-length list of children; see
+   §N below for details.
 
 ## 2. Build an AST
 
@@ -159,6 +285,55 @@ let rendered: String = rendered.unwrap_stmt();
 The return is a sort-tagged `LangStoreFoldResult<String, String>`. Call
 `.unwrap_stmt()` when you know the root is a `Stmt`; match on it when you
 don't.
+
+### What the two `String`s mean
+
+The mapped enums were generated as (recap from §1):
+
+```rust
+enum StmtNodeMapped<A_stmt, A_expr> { Let(String, A_expr), Seq(A_stmt, A_stmt), ... }
+enum ExprNodeMapped<A_stmt, A_expr> { Block(A_stmt, A_expr), Add(A_expr, A_expr), ... }
+```
+
+The first parameter stands for "whatever the `Stmt` algebra returns",
+the second for "whatever the `Expr` algebra returns". In this fold
+both algebras return `String`, so both parameters become `String`, and
+you write `StmtNodeMapped<String, String>` and
+`ExprNodeMapped<String, String>` on each algebra's input.
+
+Watch what happens inside each variant:
+
+- `StmtNodeMapped::Let(n, v)`: `n: String` is the data field (it was
+  `String` in the original declaration, stays `String` in the mapped
+  form); `v` has type *the second parameter*, because the `Let`
+  variant's second field was declared `Expr`. In this fold `v: String`.
+- `StmtNodeMapped::Seq(l, r)`: `l` and `r` both have type *the first
+  parameter*, because `Seq`'s fields were both `Stmt`. In this fold
+  `l: String` and `r: String`.
+- `ExprNodeMapped::Block(s, e)`: `s` has type *the first parameter*
+  (field was `Stmt`), `e` has type *the second parameter* (field was
+  `Expr`).
+
+That's why the parameter order is family-wide, not per-sort: both
+algebras need to know the same two type variables in the same order,
+so that `ExprNodeMapped::Block(s, e)` consistently means "s is
+whatever the Stmt algebra returns, e is whatever the Expr algebra
+returns" no matter which algebra you're inside.
+
+A concrete variation: to render statements as `Vec<u8>` bytecode while
+keeping expressions as `i64` values, you'd write
+
+```rust
+s.fold(
+    root,
+    |stmt: StmtNodeMapped<Vec<u8>, i64>| { /* returns Vec<u8> */ },
+    |expr: ExprNodeMapped<Vec<u8>, i64>| { /* returns i64     */ },
+);
+```
+
+Inside the `Stmt` algebra, `Let(n, v)` would give you `n: String` and
+`v: i64` (the Expr result type). Inside the `Expr` algebra, `Block(s, e)`
+would give you `s: Vec<u8>` (the Stmt result type) and `e: i64`.
 
 ## 4. `fold` with different per-sort types
 
