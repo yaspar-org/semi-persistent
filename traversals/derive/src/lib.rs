@@ -40,26 +40,26 @@ struct ResolvedSort {
 
 
 // ===========================================================================
-// partition! — partitioned per-type arenas
+// rec_family! — partitioned per-type arenas
 // ===========================================================================
 
 #[proc_macro]
-pub fn partition(input: TokenStream) -> TokenStream {
-    let raw = parse_macro_input!(input as PartitionDef);
-    match gen_partition(&raw) {
+pub fn rec_family(input: TokenStream) -> TokenStream {
+    let raw = parse_macro_input!(input as FamilyDef);
+    match gen_family(&raw) {
         Ok(tokens) => tokens.into(),
         Err(e) => e.to_compile_error().into(),
     }
 }
 
-struct PartitionDef {
+struct FamilyDef {
     vis: syn::Visibility,
     fam_name: syn::Ident,
     store_name: syn::Ident,
     sorts: Vec<RawSortDef>,
 }
 
-impl syn::parse::Parse for PartitionDef {
+impl syn::parse::Parse for FamilyDef {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let vis: syn::Visibility = input.parse()?;
         let kw: syn::Ident = input.parse()?;
@@ -98,15 +98,15 @@ impl syn::parse::Parse for PartitionDef {
         if sorts.len() < 2 {
             return Err(syn::Error::new(fam_name.span(), "a family needs at least 2 sorts"));
         }
-        Ok(PartitionDef { vis, fam_name, store_name, sorts })
+        Ok(FamilyDef { vis, fam_name, store_name, sorts })
     }
 }
 
 // ---------------------------------------------------------------------------
-// partition! code generation
+// rec_family! code generation
 // ---------------------------------------------------------------------------
 
-fn resolve_partition_fields(sorts: &[RawSortDef]) -> Vec<ResolvedSort> {
+fn resolve_family_fields(sorts: &[RawSortDef]) -> Vec<ResolvedSort> {
     let sort_names: Vec<String> = sorts.iter().map(|s| s.name.to_string()).collect();
     sorts.iter().enumerate().map(|(si, sort)| {
         let variants = sort.variants.iter().map(|v| {
@@ -135,8 +135,8 @@ fn resolve_partition_fields(sorts: &[RawSortDef]) -> Vec<ResolvedSort> {
     }).collect()
 }
 
-fn gen_partition(def: &PartitionDef) -> syn::Result<TokenStream2> {
-    let sorts = resolve_partition_fields(&def.sorts);
+fn gen_family(def: &FamilyDef) -> syn::Result<TokenStream2> {
+    let sorts = resolve_family_fields(&def.sorts);
     let n = sorts.len();
     let vis = &def.vis;
     let store = &def.store_name;
@@ -214,7 +214,7 @@ fn gen_partition(def: &PartitionDef) -> syn::Result<TokenStream2> {
 }
 
 // ---------------------------------------------------------------------------
-// partition! generators
+// rec_family! generators
 // ---------------------------------------------------------------------------
 
 fn gen_id_newtypes(

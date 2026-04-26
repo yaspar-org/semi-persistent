@@ -1,9 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Partitioned-arena version of testorial.rs.
+//! Testorial: worked examples for every rec_family! scheme.
 //!
-//! Same language, same tests, but using `partition!` instead of `rec_family!`.
-//! All 26 chapters ported.
+//! A small imperative language is the running example. Each chapter is a
+//! standalone `#[test]` covering one recursion scheme or technique.
 //!
 //! # API convention
 //!
@@ -17,7 +17,7 @@
 //! ```text
 //! Ch  What                    Scheme
 //! ──  ──────────────────────  ──────────────────────────────────────
-//!  0  The Language            partition!
+//!  0  The Language            rec_family!
 //!  1  Pretty Print + Size     fold (multi-sorted by default)
 //!  2  Constant Folding        rewrite
 //!  3  Double Negation         rewrite
@@ -47,7 +47,7 @@
 #[cfg(test)]
 mod tests {
     use semi_persistent_traversals::*;
-    use semi_persistent_traversals_derive::partition;
+    use semi_persistent_traversals_derive::rec_family;
     use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
 
@@ -55,7 +55,7 @@ mod tests {
     // Chapter 0: The Language (partitioned)
     // ====================================================================
 
-    partition! {
+    rec_family! {
         family Lang => LangStore;
 
         enum Stmt {

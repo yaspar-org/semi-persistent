@@ -3,9 +3,9 @@
 #![allow(dead_code)]
 
 use semi_persistent_traversals::*;
-use semi_persistent_traversals_derive::partition;
+use semi_persistent_traversals_derive::rec_family;
 
-partition! {
+rec_family! {
     family Lang => LangStore;
     enum Stmt {
         Assign(String, Expr),
@@ -315,7 +315,7 @@ fn partition_fold_with_original() {
 }
 
 // Variadic family test
-partition! {
+rec_family! {
     family VLang => VStore;
     enum VStmt { Assign(u32, VExpr), Block(Variadic<VStmt>) }
     enum VExpr { Lit(i64), Add(Variadic<VExpr>), Neg(VExpr) }

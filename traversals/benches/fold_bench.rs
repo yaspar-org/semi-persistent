@@ -15,10 +15,10 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use semi_persistent_traversals::{Dense, Sparse, memo};
-use semi_persistent_traversals_derive::partition;
+use semi_persistent_traversals_derive::rec_family;
 use std::hint::black_box;
 
-partition! {
+rec_family! {
     family Lang => LangStore;
     enum Stmt { Noop, Print(Expr) }
     enum Expr { Lit(i64), Add(Expr, Expr) }
