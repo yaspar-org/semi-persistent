@@ -5,9 +5,9 @@
 //! Two groups, both on a balanced Add(Lit) tree of varying depth:
 //!
 //! - `fold`: cost to fold an already-built store.
-//!     • dense   — default memo strategy
-//!     • sparse  — hashmap-backed, O(reachable) memo
-//!     • none    — no memo, stack-based (incorrect on DAGs)
+//!   • dense   — default memo strategy
+//!   • sparse  — hashmap-backed, O(reachable) memo
+//!   • none    — no memo, stack-based (incorrect on DAGs)
 //!
 //! - `build`: cost to construct a tree with lots of structural redundancy,
 //!   comparing plain push vs hash-consed push (`new_dedup`). All leaves are
@@ -42,7 +42,10 @@ fn build(s: &mut LangStore, depth: u32) -> ExprId {
 // Fold under a given strategy M
 // ---------------------------------------------------------------------------
 
-fn fold_with<M: semi_persistent_traversals::MemoStrategy>(s: &LangStore, root: LangStoreRoot) -> i64 {
+fn fold_with<M: semi_persistent_traversals::MemoStrategy>(
+    s: &LangStore,
+    root: LangStoreRoot,
+) -> i64 {
     let r = s.with_strategy::<M>().fold(
         root,
         |_: StmtNodeMapped<i64>| 0i64,

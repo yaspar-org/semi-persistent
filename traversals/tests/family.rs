@@ -55,7 +55,7 @@ fn partition_fold_show() {
 #[test]
 fn partition_fold_eval() {
     let (store, root) = build_sample();
-    let result = store.fold(
+    let _result = store.fold(
         root,
         |stmt: StmtNodeMapped<(), i64>| match stmt {
             StmtNodeMapped::Assign(_, _) => (),
@@ -105,7 +105,7 @@ fn partition_fold_size() {
 #[test]
 fn partition_mark_restore() {
     let mut store = LangStore::new();
-    let one = store.push_expr(ExprNode::Lit(1));
+    let _one = store.push_expr(ExprNode::Lit(1));
     let mark = store.mark();
     let _two = store.push_expr(ExprNode::Lit(2));
     assert_eq!(store.len_expr(), 2);
@@ -170,9 +170,7 @@ fn partition_fold_short() {
             StmtNodeMapped::Print(_) => Err(true), // short-circuit on Print
             _ => Ok(false),
         },
-        |expr: ExprNodeMapped<bool, bool>| Ok(match expr {
-            _ => false,
-        }),
+        |_: ExprNodeMapped<bool, bool>| Ok(false),
     );
     assert!(result.unwrap_stmt());
 }
@@ -200,26 +198,16 @@ fn partition_para() {
 #[test]
 fn partition_unfold() {
     let mut store = LangStore::new();
-    let root = store.unfold(
-        LangStoreSeed::Stmt(3i32),
-        |seed| match seed {
-            LangStoreSeed::Stmt(n) if n <= 0 => {
-                LangStoreLayer::Stmt(
-                    StmtNode::Print(ExprId(0)),
-                    vec![LangStoreSeed::Expr(n)],
-                )
-            }
-            LangStoreSeed::Stmt(n) => {
-                LangStoreLayer::Stmt(
-                    StmtNode::Seq(StmtId(0), StmtId(0)),
-                    vec![LangStoreSeed::Stmt(n - 1), LangStoreSeed::Stmt(n - 1)],
-                )
-            }
-            LangStoreSeed::Expr(n) => {
-                LangStoreLayer::Expr(ExprNode::Lit(n as i64), vec![])
-            }
-        },
-    );
+    let root = store.unfold(LangStoreSeed::Stmt(3i32), |seed| match seed {
+        LangStoreSeed::Stmt(n) if n <= 0 => {
+            LangStoreLayer::Stmt(StmtNode::Print(ExprId(0)), vec![LangStoreSeed::Expr(n)])
+        }
+        LangStoreSeed::Stmt(n) => LangStoreLayer::Stmt(
+            StmtNode::Seq(StmtId(0), StmtId(0)),
+            vec![LangStoreSeed::Stmt(n - 1), LangStoreSeed::Stmt(n - 1)],
+        ),
+        LangStoreSeed::Expr(n) => LangStoreLayer::Expr(ExprNode::Lit(n as i64), vec![]),
+    });
     let result = store.fold(
         root,
         |stmt: StmtNodeMapped<usize, usize>| match stmt {
@@ -327,7 +315,9 @@ fn partition_variadic_fold() {
     let one = s.push_vexpr(VExprNode::Lit(1));
     let two = s.push_vexpr(VExprNode::Lit(2));
     let three = s.push_vexpr(VExprNode::Lit(3));
-    let sum = s.push_vexpr(VExprNode::Add(Variadic::Resolved(smallvec::smallvec![one, two, three])));
+    let sum = s.push_vexpr(VExprNode::Add(Variadic::Resolved(smallvec::smallvec![
+        one, two, three
+    ])));
     let result = s.fold(
         VStoreRoot::VExpr(sum),
         |_: VStmtNodeMapped<(), i64>| (),
@@ -343,11 +333,11 @@ fn partition_variadic_fold() {
 #[test]
 fn partition_variadic_pool() {
     let mut s = VStore::new();
-    let one = s.push_vexpr(VExprNode::Lit(1));
-    let two = s.push_vexpr(VExprNode::Lit(2));
+    let _one = s.push_vexpr(VExprNode::Lit(1));
+    let _two = s.push_vexpr(VExprNode::Lit(2));
     // Use alloc to test pool-based variadic
     let span = s.alloc_vstmt_vstmt(&[]);
-    let empty_block = s.push_vstmt(VStmtNode::Block(span));
+    let _empty_block = s.push_vstmt(VStmtNode::Block(span));
     assert_eq!(s.len_vstmt(), 1);
     assert_eq!(s.len_vexpr(), 2);
 }
