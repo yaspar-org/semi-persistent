@@ -11,3 +11,10 @@ semi-persistent-traversals-derive = { path = "derive", version = "0.1.0" }
 winnow.workspace = true
 rustc-hash = "2"
 smallvec = "1"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "fold_bench"
+harness = false
