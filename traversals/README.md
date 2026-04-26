@@ -112,10 +112,87 @@ The macro generates:
 
 Scales to any number of sorts.
 
+## Partitioned layout — `partition!`
+
+`partition!` generates the same family as `rec_family!` but stores each sort
+in its own arena with typed IDs (`StmtId`, `ExprId`). Folds are 9–15% faster,
+and multi-sorted folds take **one algebra per sort** rather than one algebra
+plus a `dispatch`.
+
+```rust
+use amzn_semi_persistent_traversals_derive::partition;
+
+partition! {
+    family Lang => LangStore;
+
+    enum Stmt { Let(String, Expr), Print(Expr), Noop }
+    enum Expr { Lit(i64), Var(String), Add(Expr, Expr) }
+}
+
+// Build a program: let x = 1 + 2; print(x)
+let mut s = LangStore::new();
+let one  = s.push_expr(ExprNode::Lit(1));
+let two  = s.push_expr(ExprNode::Lit(2));
+let sum  = s.push_expr(ExprNode::Add(one, two));
+let bind = s.push_stmt(StmtNode::Let("x".into(), sum));
+let x    = s.push_expr(ExprNode::Var("x".into()));
+let pr   = s.push_stmt(StmtNode::Print(x));
+// ... combine into a root stmt ...
+
+// Fold: one algebra per sort, in declaration order.
+// Each algebra receives a mapped enum where child ids are replaced by results.
+// Each sort can return a different type.
+let result = s.fold(
+    LangStoreRoot::Stmt(bind),
+    // Stmt algebra: sees StmtNodeMapped<StmtResult, ExprResult>
+    |stmt: StmtNodeMapped<String, i64>| match stmt {
+        StmtNodeMapped::Let(n, v) => format!("{n} = {v}"),
+        StmtNodeMapped::Print(v)  => format!("print({v})"),
+        StmtNodeMapped::Noop      => "noop".into(),
+    },
+    // Expr algebra: sees ExprNodeMapped<StmtResult, ExprResult>
+    |expr: ExprNodeMapped<String, i64>| match expr {
+        ExprNodeMapped::Lit(n)      => n,
+        ExprNodeMapped::Var(_)      => 0,
+        ExprNodeMapped::Add(l, r)   => l + r,
+    },
+);
+
+// Result is sort-tagged. Unwrap when you know the root sort.
+let s: String = result.unwrap_stmt();
+```
+
+**Calling convention for every scheme** (`fold`, `fold_short`,
+`fold_with_history`, `fold_with_aux`, `fold_with_original`, `fold_pair`,
+`prefold`, `rewrite`, `rewrite_down`, `transform`): **one closure per sort
+in declaration order**. With N sorts, these schemes take N closures.
+`fold_pair` takes 2N closures (two algebras per sort). Each mapped enum
+is generic over only the sort result types it references.
+
 ## Crate structure
 
 - `amzn-semi-persistent-traversals` — core library: `Arena`, `Functor` trait, all schemes
 - `amzn-semi-persistent-traversals-derive` — proc macros: `#[derive(RecFunctor)]` and `rec_family!`
+
+## Choosing layout, memo strategy, and dedup
+
+Three orthogonal choices affect performance and ergonomics:
+
+- **Layout**: `Arena<Lang<usize, usize>>` (coproduct, via `rec_family!`) vs
+  `LangStore` (partitioned per-sort arenas, via `partition!`). Partitioned
+  fold is 9–15% faster with typed IDs and cleaner algebras — **prefer
+  partitioned for multi-sort ASTs**.
+- **Memo strategy**: `Dense` (default, `O(store)` memo) vs `Sparse`
+  (hashmap, `O(reachable)` memo) vs `memo::None` (no dedup, for pure trees).
+  Use `store.with_strategy::<Sparse>().fold(…)` when folding a small
+  subtree inside a large store.
+- **Dedup**: `new()` (plain push) vs `new_dedup()` (hash-consing). Dedup
+  is 2–3× slower at construction but can shrink a 500K-node tree to 19
+  unique nodes when there's structural sharing. Use for e-graphs,
+  compiler IRs, canonicalization.
+
+Full decision guide with benchmarks:
+[`doc/design/layout-and-strategy.md`](doc/design/layout-and-strategy.md).
 
 ## Documentation
 
