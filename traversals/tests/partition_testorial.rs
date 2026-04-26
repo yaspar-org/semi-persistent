@@ -24,7 +24,6 @@
 //!  4  Find Variable           fold_short
 //!  5  Build from Seed         unfold
 //!  6  Build with Reuse        unfold_short
-//!  7  Factorial               refold (arena-free)
 //!  8  Desugar While           rewrite
 //!  9  Type Inference          fold
 //! 10  Interpreter             fold
@@ -35,7 +34,6 @@
 //! 15  Saturating Eval         fold_pair
 //! 16  Simplify Before Eval    prefold
 //! 17  Canonicalize Build      postunfold
-//! 18  Fibonacci               refold_with_history (arena-free)
 //! 19  Top-Down Desugar        rewrite_down
 //! 20  Cost Model              fold_with_original
 //! 21  Dead Code Search        fold_short (multi-sorted early exit)
@@ -1194,57 +1192,5 @@ mod tests {
             },
         );
         assert!(matches!(result, LangStoreFoldResult::Stmt(true)));
-    }
-
-    // ====================================================================
-    // Chapter 7: Factorial — refold (hylomorphism, no arena)
-    // ====================================================================
-
-    #[test]
-    fn ch07_factorial() {
-        let result = refold(
-            5u64,
-            &|n| if n == 0 { (1u64, vec![]) } else { (n, vec![n - 1]) },
-            &|n, ch: Vec<u64>| if ch.is_empty() { n } else { n * ch[0] },
-        );
-        assert_eq!(result, 120);
-    }
-
-    // ====================================================================
-    // Chapter 18: Fibonacci — refold_with_history (dynamorphism)
-    // ====================================================================
-    //
-    // refold_with_history is generic over any N: Functor<usize>. The
-    // single-sort Lang-style functor from the Arena world still works
-    // here — the partitioned store is orthogonal to this arena-free
-    // hylo-with-history scheme.
-
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    enum FibExpr<R> { Lit(i64), Add(R, R) }
-
-    impl<R> semi_persistent_traversals::Functor<R> for FibExpr<R> {
-        type Mapped<S> = FibExpr<S>;
-        fn map<S>(self, mut f: impl FnMut(R) -> S) -> FibExpr<S> {
-            match self {
-                FibExpr::Lit(n) => FibExpr::Lit(n),
-                FibExpr::Add(l, r) => FibExpr::Add(f(l), f(r)),
-            }
-        }
-    }
-    impl<R: Copy> semi_persistent_traversals::HasVariadic for FibExpr<R> {
-        fn resolve_spans(&mut self, _: &[usize]) {}
-    }
-
-    #[test]
-    fn ch18_fibonacci() {
-        let result = refold_with_history(
-            10u32,
-            |n| if n <= 1 { (FibExpr::Lit(n as i64), vec![]) } else { (FibExpr::Add(0, 0), vec![n - 1, n - 2]) },
-            |node: FibExpr<&Ann<i64>>| match node {
-                FibExpr::Lit(n) => n,
-                FibExpr::Add(l, r) => l.value + r.value,
-            },
-        );
-        assert_eq!(result, 55);
     }
 }
