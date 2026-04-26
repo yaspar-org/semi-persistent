@@ -10,8 +10,8 @@ The full, tested version of every example lives in
 
 ## 1. Define the family
 
-`rec_family!` declares mutually recursive types and generates a per-sort
-arena store:
+`rec_family!` declares a family of mutually recursive types and generates
+a per-sort arena store:
 
 ```rust
 use semi_persistent_traversals_derive::rec_family;
@@ -41,19 +41,68 @@ rec_family! {
 }
 ```
 
-Each sort name becomes three types:
+### The header line
 
-- `StmtNode` / `ExprNode` — the concrete node enum stored in the arena.
-  Cross-sort references use typed IDs (`StmtId`, `ExprId`).
-- `StmtNodeMapped<A, B>` / `ExprNodeMapped<A, B>` — the "mapped" node
-  where child IDs have been replaced by algebra results. Generic only
-  over the sort result types it references.
-- `StmtId` / `ExprId` — typed handles. Using an `ExprId` where a `StmtId`
+```rust
+family Lang => LangStore;
+```
+
+- `family` is a keyword that starts the declaration.
+- `Lang` is the **family name**. It's a label used in the macro's internal
+  bookkeeping and shows up in the names of generated companion types
+  (`LangSeed`, `LangLayer`, `LangApoSeed`, `LangApoLayer` for the unfold
+  schemes). You rarely type `Lang` directly in user code.
+- `=>` separates the family name from the store name.
+- `LangStore` is the **store type** the macro generates for you. It owns
+  the per-sort arenas. You create one with `LangStore::new()` or
+  `LangStore::new_dedup()` and call every scheme method on it. The store
+  name is also the prefix for generated companion types: `LangStoreRoot`
+  (sort-tagged handle), `LangStoreFoldResult<A, B, …>` (sort-tagged fold
+  return), `LangStoreMark` (snapshot handle), `LangStoreZipper` (and
+  `ZipperMut` / `ZipperCow` variants).
+- The trailing `;` ends the header.
+
+The family name and store name can be anything you want; keep them
+descriptive. For an e-graph AST you might write `family Egraph => ENodes`
+and get `ENodes::new()`, `ENodesRoot`, `ENodesFoldResult`, etc.
+
+### The enum declarations
+
+Each `enum` under the header declares one **sort** in the family. Sort
+order matters: it determines the argument order for every multi-algebra
+scheme (`fold`, `rewrite`, `prefold`, …) — one closure per sort, in the
+order the sorts were declared.
+
+Variant fields can be:
+
+- A **data field** (`String`, `i64`, `bool`, any type not mentioned as
+  a sort name in this family): stored inline in the node.
+- A **child field** referring to a sort name in the same family
+  (`Stmt`, `Expr`): stored as a typed ID. `Stmt(Stmt, Expr)` means
+  "contains one child of sort Stmt and one of sort Expr"; the macro
+  generates `StmtNode::Seq(StmtId, ExprId)` where those IDs point
+  into the appropriate per-sort arena.
+- A **variadic child field** spelled `Variadic<Sort>`: a variable-length
+  list of children, stored inline for short lists and pooled for longer
+  ones. See [section on Variadic](#variadic-children-optional) below.
+
+### Generated types per sort
+
+For every sort `S` (e.g. `Stmt`, `Expr`), the macro generates:
+
+- `SNode` — the concrete node enum stored in the arena. Cross-sort
+  references are typed IDs: `StmtNode::Let(String, ExprId)`.
+- `SId` — a newtype wrapping `usize`. Using an `ExprId` where a `StmtId`
   is expected is a compile error.
+- `SNodeMapped<A, B, …>` — the "mapped" node where child IDs have been
+  replaced by algebra results. Generic only over the sort result types
+  it actually references: if `Stmt` never contains an `Expr`,
+  `StmtNodeMapped` is generic only in `A_stmt`.
 
-The store has `push_stmt`, `push_expr`, `get_stmt`, `get_expr`, `len_stmt`,
-`len_expr`, plus all the scheme methods (`fold`, `rewrite`, etc.) that
-follow.
+The store provides per-sort methods: `push_stmt(StmtNode) -> StmtId`,
+`get_stmt(StmtId) -> &StmtNode`, `len_stmt() -> usize`, plus `mark()`,
+`restore(&mark)`, and the scheme methods covered in the rest of this
+tutorial.
 
 ## 2. Build an AST
 
