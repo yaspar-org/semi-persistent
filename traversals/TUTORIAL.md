@@ -1,24 +1,23 @@
 # Tutorial: recursion schemes with `rec_family!`
 
-This tutorial walks you through the `semi-persistent-traversals` crate by
-building up a small compiler pipeline. Each section covers one scheme;
-each scheme is a single method call where you write the algebra and the
-library writes the recursion.
+This tutorial walks through the `semi-persistent-traversals` crate by
+building a small compiler pipeline. Each section introduces one scheme,
+explains what problem it solves, and shows a worked example. Every
+example is a real `#[test]` in [`tests/testorial.rs`](tests/testorial.rs),
+so you can run them and step through in your editor as you read.
 
-The full, tested version of every example lives in
-[`tests/testorial.rs`](tests/testorial.rs).
+The running language is a tiny imperative language with statements and
+expressions. We define it once in §1 and reuse it throughout.
 
 ## 1. Define the family
 
-A *family* is a set of types that reference each other. In a small
-imperative language, statements can contain expressions (think `print(x)`)
-and expressions can contain statements (think `{ x = 1; x + 2 }`); neither
-makes sense on its own. `rec_family!` declares all the types of a family
-in one place and generates the machinery to store them: one arena per
-type, typed IDs that prevent you from mixing them up, and a full suite of
-traversals that cross between types automatically.
-
-Here's the full declaration for a language we'll use throughout:
+A *family* is a set of types that reference each other. The language
+here has statements that contain expressions (think `print(x)`) and
+expressions that contain statements (think `{ x = 1; x + 2 }`). Neither
+type is meaningful on its own. `rec_family!` declares both types in one
+place and generates the supporting machinery: per-type arenas, typed
+IDs to keep them straight, and traversal schemes that cross between
+types automatically.
 
 ```rust
 use semi_persistent_traversals_derive::rec_family;
@@ -48,36 +47,34 @@ rec_family! {
 }
 ```
 
-Before diving into the syntax, a word on vocabulary.
+Before walking through the syntax, a note on vocabulary.
 
-### Sorts vs types
+### Sorts versus types
 
-The word *sort* means "one of the categories in a family of mutually
-recursive definitions". The word *type* means what it normally means in
-Rust.
+The word *sort* is used throughout the crate to mean "one of the
+categories in a mutually recursive family". The word *type* keeps its
+ordinary Rust meaning.
 
-These documents keep the two separate because the macro does. A single
-sort produces several Rust types, and mixing the words up makes the
-generated API hard to read.
-
-For the family above, `Stmt` and `Expr` are the two sorts. The word
-`Stmt` appearing on line `enum Stmt { ... }` is a sort label, not a
-Rust type; `Stmt` doesn't exist as a Rust type anywhere. Nor does
-`Expr`. What *does* exist, after the macro runs, is a collection of
-Rust types derived from each sort, shown next.
+The two are kept separate because the macro does. A single sort
+produces several distinct Rust types, and using one word for both
+makes the generated API confusing. In the family above, `Stmt` and
+`Expr` are the two sorts. The identifier `Stmt` on the line
+`enum Stmt { ... }` is a sort label inside the macro; it is not a Rust
+type that you can refer to elsewhere. What does exist after the macro
+runs is a collection of Rust types derived from each sort.
 
 ### What the macro generates
 
-For this family, the macro expands to (abbreviated):
+For the family above, the macro produces (abbreviated):
 
 ```rust
-// --- IDs: one newtype per sort ---
+// One newtype per sort, used as a typed arena handle.
 pub struct StmtId(pub usize);
 pub struct ExprId(pub usize);
 
-// --- Nodes: one enum per sort, what lives in the arena ---
+// One enum per sort, stored in the arena. Cross-sort fields became typed IDs.
 pub enum StmtNode {
-    Let(String, ExprId),                // "Expr" in the macro became ExprId
+    Let(String, ExprId),
     Seq(StmtId, StmtId),
     Print(ExprId),
     If(ExprId, StmtId, StmtId),
@@ -93,10 +90,10 @@ pub enum ExprNode {
     Mul(ExprId, ExprId),
     Neg(ExprId),
     Eq(ExprId, ExprId),
-    Block(StmtId, ExprId),              // cross-sort: Stmt became StmtId
+    Block(StmtId, ExprId),
 }
 
-// --- Mapped nodes: what algebras see, with children replaced by results ---
+// One mapped enum per sort. Algebras receive this: child IDs replaced by results.
 pub enum StmtNodeMapped<A_stmt, A_expr> {
     Let(String, A_expr),
     Seq(A_stmt, A_stmt),
@@ -117,7 +114,7 @@ pub enum ExprNodeMapped<A_stmt, A_expr> {
     Block(A_stmt, A_expr),
 }
 
-// --- Sort-tagged handles ---
+// Sort-tagged root handle and fold-result enum.
 pub enum LangStoreRoot {
     Stmt(StmtId),
     Expr(ExprId),
@@ -128,68 +125,69 @@ pub enum LangStoreFoldResult<A_stmt, A_expr> {
     Expr(A_expr),
 }
 
-// --- The store: one arena per sort, plus all the scheme methods ---
-pub struct LangStore { /* private: Vec<StmtNode>, Vec<ExprNode>, ... */ }
+// The store owns one arena per sort and provides all scheme methods.
+pub struct LangStore { /* ... */ }
 
 impl LangStore {
-    pub fn new() -> Self { ... }
-    pub fn new_dedup() -> Self { ... }
+    pub fn new() -> Self { /* ... */ }
+    pub fn new_dedup() -> Self { /* ... */ }
 
-    pub fn push_stmt(&mut self, node: StmtNode) -> StmtId { ... }
-    pub fn push_expr(&mut self, node: ExprNode) -> ExprId { ... }
-    pub fn get_stmt(&self, id: StmtId) -> &StmtNode { ... }
-    pub fn get_expr(&self, id: ExprId) -> &ExprNode { ... }
-    pub fn len_stmt(&self) -> usize { ... }
-    pub fn len_expr(&self) -> usize { ... }
+    pub fn push_stmt(&mut self, node: StmtNode) -> StmtId { /* ... */ }
+    pub fn push_expr(&mut self, node: ExprNode) -> ExprId { /* ... */ }
+    pub fn get_stmt(&self, id: StmtId) -> &StmtNode { /* ... */ }
+    pub fn get_expr(&self, id: ExprId) -> &ExprNode { /* ... */ }
+    pub fn len_stmt(&self) -> usize { /* ... */ }
+    pub fn len_expr(&self) -> usize { /* ... */ }
 
-    pub fn mark(&self) -> LangStoreMark { ... }
-    pub fn restore(&mut self, mark: &LangStoreMark) { ... }
+    pub fn mark(&self) -> LangStoreMark { /* ... */ }
+    pub fn restore(&mut self, mark: &LangStoreMark) { /* ... */ }
 
     pub fn fold<A_stmt: Clone, A_expr: Clone>(
         &self,
         root: LangStoreRoot,
         alg_stmt: impl Fn(StmtNodeMapped<A_stmt, A_expr>) -> A_stmt,
         alg_expr: impl Fn(ExprNodeMapped<A_stmt, A_expr>) -> A_expr,
-    ) -> LangStoreFoldResult<A_stmt, A_expr> { ... }
+    ) -> LangStoreFoldResult<A_stmt, A_expr> { /* ... */ }
 
-    // ... every other scheme: fold_short, fold_with_history, fold_with_aux,
-    //     fold_with_original, fold_pair, prefold, unfold, unfold_short,
-    //     postunfold, transform, rewrite, rewrite_down, fold_all
+    // fold_short, fold_with_history, fold_with_aux, fold_with_original,
+    // fold_pair, prefold, unfold, unfold_short, postunfold, transform,
+    // rewrite, rewrite_down, fold_all: all follow the same per-sort pattern.
 }
 ```
 
-A few things to notice.
+Four observations about this expansion.
 
-**The enum name gets a `Node` suffix.** The sort is `Stmt`; the Rust enum
-is `StmtNode`. Keeping them distinct means you can have your own type
-called `Stmt` in the same module if you want, and it also reflects the
-distinction above: `Stmt` is a category, `StmtNode` is the concrete
-representation.
+The enum name carries a `Node` suffix. The sort is `Stmt`; the generated
+Rust enum is `StmtNode`. Keeping the two names distinct means a user
+type called `Stmt` in the same module will not collide with macro
+output, and the naming reflects the split between the category (`Stmt`)
+and its concrete representation (`StmtNode`).
 
-**Cross-sort fields in the original declaration become typed IDs in the
-generated enum.** When you wrote `Let(String, Expr)` inside the macro,
-`Expr` wasn't a Rust type — it was a sort label. The macro resolved it
-to `ExprId`, the typed handle for `Expr` nodes. `StmtNode::Let` therefore
-holds a `String` and an `ExprId`. Passing a `StmtId` to
-`StmtNode::Let(..., stmt_id)` is a compile error.
+Cross-sort fields in the original declaration become typed IDs in the
+generated enum. When the original declaration says `Let(String, Expr)`,
+the word `Expr` there is a sort label, not a Rust type. The macro
+resolves it to `ExprId`, so `StmtNode::Let` holds a `String` and an
+`ExprId`. Passing a `StmtId` where an `ExprId` is expected is a compile
+error, which is what "typed IDs" really buys you.
 
-**The mapped enum has one generic parameter per sort in the family.**
-Both `StmtNodeMapped` and `ExprNodeMapped` take `<A_stmt, A_expr>` —
-always in the order the sorts were declared. This is because any sort
-can contain children of any other sort: `Expr::Block(Stmt, Expr)` has
-both a `Stmt` child and an `Expr` child, so `ExprNodeMapped` needs the
-result-type for each. Even if a sort happens not to reference another
-sort in some variant, the parameter order stays consistent family-wide
-so that the same two algebras can carry the same two result types
-through both enums. The macro prunes *completely unused* parameters
-(a sort that references no other sort in any variant), but in any
-realistic mutually-recursive family all sort parameters are present.
+Both mapped enums take the same pair of generic parameters
+`<A_stmt, A_expr>`, in the order the sorts were declared. This is
+necessary because any sort can contain children of any other sort.
+`ExprNode::Block(Stmt, Expr)` has both a `Stmt` child and an `Expr`
+child, so `ExprNodeMapped` needs to know the result type for each. The
+parameter order is family-wide rather than per-sort so that a single
+pair of algebras can carry the same pair of result types through both
+enums consistently. The macro does prune a sort parameter when a sort
+is referenced nowhere in any variant, but that rarely matters for
+genuinely mutually recursive families.
 
-**Variant payload order changes when children of different sorts appear.**
-Compare `StmtNode::Let(String, ExprId)` to
-`StmtNodeMapped::Let(String, A_expr)`: the data field stays put, and
-only the ID gets replaced by the algebra's result. That's why the same
-variant pattern works in both contexts.
+The mapped enum mirrors the node enum variant by variant, replacing
+each child ID with the corresponding sort parameter. Compare
+`StmtNode::Let(String, ExprId)` with
+`StmtNodeMapped::Let(String, A_expr)`: the `String` data field stays
+put, only the `ExprId` became `A_expr`. The same pattern match against
+`Let(n, v)` works in both contexts, which is what makes fold algebras
+easy to write.
 
 ### Reading the header line
 
@@ -197,40 +195,41 @@ variant pattern works in both contexts.
 family Lang => LangStore;
 ```
 
-- `family` is a keyword that opens the declaration.
-- `Lang` is the *family name*. It shows up as a prefix on a small number
-  of generated types used by the unfold schemes: `LangSeed`, `LangLayer`,
-  `LangApoSeed`, `LangApoLayer`. You rarely write `Lang` directly.
-- `=>` separates the family name from the store name.
-- `LangStore` is the *store type*. This is what you instantiate
-  (`LangStore::new()`) and call every scheme method on. It's also the
-  prefix for `LangStoreRoot`, `LangStoreFoldResult`, `LangStoreMark`,
-  `LangStoreZipper`, `LangStoreZipperMut`, and `LangStoreZipperCow`.
-
-The family name and store name can be anything; keep them descriptive.
-An e-graph AST might be `family Egraph => ENodes` and you'd instantiate
-`ENodes::new()`, get back an `ENodesRoot`, and so on.
+`family` is a keyword that opens the declaration. `Lang` is the family
+name; it shows up as a prefix on a small number of generated companion
+types used by the unfold schemes (`LangSeed`, `LangLayer`,
+`LangApoSeed`, `LangApoLayer`). You rarely write `Lang` directly. The
+`=>` separator is followed by `LangStore`, the store type you
+instantiate with `LangStore::new()` or `LangStore::new_dedup()`.
+`LangStore` is also the prefix for `LangStoreRoot`,
+`LangStoreFoldResult`, `LangStoreMark`, `LangStoreZipper`,
+`LangStoreZipperMut`, and `LangStoreZipperCow`. Both names are
+arbitrary; pick something descriptive for your domain.
 
 ### Declaring sorts and their variants
 
-Each `enum` under the header declares one sort. Two rules:
+Each `enum` block under the header declares one sort. Two rules govern
+them:
 
-1. **Sort declaration order is the argument order for every multi-algebra
-   scheme.** The `Stmt` algebra comes first in `fold(..., alg_stmt,
-   alg_expr)` because `enum Stmt` came first in the macro. That order
-   also fixes the order of generic parameters on every mapped enum
-   (`<A_stmt, A_expr>`) and the variant order of `LangStoreFoldResult`.
-   Once set, it cascades everywhere.
+1. The declaration order of sorts is the argument order of every
+   multi-algebra scheme. Because `enum Stmt` appears before `enum Expr`,
+   the `Stmt` algebra comes first in `fold(..., alg_stmt, alg_expr)`.
+   That order also fixes the order of generic parameters on every
+   mapped enum (`<A_stmt, A_expr>`) and the variant order of
+   `LangStoreFoldResult`. Set it once and it cascades everywhere.
 
-2. **A variant field is either data or a child.** The macro distinguishes
-   the two by matching field types against the sort names. `String`,
-   `i64`, `bool`, `MyCustomStruct` — anything not mentioned as a sort
-   name becomes a data field stored inline. `Stmt`, `Expr` — anything
-   matching a sort name becomes a typed child ID. A third form,
-   `Variadic<Sort>`, declares a variable-length list of children; see
-   §N below for details.
+2. A variant's fields are classified by matching their types against
+   the sort names. Any type that is not a sort name (`String`, `i64`,
+   `bool`, any user type) becomes a data field stored inline in the
+   node. Any type that matches a sort name becomes a typed child ID.
+   A third form, `Variadic<Sort>`, declares a variable-length list of
+   children of that sort, covered in §N below.
 
 ## 2. Build an AST
+
+With the family declared, you build ASTs by pushing nodes into the
+store. The typed IDs make it impossible to put a `Stmt` where an `Expr`
+is expected.
 
 ```rust
 fn sample() -> (LangStore, LangStoreRoot) {
@@ -238,24 +237,27 @@ fn sample() -> (LangStore, LangStoreRoot) {
     let one   = s.push_expr(ExprNode::Lit(1));
     let two   = s.push_expr(ExprNode::Lit(2));
     let three = s.push_expr(ExprNode::Lit(3));
-    let prod  = s.push_expr(ExprNode::Mul(two, three));   // typed: Mul takes ExprId
+    let prod  = s.push_expr(ExprNode::Mul(two, three));
     let sum   = s.push_expr(ExprNode::Add(one, prod));
     let bind  = s.push_stmt(StmtNode::Let("x".into(), sum));
     (s, LangStoreRoot::Stmt(bind))
 }
 ```
 
-`LangStoreRoot` is a sort-tagged handle — `Stmt(StmtId)` or `Expr(ExprId)`.
-Schemes that take a "root" accept a `LangStoreRoot` so they can start from
-either sort.
+`LangStoreRoot` is a sort-tagged handle, either `Stmt(StmtId)` or
+`Expr(ExprId)`. Schemes that accept a root take this enum so they can
+start from either sort.
 
-## 3. `fold` — bottom-up traversal
+## 3. `fold`: bottom-up traversal
 
-`fold` takes **one algebra per sort, in declaration order**. Each algebra
-receives a mapped node (children already replaced by results) and returns
-the result for that node. Sorts can return different types.
+A fold walks the tree from the leaves up and combines child results.
+You write an *algebra* for each sort: a function that takes one node
+with its child IDs already replaced by the algebra's results and
+returns the result for that node. The library handles the traversal,
+the stack, and the memoization.
 
-Pretty-printer: `Stmt → String`, `Expr → String`.
+Here is a pretty-printer that turns the AST back into source-like
+text. Both sorts produce `String`.
 
 ```rust
 let rendered = s.fold(
@@ -282,46 +284,42 @@ let rendered = s.fold(
 let rendered: String = rendered.unwrap_stmt();
 ```
 
-The return is a sort-tagged `LangStoreFoldResult<String, String>`. Call
-`.unwrap_stmt()` when you know the root is a `Stmt`; match on it when you
-don't.
+The return is a `LangStoreFoldResult<String, String>`. The root is a
+`Stmt`, so `unwrap_stmt()` gives the `String` directly; if you did not
+know the root sort in advance, you would match on the variants.
 
-### What the two `String`s mean
+### Reading the type parameters
 
-The mapped enums were generated as (recap from §1):
+Recall the generated mapped enums:
 
 ```rust
 enum StmtNodeMapped<A_stmt, A_expr> { Let(String, A_expr), Seq(A_stmt, A_stmt), ... }
 enum ExprNodeMapped<A_stmt, A_expr> { Block(A_stmt, A_expr), Add(A_expr, A_expr), ... }
 ```
 
-The first parameter stands for "whatever the `Stmt` algebra returns",
-the second for "whatever the `Expr` algebra returns". In this fold
-both algebras return `String`, so both parameters become `String`, and
-you write `StmtNodeMapped<String, String>` and
-`ExprNodeMapped<String, String>` on each algebra's input.
+The first parameter is the result type of the `Stmt` algebra; the
+second is the result type of the `Expr` algebra. Writing
+`StmtNodeMapped<String, String>` means both algebras happen to return
+`String` in this fold. Inside each variant, the field types are
+determined by the variant declaration:
 
-Watch what happens inside each variant:
+- In `StmtNodeMapped::Let(n, v)`, the binding `n: String` comes from
+  the original data field; `v: String` is the result of folding the
+  `Expr` child, bound to the second type parameter.
+- In `StmtNodeMapped::Seq(l, r)`, both `l` and `r` are `String`s from
+  the first type parameter, because both `Seq` fields were declared
+  `Stmt`.
+- In `ExprNodeMapped::Block(s, e)`, `s: String` is bound to the first
+  parameter (the field was `Stmt`) and `e: String` to the second (the
+  field was `Expr`).
 
-- `StmtNodeMapped::Let(n, v)`: `n: String` is the data field (it was
-  `String` in the original declaration, stays `String` in the mapped
-  form); `v` has type *the second parameter*, because the `Let`
-  variant's second field was declared `Expr`. In this fold `v: String`.
-- `StmtNodeMapped::Seq(l, r)`: `l` and `r` both have type *the first
-  parameter*, because `Seq`'s fields were both `Stmt`. In this fold
-  `l: String` and `r: String`.
-- `ExprNodeMapped::Block(s, e)`: `s` has type *the first parameter*
-  (field was `Stmt`), `e` has type *the second parameter* (field was
-  `Expr`).
+The parameter order is family-wide, not per-sort. The `Expr` algebra
+still sees `<A_stmt, A_expr>` as its mapped-enum parameters, in that
+order, because `Block` contains a `Stmt` child whose result type the
+algebra must know.
 
-That's why the parameter order is family-wide, not per-sort: both
-algebras need to know the same two type variables in the same order,
-so that `ExprNodeMapped::Block(s, e)` consistently means "s is
-whatever the Stmt algebra returns, e is whatever the Expr algebra
-returns" no matter which algebra you're inside.
-
-A concrete variation: to render statements as `Vec<u8>` bytecode while
-keeping expressions as `i64` values, you'd write
+If statements rendered as `Vec<u8>` bytecode and expressions rendered
+as `i64` values, the call would look like
 
 ```rust
 s.fold(
@@ -331,22 +329,24 @@ s.fold(
 );
 ```
 
-Inside the `Stmt` algebra, `Let(n, v)` would give you `n: String` and
-`v: i64` (the Expr result type). Inside the `Expr` algebra, `Block(s, e)`
-would give you `s: Vec<u8>` (the Stmt result type) and `e: i64`.
+and inside the statement algebra `Let(n, v)` would bind `n: String` and
+`v: i64`, while inside the expression algebra `Block(s, e)` would bind
+`s: Vec<u8>` and `e: i64`.
 
-## 4. `fold` with different per-sort types
+## 4. Folding to different per-sort types: interpreter
 
-The interpreter evaluates expressions to `i64` and statements to environment
-transformers:
+A real use of per-sort types shows up in an interpreter. Statements
+transform an environment (a mapping from variable names to values);
+expressions evaluate to an integer in an environment. The two result
+types differ but share the environment they operate on.
 
 ```rust
 use std::collections::HashMap;
 use std::rc::Rc;
 
 type Env   = HashMap<String, i64>;
-type SVal  = Rc<dyn Fn(&Env) -> Env>;  // Stmt result
-type EVal  = Rc<dyn Fn(&Env) -> i64>;  // Expr result
+type SVal  = Rc<dyn Fn(&Env) -> Env>;
+type EVal  = Rc<dyn Fn(&Env) -> i64>;
 
 let result = s.fold(
     root,
@@ -374,31 +374,33 @@ let result = s.fold(
             ExprNodeMapped::Var(name)   => Rc::new(move |env| *env.get(&name).unwrap_or(&0)),
             ExprNodeMapped::Add(l, r)   => Rc::new(move |env| l(env) + r(env)),
             ExprNodeMapped::Mul(l, r)   => Rc::new(move |env| l(env) * r(env)),
-            // …
             _ => Rc::new(|_| 0),
         }
     },
 );
 ```
 
-Key property: the `SVal` algebra sees `Expr` children as `EVal` (closures
-returning `i64`), and the `EVal` algebra sees `Stmt` children as `SVal`.
-Cross-sort references are carried through the fold automatically.
+Notice how cross-sort references flow. Inside the statement algebra,
+`Let(name, val)` binds `val: EVal` because the original field was
+`Expr`. Inside the expression algebra, there would be a `Block(s, e)`
+arm (omitted for brevity) that binds `s: SVal` because the field was
+`Stmt`. The fold routes each child's result to the right algebra
+automatically.
 
-## 5. `rewrite` — bottom-up tree-to-tree transform
+## 5. `rewrite`: bottom-up tree transform
 
-`rewrite` gives each rule a `&mut Store` to push into and returns a typed
-ID for the sort. Use it to create new nodes, inspect already-rewritten
-children, or collapse structure.
+`fold` reduces a tree to a value. `rewrite` reduces a tree to another
+tree. Each rule receives a node whose child IDs already point into the
+new store and must decide what node (if any) to emit. Because the new
+store is passed as `&mut Store`, the rule can create new nodes, peek
+at already-rewritten children, or collapse a subtree to a simpler one.
 
-Constant folding:
+A constant folder is the classic example:
 
 ```rust
 let (s2, r2) = s.rewrite(
     root,
-    // Stmt rule: pass through
     |node, new: &mut LangStore| new.push_stmt(node),
-    // Expr rule: fold literal arithmetic
     |node, new: &mut LangStore| match node {
         ExprNode::Add(l, r) => {
             if let (ExprNode::Lit(a), ExprNode::Lit(b)) = (new.get_expr(l), new.get_expr(r)) {
@@ -406,7 +408,7 @@ let (s2, r2) = s.rewrite(
             }
             new.push_expr(ExprNode::Add(l, r))
         }
-        ExprNode::Mul(l, r) => { /* … */ new.push_expr(ExprNode::Mul(l, r)) }
+        ExprNode::Mul(l, r) => { /* ... */ new.push_expr(ExprNode::Mul(l, r)) }
         ExprNode::Neg(e) => {
             if let ExprNode::Lit(n) = new.get_expr(e) {
                 return new.push_expr(ExprNode::Lit(-n));
@@ -418,18 +420,21 @@ let (s2, r2) = s.rewrite(
 );
 ```
 
-Because `rewrite` is bottom-up, by the time the rule sees `Add(l, r)` the
-children `l` and `r` are already in `new`. Inspecting them via
-`new.get_expr(l)` gives you the *rewritten* child, not the original.
+Because the rewrite runs bottom-up, by the time the `Add(l, r)` arm
+fires the children at `l` and `r` are already in the new store. Calling
+`new.get_expr(l)` returns the rewritten child, so if both children
+rewrote to literals, the rule can push a single collapsed `Lit`.
 
-## 6. `rewrite_down` — top-down transform
+## 6. `rewrite_down`: top-down transform
 
-Same signature as `rewrite`, but the rule fires on the way down. The rewritten
-node's children are then visited and rewritten in turn. Use when a node needs
-to decide based on *itself*, not its children.
+A bottom-up rewrite sees children before the parent. A top-down rewrite
+sees the parent first, rewrites it, and then visits the (possibly new)
+children. This ordering is what you want when the rewrite creates new
+children that themselves need rewriting.
+
+A small example: replace every `Neg(x)` with `Mul(x, x)`, top-down.
 
 ```rust
-// Replace every Neg(x) with Mul(x, x) top-down
 let (s2, r2) = s.rewrite_down(
     root,
     |stmt| stmt,
@@ -440,19 +445,29 @@ let (s2, r2) = s.rewrite_down(
 );
 ```
 
-On `Neg(Neg(5))`, the outer `Neg` fires first → `Mul(Neg(5), Neg(5))`. Then
-the inner `Neg`s fire → `Mul(Mul(5,5), Mul(5,5))`. Result: 625.
+Apply this to `Neg(Neg(5))`. The outer `Neg` is visited first and
+rewrites to `Mul(Neg(5), Neg(5))`. Each of the inner `Neg(5)`s is then
+visited and rewrites to `Mul(5, 5)`. The final tree is
+`Mul(Mul(5, 5), Mul(5, 5))`, which evaluates to 625. A bottom-up
+rewrite would miss the inner rewrites, because the outer `Neg` would
+already have been consumed before its children were visited.
 
-## 7. `fold_short` — early exit
+## 7. `fold_short`: early exit
 
-Each algebra returns `Result<A, A>`. `Ok(v)` continues; `Err(v)` exits the
-fold immediately, returning that value.
+A fold normally visits every reachable node. Sometimes you want to
+stop as soon as a condition is met. `fold_short` gives each algebra
+an early-exit hatch: the return type is `Result<A, A>`, where `Ok(v)`
+continues the fold with result `v` and `Err(v)` ends it immediately
+and returns `v`.
+
+Here is a dead-code detector that exits as soon as it finds an
+`If(false, _, _)`:
 
 ```rust
 let found = s.fold_short(
     root,
     |stmt: StmtNodeMapped<bool, bool>| match stmt {
-        StmtNodeMapped::If(cond_false, _, _) if cond_false => Err(true), // dead code!
+        StmtNodeMapped::If(cond_false, _, _) if cond_false => Err(true),
         StmtNodeMapped::Seq(l, r) => Ok(l || r),
         _ => Ok(false),
     },
@@ -463,19 +478,30 @@ let found = s.fold_short(
 );
 ```
 
-## 8. `fold_with_history` — look-back at grandchildren
+The expression algebra tags every `Bool(false)` as "true, this is a
+literal false". The statement algebra sees that tag arrive as the
+first child of an `If`, and if so returns `Err(true)` to abort the
+traversal.
 
-The algebra receives `Ann<A>` instead of `A`. `Ann` exposes the child's
-`value` and its `children` (raw IDs), letting you peek one level deeper.
+## 8. `fold_with_history`: peek at grandchildren
+
+A plain fold gives each algebra only the direct children's results. If
+the decision at a node depends on what the grandchildren look like,
+you need a scheme that carries more context through the recursion.
+`fold_with_history` does exactly that: each algebra receives `Ann<A>`
+instead of `A`, where `Ann` bundles a child's result with that child's
+own children's raw IDs. You can look one level deeper without running
+a second traversal.
+
+A complexity score that penalizes deep nesting uses this:
 
 ```rust
 use semi_persistent_traversals::Ann;
 
 let complexity = s.fold_with_history(
     root,
-    |stmt: StmtNodeMapped<Ann<usize>, Ann<usize>>| /* … */,
+    |stmt: StmtNodeMapped<Ann<usize>, Ann<usize>>| /* ... */,
     |expr: ExprNodeMapped<Ann<usize>, Ann<usize>>| {
-        // Penalize deep nesting: binary ops whose children are themselves deep cost extra.
         let penalty = match &expr {
             ExprNodeMapped::Add(l, r) | ExprNodeMapped::Mul(l, r) => {
                 let deep = !l.children.is_empty() && !r.children.is_empty();
@@ -483,69 +509,120 @@ let complexity = s.fold_with_history(
             }
             _ => 0,
         };
-        /* … base cost + penalty … */
+        /* base cost + penalty */
     },
 );
 ```
 
-## 9. `fold_with_aux` — two folds in one pass (zygomorphism)
+Inside `Add(l, r)`, both `l` and `r` are `Ann<usize>` values. Reading
+`l.value` gives the child's fold result; reading `l.children` reveals
+the raw IDs of the grandchildren, which lets the algebra detect "this
+child is itself an operation, not a leaf".
 
-Two algebras per sort. The *aux* algebra runs first and sees only
-`B`-children; the *main* algebra then sees `(A, B)` children, with
-access to both the current result and the aux result.
+## 9. `fold_with_aux`: two folds in one pass
 
-Type-checking followed by type-aware evaluation:
+Some analyses want one pass to compute a preliminary value and a
+second pass to compute a main value that depends on the preliminary.
+Running two separate folds wastes work; `fold_with_aux` runs both in
+one pass, with two algebras per sort. The aux algebra sees only its
+own B-typed children. The main algebra sees `(A, B)` pairs, so it has
+access to the aux result at every child along with the main result.
+
+A type-aware interpreter is a natural fit. The aux pass annotates
+each expression with its type; the main pass evaluates, and can refuse
+to add a `Bool` to an `Int`.
 
 ```rust
 let result = s.fold_with_aux(
     root,
-    // aux: Stmt → &str
     |_: StmtNodeMapped<&str, &str>| "stmt",
-    // aux: Expr → &str  ("int" | "bool" | "err")
     |expr: ExprNodeMapped<&str, &str>| match expr { /* type check */ },
-    // main: Stmt → i64
     |_: StmtNodeMapped<(i64, &str), (i64, &str)>| 0,
-    // main: Expr → i64  (evaluate, using type from aux to guard)
     |expr: ExprNodeMapped<(i64, &str), (i64, &str)>| match expr {
         ExprNodeMapped::Add((l, lt), (r, rt)) =>
             if lt == "int" && rt == "int" { l + r } else { -1 },
-        /* … */
+        /* ... */
     },
 );
 ```
 
-## 10. `fold_pair` — mutually recursive folds
+## 10. `fold_pair`: mutually recursive algebras
 
-Two algebras per sort, each returning a different type, both seeing all
-children as `(A, B)` pairs. Use when two folds depend on each other's
-intermediate results at every node.
+`fold_with_aux` has a direction: the aux pass feeds the main pass.
+`fold_pair` is symmetric. Two algebras per sort, each producing a
+different type, each seeing `(A, B)` pairs at every child. Use this
+when two analyses genuinely depend on each other at every node, so
+neither can be finished before the other starts.
 
-## 11. `fold_with_original` — see the pre-mapped node
+A saturating evaluator does value and overflow-flag computation
+together:
 
-The algebra receives `(&OriginalNode, MappedNode)`. Use when the cost or
-shape of a node depends on its *structure*, not just its children's results.
+```rust
+let (value, overflowed) = s.fold_pair(
+    root,
+    |_: StmtNodeMapped<(i64, bool), (i64, bool)>| 0i64,
+    |_: StmtNodeMapped<(i64, bool), (i64, bool)>| false,
+    |expr: ExprNodeMapped<(i64, bool), (i64, bool)>| match expr {
+        ExprNodeMapped::Lit(n) => n,
+        ExprNodeMapped::Add((l, lo), (r, ro)) => l.saturating_add(r),
+        _ => 0,
+    },
+    |expr: ExprNodeMapped<(i64, bool), (i64, bool)>| match expr {
+        ExprNodeMapped::Lit(_) => false,
+        ExprNodeMapped::Add((l, lo), (r, ro)) => lo || ro || l.checked_add(r).is_none(),
+        _ => false,
+    },
+).unwrap_expr();
+```
+
+Both algebras for the `Add` variant see the left and right children as
+`(i64, bool)`: the value and its overflow flag. The value algebra
+returns the (possibly saturated) sum; the overflow algebra returns
+whether any child had already overflowed or whether this addition
+newly overflows.
+
+## 11. `fold_with_original`: see the unmapped node
+
+Most folds only need the children's results. When the decision at a
+node depends on the node's own *structure*, not just what its children
+folded to, you need access to the original node. `fold_with_original`
+passes both: the algebra receives a reference to the original node
+alongside the mapped node whose children have been replaced by
+results.
+
+A cost model is the standard use. Binary operations cost more than
+unary ones, which cost more than leaves, and the cost of each
+subtree accumulates.
 
 ```rust
 let cost = s.fold_with_original(
     root,
-    |orig: &StmtNode, mapped: StmtNodeMapped<usize, usize>| { /* … */ },
+    |_orig: &StmtNode, mapped: StmtNodeMapped<usize, usize>| { /* ... */ },
     |orig: &ExprNode, mapped: ExprNodeMapped<usize, usize>| {
         let own = match orig {
-            ExprNode::Add(..) | ExprNode::Mul(..) | ExprNode::Eq(..) => 2, // binary ops
+            ExprNode::Add(..) | ExprNode::Mul(..) | ExprNode::Eq(..) => 2,
             ExprNode::Neg(..) => 1,
             _ => 0,
         };
-        let child_cost = /* sum from mapped */;
+        let child_cost = /* sum child costs from mapped */ 0;
         child_cost + own
     },
 );
 ```
 
-## 12. `unfold` and `unfold_short` — top-down construction
+The `orig` reference tells the algebra which variant it is looking at
+before the mapping erased the IDs; the `mapped` value provides the
+already-folded child costs to sum up.
 
-`unfold` builds a tree from a seed, top-down. The coalgebra takes a seed
-and returns a `LangStoreLayer`: a node with child *seeds* in place of
-child IDs. Seeds expand recursively until they bottom out.
+## 12. `unfold` and `unfold_short`: build a tree from a seed
+
+A fold consumes a tree. An unfold produces one, top-down from a seed
+value. The *coalgebra* takes a seed and returns a node layer: a node
+shape plus one child *seed* for each hole in the node. The library
+recurses on each child seed, expanding until a coalgebra returns a
+layer with no seeds (a leaf).
+
+A generator for balanced expression trees:
 
 ```rust
 let root = s.unfold(
@@ -553,7 +630,7 @@ let root = s.unfold(
     |seed| match seed {
         LangStoreSeed::Expr(0) => LangStoreLayer::Expr(ExprNode::Lit(1), vec![]),
         LangStoreSeed::Expr(n) => LangStoreLayer::Expr(
-            ExprNode::Add(ExprId(0), ExprId(0)),       // placeholder ids
+            ExprNode::Add(ExprId(0), ExprId(0)),
             vec![LangStoreSeed::Expr(n - 1), LangStoreSeed::Expr(n - 1)],
         ),
         LangStoreSeed::Stmt(_) => unreachable!(),
@@ -561,26 +638,66 @@ let root = s.unfold(
 );
 ```
 
-The child IDs in the returned node are placeholders — `unfold` replaces them
-with the real IDs once each child has been built.
+The child IDs in the returned node (`ExprId(0)` above) are
+placeholders. The library replaces them with the real IDs once each
+child has been unfolded and pushed. This placeholder step is
+unavoidable because the parent has to describe its shape before its
+children exist.
 
-`unfold_short` is the apomorphism: the coalgebra can return `Done(id)` to
-reuse an existing node instead of continuing to expand.
+`unfold_short` adds one capability: the coalgebra can return `Done(id)`
+to reuse an existing node instead of continuing to expand. This is how
+you share a precomputed subtree into a generated structure without
+building two copies of it.
 
-## 13. `prefold` and `postunfold` — normalization passes
+## 13. `prefold` and `postunfold`: normalize along the way
 
-- `prefold(pre, alg)` — apply a per-sort `Node → Node` rewrite before
-  folding. Use for strength reduction, desugaring, or any transform you
-  want "baked in" before the fold sees it.
-- `postunfold(post, coalg)` — apply a per-sort `Node → Node` rewrite
-  after each unfold layer, before the node is pushed. Use for
-  canonicalization (e.g., sort commutative operands).
+A fold is most useful when its input is in a known shape. `prefold`
+takes a per-sort rewrite (`Node → Node`) and applies it to every node
+before the algebra sees it. Use it for strength reduction
+("multiplication by 1 is just the operand"), for desugaring before
+evaluation, or for any transform you want to treat as part of the
+fold's input rather than as a separate pass.
+
+```rust
+let result = s.prefold(
+    root,
+    |stmt| stmt,
+    |expr| match expr {
+        ExprNode::Mul(l, r) => ExprNode::Add(l, r),
+        other => other,
+    },
+    alg_stmt,
+    alg_expr,
+);
+```
+
+The example rewrites every `Mul` to an `Add` before the fold sees it,
+so the fold only needs to handle `Add`.
+
+`postunfold` is the dual on the construction side. It runs a per-sort
+rewrite on each layer the coalgebra produces, after the children have
+been resolved but before the node is pushed. Use it for
+canonicalization: sort commutative operands so that a downstream dedup
+recognizes `Add(1, 2)` and `Add(2, 1)` as the same node.
+
+```rust
+let root = s.postunfold(
+    LangStoreSeed::Expr(3u32),
+    |stmt| stmt,
+    |expr| match expr {
+        ExprNode::Add(a, b) if a.0 > b.0 => ExprNode::Add(b, a),
+        other => other,
+    },
+    |seed| { /* coalgebra */ },
+);
+```
 
 ## 14. Hash-consing with `new_dedup`
 
-`LangStore::new_dedup()` adds a per-sort hashmap. Pushing a node that's
-already been pushed returns the existing ID instead of appending a
-duplicate:
+A plain store appends every pushed node, even if it is structurally
+identical to an existing one. `LangStore::new_dedup()` adds a per-sort
+hashmap: a push first checks whether the same node already exists, and
+if so returns the existing ID.
 
 ```rust
 let mut s = LangStore::new_dedup();
@@ -590,87 +707,113 @@ assert_eq!(a, b);
 assert_eq!(s.len_expr(), 1);
 ```
 
-Dedup is per-sort: pushing an `Expr` doesn't consult the `Stmt` table.
-Dedup interacts correctly with `mark`/`restore` — on restore, dedup
-entries pointing past the mark are pruned.
+Dedup operates per sort: pushing an `Expr` does not consult the `Stmt`
+table. It also interacts correctly with `mark` and `restore`; on
+restore, dedup entries pointing at truncated nodes are pruned, so a
+later push of an identical node starts fresh rather than returning a
+stale ID.
+
+Dedup trades construction time for memory. See
+[`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for
+numbers and guidance.
 
 ## 15. Memoization strategies
 
-`fold` defaults to dense memoization — a `Vec<Option<A>>` sized to the
-full store. Two alternatives via `with_strategy`:
+`fold` uses dense memoization by default: a vector sized to the number
+of nodes in the store, indexed by node ID. Two alternatives are
+available via `with_strategy`.
 
 ```rust
 use semi_persistent_traversals::{Sparse, memo};
 
-// Sparse: hashmap memo, O(reachable) allocation.
-// Use when folding a small subtree inside a large store.
 let r = s.with_strategy::<Sparse>().fold(root, alg_stmt, alg_expr);
-
-// None: no dedup checks. Fastest for pure trees (no structural sharing).
-// INCORRECT on DAGs — will recompute shared subtrees.
 let r = s.with_strategy::<memo::None>().fold(root, alg_stmt, alg_expr);
 ```
 
-See [`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for the
-full decision guide with benchmark numbers.
+`Sparse` uses a hashmap, so allocation is proportional to the nodes
+actually visited rather than the full store. Good for folding a small
+region of a large store; worse than dense when the fold visits almost
+everything. `memo::None` skips dedup checks entirely and assumes the
+input is a pure tree. It is faster than dense on trees but produces
+wrong results on DAGs. The design doc covers the tradeoffs.
 
-## 16. Zippers — cursor-based navigation
+## 16. Zippers: cursor-based navigation
 
-Sometimes you need to walk up from a node, check siblings, or patch the
-tree at a focused location. Zippers give you a stack of "crumbs" for the
-path from root to the focus:
+Schemes like `fold` and `rewrite` are good at doing the same thing
+everywhere. When you need to navigate to a specific location in the
+tree, check its siblings or ancestors, and possibly patch it in place,
+a zipper is the right tool. A zipper is a cursor with focus plus a
+stack of breadcrumbs for the path back to the root.
+
+The crate ships three zipper flavors.
+
+`LangStoreZipper` is read-only. Move the focus down into a child with
+`down(i)`, back up with `up()`, to a sibling with `down` after `up`.
+Read the current node via `focus()`.
 
 ```rust
-// Read-only: Zipper
 let mut z = LangStoreZipper::new(&s, root);
-z.down(1);  // into first child of focus
 z.down(1);
-z.up();     // back up one crumb
-match z.focus() { LangStoreRoot::Expr(id) => /* … */, _ => panic!() }
+z.down(1);
+z.up();
+match z.focus() {
+    LangStoreRoot::Expr(id) => { /* ... */ }
+    _ => panic!(),
+}
+```
 
-// Mutation in place: ZipperMut
+`LangStoreZipperMut` allows in-place mutation. `set_focus_expr(node)`
+overwrites the current node; every reference to that ID elsewhere in
+the store sees the change. Only usable on stores built without dedup,
+since mutating a hash-consed node would desynchronize the dedup table
+from the arena.
+
+```rust
 let mut z = LangStoreZipperMut::new(&mut s, root);
 z.down(0);
-z.set_focus_expr(ExprNode::Lit(42));  // overwrites in place
+z.set_focus_expr(ExprNode::Lit(42));
+```
 
-// Copy-on-write: ZipperCow — builds a new store containing the spine
-// and unchanged subtrees, leaves original untouched
+`LangStoreZipperCow` produces a new store containing the updated
+version of the tree, leaving the original untouched. Internally it
+rebuilds the spine from the focus up to the root and reuses everything
+else, so the cost is proportional to the tree size rather than the
+full store.
+
+```rust
 let z = LangStoreZipperCow::new(&s, root);
 let (new_store, new_root) = z.set_focus_expr(ExprNode::Lit(3));
 ```
 
 ## 17. The full chapter list
 
-For worked examples of each scheme applied to a real compiler pipeline
-(pretty printer, constant folder, type checker, interpreter, bytecode
-compiler), see [`tests/testorial.rs`](tests/testorial.rs):
+[`tests/testorial.rs`](tests/testorial.rs) contains one chapter per
+scheme applied to a realistic piece of a compiler pipeline. Each
+chapter is a standalone `#[test]`.
 
-| Ch | Scheme |
-|----|--------|
-|  1 | `fold` |
-|  2 | `rewrite` — constant folding |
-|  3 | `rewrite` — double negation |
-|  4 | `fold_short` — find a variable |
-|  5 | `unfold` — generate an AST |
-|  6 | `unfold_short` — build with node reuse |
-|  8 | `rewrite` — desugar while loops |
-|  9 | `fold` — type inference |
-| 10 | `fold` — interpreter |
-| 11 | `fold` — free variables |
-| 12 | `fold` — precedence-aware pretty printer |
-| 13 | `fold_with_history` — depth complexity |
-| 14 | `fold_with_aux` — type check + evaluate |
-| 15 | `fold_pair` — saturating eval |
-| 16 | `prefold` — simplify then eval |
-| 17 | `postunfold` — canonicalize during build |
-| 19 | `rewrite_down` — top-down desugar |
-| 20 | `fold_with_original` — cost model |
-| 21 | `fold_short` — dead code search |
-| 22 | `prefold` — desugar then eval (multi-sorted) |
-| 23 | `fold` — compile to bytecode |
-| 24 | `Zipper` — find binder via sibling |
-| 25 | `ZipperMut` — walk up and patch |
-| 26 | `ZipperCow` — specialize shared subtree |
-
-Each chapter is a standalone `#[test]`, so you can run them individually
-and step through in your editor.
+| Ch | Scheme | Example |
+|----|--------|---------|
+|  1 | `fold` | pretty printer and size |
+|  2 | `rewrite` | constant folding |
+|  3 | `rewrite` | double negation elimination |
+|  4 | `fold_short` | find a variable |
+|  5 | `unfold` | generate an AST |
+|  6 | `unfold_short` | build with node reuse |
+|  8 | `rewrite` | desugar while loops |
+|  9 | `fold` | type inference |
+| 10 | `fold` | interpreter |
+| 11 | `fold` | free variables |
+| 12 | `fold` | precedence-aware pretty printer |
+| 13 | `fold_with_history` | depth complexity |
+| 14 | `fold_with_aux` | type check then evaluate |
+| 15 | `fold_pair` | saturating eval |
+| 16 | `prefold` | simplify then eval |
+| 17 | `postunfold` | canonicalize during build |
+| 19 | `rewrite_down` | top-down desugar |
+| 20 | `fold_with_original` | cost model |
+| 21 | `fold_short` | dead code search |
+| 22 | `prefold` | desugar then eval, multi-sorted |
+| 23 | `fold` | compile to bytecode |
+| 24 | `Zipper` | find a binder via siblings |
+| 25 | `ZipperMut` | walk up and patch |
+| 26 | `ZipperCow` | specialize a shared subtree |
