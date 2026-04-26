@@ -923,6 +923,7 @@ dependencies = [
 name = "semi-persistent-traversals"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "rustc-hash",
  "semi-persistent-traversals-derive",
  "smallvec",
