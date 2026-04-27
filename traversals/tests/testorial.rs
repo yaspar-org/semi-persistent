@@ -56,6 +56,7 @@ mod tests {
     // ====================================================================
 
     rec_family! {
+        #[smart_constructors]
         family Lang => LangStore;
 
         enum Stmt {
@@ -79,70 +80,32 @@ mod tests {
         }
     }
 
-    // Smart constructors
-    fn let_(s: &mut LangStore, n: &str, e: ExprId) -> StmtId {
-        s.push_stmt(StmtNode::Let(n.into(), e))
-    }
-    fn seq(s: &mut LangStore, l: StmtId, r: StmtId) -> StmtId {
-        s.push_stmt(StmtNode::Seq(l, r))
-    }
-    fn print_(s: &mut LangStore, e: ExprId) -> StmtId {
-        s.push_stmt(StmtNode::Print(e))
-    }
-    fn if_(s: &mut LangStore, c: ExprId, t: StmtId, e: StmtId) -> StmtId {
-        s.push_stmt(StmtNode::If(c, t, e))
-    }
-    fn while_(s: &mut LangStore, c: ExprId, b: StmtId) -> StmtId {
-        s.push_stmt(StmtNode::While(c, b))
-    }
-    fn var(s: &mut LangStore, n: &str) -> ExprId {
-        s.push_expr(ExprNode::Var(n.into()))
-    }
-    fn lit(s: &mut LangStore, n: i64) -> ExprId {
-        s.push_expr(ExprNode::Lit(n))
-    }
-    fn bool_(s: &mut LangStore, b: bool) -> ExprId {
-        s.push_expr(ExprNode::Bool(b))
-    }
-    fn add(s: &mut LangStore, l: ExprId, r: ExprId) -> ExprId {
-        s.push_expr(ExprNode::Add(l, r))
-    }
-    fn mul(s: &mut LangStore, l: ExprId, r: ExprId) -> ExprId {
-        s.push_expr(ExprNode::Mul(l, r))
-    }
-    fn neg(s: &mut LangStore, e: ExprId) -> ExprId {
-        s.push_expr(ExprNode::Neg(e))
-    }
-    fn eq_(s: &mut LangStore, l: ExprId, r: ExprId) -> ExprId {
-        s.push_expr(ExprNode::Eq(l, r))
-    }
-
     /// Same sample program:
     /// x = 1 + 2 * 3; y = -(x); if (x == 7) print(y) else print(x)
     fn sample() -> (LangStore, LangStoreRoot) {
         let mut s = LangStore::new();
-        let one = lit(&mut s, 1);
-        let two = lit(&mut s, 2);
-        let three = lit(&mut s, 3);
-        let prod = mul(&mut s, two, three);
-        let sum = add(&mut s, one, prod);
-        let s1 = let_(&mut s, "x", sum);
+        let one = s.lit(1);
+        let two = s.lit(2);
+        let three = s.lit(3);
+        let prod = s.mul(two, three);
+        let sum = s.add(one, prod);
+        let s1 = s.let_("x", sum);
 
-        let x1 = var(&mut s, "x");
-        let ny = neg(&mut s, x1);
-        let s2 = let_(&mut s, "y", ny);
+        let x1 = s.var("x");
+        let ny = s.neg(x1);
+        let s2 = s.let_("y", ny);
 
-        let x2 = var(&mut s, "x");
-        let seven = lit(&mut s, 7);
-        let cond = eq_(&mut s, x2, seven);
-        let y = var(&mut s, "y");
-        let pr_y = print_(&mut s, y);
-        let x3 = var(&mut s, "x");
-        let pr_x = print_(&mut s, x3);
-        let s3 = if_(&mut s, cond, pr_y, pr_x);
+        let x2 = s.var("x");
+        let seven = s.lit(7);
+        let cond = s.eq(x2, seven);
+        let y = s.var("y");
+        let pr_y = s.print(y);
+        let x3 = s.var("x");
+        let pr_x = s.print(x3);
+        let s3 = s.if_(cond, pr_y, pr_x);
 
-        let s23 = seq(&mut s, s2, s3);
-        let prog = seq(&mut s, s1, s23);
+        let s23 = s.seq(s2, s3);
+        let prog = s.seq(s1, s23);
         (s, LangStoreRoot::Stmt(prog))
     }
 
@@ -424,13 +387,13 @@ mod tests {
     #[test]
     fn ch12_precedence_print() {
         let mut s = LangStore::new();
-        let one = lit(&mut s, 1);
-        let two = lit(&mut s, 2);
-        let three = lit(&mut s, 3);
-        let four = lit(&mut s, 4);
-        let sum = add(&mut s, one, two);
-        let sum2 = add(&mut s, three, four);
-        let root = mul(&mut s, sum, sum2);
+        let one = s.lit(1);
+        let two = s.lit(2);
+        let three = s.lit(3);
+        let four = s.lit(4);
+        let sum = s.add(one, two);
+        let sum2 = s.add(three, four);
+        let root = s.mul(sum, sum2);
 
         let result = s.fold(
             LangStoreRoot::Expr(root),
@@ -525,11 +488,11 @@ mod tests {
     #[test]
     fn ch03_double_negation() {
         let mut s = LangStore::new();
-        let five = lit(&mut s, 5);
-        let n1 = neg(&mut s, five);
-        let n2 = neg(&mut s, n1);
-        let n3 = neg(&mut s, n2);
-        let root = print_(&mut s, n3);
+        let five = s.lit(5);
+        let n1 = s.neg(five);
+        let n2 = s.neg(n1);
+        let n3 = s.neg(n2);
+        let root = s.print(n3);
 
         let (s2, r2) = s.rewrite(
             LangStoreRoot::Stmt(root),
@@ -552,12 +515,12 @@ mod tests {
     #[test]
     fn ch08_desugar_while() {
         let mut s = LangStore::new();
-        let x = var(&mut s, "x");
-        let zero = lit(&mut s, 0);
-        let cond = eq_(&mut s, x, zero);
-        let x2 = var(&mut s, "x");
-        let body = print_(&mut s, x2);
-        let root = while_(&mut s, cond, body);
+        let x = s.var("x");
+        let zero = s.lit(0);
+        let cond = s.eq(x, zero);
+        let x2 = s.var("x");
+        let body = s.print(x2);
+        let root = s.while_(cond, body);
 
         assert_eq!(
             show(&s, LangStoreRoot::Stmt(root)),
@@ -617,7 +580,7 @@ mod tests {
     #[test]
     fn ch06_build_with_reuse() {
         let mut s = LangStore::new();
-        let shared = lit(&mut s, 42);
+        let shared = s.lit(42);
         let root = s.unfold_short(LangStoreSeed::Expr(2u32), |seed| match seed {
             LangStoreSeed::Expr(0) => LangStoreApoLayer::Expr(
                 ExprNode::Neg(ExprId(0)),
@@ -699,11 +662,11 @@ mod tests {
     #[test]
     fn ch14_zygo_typecheck_eval() {
         let mut s = LangStore::new();
-        let one = lit(&mut s, 1);
-        let two = lit(&mut s, 2);
-        let three = lit(&mut s, 3);
-        let prod = mul(&mut s, two, three);
-        let root = add(&mut s, one, prod);
+        let one = s.lit(1);
+        let two = s.lit(2);
+        let three = s.lit(3);
+        let prod = s.mul(two, three);
+        let root = s.add(one, prod);
 
         let result = s.fold_with_aux(
             LangStoreRoot::Expr(root),
@@ -752,9 +715,9 @@ mod tests {
     #[test]
     fn ch15_mutu_saturating() {
         let mut s = LangStore::new();
-        let h = lit(&mut s, 100);
-        let h2 = lit(&mut s, 100);
-        let root = add(&mut s, h, h2);
+        let h = s.lit(100);
+        let h2 = s.lit(100);
+        let root = s.add(h, h2);
 
         let result = s.fold_pair(
             LangStoreRoot::Expr(root),
@@ -797,9 +760,9 @@ mod tests {
     #[test]
     fn ch16_prepro_normalize() {
         let mut s = LangStore::new();
-        let two = lit(&mut s, 2);
-        let three = lit(&mut s, 3);
-        let root = mul(&mut s, two, three);
+        let two = s.lit(2);
+        let three = s.lit(3);
+        let root = s.mul(two, three);
 
         let result = s.prefold(
             LangStoreRoot::Expr(root),
@@ -827,10 +790,10 @@ mod tests {
     #[test]
     fn ch22_prefold_multi() {
         let mut s = LangStore::new();
-        let two = lit(&mut s, 2);
-        let three = lit(&mut s, 3);
-        let prod = mul(&mut s, two, three);
-        let root = print_(&mut s, prod);
+        let two = s.lit(2);
+        let three = s.lit(3);
+        let prod = s.mul(two, three);
+        let root = s.print(prod);
 
         let result = s.prefold(
             LangStoreRoot::Stmt(root),
@@ -897,9 +860,9 @@ mod tests {
     #[test]
     fn ch19_transform_down() {
         let mut s = LangStore::new();
-        let five = lit(&mut s, 5);
-        let n1 = neg(&mut s, five);
-        let root = neg(&mut s, n1);
+        let five = s.lit(5);
+        let n1 = s.neg(five);
+        let root = s.neg(n1);
 
         let (s2, r2) = s.rewrite_down(
             LangStoreRoot::Expr(root),
@@ -964,12 +927,12 @@ mod tests {
     #[test]
     fn ch25_zipper_mut_walk_up_and_patch() {
         let mut s = LangStore::new();
-        let n10 = lit(&mut s, 10);
-        let n20 = lit(&mut s, 20);
-        let n30 = lit(&mut s, 30);
-        let ng = neg(&mut s, n30);
-        let m = mul(&mut s, n20, ng);
-        let root = add(&mut s, n10, m);
+        let n10 = s.lit(10);
+        let n20 = s.lit(20);
+        let n30 = s.lit(30);
+        let ng = s.neg(n30);
+        let m = s.mul(n20, ng);
+        let root = s.add(n10, m);
 
         {
             let mut z = LangStoreZipperMut::new(&mut s, LangStoreRoot::Expr(root));
@@ -1005,11 +968,11 @@ mod tests {
     #[test]
     fn ch26_zipper_cow_specialize_shared_subtree() {
         let mut s = LangStore::new();
-        let one = lit(&mut s, 1);
-        let two = lit(&mut s, 2);
-        let shared_add = add(&mut s, one, two);
-        let tree1_root = print_(&mut s, shared_add);
-        let tree2_root = neg(&mut s, shared_add);
+        let one = s.lit(1);
+        let two = s.lit(2);
+        let shared_add = s.add(one, two);
+        let tree1_root = s.print(shared_add);
+        let tree2_root = s.neg(shared_add);
 
         assert_eq!(show(&s, LangStoreRoot::Stmt(tree1_root)), "print((1 + 2))");
         assert_eq!(show(&s, LangStoreRoot::Expr(tree2_root)), "(-(1 + 2))");
@@ -1307,12 +1270,12 @@ mod tests {
     #[test]
     fn ch21_dead_code_search() {
         let mut s = LangStore::new();
-        let f = bool_(&mut s, false);
-        let x = var(&mut s, "x");
-        let dead = print_(&mut s, x);
-        let y = var(&mut s, "y");
-        let live = print_(&mut s, y);
-        let root = if_(&mut s, f, dead, live);
+        let f = s.bool(false);
+        let x = s.var("x");
+        let dead = s.print(x);
+        let y = s.var("y");
+        let live = s.print(y);
+        let root = s.if_(f, dead, live);
 
         let result = s.fold_short(
             LangStoreRoot::Stmt(root),
