@@ -902,6 +902,16 @@ assert_eq!(a, b);
 assert_eq!(s.len_expr(), 1);
 ```
 
+Dedup mode is tracked in the type. `LangStore::new()` returns
+`LangStore<false>` and `LangStore::new_dedup()` returns `LangStore<true>`.
+Methods that perform in-place mutation, `set_stmt`, `set_expr`, and
+`LangStoreZipperMut::new`, are only defined on `LangStore<false>`, so
+calling them on a deduplicating store is a compile error rather than a
+silent corruption of the dedup map. The `const DEDUP: bool` parameter is
+elided by monomorphization: at runtime the `if DEDUP` branches in
+`push_*` and `restore` become unconditional code or dead code depending
+on which store you built.
+
 Dedup operates per sort: pushing an `Expr` does not consult the `Stmt`
 table. It also interacts correctly with `mark` and `restore`; on
 restore, dedup entries pointing at truncated nodes are pruned, so a
@@ -959,9 +969,10 @@ match z.focus() {
 
 `LangStoreZipperMut` allows in-place mutation. `set_focus_expr(node)`
 overwrites the current node; every reference to that ID elsewhere in
-the store sees the change. Only usable on stores built without dedup,
-since mutating a hash-consed node would desynchronize the dedup table
-from the arena.
+the store sees the change. The constructor takes `&mut LangStore<false>`,
+so passing a deduplicating store is a compile error. Mutation on a
+dedup'd store would leave the hashmap pointing at a stale node, and
+the type restriction prevents that at compile time.
 
 ```rust
 let mut z = LangStoreZipperMut::new(&mut s, root);
@@ -979,6 +990,10 @@ full store.
 let z = LangStoreZipperCow::new(&s, root);
 let (new_store, new_root) = z.set_focus_expr(ExprNode::Lit(3));
 ```
+
+The new store inherits the dedup mode of the source: calling
+`set_focus_*` on a `ZipperCow` wrapping a `LangStore<true>` produces a
+`LangStore<true>` with the rebuilt spine re-interned.
 
 ## 18. The full chapter list
 

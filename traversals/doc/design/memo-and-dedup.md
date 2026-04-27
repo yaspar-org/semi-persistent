@@ -75,6 +75,17 @@ is structurally identical to an earlier one. A deduplicating store
 structure; pushing a node that is already present returns the existing
 ID instead of appending a duplicate.
 
+The two constructors return different types. `new()` gives back a
+`LangStore<false>` and `new_dedup()` gives back a `LangStore<true>`,
+where the boolean is a `const DEDUP: bool` parameter on the store. The
+generic impls fold `if DEDUP` branches into monomorphized code, so a
+`<false>` store has the same runtime shape as before the refactor and a
+`<true>` store pays the hashmap lookups unconditionally. The type
+distinction also gates in-place mutation: `set_*` methods and
+`ZipperMut::new` only exist on `LangStore<false>`, making mutation on a
+deduplicating store a compile error rather than a silent dedup-map
+corruption.
+
 Dedup costs roughly 2 to 3× more per push than plain construction,
 because each push now computes a hash and probes the hashmap. The cost
 is consistent across sizes:

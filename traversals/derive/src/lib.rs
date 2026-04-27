@@ -608,7 +608,8 @@ fn gen_container(
         })
         .collect();
 
-    // push_* methods — dedup if index present
+    // push_* methods — when DEDUP is true at the type level, hash-cons.
+    // The `if DEDUP` const branches are eliminated at monomorphization.
     let push_methods: Vec<TokenStream2> = sorts
         .iter()
         .enumerate()
@@ -620,14 +621,16 @@ fn gen_container(
             let dedup = format_ident!("{}_dedup", sort_lowers[i]);
             quote! {
                 #vis fn #method(&mut self, node: #node) -> #id {
-                    if let Some(ref idx_map) = self.#dedup {
+                    if DEDUP {
+                        let idx_map = self.#dedup.as_ref().expect("DEDUP=true requires initialized dedup map");
                         if let Some(&existing) = idx_map.get(&node) {
                             return #id(existing);
                         }
                     }
                     let idx = self.#field.len();
                     self.#field.push(node.clone());
-                    if let Some(ref mut idx_map) = self.#dedup {
+                    if DEDUP {
+                        let idx_map = self.#dedup.as_mut().expect("DEDUP=true requires initialized dedup map");
                         idx_map.insert(node, idx);
                     }
                     #id(idx)
@@ -741,24 +744,25 @@ fn gen_container(
             })
         })
         .collect();
-    let dedup_defaults_none: Vec<TokenStream2> = sorts
+    // Dedup field initializer: `None` when DEDUP=false, `Some(FxHashMap::default())` when
+    // DEDUP=true. The `if DEDUP` is const-evaluated at monomorphization.
+    let dedup_defaults_conditional: Vec<TokenStream2> = sorts
         .iter()
         .enumerate()
         .map(|(i, _)| {
             let field = format_ident!("{}_dedup", sort_lowers[i]);
-            quote! { #field: None }
-        })
-        .collect();
-    let dedup_defaults_some: Vec<TokenStream2> = sorts
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let field = format_ident!("{}_dedup", sort_lowers[i]);
-            quote! { #field: Some(::semi_persistent_traversals::FxHashMap::default()) }
+            quote! {
+                #field: if DEDUP {
+                    Some(::semi_persistent_traversals::FxHashMap::default())
+                } else {
+                    None
+                }
+            }
         })
         .collect();
 
     // On restore, drop nodes beyond the mark AND invalidate dedup entries pointing past the mark.
+    // Gated on DEDUP at the type level; when DEDUP=false these branches are const-eliminated.
     let restore_dedup_prune: Vec<TokenStream2> = sorts
         .iter()
         .enumerate()
@@ -766,7 +770,8 @@ fn gen_container(
             let field = format_ident!("{}_dedup", sort_lowers[i]);
             let len_field = format_ident!("{}_len", sort_lowers[i]);
             quote! {
-                if let Some(ref mut idx_map) = self.#field {
+                if DEDUP {
+                    let idx_map = self.#field.as_mut().expect("DEDUP=true requires initialized dedup map");
                     idx_map.retain(|_, v| *v < mark.#len_field);
                 }
             }
@@ -781,21 +786,21 @@ fn gen_container(
         }
 
         #[derive(Clone)]
-        #vis struct #store {
+        #vis struct #store<const DEDUP: bool = false> {
             #(#arena_fields,)*
             #(#pool_fields,)*
             #(#dedup_fields,)*
         }
 
-        impl #store {
-            #vis fn new() -> Self {
-                Self { #(#arena_defaults,)* #(#pool_defaults,)* #(#dedup_defaults_none,)* }
-            }
-
-            /// Build a deduplicating store. `push_*` returns an existing id if a structurally
-            /// identical node has already been pushed (hash-consing).
-            #vis fn new_dedup() -> Self {
-                Self { #(#arena_defaults,)* #(#pool_defaults,)* #(#dedup_defaults_some,)* }
+        impl<const DEDUP: bool> #store<DEDUP> {
+            /// Private constructor shared by `new()` and `new_dedup()`.
+            /// Initializes the dedup fields based on the DEDUP const parameter.
+            fn __new_inner() -> Self {
+                Self {
+                    #(#arena_defaults,)*
+                    #(#pool_defaults,)*
+                    #(#dedup_defaults_conditional,)*
+                }
             }
 
             #(#push_methods)*
@@ -811,6 +816,24 @@ fn gen_container(
                 #(#restore_arenas)*
                 #(#restore_pools)*
                 #(#restore_dedup_prune)*
+            }
+        }
+
+        impl #store<false> {
+            #vis fn new() -> Self {
+                Self::__new_inner()
+            }
+        }
+
+        impl #store<true> {
+            /// Build a deduplicating store. `push_*` returns an existing id if a structurally
+            /// identical node has already been pushed (hash-consing).
+            ///
+            /// The returned type is `#store<true>`. Methods that perform in-place mutation
+            /// (e.g. `set_<sort>`, `ZipperMut::new`) are only defined on `#store<false>`,
+            /// so mutating a dedup'd store is a compile error.
+            #vis fn new_dedup() -> Self {
+                Self::__new_inner()
             }
         }
     }
@@ -1016,7 +1039,7 @@ fn gen_fold(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -1039,7 +1062,7 @@ fn gen_fold(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -1220,7 +1243,7 @@ fn gen_fold_all(
         #(#cache_index_impls)*
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_all<#(#aps: Clone),*>(
                 &self,
                 #(#alg_params),*
@@ -1242,7 +1265,7 @@ fn gen_fold_all(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_all<#(#aps: Clone),*>(
                 &self,
                 #(#alg_params),*
@@ -1399,7 +1422,7 @@ fn gen_para(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_with_ids<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -1422,7 +1445,7 @@ fn gen_para(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_with_ids<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -1574,14 +1597,14 @@ fn gen_transform(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn transform(
                 &self,
                 __root: #root_name,
                 #(#rule_params),*
-            ) -> (#store, #root_name) {
+            ) -> (#store<DEDUP>, #root_name) {
                 enum __Task { #(#task_variants),* }
-                let mut __new = #store::new();
+                let mut __new = <#store<DEDUP>>::__new_inner();
                 #(#mapping_decls)*
                 #(#visited_decls)*
                 #(#child_buf_decls)*
@@ -1599,12 +1622,12 @@ fn gen_transform(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn transform(
                 &self,
                 __root: #root_name,
                 #(#rule_params),*
-            ) -> (#store, #root_name) {
+            ) -> (#store<DEDUP>, #root_name) {
                 self.with_strategy::<::semi_persistent_traversals::Dense>().transform(__root, #(#rule_args),*)
             }
         }
@@ -1774,7 +1797,7 @@ fn gen_histo(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_with_history<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -1797,7 +1820,7 @@ fn gen_histo(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_with_history<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -1979,7 +2002,7 @@ fn gen_zygo(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_with_aux<#(#aps: Clone,)* #(#bps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -2003,7 +2026,7 @@ fn gen_zygo(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_with_aux<#(#aps: Clone,)* #(#bps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -2157,7 +2180,7 @@ fn gen_fold_short(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_short<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -2180,7 +2203,7 @@ fn gen_fold_short(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_short<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -2332,7 +2355,7 @@ fn gen_fold_with_original(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_with_original<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -2355,7 +2378,7 @@ fn gen_fold_with_original(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_with_original<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -2465,7 +2488,7 @@ fn gen_unfold(
         #vis enum #layer_name<S> { #(#layer_variants),* }
 
         #[allow(non_snake_case, clippy::too_many_arguments, unreachable_patterns)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn unfold<S>(
                 &mut self,
                 seed: #seed_name<S>,
@@ -2526,7 +2549,7 @@ fn gen_rewrite(
             let p = format_ident!("__rule{}", i);
             let node = format_ident!("{}Node", sort_names[i]);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { #p: impl Fn(#node, &mut #store) -> #id }
+            quote! { #p: impl Fn(#node, &mut #store<DEDUP>) -> #id }
         })
         .collect();
     let rule_args: Vec<syn::Ident> = (0..n).map(|i| format_ident!("__rule{}", i)).collect();
@@ -2646,14 +2669,14 @@ fn gen_rewrite(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn rewrite(
                 &self,
                 __root: #root_name,
                 #(#rule_params),*
-            ) -> (#store, #root_name) {
+            ) -> (#store<DEDUP>, #root_name) {
                 enum __Task { #(#task_variants),* }
-                let mut __new = #store::new();
+                let mut __new = <#store<DEDUP>>::__new_inner();
                 #(#mapping_decls)*
                 #(#visited_decls)*
                 #(#child_buf_decls)*
@@ -2671,12 +2694,12 @@ fn gen_rewrite(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn rewrite(
                 &self,
                 __root: #root_name,
                 #(#rule_params),*
-            ) -> (#store, #root_name) {
+            ) -> (#store<DEDUP>, #root_name) {
                 self.with_strategy::<::semi_persistent_traversals::Dense>().rewrite(__root, #(#rule_args),*)
             }
         }
@@ -2793,7 +2816,7 @@ fn gen_unfold_short(
         #vis enum #layer_name<S> { #(#layer_variants),* }
 
         #[allow(non_snake_case, clippy::too_many_arguments, unreachable_patterns)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn unfold_short<S>(
                 &mut self,
                 seed: #seed_name<S>,
@@ -3015,7 +3038,7 @@ fn gen_fold_pair(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn fold_pair<#(#a_params_a),*, #(#b_params_b),*>(
                 &self,
                 __root: #root_name,
@@ -3038,7 +3061,7 @@ fn gen_fold_pair(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn fold_pair<#(#a_params_a),*, #(#b_params_b),*>(
                 &self,
                 __root: #root_name,
@@ -3093,14 +3116,14 @@ fn gen_prefold(
         .map(|i| {
             let push_method = format_ident!("push_{}", sort_lowers[i]);
             let p = &pre_args[i];
-            quote! { |__node, __new: &mut #store| __new.#push_method(#p(__node)) }
+            quote! { |__node, __new: &mut #store<DEDUP>| __new.#push_method(#p(__node)) }
         })
         .collect();
 
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn prefold<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -3113,7 +3136,7 @@ fn gen_prefold(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn prefold<#(#aps: Clone),*>(
                 &self,
                 __root: #root_name,
@@ -3214,7 +3237,7 @@ fn gen_postunfold(
 
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments, unreachable_patterns)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn postunfold<S>(
                 &mut self,
                 seed: #seed_name<S>,
@@ -3413,14 +3436,14 @@ fn gen_rewrite_down(
     let view_name = format_ident!("{}View", store);
     quote! {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl<'a, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, M> {
+        impl<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> #view_name<'a, DEDUP, M> {
             #vis fn rewrite_down(
                 &self,
                 __root: #root_name,
                 #(#rule_params),*
-            ) -> (#store, #root_name) {
+            ) -> (#store<DEDUP>, #root_name) {
                 enum __Task { #(#task_variants),* }
-                let mut __new = #store::new();
+                let mut __new = <#store<DEDUP>>::__new_inner();
                 #(#rewritten_decls)*
                 #(#map_decls)*
                 #(#visited_decls)*
@@ -3439,12 +3462,12 @@ fn gen_rewrite_down(
         }
 
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #vis fn rewrite_down(
                 &self,
                 __root: #root_name,
                 #(#rule_params),*
-            ) -> (#store, #root_name) {
+            ) -> (#store<DEDUP>, #root_name) {
                 self.with_strategy::<::semi_persistent_traversals::Dense>().rewrite_down(__root, #(#rule_args),*)
             }
         }
@@ -3685,17 +3708,17 @@ fn gen_zipper(
 
         let fn_name_with_strategy = format_ident!("set_focus_{}_with_strategy", sort_lowers[fi]);
         quote! {
-            #vis fn #fn_name(self, node: #node_name) -> (#store, #root_name) {
+            #vis fn #fn_name(self, node: #node_name) -> (#store<DEDUP>, #root_name) {
                 self.#fn_name_with_strategy::<::semi_persistent_traversals::Dense>(node)
             }
-            #vis fn #fn_name_with_strategy<M: ::semi_persistent_traversals::MemoStrategy>(self, node: #node_name) -> (#store, #root_name) {
+            #vis fn #fn_name_with_strategy<M: ::semi_persistent_traversals::MemoStrategy>(self, node: #node_name) -> (#store<DEDUP>, #root_name) {
                 let __new_node: #node_name = node;
                 let __focus_id = match self.focus {
                     #root_name::#sn(__id) => __id,
                     _ => panic!("set_focus sort does not match focus sort"),
                 };
                 let __root: #root_name = if self.crumbs.is_empty() { self.focus } else { self.crumbs[0].0 };
-                let mut __new = #store::new();
+                let mut __new = <#store<DEDUP>>::__new_inner();
                 enum __Task { #(#task_variants),* }
                 #(#map_decls)*
                 #(#visited_decls)*
@@ -3733,18 +3756,21 @@ fn gen_zipper(
         #(#children_root_impls)*
         #(#remap_node_impls)*
 
-        impl #store {
+        // set_<sort> methods are only defined on non-dedup stores. Calling them on a
+        // dedup'd store would desynchronize the dedup map from the arena; making them
+        // unavailable at the type level prevents that at compile time.
+        impl #store<false> {
             #(#set_store_methods)*
         }
 
-        #vis struct #zipper_name<'a> {
-            store: &'a #store,
+        #vis struct #zipper_name<'a, const DEDUP: bool = false> {
+            store: &'a #store<DEDUP>,
             focus: #root_name,
             crumbs: Vec<(#root_name, usize)>,
         }
 
-        impl<'a> #zipper_name<'a> {
-            #vis fn new(store: &'a #store, root: #root_name) -> Self {
+        impl<'a, const DEDUP: bool> #zipper_name<'a, DEDUP> {
+            #vis fn new(store: &'a #store<DEDUP>, root: #root_name) -> Self {
                 Self { store, focus: root, crumbs: Vec::new() }
             }
             #vis fn focus(&self) -> #root_name { self.focus }
@@ -3781,26 +3807,29 @@ fn gen_zipper(
             }
         }
 
+        // ZipperMut is pinned to non-dedup stores: its set_focus_<sort> methods call
+        // set_<sort> on the store, which is only defined for #store<false>. Pinning
+        // the lifetime to #store<false> enforces the restriction at compile time.
         #vis struct #zipper_mut_name<'a> {
-            store: &'a mut #store,
+            store: &'a mut #store<false>,
             focus: #root_name,
             crumbs: Vec<(#root_name, usize)>,
         }
 
         impl<'a> #zipper_mut_name<'a> {
-            #vis fn new(store: &'a mut #store, root: #root_name) -> Self {
+            #vis fn new(store: &'a mut #store<false>, root: #root_name) -> Self {
                 Self { store, focus: root, crumbs: Vec::new() }
             }
             #vis fn focus(&self) -> #root_name { self.focus }
             #vis fn focus_id(&self) -> #root_name { self.focus }
             #vis fn depth(&self) -> usize { self.crumbs.len() }
             #vis fn child_count(&self) -> usize {
-                let __store: &#store = self.store;
+                let __store: &#store<false> = self.store;
                 let __kids = match self.focus { #(#dispatch_children),* };
                 __kids.len()
             }
             #vis fn down(&mut self, child_index: usize) -> bool {
-                let __store: &#store = self.store;
+                let __store: &#store<false> = self.store;
                 let __kids = match self.focus { #(#dispatch_children),* };
                 if child_index >= __kids.len() { return false; }
                 self.crumbs.push((self.focus, child_index));
@@ -3816,20 +3845,20 @@ fn gen_zipper(
             #(#set_focus_methods)*
         }
 
-        #vis struct #zipper_cow_name<'a> {
-            src: &'a #store,
+        #vis struct #zipper_cow_name<'a, const DEDUP: bool = false> {
+            src: &'a #store<DEDUP>,
             focus: #root_name,
             crumbs: Vec<(#root_name, usize)>,
         }
 
-        impl<'a> #zipper_cow_name<'a> {
-            #vis fn new(src: &'a #store, root: #root_name) -> Self {
+        impl<'a, const DEDUP: bool> #zipper_cow_name<'a, DEDUP> {
+            #vis fn new(src: &'a #store<DEDUP>, root: #root_name) -> Self {
                 Self { src, focus: root, crumbs: Vec::new() }
             }
             #vis fn focus(&self) -> #root_name { self.focus }
             #vis fn depth(&self) -> usize { self.crumbs.len() }
             #vis fn down(&mut self, child_index: usize) -> bool {
-                let __store: &#store = self.src;
+                let __store: &#store<DEDUP> = self.src;
                 let __kids = match self.focus { #(#dispatch_children),* };
                 if child_index >= __kids.len() { return false; }
                 self.crumbs.push((self.focus, child_index));
@@ -3850,32 +3879,75 @@ fn gen_zipper(
 fn gen_view(vis: &syn::Visibility, store: &syn::Ident) -> TokenStream2 {
     let view_name = format_ident!("{}View", store);
     quote! {
-        #vis struct #view_name<'a, M: ::semi_persistent_traversals::MemoStrategy> {
-            store: &'a #store,
+        #vis struct #view_name<'a, const DEDUP: bool, M: ::semi_persistent_traversals::MemoStrategy> {
+            store: &'a #store<DEDUP>,
             _m: ::core::marker::PhantomData<M>,
         }
 
-        impl #store {
-            #vis fn with_strategy<M: ::semi_persistent_traversals::MemoStrategy>(&self) -> #view_name<'_, M> {
+        impl<const DEDUP: bool> #store<DEDUP> {
+            #vis fn with_strategy<M: ::semi_persistent_traversals::MemoStrategy>(&self) -> #view_name<'_, DEDUP, M> {
                 #view_name { store: self, _m: ::core::marker::PhantomData }
             }
         }
     }
 }
 
-
 /// Reserved Rust keywords (2018+ edition). Any variant whose snake_case
 /// equals one of these is renamed with a trailing underscore.
 fn is_rust_keyword(s: &str) -> bool {
     matches!(
         s,
-        "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern"
-            | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "match"
-            | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
-            | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe"
-            | "use" | "where" | "while" | "async" | "await" | "dyn" | "abstract"
-            | "become" | "box" | "do" | "final" | "macro" | "override" | "priv"
-            | "typeof" | "unsized" | "virtual" | "yield" | "try" | "union"
+        "as" | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "async"
+            | "await"
+            | "dyn"
+            | "abstract"
+            | "become"
+            | "box"
+            | "do"
+            | "final"
+            | "macro"
+            | "override"
+            | "priv"
+            | "typeof"
+            | "unsized"
+            | "virtual"
+            | "yield"
+            | "try"
+            | "union"
     )
 }
 
@@ -3938,11 +4010,7 @@ fn gen_smart_constructors(
                     // Cross-sort collision.
                     let msg = format!(
                         "smart_constructors: variant `{}` in sort `{}` collides with variant `{}` in sort `{}` (both would generate `{}`). Rename one, or remove #[smart_constructors] and write helpers by hand.",
-                        v.name,
-                        sort_names[si],
-                        prev_variant,
-                        sort_names[*prev_si],
-                        method,
+                        v.name, sort_names[si], prev_variant, sort_names[*prev_si], method,
                     );
                     collision_errors.push(quote! {
                         ::core::compile_error!(#msg);
@@ -3957,67 +4025,73 @@ fn gen_smart_constructors(
         return quote! { #(#collision_errors)* };
     }
 
-    let methods: Vec<TokenStream2> = sorts.iter().enumerate().flat_map(|(si, sort)| {
-        let sort_name = sort_names[si];
-        let id_name = format_ident!("{}Id", sort_name);
-        let node_name = format_ident!("{}Node", sort_name);
-        let push_method = format_ident!("push_{}", sort_lowers[si]);
-        sort.variants.iter().map(|v| {
-            let variant = &v.name;
-            let method = constructor_method_name(variant);
-            // Build parameter list and body piece by piece.
-            let mut params: Vec<TokenStream2> = Vec::new();
-            let mut forward_exprs: Vec<TokenStream2> = Vec::new();
-            // Extra "alloc" prelude statements, for Variadic fields.
-            let mut prelude: Vec<TokenStream2> = Vec::new();
-            for (i, f) in v.fields.iter().enumerate() {
-                let pname = format_ident!("__p{}", i);
-                match f {
-                    FieldKind::Child(j) => {
-                        let child_id = format_ident!("{}Id", sort_names[*j]);
-                        params.push(quote! { #pname: #child_id });
-                        forward_exprs.push(quote! { #pname });
-                    }
-                    FieldKind::VariadicChild(j) => {
-                        let child_id = format_ident!("{}Id", sort_names[*j]);
-                        let alloc_method = format_ident!(
-                            "alloc_{}_{}",
-                            sort_lowers[si],
-                            sort_lowers[*j]
-                        );
-                        let tmp = format_ident!("__v{}", i);
-                        params.push(quote! { #pname: &[#child_id] });
-                        prelude.push(quote! { let #tmp = self.#alloc_method(#pname); });
-                        forward_exprs.push(quote! { #tmp });
-                    }
-                    FieldKind::Data(ty) => {
-                        if is_bare_string(ty) {
-                            params.push(quote! { #pname: impl ::core::convert::Into<String> });
-                            forward_exprs.push(quote! { #pname.into() });
-                        } else {
-                            params.push(quote! { #pname: #ty });
-                            forward_exprs.push(quote! { #pname });
+    let methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .flat_map(|(si, sort)| {
+            let sort_name = sort_names[si];
+            let id_name = format_ident!("{}Id", sort_name);
+            let node_name = format_ident!("{}Node", sort_name);
+            let push_method = format_ident!("push_{}", sort_lowers[si]);
+            sort.variants
+                .iter()
+                .map(|v| {
+                    let variant = &v.name;
+                    let method = constructor_method_name(variant);
+                    // Build parameter list and body piece by piece.
+                    let mut params: Vec<TokenStream2> = Vec::new();
+                    let mut forward_exprs: Vec<TokenStream2> = Vec::new();
+                    // Extra "alloc" prelude statements, for Variadic fields.
+                    let mut prelude: Vec<TokenStream2> = Vec::new();
+                    for (i, f) in v.fields.iter().enumerate() {
+                        let pname = format_ident!("__p{}", i);
+                        match f {
+                            FieldKind::Child(j) => {
+                                let child_id = format_ident!("{}Id", sort_names[*j]);
+                                params.push(quote! { #pname: #child_id });
+                                forward_exprs.push(quote! { #pname });
+                            }
+                            FieldKind::VariadicChild(j) => {
+                                let child_id = format_ident!("{}Id", sort_names[*j]);
+                                let alloc_method =
+                                    format_ident!("alloc_{}_{}", sort_lowers[si], sort_lowers[*j]);
+                                let tmp = format_ident!("__v{}", i);
+                                params.push(quote! { #pname: &[#child_id] });
+                                prelude.push(quote! { let #tmp = self.#alloc_method(#pname); });
+                                forward_exprs.push(quote! { #tmp });
+                            }
+                            FieldKind::Data(ty) => {
+                                if is_bare_string(ty) {
+                                    params.push(
+                                        quote! { #pname: impl ::core::convert::Into<String> },
+                                    );
+                                    forward_exprs.push(quote! { #pname.into() });
+                                } else {
+                                    params.push(quote! { #pname: #ty });
+                                    forward_exprs.push(quote! { #pname });
+                                }
+                            }
                         }
                     }
-                }
-            }
-            let build_call = if v.fields.is_empty() {
-                quote! { #node_name::#variant }
-            } else {
-                quote! { #node_name::#variant(#(#forward_exprs),*) }
-            };
-            quote! {
-                #[inline]
-                #vis fn #method(&mut self, #(#params),*) -> #id_name {
-                    #(#prelude)*
-                    self.#push_method(#build_call)
-                }
-            }
-        }).collect::<Vec<_>>()
-    }).collect();
+                    let build_call = if v.fields.is_empty() {
+                        quote! { #node_name::#variant }
+                    } else {
+                        quote! { #node_name::#variant(#(#forward_exprs),*) }
+                    };
+                    quote! {
+                        #[inline]
+                        #vis fn #method(&mut self, #(#params),*) -> #id_name {
+                            #(#prelude)*
+                            self.#push_method(#build_call)
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
     quote! {
-        impl #store {
+        impl<const DEDUP: bool> #store<DEDUP> {
             #(#methods)*
         }
     }
