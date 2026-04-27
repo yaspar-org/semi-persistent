@@ -341,3 +341,78 @@ fn partition_variadic_pool() {
     assert_eq!(s.len_vstmt(), 1);
     assert_eq!(s.len_vexpr(), 2);
 }
+
+// ---------------------------------------------------------------------------
+// Smart constructors (opt-in #[smart_constructors])
+// ---------------------------------------------------------------------------
+
+// A family using keyword-collision variants (If, While, Let) and String fields,
+// to exercise keyword escape and impl Into<String> generalization.
+rec_family! {
+    #[smart_constructors]
+    family Sc => ScStore;
+    enum ScStmt {
+        Let(String, ScExpr),
+        Seq(ScStmt, ScStmt),
+        Print(ScExpr),
+        If(ScExpr, ScStmt, ScStmt),
+        While(ScExpr, ScStmt),
+        Noop,
+    }
+    enum ScExpr {
+        Var(String),
+        Lit(i64),
+        Add(ScExpr, ScExpr),
+    }
+}
+
+#[test]
+fn smart_constructors_basic_and_typed() {
+    let mut s = ScStore::new();
+    // Typed IDs returned; no explicit ScExprNode::... constructors required.
+    let one: ScExprId = s.lit(1);
+    let two: ScExprId = s.lit(2);
+    let sum: ScExprId = s.add(one, two);
+
+    // String field accepts &str via impl Into<String>.
+    let bind: ScStmtId = s.let_("x", sum);
+    let x_ref = s.var("x");
+    let pr: ScStmtId = s.print(x_ref);
+
+    // Keyword escape: `if`, `while`, `let` -> `if_`, `while_`, `let_`; `noop` stays.
+    let noop: ScStmtId = s.noop();
+    let body: ScStmtId = s.seq(pr, noop);
+    let x_ref2 = s.var("x");
+    let _loop: ScStmtId = s.while_(x_ref2, body);
+    let cond = s.lit(1);
+    let _ite: ScStmtId = s.if_(cond, bind, noop);
+
+    // All nodes were actually pushed (no dedup).
+    assert!(s.len_scexpr() >= 5);
+    assert!(s.len_scstmt() >= 5);
+}
+
+// A family with Variadic to confirm smart constructors accept &[SortId] and
+// internally call alloc_*.
+rec_family! {
+    #[smart_constructors]
+    family ScV => ScVStore;
+    enum Prog {
+        Module(Variadic<Decl>),
+    }
+    enum Decl {
+        Fn(String, Variadic<Decl>),
+        Global(String),
+    }
+}
+
+#[test]
+fn smart_constructors_variadic_and_string_coercion() {
+    let mut s = ScVStore::new();
+    let g1 = s.global("a"); // &str works via impl Into<String>
+    let g2 = s.global(String::from("b")); // String also works
+    let f = s.fn_("main", &[g1, g2]); // &[DeclId] accepted; alloc_* called internally
+    let _m = s.module(&[f]);
+    assert_eq!(s.len_decl(), 3);
+    assert_eq!(s.len_prog(), 1);
+}
