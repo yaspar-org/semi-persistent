@@ -248,6 +248,96 @@ fn sample() -> (LangStore, LangStoreRoot) {
 `Expr(ExprId)`. Schemes that accept a root take this enum so they can
 start from either sort.
 
+### Smart constructors (optional)
+
+The calls above are wordy. Every construction mentions the store, the
+node enum, and the variant name, even though the enum and variant are
+already clear from the arguments. Adding the `#[smart_constructors]`
+attribute at the top of the `rec_family!` invocation asks the macro to
+generate one constructor method per variant:
+
+```rust
+rec_family! {
+    #[smart_constructors]
+    family Lang => LangStore;
+    // ... same enums as before ...
+}
+```
+
+With that attribute, the store gains methods like `s.lit(1)`,
+`s.add(l, r)`, `s.let_("x", sum)`, and so on. The method name is the
+variant name lowercased, with a trailing underscore when the result
+would collide with a Rust keyword (`let_`, `if_`, `while_`). The
+sample builder becomes:
+
+```rust
+fn sample() -> (LangStore, LangStoreRoot) {
+    let mut s = LangStore::new();
+    let one   = s.lit(1);
+    let two   = s.lit(2);
+    let three = s.lit(3);
+    let prod  = s.mul(two, three);
+    let sum   = s.add(one, prod);
+    let bind  = s.let_("x", sum);
+    (s, LangStoreRoot::Stmt(bind))
+}
+```
+
+The generated constructors apply two small ergonomic improvements.
+Fields declared `String` become `impl Into<String>` in the method
+signature, so `s.let_("x", sum)` accepts a `&str` directly without
+a `.to_string()` call. Fields declared `Variadic<Sort>` become
+`&[SortId]`, and the method calls the corresponding `alloc_*` pool
+helper internally, so you write `s.call("f", &[a, b, c])` instead of
+`s.alloc_stmt_expr(&[a, b, c])` followed by a `push_stmt`.
+
+Two limitations. First, the macro generates one method per variant
+across all sorts in the family, so two variants in different sorts
+that would share a method name (both lowercase to `add`, for example)
+produce a `compile_error!` at macro expansion time. Rename one of the
+colliding variants, or drop `#[smart_constructors]` and write the
+helpers you want by hand.
+
+Second, the methods take `&mut self`, so you cannot nest two calls
+on the same store in one expression. Rust's borrow checker rejects
+
+```rust
+let _ite = s.if_(s.lit(1), bind, noop);  // error: cannot borrow `s` twice
+```
+
+because the inner `s.lit(1)` borrows `s` mutably while `s.if_` also
+borrows `s` mutably. The fix is to bind sub-expressions to locals:
+
+```rust
+let cond = s.lit(1);
+let _ite = s.if_(cond, bind, noop);
+```
+
+This is the tradeoff for the compactness the constructors buy you
+elsewhere. For a language with deep nesting in its AST construction,
+the hand-written helpers in the next paragraph may read better.
+
+### Hand-written helpers
+
+If you do not want the smart constructor API, or you want finer
+control over argument ergonomics than `#[smart_constructors]` offers
+(different field conversions, currying, custom argument names),
+define small free functions:
+
+```rust
+fn lit(s: &mut LangStore, n: i64) -> ExprId {
+    s.push_expr(ExprNode::Lit(n))
+}
+
+fn add(s: &mut LangStore, l: ExprId, r: ExprId) -> ExprId {
+    s.push_expr(ExprNode::Add(l, r))
+}
+```
+
+Free functions compose the same way but stay outside the `LangStore`
+impl, which keeps the inherent API surface small and gives you full
+control over signatures.
+
 ## 3. `fold`: bottom-up traversal
 
 A fold walks the tree from the leaves up and combines child results.

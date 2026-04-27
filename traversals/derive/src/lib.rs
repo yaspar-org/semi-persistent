@@ -55,10 +55,34 @@ struct FamilyDef {
     fam_name: syn::Ident,
     store_name: syn::Ident,
     sorts: Vec<RawSortDef>,
+    smart_constructors: bool,
 }
 
 impl syn::parse::Parse for FamilyDef {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Optional #[smart_constructors] attribute before the family header.
+        let mut smart_constructors = false;
+        while input.peek(syn::Token![#]) {
+            let _: syn::Token![#] = input.parse()?;
+            let bracketed;
+            syn::bracketed!(bracketed in input);
+            let attr_name: syn::Ident = bracketed.parse()?;
+            if attr_name == "smart_constructors" {
+                smart_constructors = true;
+            } else {
+                return Err(syn::Error::new(
+                    attr_name.span(),
+                    "unknown attribute; only `smart_constructors` is supported",
+                ));
+            }
+            if !bracketed.is_empty() {
+                return Err(syn::Error::new(
+                    attr_name.span(),
+                    "attribute takes no arguments",
+                ));
+            }
+        }
+
         let vis: syn::Visibility = input.parse()?;
         let kw: syn::Ident = input.parse()?;
         if kw != "family" {
@@ -107,6 +131,7 @@ impl syn::parse::Parse for FamilyDef {
             fam_name,
             store_name,
             sorts,
+            smart_constructors,
         })
     }
 }
@@ -236,6 +261,11 @@ fn gen_family(def: &FamilyDef) -> syn::Result<TokenStream2> {
     let zipper_impl = gen_zipper(vis, store, &sorts, &sort_names, &sort_lowers, n);
     let refold_impl = gen_refold(vis, store, &sorts, &sort_names, &sort_lowers, n);
     let rewrite_impl = gen_rewrite(vis, store, &sorts, &sort_names, &sort_lowers, n);
+    let smart_ctors_impl = if def.smart_constructors {
+        gen_smart_constructors(vis, store, &sorts, &sort_names, &sort_lowers)
+    } else {
+        quote! {}
+    };
 
     Ok(quote! {
         #id_newtypes
@@ -262,6 +292,7 @@ fn gen_family(def: &FamilyDef) -> syn::Result<TokenStream2> {
         #zipper_impl
         #refold_impl
         #rewrite_impl
+        #smart_ctors_impl
     })
 }
 
@@ -3828,6 +3859,166 @@ fn gen_view(vis: &syn::Visibility, store: &syn::Ident) -> TokenStream2 {
             #vis fn with_strategy<M: ::semi_persistent_traversals::MemoStrategy>(&self) -> #view_name<'_, M> {
                 #view_name { store: self, _m: ::core::marker::PhantomData }
             }
+        }
+    }
+}
+
+
+/// Reserved Rust keywords (2018+ edition). Any variant whose snake_case
+/// equals one of these is renamed with a trailing underscore.
+fn is_rust_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "as" | "break" | "const" | "continue" | "crate" | "else" | "enum" | "extern"
+            | "false" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "match"
+            | "mod" | "move" | "mut" | "pub" | "ref" | "return" | "self" | "Self"
+            | "static" | "struct" | "super" | "trait" | "true" | "type" | "unsafe"
+            | "use" | "where" | "while" | "async" | "await" | "dyn" | "abstract"
+            | "become" | "box" | "do" | "final" | "macro" | "override" | "priv"
+            | "typeof" | "unsized" | "virtual" | "yield" | "try" | "union"
+    )
+}
+
+fn camel_to_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Returns the method name for a variant: snake_case, with trailing underscore
+/// if the result is a Rust keyword.
+fn constructor_method_name(variant: &syn::Ident) -> syn::Ident {
+    let snake = camel_to_snake(&variant.to_string());
+    let escaped = if is_rust_keyword(&snake) {
+        format!("{}_", snake)
+    } else {
+        snake
+    };
+    format_ident!("{}", escaped)
+}
+
+/// Is this a bare `String` type path? We generalise it to `impl Into<String>`.
+fn is_bare_string(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(tp) = ty
+        && tp.qself.is_none()
+        && let Some(ident) = tp.path.get_ident()
+    {
+        return ident == "String";
+    }
+    false
+}
+
+fn gen_smart_constructors(
+    vis: &syn::Visibility,
+    store: &syn::Ident,
+    sorts: &[ResolvedSort],
+    sort_names: &[&syn::Ident],
+    sort_lowers: &[syn::Ident],
+) -> TokenStream2 {
+    // Detect cross-sort collisions: two variants in different sorts
+    // whose constructor method names would be the same.
+    let mut seen: std::collections::HashMap<String, (usize, syn::Ident)> =
+        std::collections::HashMap::new();
+    let mut collision_errors: Vec<TokenStream2> = Vec::new();
+    for (si, sort) in sorts.iter().enumerate() {
+        for v in &sort.variants {
+            let method = constructor_method_name(&v.name);
+            let key = method.to_string();
+            if let Some((prev_si, prev_variant)) = seen.get(&key) {
+                if *prev_si != si {
+                    // Cross-sort collision.
+                    let msg = format!(
+                        "smart_constructors: variant `{}` in sort `{}` collides with variant `{}` in sort `{}` (both would generate `{}`). Rename one, or remove #[smart_constructors] and write helpers by hand.",
+                        v.name,
+                        sort_names[si],
+                        prev_variant,
+                        sort_names[*prev_si],
+                        method,
+                    );
+                    collision_errors.push(quote! {
+                        ::core::compile_error!(#msg);
+                    });
+                }
+            } else {
+                seen.insert(key, (si, v.name.clone()));
+            }
+        }
+    }
+    if !collision_errors.is_empty() {
+        return quote! { #(#collision_errors)* };
+    }
+
+    let methods: Vec<TokenStream2> = sorts.iter().enumerate().flat_map(|(si, sort)| {
+        let sort_name = sort_names[si];
+        let id_name = format_ident!("{}Id", sort_name);
+        let node_name = format_ident!("{}Node", sort_name);
+        let push_method = format_ident!("push_{}", sort_lowers[si]);
+        sort.variants.iter().map(|v| {
+            let variant = &v.name;
+            let method = constructor_method_name(variant);
+            // Build parameter list and body piece by piece.
+            let mut params: Vec<TokenStream2> = Vec::new();
+            let mut forward_exprs: Vec<TokenStream2> = Vec::new();
+            // Extra "alloc" prelude statements, for Variadic fields.
+            let mut prelude: Vec<TokenStream2> = Vec::new();
+            for (i, f) in v.fields.iter().enumerate() {
+                let pname = format_ident!("__p{}", i);
+                match f {
+                    FieldKind::Child(j) => {
+                        let child_id = format_ident!("{}Id", sort_names[*j]);
+                        params.push(quote! { #pname: #child_id });
+                        forward_exprs.push(quote! { #pname });
+                    }
+                    FieldKind::VariadicChild(j) => {
+                        let child_id = format_ident!("{}Id", sort_names[*j]);
+                        let alloc_method = format_ident!(
+                            "alloc_{}_{}",
+                            sort_lowers[si],
+                            sort_lowers[*j]
+                        );
+                        let tmp = format_ident!("__v{}", i);
+                        params.push(quote! { #pname: &[#child_id] });
+                        prelude.push(quote! { let #tmp = self.#alloc_method(#pname); });
+                        forward_exprs.push(quote! { #tmp });
+                    }
+                    FieldKind::Data(ty) => {
+                        if is_bare_string(ty) {
+                            params.push(quote! { #pname: impl ::core::convert::Into<String> });
+                            forward_exprs.push(quote! { #pname.into() });
+                        } else {
+                            params.push(quote! { #pname: #ty });
+                            forward_exprs.push(quote! { #pname });
+                        }
+                    }
+                }
+            }
+            let build_call = if v.fields.is_empty() {
+                quote! { #node_name::#variant }
+            } else {
+                quote! { #node_name::#variant(#(#forward_exprs),*) }
+            };
+            quote! {
+                #[inline]
+                #vis fn #method(&mut self, #(#params),*) -> #id_name {
+                    #(#prelude)*
+                    self.#push_method(#build_call)
+                }
+            }
+        }).collect::<Vec<_>>()
+    }).collect();
+
+    quote! {
+        impl #store {
+            #(#methods)*
         }
     }
 }
