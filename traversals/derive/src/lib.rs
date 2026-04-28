@@ -626,14 +626,15 @@ fn gen_container(
                         if let Some(&existing) = idx_map.get(&node) {
                             return #id(existing);
                         }
+                        let idx = self.#field.len();
+                        self.#field.push(node.clone());
+                        self.#dedup.as_mut().expect("DEDUP=true requires initialized dedup map").insert(node, idx);
+                        #id(idx)
+                    } else {
+                        let idx = self.#field.len();
+                        self.#field.push(node);
+                        #id(idx)
                     }
-                    let idx = self.#field.len();
-                    self.#field.push(node.clone());
-                    if DEDUP {
-                        let idx_map = self.#dedup.as_mut().expect("DEDUP=true requires initialized dedup map");
-                        idx_map.insert(node, idx);
-                    }
-                    #id(idx)
                 }
             }
         })
