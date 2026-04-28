@@ -28,7 +28,7 @@ rec_family! {
 // Builder — balanced Add tree of depth d, all leaves Lit(1)
 // ---------------------------------------------------------------------------
 
-fn build(s: &mut LangStore, depth: u32) -> ExprId {
+fn build<const DEDUP: bool>(s: &mut LangStore<DEDUP>, depth: u32) -> ExprId {
     if depth == 0 {
         s.push_expr(ExprNode::Lit(1))
     } else {

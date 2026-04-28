@@ -416,3 +416,135 @@ fn smart_constructors_variadic_and_string_coercion() {
     assert_eq!(s.len_decl(), 3);
     assert_eq!(s.len_prog(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// DEDUP propagation tests: verify that rewrite, transform, ZipperCow, fold,
+// and fold_all all work correctly on LangStore<true> and that the output
+// stores (where applicable) inherit the dedup mode.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dedup_rewrite_preserves_dedup() {
+    let mut s = LangStore::new_dedup();
+    let one = s.push_expr(ExprNode::Lit(1));
+    let dup = s.push_expr(ExprNode::Lit(1));
+    assert_eq!(one, dup, "source store should dedup");
+    let sum = s.push_expr(ExprNode::Add(one, one));
+    let pr = s.push_stmt(StmtNode::Print(sum));
+
+    let (mut s2, _r2) = s.rewrite(
+        LangStoreRoot::Stmt(pr),
+        |node, new: &mut LangStore<true>| new.push_stmt(node),
+        |node, new: &mut LangStore<true>| new.push_expr(node),
+    );
+    // The output store should also be dedup.
+    let a = s2.push_expr(ExprNode::Lit(1));
+    let b = s2.push_expr(ExprNode::Lit(1));
+    assert_eq!(a, b, "rewrite output store should be dedup");
+}
+
+#[test]
+fn dedup_transform_preserves_dedup() {
+    let mut s = LangStore::new_dedup();
+    let one = s.push_expr(ExprNode::Lit(1));
+    let sum = s.push_expr(ExprNode::Add(one, one));
+    let pr = s.push_stmt(StmtNode::Print(sum));
+
+    let (mut s2, _r2) = s.transform(
+        LangStoreRoot::Stmt(pr),
+        |stmt| stmt,
+        |expr| match expr {
+            ExprNode::Lit(n) => ExprNode::Lit(n * 10),
+            other => other,
+        },
+    );
+    let a = s2.push_expr(ExprNode::Lit(10));
+    let b = s2.push_expr(ExprNode::Lit(10));
+    assert_eq!(a, b, "transform output store should be dedup");
+}
+
+#[test]
+fn dedup_zipper_cow_preserves_dedup() {
+    let mut s = LangStore::new_dedup();
+    let one = s.push_expr(ExprNode::Lit(1));
+    let two = s.push_expr(ExprNode::Lit(2));
+    let sum = s.push_expr(ExprNode::Add(one, two));
+    let pr = s.push_stmt(StmtNode::Print(sum));
+
+    let mut z = LangStoreZipperCow::new(&s, LangStoreRoot::Stmt(pr));
+    z.down(0); // focus on the Expr child of Print (the Add node)
+    let (mut s2, _r2) = z.set_focus_expr(ExprNode::Lit(99));
+
+    // Output store should be dedup.
+    let a = s2.push_expr(ExprNode::Lit(99));
+    let b = s2.push_expr(ExprNode::Lit(99));
+    assert_eq!(a, b, "ZipperCow output store should be dedup");
+
+    // Original untouched.
+    assert_eq!(s.len_expr(), 3);
+}
+
+#[test]
+fn dedup_fold_with_sharing() {
+    let mut s = LangStore::new_dedup();
+    let one = s.push_expr(ExprNode::Lit(1));
+    let sum = s.push_expr(ExprNode::Add(one, one)); // shared child
+    assert_eq!(s.len_expr(), 2, "dedup: only 2 unique expr nodes");
+
+    let result = s.fold(
+        LangStoreRoot::Expr(sum),
+        |_: StmtNodeMapped<(), i64>| (),
+        |expr: ExprNodeMapped<(), i64>| match expr {
+            ExprNodeMapped::Lit(n) => n,
+            ExprNodeMapped::Add(l, r) => l + r,
+            _ => 0,
+        },
+    );
+    assert_eq!(result.unwrap_expr(), 2);
+}
+
+#[test]
+fn dedup_fold_all() {
+    let mut s = LangStore::new_dedup();
+    let one = s.push_expr(ExprNode::Lit(1));
+    let sum = s.push_expr(ExprNode::Add(one, one));
+    let pr = s.push_stmt(StmtNode::Print(sum));
+    let _ = pr; // ensure it's pushed
+
+    let cache = s.fold_all(
+        |stmt: StmtNodeMapped<usize, usize>| match stmt {
+            StmtNodeMapped::Assign(_, e) => 1 + e,
+            StmtNodeMapped::Seq(l, r) => 1 + l + r,
+            StmtNodeMapped::Print(e) => 1 + e,
+        },
+        |expr: ExprNodeMapped<usize, usize>| match expr {
+            ExprNodeMapped::Var(_) | ExprNodeMapped::Lit(_) => 1,
+            ExprNodeMapped::Add(l, r) | ExprNodeMapped::Block(l, r) => 1 + l + r,
+        },
+    );
+    assert_eq!(cache[ExprId(0)], 1); // Lit(1)
+    assert_eq!(cache[ExprId(1)], 3); // Add(Lit(1), Lit(1))
+    assert_eq!(cache[StmtId(0)], 4); // Print(Add(...))
+}
+
+#[test]
+fn memo_none_fold_on_tree() {
+    let (store, root) = build_sample();
+    let result = store
+        .with_strategy::<semi_persistent_traversals::memo::None>()
+        .fold(
+            root,
+            |stmt: StmtNodeMapped<String, String>| match stmt {
+                StmtNodeMapped::Assign(name, val) => format!("{name} = {val}"),
+                StmtNodeMapped::Seq(l, r) => format!("{l}; {r}"),
+                StmtNodeMapped::Print(e) => format!("print({e})"),
+            },
+            |expr: ExprNodeMapped<String, String>| match expr {
+                ExprNodeMapped::Var(name) => name,
+                ExprNodeMapped::Lit(n) => n.to_string(),
+                ExprNodeMapped::Add(l, r) => format!("({l} + {r})"),
+                ExprNodeMapped::Block(s, e) => format!("{{ {s}; {e} }}"),
+            },
+        );
+    assert_eq!(result.unwrap_stmt(), "x = (1 + 2); print(x)");
+}
