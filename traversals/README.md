@@ -1,127 +1,153 @@
 # amzn-semi-persistent-traversals
 
-Arena-based recursion schemes for Rust. Write the algebra, not the traversal.
+Partitioned-arena recursion schemes for Rust. Write the algebra, not the
+traversal.
 
 ## What it does
 
-Semi-Persistent Traversals lets you define recursive data types as **functors** — enums
-parameterized over their child type — and store them in flat arenas.
-The library then provides a full suite of stack-safe, memoized
-traversal schemes so you never write a recursive function:
+Real ASTs have many mutually recursive types. A small imperative
+language has statements that contain expressions and expressions that
+contain statements; neither makes sense alone. Declaring these types
+by hand in Rust is awkward because they reference each other, and
+writing recursive traversals over them risks stack overflows on deep
+trees while repeating the same boilerplate for every new operation.
 
-- **Folds** (bottom-up): `fold`, `fold_all`, `fold_with_ids`,
-  `fold_with_history`, `fold_with_aux`, `fold_pair`, `fold_short`,
-  `fold_with_original`, `fold_mut`, `prefold`
-- **Zero-clone folds**: `fold_ref`, `fold_all_ref` — algebra receives `&A`
-  children instead of cloned `A`. Use when result type is expensive to clone.
-- **Unfolds** (top-down build): `unfold`, `unfold_short`, `postunfold`
-- **Refolds** (unfold then fold): `refold`, `refold_with_history`, `refold_full`
-- **Transforms** (tree → tree): `transform`, `rewrite`, `rewrite_down`
+The `rec_family!` macro in this crate takes a single declaration of a
+mutually recursive family and generates everything you need to work
+with it: one arena per type, typed IDs that prevent you from mixing
+them up, and a suite of iterative, memoized traversal schemes that
+cross between types automatically. You write the per-node logic (the
+*algebra*) and the library runs the recursion.
 
-All traversals are iterative (no stack overflow on million-node trees),
-automatically memoized (shared subtrees computed once), and work on both
-`Arena::new()` (no dedup) and `Arena::new_dedup()` (hash-consing on push).
+The schemes fall into four groups. Folds walk a tree bottom-up and
+combine child results: `fold`, `fold_all`, `fold_with_ids`,
+`fold_with_history`, `fold_with_aux`, `fold_pair`, `fold_short`,
+`fold_with_original`, and `prefold`. Unfolds build a tree top-down from
+a seed: `unfold`, `unfold_short`, and `postunfold`. Transforms rewrite
+a tree into another tree, bottom-up or top-down: `transform`,
+`rewrite`, and `rewrite_down`. Zippers give you a cursor that can walk
+up, across, and back down the tree, reading (`Zipper`), mutating
+in place (`ZipperMut`), or producing a copy-on-write variant
+(`ZipperCow`).
 
-## Quick example — single sort
+All traversals are iterative, so million-node trees do not overflow the
+stack. All folds are memoized, so shared subtrees are folded once. The
+store can be created plain with `Store::new()` or with hash-consing via
+`Store::new_dedup()`. Memo strategy is configurable with
+`store.with_strategy::<Sparse>().fold(...)`.
 
-```rust
-use amzn_semi-persistent-traversals::{Arena, Functor};
-use amzn_semi-persistent-traversals_derive::RecFunctor;
-
-#[derive(Clone, PartialEq, Eq, Hash, RecFunctor)]
-enum E<R> { Lit(i64), Add(R, R), Neg(R) }
-
-let mut a = Arena::new();
-let one = a.push(E::Lit(1));
-let two = a.push(E::Lit(2));
-let sum = a.push(E::Add(one.0, two.0));
-
-// Evaluate — you write only the algebra
-let val = a.fold(sum, |node: E<i64>| match node {
-    E::Lit(n) => n,
-    E::Add(a, b) => a + b,
-    E::Neg(a) => -a,
-});
-assert_eq!(val, 3);
-```
-
-## Mutually recursive types — `rec_family!`
-
-Real ASTs have multiple sorts defined in terms of each other. Here's a
-language with expressions and types, plus a pretty printer:
+## Quick example
 
 ```rust
-use amzn_semi-persistent-traversals::Arena;
-use amzn_semi-persistent-traversals_derive::rec_family;
+use semi_persistent_traversals_derive::rec_family;
 
 rec_family! {
-    family Lang;
-    enum Expr {
-        IntLit(i64),
-        BoolLit(bool),
-        Add(Expr, Expr),
-        Eq(Expr, Expr),
-        If(Expr, Expr, Expr),
-        Call(String, Variadic<Expr>),  // variable-arity: f(a, b, c, ...)
-        Ann(Expr, Ty),
-    }
-    enum Ty {
-        TInt,
-        TBool,
-        TFn(Variadic<Ty>, Ty),        // (T1, T2, ...) -> T
-    }
+    family Lang => LangStore;
+
+    enum Stmt { Let(String, Expr), Print(Expr), Noop }
+    enum Expr { Lit(i64), Var(String), Add(Expr, Expr) }
+}
+
+let mut s = LangStore::new();
+let one  = s.push_expr(ExprNode::Lit(1));
+let two  = s.push_expr(ExprNode::Lit(2));
+let sum  = s.push_expr(ExprNode::Add(one, two));
+let bind = s.push_stmt(StmtNode::Let("x".into(), sum));
+
+let result = s.fold(
+    LangStoreRoot::Stmt(bind),
+    |stmt: StmtNodeMapped<String, i64>| match stmt {
+        StmtNodeMapped::Let(n, v) => format!("{n} = {v}"),
+        StmtNodeMapped::Print(v)  => format!("print({v})"),
+        StmtNodeMapped::Noop      => "noop".into(),
+    },
+    |expr: ExprNodeMapped<String, i64>| match expr {
+        ExprNodeMapped::Lit(n)    => n,
+        ExprNodeMapped::Var(_)    => 0,
+        ExprNodeMapped::Add(l, r) => l + r,
+    },
+);
+
+let rendered: String = result.unwrap_stmt();
+```
+
+The word *sort* means "one of the categories in a family of mutually
+recursive definitions". Above, `Stmt` and `Expr` are sorts. Each sort
+produces a small set of Rust types with systematic suffixes. `StmtNode`
+is the enum stored in the arena. `StmtId` is a typed handle into the
+arena. `StmtNodeMapped<A_stmt, A_expr>` is what an algebra receives,
+with each child ID replaced by the algebra's result for that child.
+Parameter order on the mapped enums follows sort declaration order
+family-wide. [TUTORIAL §1](TUTORIAL.md) walks through the full macro
+expansion for this example.
+
+## Calling convention
+
+Every scheme takes one closure per sort, in the order the sorts were
+declared. For a family with two sorts, most schemes take two closures;
+`fold_with_aux` and `fold_pair` take four (two algebras per sort). The
+list of single-closure schemes is `fold`, `fold_short`,
+`fold_with_history`, `fold_with_original`, `prefold`, `rewrite`,
+`rewrite_down`, `transform`, `fold_all`, `unfold`, `unfold_short`, and
+`postunfold`.
+
+Return values are sort-tagged. A fold returns
+`<Store>FoldResult<A_stmt, A_expr, ...>`, an enum with one variant per
+sort. Call `.unwrap_<sort>()` when you know the root sort at the call
+site, or match on the variants otherwise. Each sort can return a
+different type; the parameter list on the mapped enum tells you which
+is which.
+
+## Variadic children
+
+Use `Variadic<Sort>` in a variant to declare a variable-length list of
+children of that sort. The macro stores short lists inline and longer
+lists in a pool. In algebras the list appears as `Variadic<A>` and
+iterates with `.iter()`.
+
+```rust
+rec_family! {
+    family Calc => CalcStore;
+    enum Stmt { Call(String, Variadic<Expr>) }
+    enum Expr { Lit(i64) }
 }
 ```
 
-`Variadic<Sort>` declares a variable-length child list. In the arena it's
-stored inline (no `Vec` allocation for ≤4 elements). In the algebra, it
-appears as `Variadic<A>` which you iterate with `.iter()`:
+## Performance tuning
 
-```rust
-// Build: f(1, 2, 3)
-let args = a.alloc_children(&[one, two, three]);  // returns Variadic<usize>
-let call = a.push(Lang::ExprCall("f".into(), args));
+Two runtime choices affect performance, and they are independent of
+each other.
 
-// Pretty-print — Variadic<&String> in the ref algebra
-let result = fold_ref_lang_multi(&a, call,
-    |e: Expr<&String, &String>| match e {
-        Expr::Call(name, args) => {
-            let arg_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            format!("{}({})", name, arg_strs.join(", "))
-        }
-        // ...other arms...
-    },
-    |t: Ty<&String>| match t {
-        Ty::TFn(params, ret) => {
-            let ps: Vec<&str> = params.iter().map(|s| s.as_str()).collect();
-            format!("({}) -> {}", ps.join(", "), ret)
-        }
-        // ...
-    },
-);
-```
+Memo strategy controls how a fold caches intermediate results. The
+default, `Dense`, allocates one memo slot per node in the store and is
+fastest when you fold most of the store. `Sparse` uses a hashmap and
+allocates proportional to the nodes actually visited, which is the
+right choice when you fold a small subtree of a large store.
+`memo::None` skips dedup checks and is only correct for pure trees.
 
-The macro generates:
-- **Coproduct enum** `Lang<S0, S1>` stored in the arena
-- **Per-sort enums** `Expr<S0, S1>` and `Ty<S1>` for pattern matching
-- **`fold_lang_multi`** / **`fold_ref_lang_multi`** — heterogeneous folds
-  where each sort can produce a different result type
-- **`fold_all_lang_multi`** / **`fold_all_ref_lang_multi`** — O(n) linear
-  scan over the entire arena
-- `dispatch`, `multi_map`, `multi_map_ref`, `From`/`TryFrom` conversions
+Dedup controls whether `push_*` deduplicates structurally identical
+nodes. `Store::new()` appends unconditionally; `Store::new_dedup()`
+hashes and reuses. Dedup costs roughly 2 to 3× more per push but can
+shrink highly redundant inputs by orders of magnitude. Use it for
+e-graphs, canonicalized IRs, and any pipeline where you fold the
+store more than once. Dedup interacts correctly with `mark` and
+`restore`: entries pointing past a restored mark are pruned
+automatically.
 
-Scales to any number of sorts.
+See [`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for
+the full decision guide with benchmark numbers.
 
 ## Crate structure
 
-- `amzn-semi-persistent-traversals` — core library: `Arena`, `Functor` trait, all schemes
-- `amzn-semi-persistent-traversals-derive` — proc macros: `#[derive(RecFunctor)]` and `rec_family!`
+The workspace has two crates. `amzn-semi-persistent-traversals` is the
+core library and contains the memo strategy types, `Variadic`,
+`HasVariadic`, and `Ann`. `amzn-semi-persistent-traversals-derive`
+contains the `rec_family!` proc macro.
 
 ## Documentation
 
-See [TUTORIAL.md](TUTORIAL.md) for the full guide covering every scheme,
-the internal design, mutually recursive type families, and deduplication.
-
-See `tests/testorial.rs` for a 30-chapter worked example building a complete
-compiler pipeline (pretty printer, constant folder, type checker,
-interpreter, bytecode compiler) using only recursion schemes.
+[TUTORIAL.md](TUTORIAL.md) is the extended guide and covers every
+scheme with worked examples. [`tests/testorial.rs`](tests/testorial.rs)
+contains 24 chapters that build a complete compiler pipeline (pretty
+printer, constant folder, type checker, interpreter, bytecode
+compiler) using only recursion schemes.
