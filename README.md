@@ -21,18 +21,20 @@ Both semi-persistence (`const TRACK: bool`) and proof logging (`const PROOFS: bo
 | [`egraph`](egraph/) | Equality saturation engine: e-graphs, e-matching, rewrite scheduling, term extraction, proofs. ([design docs](egraph/doc/design/00-table-of-contents.md)) |
 | [`traversals`](traversals/) | Arena-based recursion schemes. Stack-safe folds, unfolds, transforms, zippers. Includes `traversals-derive` proc-macro. ([tutorial](traversals/TUTORIAL.md)) |
 | [`abstract-domains`](abstract-domains/) | Verified bitvector abstract domains (Tnums, Anums, Unums, Intervals, reduced products). 754 Verus proofs, 0 admits. Built separately from the default workflow. |
+| [`containers-verus`](containers-verus/) | Verus port of `containers`, built for formal verification of the semi-persistent protocol. Excluded from the default workflow. |
 
 ## Building
 
 ```bash
-# Build all crates (except abstract-domains)
+# Build all crates (except Verus-only ones)
 cargo build
 
-# Run all tests (except abstract-domains)
-cargo test --workspace --exclude semi-persistent-abstract-domains
+# Run all tests (except Verus-only ones)
+cargo test --workspace --exclude semi-persistent-abstract-domains --exclude semi-persistent-containers-verus
 
-# abstract-domains is verified with Verus and built separately
+# abstract-domains and containers-verus are verified with Verus and built separately
 cd abstract-domains && cargo verus verify
+cd containers-verus && cargo verus verify
 ```
 
 ## Design Principles
