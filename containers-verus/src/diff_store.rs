@@ -73,7 +73,9 @@ where
         ensures v == self.data()[i.as_nat() as int];
 
     fn push(&mut self, value: T)
-        requires old(self).wf(),
+        requires
+            old(self).wf(),
+            old(self).data().len() + 1 < I::max_nat(),
         ensures
             self.wf(),
             self.data() == old(self).data().push(value),
@@ -186,6 +188,10 @@ where
             old(self).wf(),
             index.as_nat() < target_saved_len.as_nat() ==>
                 index.as_nat() <= old(self).data().len(),
+            // If we'd push, the new length must still fit in I.
+            (index.as_nat() < target_saved_len.as_nat()
+                && index.as_nat() == old(self).data().len())
+                ==> old(self).data().len() + 1 < I::max_nat(),
         ensures
             self.wf(),
             // In-frame, in-bounds: overwrite.
