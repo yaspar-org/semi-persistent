@@ -1,4 +1,5 @@
 /target
 .verus-solver-log
+.verus-log/
 liblib.rlib
 .claude/
