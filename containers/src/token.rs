@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::IndexLike;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Opaque token returned by `mark()`, used to `backtrack()`.
@@ -12,10 +13,15 @@ pub struct VecToken {
 }
 
 /// Frame header stored on the frame stack.
+///
+/// `saved_len: I` matches the vector's index type, so vectors with `I = u64`
+/// can grow past `u32::MAX` slots without truncation. `diff_start: usize`
+/// indexes into the diff log (a `std::Vec`, so the `usize` domain is the
+/// natural fit and is independent of `I`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Frame {
-    pub saved_len: u32,
-    pub diff_start: u32,
+pub(crate) struct Frame<I: IndexLike> {
+    pub saved_len: I,
+    pub diff_start: usize,
 }
 
 /// Unique identity for a `Vec` instance. Prevents using a token from one
