@@ -33,7 +33,7 @@ where
 {
     pub store: S,
     pub diff_log: std::vec::Vec<(T, I)>,
-    pub frames: std::vec::Vec<Frame>,
+    pub frames: std::vec::Vec<Frame<I>>,
     pub phantom: core::marker::PhantomData<(T, I)>,
 }
 
