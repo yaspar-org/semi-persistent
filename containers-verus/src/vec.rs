@@ -49,6 +49,8 @@ pub struct VecToken {
 }
 
 /// Spec helper: there is some entry in `diffs` pointing at index `j`.
+///
+/// Used as the "captured" predicate in the declarative invariant.
 pub open spec fn diff_has_index<T, I: IndexLike>(
     diffs: Seq<(T, I)>,
     j: nat,
@@ -57,19 +59,11 @@ pub open spec fn diff_has_index<T, I: IndexLike>(
         && (#[trigger] diffs[k]).1.as_nat() == j
 }
 
-/// Spec helper: the value of `j` recorded in `diffs` (pre-frame value).
-/// Defined only when `diff_has_index(diffs, j)`; else `arbitrary()`.
-/// First-write-wins ensures uniqueness, so `choose` picks the only entry.
-pub open spec fn diff_value_at<T, I: IndexLike>(
-    diffs: Seq<(T, I)>,
-    j: nat,
-) -> T {
-    let k = choose|k: int| 0 <= k < diffs.len()
-        && (#[trigger] diffs[k]).1.as_nat() == j;
-    diffs[k].0
-}
-
-/// First-write-wins: each index appears at most once.
+/// First-write-wins: each index appears at most once across the diff log.
+///
+/// Without this, multiple entries could disagree about a slot's marked
+/// value and the invariant would be ambiguous. Production enforces this
+/// via the per-slot capture flag.
 pub open spec fn diffs_unique_indices<T, I: IndexLike>(
     diffs: Seq<(T, I)>,
 ) -> bool {
@@ -78,25 +72,39 @@ pub open spec fn diffs_unique_indices<T, I: IndexLike>(
             ==> (#[trigger] diffs[i]).1.as_nat() != (#[trigger] diffs[j]).1.as_nat()
 }
 
-/// Pointwise reconstruction of the snapshot from view + diffs.
+/// The declarative frame invariant — your formulation.
 ///
-/// `reconstruct(view, diffs)[j]` =
-///   diff_value_at(diffs, j)  if diff_has_index(diffs, j)
-///   view[j]                  otherwise
-pub open spec fn reconstruct<T, I: IndexLike>(
+/// For each cell `j` in the marked region:
+///   - If no diff entry points at `j` (uncaptured): `view[j] == snap[j]`.
+///     The slot was never written to since mark, so the current view
+///     still holds the marked value.
+///   - Else (captured): some diff entry `(old, j)` has `old == snap[j]`.
+///     The diff log holds the marked value; the current view holds
+///     whatever scribble has been written since.
+///
+/// Both arms are stated as conjuncts. They are *jointly* the meaning of
+/// "snap is the snapshot at mark time of this view-plus-diff-log triple."
+/// First-write-wins (above) ensures the captured arm's witness is unique.
+pub open spec fn frame_inv<T, I: IndexLike>(
     view: Seq<T>,
     diffs: Seq<(T, I)>,
+    snap: Seq<T>,
     saved_len: nat,
-) -> Seq<T> {
-    Seq::new(saved_len, |j: int|
-        if diff_has_index::<T, I>(diffs, j as nat) {
-            diff_value_at::<T, I>(diffs, j as nat)
-        } else if 0 <= j && (j as nat) < view.len() {
-            view[j]
-        } else {
-            arbitrary()
-        }
-    )
+) -> bool {
+    &&& snap.len() == saved_len
+    &&& saved_len <= view.len()
+    &&& (forall|j: int| #![trigger snap[j]]
+            0 <= j < saved_len as int ==> {
+                if !diff_has_index::<T, I>(diffs, j as nat) {
+                    // Uncaptured arm.
+                    view[j] == snap[j]
+                } else {
+                    // Captured arm.
+                    exists|k: int| 0 <= k < diffs.len()
+                        && (#[trigger] diffs[k]).1.as_nat() == j as nat
+                        && diffs[k].0 == snap[j]
+                }
+            })
 }
 
 /// Semi-persistent vector parameterized by storage backend `S` and index
@@ -137,11 +145,10 @@ where
     ///   - frames.len() <= 1                          (single frame for now)
     ///   - frames.len() == 0 ==> diff_log is empty   (no orphan diff entries)
     ///   - if frames.len() == 1:
-    ///       saved_len <= view.len()
     ///       diff_start == 0
-    ///       every diff entry idx is < saved_len    (in-bounds diffs only)
-    ///       diff entries have unique indices       (first-write-wins)
-    ///       snapshots[0] == reconstruct(view, diff_log, saved_len)
+    ///       every diff entry idx < saved_len       (in-bounds diffs only)
+    ///       first-write-wins (unique indices)
+    ///       frame_inv(view, diff_log, snapshots[0], saved_len)
     pub open spec fn wf(&self) -> bool {
         &&& self.store.wf()
         &&& self.snapshots@.len() == self.frames@.len()
@@ -150,12 +157,14 @@ where
         &&& (self.frames@.len() == 1 ==> {
                 let f = self.frames@[0];
                 &&& f.diff_start == 0
-                &&& f.saved_len.as_nat() <= self.view().len()
                 &&& (forall|k: int| 0 <= k < self.diff_log@.len() ==>
                         (#[trigger] self.diff_log@[k]).1.as_nat() < f.saved_len.as_nat())
                 &&& diffs_unique_indices::<T, I>(self.diff_log@)
-                &&& self.snapshots@[0]
-                    == reconstruct::<T, I>(self.view(), self.diff_log@, f.saved_len.as_nat())
+                &&& frame_inv::<T, I>(
+                        self.view(),
+                        self.diff_log@,
+                        self.snapshots@[0],
+                        f.saved_len.as_nat())
             })
     }
 
@@ -192,24 +201,14 @@ where
             self.snapshots_view() == old(self).snapshots_view(),
     {
         self.store.push(value);
-        // The wf invariant in the frame=1 case requires
-        //   snapshots[0] == reconstruct(view, diff_log, saved_len)
-        // After push: diff_log and saved_len unchanged; view extended by one.
-        // For each j < saved_len:
-        //   - if diff_has_index(diff_log, j): reconstruct[j] = diff_value_at(diff_log, j),
-        //     unchanged from old.
-        //   - else: reconstruct[j] = view[j]. Since saved_len <= old.view().len(),
-        //     the prefix view[0..saved_len] is identical pre/post push.
-        // Hence reconstruct is unchanged. wf re-establishes by extensionality.
-        proof {
-            if self.frames@.len() == 1 {
-                let f = self.frames@[0];
-                let saved_len = f.saved_len.as_nat();
-                let old_recon = reconstruct::<T, I>(old(self).view(), self.diff_log@, saved_len);
-                let new_recon = reconstruct::<T, I>(self.view(), self.diff_log@, saved_len);
-                assert(old_recon =~= new_recon);
-            }
-        }
+        // Per-cell argument:
+        //   diff_log unchanged → diff_has_index(j) unchanged for every j.
+        //   saved_len unchanged.
+        //   For j < saved_len <= old.view.len(): view[j] is identical
+        //     pre and post push (the push only extends).
+        //   So both arms of frame_inv are inherited from old.
+        // No proof hint needed — Verus discharges this from the unchanged
+        // operands plus extensionality on view's prefix.
     }
 
     pub fn pop(&mut self) -> (r: Option<T>)
@@ -274,15 +273,12 @@ where
 
         self.frames.push(Frame { saved_len, diff_start: 0 });
 
-        // Establish wf for the new frame. With diff_log empty (wf
-        // precondition for frames.len() == 0), reconstruct just reads
-        // view[j] for every j < saved_len, which is exactly view (since
-        // saved_len == view.len()). So snapshots[0] = view = reconstruct.
-        proof {
-            let saved_len_nat = saved_len.as_nat();
-            let recon = reconstruct::<T, I>(self.view(), self.diff_log@, saved_len_nat);
-            assert(recon =~= self.view());
-        }
+        // Establish frame_inv for the new frame. With diff_log empty:
+        //   - diff_has_index(j) is false for every j (no entries),
+        //   - so the uncaptured arm fires for every j: view[j] == snap[j].
+        //   - snap was just set to view, so view[j] == view[j]. ✓
+        //   - len conditions: snap.len() == view.len() == saved_len. ✓
+        // Verus discharges this directly.
 
         VecToken { frame_idx: 0 }
     }
@@ -307,25 +303,25 @@ where
         let saved_len = target_frame.saved_len;
         let diff_start = target_frame.diff_start;
 
-        // Capture pre-state. snapshots[0] equals reconstruct(pre_view,
-        // pre_diffs, saved_len) by the wf invariant.
+        // Capture pre-state. By wf, frame_inv(pre_view, pre_diffs, snap0,
+        // saved_len) holds — the declarative two-arm invariant.
         let pre_view: Ghost<Seq<T>> = Ghost(self.view());
         let pre_diffs: Ghost<Seq<(T, I)>> = Ghost(self.diff_log@);
         let snap0: Ghost<Seq<T>> = Ghost(self.snapshots@[target_index as int]);
 
         self.store.truncate(saved_len);
 
-        // Loop invariant. Walk i from n down to diff_start; the suffix
-        // [i, n) has been applied. For j < saved_len, j is "fully restored"
-        // iff no entry in [diff_start, i) points at j — equivalently, all
-        // entries pointing at j (if any) have been processed.
-        //
-        // Two sub-cases when no entry in [diff_start, i) points at j:
-        //   (a) j has an entry in [i, n): we already applied it, so
-        //       data[j] = the entry's old value = snap0[j] (by reconstruct).
-        //   (b) j has no entry anywhere in diff_log: data[j] never changed
-        //       from pre_view[j]; since saved_len <= pre_view.len() and
-        //       reconstruct fell through to view[j], data[j] = snap0[j].
+        // Loop invariant — directly the declarative form.
+        // For each j < saved_len, j is "fully restored" iff no entry in the
+        // unapplied prefix [diff_start, i) of the diff log points at j.
+        // Equivalently, all the diff entries for j have been applied.
+        // For such j, by frame_inv:
+        //   - if uncaptured (no entry anywhere): pre_view[j] == snap[j],
+        //     and our truncated view still holds pre_view[j];
+        //   - if captured (entry in [i, n) which we just applied): we wrote
+        //     the entry's old_val, and frame_inv's captured-arm says
+        //     old_val == snap[j].
+        // Both cases give data[j] == snap[j].
         let n = self.diff_log.len();
         let mut i: usize = n;
         while i > diff_start
@@ -339,9 +335,7 @@ where
                 forall|k: int| 0 <= k < self.diff_log@.len() ==>
                     (#[trigger] self.diff_log@[k]).1.as_nat() < saved_len.as_nat(),
                 diffs_unique_indices::<T, I>(self.diff_log@),
-                snap0@ == reconstruct::<T, I>(pre_view@, pre_diffs@, saved_len.as_nat()),
-                // Pointwise correctness: any j whose entry has already been
-                // processed (or never had one) is now at its snapshot value.
+                frame_inv::<T, I>(pre_view@, pre_diffs@, snap0@, saved_len.as_nat()),
                 forall|j: int| #![trigger self.store.data()[j]]
                     0 <= j < saved_len.as_nat()
                     && !(exists|k: int| diff_start <= k < (i as int)
