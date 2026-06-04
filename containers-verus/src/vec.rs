@@ -107,6 +107,317 @@ pub open spec fn frame_inv<T, I: IndexLike>(
             })
 }
 
+// ---------------------------------------------------------------------------
+// `overlay` — the spec model of the restore loop (M4)
+// ---------------------------------------------------------------------------
+//
+// The restore loop walks the diff log from `n` down to `lo`, applying each
+// entry `(old, idx)` via `restore_entry`. Entries with `idx < base.len()`
+// overwrite `base[idx]`; entries beyond `base.len()` are no-ops (the
+// production restore_entry guard). Because the loop walks *downward*, the
+// entry with the SMALLEST index in `[lo, hi)` that hits a given cell is
+// applied LAST and therefore wins.
+//
+// `overlay(base, diffs, lo, hi)` is the recursive spec for this: apply
+// `diffs[lo]` on top of `overlay(base, diffs, lo+1, hi)`, so the lower
+// index ends up outermost (winning). This is exactly the loop's result.
+
+/// Replay `diffs[lo..hi]` over `base` in reverse-index-wins order.
+pub open spec fn overlay<T, I: IndexLike>(
+    base: Seq<T>,
+    diffs: Seq<(T, I)>,
+    lo: int,
+    hi: int,
+) -> Seq<T>
+    decreases hi - lo
+{
+    if lo >= hi || lo < 0 || hi > diffs.len() {
+        base
+    } else {
+        let prev = overlay(base, diffs, lo + 1, hi);
+        let d = diffs[lo];
+        if d.1.as_nat() < prev.len() {
+            prev.update(d.1.as_nat() as int, d.0)
+        } else {
+            prev
+        }
+    }
+}
+
+/// `overlay` preserves the base length (it only updates, never grows).
+pub proof fn lemma_overlay_len<T, I: IndexLike>(
+    base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
+)
+    ensures overlay::<T, I>(base, diffs, lo, hi).len() == base.len(),
+    decreases hi - lo,
+{
+    if lo >= hi || lo < 0 || hi > diffs.len() {
+    } else {
+        lemma_overlay_len::<T, I>(base, diffs, lo + 1, hi);
+    }
+}
+
+/// If no entry in `[lo, hi)` hits cell `j`, overlay leaves `base[j]` alone.
+pub proof fn lemma_overlay_uncaptured<T, I: IndexLike>(
+    base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, j: int,
+)
+    requires
+        0 <= j < base.len(),
+        forall|k: int| lo <= k < hi && 0 <= k < diffs.len()
+            ==> (#[trigger] diffs[k]).1.as_nat() != j as nat,
+    ensures
+        overlay::<T, I>(base, diffs, lo, hi)[j] == base[j],
+    decreases hi - lo,
+{
+    if lo >= hi || lo < 0 || hi > diffs.len() {
+    } else {
+        lemma_overlay_uncaptured::<T, I>(base, diffs, lo + 1, hi, j);
+        lemma_overlay_len::<T, I>(base, diffs, lo + 1, hi);
+        // diffs[lo].1 != j, so the update at lo (if any) doesn't touch j.
+    }
+}
+
+/// If `[lo, hi)` has unique indices and the entry at position `p` hits `j`,
+/// then overlay sets `base[j]` to that entry's value — regardless of base,
+/// because the winning entry is the unique one.
+pub proof fn lemma_overlay_captured<T, I: IndexLike>(
+    base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, p: int, j: int,
+)
+    requires
+        0 <= j < base.len(),
+        lo <= p < hi,
+        0 <= p < diffs.len(),
+        lo >= 0,
+        hi <= diffs.len(),
+        diffs[p].1.as_nat() == j as nat,
+        // unique within [lo, hi)
+        forall|a: int, b: int|
+            lo <= a < hi && lo <= b < hi && a != b
+                ==> (#[trigger] diffs[a]).1.as_nat() != (#[trigger] diffs[b]).1.as_nat(),
+    ensures
+        overlay::<T, I>(base, diffs, lo, hi)[j] == diffs[p].0,
+    decreases hi - lo,
+{
+    let prev = overlay::<T, I>(base, diffs, lo + 1, hi);
+    lemma_overlay_len::<T, I>(base, diffs, lo + 1, hi);
+    if p == lo {
+        // Entry at lo wins (applied last/outermost). All entries in
+        // [lo+1, hi) have different indices from j (uniqueness), so they
+        // don't matter — the final update at lo sets j.
+    } else {
+        // p in [lo+1, hi). By IH, overlay(lo+1, hi)[j] == diffs[p].0.
+        lemma_overlay_captured::<T, I>(base, diffs, lo + 1, hi, p, j);
+        // The update at lo has index diffs[lo].1 != j (uniqueness, lo != p),
+        // so it doesn't disturb j.
+    }
+}
+
+/// `frame_inv_range` over `[lo, hi)` depends only on the diff entries in
+/// that range. If two diff sequences agree pointwise on `[lo, hi)` (and are
+/// both long enough), the predicate holds for one iff for the other.
+pub proof fn lemma_frame_inv_range_local<T, I: IndexLike>(
+    above: Seq<T>, da: Seq<(T, I)>, db: Seq<(T, I)>,
+    lo: int, hi: int, snap: Seq<T>, saved_len: nat,
+)
+    requires
+        0 <= lo <= hi <= da.len(),
+        hi <= db.len(),
+        forall|m: int| lo <= m < hi ==> #[trigger] da[m] == db[m],
+        frame_inv_range::<T, I>(above, da, lo, hi, snap, saved_len),
+    ensures
+        frame_inv_range::<T, I>(above, db, lo, hi, snap, saved_len),
+{
+    // Structural conjuncts: index-bound and uniqueness foralls read entries
+    // only in [lo, hi), where da and db agree.
+    assert forall|m: int| lo <= m < hi implies
+        (#[trigger] db[m]).1.as_nat() < saved_len by { assert(da[m] == db[m]); }
+    assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b implies
+        (#[trigger] db[a]).1.as_nat() != (#[trigger] db[b]).1.as_nat()
+    by { assert(da[a] == db[a]); assert(da[b] == db[b]); }
+    // Both the structural foralls and the two-arm forall read da[m]/db[m]
+    // only for m in [lo, hi), where they agree. captured_in_range and the
+    // captured-arm witness likewise quantify over [lo, hi).
+    assert forall|j: int| #![trigger snap[j]] 0 <= j < saved_len as int implies {
+        if !captured_in_range::<T, I>(db, lo, hi, j as nat) {
+            above[j] == snap[j]
+        } else {
+            exists|k: int| lo <= k < hi
+                && (#[trigger] db[k]).1.as_nat() == j as nat
+                && db[k].0 == snap[j]
+        }
+    } by {
+        // captured_in_range agrees because entries agree on [lo, hi).
+        assert(captured_in_range::<T, I>(db, lo, hi, j as nat)
+            == captured_in_range::<T, I>(da, lo, hi, j as nat)) by {
+            if captured_in_range::<T, I>(db, lo, hi, j as nat) {
+                let w = choose|k: int| lo <= k < hi && 0 <= k < db.len()
+                    && (#[trigger] db[k]).1.as_nat() == j as nat;
+                assert(da[w] == db[w]);
+            }
+            if captured_in_range::<T, I>(da, lo, hi, j as nat) {
+                let w = choose|k: int| lo <= k < hi && 0 <= k < da.len()
+                    && (#[trigger] da[k]).1.as_nat() == j as nat;
+                assert(da[w] == db[w]);
+            }
+        }
+        if captured_in_range::<T, I>(db, lo, hi, j as nat) {
+            let w = choose|k: int| lo <= k < hi
+                && (#[trigger] da[k]).1.as_nat() == j as nat && da[k].0 == snap[j];
+            assert(da[w] == db[w]);
+        }
+    }
+}
+
+/// `overlay`'s value at `j < bound` depends only on `base`'s prefix
+/// `[0, bound)` and on entries whose index is `< bound`. Concretely: if two
+/// bases agree on `[0, bound)`, then their overlays agree on `[0, bound)`,
+/// regardless of base values or entry indices `>= bound`.
+///
+/// This is what lets restore overlay onto the *truncated* base (length
+/// saved_len) and still match `overlay` onto the full view on the marked
+/// region: entries with idx >= saved_len are no-ops on `[0, saved_len)`.
+pub proof fn lemma_overlay_prefix_agnostic<T, I: IndexLike>(
+    base_a: Seq<T>, base_b: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, bound: int,
+)
+    requires
+        0 <= bound <= base_a.len(),
+        0 <= bound <= base_b.len(),
+        forall|j: int| 0 <= j < bound ==> #[trigger] base_a[j] == base_b[j],
+    ensures
+        forall|j: int| 0 <= j < bound ==>
+            #[trigger] overlay::<T, I>(base_a, diffs, lo, hi)[j]
+                == overlay::<T, I>(base_b, diffs, lo, hi)[j],
+    decreases hi - lo,
+{
+    lemma_overlay_len::<T, I>(base_a, diffs, lo, hi);
+    lemma_overlay_len::<T, I>(base_b, diffs, lo, hi);
+    if lo >= hi || lo < 0 || hi > diffs.len() {
+    } else {
+        lemma_overlay_prefix_agnostic::<T, I>(base_a, base_b, diffs, lo + 1, hi, bound);
+        lemma_overlay_len::<T, I>(base_a, diffs, lo + 1, hi);
+        lemma_overlay_len::<T, I>(base_b, diffs, lo + 1, hi);
+        // The step at lo updates index diffs[lo].1 in both. For j < bound:
+        // if diffs[lo].1 == j and j < both prevs' len, both get diffs[lo].0;
+        // otherwise both inherit prev[j], equal by IH.
+    }
+}
+
+/// `overlay` splits at any midpoint: applying `[lo, hi)` equals applying
+/// the upper part `[mid, hi)` first, then the lower part `[lo, mid)` on top.
+/// This is what lets us peel strata one at a time.
+pub proof fn lemma_overlay_split<T, I: IndexLike>(
+    base: Seq<T>, diffs: Seq<(T, I)>, lo: int, mid: int, hi: int,
+)
+    requires
+        0 <= lo <= mid <= hi <= diffs.len(),
+    ensures
+        overlay::<T, I>(base, diffs, lo, hi)
+            == overlay::<T, I>(overlay::<T, I>(base, diffs, mid, hi), diffs, lo, mid),
+    decreases mid - lo,
+{
+    if lo >= mid {
+        // [lo, mid) empty: RHS inner overlay is identity, so both sides
+        // are overlay(base, mid, hi) == overlay(base, lo, hi) since lo==mid.
+    } else {
+        // Peel lo off both sides.
+        //   LHS = step(diffs[lo], overlay(base, lo+1, hi))
+        //   RHS = step(diffs[lo], overlay(overlay(base, mid, hi), lo+1, mid))
+        // By IH on (lo+1, mid, hi): overlay(base, lo+1, hi)
+        //   == overlay(overlay(base, mid, hi), lo+1, mid).
+        // So the two `step` arguments coincide and the results match.
+        lemma_overlay_split::<T, I>(base, diffs, lo + 1, mid, hi);
+    }
+}
+
+/// Range-based "captured": some entry in `diffs[lo..hi)` hits `j`.
+pub open spec fn captured_in_range<T, I: IndexLike>(
+    diffs: Seq<(T, I)>, lo: int, hi: int, j: nat,
+) -> bool {
+    exists|k: int| lo <= k < hi && 0 <= k < diffs.len()
+        && (#[trigger] diffs[k]).1.as_nat() == j
+}
+
+/// Range-form of the two-arm frame invariant for one stratum `[lo, hi)`.
+/// `above` is the layer above (snapshot[k+1] or the view); `snap` is this
+/// stratum's snapshot. Stated over the diff-log range directly.
+pub open spec fn frame_inv_range<T, I: IndexLike>(
+    above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
+    snap: Seq<T>, saved_len: nat,
+) -> bool {
+    &&& snap.len() == saved_len
+    &&& saved_len <= above.len()
+    &&& (forall|k: int| lo <= k < hi ==>
+            (#[trigger] diffs[k]).1.as_nat() < saved_len)
+    &&& (forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b ==>
+            (#[trigger] diffs[a]).1.as_nat() != (#[trigger] diffs[b]).1.as_nat())
+    &&& (forall|j: int| #![trigger snap[j]] 0 <= j < saved_len as int ==> {
+            if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
+                above[j] == snap[j]
+            } else {
+                exists|k: int| lo <= k < hi
+                    && (#[trigger] diffs[k]).1.as_nat() == j as nat
+                    && diffs[k].0 == snap[j]
+            }
+        })
+}
+
+/// The per-stratum bridge: if a diff-log range `[lo, hi)` satisfies the
+/// two-arm `frame_inv` relative to `above` and `snap` (stated directly over
+/// the range), then overlaying that range onto `above` reproduces `snap`
+/// on `[0, saved_len)`.
+///
+/// Hypotheses mirror `frame_inv` + the structural conditions, but phrased
+/// over the diff-log range rather than an extracted subrange.
+pub proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
+    above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
+    snap: Seq<T>, saved_len: nat,
+)
+    requires
+        0 <= lo <= hi <= diffs.len(),
+        snap.len() == saved_len,
+        saved_len <= above.len(),
+        // entries in range are in-bounds for the marked region
+        forall|k: int| lo <= k < hi ==>
+            (#[trigger] diffs[k]).1.as_nat() < saved_len,
+        // unique indices within range
+        forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b ==>
+            (#[trigger] diffs[a]).1.as_nat() != (#[trigger] diffs[b]).1.as_nat(),
+        // two-arm frame_inv over the range
+        forall|j: int| #![trigger snap[j]] 0 <= j < saved_len as int ==> {
+            if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
+                above[j] == snap[j]
+            } else {
+                exists|k: int| lo <= k < hi
+                    && (#[trigger] diffs[k]).1.as_nat() == j as nat
+                    && diffs[k].0 == snap[j]
+            }
+        },
+    ensures
+        forall|j: int| 0 <= j < saved_len as int ==>
+            #[trigger] overlay::<T, I>(above, diffs, lo, hi)[j] == snap[j],
+{
+    lemma_overlay_len::<T, I>(above, diffs, lo, hi);
+    assert forall|j: int| 0 <= j < saved_len as int implies
+        #[trigger] overlay::<T, I>(above, diffs, lo, hi)[j] == snap[j]
+    by {
+        if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
+            // Uncaptured: overlay leaves above[j], which == snap[j].
+            assert forall|k: int| lo <= k < hi && 0 <= k < diffs.len() implies
+                (#[trigger] diffs[k]).1.as_nat() != j as nat
+            by {
+                // else captured_in_range would hold
+            }
+            lemma_overlay_uncaptured::<T, I>(above, diffs, lo, hi, j);
+        } else {
+            // Captured: pick the witness entry p, show overlay sets snap[j].
+            let p = choose|k: int| lo <= k < hi
+                && (#[trigger] diffs[k]).1.as_nat() == j as nat
+                && diffs[k].0 == snap[j];
+            lemma_overlay_captured::<T, I>(above, diffs, lo, hi, p, j);
+        }
+    }
+}
+
 /// Semi-persistent vector parameterized by storage backend `S` and index
 /// type `I`. `TRACK` compiles out all tracking when false.
 pub struct Vec<T, I, S, const TRACK: bool>
@@ -149,23 +460,248 @@ where
     ///       every diff entry idx < saved_len       (in-bounds diffs only)
     ///       first-write-wins (unique indices)
     ///       frame_inv(view, diff_log, snapshots[0], saved_len)
+    /// The "layer above" frame `k`: snapshots[k+1] for inner frames, or the
+    /// current view for the topmost frame.
+    pub open spec fn layer_above_at(&self, k: int) -> Seq<T> {
+        if k + 1 < self.frames@.len() {
+            self.snapshots@[k + 1]
+        } else {
+            self.view()
+        }
+    }
+
+    /// End of frame `k`'s stratum.
+    pub open spec fn stratum_end(&self, k: int) -> int {
+        if k + 1 < self.frames@.len() {
+            self.frames@[k + 1].diff_start as int
+        } else {
+            self.diff_log@.len() as int
+        }
+    }
+
+    /// Well-formedness, generalized to arbitrary stack depth (M4).
+    ///
+    /// Structural:
+    ///   - snapshots.len() == frames.len()
+    ///   - frames.len() == 0 ==> diff_log empty
+    ///   - frames[0].diff_start == 0
+    ///   - diff_starts monotone, last <= diff_log.len()
+    ///   - saved_lens monotone, last <= view.len()
+    ///   - snapshots[k].len() == frames[k].saved_len
+    ///
+    /// Per-frame (over each frame's stratum `[diff_start_k, stratum_end_k)`):
+    ///   frame_inv_range(layer_above(k), diff_log, lo_k, hi_k,
+    ///                   snapshots[k], saved_len_k)
     pub open spec fn wf(&self) -> bool {
+        let frames = self.frames@;
+        let diffs = self.diff_log@;
+        let snaps = self.snapshots@;
+        let n = diffs.len();
+
         &&& self.store.wf()
-        &&& self.snapshots@.len() == self.frames@.len()
-        &&& self.frames@.len() <= 1
-        &&& (self.frames@.len() == 0 ==> self.diff_log@.len() == 0)
-        &&& (self.frames@.len() == 1 ==> {
-                let f = self.frames@[0];
-                &&& f.diff_start == 0
-                &&& (forall|k: int| 0 <= k < self.diff_log@.len() ==>
-                        (#[trigger] self.diff_log@[k]).1.as_nat() < f.saved_len.as_nat())
-                &&& diffs_unique_indices::<T, I>(self.diff_log@)
-                &&& frame_inv::<T, I>(
-                        self.view(),
-                        self.diff_log@,
-                        self.snapshots@[0],
-                        f.saved_len.as_nat())
-            })
+        &&& snaps.len() == frames.len()
+        &&& (frames.len() == 0 ==> n == 0)
+        &&& (frames.len() > 0 ==> frames[0].diff_start == 0)
+        &&& (frames.len() > 0 ==> frames[(frames.len() - 1) as int].diff_start <= n)
+        &&& (frames.len() > 0 ==>
+                frames[(frames.len() - 1) as int].saved_len.as_nat() <= self.view().len())
+        &&& (forall|k: int| 0 <= k && k + 1 < frames.len() ==>
+                #[trigger] frames[k].diff_start <= #[trigger] frames[k + 1].diff_start)
+        &&& (forall|k: int| 0 <= k && k + 1 < frames.len() ==>
+                #[trigger] frames[k].saved_len.as_nat()
+                    <= #[trigger] frames[k + 1].saved_len.as_nat())
+        &&& (forall|k: int| 0 <= k < frames.len() ==>
+                #[trigger] snaps[k].len() == #[trigger] frames[k].saved_len.as_nat())
+        &&& (forall|k: int| 0 <= k < frames.len() ==>
+                #[trigger] frame_inv_range::<T, I>(
+                    self.layer_above_at(k),
+                    diffs,
+                    frames[k].diff_start as int,
+                    self.stratum_end(k),
+                    snaps[k],
+                    frames[k].saved_len.as_nat()))
+    }
+
+    /// Every frame's diff_start is `<= diff_log.len()`. Follows from
+    /// monotonicity plus the top frame's bound, by upward induction.
+    pub proof fn lemma_diff_start_le_n(&self, k: int)
+        requires
+            self.wf(),
+            0 <= k < self.frames@.len(),
+        ensures
+            self.frames@[k].diff_start <= self.diff_log@.len(),
+        decreases self.frames@.len() - k,
+    {
+        let frames = self.frames@;
+        if k + 1 < frames.len() {
+            self.lemma_diff_start_le_n(k + 1);
+            assert(frames[k].diff_start <= frames[k + 1].diff_start);
+        } else {
+            // top frame: bounded directly by wf.
+        }
+    }
+
+    /// diff_start is monotone non-decreasing across frames: for `a <= b`,
+    /// `frames[a].diff_start <= frames[b].diff_start`.
+    pub proof fn lemma_diff_start_monotone(&self, a: int, b: int)
+        requires
+            self.wf(),
+            0 <= a <= b < self.frames@.len(),
+        ensures
+            self.frames@[a].diff_start <= self.frames@[b].diff_start,
+        decreases b - a,
+    {
+        let frames = self.frames@;
+        if a < b {
+            self.lemma_diff_start_monotone(a, b - 1);
+            // wf gives the adjacent step at k = b-1 (since b < frames.len()).
+            assert(0 <= b - 1 && (b - 1) + 1 < frames.len());
+            assert(frames[b - 1].diff_start <= frames[(b - 1) + 1].diff_start);
+        }
+    }
+
+    /// saved_len is monotone non-decreasing across frames.
+    pub proof fn lemma_saved_len_monotone(&self, a: int, b: int)
+        requires
+            self.wf(),
+            0 <= a <= b < self.frames@.len(),
+        ensures
+            self.frames@[a].saved_len.as_nat() <= self.frames@[b].saved_len.as_nat(),
+        decreases b - a,
+    {
+        let frames = self.frames@;
+        if a < b {
+            self.lemma_saved_len_monotone(a, b - 1);
+            assert(0 <= b - 1 && (b - 1) + 1 < frames.len());
+            assert(frames[b - 1].saved_len.as_nat() <= frames[(b - 1) + 1].saved_len.as_nat());
+        }
+    }
+
+    /// Every frame's saved_len is `<= view.len()`. By monotonicity plus
+    /// the top frame's bound.
+    pub proof fn lemma_saved_len_le_view(&self, k: int)
+        requires
+            self.wf(),
+            0 <= k < self.frames@.len(),
+        ensures
+            self.frames@[k].saved_len.as_nat() <= self.view().len(),
+        decreases self.frames@.len() - k,
+    {
+        let frames = self.frames@;
+        if k + 1 < frames.len() {
+            self.lemma_saved_len_le_view(k + 1);
+            assert(frames[k].saved_len.as_nat() <= frames[k + 1].saved_len.as_nat());
+        } else {
+        }
+    }
+
+    /// The central M4 lemma: overlaying all strata from frame `k` up to the
+    /// top, onto the current view, reconstructs `snapshots[k]` (on its
+    /// `[0, saved_len_k)` domain).
+    ///
+    /// Proved by downward induction on `k` (from the top frame to `k`).
+    /// Base case k == top: the stratum is `[diff_start_top, n)`, the layer
+    /// above is the view, and `frame_inv_range` + `lemma_overlay_eq_snap`
+    /// give the result. Inductive step: split the range at
+    /// `frames[k+1].diff_start`; the upper part reconstructs snapshots[k+1]
+    /// by IH, then stratum k overlays on top to give snapshots[k].
+    pub proof fn lemma_snap_eq_overlay(&self, k: int)
+        requires
+            self.wf(),
+            0 <= k < self.frames@.len(),
+        ensures
+            forall|j: int| 0 <= j < self.frames@[k].saved_len.as_nat() ==>
+                #[trigger] overlay::<T, I>(
+                    self.view(),
+                    self.diff_log@,
+                    self.frames@[k].diff_start as int,
+                    self.diff_log@.len() as int)[j]
+                == self.snapshots@[k][j],
+        decreases self.frames@.len() - k,
+    {
+        let frames = self.frames@;
+        let diffs = self.diff_log@;
+        let snaps = self.snapshots@;
+        let n = diffs.len() as int;
+        let lo = frames[k].diff_start as int;
+        let saved = frames[k].saved_len.as_nat();
+        let mid = self.stratum_end(k);
+
+        // frame_inv_range for stratum k is available from wf.
+        assert(frame_inv_range::<T, I>(
+            self.layer_above_at(k), diffs, lo, mid, snaps[k], saved));
+
+        if k + 1 < frames.len() {
+            // Inductive case. mid == frames[k+1].diff_start.
+            // Bounds: lo <= mid <= n. lo <= mid by diff_start monotonicity
+            // (k, k+1 adjacent); mid <= n because frames[k+1].diff_start
+            // <= frames[top].diff_start <= n.
+            self.lemma_diff_start_le_n(k + 1);
+            assert(lo <= mid) by {
+                assert(frames[k].diff_start <= frames[k + 1].diff_start);
+            }
+            // Upper range [mid, n) reconstructs snapshots[k+1] by IH.
+            self.lemma_snap_eq_overlay(k + 1);
+            let above = overlay::<T, I>(self.view(), diffs, mid, n);
+
+            // Split overlay(view, lo, n) = overlay(overlay(view, mid, n), lo, mid).
+            lemma_overlay_split::<T, I>(self.view(), diffs, lo, mid, n);
+
+            // `above` agrees with snapshots[k+1] on [0, saved_{k+1}); and
+            // saved <= saved_{k+1} (monotone), so `above` agrees with
+            // snapshots[k+1] = layer_above_at(k) on [0, saved).
+            lemma_overlay_len::<T, I>(self.view(), diffs, mid, n);
+
+            // Now overlay stratum k onto `above`. frame_inv_range holds with
+            // layer_above_at(k) == snapshots[k+1]; we need it to hold with
+            // `above` instead. They agree on [0, saved), which is all
+            // frame_inv_range's uncaptured arm reads.
+            assert(self.layer_above_at(k) == snaps[k + 1]);
+            assert(frames[k].saved_len.as_nat() <= frames[k + 1].saved_len.as_nat());
+            assert forall|j: int| 0 <= j < saved implies
+                #[trigger] above[j] == snaps[k + 1][j]
+            by {
+                self.lemma_snap_eq_overlay(k + 1);
+            }
+            // Build frame_inv_range over `above` and apply the bridge.
+            // The original frame_inv_range (from wf) holds with layer
+            // `snaps[k+1]`. The captured arm is layer-independent; the
+            // uncaptured arm needs above[j] == snaps[k][j], which chains
+            // above[j] == snaps[k+1][j] (IH) and snaps[k+1][j] == snaps[k][j]
+            // (original uncaptured arm).
+            assert(frame_inv_range::<T, I>(above, diffs, lo, mid, snaps[k], saved)) by {
+                assert(above.len() == self.view().len());
+                self.lemma_saved_len_le_view(k);
+                assert(saved <= above.len());
+                assert forall|j: int| #![trigger snaps[k][j]] 0 <= j < saved as int implies {
+                    if !captured_in_range::<T, I>(diffs, lo, mid, j as nat) {
+                        above[j] == snaps[k][j]
+                    } else {
+                        exists|p: int| lo <= p < mid
+                            && (#[trigger] diffs[p]).1.as_nat() == j as nat
+                            && diffs[p].0 == snaps[k][j]
+                    }
+                } by {
+                    // The original frame_inv_range over snaps[k+1] layer.
+                    assert(frame_inv_range::<T, I>(
+                        snaps[k + 1], diffs, lo, mid, snaps[k], saved));
+                    if !captured_in_range::<T, I>(diffs, lo, mid, j as nat) {
+                        // original uncaptured arm: snaps[k+1][j] == snaps[k][j]
+                        // IH: above[j] == snaps[k+1][j]
+                        assert(above[j] == snaps[k + 1][j]);
+                        assert(snaps[k + 1][j] == snaps[k][j]);
+                    } else {
+                        // captured arm carries over verbatim (no layer dep).
+                    }
+                }
+            }
+            lemma_overlay_eq_snap::<T, I>(above, diffs, lo, mid, snaps[k], saved);
+        } else {
+            // Base case: top frame. mid == n, layer above == view.
+            assert(mid == n);
+            assert(self.layer_above_at(k) == self.view());
+            lemma_overlay_eq_snap::<T, I>(self.view(), diffs, lo, mid, snaps[k], saved);
+        }
     }
 
     pub fn len(&self) -> (n: I)
@@ -200,15 +736,81 @@ where
             self.view() == old(self).view().push(value),
             self.snapshots_view() == old(self).snapshots_view(),
     {
+        // Pull the top-frame bound from wf BEFORE mutating (wf holds now).
+        proof {
+            let frames = self.frames@;
+            if frames.len() > 0 {
+                self.lemma_saved_len_le_view((frames.len() - 1) as int);
+            }
+        }
+        let ghost old_view = self.view();
+        let ghost old_self = *self;
         self.store.push(value);
-        // Per-cell argument:
-        //   diff_log unchanged → diff_has_index(j) unchanged for every j.
-        //   saved_len unchanged.
-        //   For j < saved_len <= old.view.len(): view[j] is identical
-        //     pre and post push (the push only extends).
-        //   So both arms of frame_inv are inherited from old.
-        // No proof hint needed — Verus discharges this from the unchanged
-        // operands plus extensionality on view's prefix.
+        // diff_log, frames, snapshots all unchanged. Only `view` changed,
+        // by appending one element. Inner frames' frame_inv_range references
+        // snapshots (unchanged) as `above`. The TOP frame references `view`;
+        // re-establish its frame_inv_range explicitly.
+        proof {
+            assert(self.view() == old_view.push(value));
+            assert(self.frames@ == old_self.frames@);
+            assert(self.diff_log@ == old_self.diff_log@);
+            assert(self.snapshots@ == old_self.snapshots@);
+            let frames = self.frames@;
+            assert forall|k: int| 0 <= k < frames.len() implies
+                #[trigger] frame_inv_range::<T, I>(
+                    self.layer_above_at(k),
+                    self.diff_log@,
+                    frames[k].diff_start as int,
+                    self.stratum_end(k),
+                    self.snapshots@[k],
+                    frames[k].saved_len.as_nat())
+            by {
+                // old frame_inv_range held for old_self with same args except
+                // possibly layer_above_at (which equals view for top frame).
+                assert(old_self.frame_inv_range_holds(k));
+                if k + 1 < frames.len() {
+                    // inner frame: layer_above unchanged (snapshot).
+                    assert(self.layer_above_at(k) == old_self.layer_above_at(k));
+                } else {
+                    // top frame: layer is view, changed by push but prefix
+                    // preserved; saved_len <= old_view.len().
+                    self.lemma_saved_len_le_view_from(old_self, k);
+                }
+            }
+        }
+    }
+
+    /// Helper used in proofs: assert frame_inv_range for frame k from wf.
+    pub open spec fn frame_inv_range_holds(&self, k: int) -> bool {
+        frame_inv_range::<T, I>(
+            self.layer_above_at(k),
+            self.diff_log@,
+            self.frames@[k].diff_start as int,
+            self.stratum_end(k),
+            self.snapshots@[k],
+            self.frames@[k].saved_len.as_nat())
+    }
+
+    /// Carry the saved_len <= view bound for the top frame across a push
+    /// (old_self had wf; new view is longer).
+    pub proof fn lemma_saved_len_le_view_from(&self, old_self: Self, k: int)
+        requires
+            old_self.wf(),
+            self.frames@ == old_self.frames@,
+            self.snapshots@ == old_self.snapshots@,
+            self.diff_log@ == old_self.diff_log@,
+            old_self.view().len() <= self.view().len(),
+            (forall|j: int| 0 <= j < old_self.view().len() ==>
+                #[trigger] self.view()[j] == old_self.view()[j]),
+            0 <= k < self.frames@.len(),
+            k + 1 == self.frames@.len(),
+        ensures
+            self.frame_inv_range_holds(k),
+    {
+        old_self.lemma_saved_len_le_view(k);
+        assert(old_self.frame_inv_range_holds(k));
+        // top frame: layer_above is view in both; agree on old prefix; the
+        // uncaptured arm only reads view[j] for j < saved_len <= old view len.
     }
 
     pub fn pop(&mut self) -> (r: Option<T>)
@@ -285,9 +887,13 @@ where
 
     /// Restore the vector to the state captured by `token`.
     ///
-    /// M3b: only single-frame restore. After restore:
-    ///   - view() equals the snapshot taken at the corresponding `mark()`.
-    ///   - the snapshot stack is truncated to `token.frame_idx`.
+    /// M4 restore — to any frame_idx in range, across nested strata.
+    ///
+    /// The loop walks the diff log from `n` down to `frames[target].diff_start`,
+    /// replaying each entry. By the `overlay` model, the result on the
+    /// marked region `[0, saved_len_target)` equals
+    /// `overlay(pre_view, diff_log, diff_start, n)`, which by the central
+    /// lemma `lemma_snap_eq_overlay` equals `snapshots[target]`.
     pub fn restore(&mut self, token: VecToken)
         requires
             old(self).wf(),
@@ -303,56 +909,181 @@ where
         let saved_len = target_frame.saved_len;
         let diff_start = target_frame.diff_start;
 
-        // Capture pre-state. By wf, frame_inv(pre_view, pre_diffs, snap0,
-        // saved_len) holds — the declarative two-arm invariant.
-        let pre_view: Ghost<Seq<T>> = Ghost(self.view());
-        let pre_diffs: Ghost<Seq<(T, I)>> = Ghost(self.diff_log@);
-        let snap0: Ghost<Seq<T>> = Ghost(self.snapshots@[target_index as int]);
+        let ghost pre_view = self.view();
+        let ghost pre_diffs = self.diff_log@;
+        let ghost snap_target = self.snapshots@[target_index as int];
+
+        // The central lemma: overlay all strata [diff_start, n) onto the
+        // pre-restore view reconstructs snap_target on its marked region.
+        proof {
+            self.lemma_snap_eq_overlay(target_index as int);
+            self.lemma_saved_len_le_view(target_index as int);
+            self.lemma_diff_start_le_n(target_index as int);
+        }
 
         self.store.truncate(saved_len);
 
-        // Loop invariant — directly the declarative form.
-        // For each j < saved_len, j is "fully restored" iff no entry in the
-        // unapplied prefix [diff_start, i) of the diff log points at j.
-        // Equivalently, all the diff entries for j have been applied.
-        // For such j, by frame_inv:
-        //   - if uncaptured (no entry anywhere): pre_view[j] == snap[j],
-        //     and our truncated view still holds pre_view[j];
-        //   - if captured (entry in [i, n) which we just applied): we wrote
-        //     the entry's old_val, and frame_inv's captured-arm says
-        //     old_val == snap[j].
-        // Both cases give data[j] == snap[j].
+        // Loop invariant: data agrees, on [0, saved_len), with overlaying
+        // the unapplied range [i, n) onto the truncated base. (The truncated
+        // base equals pre_view's prefix [0, saved_len); entries with index
+        // >= saved_len are no-ops there, by lemma_overlay_prefix_agnostic.)
+        let ghost trunc_base = self.store.data();
         let n = self.diff_log.len();
         let mut i: usize = n;
         while i > diff_start
             invariant
                 self.store.wf(),
-                self.diff_log@ == pre_diffs@,
+                self.diff_log@ == pre_diffs,
                 self.diff_log@.len() == n,
+                self.frames@ == old(self).frames@,
+                self.snapshots@ == old(self).snapshots@,
                 diff_start <= i <= n,
                 self.store.data().len() == saved_len.as_nat(),
-                saved_len.as_nat() <= pre_view@.len(),
-                forall|k: int| 0 <= k < self.diff_log@.len() ==>
-                    (#[trigger] self.diff_log@[k]).1.as_nat() < saved_len.as_nat(),
-                diffs_unique_indices::<T, I>(self.diff_log@),
-                frame_inv::<T, I>(pre_view@, pre_diffs@, snap0@, saved_len.as_nat()),
-                forall|j: int| #![trigger self.store.data()[j]]
-                    0 <= j < saved_len.as_nat()
-                    && !(exists|k: int| diff_start <= k < (i as int)
-                            && (#[trigger] self.diff_log@[k]).1.as_nat() == j as nat)
-                        ==> self.store.data()[j] == snap0@[j],
+                saved_len.as_nat() <= pre_view.len(),
+                trunc_base.len() == saved_len.as_nat(),
+                forall|j: int| 0 <= j < saved_len.as_nat() ==>
+                    #[trigger] trunc_base[j] == pre_view[j],
+                // The work done so far == overlay of the applied suffix.
+                forall|j: int| 0 <= j < saved_len.as_nat() ==>
+                    #[trigger] self.store.data()[j]
+                        == overlay::<T, I>(trunc_base, pre_diffs, i as int, n as int)[j],
             decreases i,
         {
             i -= 1;
             let (old_val, idx) = self.diff_log[i];
+            proof {
+                lemma_overlay_len::<T, I>(trunc_base, pre_diffs, (i + 1) as int, n as int);
+            }
             self.store.restore_entry(idx, &old_val, saved_len);
         }
 
-        // After the loop: i == diff_start. With diff_start == 0, the
-        // "still to be applied" set is empty, so every j is restored.
+        proof {
+            // After loop: i == diff_start. data agrees with
+            // overlay(trunc_base, diff_log, diff_start, n) on [0, saved_len).
+            // trunc_base agrees with pre_view on [0, saved_len), so by
+            // prefix-agnosticism overlay(trunc_base,..) agrees with
+            // overlay(pre_view,..) there. And that equals snap_target by
+            // the central lemma.
+            lemma_overlay_prefix_agnostic::<T, I>(
+                trunc_base, pre_view, pre_diffs,
+                diff_start as int, n as int, saved_len.as_nat() as int);
+            assert forall|j: int| 0 <= j < saved_len.as_nat() implies
+                #[trigger] self.store.data()[j] == snap_target[j] by {}
+        }
+
+        let ghost old_frames = self.frames@;
+        let ghost old_diffs = self.diff_log@;
+        let ghost old_snaps = self.snapshots@;
+
         self.diff_log.truncate(diff_start);
         self.frames.truncate(target_index);
         self.snapshots = Ghost(self.snapshots@.subrange(0, target_index as int));
+
+        proof {
+            // view() now has length saved_len and agrees with snap_target
+            // pointwise, so they're equal by extensionality.
+            assert(self.view() =~= snap_target);
+
+            // Re-establish wf for the truncated stack [0, target_index).
+            let frames = self.frames@;
+            let diffs = self.diff_log@;
+            let snaps = self.snapshots@;
+
+            assert(frames =~= old_frames.subrange(0, target_index as int));
+            assert(snaps =~= old_snaps.subrange(0, target_index as int));
+            assert(diffs =~= old_diffs.subrange(0, diff_start as int));
+            assert(frames.len() == target_index as nat);
+            assert(diffs.len() == diff_start as nat);
+
+            // Each surviving frame's stratum and layer_above is preserved:
+            //  - For k < target_index - 1: stratum [ds_k, ds_{k+1}) lies
+            //    entirely below diff_start, so truncating the diff log to
+            //    diff_start doesn't change it; layer_above is snaps[k+1],
+            //    a surviving snapshot, unchanged.
+            //  - For k == target_index - 1 (new top): its stratum upper
+            //    bound was old frames[target].diff_start == diff_start ==
+            //    new diff_log.len(), so stratum_end(k) is unchanged; its
+            //    layer_above flips from old snaps[target] to the new view,
+            //    but view == snap_target == old snaps[target], so the
+            //    frame_inv_range content is identical.
+            // Entries below diff_start are identical in old and new diff log.
+            assert forall|m: int| 0 <= m < diff_start as int implies
+                #[trigger] diffs[m] == old_diffs[m] by {}
+
+            // Structural conjuncts for the new top frame (target_index - 1),
+            // if the truncated stack is non-empty.
+            if frames.len() > 0 {
+                let top = (frames.len() - 1) as int;
+                assert(top == target_index as int - 1);
+                // new top diff_start <= new n (== diff_start):
+                old(self).lemma_diff_start_monotone(top, target_index as int);
+                assert(old_frames[top].diff_start <= old_frames[target_index as int].diff_start);
+                // new top saved_len <= new view.len() (== saved_len_target):
+                old(self).lemma_saved_len_monotone(top, target_index as int);
+                assert(self.view().len() == saved_len.as_nat());
+                assert(old_frames[target_index as int].saved_len.as_nat() == saved_len.as_nat());
+            }
+
+            assert forall|k: int| 0 <= k < frames.len() implies
+                #[trigger] frame_inv_range::<T, I>(
+                    self.layer_above_at(k), diffs, frames[k].diff_start as int,
+                    self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
+            by {
+                // The old vec satisfied frame_inv_range for frame k (wf).
+                assert(old(self).frame_inv_range_holds(k));
+                assert(old_frames[k] == frames[k]);
+                assert(old_snaps[k] == snaps[k]);
+                let lo = frames[k].diff_start as int;
+                // For surviving frames, stratum upper bound:
+                //   k < top:  frames[k+1].diff_start (same as old, < diff_start)
+                //   k == top: new diff_log.len() == diff_start
+                //             == old frames[target].diff_start
+                //             == old stratum_end(target_index - 1)
+                let hi_new = self.stratum_end(k);
+                let hi_old = old(self).stratum_end(k);
+                if k + 1 < frames.len() {
+                    assert(hi_new == frames[k + 1].diff_start as int);
+                    assert(hi_old == old_frames[k + 1].diff_start as int);
+                    assert(hi_new == hi_old);
+                    assert(self.layer_above_at(k) == snaps[k + 1]);
+                    assert(old(self).layer_above_at(k) == old_snaps[k + 1]);
+                } else {
+                    // new top frame: hi_new == new diff_log.len() == diff_start.
+                    assert(hi_new == diff_start as int);
+                    // old stratum_end(target_index - 1) == old frames[target].diff_start.
+                    assert(hi_old == old_frames[(k + 1) as int].diff_start as int);
+                    assert(hi_old == diff_start as int);
+                    assert(self.layer_above_at(k) == self.view());
+                    assert(self.view() == snap_target);
+                    assert(snap_target == old_snaps[target_index as int]);
+                    assert(old(self).layer_above_at(k) == old_snaps[k + 1]);
+                }
+                // Transfer frame_inv_range from old_diffs to new diffs:
+                // they agree on [lo, hi_new) (which is below diff_start),
+                // and layer + snap + saved_len coincide.
+                assert(self.layer_above_at(k) == old(self).layer_above_at(k));
+                assert(hi_new == hi_old);
+                // hi_old <= diff_start: it's old stratum_end(k) for a frame
+                // k < target_index. For k+1 < target_index, monotonicity of
+                // old diff_starts gives frames[k+1].diff_start <=
+                // frames[target].diff_start == diff_start. For k+1 ==
+                // target_index, hi_old == frames[target].diff_start == diff_start.
+                assert(hi_old <= diff_start as int) by {
+                    old(self).lemma_diff_start_le_n(target_index as int);
+                    if k + 1 < frames.len() {
+                        old(self).lemma_diff_start_monotone(k + 1, target_index as int);
+                    }
+                }
+                assert(hi_new <= diff_start as int);
+                lemma_frame_inv_range_local::<T, I>(
+                    self.layer_above_at(k), old_diffs, diffs,
+                    lo, hi_new, snaps[k], frames[k].saved_len.as_nat());
+                // Surface the inline form wf's forall triggers on.
+                assert(frame_inv_range::<T, I>(
+                    self.layer_above_at(k), diffs, frames[k].diff_start as int,
+                    self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat()));
+            }
+        }
     }
 }
 
