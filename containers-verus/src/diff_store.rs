@@ -56,6 +56,12 @@ where
     /// universal part is `captured().len() == data().len()`.
     spec fn wf(&self) -> bool;
 
+    /// Universal consequence of `wf`: the capture-flag sequence is exactly
+    /// as long as the data sequence. Both backends discharge this trivially.
+    proof fn lemma_wf_captured_len(&self)
+        requires self.wf(),
+        ensures self.captured().len() == self.data().len();
+
     // -- raw read / write API ------------------------------------------------
 
     fn is_empty(&self) -> (b: bool)

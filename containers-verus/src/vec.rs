@@ -212,6 +212,35 @@ pub proof fn lemma_overlay_captured<T, I: IndexLike>(
     }
 }
 
+/// Bridge between subrange-position existential and absolute-range
+/// `captured_in_range`. If `sub == diffs.subrange(lo, hi)`, then
+/// "some sub[kk] hits j" iff "some diffs[k] in [lo, hi) hits j".
+pub proof fn lemma_captured_subrange<T, I: IndexLike>(
+    diffs: Seq<(T, I)>, sub: Seq<(T, I)>, lo: int, hi: int, j: nat,
+)
+    requires
+        0 <= lo <= hi <= diffs.len(),
+        sub == diffs.subrange(lo, hi),
+    ensures
+        (exists|kk: int| 0 <= kk < sub.len()
+            && (#[trigger] sub[kk]).1.as_nat() == j)
+        == captured_in_range::<T, I>(diffs, lo, hi, j),
+{
+    if exists|kk: int| 0 <= kk < sub.len() && (#[trigger] sub[kk]).1.as_nat() == j {
+        let kk = choose|kk: int| 0 <= kk < sub.len() && (#[trigger] sub[kk]).1.as_nat() == j;
+        // sub[kk] == diffs[lo + kk], and lo <= lo+kk < hi.
+        assert(sub[kk] == diffs[lo + kk]);
+        assert(lo <= lo + kk < hi);
+    }
+    if captured_in_range::<T, I>(diffs, lo, hi, j) {
+        let k = choose|k: int| lo <= k < hi && 0 <= k < diffs.len()
+            && (#[trigger] diffs[k]).1.as_nat() == j;
+        // diffs[k] == sub[k - lo], and 0 <= k-lo < sub.len().
+        assert(sub[k - lo] == diffs[k]);
+        assert(0 <= k - lo < sub.len());
+    }
+}
+
 /// `frame_inv_range` over `[lo, hi)` depends only on the diff entries in
 /// that range. If two diff sequences agree pointwise on `[lo, hi)` (and are
 /// both long enough), the predicate holds for one iff for the other.
@@ -429,6 +458,9 @@ where
     pub store: S,
     pub diff_log: std::vec::Vec<(T, I)>,
     pub frames: std::vec::Vec<Frame<I>>,
+    /// The saved_len of the topmost (active) frame, cached for the hot path.
+    /// `I::min()` when the stack is empty. Mirrors production.
+    pub active_saved_len: I,
     pub phantom: core::marker::PhantomData<(T, I)>,
     /// Ghost stack of deep copies. `snapshots[k]` is `view()` at the
     /// moment frame `k` was pushed. Always `snapshots.len() == frames.len()`.
@@ -520,6 +552,23 @@ where
                     self.stratum_end(k),
                     snaps[k],
                     frames[k].saved_len.as_nat()))
+        // active_saved_len caches the top frame's saved_len.
+        &&& (frames.len() == 0 ==> self.active_saved_len == I::min_spec())
+        &&& (frames.len() > 0 ==>
+                self.active_saved_len == frames[(frames.len() - 1) as int].saved_len)
+        // Capture-flag bridge: store.captured()[j] is set iff j has been
+        // captured in the TOP stratum. Only meaningful when a frame is live;
+        // restricted to j < active_saved_len (the marked region of the top
+        // frame). Connects the storage backend's per-slot flag to the diff log.
+        &&& self.store.captured().len() == self.view().len()
+        &&& (frames.len() > 0 ==>
+                forall|j: int| 0 <= j < self.active_saved_len.as_nat() ==>
+                    #[trigger] self.store.captured()[j]
+                        == captured_in_range::<T, I>(
+                            diffs,
+                            frames[(frames.len() - 1) as int].diff_start as int,
+                            diffs.len() as int,
+                            j as nat))
     }
 
     /// Every frame's diff_start is `<= diff_log.len()`. Follows from
@@ -863,6 +912,8 @@ where
     /// was the diff log's end, which equals the new frame's diff_start),
     /// and its layer flips from `view` to the new `snapshots[top]`, which
     /// equals the view — so its frame_inv_range transfers.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
     pub fn mark(&mut self) -> (token: VecToken)
         requires
             old(self).wf(),
@@ -893,6 +944,7 @@ where
 
         self.snapshots = Ghost(self.snapshots@.push(old_view));
         self.frames.push(Frame { saved_len, diff_start });
+        self.active_saved_len = saved_len;
 
         proof {
             let frames = self.frames@;
@@ -907,20 +959,94 @@ where
             assert(diffs == old(self).diff_log@);
             assert(diff_start == diffs.len());
 
+            // Monotone saved_len: the only new adjacency is (old_top, new).
+            // old_top.saved_len <= old view.len() == saved_len (new frame).
+            assert(frames.len() == old_frames.len() + 1);
+            assert(new_top == old_frames.len());
+            assert(frames[new_top].saved_len == saved_len);
+            assert(forall|k: int| 0 <= k < old_frames.len() ==> frames[k] == old_frames[k]);
+            assert(old_view.len() == saved_len.as_nat());
+            if old_frames.len() > 0 {
+                old(self).lemma_saved_len_le_view((old_frames.len() - 1) as int);
+                assert(old_frames[(old_frames.len() - 1) as int].saved_len.as_nat()
+                    <= saved_len.as_nat());
+            }
+            assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
+                #[trigger] frames[k].saved_len.as_nat()
+                    <= #[trigger] frames[k + 1].saved_len.as_nat()
+            by {
+                assert(frames[k] == old_frames[k]);
+                if k + 1 < new_top {
+                    // both in old stack
+                    assert(frames[k + 1] == old_frames[k + 1]);
+                    old(self).lemma_saved_len_monotone(k, k + 1);
+                    assert(old_frames[k].saved_len.as_nat()
+                        <= old_frames[k + 1].saved_len.as_nat());
+                } else {
+                    // k+1 == new_top: old_top vs new frame
+                    assert(k == old_frames.len() - 1);
+                    assert(frames[k + 1].saved_len == saved_len);
+                    old(self).lemma_saved_len_le_view(k);
+                }
+            }
+            // diff_start monotone: new adjacency (old_top, new) has
+            // old_top.diff_start <= n == new.diff_start.
+            assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
+                #[trigger] frames[k].diff_start <= #[trigger] frames[k + 1].diff_start
+            by {
+                assert(frames[k] == old_frames[k]);
+                if k + 1 < new_top {
+                    assert(frames[k + 1] == old_frames[k + 1]);
+                    old(self).lemma_diff_start_monotone(k, k + 1);
+                } else {
+                    assert(k == old_frames.len() - 1);
+                    assert(frames[k + 1].diff_start == diff_start);
+                    old(self).lemma_diff_start_le_n(k);
+                }
+            }
+            // snapshot length & active_saved_len for the new top frame.
+            assert(snaps[new_top] == old_view);
+            assert(snaps[new_top].len() == saved_len.as_nat());
+            assert(frames[new_top].saved_len == saved_len);
+            assert(self.active_saved_len == saved_len);
+
+            // Bridge: the new top stratum [diff_start, n) == [n, n) is empty,
+            // so captured_in_range is false everywhere; prepare_mark made
+            // store.captured()[j] == false for all j < saved_len == active.
+            self.store.lemma_wf_captured_len();
+            assert(self.store.captured().len() == self.view().len());
+            assert forall|j: int| 0 <= j < self.active_saved_len.as_nat() implies
+                #[trigger] self.store.captured()[j]
+                    == captured_in_range::<T, I>(
+                        diffs, frames[new_top].diff_start as int, diffs.len() as int, j as nat)
+            by {
+                // stratum empty ⇒ RHS false; prepare_mark ⇒ LHS false.
+                assert(frames[new_top].diff_start == diffs.len());
+            }
+
             // Re-establish the per-frame frame_inv_range for the new stack.
             assert forall|k: int| 0 <= k < frames.len() implies
                 #[trigger] frame_inv_range::<T, I>(
                     self.layer_above_at(k), diffs, frames[k].diff_start as int,
                     self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
             by {
+                let lo = frames[k].diff_start as int;
+                let hi = self.stratum_end(k);
                 if k == new_top {
                     // New frame: stratum [diff_start, diff_start) is empty,
                     // layer == snapshot == view. All cells uncaptured ⇒
                     // view[j] == snap[j] trivially.
-                    assert(self.stratum_end(k) == diffs.len());
-                    assert(frames[k].diff_start == diffs.len());
+                    assert(hi == diffs.len());
+                    assert(lo == diffs.len());
                     assert(self.layer_above_at(k) == self.view());
                     assert(snaps[k] == old_view);
+                    // Empty stratum: prove frame_inv_range from scratch.
+                    assert forall|j: int| #![trigger snaps[k][j]]
+                        0 <= j < frames[k].saved_len.as_nat() as int implies
+                        snaps[k][j] == self.layer_above_at(k)[j]
+                    by {
+                        // no entry in [lo, hi) since the range is empty
+                    }
                 } else if k + 1 == new_top {
                     // Previous top frame: stratum unchanged; layer flips from
                     // old view to snaps[new_top] == old_view. Equal, so the
@@ -928,11 +1054,16 @@ where
                     assert(old(self).frame_inv_range_holds(k));
                     assert(old_frames[k] == frames[k]);
                     assert(old_snaps[k] == snaps[k]);
-                    assert(self.stratum_end(k) == diffs.len());
+                    assert(hi == diffs.len());
                     assert(old(self).stratum_end(k) == diffs.len());
                     assert(self.layer_above_at(k) == snaps[k + 1]);
                     assert(snaps[k + 1] == old_view);
                     assert(old(self).layer_above_at(k) == old_view);
+                    assert(self.layer_above_at(k) == old(self).layer_above_at(k));
+                    old(self).lemma_diff_start_le_n(k);
+                    lemma_frame_inv_range_local::<T, I>(
+                        self.layer_above_at(k), diffs, diffs,
+                        lo, hi, snaps[k], frames[k].saved_len.as_nat());
                 } else {
                     // Deeper frames: stratum and layer (a surviving snapshot)
                     // unchanged.
@@ -941,8 +1072,18 @@ where
                     assert(old_snaps[k] == snaps[k]);
                     assert(self.layer_above_at(k) == snaps[k + 1]);
                     assert(old(self).layer_above_at(k) == old_snaps[k + 1]);
-                    assert(self.stratum_end(k) == old(self).stratum_end(k));
+                    assert(self.layer_above_at(k) == old(self).layer_above_at(k));
+                    assert(hi == old(self).stratum_end(k));
+                    assert(hi == old_frames[k + 1].diff_start as int);
+                    old(self).lemma_diff_start_le_n(k + 1);
+                    old(self).lemma_diff_start_monotone(k, k + 1);
+                    lemma_frame_inv_range_local::<T, I>(
+                        self.layer_above_at(k), diffs, diffs,
+                        lo, hi, snaps[k], frames[k].saved_len.as_nat());
                 }
+                assert(frame_inv_range::<T, I>(
+                    self.layer_above_at(k), diffs, lo, hi, snaps[k],
+                    frames[k].saved_len.as_nat()));
             }
         }
 
@@ -958,6 +1099,8 @@ where
     /// marked region `[0, saved_len_target)` equals
     /// `overlay(pre_view, diff_log, diff_start, n)`, which by the central
     /// lemma `lemma_snap_eq_overlay` equals `snapshots[target]`.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
     pub fn restore(&mut self, token: VecToken)
         requires
             old(self).wf(),
@@ -1042,6 +1185,37 @@ where
         self.diff_log.truncate(diff_start);
         self.frames.truncate(target_index);
         self.snapshots = Ghost(self.snapshots@.subrange(0, target_index as int));
+
+        // Set active_saved_len and rebuild the store's capture flags so the
+        // bridge invariant holds for the new top frame. When the stack is
+        // empty, no bridge is needed and active is reset to min.
+        proof {
+            // data().len() == saved_len_target after the restore loop.
+            assert(self.store.data().len() == saved_len.as_nat());
+            if target_index > 0 {
+                // new top frame is target_index - 1.
+                old(self).lemma_diff_start_monotone(target_index as int - 1, target_index as int);
+                old(self).lemma_saved_len_monotone(target_index as int - 1, target_index as int);
+                // new_top.diff_start <= old target.diff_start == diff_start == new diff_log.len()
+                // new_top.saved_len <= old target.saved_len == saved_len == data().len()
+            }
+        }
+        let ghost surviving_view: Seq<(T, I)> = Seq::empty();
+        let ghost new_top_ds_ghost: int = 0;
+        if target_index > 0 {
+            let new_top_frame = self.frames[target_index - 1];
+            self.active_saved_len = new_top_frame.saved_len;
+            let new_top_ds = new_top_frame.diff_start;
+            let surviving = vstd::slice::slice_subrange(
+                self.diff_log.as_slice(), new_top_ds, self.diff_log.len());
+            proof {
+                surviving_view = surviving@;
+                new_top_ds_ghost = new_top_ds as int;
+            }
+            self.store.finish_restore(surviving, new_top_frame.saved_len);
+        } else {
+            self.active_saved_len = I::min();
+        }
 
         proof {
             // view() now has length saved_len and agrees with snap_target
@@ -1146,6 +1320,33 @@ where
                 assert(frame_inv_range::<T, I>(
                     self.layer_above_at(k), diffs, frames[k].diff_start as int,
                     self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat()));
+            }
+
+            // active_saved_len + capture-flag bridge.
+            self.store.lemma_wf_captured_len();
+            if frames.len() == 0 {
+                // active_saved_len was set to I::min(), which == min_spec().
+            } else {
+                let top = (frames.len() - 1) as int;
+                assert(frames[top] == old_frames[top]);
+                assert(self.active_saved_len == frames[top].saved_len);
+                // finish_restore rebuilt store.captured() from the surviving
+                // top stratum [top.diff_start, n). Its postcondition says for
+                // i < new_top.saved_len, captured()[i] iff some surviving diff
+                // entry points at i. The surviving diffs slice IS the top
+                // stratum, so captured_in_range matches.
+                assert(frames[top].diff_start as int == new_top_ds_ghost);
+                assert(surviving_view == diffs.subrange(new_top_ds_ghost, diffs.len() as int));
+                assert forall|j: int| 0 <= j < self.active_saved_len.as_nat() implies
+                    #[trigger] self.store.captured()[j]
+                        == captured_in_range::<T, I>(
+                            diffs, frames[top].diff_start as int, diffs.len() as int, j as nat)
+                by {
+                    // finish_restore: captured()[j] == exists kk, surviving_view[kk].1 == j.
+                    // lemma_captured_subrange: that == captured_in_range over the range.
+                    lemma_captured_subrange::<T, I>(
+                        diffs, surviving_view, new_top_ds_ghost, diffs.len() as int, j as nat);
+                }
             }
         }
     }

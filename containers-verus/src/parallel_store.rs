@@ -46,6 +46,8 @@ where
         &&& self.data@.len() < I::max_nat()
     }
 
+    proof fn lemma_wf_captured_len(&self) {}
+
     fn is_empty(&self) -> bool {
         self.data.len() == 0
     }

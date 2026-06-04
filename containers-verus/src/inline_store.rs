@@ -65,6 +65,8 @@ where
                 #[trigger] T::repr_wf(self.data@[i])
     }
 
+    proof fn lemma_wf_captured_len(&self) {}
+
     fn is_empty(&self) -> bool {
         self.data.len() == 0
     }
