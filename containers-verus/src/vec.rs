@@ -609,6 +609,21 @@ where
         }
     }
 
+    /// Every frame's saved_len <= active_saved_len (the top frame's, which
+    /// is the maximum by monotonicity).
+    pub proof fn lemma_saved_len_le_active(&self, k: int)
+        requires
+            self.wf(),
+            self.frames@.len() > 0,
+            0 <= k < self.frames@.len(),
+        ensures
+            self.frames@[k].saved_len.as_nat() <= self.active_saved_len.as_nat(),
+    {
+        let top = (self.frames@.len() - 1) as int;
+        self.lemma_saved_len_monotone(k, top);
+        assert(self.active_saved_len == self.frames@[top].saved_len);
+    }
+
     /// saved_len is monotone non-decreasing across frames.
     pub proof fn lemma_saved_len_monotone(&self, a: int, b: int)
         requires
@@ -862,15 +877,20 @@ where
         // uncaptured arm only reads view[j] for j < saved_len <= old view len.
     }
 
+    /// Pop the last element. Works under an active frame as long as the
+    /// element being removed is a *transient* — pushed since the active
+    /// mark — i.e. `view().len() > active_saved_len`. We never pop into any
+    /// frame's marked region (that state is needed for restore). A transient
+    /// slot has index >= active_saved_len, so it lies outside every frame's
+    /// stratum-constrained region and no capture is needed.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(200)]
     pub fn pop(&mut self) -> (r: Option<T>)
         requires
             old(self).wf(),
-            // No live frames: pop in tracked mode after a mark would need
-            // force_capture, which lives behind the M3b precondition that
-            // pop is only callable when the frame stack is empty (or the
-            // popped slot is beyond saved_len). For M3b, simplest is to
-            // require no live frames.
-            old(self).frames@.len() == 0,
+            // Either no live frame, or the top element is transient.
+            old(self).frames@.len() == 0
+                || old(self).active_saved_len.as_nat() < old(self).view().len(),
         ensures
             self.wf(),
             old(self).view().len() == 0 ==> r is None && self.view() == old(self).view(),
@@ -881,7 +901,69 @@ where
             },
             self.snapshots_view() == old(self).snapshots_view(),
     {
-        self.store.pop()
+        let ghost old_view = self.view();
+        let ghost old_diffs = self.diff_log@;
+        let ghost old_frames = self.frames@;
+        let r = self.store.pop();
+
+        proof {
+            let frames = self.frames@;
+            let diffs = self.diff_log@;
+            let snaps = self.snapshots@;
+            // pop only shrinks view by one (or no-op when empty); diff_log,
+            // frames, snapshots all unchanged.
+            assert(diffs == old_diffs);
+            assert(frames == old_frames);
+
+            if old_frames.len() > 0 && old_view.len() > 0 {
+                let top = (frames.len() - 1) as int;
+                // active_saved_len < old_view.len() ⇒ new view.len() ==
+                // old_view.len() - 1 >= active_saved_len. Marked region of
+                // every frame (saved_len <= active) is preserved.
+                assert(self.view() == old_view.drop_last());
+                assert(self.active_saved_len.as_nat() < old_view.len());
+                // Every frame's saved_len <= active <= new view.len().
+                assert forall|k: int| 0 <= k < frames.len() implies
+                    #[trigger] frame_inv_range::<T, I>(
+                        self.layer_above_at(k), diffs, frames[k].diff_start as int,
+                        self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
+                by {
+                    assert(old(self).frame_inv_range_holds(k));
+                    old(self).lemma_saved_len_le_active(k);
+                    assert(self.active_saved_len == old(self).active_saved_len);
+                    // saved_len <= active <= new view len; for the top frame
+                    // the layer is the view, and view[j] for j < saved_len is
+                    // preserved by drop_last (those indices stay in range).
+                    if k == top {
+                        assert(self.layer_above_at(k) == self.view());
+                        assert(old(self).layer_above_at(k) == old_view);
+                        assert forall|j: int| 0 <= j < frames[k].saved_len.as_nat()
+                            implies #[trigger] self.view()[j] == old_view[j] by {}
+                    } else {
+                        assert(self.layer_above_at(k) == snaps[k + 1]);
+                        assert(self.layer_above_at(k) == old(self).layer_above_at(k));
+                    }
+                }
+                // bridge preserved: store.pop drops the last captured flag
+                // (index old_view.len()-1 >= active), leaving [0, active)
+                // unchanged; diffs unchanged ⇒ captured_in_range unchanged.
+                self.store.lemma_wf_captured_len();
+                let ds_top = frames[top].diff_start as int;
+                assert forall|j: int| 0 <= j < self.active_saved_len.as_nat() implies
+                    #[trigger] self.store.captured()[j]
+                        == captured_in_range::<T, I>(
+                            diffs, ds_top, diffs.len() as int, j as nat)
+                by {
+                    // old bridge + captured()[j] unchanged (j < active <=
+                    // new len < old len, and pop drops only the last flag).
+                    assert(self.store.captured()[j] == old(self).store.captured()[j]);
+                    assert(old(self).store.captured()[j]
+                        == captured_in_range::<T, I>(
+                            old_diffs, ds_top, old_diffs.len() as int, j as nat));
+                }
+            }
+        }
+        r
     }
 
     /// Write `value` at index `i`, capturing the old value into the active
