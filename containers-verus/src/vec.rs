@@ -856,33 +856,97 @@ where
     ///
     /// M3b: only one live mark at a time. The precondition rejects nested
     /// marks; M4 will lift that.
+    /// Mark a snapshot point, possibly nested. The new frame's stratum
+    /// starts empty (diff_start == current diff_log.len()), so its
+    /// frame_inv_range holds with the view as both layer and snapshot.
+    /// The previously-top frame's stratum is unchanged (its upper bound
+    /// was the diff log's end, which equals the new frame's diff_start),
+    /// and its layer flips from `view` to the new `snapshots[top]`, which
+    /// equals the view — so its frame_inv_range transfers.
     pub fn mark(&mut self) -> (token: VecToken)
         requires
             old(self).wf(),
-            old(self).frames@.len() == 0,
+            old(self).view().len() < I::max_nat(),
         ensures
             self.wf(),
             self.view() == old(self).view(),
-            token.frame_idx == 0,
-            self.frames@.len() == 1,
+            token.frame_idx == old(self).frames@.len(),
+            self.frames@.len() == old(self).frames@.len() + 1,
             self.snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
+        proof {
+            // saved_len <= view.len() for prepare_mark's precondition.
+            if self.frames@.len() > 0 {
+                self.lemma_saved_len_le_view((self.frames@.len() - 1) as int);
+                self.lemma_diff_start_le_n((self.frames@.len() - 1) as int);
+            }
+        }
+
         let saved_len = self.store.len();
+        let diff_start = self.diff_log.len();
+
+        let ghost old_frames = self.frames@;
+        let ghost old_snaps = self.snapshots@;
+        let ghost old_view = self.view();
+
         self.store.prepare_mark(saved_len, self.diff_log.as_slice());
 
-        let view_now: Ghost<Seq<T>> = Ghost(self.view());
-        self.snapshots = Ghost(self.snapshots@.push(view_now@));
+        self.snapshots = Ghost(self.snapshots@.push(old_view));
+        self.frames.push(Frame { saved_len, diff_start });
 
-        self.frames.push(Frame { saved_len, diff_start: 0 });
+        proof {
+            let frames = self.frames@;
+            let diffs = self.diff_log@;
+            let snaps = self.snapshots@;
+            let new_top = (frames.len() - 1) as int;  // == old_frames.len()
 
-        // Establish frame_inv for the new frame. With diff_log empty:
-        //   - diff_has_index(j) is false for every j (no entries),
-        //   - so the uncaptured arm fires for every j: view[j] == snap[j].
-        //   - snap was just set to view, so view[j] == view[j]. ✓
-        //   - len conditions: snap.len() == view.len() == saved_len. ✓
-        // Verus discharges this directly.
+            // prepare_mark preserves view/diff_log/frames/snapshots (we set
+            // snapshots & frames explicitly after); only the store's internal
+            // capture flags changed, which the Vec invariant doesn't read.
+            assert(self.view() == old_view);
+            assert(diffs == old(self).diff_log@);
+            assert(diff_start == diffs.len());
 
-        VecToken { frame_idx: 0 }
+            // Re-establish the per-frame frame_inv_range for the new stack.
+            assert forall|k: int| 0 <= k < frames.len() implies
+                #[trigger] frame_inv_range::<T, I>(
+                    self.layer_above_at(k), diffs, frames[k].diff_start as int,
+                    self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
+            by {
+                if k == new_top {
+                    // New frame: stratum [diff_start, diff_start) is empty,
+                    // layer == snapshot == view. All cells uncaptured ⇒
+                    // view[j] == snap[j] trivially.
+                    assert(self.stratum_end(k) == diffs.len());
+                    assert(frames[k].diff_start == diffs.len());
+                    assert(self.layer_above_at(k) == self.view());
+                    assert(snaps[k] == old_view);
+                } else if k + 1 == new_top {
+                    // Previous top frame: stratum unchanged; layer flips from
+                    // old view to snaps[new_top] == old_view. Equal, so the
+                    // old frame_inv_range transfers.
+                    assert(old(self).frame_inv_range_holds(k));
+                    assert(old_frames[k] == frames[k]);
+                    assert(old_snaps[k] == snaps[k]);
+                    assert(self.stratum_end(k) == diffs.len());
+                    assert(old(self).stratum_end(k) == diffs.len());
+                    assert(self.layer_above_at(k) == snaps[k + 1]);
+                    assert(snaps[k + 1] == old_view);
+                    assert(old(self).layer_above_at(k) == old_view);
+                } else {
+                    // Deeper frames: stratum and layer (a surviving snapshot)
+                    // unchanged.
+                    assert(old(self).frame_inv_range_holds(k));
+                    assert(old_frames[k] == frames[k]);
+                    assert(old_snaps[k] == snaps[k]);
+                    assert(self.layer_above_at(k) == snaps[k + 1]);
+                    assert(old(self).layer_above_at(k) == old_snaps[k + 1]);
+                    assert(self.stratum_end(k) == old(self).stratum_end(k));
+                }
+            }
+        }
+
+        VecToken { frame_idx: self.frames.len() - 1 }
     }
 
     /// Restore the vector to the state captured by `token`.
