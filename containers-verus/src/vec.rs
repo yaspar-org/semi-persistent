@@ -565,7 +565,18 @@ where
     /// Per-frame (over each frame's stratum `[diff_start_k, stratum_end_k)`):
     ///   frame_inv_range(layer_above(k), diff_log, lo_k, hi_k,
     ///                   snapshots[k], saved_len_k)
-    pub open spec fn wf(&self) -> bool {
+    /// The snapshot-reconstruction core of `wf`: store well-formedness,
+    /// parallel stack lengths, frame bookkeeping (diff_start/saved_len
+    /// monotone, snapshot lengths), and the per-frame `frame_inv_range`.
+    ///
+    /// Crucially this does NOT include the capture-flag bridge or the
+    /// `store.captured().len() == view.len()` tie. `resize_default` (used by
+    /// restore to regrow a popped view) PRESERVES `wf_for_snap` — growing the
+    /// view with default fillers only touches captured cells (which the
+    /// frame_inv_range captured arm ignores) — but breaks the bridge. So the
+    /// central reconstruction lemma is stated over `wf_for_snap`, lettng
+    /// restore invoke it on the resized (non-`wf`, but `wf_for_snap`) state.
+    pub open spec fn wf_for_snap(&self) -> bool {
         let frames = self.frames@;
         let diffs = self.diff_log@;
         let snaps = self.snapshots@;
@@ -593,6 +604,13 @@ where
                     self.stratum_end(k),
                     snaps[k],
                     frames[k].saved_len.as_nat()))
+    }
+
+    pub open spec fn wf(&self) -> bool {
+        let frames = self.frames@;
+        let diffs = self.diff_log@;
+
+        &&& self.wf_for_snap()
         // active_saved_len caches the top frame's saved_len.
         &&& (frames.len() == 0 ==> self.active_saved_len == I::min_spec())
         &&& (frames.len() > 0 ==>
@@ -620,7 +638,7 @@ where
     /// monotonicity plus the top frame's bound, by upward induction.
     pub proof fn lemma_diff_start_le_n(&self, k: int)
         requires
-            self.wf(),
+            self.wf_for_snap(),
             0 <= k < self.frames@.len(),
         ensures
             self.frames@[k].diff_start <= self.diff_log@.len(),
@@ -639,7 +657,7 @@ where
     /// `frames[a].diff_start <= frames[b].diff_start`.
     pub proof fn lemma_diff_start_monotone(&self, a: int, b: int)
         requires
-            self.wf(),
+            self.wf_for_snap(),
             0 <= a <= b < self.frames@.len(),
         ensures
             self.frames@[a].diff_start <= self.frames@[b].diff_start,
@@ -658,7 +676,7 @@ where
     /// is the maximum by monotonicity).
     pub proof fn lemma_saved_len_le_active(&self, k: int)
         requires
-            self.wf(),
+            self.wf(),  // needs active_saved_len == frames[top].saved_len (bridge side)
             self.frames@.len() > 0,
             0 <= k < self.frames@.len(),
         ensures
@@ -672,7 +690,7 @@ where
     /// saved_len is monotone non-decreasing across frames.
     pub proof fn lemma_saved_len_monotone(&self, a: int, b: int)
         requires
-            self.wf(),
+            self.wf_for_snap(),
             0 <= a <= b < self.frames@.len(),
         ensures
             self.frames@[a].saved_len.as_nat() <= self.frames@[b].saved_len.as_nat(),
@@ -690,7 +708,7 @@ where
     /// the top frame's bound.
     pub proof fn lemma_saved_len_le_view(&self, k: int)
         requires
-            self.wf(),
+            self.wf_for_snap(),
             0 <= k < self.frames@.len(),
         ensures
             self.frames@[k].saved_len.as_nat() <= self.view().len(),
@@ -716,7 +734,7 @@ where
     /// by IH, then stratum k overlays on top to give snapshots[k].
     pub proof fn lemma_snap_eq_overlay(&self, k: int)
         requires
-            self.wf(),
+            self.wf_for_snap(),
             0 <= k < self.frames@.len(),
         ensures
             forall|j: int| 0 <= j < self.frames@[k].saved_len.as_nat() ==>
