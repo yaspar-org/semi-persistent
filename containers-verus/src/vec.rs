@@ -598,12 +598,16 @@ where
         &&& (frames.len() > 0 ==>
                 self.active_saved_len == frames[(frames.len() - 1) as int].saved_len)
         // Capture-flag bridge: store.captured()[j] is set iff j has been
-        // captured in the TOP stratum. Only meaningful when a frame is live;
-        // restricted to j < active_saved_len (the marked region of the top
-        // frame). Connects the storage backend's per-slot flag to the diff log.
+        // captured in the TOP stratum. Only meaningful when a frame is live.
+        // Restricted to j < min(active_saved_len, view.len()): the store only
+        // tracks flags for *present* cells. Cells popped out of the marked
+        // region (j in [view.len(), active)) have no store flag — their
+        // captured-ness lives in the diff log and is enforced by the coverage
+        // clause inside frame_cell_inv.
         &&& self.store.captured().len() == self.view().len()
         &&& (frames.len() > 0 ==>
-                forall|j: int| 0 <= j < self.active_saved_len.as_nat() ==>
+                forall|j: int|
+                    0 <= j < self.active_saved_len.as_nat() && j < self.view().len() ==>
                     #[trigger] self.store.captured()[j]
                         == captured_in_range::<T, I>(
                             diffs,
