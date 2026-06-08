@@ -121,6 +121,37 @@ where
             self.data() == old(self).data().subrange(0, len.as_nat() as int),
             self.captured() == old(self).captured().subrange(0, len.as_nat() as int);
 
+    /// Mark slot `i` as captured without logging or changing `data`. Used by
+    /// `Vec::push` when a previously-popped marked index is re-added: the
+    /// pop already captured `snap[i]`, so the fresh slot must inherit the
+    /// captured flag to keep first-write-wins (and bound the diff log).
+    fn mark_captured(&mut self, i: I)
+        requires
+            old(self).wf(),
+            i.as_nat() < old(self).data().len(),
+        ensures
+            self.wf(),
+            self.data() == old(self).data(),
+            self.captured() == old(self).captured().update(i.as_nat() as int, true);
+
+    /// Resize `data` to `len`: truncate if longer, or extend with
+    /// `T::default()` fillers if shorter. Used by `restore` to regrow the
+    /// popped region before the overwrite-only replay. The filler values are
+    /// arbitrary — they are always overwritten by the replay, which is why
+    /// no constraint is placed on `T::default()`. New slots are uncaptured.
+    fn resize_default(&mut self, len: I)
+        where T: core::default::Default
+        requires
+            old(self).wf(),
+            len.as_nat() < I::max_nat(),
+        ensures
+            self.wf(),
+            self.data().len() == len.as_nat(),
+            // existing prefix preserved
+            forall|j: int| 0 <= j < len.as_nat() && j < old(self).data().len()
+                ==> #[trigger] self.data()[j] == old(self).data()[j],
+            self.captured().len() == len.as_nat();
+
     // -- capture protocol ----------------------------------------------------
 
     /// Begin a new frame. Clears the capture flag for all slots in
