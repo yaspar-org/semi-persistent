@@ -93,6 +93,48 @@ where
         self.captured.truncate(lu);
     }
 
+    fn mark_captured(&mut self, i: I) {
+        let iu = i.as_usize();
+        self.captured.set(iu, true);
+    }
+
+    fn resize_default(&mut self, len: I)
+        where T: core::default::Default
+    {
+        let target = len.as_usize();
+        // The data prefix shared with the original: min(old_len, target).
+        let ghost shared = if old(self).data@.len() < target as nat {
+            old(self).data@.len()
+        } else {
+            target as nat
+        };
+        // Truncate if longer.
+        if self.data.len() > target {
+            self.data.truncate(target);
+            self.captured.truncate(target);
+        }
+        // Grow with defaults if shorter.
+        while self.data.len() < target
+            invariant
+                self.data@.len() == self.captured@.len(),
+                self.data@.len() <= target,
+                target == len.as_nat(),
+                len.as_nat() < I::max_nat(),
+                shared <= self.data@.len(),
+                shared == (if old(self).data@.len() < target as nat {
+                    old(self).data@.len()
+                } else {
+                    target as nat
+                }),
+                forall|j: int| 0 <= j < shared
+                    ==> #[trigger] self.data@[j] == old(self).data@[j],
+            decreases target - self.data.len(),
+        {
+            self.data.push(T::default());
+            self.captured.push(false);
+        }
+    }
+
     fn prepare_mark(&mut self, saved_len: I, prev_diffs: &[(T, I)]) {
         // Clear all capture flags in [0, data.len()).
         let n = self.captured.len();

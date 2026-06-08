@@ -113,6 +113,48 @@ where
         self.data.truncate(lu);
     }
 
+    fn mark_captured(&mut self, i: I) {
+        let iu = i.as_usize();
+        let mut r = self.data[iu];
+        T::set_tag(&mut r);
+        self.data.set(iu, r);
+    }
+
+    fn resize_default(&mut self, len: I)
+        where T: core::default::Default
+    {
+        let target = len.as_usize();
+        let ghost shared = if old(self).data@.len() < target as nat {
+            old(self).data@.len()
+        } else {
+            target as nat
+        };
+        if self.data.len() > target {
+            self.data.truncate(target);
+        }
+        while self.data.len() < target
+            invariant
+                self.data@.len() <= target,
+                target == len.as_nat(),
+                len.as_nat() < I::max_nat(),
+                shared <= self.data@.len(),
+                shared == (if old(self).data@.len() < target as nat {
+                    old(self).data@.len()
+                } else {
+                    target as nat
+                }),
+                forall|j: int| 0 <= j < self.data@.len() ==>
+                    #[trigger] T::repr_wf(self.data@[j]),
+                forall|j: int| 0 <= j < shared ==>
+                    #[trigger] T::value_of(self.data@[j])
+                        == T::value_of(old(self).data@[j]),
+            decreases target - self.data.len(),
+        {
+            let filler = T::default().into_repr();
+            self.data.push(filler);
+        }
+    }
+
     fn prepare_mark(&mut self, saved_len: I, prev_diffs: &[(T, I)]) {
         // Clear tag on every slot in [0, data.len()).
         let n = self.data.len();
