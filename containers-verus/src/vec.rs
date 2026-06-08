@@ -263,37 +263,51 @@ pub proof fn lemma_frame_inv_range_local<T, I: IndexLike>(
     assert forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b implies
         (#[trigger] db[a]).1.as_nat() != (#[trigger] db[b]).1.as_nat()
     by { assert(da[a] == db[a]); assert(da[b] == db[b]); }
-    // Both the structural foralls and the two-arm forall read da[m]/db[m]
-    // only for m in [lo, hi), where they agree. captured_in_range and the
-    // captured-arm witness likewise quantify over [lo, hi).
-    assert forall|j: int| #![trigger snap[j]] 0 <= j < saved_len as int implies {
-        if !captured_in_range::<T, I>(db, lo, hi, j as nat) {
-            above[j] == snap[j]
-        } else {
-            exists|k: int| lo <= k < hi
-                && (#[trigger] db[k]).1.as_nat() == j as nat
-                && db[k].0 == snap[j]
-        }
-    } by {
-        // captured_in_range agrees because entries agree on [lo, hi).
-        assert(captured_in_range::<T, I>(db, lo, hi, j as nat)
-            == captured_in_range::<T, I>(da, lo, hi, j as nat)) by {
-            if captured_in_range::<T, I>(db, lo, hi, j as nat) {
-                let w = choose|k: int| lo <= k < hi && 0 <= k < db.len()
-                    && (#[trigger] db[k]).1.as_nat() == j as nat;
-                assert(da[w] == db[w]);
-            }
-            if captured_in_range::<T, I>(da, lo, hi, j as nat) {
-                let w = choose|k: int| lo <= k < hi && 0 <= k < da.len()
-                    && (#[trigger] da[k]).1.as_nat() == j as nat;
-                assert(da[w] == db[w]);
-            }
-        }
+    // Per-cell two-arm: frame_cell_inv reads only entries in [lo, hi) plus
+    // `above`/`snap` (shared). The named predicate gives a clean function-
+    // application trigger that re-assembles into frame_inv_range's forall.
+    assert forall|j: int| 0 <= j < saved_len as int implies
+        #[trigger] frame_cell_inv::<T, I>(above, db, lo, hi, snap, j)
+    by {
+        lemma_frame_cell_inv_local::<T, I>(above, da, db, lo, hi, snap, j);
+    }
+}
+
+/// `frame_cell_inv` for cell `j` depends only on entries in `[lo, hi)`. If
+/// `da`/`db` agree there, the per-cell invariant transfers. Isolated so the
+/// quantifier instantiation is local and the equality is by function
+/// congruence on `captured_in_range` + the witness entry.
+pub proof fn lemma_frame_cell_inv_local<T, I: IndexLike>(
+    above: Seq<T>, da: Seq<(T, I)>, db: Seq<(T, I)>,
+    lo: int, hi: int, snap: Seq<T>, j: int,
+)
+    requires
+        0 <= lo <= hi <= da.len(),
+        hi <= db.len(),
+        forall|m: int| lo <= m < hi ==> #[trigger] da[m] == db[m],
+        frame_cell_inv::<T, I>(above, da, lo, hi, snap, j),
+    ensures
+        frame_cell_inv::<T, I>(above, db, lo, hi, snap, j),
+{
+    // captured_in_range agrees across da/db (reads entries in [lo, hi)).
+    assert(captured_in_range::<T, I>(db, lo, hi, j as nat)
+        == captured_in_range::<T, I>(da, lo, hi, j as nat)) by {
         if captured_in_range::<T, I>(db, lo, hi, j as nat) {
-            let w = choose|k: int| lo <= k < hi
-                && (#[trigger] da[k]).1.as_nat() == j as nat && da[k].0 == snap[j];
+            let w = choose|k: int| lo <= k < hi && 0 <= k < db.len()
+                && (#[trigger] db[k]).1.as_nat() == j as nat;
             assert(da[w] == db[w]);
         }
+        if captured_in_range::<T, I>(da, lo, hi, j as nat) {
+            let w = choose|k: int| lo <= k < hi && 0 <= k < da.len()
+                && (#[trigger] da[k]).1.as_nat() == j as nat;
+            assert(da[w] == db[w]);
+        }
+    }
+    if captured_in_range::<T, I>(db, lo, hi, j as nat) {
+        // carry the witness entry from da to db (same position, equal entry).
+        let w = choose|k: int| lo <= k < hi
+            && (#[trigger] da[k]).1.as_nat() == j as nat && da[k].0 == snap[j];
+        assert(da[w] == db[w]);
     }
 }
 
@@ -366,28 +380,64 @@ pub open spec fn captured_in_range<T, I: IndexLike>(
         && (#[trigger] diffs[k]).1.as_nat() == j
 }
 
+/// Per-cell two-arm invariant for cell `j` of stratum `[lo, hi)`.
+///
+/// Factored into a named predicate (rather than inlined in the forall) so
+/// the `forall|j|` in `frame_inv_range` has a clean function-application
+/// trigger that Verus can re-assemble reliably across diff-log changes.
+///
+/// Coverage-aware uncaptured arm: an uncaptured cell `j` must be *present*
+/// in `above` (`j < above.len()`) and hold the snapshot value. Equivalently,
+/// every cell `j` in `[above.len(), saved_len)` — popped out of `above` —
+/// must be captured. That's what lets `restore` regrow the popped region with
+/// `resize_default` and overwrite every filler back to `snap[j]`.
+pub open spec fn frame_cell_inv<T, I: IndexLike>(
+    above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
+    snap: Seq<T>, j: int,
+) -> bool {
+    if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
+        &&& (j as nat) < above.len()
+        &&& above[j] == snap[j]
+    } else {
+        exists|k: int| lo <= k < hi
+            && (#[trigger] diffs[k]).1.as_nat() == j as nat
+            && diffs[k].0 == snap[j]
+    }
+}
+
 /// Range-form of the two-arm frame invariant for one stratum `[lo, hi)`.
 /// `above` is the layer above (snapshot[k+1] or the view); `snap` is this
 /// stratum's snapshot. Stated over the diff-log range directly.
+///
+/// Note: no `saved_len <= above.len()` requirement — `above` (the view, for
+/// the top frame) may be shorter than `saved_len` in the post-pop state. The
+/// coverage clause inside `frame_cell_inv` handles the popped cells.
 pub open spec fn frame_inv_range<T, I: IndexLike>(
     above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
     snap: Seq<T>, saved_len: nat,
 ) -> bool {
     &&& snap.len() == saved_len
-    &&& saved_len <= above.len()
     &&& (forall|k: int| lo <= k < hi ==>
             (#[trigger] diffs[k]).1.as_nat() < saved_len)
     &&& (forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b ==>
             (#[trigger] diffs[a]).1.as_nat() != (#[trigger] diffs[b]).1.as_nat())
-    &&& (forall|j: int| #![trigger snap[j]] 0 <= j < saved_len as int ==> {
-            if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
-                above[j] == snap[j]
-            } else {
-                exists|k: int| lo <= k < hi
-                    && (#[trigger] diffs[k]).1.as_nat() == j as nat
-                    && diffs[k].0 == snap[j]
-            }
-        })
+    &&& (forall|j: int| 0 <= j < saved_len as int ==>
+            #[trigger] frame_cell_inv::<T, I>(above, diffs, lo, hi, snap, j))
+}
+
+/// Instantiate `frame_inv_range`'s per-cell forall at one cell `j`. The
+/// forall's trigger is `frame_cell_inv(...)`, so this is just an explicit
+/// hook for call sites that need the per-cell fact in hand.
+pub proof fn lemma_frame_inv_arm_at<T, I: IndexLike>(
+    above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
+    snap: Seq<T>, saved_len: nat, j: int,
+)
+    requires
+        frame_inv_range::<T, I>(above, diffs, lo, hi, snap, saved_len),
+        0 <= j < saved_len as int,
+    ensures
+        frame_cell_inv::<T, I>(above, diffs, lo, hi, snap, j),
+{
 }
 
 /// The per-stratum bridge: if a diff-log range `[lo, hi)` satisfies the
@@ -403,24 +453,12 @@ pub proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
 )
     requires
         0 <= lo <= hi <= diffs.len(),
-        snap.len() == saved_len,
+        // The base is already full-length (restore resizes to saved_len
+        // before replay), so the overwrite-only overlay reaches every cell.
         saved_len <= above.len(),
-        // entries in range are in-bounds for the marked region
-        forall|k: int| lo <= k < hi ==>
-            (#[trigger] diffs[k]).1.as_nat() < saved_len,
-        // unique indices within range
-        forall|a: int, b: int| lo <= a < hi && lo <= b < hi && a != b ==>
-            (#[trigger] diffs[a]).1.as_nat() != (#[trigger] diffs[b]).1.as_nat(),
-        // two-arm frame_inv over the range
-        forall|j: int| #![trigger snap[j]] 0 <= j < saved_len as int ==> {
-            if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
-                above[j] == snap[j]
-            } else {
-                exists|k: int| lo <= k < hi
-                    && (#[trigger] diffs[k]).1.as_nat() == j as nat
-                    && diffs[k].0 == snap[j]
-            }
-        },
+        // Full frame_inv_range bundles snap.len, index-bound, uniqueness, and
+        // the per-cell two-arm — all needed below.
+        frame_inv_range::<T, I>(above, diffs, lo, hi, snap, saved_len),
     ensures
         forall|j: int| 0 <= j < saved_len as int ==>
             #[trigger] overlay::<T, I>(above, diffs, lo, hi)[j] == snap[j],
@@ -429,6 +467,7 @@ pub proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
     assert forall|j: int| 0 <= j < saved_len as int implies
         #[trigger] overlay::<T, I>(above, diffs, lo, hi)[j] == snap[j]
     by {
+        assert(frame_cell_inv::<T, I>(above, diffs, lo, hi, snap, j));
         if !captured_in_range::<T, I>(diffs, lo, hi, j as nat) {
             // Uncaptured: overlay leaves above[j], which == snap[j].
             assert forall|k: int| lo <= k < hi && 0 <= k < diffs.len() implies
@@ -439,6 +478,8 @@ pub proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
             lemma_overlay_uncaptured::<T, I>(above, diffs, lo, hi, j);
         } else {
             // Captured: pick the witness entry p, show overlay sets snap[j].
+            assert(captured_in_range::<T, I>(diffs, lo, hi, j as nat));
+            assert((j as nat) < above.len());  // from saved_len <= above.len()
             let p = choose|k: int| lo <= k < hi
                 && (#[trigger] diffs[k]).1.as_nat() == j as nat
                 && diffs[k].0 == snap[j];
@@ -722,10 +763,14 @@ where
             // frame_inv_range's uncaptured arm reads.
             assert(self.layer_above_at(k) == snaps[k + 1]);
             assert(frames[k].saved_len.as_nat() <= frames[k + 1].saved_len.as_nat());
+            assert(mid == frames[k + 1].diff_start as int);
+            // IH gives overlay(view, [mid,n))[j] == snaps[k+1][j] for
+            // j < saved_{k+1}; saved <= saved_{k+1}, so it holds for j < saved.
             assert forall|j: int| 0 <= j < saved implies
                 #[trigger] above[j] == snaps[k + 1][j]
             by {
                 self.lemma_snap_eq_overlay(k + 1);
+                assert(j < frames[k + 1].saved_len.as_nat());
             }
             // Build frame_inv_range over `above` and apply the bridge.
             // The original frame_inv_range (from wf) holds with layer
@@ -737,33 +782,34 @@ where
                 assert(above.len() == self.view().len());
                 self.lemma_saved_len_le_view(k);
                 assert(saved <= above.len());
-                assert forall|j: int| #![trigger snaps[k][j]] 0 <= j < saved as int implies {
+                // Per-cell: transfer frame_cell_inv from the snaps[k+1] layer
+                // to the `above` layer. They agree on [0, saved) (IH:
+                // above[j]==snaps[k+1][j], and the original uncaptured arm
+                // gives snaps[k+1][j]==snaps[k][j]). The captured arm is
+                // layer-independent.
+                assert forall|j: int| 0 <= j < saved as int implies
+                    #[trigger] frame_cell_inv::<T, I>(above, diffs, lo, mid, snaps[k], j)
+                by {
+                    lemma_frame_inv_arm_at::<T, I>(
+                        snaps[k + 1], diffs, lo, mid, snaps[k], saved, j);
                     if !captured_in_range::<T, I>(diffs, lo, mid, j as nat) {
-                        above[j] == snaps[k][j]
-                    } else {
-                        exists|p: int| lo <= p < mid
-                            && (#[trigger] diffs[p]).1.as_nat() == j as nat
-                            && diffs[p].0 == snaps[k][j]
-                    }
-                } by {
-                    // The original frame_inv_range over snaps[k+1] layer.
-                    assert(frame_inv_range::<T, I>(
-                        snaps[k + 1], diffs, lo, mid, snaps[k], saved));
-                    if !captured_in_range::<T, I>(diffs, lo, mid, j as nat) {
-                        // original uncaptured arm: snaps[k+1][j] == snaps[k][j]
-                        // IH: above[j] == snaps[k+1][j]
+                        // snaps[k+1][j] == snaps[k][j] (arm) & above[j]==snaps[k+1][j] (IH)
                         assert(above[j] == snaps[k + 1][j]);
+                        assert((j as nat) < snaps[k + 1].len());
                         assert(snaps[k + 1][j] == snaps[k][j]);
-                    } else {
-                        // captured arm carries over verbatim (no layer dep).
+                        assert((j as nat) < above.len());
                     }
                 }
             }
+            lemma_overlay_len::<T, I>(self.view(), diffs, mid, n);
+            self.lemma_saved_len_le_view(k);
+            assert(saved <= above.len());
             lemma_overlay_eq_snap::<T, I>(above, diffs, lo, mid, snaps[k], saved);
         } else {
             // Base case: top frame. mid == n, layer above == view.
             assert(mid == n);
             assert(self.layer_above_at(k) == self.view());
+            self.lemma_saved_len_le_view(k);  // saved <= view.len()
             lemma_overlay_eq_snap::<T, I>(self.view(), diffs, lo, mid, snaps[k], saved);
         }
     }
@@ -873,8 +919,26 @@ where
     {
         old_self.lemma_saved_len_le_view(k);
         assert(old_self.frame_inv_range_holds(k));
-        // top frame: layer_above is view in both; agree on old prefix; the
-        // uncaptured arm only reads view[j] for j < saved_len <= old view len.
+        let above_old = old_self.view();
+        let above_new = self.view();
+        let diffs = self.diff_log@;
+        let lo = self.frames@[k].diff_start as int;
+        let hi = self.stratum_end(k);
+        let snap = self.snapshots@[k];
+        let sl = self.frames@[k].saved_len.as_nat();
+        assert(self.layer_above_at(k) == above_new);
+        assert(old_self.layer_above_at(k) == above_old);
+        assert(self.stratum_end(k) == old_self.stratum_end(k));
+        // Per-cell transfer: same diffs/snap; view prefix preserved & longer.
+        assert forall|j: int| 0 <= j < sl as int implies
+            #[trigger] frame_cell_inv::<T, I>(above_new, diffs, lo, hi, snap, j)
+        by {
+            lemma_frame_inv_arm_at::<T, I>(above_old, diffs, lo, hi, snap, sl, j);
+            // captured arm is layer-independent; uncaptured arm: old gave
+            // j < above_old.len() && above_old[j]==snap[j]; above_new is
+            // longer and agrees on the old prefix.
+            assert(sl <= above_old.len());
+        }
     }
 
     /// Pop the last element. Works under an active frame as long as the
@@ -931,17 +995,34 @@ where
                     assert(old(self).frame_inv_range_holds(k));
                     old(self).lemma_saved_len_le_active(k);
                     assert(self.active_saved_len == old(self).active_saved_len);
+                    let lo = frames[k].diff_start as int;
+                    let hi = self.stratum_end(k);
+                    let snap = snaps[k];
+                    let sl = frames[k].saved_len.as_nat();
+                    assert(self.stratum_end(k) == old(self).stratum_end(k));
                     // saved_len <= active <= new view len; for the top frame
                     // the layer is the view, and view[j] for j < saved_len is
                     // preserved by drop_last (those indices stay in range).
                     if k == top {
                         assert(self.layer_above_at(k) == self.view());
                         assert(old(self).layer_above_at(k) == old_view);
-                        assert forall|j: int| 0 <= j < frames[k].saved_len.as_nat()
-                            implies #[trigger] self.view()[j] == old_view[j] by {}
+                        assert(sl <= self.view().len());
+                        // Per-cell transfer: view prefix preserved, in range.
+                        assert forall|j: int| 0 <= j < sl as int implies
+                            #[trigger] frame_cell_inv::<T, I>(self.view(), diffs, lo, hi, snap, j)
+                        by {
+                            lemma_frame_inv_arm_at::<T, I>(old_view, diffs, lo, hi, snap, sl, j);
+                            assert(self.view()[j] == old_view[j]);
+                        }
                     } else {
                         assert(self.layer_above_at(k) == snaps[k + 1]);
                         assert(self.layer_above_at(k) == old(self).layer_above_at(k));
+                        // same layer, same diffs/snap ⇒ frame_inv_range identical.
+                        assert forall|j: int| 0 <= j < sl as int implies
+                            #[trigger] frame_cell_inv::<T, I>(snaps[k + 1], diffs, lo, hi, snap, j)
+                        by {
+                            lemma_frame_inv_arm_at::<T, I>(snaps[k + 1], diffs, lo, hi, snap, sl, j);
+                        }
                     }
                 }
                 // bridge preserved: store.pop drops the last captured flag
@@ -1133,18 +1214,13 @@ where
                                 assert(old_diffs[other].1.as_nat() != iu as nat);
                             }
                         }
-                        // two-arm.
-                        assert forall|j: int| #![trigger snap[j]]
-                            0 <= j < sl as int implies {
-                            if !captured_in_range::<T, I>(diffs, ds, hi, j as nat) {
-                                new_view[j] == snap[j]
-                            } else {
-                                exists|p: int| ds <= p < hi
-                                    && (#[trigger] diffs[p]).1.as_nat() == j as nat
-                                    && diffs[p].0 == snap[j]
-                            }
-                        } by {
+                        // two-arm, per-cell via frame_cell_inv.
+                        assert forall|j: int| 0 <= j < sl as int implies
+                            #[trigger] frame_cell_inv::<T, I>(new_view, diffs, ds, hi, snap, j)
+                        by {
                             assert(old(self).frame_inv_range_holds(top));
+                            lemma_frame_inv_arm_at::<T, I>(
+                                old_view, old_diffs, ds, old_diffs.len() as int, snap, sl, j);
                             // bridge at j: old captured()[j] iff j in old top stratum.
                             if j == iu {
                                 // j is captured now; find a witness with value snap[iu].
@@ -1208,6 +1284,11 @@ where
                                         && (#[trigger] old_diffs[p]).1.as_nat() == j as nat
                                         && old_diffs[p].0 == snap[j];
                                     assert(diffs[p] == old_diffs[p]);
+                                } else {
+                                    // uncaptured: old arm gives j < old_view.len()
+                                    // && old_view[j]==snap[j]; new_view == old_view
+                                    // (set_raw preserves length), so j<new_view.len().
+                                    assert((j as nat) < new_view.len());
                                 }
                             }
                         }
