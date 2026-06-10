@@ -651,13 +651,18 @@ where
         &&& (frames.len() == 0 ==> n == 0)
         &&& (frames.len() > 0 ==> frames[0].diff_start == 0)
         &&& (frames.len() > 0 ==> frames[(frames.len() - 1) as int].diff_start <= n)
-        &&& (frames.len() > 0 ==>
-                frames[(frames.len() - 1) as int].saved_len.as_nat() <= self.view().len())
+        // NOTE (faithful pop): the top-frame "view is full"
+        // (`frames[top].saved_len <= view.len()`) and `saved_len` monotonicity
+        // clauses are DELIBERATELY ABSENT. After a pop into the marked region
+        // the view is shorter than saved_len; and `mark` after a deep pop
+        // records a short length, so a newer frame can have a SMALLER
+        // saved_len than its parent. Both facts are replaced by the per-frame
+        // COVERAGE encoded in `frame_cell_inv`'s uncaptured arm
+        // (uncaptured j ==> j < layer_above.len()), which is all the
+        // reconstruction proof needs. `diff_start` monotonicity DOES still
+        // hold (the diff log only grows) and is kept.
         &&& (forall|k: int| 0 <= k && k + 1 < frames.len() ==>
                 #[trigger] frames[k].diff_start <= #[trigger] frames[k + 1].diff_start)
-        &&& (forall|k: int| 0 <= k && k + 1 < frames.len() ==>
-                #[trigger] frames[k].saved_len.as_nat()
-                    <= #[trigger] frames[k + 1].saved_len.as_nat())
         &&& (forall|k: int| 0 <= k < frames.len() ==>
                 #[trigger] snaps[k].len() == #[trigger] frames[k].saved_len.as_nat())
         &&& (forall|k: int| 0 <= k < frames.len() ==>
@@ -736,55 +741,14 @@ where
         }
     }
 
-    /// Every frame's saved_len <= active_saved_len (the top frame's, which
-    /// is the maximum by monotonicity).
-    pub proof fn lemma_saved_len_le_active(&self, k: int)
-        requires
-            self.wf(),  // needs active_saved_len == frames[top].saved_len (bridge side)
-            self.frames@.len() > 0,
-            0 <= k < self.frames@.len(),
-        ensures
-            self.frames@[k].saved_len.as_nat() <= self.active_saved_len.as_nat(),
-    {
-        let top = (self.frames@.len() - 1) as int;
-        self.lemma_saved_len_monotone(k, top);
-        assert(self.active_saved_len == self.frames@[top].saved_len);
-    }
-
-    /// saved_len is monotone non-decreasing across frames.
-    pub proof fn lemma_saved_len_monotone(&self, a: int, b: int)
-        requires
-            self.wf_for_snap(),
-            0 <= a <= b < self.frames@.len(),
-        ensures
-            self.frames@[a].saved_len.as_nat() <= self.frames@[b].saved_len.as_nat(),
-        decreases b - a,
-    {
-        let frames = self.frames@;
-        if a < b {
-            self.lemma_saved_len_monotone(a, b - 1);
-            assert(0 <= b - 1 && (b - 1) + 1 < frames.len());
-            assert(frames[b - 1].saved_len.as_nat() <= frames[(b - 1) + 1].saved_len.as_nat());
-        }
-    }
-
-    /// Every frame's saved_len is `<= view.len()`. By monotonicity plus
-    /// the top frame's bound.
-    pub proof fn lemma_saved_len_le_view(&self, k: int)
-        requires
-            self.wf_for_snap(),
-            0 <= k < self.frames@.len(),
-        ensures
-            self.frames@[k].saved_len.as_nat() <= self.view().len(),
-        decreases self.frames@.len() - k,
-    {
-        let frames = self.frames@;
-        if k + 1 < frames.len() {
-            self.lemma_saved_len_le_view(k + 1);
-            assert(frames[k].saved_len.as_nat() <= frames[k + 1].saved_len.as_nat());
-        } else {
-        }
-    }
+    // NOTE (faithful pop): `lemma_saved_len_le_active` ("top frame is the
+    // longest"), `lemma_saved_len_monotone` ("saved_len non-decreasing"), and
+    // `lemma_saved_len_le_view` ("every saved_len <= view.len()") were DELETED
+    // here. All three are FALSE once pop can shrink the view into the marked
+    // region and `mark` can record a short length. They are replaced
+    // everywhere by the per-frame coverage in `frame_cell_inv`'s uncaptured
+    // arm (uncaptured j ==> j < layer_above.len()), which is exactly the bound
+    // those lemmas used to supply and which holds unconditionally.
 
     /// The central M4 lemma: overlaying all strata from frame `k` up to the
     /// top, onto the current view, reconstructs `snapshots[k]` (on its
@@ -905,109 +869,6 @@ where
         }
     }
 
-    pub proof fn lemma_snap_eq_overlay(&self, k: int)
-        requires
-            self.wf_for_snap(),
-            0 <= k < self.frames@.len(),
-        ensures
-            forall|j: int| 0 <= j < self.frames@[k].saved_len.as_nat() ==>
-                #[trigger] overlay::<T, I>(
-                    self.view(),
-                    self.diff_log@,
-                    self.frames@[k].diff_start as int,
-                    self.diff_log@.len() as int)[j]
-                == self.snapshots@[k][j],
-        decreases self.frames@.len() - k,
-    {
-        let frames = self.frames@;
-        let diffs = self.diff_log@;
-        let snaps = self.snapshots@;
-        let n = diffs.len() as int;
-        let lo = frames[k].diff_start as int;
-        let saved = frames[k].saved_len.as_nat();
-        let mid = self.stratum_end(k);
-
-        // frame_inv_range for stratum k is available from wf.
-        assert(frame_inv_range::<T, I>(
-            self.layer_above_at(k), diffs, lo, mid, snaps[k], saved));
-
-        if k + 1 < frames.len() {
-            // Inductive case. mid == frames[k+1].diff_start.
-            // Bounds: lo <= mid <= n. lo <= mid by diff_start monotonicity
-            // (k, k+1 adjacent); mid <= n because frames[k+1].diff_start
-            // <= frames[top].diff_start <= n.
-            self.lemma_diff_start_le_n(k + 1);
-            assert(lo <= mid) by {
-                assert(frames[k].diff_start <= frames[k + 1].diff_start);
-            }
-            // Upper range [mid, n) reconstructs snapshots[k+1] by IH.
-            self.lemma_snap_eq_overlay(k + 1);
-            let above = overlay::<T, I>(self.view(), diffs, mid, n);
-
-            // Split overlay(view, lo, n) = overlay(overlay(view, mid, n), lo, mid).
-            lemma_overlay_split::<T, I>(self.view(), diffs, lo, mid, n);
-
-            // `above` agrees with snapshots[k+1] on [0, saved_{k+1}); and
-            // saved <= saved_{k+1} (monotone), so `above` agrees with
-            // snapshots[k+1] = layer_above_at(k) on [0, saved).
-            lemma_overlay_len::<T, I>(self.view(), diffs, mid, n);
-
-            // Now overlay stratum k onto `above`. frame_inv_range holds with
-            // layer_above_at(k) == snapshots[k+1]; we need it to hold with
-            // `above` instead. They agree on [0, saved), which is all
-            // frame_inv_range's uncaptured arm reads.
-            assert(self.layer_above_at(k) == snaps[k + 1]);
-            assert(frames[k].saved_len.as_nat() <= frames[k + 1].saved_len.as_nat());
-            assert(mid == frames[k + 1].diff_start as int);
-            // IH gives overlay(view, [mid,n))[j] == snaps[k+1][j] for
-            // j < saved_{k+1}; saved <= saved_{k+1}, so it holds for j < saved.
-            assert forall|j: int| 0 <= j < saved implies
-                #[trigger] above[j] == snaps[k + 1][j]
-            by {
-                self.lemma_snap_eq_overlay(k + 1);
-                assert(j < frames[k + 1].saved_len.as_nat());
-            }
-            // Build frame_inv_range over `above` and apply the bridge.
-            // The original frame_inv_range (from wf) holds with layer
-            // `snaps[k+1]`. The captured arm is layer-independent; the
-            // uncaptured arm needs above[j] == snaps[k][j], which chains
-            // above[j] == snaps[k+1][j] (IH) and snaps[k+1][j] == snaps[k][j]
-            // (original uncaptured arm).
-            assert(frame_inv_range::<T, I>(above, diffs, lo, mid, snaps[k], saved)) by {
-                assert(above.len() == self.view().len());
-                self.lemma_saved_len_le_view(k);
-                assert(saved <= above.len());
-                // Per-cell: transfer frame_cell_inv from the snaps[k+1] layer
-                // to the `above` layer. They agree on [0, saved) (IH:
-                // above[j]==snaps[k+1][j], and the original uncaptured arm
-                // gives snaps[k+1][j]==snaps[k][j]). The captured arm is
-                // layer-independent.
-                assert forall|j: int| 0 <= j < saved as int implies
-                    #[trigger] frame_cell_inv::<T, I>(above, diffs, lo, mid, snaps[k], j)
-                by {
-                    lemma_frame_inv_arm_at::<T, I>(
-                        snaps[k + 1], diffs, lo, mid, snaps[k], saved, j);
-                    if !captured_in_range::<T, I>(diffs, lo, mid, j as nat) {
-                        // snaps[k+1][j] == snaps[k][j] (arm) & above[j]==snaps[k+1][j] (IH)
-                        assert(above[j] == snaps[k + 1][j]);
-                        assert((j as nat) < snaps[k + 1].len());
-                        assert(snaps[k + 1][j] == snaps[k][j]);
-                        assert((j as nat) < above.len());
-                    }
-                }
-            }
-            lemma_overlay_len::<T, I>(self.view(), diffs, mid, n);
-            self.lemma_saved_len_le_view(k);
-            assert(saved <= above.len());
-            lemma_overlay_eq_snap::<T, I>(above, diffs, lo, mid, snaps[k], saved);
-        } else {
-            // Base case: top frame. mid == n, layer above == view.
-            assert(mid == n);
-            assert(self.layer_above_at(k) == self.view());
-            self.lemma_saved_len_le_view(k);  // saved <= view.len()
-            lemma_overlay_eq_snap::<T, I>(self.view(), diffs, lo, mid, snaps[k], saved);
-        }
-    }
 
     pub fn len(&self) -> (n: I)
         requires self.wf(),
@@ -1041,16 +902,50 @@ where
             self.view() == old(self).view().push(value),
             self.snapshots_view() == old(self).snapshots_view(),
     {
-        // Pull the top-frame bound from wf BEFORE mutating (wf holds now).
-        proof {
-            let frames = self.frames@;
-            if frames.len() > 0 {
-                self.lemma_saved_len_le_view((frames.len() - 1) as int);
-            }
-        }
         let ghost old_view = self.view();
         let ghost old_self = *self;
+        let old_len = self.store.len();
         self.store.push(value);
+
+        // Faithful-pop bookkeeping: if we are pushing back into a slot that
+        // lies inside the active frame's marked region (old_len < active),
+        // that slot was popped out of the marked region earlier and the pop
+        // already captured snap[old_len] into the top stratum. The fresh slot
+        // must therefore INHERIT the captured flag, both to keep the bridge
+        // (captured() must match captured_in_range, which is true for that
+        // index) and to keep the diff log bounded (a later `set` here must
+        // not re-capture). When old_len >= active (the normal transient push)
+        // this branch is skipped and the new slot stays uncaptured.
+        // Compare via as_usize (whose spec relation to as_nat is concrete),
+        // not via lt() — lt_spec is a default trait method whose body is not
+        // transparent at the generic `I: IndexLike` use-site.
+        let has_frame = self.frames.len() > 0;
+        let in_marked = old_len.as_usize() < self.active_saved_len.as_usize();
+        let reentered = has_frame && in_marked;
+        proof {
+            assert(in_marked == (old_len.as_nat() < self.active_saved_len.as_nat()));
+            assert(has_frame == (self.frames@.len() > 0));
+            assert(reentered == (self.frames@.len() > 0
+                && old_len.as_nat() < self.active_saved_len.as_nat()));
+        }
+        // push appended captured()[old_len] == false; record it.
+        assert(self.store.captured()[old_len.as_nat() as int] == false);
+        if reentered {
+            // data().len() == old_len + 1 after push, so old_len is in bounds.
+            self.store.mark_captured(old_len);
+        } else {
+            // captured()[old_len] stays false (still need it in scope).
+            assert(self.store.captured()[old_len.as_nat() as int] == false);
+        }
+        // Merged: captured()[old_len] is exactly `reentered`.
+        assert(self.store.captured()[old_len.as_nat() as int] == reentered);
+        proof {
+            // Post-state of captured(): prefix [0, old_len) unchanged (push
+            // appends at old_len; mark_captured, if it ran, updates only
+            // old_len). Index old_len == `reentered` (asserted above).
+            assert forall|j: int| 0 <= j < old_len.as_nat() implies
+                #[trigger] self.store.captured()[j] == old_self.store.captured()[j] by {}
+        }
         // diff_log, frames, snapshots all unchanged. Only `view` changed,
         // by appending one element. Inner frames' frame_inv_range references
         // snapshots (unchanged) as `above`. The TOP frame references `view`;
@@ -1061,6 +956,7 @@ where
             assert(self.diff_log@ == old_self.diff_log@);
             assert(self.snapshots@ == old_self.snapshots@);
             let frames = self.frames@;
+            let diffs = self.diff_log@;
             assert forall|k: int| 0 <= k < frames.len() implies
                 #[trigger] frame_inv_range::<T, I>(
                     self.layer_above_at(k),
@@ -1078,8 +974,63 @@ where
                     assert(self.layer_above_at(k) == old_self.layer_above_at(k));
                 } else {
                     // top frame: layer is view, changed by push but prefix
-                    // preserved; saved_len <= old_view.len().
+                    // preserved. Coverage-based (no saved_len <= view bound).
                     self.lemma_saved_len_le_view_from(old_self, k);
+                }
+            }
+            // Bridge: store.push appended captured()[old_len]==false; if we
+            // then mark_captured(old_len) it's true. For j < old_len the flag
+            // and the diffs are unchanged, so the old bridge transfers; for
+            // j == old_len (only relevant when old_len < active) the
+            // mark_captured set it true, matching captured_in_range (snap was
+            // captured by the earlier pop — coverage).
+            self.store.lemma_wf_captured_len();
+            if frames.len() > 0 {
+                let top = (frames.len() - 1) as int;
+                let ds_top = frames[top].diff_start as int;
+                assert(self.active_saved_len == frames[top].saved_len);
+                assert forall|j: int|
+                    0 <= j < self.active_saved_len.as_nat() && j < self.view().len() implies
+                    #[trigger] self.store.captured()[j]
+                        == captured_in_range::<T, I>(diffs, ds_top, diffs.len() as int, j as nat)
+                by {
+                    if j < old_len.as_nat() {
+                        // unchanged flag, unchanged diffs ⇒ old bridge applies.
+                        assert(self.store.captured()[j] == old_self.store.captured()[j]);
+                        assert(j < old_self.view().len());
+                        assert(old_self.store.captured()[j]
+                            == captured_in_range::<T, I>(
+                                old_self.diff_log@, ds_top, old_self.diff_log@.len() as int, j as nat));
+                    } else {
+                        // j == old_len: only present when old_len < view.len(),
+                        // i.e. old_len < active (the mark_captured branch ran).
+                        // captured()[old_len] == true; and the top frame's
+                        // coverage arm (j < active, uncaptured ⇒ j < view.len)
+                        // forces this popped cell to be captured_in_range.
+                        assert(j == old_len.as_nat());
+                        assert(j < self.active_saved_len.as_nat());
+                        // The exec branch `old_len.lt(active)` ran (its spec is
+                        // old_len.as_nat() < active.as_nat()), so mark_captured
+                        // set captured()[old_len] = true.
+                        assert(old_len.as_nat() < self.active_saved_len.as_nat());
+                        assert(in_marked);
+                        assert(has_frame);  // frames.len() > 0 (outer if)
+                        assert(reentered);  // ⇒ captured()[old_len] == true
+                        // old_self top frame_cell_inv at j: j < active == saved_top,
+                        // and j >= old_view.len() (popped) ⇒ captured arm.
+                        assert(old_self.frame_inv_range_holds(top));
+                        lemma_frame_inv_arm_at::<T, I>(
+                            old_self.layer_above_at(top), old_self.diff_log@, ds_top,
+                            old_self.stratum_end(top), old_self.snapshots@[top],
+                            frames[top].saved_len.as_nat(), j);
+                        assert(old_self.layer_above_at(top) == old_view);
+                        assert(j >= old_view.len());  // old_len == old_view.len()
+                        // uncaptured arm would need j < old_view.len(): false.
+                        // So captured_in_range(old_diffs, ds_top, |old_diffs|, j).
+                        assert(captured_in_range::<T, I>(
+                            old_self.diff_log@, ds_top, old_self.diff_log@.len() as int, j as nat));
+                        assert(self.store.captured()[j] == true);
+                    }
                 }
             }
         }
@@ -1096,8 +1047,11 @@ where
             self.frames@[k].saved_len.as_nat())
     }
 
-    /// Carry the saved_len <= view bound for the top frame across a push
-    /// (old_self had wf; new view is longer).
+    /// Carry the top frame's `frame_inv_range` across a push (old_self had wf;
+    /// the new view is the old view plus appended elements). Coverage-based:
+    /// no `saved_len <= view.len()` needed — the per-cell uncaptured arm itself
+    /// supplies `j < above_old.len()`, and the appended view agrees on the old
+    /// prefix, so the arm transfers cell-by-cell.
     pub proof fn lemma_saved_len_le_view_from(&self, old_self: Self, k: int)
         requires
             old_self.wf(),
@@ -1112,7 +1066,6 @@ where
         ensures
             self.frame_inv_range_holds(k),
     {
-        old_self.lemma_saved_len_le_view(k);
         assert(old_self.frame_inv_range_holds(k));
         let above_old = old_self.view();
         let above_new = self.view();
@@ -1130,9 +1083,9 @@ where
         by {
             lemma_frame_inv_arm_at::<T, I>(above_old, diffs, lo, hi, snap, sl, j);
             // captured arm is layer-independent; uncaptured arm: old gave
-            // j < above_old.len() && above_old[j]==snap[j]; above_new is
-            // longer and agrees on the old prefix.
-            assert(sl <= above_old.len());
+            // j < above_old.len() && above_old[j]==snap[j], and above_new is
+            // longer and agrees on the old prefix — so j < above_new.len()
+            // and above_new[j]==snap[j]. No saved_len<=view bound required.
         }
     }
 
@@ -1188,19 +1141,22 @@ where
                         self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
                 by {
                     assert(old(self).frame_inv_range_holds(k));
-                    old(self).lemma_saved_len_le_active(k);
                     assert(self.active_saved_len == old(self).active_saved_len);
                     let lo = frames[k].diff_start as int;
                     let hi = self.stratum_end(k);
                     let snap = snaps[k];
                     let sl = frames[k].saved_len.as_nat();
                     assert(self.stratum_end(k) == old(self).stratum_end(k));
-                    // saved_len <= active <= new view len; for the top frame
-                    // the layer is the view, and view[j] for j < saved_len is
-                    // preserved by drop_last (those indices stay in range).
+                    // For the top frame the layer is the view, and view[j] for
+                    // j < saved_len is preserved by drop_last. Here sl ==
+                    // active_saved_len (wf bridge) and active < old_view.len()
+                    // (the transient-pop precondition), so sl <= new view.len()
+                    // — no saved_len monotonicity needed. Inner frames are
+                    // layer-identical (their layer is an unchanged snapshot).
                     if k == top {
                         assert(self.layer_above_at(k) == self.view());
                         assert(old(self).layer_above_at(k) == old_view);
+                        assert(frames[top].saved_len == self.active_saved_len);  // wf
                         assert(sl <= self.view().len());
                         // Per-cell transfer: view prefix preserved, in range.
                         assert forall|j: int| 0 <= j < sl as int implies
@@ -1368,10 +1324,11 @@ where
                         // In `set` we always have iu < view.len(); the active
                         // marked region is [0, active_n) == [0, sl).
 
-                        // Structural conjuncts.
+                        // Structural conjuncts. (No `sl <= view.len()`: that
+                        // top-fullness fact is gone; frame_inv_range's per-cell
+                        // uncaptured arm carries the only presence bound needed.)
                         assert(snap.len() == sl);
                         assert(new_view.len() == old_view.len());
-                        assert(sl <= new_view.len());
                         assert forall|m: int| ds <= m < hi implies
                             (#[trigger] diffs[m]).1.as_nat() < sl by {
                             if m < old_diffs.len() {
@@ -1446,10 +1403,14 @@ where
                                     assert(diffs[p] == old_diffs[p]);
                                 }
                             } else {
-                                // j != iu: new_view[j] == old_view[j]; capture
-                                // only may add index iu != j so captured-status
-                                // of j is unchanged between old_diffs and diffs.
-                                assert(new_view[j] == old_view[j]);
+                                // j != iu: capture only may add index iu != j,
+                                // so j's captured-status is unchanged between
+                                // old_diffs and diffs. (We DON'T assert
+                                // new_view[j]==old_view[j] up front: for popped
+                                // cells j >= view.len() that index is out of
+                                // range — but coverage puts those in the
+                                // captured arm, so the uncaptured sub-branch
+                                // below only runs when j < view.len().)
                                 assert(captured_in_range::<T, I>(diffs, ds, hi, j as nat)
                                     == captured_in_range::<T, I>(
                                         old_diffs, ds, old_diffs.len() as int, j as nat)) by {
@@ -1480,9 +1441,13 @@ where
                                         && old_diffs[p].0 == snap[j];
                                     assert(diffs[p] == old_diffs[p]);
                                 } else {
-                                    // uncaptured: old arm gives j < old_view.len()
-                                    // && old_view[j]==snap[j]; new_view == old_view
-                                    // (set_raw preserves length), so j<new_view.len().
+                                    // uncaptured: the old uncaptured arm gives
+                                    // j < old_view.len() && old_view[j]==snap[j].
+                                    // set_raw preserves length and changes only
+                                    // iu != j, so j < new_view.len() and
+                                    // new_view[j] == old_view[j] == snap[j].
+                                    assert((j as nat) < old_view.len());
+                                    assert(new_view[j] == old_view[j]);
                                     assert((j as nat) < new_view.len());
                                 }
                             }
@@ -1494,12 +1459,17 @@ where
                 assert(self.store.captured().len() == self.view().len());
 
                 let ds_top = frames[top].diff_start as int;
-                assert forall|j: int| 0 <= j < self.active_saved_len.as_nat() implies
+                // Bridge gated by j < view.len() (matches the wf clause): the
+                // store only tracks flags for present cells. set_raw preserves
+                // length, so view.len() == old_view.len().
+                assert forall|j: int|
+                    0 <= j < self.active_saved_len.as_nat() && j < self.view().len() implies
                     #[trigger] self.store.captured()[j]
                         == captured_in_range::<T, I>(
                             diffs, ds_top, diffs.len() as int, j as nat)
                 by {
-                    // old bridge for j.
+                    // old bridge for j (j < view.len() == old_view.len()).
+                    assert(j < old(self).view().len());
                     assert(old(self).store.captured()[j]
                         == captured_in_range::<T, I>(
                             old_diffs, ds_top, old_diffs.len() as int, j as nat));
@@ -1570,14 +1540,6 @@ where
             self.frames@.len() == old(self).frames@.len() + 1,
             self.snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
-        proof {
-            // saved_len <= view.len() for prepare_mark's precondition.
-            if self.frames@.len() > 0 {
-                self.lemma_saved_len_le_view((self.frames@.len() - 1) as int);
-                self.lemma_diff_start_le_n((self.frames@.len() - 1) as int);
-            }
-        }
-
         let saved_len = self.store.len();
         let diff_start = self.diff_log.len();
 
@@ -1604,36 +1566,14 @@ where
             assert(diffs == old(self).diff_log@);
             assert(diff_start == diffs.len());
 
-            // Monotone saved_len: the only new adjacency is (old_top, new).
-            // old_top.saved_len <= old view.len() == saved_len (new frame).
+            // saved_len monotonicity is NO LONGER a wf clause (faithful pop:
+            // mark-after-deep-pop can record a SMALLER saved_len than the
+            // parent). So nothing to prove here for saved_len.
             assert(frames.len() == old_frames.len() + 1);
             assert(new_top == old_frames.len());
             assert(frames[new_top].saved_len == saved_len);
             assert(forall|k: int| 0 <= k < old_frames.len() ==> frames[k] == old_frames[k]);
             assert(old_view.len() == saved_len.as_nat());
-            if old_frames.len() > 0 {
-                old(self).lemma_saved_len_le_view((old_frames.len() - 1) as int);
-                assert(old_frames[(old_frames.len() - 1) as int].saved_len.as_nat()
-                    <= saved_len.as_nat());
-            }
-            assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
-                #[trigger] frames[k].saved_len.as_nat()
-                    <= #[trigger] frames[k + 1].saved_len.as_nat()
-            by {
-                assert(frames[k] == old_frames[k]);
-                if k + 1 < new_top {
-                    // both in old stack
-                    assert(frames[k + 1] == old_frames[k + 1]);
-                    old(self).lemma_saved_len_monotone(k, k + 1);
-                    assert(old_frames[k].saved_len.as_nat()
-                        <= old_frames[k + 1].saved_len.as_nat());
-                } else {
-                    // k+1 == new_top: old_top vs new frame
-                    assert(k == old_frames.len() - 1);
-                    assert(frames[k + 1].saved_len == saved_len);
-                    old(self).lemma_saved_len_le_view(k);
-                }
-            }
             // diff_start monotone: new adjacency (old_top, new) has
             // old_top.diff_start <= n == new.diff_start.
             assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
@@ -1861,13 +1801,20 @@ where
             // data().len() == saved_len_target after the restore loop.
             assert(self.store.data().len() == saved_len.as_nat());
             if target_index > 0 {
-                // new top frame is target_index - 1.
+                // new top frame is target_index - 1; its diff_start <= old
+                // target.diff_start == diff_start == new diff_log.len().
                 old(self).lemma_diff_start_monotone(target_index as int - 1, target_index as int);
-                old(self).lemma_saved_len_monotone(target_index as int - 1, target_index as int);
-                // new_top.diff_start <= old target.diff_start == diff_start == new diff_log.len()
-                // new_top.saved_len <= old target.saved_len == saved_len == data().len()
+                // NOTE: we no longer derive "new_top.saved_len <= data().len()"
+                // via saved_len monotonicity (gone, and false under faithful
+                // pop — the parent can have a LARGER saved_len than the
+                // restore target). Instead finish_restore is told to rebuild
+                // capture flags over [0, data().len()) only, which is exactly
+                // the range the wf bridge reads (it's gated by j < view.len()).
             }
         }
+        // data().len() == target's saved_len; this is the present-cell range
+        // the bridge cares about, regardless of the new top frame's saved_len.
+        let present_len = self.store.len();
         let ghost surviving_view: Seq<(T, I)> = Seq::empty();
         let ghost new_top_ds_ghost: int = 0;
         if target_index > 0 {
@@ -1880,7 +1827,7 @@ where
                 surviving_view = surviving@;
                 new_top_ds_ghost = new_top_ds as int;
             }
-            self.store.finish_restore(surviving, new_top_frame.saved_len);
+            self.store.finish_restore(surviving, present_len);
         } else {
             self.active_saved_len = I::min();
         }
@@ -1924,10 +1871,9 @@ where
                 // new top diff_start <= new n (== diff_start):
                 old(self).lemma_diff_start_monotone(top, target_index as int);
                 assert(old_frames[top].diff_start <= old_frames[target_index as int].diff_start);
-                // new top saved_len <= new view.len() (== saved_len_target):
-                old(self).lemma_saved_len_monotone(top, target_index as int);
+                // (top-fullness "new top saved_len <= view.len()" is no longer
+                // a wf clause; nothing to prove here.)
                 assert(self.view().len() == saved_len.as_nat());
-                assert(old_frames[target_index as int].saved_len.as_nat() == saved_len.as_nat());
             }
 
             assert forall|k: int| 0 <= k < frames.len() implies
@@ -2005,7 +1951,13 @@ where
                 // stratum, so captured_in_range matches.
                 assert(frames[top].diff_start as int == new_top_ds_ghost);
                 assert(surviving_view == diffs.subrange(new_top_ds_ghost, diffs.len() as int));
-                assert forall|j: int| 0 <= j < self.active_saved_len.as_nat() implies
+                // The wf bridge is gated by j < view.len(); finish_restore
+                // rebuilt captured() over exactly [0, present_len) ==
+                // [0, view.len()), so we prove it on that range (NOT on
+                // [0, active), which may exceed view.len() after faithful pop).
+                assert(present_len.as_nat() == self.view().len());
+                assert forall|j: int|
+                    0 <= j < self.active_saved_len.as_nat() && j < self.view().len() implies
                     #[trigger] self.store.captured()[j]
                         == captured_in_range::<T, I>(
                             diffs, frames[top].diff_start as int, diffs.len() as int, j as nat)
@@ -2016,17 +1968,8 @@ where
                         diffs, surviving_view, new_top_ds_ghost, diffs.len() as int, j as nat);
                 }
             }
-            // saved_len monotonicity for the truncated stack: frames is a
-            // prefix of old_frames, so transfer the old per-adjacent-pair fact.
-            // (This clause is dropped in the step-4 wf relaxation.)
-            assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
-                #[trigger] frames[k].saved_len.as_nat()
-                    <= #[trigger] frames[k + 1].saved_len.as_nat()
-            by {
-                assert(frames[k] == old_frames[k]);
-                assert(frames[k + 1] == old_frames[k + 1]);
-                old(self).lemma_saved_len_monotone(k, k + 1);
-            }
+            // saved_len monotonicity is no longer a wf clause — nothing to
+            // re-establish for the truncated stack.
         }
     }
 }
