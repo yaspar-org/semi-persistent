@@ -305,6 +305,54 @@ pub proof fn lemma_captured_subrange<T, I: IndexLike>(
     }
 }
 
+/// Appending at most one entry whose index is `bound` (the popped slot) to
+/// the top stratum doesn't change captured-status of any OTHER index `j`
+/// (`j != bound`). Used by faithful `pop`: the capture append hits only the
+/// popped index, so every surviving cell's bridge/captured arm is preserved.
+/// `diffs` is either `old_diffs` (no-op capture) or `old_diffs.push(e)` with
+/// `e.1.as_nat() == bound`.
+pub proof fn lemma_captured_in_range_append_other<T, I: IndexLike>(
+    old_diffs: Seq<(T, I)>, diffs: Seq<(T, I)>, lo: int, j: nat, bound: nat,
+)
+    requires
+        j != bound,
+        lo <= old_diffs.len(),
+        diffs == old_diffs
+            || (diffs.len() == old_diffs.len() + 1
+                && diffs.subrange(0, old_diffs.len() as int) == old_diffs
+                && (#[trigger] diffs[old_diffs.len() as int]).1.as_nat() == bound),
+    ensures
+        captured_in_range::<T, I>(diffs, lo, diffs.len() as int, j)
+            == captured_in_range::<T, I>(old_diffs, lo, old_diffs.len() as int, j),
+{
+    if diffs == old_diffs {
+        return;
+    }
+    let n = old_diffs.len() as int;
+    // forward: a hitter in diffs is at some position p; if p == n it has
+    // index bound != j, contradiction; else p < n and diffs[p]==old_diffs[p].
+    if captured_in_range::<T, I>(diffs, lo, diffs.len() as int, j) {
+        let p = choose|p: int| lo <= p < diffs.len() && 0 <= p < diffs.len()
+            && (#[trigger] diffs[p]).1.as_nat() == j;
+        if p < n {
+            assert(diffs[p] == old_diffs[p]) by {
+                assert(diffs.subrange(0, n)[p] == old_diffs[p]);
+            }
+        } else {
+            assert(p == n);
+            assert(diffs[p].1.as_nat() == bound);  // contradicts == j
+        }
+    }
+    // backward: an old hitter at p < n survives at the same position.
+    if captured_in_range::<T, I>(old_diffs, lo, n, j) {
+        let p = choose|p: int| lo <= p < n && 0 <= p < old_diffs.len()
+            && (#[trigger] old_diffs[p]).1.as_nat() == j;
+        assert(diffs[p] == old_diffs[p]) by {
+            assert(diffs.subrange(0, n)[p] == old_diffs[p]);
+        }
+    }
+}
+
 /// `frame_inv_range` over `[lo, hi)` depends only on the diff entries in
 /// that range. If two diff sequences agree pointwise on `[lo, hi)` (and are
 /// both long enough), the predicate holds for one iff for the other.
@@ -1089,20 +1137,21 @@ where
         }
     }
 
-    /// Pop the last element. Works under an active frame as long as the
-    /// element being removed is a *transient* — pushed since the active
-    /// mark — i.e. `view().len() > active_saved_len`. We never pop into any
-    /// frame's marked region (that state is needed for restore). A transient
-    /// slot has index >= active_saved_len, so it lies outside every frame's
-    /// stratum-constrained region and no capture is needed.
+    /// Pop the last element (FAITHFUL: may pop into a frame's marked region).
+    ///
+    /// If the removed slot lies inside the active frame's marked region
+    /// (`old_len - 1 < active_saved_len`), it is first CAPTURED into the top
+    /// stratum (first-write-wins), so the now-absent cell still satisfies the
+    /// frame invariant via the captured arm — this is exactly the coverage
+    /// obligation. Conditional capture (not production's unconditional
+    /// force_capture) keeps the diff log bounded: at most one entry per index
+    /// per stratum. `restore` later regrows the popped region with
+    /// `resize_default` and overwrites each filler back from these captures.
     #[verifier::spinoff_prover]
-    #[verifier::rlimit(200)]
+    #[verifier::rlimit(300)]
     pub fn pop(&mut self) -> (r: Option<T>)
         requires
             old(self).wf(),
-            // Either no live frame, or the top element is transient.
-            old(self).frames@.len() == 0
-                || old(self).active_saved_len.as_nat() < old(self).view().len(),
         ensures
             self.wf(),
             old(self).view().len() == 0 ==> r is None && self.view() == old(self).view(),
@@ -1116,82 +1165,305 @@ where
         let ghost old_view = self.view();
         let ghost old_diffs = self.diff_log@;
         let ghost old_frames = self.frames@;
+
+        // Capture the cell we are about to remove, if it falls inside the
+        // active marked region. Must happen BEFORE store.pop while data[last]
+        // is still readable; capture's first-write-wins logs (data[last], last)
+        // == (snap[last], last) only if it was uncaptured, else no-ops.
+        let len = self.store.len();
+        let ghost old_store_captured = self.store.captured();
+        let ghost captured_marked = false;
+        let ghost last_g: int = 0;
+        // data_last == value of the slot being removed (defined when nonempty).
+        let ghost data_last: T = old(self).store.data()[
+            if old_view.len() > 0 { old_view.len() - 1 } else { 0 } as int];
+        if self.frames.len() > 0 && len.as_usize() > 0
+            && len.as_usize() - 1 < self.active_saved_len.as_usize()
+        {
+            let last = len.as_usize() - 1;
+            proof { len.lemma_as_nat_bounded(); }  // last < len.as_nat() < max_nat
+            let last_i = match I::try_from_usize(last) {
+                Some(x) => x,
+                None => { assert(false); return None; },
+            };
+            let active = self.active_saved_len;
+            proof {
+                captured_marked = true;
+                last_g = last as int;
+                assert(last_i.as_nat() == last as nat);
+                assert(last_i.as_nat() < active.as_nat());
+                assert(self.store.data()[last as int] == data_last);
+            }
+            self.store.capture(last_i, active, &mut self.diff_log);
+            proof {
+                // capture's first-write-wins outcome at index `last`:
+                //  - if !old.captured[last]: appended (data_last, last_i);
+                //  - else: no-op. Both ways the result diff log relates to
+                //    old_diffs by "append-one-at-index-last or identity".
+                if !old_store_captured[last as int] {
+                    assert(self.diff_log@ == old_diffs.push((data_last, last_i)));
+                    assert(self.diff_log@[old_diffs.len() as int].1.as_nat() == last as nat);
+                } else {
+                    assert(self.diff_log@ == old_diffs);
+                }
+                // capture changes the flag only at `last == len-1`; surface
+                // the SAME-shaped fact both branches will share post-if.
+                assert(last as int == len.as_nat() - 1);
+                // capture preserves data() ⇒ captured() length unchanged
+                // (both equal data().len(), which capture leaves intact).
+                self.store.lemma_wf_captured_len();
+                old(self).store.lemma_wf_captured_len();
+                assert(self.store.data() == old(self).store.data());
+                assert(self.store.captured().len() == old_store_captured.len());
+                assert forall|j: int| 0 <= j < len.as_nat() - 1
+                    implies #[trigger] self.store.captured()[j] == old_store_captured[j] by {
+                    // capture's ensures: either first-write-wins (forall
+                    // k != last_i.as_nat() preserved) or no-op (captured()
+                    // unchanged). Either way j (!= last == last_i.as_nat()) is
+                    // preserved.
+                    assert(j != last_i.as_nat());
+                    assert(j < self.store.captured().len());
+                }
+            }
+        } else {
+            // No capture: the store is entirely unchanged — same shape.
+            proof {
+                assert(self.store.captured() =~= old_store_captured);
+                assert forall|j: int| 0 <= j < len.as_nat() - 1
+                    implies #[trigger] self.store.captured()[j] == old_store_captured[j] by {}
+            }
+        }
+        // mid state (after the optional capture, before pop): both branches
+        // established flags below `len-1` match old_store_captured.
+        let ghost mid_captured = self.store.captured();
+
+        let ghost mid_diffs = self.diff_log@;
+        // diffs is old_diffs, or old_diffs.push(e) with e.1 == last_g (== new_len).
         let r = self.store.pop();
 
         proof {
             let frames = self.frames@;
             let diffs = self.diff_log@;
             let snaps = self.snapshots@;
-            // pop only shrinks view by one (or no-op when empty); diff_log,
-            // frames, snapshots all unchanged.
-            assert(diffs == old_diffs);
+            // capture/pop leave frames & snapshots unchanged. diff_log is
+            // either old_diffs (no capture) or old_diffs.push((snap[last],last)).
             assert(frames == old_frames);
+            assert(snaps == old(self).snapshots@);
+            assert(diffs == mid_diffs);
 
             if old_frames.len() > 0 && old_view.len() > 0 {
                 let top = (frames.len() - 1) as int;
-                // active_saved_len < old_view.len() ⇒ new view.len() ==
-                // old_view.len() - 1 >= active_saved_len. Marked region of
-                // every frame (saved_len <= active) is preserved.
+                let new_len = (old_view.len() - 1) as int;  // == self.view().len()
+                let ds_top = frames[top].diff_start as int;
+                let active_n = self.active_saved_len.as_nat() as int;
                 assert(self.view() == old_view.drop_last());
-                assert(self.active_saved_len.as_nat() < old_view.len());
-                // Every frame's saved_len <= active <= new view.len().
+                assert(frames[top].saved_len == self.active_saved_len);  // wf
+                // last == new_len == old_view.len()-1; captured_marked iff
+                // new_len < active.
+                assert(captured_marked == (new_len < active_n));
+
+                // Unified relation between diffs and old_diffs: either equal
+                // (no capture, or capture no-op'd on an already-captured slot)
+                // or old_diffs with ONE entry appended whose index is new_len.
+                // This is exactly the hypothesis lemma_captured_in_range_append_
+                // other needs, for every j != new_len.
+                assert(diffs == old_diffs
+                    || (diffs.len() == old_diffs.len() + 1
+                        && diffs.subrange(0, old_diffs.len() as int) == old_diffs
+                        && diffs[old_diffs.len() as int].1.as_nat() == new_len as nat)) by {
+                    if captured_marked && !old_store_captured[new_len] {
+                        assert(diffs == old_diffs.push((data_last, diffs[old_diffs.len() as int].1)));
+                        assert(diffs.subrange(0, old_diffs.len() as int) == old_diffs);
+                    }
+                }
+
+                // What capture did to the diff log & flags. Let last = new_len.
+                // If captured_marked: capture saw i=last < active. First-write-
+                // wins: if !old.captured[last] it appended (snap[last], last)
+                // and set the flag; else no-op. Either way after capture the
+                // top stratum HITS last with value snap[last], and for all
+                // j != last the flags/entries are unchanged.
+                self.store.lemma_wf_captured_len();
+
+                // --- frame_inv_range for every frame ---
                 assert forall|k: int| 0 <= k < frames.len() implies
                     #[trigger] frame_inv_range::<T, I>(
                         self.layer_above_at(k), diffs, frames[k].diff_start as int,
                         self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
                 by {
                     assert(old(self).frame_inv_range_holds(k));
-                    assert(self.active_saved_len == old(self).active_saved_len);
                     let lo = frames[k].diff_start as int;
                     let hi = self.stratum_end(k);
                     let snap = snaps[k];
                     let sl = frames[k].saved_len.as_nat();
-                    assert(self.stratum_end(k) == old(self).stratum_end(k));
-                    // For the top frame the layer is the view, and view[j] for
-                    // j < saved_len is preserved by drop_last. Here sl ==
-                    // active_saved_len (wf bridge) and active < old_view.len()
-                    // (the transient-pop precondition), so sl <= new view.len()
-                    // — no saved_len monotonicity needed. Inner frames are
-                    // layer-identical (their layer is an unchanged snapshot).
-                    if k == top {
+                    if k < top {
+                        // Inner frame: layer is an unchanged snapshot; its
+                        // stratum [ds_k, ds_{k+1}) lies below the top stratum,
+                        // so a capture append at the end doesn't touch it.
+                        assert(self.layer_above_at(k) == snaps[k + 1]);
+                        assert(self.layer_above_at(k) == old(self).layer_above_at(k));
+                        assert(hi == old(self).stratum_end(k));
+                        assert(hi == old_frames[k + 1].diff_start as int);
+                        old(self).lemma_diff_start_le_n(k + 1);
+                        old(self).lemma_diff_start_monotone(k + 1, top);
+                        assert(hi <= old_diffs.len() as int);
+                        lemma_frame_inv_range_local::<T, I>(
+                            self.layer_above_at(k), old_diffs, diffs, lo, hi, snap, sl);
+                    } else {
+                        // Top frame. Layer is the (shortened) view; stratum
+                        // [ds_top, n) possibly extended by the capture append
+                        // at index `last == new_len`. Per cell j < sl:
+                        //   j < new_len  : present, value & captured-status
+                        //                  preserved ⇒ old arm transfers;
+                        //   j == new_len : now ABSENT. If captured_marked the
+                        //                  capture put (snap[last],last) in the
+                        //                  stratum (captured arm); coverage.
+                        //   j > new_len  : was already absent in old state, so
+                        //                  old captured arm held; entry survives.
                         assert(self.layer_above_at(k) == self.view());
                         assert(old(self).layer_above_at(k) == old_view);
-                        assert(frames[top].saved_len == self.active_saved_len);  // wf
-                        assert(sl <= self.view().len());
-                        // Per-cell transfer: view prefix preserved, in range.
+                        assert(sl == active_n);
+                        // old top stratum ended at old_diffs.len().
+                        old(self).lemma_diff_start_le_n(top);
+                        assert(old(self).stratum_end(top) == old_diffs.len() as int);
+                        assert(frame_inv_range::<T, I>(
+                            old_view, old_diffs, lo, old_diffs.len() as int, snap, sl));
                         assert forall|j: int| 0 <= j < sl as int implies
                             #[trigger] frame_cell_inv::<T, I>(self.view(), diffs, lo, hi, snap, j)
                         by {
-                            lemma_frame_inv_arm_at::<T, I>(old_view, diffs, lo, hi, snap, sl, j);
-                            assert(self.view()[j] == old_view[j]);
+                            lemma_frame_inv_arm_at::<T, I>(
+                                old_view, old_diffs, lo, old_diffs.len() as int, snap, sl, j);
+                            if j < new_len {
+                                // present & preserved by drop_last; capture
+                                // append (if any) is at index last != j.
+                                assert(self.view()[j] == old_view[j]);
+                                lemma_captured_in_range_append_other::<T, I>(
+                                    old_diffs, diffs, lo, j as nat, new_len as nat);
+                            } else if j == new_len {
+                                // The cell just removed. It was inside the
+                                // marked region (j < active == sl), so the
+                                // capture ran (captured_marked). The capture
+                                // arm holds: there is an entry in [lo, hi) with
+                                // index j == new_len and value snap[j].
+                                assert(j < active_n);
+                                assert(captured_marked);
+                                assert(hi == diffs.len());  // top stratum end
+                                // old cell_inv at j (from lemma_frame_inv_arm_at
+                                // above): j == new_len == old_view.len()-1, so
+                                // j < old_view.len() ⇒ if old-uncaptured then
+                                // old_view[j] == snap[j]; if old-captured the
+                                // old entry already holds snap[j].
+                                // The cell_inv for j must be the CAPTURED arm:
+                                // exhibit p in [lo,hi) with index j, value snap[j].
+                                if old_store_captured[j] {
+                                    // already captured: capture no-op'd, so
+                                    // diffs == old_diffs and the old captured
+                                    // arm's witness survives.
+                                    assert(j < old_view.len());
+                                    assert(old(self).store.captured()[j]);  // == old_store_captured[j]
+                                    assert(captured_in_range::<T, I>(
+                                        old_diffs, lo, old_diffs.len() as int, j as nat)) by {
+                                        assert(old(self).store.captured()[j]
+                                            == captured_in_range::<T, I>(
+                                                old_diffs, lo, old_diffs.len() as int, j as nat));
+                                    }
+                                    // old captured arm gives the value witness.
+                                    assert(frame_cell_inv::<T, I>(
+                                        old_view, old_diffs, lo, old_diffs.len() as int, snap, j));
+                                    assert(diffs == old_diffs);
+                                    let p = choose|p: int| lo <= p < old_diffs.len() as int
+                                        && (#[trigger] old_diffs[p]).1.as_nat() == j as nat
+                                        && old_diffs[p].0 == snap[j];
+                                    assert(lo <= p < hi && 0 <= p < diffs.len()
+                                        && diffs[p].1.as_nat() == j as nat
+                                        && diffs[p].0 == snap[j]);
+                                    assert(captured_in_range::<T, I>(diffs, lo, hi, j as nat));
+                                    assert(frame_cell_inv::<T, I>(self.view(), diffs, lo, hi, snap, j));
+                                } else {
+                                    // uncaptured: capture appended (data_last, last_i)
+                                    // at position old_diffs.len(); data_last ==
+                                    // old.data[j] == old_view[j] == snap[j] (old
+                                    // uncaptured arm).
+                                    assert(!captured_in_range::<T, I>(
+                                        old_diffs, lo, old_diffs.len() as int, j as nat)) by {
+                                        assert(j < old_view.len());
+                                        assert(old(self).store.captured()[j] == false);
+                                        assert(old(self).store.captured()[j]
+                                            == captured_in_range::<T, I>(
+                                                old_diffs, lo, old_diffs.len() as int, j as nat));
+                                    }
+                                    assert(frame_cell_inv::<T, I>(
+                                        old_view, old_diffs, lo, old_diffs.len() as int, snap, j));
+                                    assert(old_view[j] == snap[j]);  // old uncaptured arm
+                                    assert(data_last == old_view[j]);
+                                    let p = old_diffs.len() as int;
+                                    assert(diffs.subrange(0, p) == old_diffs);
+                                    assert(diffs[p].1.as_nat() == j as nat);
+                                    assert(diffs[p].0 == data_last);
+                                    assert(diffs[p].0 == snap[j]);
+                                    assert(lo <= p < hi && 0 <= p < diffs.len());
+                                    assert(captured_in_range::<T, I>(diffs, lo, hi, j as nat));
+                                    assert(frame_cell_inv::<T, I>(self.view(), diffs, lo, hi, snap, j));
+                                }
+                            } else {
+                                // j > new_len: this cell was ALREADY absent
+                                // before this pop (j >= old_view.len()-... it
+                                // was popped earlier). The old uncaptured arm
+                                // would need j < old_view.len(): j > new_len ==
+                                // old_view.len()-1 ⇒ j >= old_view.len(), so the
+                                // old cell_inv took the CAPTURED arm. That entry
+                                // is below old_diffs.len() <= diffs.len() and is
+                                // preserved by the capture append.
+                                assert(j >= old_view.len());
+                                assert(captured_in_range::<T, I>(
+                                    old_diffs, lo, old_diffs.len() as int, j as nat));
+                                lemma_captured_in_range_append_other::<T, I>(
+                                    old_diffs, diffs, lo, j as nat, new_len as nat);
+                            }
                         }
-                    } else {
-                        assert(self.layer_above_at(k) == snaps[k + 1]);
-                        assert(self.layer_above_at(k) == old(self).layer_above_at(k));
-                        // same layer, same diffs/snap ⇒ frame_inv_range identical.
-                        assert forall|j: int| 0 <= j < sl as int implies
-                            #[trigger] frame_cell_inv::<T, I>(snaps[k + 1], diffs, lo, hi, snap, j)
-                        by {
-                            lemma_frame_inv_arm_at::<T, I>(snaps[k + 1], diffs, lo, hi, snap, sl, j);
-                        }
+                        assert(frame_inv_range::<T, I>(self.view(), diffs, lo, hi, snap, sl));
                     }
                 }
-                // bridge preserved: store.pop drops the last captured flag
-                // (index old_view.len()-1 >= active), leaving [0, active)
-                // unchanged; diffs unchanged ⇒ captured_in_range unchanged.
-                self.store.lemma_wf_captured_len();
-                let ds_top = frames[top].diff_start as int;
-                assert forall|j: int| 0 <= j < self.active_saved_len.as_nat() implies
+
+                // --- bridge (gated by j < active && j < view.len()) ---
+                assert forall|j: int|
+                    0 <= j < active_n && j < self.view().len() implies
                     #[trigger] self.store.captured()[j]
-                        == captured_in_range::<T, I>(
-                            diffs, ds_top, diffs.len() as int, j as nat)
+                        == captured_in_range::<T, I>(diffs, ds_top, diffs.len() as int, j as nat)
                 by {
-                    // old bridge + captured()[j] unchanged (j < active <=
-                    // new len < old len, and pop drops only the last flag).
-                    assert(self.store.captured()[j] == old(self).store.captured()[j]);
+                    // j < view.len() == new_len, so j != last (== new_len). The
+                    // capture append (if any) is at index last != j, and pop's
+                    // drop_last removes the flag at last (>= new_len > j). So
+                    // both captured()[j] and captured_in_range(j) are unchanged
+                    // from the old top-stratum bridge.
+                    assert(j < new_len);
+                    assert(j < old_view.len());
+                    // pop's drop_last: captured()[j] == mid_captured[j] for
+                    // j < new_len; and mid_captured[j] == old flag (capture
+                    // only touched index new_len != j).
+                    assert(self.store.captured()[j] == mid_captured[j]);
+                    assert(mid_captured[j] == old(self).store.captured()[j]);
                     assert(old(self).store.captured()[j]
                         == captured_in_range::<T, I>(
                             old_diffs, ds_top, old_diffs.len() as int, j as nat));
+                    lemma_captured_in_range_append_other::<T, I>(
+                        old_diffs, diffs, ds_top, j as nat, new_len as nat);
+                }
+            } else if old_frames.len() > 0 {
+                // old_view empty (so view stays empty): store.pop is a no-op
+                // and the capture branch can't have run (len == 0). So the
+                // entire state equals old(self), and old wf transfers directly.
+                assert(old_view.len() == 0);
+                assert(self.view() == old_view);
+                assert(diffs == old_diffs);
+                assert(self.store.captured() == old(self).store.captured());
+                assert forall|k: int| 0 <= k < frames.len() implies
+                    #[trigger] frame_inv_range::<T, I>(
+                        self.layer_above_at(k), diffs, frames[k].diff_start as int,
+                        self.stratum_end(k), snaps[k], frames[k].saved_len.as_nat())
+                by {
+                    assert(old(self).frame_inv_range_holds(k));
+                    assert(self.layer_above_at(k) == old(self).layer_above_at(k));
                 }
             }
         }
