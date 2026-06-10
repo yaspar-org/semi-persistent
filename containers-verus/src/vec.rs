@@ -212,6 +212,42 @@ pub proof fn lemma_overlay_captured<T, I: IndexLike>(
     }
 }
 
+/// Lowest-position-in-range wins. If `p` is the LOWEST position in `[lo, hi)`
+/// whose entry hits `j` (entries before `p` miss `j`), then overlay sets
+/// `base[j]` to `diffs[p].0` — even if higher positions in `[lo, hi)` also
+/// hit `j`. This generalizes `lemma_overlay_captured` (which needs global
+/// uniqueness in the range) to the cross-stratum case where the same index
+/// recurs in different strata: the deepest (= lowest-position) stratum's
+/// entry wins, which is exactly what reverse-replay computes.
+pub proof fn lemma_overlay_lowest<T, I: IndexLike>(
+    base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, p: int, j: int,
+)
+    requires
+        0 <= j < base.len(),
+        lo <= p < hi,
+        0 <= p < diffs.len(),
+        lo >= 0,
+        hi <= diffs.len(),
+        diffs[p].1.as_nat() == j as nat,
+        // p is the LOWEST hitter of j in [lo, hi): earlier positions miss j.
+        forall|q: int| lo <= q < p ==> (#[trigger] diffs[q]).1.as_nat() != j as nat,
+    ensures
+        overlay::<T, I>(base, diffs, lo, hi)[j] == diffs[p].0,
+    decreases hi - lo,
+{
+    let prev = overlay::<T, I>(base, diffs, lo + 1, hi);
+    lemma_overlay_len::<T, I>(base, diffs, lo + 1, hi);
+    if p == lo {
+        // diffs[lo] hits j; it is applied OUTERMOST (last), so its value is
+        // the final value at j regardless of what [lo+1, hi) did to prev[j].
+    } else {
+        // diffs[lo] does not hit j (lo < p and p is the lowest hitter).
+        // p is still the lowest hitter in [lo+1, hi). By IH overlay(lo+1,hi)[j]
+        // == diffs[p].0, and the outermost update at lo (index != j) leaves j.
+        lemma_overlay_lowest::<T, I>(base, diffs, lo + 1, hi, p, j);
+    }
+}
+
 /// Bridge between subrange-position existential and absolute-range
 /// `captured_in_range`. If `sub == diffs.subrange(lo, hi)`, then
 /// "some sub[kk] hits j" iff "some diffs[k] in [lo, hi) hits j".
