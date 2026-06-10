@@ -11,12 +11,19 @@
 //!
 //!   token.container_id.eq(self.id)  ⟺  token.container_id.id() == self.id.id()
 //!
-//! We do NOT axiomatize a global fresh-id source (a mutable static is not
-//! expressible in spec). Distinctness of two live containers is instead a
-//! *hypothesis* a caller supplies when relevant; the verified guarantee is the
-//! faithful reflection above — a matching id provably means the exec check
-//! passed, so a token minted by another container (different ghost id) is
-//! provably rejected. That is the soundness-relevant direction.
+//! The container check only rejects *cross-container misuse* (a caller error),
+//! so it is NOT on the correctness-critical path — restore's reconstruction
+//! theorem stands without it. We therefore keep this encoding minimal: the
+//! verified guarantee is the faithful reflection above (a matching id provably
+//! means the exec check passed, so a token minted by another container is
+//! provably rejected — the soundness-relevant direction).
+//!
+//! Note: a fresh-id *generator* IS expressible in Verus if we later want
+//! distinctness as a proved (not assumed) property — a `tracked` ghost
+//! monotone counter threaded as a linear resource and advanced on each `new()`
+//! (`ensures fresh > all prior`), no global mutable static required. Deferred
+//! because the check is off the critical path. See
+//! `doc/design/m5-fork-history-design.md` §4(c).
 
 use vstd::prelude::*;
 

@@ -61,82 +61,128 @@ at that point, hence `<` the new branch id. So **`origins[b-1].parent_branch_id
 descends toward 0 and terminates. This is the key well-formedness invariant we
 must carry on `ForkHistory` to give the spec walk a `decreases`.
 
+## 0.5. Architecture: validity is a SEPARATE GATE, orthogonal to restore
+
+The most important framing correction (per review 2026-06-10): **fork history
+defines token *validity*; it does not touch the restore *mechanism*.** These
+are two layers that meet only at `restore`'s entry, never inside the
+reconstruction proof:
+
+- **Mechanism (M1–M4, DONE).** `restore` is keyed on `token.frame_index` (the
+  stack slot to roll back to). Its correctness theorem —
+  `view() == snapshots[frame_index]` — and its structural precondition
+  (`frame_index < frames.len()`) are UNCHANGED by M5. We do **not** try to
+  discharge that precondition *from* validity; it stays its own requirement.
+- **Validity (M5).** `is_valid(token)` is a predicate over the fork history
+  answering "is this token's branch/depth on the live, un-cut timeline". It is
+  computed and checked at `restore`'s entry (a `bool` the caller/contract
+  gates on) and is otherwise independent of the snapshot machinery.
+
+So M5 adds an orthogonal predicate + its `assert`, plus the `forks.fork(...)`
+bookkeeping call at the *end* of restore (which only mutates `ForkHistory`, not
+the store/diff_log/frames). It does NOT re-shape the reconstruction theorem.
+There is therefore **no "validity ⇒ in-range" obligation** — that was a
+mis-coupling. frame_index-in-range remains a structural precondition; validity
+is a parallel guarantee.
+
+### `depth` and `frame_index` are DIFFERENT concepts (not to be merged)
+
+They are numerically equal at `mark` time (`mark` stamps both `= frames.len()`)
+but they answer different questions and live in different layers:
+
+- **`frame_index`** — the *mechanism* coordinate: which frame-stack slot
+  `restore` rolls back to (`target_index`, used to index `frames`).
+- **`depth`** — the *validity* coordinate: the token's position along its
+  branch's timeline, compared against `current_depth` / `fork_depth` in
+  `is_valid`. It is what tells an *abandoned-future* token (deeper than the
+  cut) apart from a genuine ancestor.
+
+Keeping them as one field would conflate the mechanism axis with the validity
+axis. **Decision: keep both, with NO `depth == frame_index` wf clause** — they
+are independent fields; the only relation is that `mark` happens to set them
+equal, which we don't need to exploit (and shouldn't, to keep the layers clean).
+
 ## 1. Two layers + the refinement (mirrors M3b's spec/exec split)
 
 - **Exec `ForkHistory`** — faithful port of production: `current_branch_id:
-  u32` (model as `nat` ghost-projected, like `IndexLike`, or just `u32` with
-  `as_nat`), `origins: Vec<ForkOrigin>`. Methods `new/current_branch/fork/
-  is_valid` with the production bodies.
+  u32`, `origins: Vec<ForkOrigin>` (each `{ parent_branch_id: u32, fork_depth:
+  u32 }`). Methods `new/current_branch/fork/is_valid` with the production
+  bodies. IDs and depths are **concrete machine integers** (`u32`), matching
+  production and the bit-stealing id story (`define_id31!` gives a u31-effective
+  id in a u32 word with the MSB as the capture tag) — see §4(a). No ghost-`nat`
+  projection; we reason on `u32`/`as nat` directly where needed.
 - **Spec `fork_valid`** — a pure recursive `spec fn` over `(origins,
   current_branch, current_depth, token_branch, token_depth)` that defines the
   walk declaratively, with `decreases branch` (sound by the parent-decreasing
-  invariant). The exec `is_valid` while-loop is proved to compute exactly
-  `fork_valid(...)`.
+  invariant; the spec is kept total with an explicit `parent >= branch` guard).
+  The exec `is_valid` while-loop is proved to compute exactly `fork_valid(...)`.
+  **[DONE — `fork_history.rs`, 7 verified.]**
 - **Well-formedness `fh_wf`**: `forall b: 1 ≤ b ≤ origins.len() ==>
   origins[b-1].parent_branch_id < b` AND `current_branch_id ≤ origins.len()`.
-  `new` establishes it (empty origins, branch 0); `fork` maintains it (new
-  parent is an existing valid branch id, new current is origins.len()).
+  `new` establishes it; `fork` maintains it. **[DONE.]**
 
-The stub doc mentions a heavier "ForkTree with per-node saved_view +
-current_path". We DON'T need saved_view in the tree: the snapshot
-reconstruction is already the M1–M4 theorem keyed on `frame_index`. The fork
-tree only governs *which frame_index values are still restorable*. So the
-lean model is: `fork_valid` is the whole ghost story; the "current path" is
-implicitly the ancestor chain of `current_branch_id`, and
-`current_path.contains(node)` ⟺ `fork_valid(... that node ...)`.
+We do NOT need the heavier "ForkTree with per-node saved_view + current_path"
+the stub mentioned: snapshot reconstruction is the M1–M4 theorem keyed on
+`frame_index`. The fork history only governs *which tokens are still valid*.
+`fork_valid` is the whole ghost story; the "current path" is implicitly the
+ancestor chain of `current_branch_id`.
 
 ## 2. The safety theorem (what M5 proves)
 
-1. **Refinement**: `ForkHistory::is_valid(t, d)` (exec, while-loop) returns
-   `fork_valid(origins@, current_branch_id, d, t.branch_id, t.depth)`
-   (spec). Pure, self-contained — provable now, touches nothing in vec.rs.
-2. **Container safety**: `ContainerId` equality is unforgeable — two distinct
-   `Vec::new()` calls get distinct ids (ghost `id: nat`, `external_body`
-   constructor axiomatized fresh). So `t.container_id == self.id ==> t was
-   minted by self`.
-3. **Validity ⇒ in-range**: if `is_valid_token(t)` then
-   `t.frame_index < frames.len()` (so the M4 `restore` precondition
-   `token.frame_idx < frames@.len()` is *discharged* by validity, not assumed).
-   This is the bridge that lets `restore`'s public contract require only
-   `is_valid_token(t)` instead of the raw in-range condition.
-4. **End-to-end**: `restore(t)` with `is_valid_token(t)` ensures
-   `view() == snapshots[t.frame_index]` (the M4 theorem) AND re-establishes
-   `fh_wf` after the `fork` call.
+1. **Refinement** (DONE): `ForkHistory::is_valid(t_branch, t_depth, d)` returns
+   `fork_valid(origins@, current_branch_id, d, t_branch, t_depth)`. Pure,
+   self-contained, touches nothing in vec.rs.
+2. **Branch-cut characterization**: `fork_valid` is exactly "token's branch is
+   an ancestor-or-equal of the current branch, and its depth is within that
+   branch's live (un-cut) prefix". A path-level lemma over the fork tree —
+   the real content of branch-cut safety. Pure over `ForkHistory`.
+3. **`mark`/`restore`/`fork` maintain `fh_wf`**, and `restore` calls
+   `forks.fork(token, frames.len())` at the END (after reconstruction), cutting
+   the branch. This is the only vec.rs wiring; `fork` mutates only the
+   `ForkHistory` field, so the M1–M4 reconstruction proof is untouched.
+4. **`is_valid_token(t)` exec method** = container check (cheap, see §4c) AND
+   `forks.is_valid(...)`, exposed so callers gate `restore` on it. `restore`'s
+   contract keeps its own `frame_index < frames.len()` structural precondition
+   (validity is parallel, NOT a substitute — see §0.5).
 
-Step 1+2 are the self-contained, design-stable core. Steps 3–4 rewire vec.rs's
-token surface (currently `VecToken { frame_idx }`) and the mark/restore
-contracts — higher risk, done after the core + this review.
+Steps 1 (+ the data types) are DONE and self-contained. Step 2 is a pure
+fork-history lemma (no vec.rs). Steps 3–4 wire `ForkHistory` into `Vec` and
+extend `VecToken` — REVIEW GATE, but now a *small additive* change (a new field
++ a gate + a tail call), not a reshape of restore.
 
 ## 3. Build order (each commit green)
 
-1. **`ContainerId`** — `external_body` struct wrapping the runtime id + ghost
-   `id: nat`; `new()` ensures a fresh ghost id (`spec fn` distinctness via an
-   uninterpreted "next id" the axiom advances). Standalone; no design freedom.
-2. **`ForkHistory` + `fork_valid` + refinement lemma** — the data types,
-   `fh_wf`, the spec walk with `decreases`, and the exec `is_valid` ⟺
-   `fork_valid` proof. Standalone (own module); doesn't touch vec.rs.
-3. **Token surface**: extend `VecToken` with `branch_id`/`depth`/`container_id`
-   (ghost or real), thread `ForkHistory` + `ContainerId` into `Vec`, update
-   `mark` to stamp them and `restore` to call `fork`. Re-prove `wf` carries
-   `fh_wf`. (Touches vec.rs — REVIEW GATE before starting.)
-4. **`is_valid_token` exec method + validity⇒in-range** + restore's public
-   contract switched to require validity. End-to-end safety theorem.
+1. **`ContainerId`** — concrete id wrapper. **[DONE — see §4c for the
+   modeling.]**
+2. **`ForkHistory` + `fork_valid` + refinement lemma**. **[DONE.]**
+3. **Branch-cut characterization lemma** (§2.2) — pure over `ForkHistory`,
+   no vec.rs. The mathematical heart of M5.
+4. **Wire into `Vec`**: add `forks: ForkHistory` + `id: ContainerId` fields,
+   extend `VecToken` with `branch_id`/`depth`/`container_id` (real `u32`/
+   `ContainerId`), `mark` stamps them, `restore` `assert`s `is_valid_token` and
+   calls `forks.fork(...)` at the end, `wf` carries `fh_wf`. Restore's
+   reconstruction contract is unchanged. (REVIEW GATE; small additive diff.)
 
-## 4. Open questions for review
+## 4. Decisions (resolved in review 2026-06-10)
 
-- (a) Model `branch_id`/`depth` as `u32` (real, with `as_nat`) or as ghost
-  `nat` carried alongside a real `u32`? Production uses `u32`; a `u32` overflow
-  at 4 G forks is a real (if unreachable) edge — mirror the M1 `saved_len`
-  fix and bound it, or treat ids as unbounded ghost `nat` and keep `u32` only
-  in exec? **Lean: `nat` ghost + `u32` exec with `as_nat`, like `IndexLike`.**
-- (b) Do we fold `depth == frame_index` into one field in the verus model
-  (production keeps two but never diverges them), or keep both for fidelity?
-  **Lean: keep both, with a wf clause `token.depth == token.frame_index` so
-  the validity⇒in-range bridge can use `depth` and reconstruction can use
-  `frame_index`.**
-- (c) `ContainerId` freshness axiom shape — a global ghost counter is awkward
-  in Verus (no mutable statics in spec). **Lean: `new()` is `external_body`
-  returning a value whose ghost `id` is `>` any previously handed out, modeled
-  by an uninterpreted monotone source; for the cross-container check we only
-  need *distinctness*, which `external_body` + an `ensures self.id == <fresh>`
-  with an opaque fresh-ness predicate provides.** Needs care; flagged.
+- (a) **IDs/depths are concrete `u32`, not ghost `nat`.** Production uses `u32`;
+  the bit-stealing id types are u31-effective (`define_id31!`: `u32` word, MSB =
+  capture tag, `MAX_RAW = 0x7FFF_FFFF`). The model reasons on machine integers
+  directly. (`nat` would only be worth it if it materially eased SMT — it does
+  not here; the walk arithmetic is simple `<` comparisons.) A `u32` branch-id
+  overflow at 4 G forks is the same unreachable edge as elsewhere; bound it in
+  `fork`'s precondition (`origins.len() + 1 <= u32::MAX`) rather than ghosting
+  it away, mirroring the M1 `saved_len` treatment.
+- (b) **`depth` and `frame_index` stay SEPARATE fields, no equating wf clause.**
+  See §0.5 — they are different concepts (validity axis vs mechanism axis).
+- (c) **`ContainerId` check is trivial; keep it minimal but DO model the
+  generator faithfully.** A static integer generator IS expressible in Verus:
+  a `tracked` ghost monotone counter (a `Tracked<...>` resource threaded as the
+  "next id" source, advanced on each `new()`, with `ensures fresh_id > all
+  prior`) gives genuine distinctness — no global mutable static needed; the
+  monotone ghost token is passed/owned like any linear resource. Since the
+  container check is not on the correctness-critical path (it only rejects
+  cross-container misuse, a caller error), we keep the *current* lean encoding
+  (`external_body` + `id(): nat`, exec `eq` reflecting id equality) for now and
+  note the tracked-counter upgrade as available if we later want end-to-end
+  distinctness as a *proved* (not assumed) property.
