@@ -1,9 +1,10 @@
 # M5 — Fork history / branch-cut safety (design)
 
-Status: DESIGN, for review. Tree is green at HEAD (`d66526d`, 142 verified).
-This milestone adds the last piece of the production token contract: a token
-is only valid to `restore` if it lies on the **current branch path** of the
-fork tree (not an "abandoned future"), and only on the **same container**.
+Status: DESIGN, for review. This milestone adds the remaining part of the
+production token contract: `restore` requires (as a precondition) that the
+token is *valid* — its branch is on the current path of the fork tree and its
+depth is within that branch's recorded bound — and that it originates from the
+same container.
 
 ## 0. What the production code actually does (re-read 2026-06-10)
 
@@ -29,8 +30,7 @@ fork tree (not an "abandoned future"), and only on the **same container**.
   4. (the M1–M4 reconstruction we already proved);
   5. **`forks.fork(&token, frames.len())`** — push a new origin
      `(token.branch_id, token.depth)` and set `current_branch_id =
-     origins.len()`. This is the branch cut: everything that was "above" the
-     restore target is now an abandoned future.
+     origins.len()`. This records the cut (see §0.6).
 - `is_valid(token, current_depth)`:
   ```
   if token.branch_id == current_branch_id { return token.depth <= current_depth }
@@ -45,11 +45,57 @@ fork tree (not an "abandoned future"), and only on the **same container**.
   }
   return token.depth <= current_depth
   ```
-  In words: walk from the current branch up the parent chain. The token is
-  valid iff its branch is an ancestor-or-equal of the current branch AND its
-  depth is within the live prefix of that branch — `≤ current_depth` if the
-  token is on the current branch, else `≤ fork_depth` of the fork that leaves
-  the token's branch toward the current head.
+  This is the operational definition; §0.6 states the declarative
+  characterization it is intended to compute.
+
+## 0.6. Definitions and the branch-safety theorem (precise)
+
+**Fork tree.** `ForkHistory = { current_branch_id: u32, origins: Vec<ForkOrigin> }`.
+The branches are the node ids `0, 1, …, origins.len()`; node `0` is the root.
+For `b ≥ 1`, `origins[b-1] = { parent_branch_id, fork_depth }` defines branch
+`b`'s parent edge: `parent(b) := origins[b-1].parent_branch_id`, labeled with
+`fork_depth(b) := origins[b-1].fork_depth`. Invariant `fh_wf`:
+`parent(b) < b` for all `1 ≤ b ≤ origins.len()`, and `current_branch_id ≤
+origins.len()`.
+
+**How a cut is recorded.** `fork(p, d)` performs exactly:
+`origins.push({ parent_branch_id: p, fork_depth: d })` (creating a new branch
+`b_new = origins.len()` with `parent(b_new) = p`, `fork_depth(b_new) = d`),
+then `current_branch_id := b_new`. Thus a cut is recorded as **one appended
+origin entry**. The entry on branch `c` with `parent(c) = p`, `fork_depth(c) =
+d` records the fact: *branch `p` was restored at depth `d` and branch `c`
+diverged from it there* — so along the path toward `c`, branch `p` is retained
+only up to depth `d`.
+
+**On the current path.** Define the current path as the node sequence
+`current_branch_id, parent(current_branch_id), parent²(…), …, 0` (finite and
+terminating because `parent(b) < b`). A branch `q` *is on the current path* iff
+it occurs in this sequence (i.e. `q == current_branch_id` or `q` is a strict
+ancestor of `current_branch_id`). Being on the current path is a NECESSARY,
+not sufficient, condition for a token on `q` to be valid.
+
+**Depth bound of a path branch.** For `q` on the current path:
+- if `q == current_branch_id`, `bound(q) := current_depth` (the live frontier;
+  `q` is the live branch, not a cut one);
+- if `q` is a strict ancestor, the path is linear so `q` has a unique child `c`
+  on it (the node with `parent(c) = q`); `bound(q) := fork_depth(c)` — the
+  depth at which `q` was cut on the way to the current branch.
+
+**Branch-safety theorem.** `is_valid(token, current_depth) = true` **iff**
+`token.branch_id` is on the current path **and** `token.depth ≤
+bound(token.branch_id)`.
+
+Contrapositive (when a token is REJECTED): `token` is invalid iff EITHER
+(i) `token.branch_id` is not on the current path — it lies in a subtree that
+was diverged away from (`is_valid`'s walk reaches branch `0`); OR
+(ii) its branch is on the path but `token.depth > bound(token.branch_id)` — it
+names a frame on a prefix that was rolled back past (a strictly-deeper position
+on a cut branch, or beyond the live frontier of the current branch).
+
+Note the asymmetry your phrasing should avoid: a token on a *cut* branch `p` is
+NOT automatically invalid — it is valid iff `token.depth ≤ fork_depth(c)` for
+`p`'s on-path child `c`. Cut branches retain their at-or-below-the-cut tokens
+(those name genuine ancestors of the current state).
 
 ### Why the walk terminates
 Each step sets `branch = origin.parent_branch_id`. Production does NOT prove
@@ -61,7 +107,7 @@ at that point, hence `<` the new branch id. So **`origins[b-1].parent_branch_id
 descends toward 0 and terminates. This is the key well-formedness invariant we
 must carry on `ForkHistory` to give the spec walk a `decreases`.
 
-## 0.5. Architecture: validity is a SEPARATE GATE, orthogonal to restore
+## 0.5. Architecture: validity is a separate precondition, orthogonal to restore
 
 The most important framing correction (per review 2026-06-10): **fork history
 defines token *validity*; it does not touch the restore *mechanism*.** These
@@ -73,34 +119,31 @@ reconstruction proof:
   `view() == snapshots[frame_index]` — and its structural precondition
   (`frame_index < frames.len()`) are UNCHANGED by M5. We do **not** try to
   discharge that precondition *from* validity; it stays its own requirement.
-- **Validity (M5).** `is_valid(token)` is a predicate over the fork history
-  answering "is this token's branch/depth on the live, un-cut timeline". It is
-  computed and checked at `restore`'s entry (a `bool` the caller/contract
-  gates on) and is otherwise independent of the snapshot machinery.
+- **Validity (M5).** `is_valid(token)` is the §0.6 predicate over the fork
+  history. It is evaluated as a precondition of `restore` and is otherwise
+  independent of the snapshot machinery.
 
-So M5 adds an orthogonal predicate + its `assert`, plus the `forks.fork(...)`
-bookkeeping call at the *end* of restore (which only mutates `ForkHistory`, not
-the store/diff_log/frames). It does NOT re-shape the reconstruction theorem.
-There is therefore **no "validity ⇒ in-range" obligation** — that was a
-mis-coupling. frame_index-in-range remains a structural precondition; validity
-is a parallel guarantee.
+So M5 adds this predicate + its `assert`, plus the `forks.fork(...)` call at
+the *end* of restore (which mutates only the `ForkHistory` field, not the
+store/diff_log/frames). It does NOT change the reconstruction theorem. There is
+therefore **no "validity ⇒ in-range" obligation** — that was a mis-coupling.
+`frame_index < frames.len()` remains an independent structural precondition;
+validity is a separate precondition.
 
-### `depth` and `frame_index` are DIFFERENT concepts (not to be merged)
+### `depth` and `frame_index` are DIFFERENT quantities (not to be merged)
 
 They are numerically equal at `mark` time (`mark` stamps both `= frames.len()`)
-but they answer different questions and live in different layers:
+but they are used by different parts of the contract:
 
-- **`frame_index`** — the *mechanism* coordinate: which frame-stack slot
-  `restore` rolls back to (`target_index`, used to index `frames`).
-- **`depth`** — the *validity* coordinate: the token's position along its
-  branch's timeline, compared against `current_depth` / `fork_depth` in
-  `is_valid`. It is what tells an *abandoned-future* token (deeper than the
-  cut) apart from a genuine ancestor.
+- **`frame_index`** — consumed by the reconstruction mechanism: the frame-stack
+  index `restore` rolls back to (`target_index`, used to index `frames`).
+- **`depth`** — consumed by `is_valid`: compared against `current_depth` /
+  `fork_depth` per §0.6 to decide validity.
 
-Keeping them as one field would conflate the mechanism axis with the validity
-axis. **Decision: keep both, with NO `depth == frame_index` wf clause** — they
-are independent fields; the only relation is that `mark` happens to set them
-equal, which we don't need to exploit (and shouldn't, to keep the layers clean).
+Keeping them as one field would couple the reconstruction-index requirement to
+the validity predicate. **Decision: keep both, with NO `depth == frame_index`
+wf clause** — they are independent fields; the only relation is that `mark`
+sets them equal, which neither part of the proof needs to exploit.
 
 ## 1. Two layers + the refinement (mirrors M3b's spec/exec split)
 
@@ -127,41 +170,49 @@ the stub mentioned: snapshot reconstruction is the M1–M4 theorem keyed on
 `fork_valid` is the whole ghost story; the "current path" is implicitly the
 ancestor chain of `current_branch_id`.
 
-## 2. The safety theorem (what M5 proves)
+## 2. What M5 proves
 
 1. **Refinement** (DONE): `ForkHistory::is_valid(t_branch, t_depth, d)` returns
-   `fork_valid(origins@, current_branch_id, d, t_branch, t_depth)`. Pure,
-   self-contained, touches nothing in vec.rs.
-2. **Branch-cut characterization**: `fork_valid` is exactly "token's branch is
-   an ancestor-or-equal of the current branch, and its depth is within that
-   branch's live (un-cut) prefix". A path-level lemma over the fork tree —
-   the real content of branch-cut safety. Pure over `ForkHistory`.
+   `fork_valid(origins@, current_branch_id, d, t_branch, t_depth)`. Pure over
+   `ForkHistory`; no vec.rs.
+2. **Branch-safety theorem** (§0.6) — `fork_valid` equals the declarative
+   predicate "`token.branch_id` is on the current path AND `token.depth ≤
+   bound(token.branch_id)`". Pure over `ForkHistory`. NOT yet proved in
+   general; see §2.1 for what IS proved so far.
 3. **`mark`/`restore`/`fork` maintain `fh_wf`**, and `restore` calls
-   `forks.fork(token, frames.len())` at the END (after reconstruction), cutting
-   the branch. This is the only vec.rs wiring; `fork` mutates only the
-   `ForkHistory` field, so the M1–M4 reconstruction proof is untouched.
-4. **`is_valid_token(t)` exec method** = container check (cheap, see §4c) AND
-   `forks.is_valid(...)`, exposed so callers gate `restore` on it. `restore`'s
-   contract keeps its own `frame_index < frames.len()` structural precondition
-   (validity is parallel, NOT a substitute — see §0.5).
+   `forks.fork(token, frames.len())` after reconstruction (records the cut).
+   The only vec.rs wiring; `fork` mutates only the `ForkHistory` field, so the
+   M1–M4 reconstruction proof is unchanged.
+4. **`is_valid_token(t)` exec method** = container check (§4c) AND
+   `forks.is_valid(...)`. `restore` requires it as a precondition, alongside —
+   not in place of — its own `frame_index < frames.len()` precondition (§0.5).
 
-Steps 1 (+ the data types) are DONE and self-contained. Step 2 is a pure
-fork-history lemma (no vec.rs). Steps 3–4 wire `ForkHistory` into `Vec` and
-extend `VecToken` — REVIEW GATE, but now a *small additive* change (a new field
-+ a gate + a tail call), not a reshape of restore.
+### 2.1. Proved so far vs. remaining
+
+- DONE: refinement (item 1); `fork`/`new` maintain `fh_wf`; and `lemma_branch_cut`
+  — the SINGLE-CUT INSTANCE of item 2: *immediately after* `fork(p, d)`, a
+  token on branch `p` satisfies `fork_valid` iff `token.depth ≤ d`. Plus
+  `lemma_fork_valid_current_branch` (the same-current-branch case).
+- NOT YET PROVED: the GENERAL branch-safety theorem (§0.6) for arbitrary
+  current paths — i.e. that `fork_valid` equals "on current path AND depth ≤
+  bound", covering strict-grandparent branches and the off-path (sibling
+  subtree) rejection. `lemma_branch_cut` is only the depth-`d`-just-cut case;
+  it does NOT by itself establish the full characterization.
 
 ## 3. Build order (each commit green)
 
-1. **`ContainerId`** — concrete id wrapper. **[DONE — see §4c for the
-   modeling.]**
+1. **`ContainerId`** — concrete id wrapper. **[DONE — see §4c.]**
 2. **`ForkHistory` + `fork_valid` + refinement lemma**. **[DONE.]**
-3. **Branch-cut characterization lemma** (§2.2) — pure over `ForkHistory`,
-   no vec.rs. The mathematical heart of M5.
+3. **Branch-safety theorem**: define on-path / bound as spec fns and prove
+   `fork_valid ⟺ on_path(token_branch) && token_depth ≤ bound(token_branch)`
+   (§0.6). Pure over `ForkHistory`, no vec.rs. **[`lemma_branch_cut` +
+   `lemma_fork_valid_current_branch` DONE — the single-cut and current-branch
+   instances. General theorem PENDING.]**
 4. **Wire into `Vec`**: add `forks: ForkHistory` + `id: ContainerId` fields,
    extend `VecToken` with `branch_id`/`depth`/`container_id` (real `u32`/
    `ContainerId`), `mark` stamps them, `restore` `assert`s `is_valid_token` and
    calls `forks.fork(...)` at the end, `wf` carries `fh_wf`. Restore's
-   reconstruction contract is unchanged. (REVIEW GATE; small additive diff.)
+   reconstruction contract is unchanged. (REVIEW; small additive diff.)
 
 ## 4. Decisions (resolved in review 2026-06-10)
 

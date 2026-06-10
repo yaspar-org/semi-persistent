@@ -498,13 +498,20 @@ turns coverage into the `view() == snapshots[target]` reconstruction.
 
 ## 9. Fork history / branch-cut safety
 
+> **Authoritative formal statement: `m5-fork-history-design.md` §0.6** (precise
+> definitions of the fork tree, how a cut is recorded, "on the current path",
+> the per-branch depth bound, and the branch-safety theorem). This section is
+> the informal overview; where the prose below uses loose words ("timeline",
+> etc.) the §0.6 definitions govern.
+
 Mark/restore alone is not memory-safe against **stale tokens**. The frame
 index in a token can be reused: restore past a mark, then mark again — the new
-frame reuses the old index, but it is a *different* logical snapshot on a *new
-timeline*. A token from the abandoned timeline must be rejected, or restoring
-with it would roll back to a frame that no longer means what the token thinks.
-Production solves this with two mechanisms; the verus model does **not yet**
-have either (this is milestone **M5**, after push/pop).
+frame reuses the old index, but it denotes a *different* logical snapshot. A
+token naming the rolled-back position must be rejected, or restoring with it
+would roll back to a frame that no longer means what the token records.
+Production solves this with two mechanisms; the verus model has the
+fork-history theory (`fork_history.rs`) but has not yet wired it into `Vec`
+(milestone **M5**).
 
 ### 9.1 Container identity (M5a — straightforward)
 
