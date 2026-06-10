@@ -248,6 +248,34 @@ pub proof fn lemma_overlay_lowest<T, I: IndexLike>(
     }
 }
 
+/// If no entry in the lower part `[lo, mid)` hits `j`, then overlaying the
+/// whole `[lo, hi)` agrees at `j` with overlaying just the upper part
+/// `[mid, hi)`. (The lower-part replay, applied outermost, leaves `j` alone.)
+/// Used by the flat central lemma's uncaptured/recurse step.
+pub proof fn lemma_overlay_uncaptured_prefix<T, I: IndexLike>(
+    base: Seq<T>, diffs: Seq<(T, I)>, lo: int, mid: int, hi: int, j: int,
+)
+    requires
+        0 <= lo <= mid <= hi <= diffs.len(),
+        0 <= j < base.len(),
+        forall|q: int| lo <= q < mid ==> (#[trigger] diffs[q]).1.as_nat() != j as nat,
+    ensures
+        overlay::<T, I>(base, diffs, lo, hi)[j]
+            == overlay::<T, I>(base, diffs, mid, hi)[j],
+    decreases mid - lo,
+{
+    lemma_overlay_len::<T, I>(base, diffs, mid, hi);
+    if lo >= mid {
+        // [lo, mid) empty ⇒ both sides identical.
+    } else {
+        // Peel lo: overlay(lo,hi) = step(diffs[lo], overlay(lo+1,hi)). By IH
+        // overlay(lo+1,hi)[j] == overlay(mid,hi)[j]; diffs[lo] misses j so the
+        // outermost step leaves j.
+        lemma_overlay_uncaptured_prefix::<T, I>(base, diffs, lo + 1, mid, hi, j);
+        lemma_overlay_len::<T, I>(base, diffs, lo + 1, hi);
+    }
+}
+
 /// Bridge between subrange-position existential and absolute-range
 /// `captured_in_range`. If `sub == diffs.subrange(lo, hi)`, then
 /// "some sub[kk] hits j" iff "some diffs[k] in [lo, hi) hits j".
@@ -768,6 +796,115 @@ where
     /// give the result. Inductive step: split the range at
     /// `frames[k+1].diff_start`; the upper part reconstructs snapshots[k+1]
     /// by IH, then stratum k overlays on top to give snapshots[k].
+    /// FLAT central lemma (per-cell, base-parametric, target-clamped).
+    ///
+    /// For a single cell `j < saved_k`, overlaying the whole tail range
+    /// `[diff_start_k, n)` onto `base` reconstructs `snapshots[k][j]`. Unlike
+    /// the layered `lemma_snap_eq_overlay`, this never builds intermediate
+    /// snapshot sequences and never needs `saved_len` monotonicity: a cell
+    /// captured at some level is pinned by `lemma_overlay_lowest` (base-
+    /// independent, lowest-in-range = deepest stratum wins); an uncaptured
+    /// cell recurses one frame up (coverage gives `j < layer_above.len()`),
+    /// terminating at the top frame where `layer_above == view` and the base
+    /// agrees with the view on `j`.
+    ///
+    /// `base` requirements: long enough (`j < base.len()`) and agreeing with
+    /// the view on the shared prefix — exactly what `resize_default` gives
+    /// restore.
+    pub proof fn lemma_cell_eq_overlay(&self, base: Seq<T>, k: int, j: int)
+        requires
+            self.wf_for_snap(),
+            0 <= k < self.frames@.len(),
+            0 <= j < self.frames@[k].saved_len.as_nat(),
+            (j as nat) < base.len(),
+            // base agrees with the view on the shared prefix
+            forall|m: int| 0 <= m < base.len() && m < self.view().len()
+                ==> #[trigger] base[m] == self.view()[m],
+        ensures
+            overlay::<T, I>(
+                base, self.diff_log@,
+                self.frames@[k].diff_start as int,
+                self.diff_log@.len() as int)[j]
+                == self.snapshots@[k][j],
+        decreases self.frames@.len() - k,
+    {
+        let frames = self.frames@;
+        let diffs = self.diff_log@;
+        let snaps = self.snapshots@;
+        let n = diffs.len() as int;
+        let lo = frames[k].diff_start as int;
+        let mid = self.stratum_end(k);
+        let saved = frames[k].saved_len.as_nat();
+        self.lemma_diff_start_le_n(k);
+        // Bounds: lo <= mid <= n.
+        if k + 1 < frames.len() {
+            self.lemma_diff_start_le_n(k + 1);
+            assert(frames[k].diff_start <= frames[k + 1].diff_start);  // monotone (adjacent)
+            assert(mid == frames[k + 1].diff_start as int);
+        } else {
+            assert(mid == n);
+        }
+        assert(lo <= mid <= n);
+        // stratum k's per-cell invariant at j (from wf_for_snap).
+        lemma_frame_inv_arm_at::<T, I>(
+            self.layer_above_at(k), diffs, lo, mid, snaps[k], saved, j);
+
+        // frame_inv_range for stratum k (incl. its uniqueness conjunct).
+        assert(frame_inv_range::<T, I>(self.layer_above_at(k), diffs, lo, mid, snaps[k], saved));
+        if captured_in_range::<T, I>(diffs, lo, mid, j as nat) {
+            // Captured in stratum k. The captured arm gives an entry p in
+            // [lo, mid) holding snap_k[j]. By stratum-k uniqueness, p is the
+            // ONLY hitter of j in [lo, mid), hence the lowest hitter in the
+            // whole tail [lo, n) (stratum k = [lo, mid) is the lowest part;
+            // deeper strata [mid, n) sit above). lemma_overlay_lowest pins it.
+            let p = choose|q: int| lo <= q < mid
+                && (#[trigger] diffs[q]).1.as_nat() == j as nat
+                && diffs[q].0 == snaps[k][j];
+            assert(lo <= p < mid && diffs[p].1.as_nat() == j as nat);
+            assert(forall|q: int| lo <= q < p ==> (#[trigger] diffs[q]).1.as_nat() != j as nat) by {
+                // uniqueness in [lo, mid): a second hitter q != p contradicts.
+                assert forall|q: int| lo <= q < p implies (#[trigger] diffs[q]).1.as_nat() != j as nat by {
+                    if diffs[q].1.as_nat() == j as nat {
+                        // q, p both in [lo, mid), q != p, same index ⇒ violates
+                        // frame_inv_range's uniqueness conjunct.
+                        assert(q != p);
+                    }
+                }
+            }
+            lemma_overlay_lowest::<T, I>(base, diffs, lo, n, p, j);
+        } else {
+            // Uncaptured in stratum k. Coverage ⇒ j < layer_above.len() and
+            // layer_above[j] == snap_k[j]. Recurse / terminate.
+            if k + 1 < frames.len() {
+                // layer_above == snaps[k+1]; recurse at k+1 over [mid, n).
+                assert(self.layer_above_at(k) == snaps[k + 1]);
+                assert((j as nat) < snaps[k + 1].len());
+                assert(snaps[k + 1][j as int] == snaps[k][j as int]);
+                assert(mid == frames[k + 1].diff_start as int);
+                self.lemma_cell_eq_overlay(base, k + 1, j);
+                // overlay over [mid, n) gives snap_{k+1}[j] == snap_k[j].
+                // Extend to [lo, n): !captured_in_range(lo,mid,j) is exactly
+                // "no q in [lo,mid) hits j", so the [lo,mid) prefix leaves j.
+                assert forall|q: int| lo <= q < mid implies
+                    (#[trigger] diffs[q]).1.as_nat() != j as nat by {
+                    if diffs[q].1.as_nat() == j as nat {
+                        assert(0 <= q < diffs.len());  // q < mid <= n
+                        assert(captured_in_range::<T, I>(diffs, lo, mid, j as nat));
+                    }
+                }
+                lemma_overlay_uncaptured_prefix::<T, I>(base, diffs, lo, mid, n, j);
+            } else {
+                // Top frame: layer_above == view, j < view.len(), and
+                // base[j] == view[j] == snap_k[j]. No entry in [lo, n) hits j.
+                assert(self.layer_above_at(k) == self.view());
+                assert((j as nat) < self.view().len());
+                assert(self.view()[j as int] == snaps[k][j as int]);
+                assert(mid == n);
+                lemma_overlay_uncaptured::<T, I>(base, diffs, lo, n, j);
+            }
+        }
+    }
+
     pub proof fn lemma_snap_eq_overlay(&self, k: int)
         requires
             self.wf_for_snap(),
