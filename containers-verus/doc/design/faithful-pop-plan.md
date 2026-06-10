@@ -1,9 +1,11 @@
 # Implementation Plan — Faithful pop with `T: Copy + Default`
 
-Status: DECISIONS LOCKED (see §0), ready to execute. Tree is green at HEAD
-(142 verified, 0 errors). This plan lifts the transient-only `pop` restriction
-to full production behavior (pop into the marked region), using the
-Default-resize regrow strategy.
+Status: **COMPLETE** (HEAD `99b6788`, 142 verified, 0 errors, no admits). All
+five steps landed in order, each leaving the tree green — see
+`proof-attempts-log.md` "Faithful pop — how it landed" for the commit-by-commit
+record. The transient-only `pop` restriction is gone; pop into the marked
+region works, with the Default-resize regrow strategy and conditional (bounded)
+capture. The text below is the original plan, kept for reference.
 
 ## How production ACTUALLY saves & restores length (re-read 2026-06-09)
 
