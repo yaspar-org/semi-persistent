@@ -450,6 +450,39 @@ clamped), so the view never needs to exceed the target's saved_len.
    later `set` re-captures and the log grows unbounded (defeats first-write-wins
    *and* the bound). This is what keeps faithful pop's log ≤ saved_len.
 
+### Coverage — the one lemma, and its lifecycle
+
+With conditional capture (no force-record), we are back to **at most one diff
+per cell per stratum** (uniqueness). The *only* new obligation faithful pop
+adds is **coverage**, which is just the contrapositive of `frame_cell_inv`'s
+uncaptured arm:
+
+> **Coverage (per frame k):** every cell `j` with `layer_above_k.len() ≤ j <
+> saved_len_k` is **captured** in stratum k. I.e. any marked cell no longer
+> present in the layer above (it was popped) has a diff entry — the entry that
+> will overwrite the padded default during restore.
+
+Plus **uniqueness**: within a stratum each index appears at most once
+(first-write-wins). These two are the whole proof. Crucially, **nothing about
+`T::default()`'s value is ever needed** — coverage guarantees every padded
+default is overwritten, so defaults are transient placeholders, never observed.
+
+Lifecycle — how each op handles coverage + uniqueness (top frame's
+`layer_above` is the live `view`; the gap is `[view.len(), saved_len)`):
+
+| op | coverage | uniqueness |
+|----|----------|------------|
+| **mark** | *establishes*: `saved_len := view.len()`, so the gap is **empty** — no popped cells yet, nothing to cover. | *establishes*: new stratum is empty. |
+| **set(i,v)** | *maintains*: view length unchanged ⇒ gap unchanged; `i < view.len()` is below the gap. | *maintains*: `capture` is first-write-wins → `i` appears ≤ once. |
+| **pop()** | *maintains*: removing cell `i` grows the gap to include `i`; `pop` calls `capture(i)` first, so `i` becomes captured (or already was) — holding `snap[i]` because the old uncaptured arm gave `view[i]==snap[i]`. | *maintains*: **conditional** capture (not force-record) → still ≤ 1 entry for `i`. |
+| **push(v)** | cell leaves the gap (present again); n/a. | *maintains*: if re-entering a marked index (`old_len < saved_len`), `mark_captured(old_len)` keeps the flag set so a later `set` won't append a 2nd entry. |
+| **restore(t)** | *uses*: pad/chop to `saved_target`; the padded cells are exactly the gap, which coverage says are all captured ⇒ each padded default is overwritten by its diff (lowest-position-in-range wins = the target's value). | *uses*: lowest-position-in-`[diff_start_target,n)` entry per cell is unambiguous (≤1 per stratum), and it is the target's own (or a fallen-through deeper stratum's) value. |
+
+This is the "either it's already snapshotted, or we record a diff" intuition,
+formalized: `pop` is the only op that opens a gap, and it pays for each gapped
+cell with a capture. See `flat-central-lemma-design.md` for the lemma that
+turns coverage into the `view() == snapshots[target]` reconstruction.
+
 ### Done vs pending for faithful pop
 
 - Done & committed: store methods `mark_captured`/`resize_default`;
