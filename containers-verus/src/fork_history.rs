@@ -186,4 +186,89 @@ impl ForkHistory {
     }
 }
 
+// ===========================================================================
+// Branch-cut characterization (the mathematical heart of M5). Pure lemmas over
+// `fork_valid`/`fh_wf` — no `Vec` involvement. These say precisely what
+// validity means, and in particular establish the abandoned-future rejection
+// that makes restore memory-safe against stale tokens.
+// ===========================================================================
+
+/// Same-branch validity: a token on the CURRENT branch is valid iff its depth
+/// is within the current live depth. (The `fork_valid` fast path.)
+pub proof fn lemma_fork_valid_current_branch(
+    origins: Seq<ForkOrigin>, current_branch_id: nat, current_depth: nat,
+    token_depth: nat,
+)
+    ensures
+        fork_valid(origins, current_branch_id, current_depth,
+            current_branch_id, token_depth)
+            == (token_depth <= current_depth),
+{
+    // fork_walk's first arm fires immediately: branch == token_branch.
+}
+
+/// **Branch-cut safety.** Model the post-restore state: `origins'` is `origins`
+/// with one origin `(cut_branch, cut_depth)` appended, and the current branch
+/// is the new origin's index `origins.len() + 1` (exactly what `fork` does when
+/// restoring a token on branch `cut_branch` at depth `cut_depth`).
+///
+/// Then a token on the cut branch is valid AFTER the cut **iff its depth is at
+/// or below the cut**:
+///   - `token_depth <= cut_depth`  → still valid (a genuine ancestor of the
+///     new head — the snapshot it names is on the live path);
+///   - `token_depth >  cut_depth`  → INVALID (an abandoned future, above the
+///     cut — rejected, which is the whole point).
+///
+/// This is the property that makes stale-token reuse impossible: after we fork
+/// off `cut_branch` at `cut_depth`, every deeper token from the discarded
+/// timeline is rejected by `is_valid`.
+pub proof fn lemma_branch_cut(
+    origins: Seq<ForkOrigin>, cut_branch: nat, cut_depth: nat,
+    new_current_depth: nat, token_depth: nat,
+)
+    requires
+        fh_wf(origins, cut_branch),         // cut_branch is a real branch
+        cut_branch <= origins.len(),
+        origins.len() + 1 <= u32::MAX,
+        cut_depth < u32::MAX,               // depths are u32 (token.depth)
+    ensures
+        ({
+            let origins2 = origins.push(
+                ForkOrigin { parent_branch_id: cut_branch as u32, fork_depth: cut_depth as u32 });
+            let current2 = (origins.len() + 1) as nat;
+            fork_valid(origins2, current2, new_current_depth, cut_branch, token_depth)
+                == (token_depth <= cut_depth)
+        }),
+{
+    // cut_branch <= origins.len() < u32::MAX and cut_depth < u32::MAX, so the
+    // u32 casts round-trip.
+    assert(cut_branch < u32::MAX);
+    assert((cut_branch as u32) as nat == cut_branch);
+    assert((cut_depth as u32) as nat == cut_depth);
+    let origins2 = origins.push(
+        ForkOrigin { parent_branch_id: cut_branch as u32, fork_depth: cut_depth as u32 });
+    let current2 = (origins.len() + 1) as nat;
+    // current2 == origins2.len(); current2 != cut_branch (cut_branch <= len <
+    // len+1 == current2); origins2[current2 - 1] is the appended origin whose
+    // parent IS cut_branch (== token_branch). So fork_walk takes the
+    // "parent == token_branch" arm in one step: returns token_depth <= fork_depth.
+    assert(origins2.len() == current2);
+    assert(current2 != cut_branch);
+    assert(current2 != 0);
+    assert(current2 <= origins2.len());
+    // Seq::push index: origins2[origins.len()] is the appended origin.
+    assert(origins2[origins.len() as int]
+        == ForkOrigin { parent_branch_id: cut_branch as u32, fork_depth: cut_depth as u32 });
+    assert(current2 - 1 == origins.len());
+    assert(origins2[current2 - 1].parent_branch_id == cut_branch as u32);
+    assert(origins2[current2 - 1].fork_depth == cut_depth as u32);
+    // Unfold fork_walk one step at current2: branch != token_branch, != 0,
+    // <= len, and origins2[current2-1].parent == cut_branch == token_branch,
+    // so it returns token_depth <= fork_depth == cut_depth.
+    assert(fork_walk(origins2, current2, new_current_depth, cut_branch, token_depth)
+        == (token_depth <= origins2[current2 - 1].fork_depth as nat));
+    assert(fork_valid(origins2, current2, new_current_depth, cut_branch, token_depth)
+        == (token_depth <= cut_depth));
+}
+
 } // verus!
