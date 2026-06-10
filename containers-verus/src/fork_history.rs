@@ -45,18 +45,22 @@ pub open spec fn fh_wf(origins: Seq<ForkOrigin>, current_branch_id: nat) -> bool
             (#[trigger] origins[b - 1]).parent_branch_id < b)
 }
 
-/// Declarative token validity. Walk from `branch` up the parent chain:
-///   - if `branch == token_branch`: valid iff `token_depth <= current_depth`
-///     (the token is on the branch we're currently walking, whose live prefix
-///     is bounded by `current_depth`);
-///   - else if `branch == 0`: the token's branch is not an ancestor — invalid;
-///   - else step to the parent. If that parent IS the token's branch, the
-///     token sits just below the fork point, so it's valid iff
-///     `token_depth <= fork_depth` of this origin.
+/// Operational definition of token validity (the production `is_valid` walk;
+/// design doc §0.6 gives the declarative characterization). Walk from `branch`
+/// following `parent` edges:
+///   - if `branch == token_branch`: result is `token_depth <= current_depth`;
+///   - else if `branch == 0`: `token_branch` is not on the path from the start
+///     branch to the root — result `false`;
+///   - else let `origin = origins[branch - 1]`. If `origin.parent_branch_id ==
+///     token_branch`, result is `token_depth <= origin.fork_depth` (the bound
+///     `token_branch` is cut to along this path); otherwise recurse on
+///     `origin.parent_branch_id`.
 ///
-/// `current_depth` is only consulted on the *first* branch (the current head);
-/// the recursion threads it unchanged but it is only used at `branch ==
-/// token_branch`. `decreases branch`, sound under `fh_wf`.
+/// `current_depth` is consulted only at the `branch == token_branch` case
+/// (reached only when the start branch equals `token_branch`, since the walk
+/// otherwise stops at the parent test). `decreases branch`; sound under
+/// `fh_wf` (`parent < branch`), kept total by the explicit `parent >= branch`
+/// guard below.
 pub open spec fn fork_walk(
     origins: Seq<ForkOrigin>, branch: nat, current_depth: nat,
     token_branch: nat, token_depth: nat,
@@ -187,14 +191,15 @@ impl ForkHistory {
 }
 
 // ===========================================================================
-// Branch-cut characterization (the mathematical heart of M5). Pure lemmas over
-// `fork_valid`/`fh_wf` — no `Vec` involvement. These say precisely what
-// validity means, and in particular establish the abandoned-future rejection
-// that makes restore memory-safe against stale tokens.
+// Branch-safety characterization. Pure lemmas over `fork_valid`/`fh_wf` (no
+// `Vec`). These are specific INSTANCES of the general branch-safety theorem
+// (design doc §0.6, §2.1); the general theorem over arbitrary current paths is
+// not yet proved.
 // ===========================================================================
 
-/// Same-branch validity: a token on the CURRENT branch is valid iff its depth
-/// is within the current live depth. (The `fork_valid` fast path.)
+/// Current-branch case: a token whose branch IS the current branch satisfies
+/// `fork_valid` iff its depth is `<= current_depth`. (The first arm of
+/// `fork_walk`.)
 pub proof fn lemma_fork_valid_current_branch(
     origins: Seq<ForkOrigin>, current_branch_id: nat, current_depth: nat,
     token_depth: nat,
@@ -207,21 +212,24 @@ pub proof fn lemma_fork_valid_current_branch(
     // fork_walk's first arm fires immediately: branch == token_branch.
 }
 
-/// **Branch-cut safety.** Model the post-restore state: `origins'` is `origins`
+/// Single-cut instance of the branch-safety theorem (§0.6). Models the state
+/// immediately after `fork(cut_branch, cut_depth)`: `origins2` is `origins`
 /// with one origin `(cut_branch, cut_depth)` appended, and the current branch
-/// is the new origin's index `origins.len() + 1` (exactly what `fork` does when
-/// restoring a token on branch `cut_branch` at depth `cut_depth`).
+/// is the new origin's index `origins.len() + 1`.
 ///
-/// Then a token on the cut branch is valid AFTER the cut **iff its depth is at
-/// or below the cut**:
-///   - `token_depth <= cut_depth`  → still valid (a genuine ancestor of the
-///     new head — the snapshot it names is on the live path);
-///   - `token_depth >  cut_depth`  → INVALID (an abandoned future, above the
-///     cut — rejected, which is the whole point).
+/// Conclusion: a token whose branch is `cut_branch` satisfies `fork_valid`
+/// (against this post-fork state) iff `token_depth <= cut_depth`:
+///   - `token_depth <= cut_depth`  → valid: `cut_branch` is the parent of the
+///     new current branch (on the current path), and `cut_depth` is its bound
+///     (= the fork_depth of its on-path child), so the token is at or below
+///     the bound;
+///   - `token_depth >  cut_depth`  → invalid: a position on `cut_branch`
+///     strictly deeper than the recorded bound.
 ///
-/// This is the property that makes stale-token reuse impossible: after we fork
-/// off `cut_branch` at `cut_depth`, every deeper token from the discarded
-/// timeline is rejected by `is_valid`.
+/// Scope: this covers ONLY a token on the just-cut branch in the
+/// single-origin-appended state. It does NOT establish the general theorem
+/// (strict-grandparent branches, off-path rejection, multi-cut states); see
+/// §2.1.
 pub proof fn lemma_branch_cut(
     origins: Seq<ForkOrigin>, cut_branch: nat, cut_depth: nat,
     new_current_depth: nat, token_depth: nat,
