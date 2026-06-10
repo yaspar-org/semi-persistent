@@ -27,9 +27,10 @@ weaker version, then we relaxed a restriction:
 4. **Mutation under a mark** (M4 set/pop): `set` and `pop` callable with live
    frames — but `pop` restricted to **transient** elements only
    (`active_saved_len < view.len()`), i.e. never pop into a marked region.
-5. **(current frontier) Faithful pop**: pop into the marked region. *In
-   progress* — this is where the invariant had to be relaxed twice and the
-   central lemma restated. Not yet landed.
+5. **Faithful pop**: pop into the marked region. **LANDED** (HEAD `99b6788`) —
+   the invariant was relaxed twice (top-fullness + saved_len monotonicity both
+   dropped for per-frame coverage) and the central lemma restated flat/target-
+   clamped. See the "Faithful pop — how it landed" section below.
 
 Each rung is a real theorem with a real restriction encoded as a `requires`.
 Nothing was faked: when we couldn't prove a rung we either weakened the
@@ -191,19 +192,43 @@ concrete step.
 
 ## Current state of the tree
 
-HEAD `036e142` (design docs) / `1f979ae` (last code): **142 verified, 0 errors,
-no admits/assumes**. Proved = ladder rungs 1–4 (full vector with transient-only
-pop, arbitrary nesting, headline restore theorem). Uncommitted WIP in `vec.rs`
-holds a partial faithful-pop attempt (clause-6 removal + inductive-step
-coverage rewrite); it does not verify and is kept out of HEAD.
+HEAD `99b6788`: **142 verified, 0 errors, no admits/assumes**. Proved = ladder
+rungs 1–5 — **faithful pop is LANDED**. The full vector now supports pop into a
+frame's marked region, arbitrary nesting, and the headline restore theorem
+(`view() == snapshots[token]`) across non-monotone saved_lens.
+
+### Faithful pop — how it landed (5 commits, each green)
+1. `7b28f29` `lemma_overlay_lowest` — lowest-position-in-range wins (cross-
+   stratum), replacing the uniqueness-only `lemma_overlay_captured` for the
+   flat proof.
+2. `1ff6888` `lemma_cell_eq_overlay` — the **flat, base-parametric, target-
+   clamped** central lemma. Reconstructs a single `snapshots[k][j]` by
+   overlaying the whole tail `[diff_start_k, n)` onto a base, via downward
+   induction; captured cells pinned by `lemma_overlay_lowest`, uncaptured
+   cells recurse one frame up (coverage gives `j < layer_above.len()`),
+   terminating at the top frame. Uses NO saved_len monotonicity.
+3. `0002620` `restore` reworked: `resize_default(saved_len)` → base of length
+   exactly the target's saved_len → flat lemma on the pre-resize `old_self`
+   (it's base-parametric, so the resized data is the base) → overwrite-only
+   replay. Adds `T: Default` on `restore`.
+4. `d6585a2` dropped the two now-false `wf_for_snap` clauses (top-fullness +
+   saved_len monotonicity), replaced by per-frame coverage. Deleted the dead
+   layered `lemma_snap_eq_overlay` and the three false lemmas
+   `lemma_saved_len_{monotone,le_active,le_view}`. `push` now REQUIRED to call
+   `store.mark_captured(old_len)` on re-entry (bridge would break otherwise).
+5. `99b6788` faithful `pop`: dropped the transient-only precondition;
+   conditionally captures the popped cell when it's inside the marked region.
+   New free lemma `lemma_captured_in_range_append_other` (a one-entry append at
+   the popped index doesn't change any other cell's captured-status).
+
+Key Verus gotcha hit in steps 4–5: `IndexLike::lt_spec`/`le_spec` are DEFAULT
+trait-method bodies and are NOT transparent at a generic `I: IndexLike` use
+site — `lt()`'s ensures won't unfold to `as_nat() < as_nat()`. Compare via
+`as_usize()` (whose spec relation to `as_nat` is concrete) instead.
 
 ## What's left
-- **Faithful pop**: restate central lemma flat/target-clamped; drop the two wf
-  clauses (top-fullness, saved_len-monotone) in favor of coverage; restore
-  body (resize to target_saved_len + replay); `push` `mark_captured`; `pop`
-  conditional-capture. Design fully understood; ~1–2 focused sessions.
 - **Fork history / branch-cut safety** (M5): ContainerId + ghost ForkTree +
-  `is_valid` characterization. Not started; scheduled after pop.
+  `is_valid` characterization. Not started; scheduled next.
 - `TRACK = false` observational-equivalence theorem.
 - Other containers (AppendOnlyVec, Map, SparseSet, BPlusTreeSet, ListArena).
 
