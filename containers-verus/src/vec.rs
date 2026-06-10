@@ -1747,6 +1747,7 @@ where
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
     pub fn restore(&mut self, token: VecToken)
+        where T: core::default::Default
         requires
             old(self).wf(),
             token.frame_idx < old(self).frames@.len(),
@@ -1765,22 +1766,53 @@ where
         let ghost pre_diffs = self.diff_log@;
         let ghost snap_target = self.snapshots@[target_index as int];
 
-        // The central lemma: overlay all strata [diff_start, n) onto the
-        // pre-restore view reconstructs snap_target on its marked region.
+        // Resize the view to EXACTLY the target's saved_len (truncate, or grow
+        // with `T::default()` fillers). After this the base length is
+        // saved_len throughout, so the replay below is pure overwrite-or-drop
+        // (restore_entry's regrow push branch never fires) — matching the
+        // overwrite-only `overlay` model. Snapshot the pre-resize state to run
+        // the flat central lemma against: `wf_for_snap` holds *before* resize,
+        // not after (default fillers break the top frame's uncaptured arm),
+        // and the lemma is base-parametric so it accepts the resized base.
+        let ghost old_self = *self;
+        proof { saved_len.lemma_as_nat_bounded(); }
+        self.store.resize_default(saved_len);
+
+        let ghost base = self.store.data();
+        let n = self.diff_log.len();
+
+        // Flat central lemma: overlaying the whole tail [diff_start, n) onto
+        // the resized base reconstructs snap_target on [0, saved_len). Run on
+        // old_self (which satisfies wf_for_snap); its diff_log/frames/snapshots
+        // match self's (resize only touched the store), and resize_default's
+        // prefix-preservation gives base == old_self.view() on the shared
+        // prefix — exactly the lemma's base-agreement hypothesis.
         proof {
-            self.lemma_snap_eq_overlay(target_index as int);
-            self.lemma_saved_len_le_view(target_index as int);
-            self.lemma_diff_start_le_n(target_index as int);
+            assert(self.diff_log@ == pre_diffs);
+            assert(base.len() == saved_len.as_nat());
+            assert(old_self.view() == pre_view);
+            // diff_start <= n (== diff_log.len()), for the replay loop bounds.
+            old_self.lemma_diff_start_le_n(target_index as int);
+            assert(diff_start <= n);
+            // snap_target has length saved_len (wf_for_snap: snaps[k].len() ==
+            // frames[k].saved_len). Needed later for view() =~= snap_target.
+            assert(snap_target == old_self.snapshots@[target_index as int]);
+            assert(snap_target.len() == saved_len.as_nat());
+            assert forall|j: int| 0 <= j < saved_len.as_nat() implies
+                #[trigger] overlay::<T, I>(base, pre_diffs, diff_start as int, n as int)[j]
+                    == snap_target[j]
+            by {
+                // base agrees with old_self.view() on the shared prefix.
+                assert forall|m: int| 0 <= m < base.len() && m < old_self.view().len()
+                    implies #[trigger] base[m] == old_self.view()[m] by {}
+                old_self.lemma_cell_eq_overlay(base, target_index as int, j);
+            }
         }
 
-        self.store.truncate(saved_len);
-
-        // Loop invariant: data agrees, on [0, saved_len), with overlaying
-        // the unapplied range [i, n) onto the truncated base. (The truncated
-        // base equals pre_view's prefix [0, saved_len); entries with index
-        // >= saved_len are no-ops there, by lemma_overlay_prefix_agnostic.)
-        let ghost trunc_base = self.store.data();
-        let n = self.diff_log.len();
+        // Replay [diff_start, n) backward over the resized base. Each
+        // restore_entry overwrites in-range / drops out-of-range; the push
+        // (regrow) branch is dead because data().len() == saved_len throughout
+        // and every in-range idx (< saved_len) is < data().len().
         let mut i: usize = n;
         while i > diff_start
             invariant
@@ -1791,34 +1823,25 @@ where
                 self.snapshots@ == old(self).snapshots@,
                 diff_start <= i <= n,
                 self.store.data().len() == saved_len.as_nat(),
-                saved_len.as_nat() <= pre_view.len(),
-                trunc_base.len() == saved_len.as_nat(),
-                forall|j: int| 0 <= j < saved_len.as_nat() ==>
-                    #[trigger] trunc_base[j] == pre_view[j],
-                // The work done so far == overlay of the applied suffix.
+                base.len() == saved_len.as_nat(),
+                // Work done so far == overlay of the applied suffix [i, n).
                 forall|j: int| 0 <= j < saved_len.as_nat() ==>
                     #[trigger] self.store.data()[j]
-                        == overlay::<T, I>(trunc_base, pre_diffs, i as int, n as int)[j],
+                        == overlay::<T, I>(base, pre_diffs, i as int, n as int)[j],
             decreases i,
         {
             i -= 1;
             let (old_val, idx) = self.diff_log[i];
             proof {
-                lemma_overlay_len::<T, I>(trunc_base, pre_diffs, (i + 1) as int, n as int);
+                lemma_overlay_len::<T, I>(base, pre_diffs, (i + 1) as int, n as int);
             }
             self.store.restore_entry(idx, &old_val, saved_len);
         }
 
         proof {
-            // After loop: i == diff_start. data agrees with
-            // overlay(trunc_base, diff_log, diff_start, n) on [0, saved_len).
-            // trunc_base agrees with pre_view on [0, saved_len), so by
-            // prefix-agnosticism overlay(trunc_base,..) agrees with
-            // overlay(pre_view,..) there. And that equals snap_target by
-            // the central lemma.
-            lemma_overlay_prefix_agnostic::<T, I>(
-                trunc_base, pre_view, pre_diffs,
-                diff_start as int, n as int, saved_len.as_nat() as int);
+            // After loop: i == diff_start, so data == overlay(base, diffs,
+            // diff_start, n) on [0, saved_len), which == snap_target by the
+            // flat lemma above.
             assert forall|j: int| 0 <= j < saved_len.as_nat() implies
                 #[trigger] self.store.data()[j] == snap_target[j] by {}
         }
@@ -1992,6 +2015,17 @@ where
                     lemma_captured_subrange::<T, I>(
                         diffs, surviving_view, new_top_ds_ghost, diffs.len() as int, j as nat);
                 }
+            }
+            // saved_len monotonicity for the truncated stack: frames is a
+            // prefix of old_frames, so transfer the old per-adjacent-pair fact.
+            // (This clause is dropped in the step-4 wf relaxation.)
+            assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
+                #[trigger] frames[k].saved_len.as_nat()
+                    <= #[trigger] frames[k + 1].saved_len.as_nat()
+            by {
+                assert(frames[k] == old_frames[k]);
+                assert(frames[k + 1] == old_frames[k + 1]);
+                old(self).lemma_saved_len_monotone(k, k + 1);
             }
         }
     }
