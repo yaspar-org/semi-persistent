@@ -98,6 +98,135 @@ pub open spec fn fork_valid(
     fork_walk(origins, current_branch_id, current_depth, token_branch, token_depth)
 }
 
+// --- Declarative characterization of the walk (design doc §0.6) -------------
+//
+// `reaches(origins, branch, q)` — `q` lies on the parent chain from `branch`
+// to the root (`branch == q`, or a strict ancestor of `branch` is `q`). This
+// is "`q` is on the path from `branch`". `walk_bound(origins, branch, cd, q)`
+// — the depth bound the walk assigns to `q` when reached from `branch`:
+// `cd` if `branch == q` (the path's start branch), else the `fork_depth` of
+// the child edge on the path whose parent is `q`. Both mirror `fork_walk`'s
+// recursion exactly, so `fork_walk == reaches && token_depth <= walk_bound`
+// (see `lemma_fork_walk_characterization`).
+
+/// `q` is reachable from `branch` by following parent edges (inclusive).
+pub open spec fn reaches(origins: Seq<ForkOrigin>, branch: nat, q: nat) -> bool
+    decreases branch,
+{
+    if branch == q {
+        true
+    } else if branch == 0 {
+        false
+    } else if branch > origins.len() {
+        false
+    } else {
+        let parent = origins[branch - 1].parent_branch_id as nat;
+        if parent >= branch {
+            false
+        } else {
+            reaches(origins, parent, q)
+        }
+    }
+}
+
+/// The depth bound the walk from `branch` (live depth `current_depth`) assigns
+/// to `q`. Meaningful only when `reaches(origins, branch, q)`; returns 0
+/// otherwise (unreachable case is gated by `reaches` at the use site).
+pub open spec fn walk_bound(
+    origins: Seq<ForkOrigin>, branch: nat, current_depth: nat, q: nat,
+) -> nat
+    decreases branch,
+{
+    if branch == q {
+        current_depth
+    } else if branch == 0 {
+        0
+    } else if branch > origins.len() {
+        0
+    } else {
+        let origin = origins[branch - 1];
+        let parent = origin.parent_branch_id as nat;
+        if parent == q {
+            origin.fork_depth as nat
+        } else if parent >= branch {
+            0
+        } else {
+            walk_bound(origins, parent, current_depth, q)
+        }
+    }
+}
+
+/// **General branch-safety characterization** (design doc §0.6). The
+/// operational walk equals the declarative predicate: a token is valid iff its
+/// branch is reachable from the start branch AND its depth is within that
+/// branch's walk bound. Proved by induction on `branch` mirroring all three
+/// recursions. This covers every case — current branch, strict ancestors
+/// (parents, grandparents, …), and off-path branches (rejected because
+/// `reaches` is false). `lemma_branch_cut` is the single-cut instance of this.
+pub proof fn lemma_fork_walk_characterization(
+    origins: Seq<ForkOrigin>, branch: nat, current_depth: nat,
+    token_branch: nat, token_depth: nat,
+)
+    requires
+        // Under fh_wf every parent id is < its branch, so the `parent >=
+        // branch` dead-guards in all three recursions are never taken and the
+        // walks align. (fh_wf for `branch` suffices: it bounds branch and
+        // gives parent-decrease for every origin index the walk visits.)
+        fh_wf(origins, branch),
+    ensures
+        fork_walk(origins, branch, current_depth, token_branch, token_depth)
+            == (reaches(origins, branch, token_branch)
+                && token_depth <= walk_bound(origins, branch, current_depth, token_branch)),
+    decreases branch,
+{
+    if branch == token_branch {
+        // all three: fork_walk = (td<=cd); reaches = true; walk_bound = cd.
+    } else if branch == 0 {
+        // fork_walk = false; reaches = false.
+    } else if branch > origins.len() {
+        // fork_walk = false; reaches = false.
+    } else {
+        let origin = origins[branch - 1];
+        let parent = origin.parent_branch_id as nat;
+        // fh_wf: parent < branch (so the `parent >= branch` dead guards in
+        // reaches/walk_bound are not taken).
+        assert(1 <= branch <= origins.len());
+        assert(parent < branch);
+        if parent == token_branch {
+            // fork_walk = (td <= fork_depth); reaches(branch) steps to
+            // reaches(parent==tb) = true; walk_bound(branch) = fork_depth.
+            assert(reaches(origins, parent, token_branch));  // parent == tb base case
+            assert(reaches(origins, branch, token_branch));  // unfold at branch
+            assert(walk_bound(origins, branch, current_depth, token_branch)
+                == origin.fork_depth as nat);                // unfold at branch
+        } else {
+            // recurse: fork_walk, reaches, walk_bound all step to parent.
+            // fh_wf(origins, parent) holds: parent < branch <= len, and the
+            // parent-decrease clause is over all origin indices regardless.
+            assert(fh_wf(origins, parent));
+            lemma_fork_walk_characterization(origins, parent, current_depth,
+                token_branch, token_depth);
+        }
+    }
+}
+
+/// Top-level form of the characterization, starting from `current_branch_id`.
+pub proof fn lemma_fork_valid_characterization(
+    origins: Seq<ForkOrigin>, current_branch_id: nat, current_depth: nat,
+    token_branch: nat, token_depth: nat,
+)
+    requires
+        fh_wf(origins, current_branch_id),
+    ensures
+        fork_valid(origins, current_branch_id, current_depth, token_branch, token_depth)
+            == (reaches(origins, current_branch_id, token_branch)
+                && token_depth
+                    <= walk_bound(origins, current_branch_id, current_depth, token_branch)),
+{
+    lemma_fork_walk_characterization(origins, current_branch_id, current_depth,
+        token_branch, token_depth);
+}
+
 impl ForkHistory {
     pub open spec fn wf(self) -> bool {
         fh_wf(self.origins@, self.current_branch_id as nat)
