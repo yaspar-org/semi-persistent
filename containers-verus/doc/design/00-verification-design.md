@@ -1,145 +1,114 @@
-# Master Verification Design — Semi-Persistent Containers
+# A Verified Semi-Persistent Vector
+
+*Master design document for `containers-verus` — the Verus port of the
+production [`semi-persistent-containers`](../../../containers) crate.*
 
 [Table of Contents](00-table-of-contents.md)
 
+## Abstract
 
-This is the master design document for `containers-verus`, the Verus port of
-the production semi-persistent vector in `../containers`. It explains the
-theorems we prove and why they are the right ones, then the data layout,
-storage abstraction, and invariants that make those theorems provable. Read
-§0 first; the rest is the machinery behind it. See the
-[table of contents](00-table-of-contents.md) for companion documents.
+We build a semi-persistent vector and prove it correct in Verus. The vector
+supports cheap snapshots (`mark`) and rollback (`restore`) proportional to the
+mutations since the snapshot, and serves as the foundation of a semi-persistent
+e-graph: the e-graph's equivalence classes, parent use-lists, hash-cons tables,
+and node arenas are all layered on top of it, so its correctness underwrites
+theirs. The decisive saving is *memory*: the structure never stores its
+snapshots. It records only a *sparse negative diff* — the old value of each
+cell, captured the first time the cell is overwritten or popped within a marked
+region — and reconstructs a snapshot by replaying that diff in reverse, so a
+snapshot costs the bytes it actually changes rather than a full deep copy. Our central result is that this reconstruction is exact: we model the
+intended states as full snapshots in ghost code and prove that each full
+snapshot is recovered from the sparse diff, at arbitrary nesting depth and
+after any interleaving of pushes, sets, and pops. We further prove that the
+discipline governing *which* snapshots may be restored is sound: a `mark`
+opens a branch in a fork history, a `restore` cuts the branches it discards,
+and any attempt to restore a snapshot that was discarded is rejected. The
+development carries no `admit`s or `assume`s; run `./verify-all.sh` from the
+package root for the current per-module tally.
 
-The whole vector — `push`, `pop` (including into a marked region), `set`,
-`get`, `mark`, `restore` — is verified at arbitrary mark-nesting depth, along
-with fork-history / branch-cut safety, with **no `admit`s or `assume`s**. Run
-`./verify-all.sh` from the package root for the current per-module count.
+## 1. Introduction
 
----
+Backtracking search — equality saturation, SAT, constraint propagation,
+game-tree exploration — repeatedly snapshots a mutable state, explores forward,
+and rolls back. Doing this by cloning the whole state at each snapshot costs
+O(n) time *and* O(n) memory per snapshot, and with many nested snapshots the
+memory dominates. A *semi-persistent* structure removes the memory blow-up: a
+snapshot stores only the cells that subsequently change, so its footprint is
+the size of the diff rather than the size of the state, and rollback runs in
+proportion to that diff. (Snapshotting is not unconditionally O(1) in time —
+`mark` resets per-cell capture state, which is sublinear with a packed
+capture bitfield and O(diff-size) for the inline backend, but never a full
+copy; see §4. The robust, design-defining win is the memory.) The price of
+the asymmetry is that the structure must reconstruct old states on demand, and
+the reconstruction logic is exactly where a subtle off-by-one or a dropped
+update silently corrupts the search. That is what makes the structure worth
+verifying, and it is the foundation we verify first because so much is built
+on it.
 
-## 0. The theorems we prove, and why they are the right ones
+The mechanism is a *diff log*. Mutating a cell for the first time since the
+last mark records the cell's old value as a negative diff `(old, index)`;
+subsequent writes to the same cell in the same mark add nothing. To restore,
+the structure truncates the log back to the mark and replays the recorded
+values in reverse, undoing each first-write and so returning every touched cell
+to what it held at mark time. Untouched cells were never logged because they
+never changed. The log is therefore *sparse* (only first-writes) and *negative*
+(it stores what to undo, not the current state), and a snapshot is never
+materialized — it lives only implicitly in "current contents, minus the diffs."
 
-A semi-persistent vector is a mutable vector that can be *snapshotted* in O(1)
-(`mark`) and *rolled back* to a snapshot in O(k) (`restore`, k = mutations
-since the mark), without ever copying the vector. The entire reason it is hard
-— and worth verifying — is that it achieves rollback **without storing the
-snapshots**: it keeps only a *diff log* of overwritten values and replays it
-backwards. So the central question a proof must answer is:
-
-> Does replaying the diff log actually reconstruct the snapshot — exactly, at
-> any nesting depth, after any interleaving of pushes, sets, and pops?
-
-That question decomposes into four theorems. Each one rules out a specific way
-the data structure could silently corrupt state; together they give end-to-end
-correctness. They are stated informally here and precisely in the sections
-that follow.
-
-### Theorem 1 — Reconstruction (the headline)
+The proof's task is to show that this implicit representation is faithful. We
+give the vector a ghost field `snapshots`: a stack of full sequences, where
+`snapshots[k]` is the entire contents at the instant frame `k` was marked.
+These full snapshots exist only in the proof — they are the *specification* of
+what each mark ought to preserve, deliberately redundant with the sparse diff
+that the running code actually keeps. The headline theorem is that the two
+agree on rollback:
 
 > After `restore(token)`, `view() == snapshots[token.frame_idx]`.
 
-`view(): Seq<T>` is the user-visible contents. `snapshots[k]` is the contents
-at the moment frame `k` was marked — a **ghost** sequence that exists only in
-the proof. This is the right top-level statement because it is exactly the
-user's mental model ("restore puts back what was there at mark time") and
-because it pins down the value of *every* cell, leaving no room for an
-off-by-one or a stale entry to hide. Crucially `snapshots` is ghost: the
-theorem asserts the structure can *recompute* the snapshot from the diff log,
-which is the entire performance claim. If we stored the snapshots, the theorem
-would be trivial and the data structure pointless.
+Here `view(): Seq<T>` is the user-visible contents and `snapshots[k]` is the
+ghost full copy at mark time. Because `snapshots` is ghost, the theorem says
+something strong: the data structure can *recompute* a full snapshot from the
+sparse negative diff, exactly, for every cell. Proving it for one mark is
+routine; the difficulty is that marks nest arbitrarily and mutations interleave
+freely — a cell may be untouched under one mark, overwritten under a deeper
+one, popped out of the live region under a third — and the reconstruction must
+still land each cell's value from precisely the right mark. We discharge this
+by partitioning the diff log into per-frame *strata* and proving a single
+declarative per-cell invariant (§6): each marked cell's snapshot value lives in
+exactly one place — in the live contents if untouched, or in the diff log if
+overwritten or popped — with no third possibility. Replaying the strata in the
+right order overlays those values back, reconstructing the snapshot (§7–8).
 
-*Why not a weaker statement?* "restore restores the length" or "restore
-restores cell 0" would both pass while corrupting other cells. Full sequence
-equality is the weakest statement that is also airtight.
+A second concern is which snapshots a caller is even allowed to restore. A
+token names a frame, but rolling back and marking again reuses frame indices,
+so a token left over from a discarded line of exploration could name a frame
+that no longer means what the token's holder thinks. Restoring it would silently
+jump to an unrelated state. We make the discipline explicit and prove it sound:
+the structure maintains a *fork history* in which each `mark` opens a branch and
+each `restore` records a cut that abandons the branches above the restore point.
+A token is valid exactly when its branch still lies on the current path of this
+history and its depth falls within that branch's un-cut prefix; we prove that
+`restore`'s validity check accepts precisely those tokens and rejects every
+token naming a discarded snapshot (§9). With this, the reconstruction guarantee
+composes across backtracking: a *valid* token always reproduces the snapshot it
+was minted for, even across intervening restores and re-marks.
 
-### Theorem 2 — The diff log is a faithful, bounded encoding
+Two further results round out the development. When no mark is live the vector
+must impose no cost, and we prove it reduces observably to a plain `std::Vec`
+with an empty diff log (the `TRACK = false` story, §7). And the same
+specification template — ghost model, sparse representation, reconstruction
+theorem — carries to the containers built on the vector: an append-only vector,
+a hash map, a sparse set (refined to a ghost set plus an index pool for stable
+identifiers), and an intrusive linked-list arena (§10, and the
+[companion docs](00-table-of-contents.md)).
 
-Reconstruction is only meaningful if the diff log itself is well-formed. Two
-sub-properties, both captured by the `wf` invariant (§6):
-
-- **Coverage**: every cell that has *left* the live view (was popped out of a
-  marked region) has a diff entry recording its marked value. The
-  contrapositive — "no diff ⟹ still present and unchanged" — is what guarantees
-  replay can find every value it needs. Without coverage, restore could be
-  asked to resurrect a cell whose value was never recorded.
-- **Uniqueness / first-write-wins**: each cell is captured *at most once per
-  frame*. This is what bounds the log to O(saved_len) per frame (not unbounded
-  — see the DoS discussion in §8 and `restore-regrow-alternatives.md`) and
-  what makes "the entry for cell j" well-defined.
-
-These are the right auxiliary theorems because reconstruction is *false*
-without them: they are precisely the gap between "we have some log" and "the
-log determines the snapshot."
-
-### Theorem 3 — The runtime capture flag faithfully mirrors the ghost log
-
-The structure carries one bit per cell (`captured()`) telling `set`/`pop`
-whether this cell has already been logged in the current frame — that is how
-first-write-wins is enforced at runtime. The **bridge** theorem says this bit
-is never out of sync with the ghost diff log:
-
-> `captured()[j]` is set ⟺ cell `j` has an entry in the current (top) frame's
-> stratum of the diff log.
-
-This is the right theorem because the runtime bit and the ghost log are two
-representations of the same fact, and *every* operation's correctness depends
-on them agreeing — a desynchronized flag would either double-log (breaking the
-bound) or skip a needed capture (breaking coverage). The bridge is what lets
-the imperative code trust a single bit instead of scanning the log.
-
-### Theorem 4 — Token validity: only honest tokens restore (branch-cut safety)
-
-`mark` hands out a token; `restore` consumes one. A token names a frame, but
-frame indices are reused after rollback, so a *stale* token from an abandoned
-branch of the search could name a frame that no longer means what the token
-thinks. The fork-history theorem characterizes exactly which tokens are valid:
-
-> A token is valid ⟺ its branch is on the current path of the fork tree and
-> its depth is within that branch's live (un-cut) prefix.
-
-This is the right theorem because it is the precise boundary between "restoring
-to a genuine ancestor of the current state" (safe, reproduces that ancestor)
-and "restoring to a discarded future" (must be rejected). It is what makes the
-snapshot theorem *composable across backtracking*: with a valid token,
-Theorem 1's guarantee survives intervening restores and re-marks.
-
-### How they compose
-
-`mark` establishes Theorems 2–3 for a fresh empty frame. `set`, `push`, and
-`pop` each *maintain* coverage, uniqueness, and the bridge as they mutate.
-`restore` *uses* coverage + uniqueness to prove the diff replay reconstructs
-the snapshot (Theorem 1), re-establishes the bridge for the frame it lands in,
-and records a fork-tree cut so Theorem 4 keeps rejecting now-stale tokens. The
-rest of this document builds the machinery — the storage abstraction (§3–4),
-the `wf` invariant that carries Theorems 2–3 (§6), the per-operation
-maintenance proofs (§7–8), and the fork tree for Theorem 4 (§9) — and shows,
-operation by operation, that the four theorems hold.
-
-A fifth, orthogonal guarantee — when no marks are live the structure behaves as
-a plain `std::Vec` with zero tracking overhead — is the `TRACK=false` story
-(§7); it matters for the "you don't pay for what you don't use" claim but is
-not part of the reconstruction argument.
-
----
-
-## 1. What problem this solves
-
-Backtracking search (e-graphs, SAT, constraint propagation, game trees) needs
-to snapshot mutable state and roll back. A naive clone-per-snapshot is O(n).
-The semi-persistent vector gives **O(1) mark** and **O(k) restore** (k =
-mutations since the mark) via a *diff log*: record the old value before each
-first overwrite, replay in reverse to undo.
-
-The headline correctness theorem we prove:
-
-> After `restore(token)`, `view() == snapshots[token.frame_idx]`, where
-> `snapshots[k]` is the deep copy of `view()` at the moment frame `k` was
-> marked. Holds at arbitrary mark-nesting depth.
-
-`view(): Seq<T>` is the abstract, user-visible contents. `snapshots` is a
-**ghost** stack — it exists only in the proof, never at runtime; the whole
-point is that the data structure reconstructs it from the diff log without
-storing it.
+The rest of this document is the machinery behind these results: the layered
+module architecture (§2), the bit-stealing storage abstraction and its two
+backends (§3–4), the vector's memory layout (§5), the well-formedness invariant
+that carries the per-cell discipline and the runtime/ghost agreement (§6), the
+operation-by-operation maintenance proofs including the subtle case of popping
+into a marked region (§7–8), the fork-history soundness argument (§9), and a
+summary of what is verified and how it extends to the container family (§10).
 
 ---
 
