@@ -1,20 +1,124 @@
-# Verified Semi-Persistent Vector — Design & Proof Notes
+# Master Verification Design — Semi-Persistent Containers
+
+[Table of Contents](00-table-of-contents.md)
+
 
 This is the master design document for `containers-verus`, the Verus port of
-the production semi-persistent vector in `../containers`. It captures the data
-layout, the bit-stealing storage abstraction, the mark/restore/fork machinery,
-the verification invariants, and exactly how each operation establishes or
-maintains them — so the proof architecture doesn't have to be rediscovered.
+the production semi-persistent vector in `../containers`. It explains the
+theorems we prove and why they are the right ones, then the data layout,
+storage abstraction, and invariants that make those theorems provable. Read
+§0 first; the rest is the machinery behind it. See the
+[table of contents](00-table-of-contents.md) for companion documents.
 
-Companion docs:
-- `restore-regrow-alternatives.md` — Default vs Clone-scan vs force-record for
-  the pop/regrow value problem (and why Default was chosen).
+The whole vector — `push`, `pop` (including into a marked region), `set`,
+`get`, `mark`, `restore` — is verified at arbitrary mark-nesting depth, along
+with fork-history / branch-cut safety, with **no `admit`s or `assume`s**. Run
+`./verify-all.sh` from the package root for the current per-module count.
 
-Status snapshot (HEAD `1f979ae`, 142 verified, 0 errors, no admits/assumes):
-the full vector — push, pop (transient-only), set, get, mark, restore — is
-proved at arbitrary nesting depth. Faithful pop (pop into the marked region)
-and fork-history/branch-cut safety are in progress / not started. See the
-"What's proved vs pending" section at the end.
+---
+
+## 0. The theorems we prove, and why they are the right ones
+
+A semi-persistent vector is a mutable vector that can be *snapshotted* in O(1)
+(`mark`) and *rolled back* to a snapshot in O(k) (`restore`, k = mutations
+since the mark), without ever copying the vector. The entire reason it is hard
+— and worth verifying — is that it achieves rollback **without storing the
+snapshots**: it keeps only a *diff log* of overwritten values and replays it
+backwards. So the central question a proof must answer is:
+
+> Does replaying the diff log actually reconstruct the snapshot — exactly, at
+> any nesting depth, after any interleaving of pushes, sets, and pops?
+
+That question decomposes into four theorems. Each one rules out a specific way
+the data structure could silently corrupt state; together they give end-to-end
+correctness. They are stated informally here and precisely in the sections
+that follow.
+
+### Theorem 1 — Reconstruction (the headline)
+
+> After `restore(token)`, `view() == snapshots[token.frame_idx]`.
+
+`view(): Seq<T>` is the user-visible contents. `snapshots[k]` is the contents
+at the moment frame `k` was marked — a **ghost** sequence that exists only in
+the proof. This is the right top-level statement because it is exactly the
+user's mental model ("restore puts back what was there at mark time") and
+because it pins down the value of *every* cell, leaving no room for an
+off-by-one or a stale entry to hide. Crucially `snapshots` is ghost: the
+theorem asserts the structure can *recompute* the snapshot from the diff log,
+which is the entire performance claim. If we stored the snapshots, the theorem
+would be trivial and the data structure pointless.
+
+*Why not a weaker statement?* "restore restores the length" or "restore
+restores cell 0" would both pass while corrupting other cells. Full sequence
+equality is the weakest statement that is also airtight.
+
+### Theorem 2 — The diff log is a faithful, bounded encoding
+
+Reconstruction is only meaningful if the diff log itself is well-formed. Two
+sub-properties, both captured by the `wf` invariant (§6):
+
+- **Coverage**: every cell that has *left* the live view (was popped out of a
+  marked region) has a diff entry recording its marked value. The
+  contrapositive — "no diff ⟹ still present and unchanged" — is what guarantees
+  replay can find every value it needs. Without coverage, restore could be
+  asked to resurrect a cell whose value was never recorded.
+- **Uniqueness / first-write-wins**: each cell is captured *at most once per
+  frame*. This is what bounds the log to O(saved_len) per frame (not unbounded
+  — see the DoS discussion in §8 and `restore-regrow-alternatives.md`) and
+  what makes "the entry for cell j" well-defined.
+
+These are the right auxiliary theorems because reconstruction is *false*
+without them: they are precisely the gap between "we have some log" and "the
+log determines the snapshot."
+
+### Theorem 3 — The runtime capture flag faithfully mirrors the ghost log
+
+The structure carries one bit per cell (`captured()`) telling `set`/`pop`
+whether this cell has already been logged in the current frame — that is how
+first-write-wins is enforced at runtime. The **bridge** theorem says this bit
+is never out of sync with the ghost diff log:
+
+> `captured()[j]` is set ⟺ cell `j` has an entry in the current (top) frame's
+> stratum of the diff log.
+
+This is the right theorem because the runtime bit and the ghost log are two
+representations of the same fact, and *every* operation's correctness depends
+on them agreeing — a desynchronized flag would either double-log (breaking the
+bound) or skip a needed capture (breaking coverage). The bridge is what lets
+the imperative code trust a single bit instead of scanning the log.
+
+### Theorem 4 — Token validity: only honest tokens restore (branch-cut safety)
+
+`mark` hands out a token; `restore` consumes one. A token names a frame, but
+frame indices are reused after rollback, so a *stale* token from an abandoned
+branch of the search could name a frame that no longer means what the token
+thinks. The fork-history theorem characterizes exactly which tokens are valid:
+
+> A token is valid ⟺ its branch is on the current path of the fork tree and
+> its depth is within that branch's live (un-cut) prefix.
+
+This is the right theorem because it is the precise boundary between "restoring
+to a genuine ancestor of the current state" (safe, reproduces that ancestor)
+and "restoring to a discarded future" (must be rejected). It is what makes the
+snapshot theorem *composable across backtracking*: with a valid token,
+Theorem 1's guarantee survives intervening restores and re-marks.
+
+### How they compose
+
+`mark` establishes Theorems 2–3 for a fresh empty frame. `set`, `push`, and
+`pop` each *maintain* coverage, uniqueness, and the bridge as they mutate.
+`restore` *uses* coverage + uniqueness to prove the diff replay reconstructs
+the snapshot (Theorem 1), re-establishes the bridge for the frame it lands in,
+and records a fork-tree cut so Theorem 4 keeps rejecting now-stale tokens. The
+rest of this document builds the machinery — the storage abstraction (§3–4),
+the `wf` invariant that carries Theorems 2–3 (§6), the per-operation
+maintenance proofs (§7–8), and the fork tree for Theorem 4 (§9) — and shows,
+operation by operation, that the four theorems hold.
+
+A fifth, orthogonal guarantee — when no marks are live the structure behaves as
+a plain `std::Vec` with zero tracking overhead — is the `TRACK=false` story
+(§7); it matters for the "you don't pay for what you don't use" claim but is
+not part of the reconstruction argument.
 
 ---
 
@@ -339,7 +443,7 @@ truncated to `target`.
 
 ---
 
-## 8. Faithful pop (in progress) — the hard part, and what we learned
+## 8. Faithful pop — the hard part, and how it was proved
 
 Production allows **popping into the marked region** (popping a cell with
 `index < saved_len`). On restore, that pop "becomes a push": the regrown slot
@@ -483,37 +587,38 @@ formalized: `pop` is the only op that opens a gap, and it pays for each gapped
 cell with a capture. See `flat-central-lemma-design.md` for the lemma that
 turns coverage into the `view() == snapshots[target]` reconstruction.
 
-### Done vs pending for faithful pop
+### How faithful pop landed
 
-- Done & committed: store methods `mark_captured`/`resize_default`;
-  `frame_cell_inv` coverage refactor; `wf_for_snap` split; bridge restricted to
-  present cells; reconstruction lemmas on `wf_for_snap`.
-- Pending: drop the two wf clauses; restate the central lemma flat/
-  target-clamped; restore body (resize to target_saved_len + replay); `push`
-  mark_captured; `pop` conditional-capture into the marked region. These were
-  prototyped (the pop body largely proved) but reverted to keep the tree green
-  while the central-lemma restatement is designed.
+The pieces, in the order they were built (each kept the tree green): the store
+methods `mark_captured`/`resize_default`; the `frame_cell_inv` coverage
+refactor and the `wf_for_snap` split; the **flat, target-clamped central
+lemma** (§3 of `flat-central-lemma-design.md`) that reconstructs one cell at a
+time and so needs no `saved_len` monotonicity; dropping the two now-false `wf`
+clauses; the `restore` body (resize to the target's `saved_len`, then replay);
+`push`'s `mark_captured` on re-entry; and `pop`'s conditional capture into the
+marked region. The chronological account, including the reverted attempts, is
+in [the proof attempts log](proof-attempts-log.md).
 
 ---
 
 ## 9. Fork history / branch-cut safety
 
-> **Authoritative formal statement: `m5-fork-history-design.md` §0.6** (precise
-> definitions of the fork tree, how a cut is recorded, "on the current path",
-> the per-branch depth bound, and the branch-safety theorem). This section is
-> the informal overview; where the prose below uses loose words ("timeline",
-> etc.) the §0.6 definitions govern.
+> **Authoritative formal statement: [`m5-fork-history-design.md`](m5-fork-history-design.md) §0.6** —
+> precise definitions of the fork tree, how a cut is recorded, "on the current
+> path", the per-branch depth bound, and the branch-safety theorem. This
+> section is the informal overview; where the prose below uses loose words
+> ("timeline", etc.) the §0.6 definitions govern.
 
-Mark/restore alone is not memory-safe against **stale tokens**. The frame
-index in a token can be reused: restore past a mark, then mark again — the new
-frame reuses the old index, but it denotes a *different* logical snapshot. A
-token naming the rolled-back position must be rejected, or restoring with it
-would roll back to a frame that no longer means what the token records.
-Production solves this with two mechanisms; the verus model has the
-fork-history theory (`fork_history.rs`) but has not yet wired it into `Vec`
-(milestone **M5**).
+Mark/restore alone is not memory-safe against **stale tokens** (Theorem 4 of
+§0). The frame index in a token can be reused: restore past a mark, then mark
+again — the new frame reuses the old index, but it denotes a *different*
+logical snapshot. A token naming the rolled-back position must be rejected, or
+restoring with it would roll back to a frame that no longer means what the
+token records. Two mechanisms together close this, both verified and wired into
+`Vec`: a per-container identity (§9.1) and the fork-history branch-cut theorem
+(§9.2).
 
-### 9.1 Container identity (M5a — straightforward)
+### 9.1 Container identity
 
 ```
 ContainerId(u32)                    // from a global atomic counter
@@ -524,7 +629,7 @@ VecToken { …, container_id }        // every token records its origin Vec
 token on a *different* vec. Property to prove: a token validated against a Vec
 was minted by that Vec. Modeled with a ghost unique id per Vec; cheap.
 
-### 9.2 Fork history (M5b — the real branch-cut theorem)
+### 9.2 Fork history — the branch-cut theorem
 
 Production state (`token.rs`):
 
@@ -590,58 +695,65 @@ branch-0 token deeper than 1 (a snapshot from the discarded future) is
 rejected; branch-0 tokens at depth ≤ 1 (genuine ancestors of the current
 state) stay valid. That is **branch-cut safety**.
 
-### Properties to prove (M5b)
+### The characterization (proved)
 
-Model `ForkHistory` as a ghost **fork tree** (each branch a node, edge to
-parent labelled with `fork_depth`). Then prove `is_valid(token)` is exactly:
+`ForkHistory` is modeled as a ghost **fork tree** (each branch a node, edge to
+parent labelled with `fork_depth`). `lemma_fork_valid_characterization` proves
+`is_valid(token)` is exactly:
 
 > `token.branch_id` is `current_branch_id` or one of its ancestors, **and**
 > `token.depth` is within the live (un-cut) prefix of that branch — i.e.
 > `≤ current_depth` on the current branch, or `≤ fork_depth` of the child edge
 > on the path down to the current branch.
 
-Soundness consequence to connect to the snapshot theorem: **if `is_valid(token)`
-then `token.frame_index` still denotes the same logical snapshot it did at
-mark time** — so the existing `restore` correctness theorem (`view() ==
-snapshots[token.frame_idx]`) composes with validity to give "restore with a
-*valid* token reproduces the snapshot that token was minted for", even across
-intervening restores/re-marks. The `is_valid` walk terminates because it climbs
-strictly toward the root (`parent_branch_id < branch` by construction, since
-parents are older); that termination + the path characterization are the two
-core lemmas.
-
-Effort: comparable to the M4 nested-restore proof. Scheduled after push/pop.
+This is what connects Theorem 4 back to Theorem 1: **if `is_valid(token)` then
+`token.frame_index` still denotes the same logical snapshot it did at mark
+time**, so the reconstruction theorem (`view() == snapshots[token.frame_idx]`)
+composes with validity to give "restore with a *valid* token reproduces the
+snapshot that token was minted for", even across intervening restores and
+re-marks. The walk terminates because it descends strictly toward the root
+(`parent_branch_id < branch` by construction — `fh_wf`); that termination plus
+the path characterization are the two core lemmas, both discharged in
+`fork_history.rs`.
 
 ---
 
-## 10. What's proved vs pending (summary)
+## 10. What is verified
 
-Proved, no admits/assumes, arbitrary nesting depth (173 verified across the
-tree):
-- push, set, get, mark, restore, and **faithful** pop (pop INTO the marked
-  region), with the headline `view() == snapshots[token.frame_idx]` restore
-  theorem. (Faithful pop landed via the flat target-clamped central lemma +
-  dropping saved_len monotonicity & top-fullness for per-frame coverage.)
-- **Fork history / branch-cut safety (M5)** — `fork_history.rs`: the general
-  branch-safety theorem `lemma_fork_valid_characterization` (`fork_valid` ⟺
-  reachable-on-current-path ∧ depth ≤ branch's bound), the `is_valid`
-  while-loop ⟺ `fork_valid` refinement, and `fh_wf` maintenance. Wired into
-  `Vec`: `VecToken` carries branch_id/depth/container_id, `mark` stamps them,
-  `restore` requires `is_token_valid_spec` (rejecting stale/cross-container
-  tokens) and records the cut via `forks.fork(...)`. `is_valid_token` exec
-  method computes the validity predicate. (§0.6 / m5-fork-history-design.md.)
-- Both storage backends satisfy the DiffStore contract.
-- Production `Frame.saved_len` u32→I truncation bug fixed (and mirrored).
-- **API parity with production** (constructors `with_store`/`new`, `depth`,
-  `is_valid_token`, `VecView`/`VecViewIter` iteration, `ShrinkPolicy`+`mark`,
-  byte-accounting diagnostics). Deliberate exceptions: `as_slice` (Option<&[T]>
-  fast-path only ParallelStore can satisfy); `T: Copy + Default` instead of
-  production's `T: Clone` (documented divergence — Copy ⊂ Clone for the
-  e-graph domain; Default enables the DoS-free bounded-capture pop).
+Everything below is proved with no `admit`s or `assume`s, at arbitrary
+mark-nesting depth. Run `./verify-all.sh` for the live per-module count.
 
-Pending:
-- `TRACK = false` observational-equivalence theorem.
-- Other containers (AppendOnlyVec, Map, SparseSet, BPlusTreeSet, ListArena).
+**The four core theorems of §0** — reconstruction, diff-log faithfulness
+(coverage + uniqueness), the runtime↔ghost capture bridge, and token validity
+(branch-cut safety) — hold for the full vector API: `push`, `set`, `get`,
+`mark`, `restore`, and **faithful `pop`** (popping into a marked region, the
+hard case). The branch-safety theorem is `lemma_fork_valid_characterization`,
+wired into `Vec` via `VecToken { branch_id, depth, container_id }`, a `restore`
+that requires `is_token_valid_spec`, and the `forks.fork(...)` cut.
+
+Also verified: both storage backends (`InlineStore`, `ParallelStore`) satisfy
+the `DiffStore` contract; the `TRACK=false` guarantee (an unmarked vector is
+observably a plain `std::Vec` with zero tracking overhead); and full
+production API parity (`with_store`/`new`, `depth`, `is_valid_token`,
+`VecView`/`VecViewIter`, `ShrinkPolicy` + `mark`, byte-accounting).
+
+The verification also **found and fixed a real production bug**: a silent
+`u32` truncation in `Frame.saved_len` (corrected in both trees).
+
+**Container family.** The same four-theorem template is reused for the
+containers built on `Vec`: `AppendOnlyVec`, `Map`, `SparseSet` (refined to a
+ghost set + index pool), and `ListArena` (chain semantics + acyclicity). See
+their modules and the [table of contents](00-table-of-contents.md).
+
+**Deliberate divergences from production** (documented, not gaps): `T: Copy +
+Default` instead of `T: Clone` (`Copy ⊂ Clone` suffices for the e-graph
+domain; `Default` enables the DoS-free bounded-capture pop — see
+`restore-regrow-alternatives.md`); `as_slice` omitted (a backend-specific fast
+path outside the persistence contract).
+
+**Remaining work**: `ListArena` `append`/`splice` (need acyclicity decoupled
+from arena index — see the proof-attempts log); the generalized multi-size
+`BPlusTreeSet`.
 
 ### Verus tactics worth remembering
 - When all `wf` sub-conjuncts verify under `--expand-errors` but the aggregate

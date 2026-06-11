@@ -159,7 +159,7 @@ sets them equal, which neither part of the proof needs to exploit.
   walk declaratively, with `decreases branch` (sound by the parent-decreasing
   invariant; the spec is kept total with an explicit `parent >= branch` guard).
   The exec `is_valid` while-loop is proved to compute exactly `fork_valid(...)`.
-  **[DONE — `fork_history.rs`, 7 verified.]**
+  **[DONE — `fork_history.rs`.]**
 - **Well-formedness `fh_wf`**: `forall b: 1 ≤ b ≤ origins.len() ==>
   origins[b-1].parent_branch_id < b` AND `current_branch_id ≤ origins.len()`.
   `new` establishes it; `fork` maintains it. **[DONE.]**
@@ -239,3 +239,6 @@ ancestor chain of `current_branch_id`.
   (`external_body` + `id(): nat`, exec `eq` reflecting id equality) for now and
   note the tracked-counter upgrade as available if we later want end-to-end
   distinctness as a *proved* (not assumed) property.
+
+---
+[← Table of Contents](00-table-of-contents.md)

@@ -83,3 +83,6 @@ first-write-wins entry), so it is *correct*.
 The `frame_cell_inv` / coverage-invariant foundation in `vec.rs` is shared by
 A and B — only the regrow mechanism in `restore` and the `T` bound differ — so
 switching A↔B later is localized to `restore` + the store's resize method.
+
+---
+[← Table of Contents](00-table-of-contents.md)

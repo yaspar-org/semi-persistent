@@ -1,6 +1,6 @@
 # Implementation Plan — Faithful pop with `T: Copy + Default`
 
-Status: **COMPLETE** (HEAD `99b6788`, 142 verified, 0 errors, no admits). All
+Status: **COMPLETE** (verifies clean, no admits). All
 five steps landed in order, each leaving the tree green — see
 `proof-attempts-log.md` "Faithful pop — how it landed" for the commit-by-commit
 record. The transient-only `pop` restriction is gone; pop into the marked
@@ -240,3 +240,6 @@ After each: `./verify-all.sh` clean, no admits/assumes, commit.
 2. OK to spend the first action on the step-5 open question (does resize-first
    let us avoid the regrow push branch)? It decides whether step 2 is small.
 3. Any objection to the commit sequence in §6?
+
+---
+[← Table of Contents](00-table-of-contents.md)
