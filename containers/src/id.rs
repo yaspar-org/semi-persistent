@@ -106,10 +106,6 @@ macro_rules! define_id_impl {
         impl $Name {
             pub const MAX_RAW: $Int = $MASK;
 
-            /// Sentinel value with MSB set. Not a valid ID.
-            /// Compares unequal to all valid IDs.
-            pub const INVALID: Self = Self($CAP);
-
             #[inline]
             pub fn new(raw: $Int) -> Self {
                 assert!(raw <= Self::MAX_RAW, concat!(stringify!($Name), " exceeds range"));
@@ -118,10 +114,6 @@ macro_rules! define_id_impl {
 
             #[inline(always)]
             pub fn raw(self) -> $Int { self.0 }
-
-            /// Whether this is a valid (non-sentinel) ID.
-            #[inline(always)]
-            pub fn is_valid(self) -> bool { self.0 <= Self::MAX_RAW }
 
             /// Construct with an arbitrary raw value, including MSB set.
             /// Only available in tests.

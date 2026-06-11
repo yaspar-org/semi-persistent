@@ -33,10 +33,17 @@ pub mod bplus;
 pub mod dense_id;
 pub mod id;
 pub mod list;
+mod sorted_cursor;
 pub mod sparse_set;
 
-pub use bplus::{BPlusCursor, BPlusNode, BPlusToken, BPlusTreeSet};
+pub use bplus::{
+    BPlusCursor, BPlusNode, BPlusNode64, BPlusNode64U32, BPlusNode128, BPlusNode128U32,
+    BPlusNode128U64, BPlusNode256, BPlusNode256U32, BPlusNode256U64, BPlusNode512U64, BPlusToken,
+    BPlusTreeSet, BinarySearch, Branchless, Layout64, Layout64U32, Layout128, Layout128U32,
+    Layout128U64, Layout256, Layout256U32, Layout256U64, Layout512U64, NodeLayout, SearchKind,
+};
 pub use dense_id::{DenseId, IdFactory, IndexLike};
 pub use id::IdRangeError;
 pub use list::{ListArena, ListArenaToken, ListIter};
+pub use sorted_cursor::SortedCursor;
 pub use sparse_set::{SparseSet, SparseSetToken};
