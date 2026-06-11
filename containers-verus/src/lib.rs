@@ -33,6 +33,7 @@ pub mod fork_history;
 pub mod frame;
 pub mod index_like;
 pub mod inline_store;
+pub mod map;
 pub mod parallel_store;
 pub mod tagged;
 pub mod vec;
