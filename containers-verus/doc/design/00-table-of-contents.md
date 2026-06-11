@@ -1,8 +1,9 @@
 # Verified Semi-Persistent Containers — Design & Proof Notes
 
 A Verus port of the [`semi-persistent-containers`](../../../containers) crate,
-built to formally verify the semi-persistent protocol: O(1) `mark`, O(k)
-`restore`, and the headline correctness theorem
+built to formally verify the semi-persistent protocol — memory-cheap snapshots
+(a sparse negative diff, never a full copy) and O(k) `restore` — and the
+headline correctness theorem
 
 > after `restore(token)`, `view() == snapshots[token.frame_idx]`
 
