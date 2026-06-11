@@ -64,6 +64,12 @@ Restore recomputes the tags for the frame it lands in, in three steps:
 - (symmetric: `prepare_mark` clears the parent's tags when a child is marked,
   so the child starts fresh — which is why they must be *put back* on restore.)
 
+This `finish_restore` rescan is **O(parent stratum)** on top of the O(replayed
+diff) of the rollback. Whether that `+p` term is avoidable — it is, with a
+generation/epoch counter, but only by giving up the 1-bit, zero-inline-memory,
+unbounded-marks capture flag — is analyzed in
+[Design Alternatives, Part 2](restore-regrow-alternatives.md#part-2--capture-flag-representation).
+
 **Why the parent's tags must be SET, not left at zero** (a tempting wrong
 intuition): you land in the parent mid-stratum; the parent already captured
 some slots before you marked `t`; those slots are genuinely captured-in-parent,
