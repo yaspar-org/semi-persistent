@@ -264,4 +264,22 @@ where
     }
 }
 
+impl<T, I> ParallelStore<T, I>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+{
+    /// A fresh, empty store: no data, no capture flags. Well-formed for any
+    /// `TRACK` (the parallel store's `wf` doesn't depend on it).
+    pub fn new<const TRACK: bool>() -> (s: ParallelStore<T, I>)
+        ensures
+            DiffStore::<T, I, TRACK>::wf(&s),
+            s.data@.len() == 0,
+            s.captured@.len() == 0,
+    {
+        proof { I::lemma_min_as_nat(); I::min_spec().lemma_as_nat_bounded(); }  // 0 < I::max_nat()
+        ParallelStore { data: Vec::new(), captured: Vec::new(), _phantom: core::marker::PhantomData }
+    }
+}
+
 } // verus!
