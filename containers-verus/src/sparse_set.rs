@@ -112,6 +112,98 @@ where
         &&& indices[sparse[id.as_nat() as int].as_nat() as int].as_nat() == id.as_nat()
     }
 
+    // ===================================================================
+    // Abstraction: the sparse set IS a ghost set of live ids together with a
+    // hand-rolled index pool of recycled ids (user-requested refinement). The
+    // permutation invariant (`wf`) is exactly what makes this abstraction sound.
+    // ===================================================================
+
+    /// The abstract set of live ids: the image of `indices` over `[0, n)`.
+    pub open spec fn id_set(&self) -> Set<nat> {
+        let indices = self.indices.view();
+        Set::new(|id: nat| exists|p: int| 0 <= p < self.n_spec()
+            && (#[trigger] indices[p]).as_nat() == id)
+    }
+
+    /// The index pool of recycled-but-not-reallocated ids: `indices[n .. cap)`,
+    /// as a sequence (the parking order; `add` reuses the slot at position `n`,
+    /// `remove` parks at `n-1`). Its multiset is the free ids.
+    pub open spec fn free_pool(&self) -> Seq<nat> {
+        let indices = self.indices.view();
+        Seq::new((self.cap_spec() - self.n_spec()) as nat,
+            |k: int| indices[self.n_spec() as int + k].as_nat())
+    }
+
+    /// Membership refinement: the runtime liveness test decides exactly the
+    /// abstract set. (⟸ uses inverse-on-live; ⟹ uses the round-trip test.)
+    pub proof fn lemma_contains_iff_id_set(&self, id: Idx)
+        requires self.wf(),
+        ensures self.contains_spec(id) <==> self.id_set().contains(id.as_nat()),
+    {
+        let indices = self.indices.view();
+        let sparse = self.sparse.view();
+        let n = self.n_spec();
+        if self.contains_spec(id) {
+            // position p = sparse[id] < n witnesses membership.
+            let p = sparse[id.as_nat() as int].as_nat() as int;
+            assert(0 <= p < n && indices[p].as_nat() == id.as_nat());
+        }
+        if self.id_set().contains(id.as_nat()) {
+            // some p<n has indices[p]==id; inverse-on-live ⇒ sparse[id]==p<n,
+            // and indices[sparse[id]]==indices[p]==id ⇒ contains_spec.
+            let p = choose|p: int| 0 <= p < n && (#[trigger] indices[p]).as_nat() == id.as_nat();
+            assert(sparse[indices[p].as_nat() as int].as_nat() == p);  // inverse
+            assert(id.as_nat() < sparse.len());  // id == indices[p] < cap == sparse.len()
+        }
+    }
+
+    /// Set and pool are DISJOINT and together exhaust the allocated id space:
+    /// every id in `[0, cap)` is either live or free, never both. (Direct from
+    /// the permutation invariant: `indices` bijects positions to ids, the live
+    /// positions `[0,n)` give the set, the free positions `[n,cap)` give the
+    /// pool.)
+    pub proof fn lemma_set_pool_partition(&self)
+        requires self.wf(),
+        ensures
+            // disjoint
+            forall|id: nat| self.id_set().contains(id) ==> !self.free_pool().contains(id),
+            // every allocated id is in exactly one
+            forall|id: nat| id < self.cap_spec() ==>
+                (self.id_set().contains(id) || self.free_pool().contains(id)),
+    {
+        let indices = self.indices.view();
+        let n = self.n_spec();
+        let cap = self.cap_spec();
+        // disjoint: a live id has a witness p<n; a pooled id has witness k with
+        // position n+k >= n. Same id at two positions violates injectivity.
+        assert forall|id: nat| self.id_set().contains(id) implies
+            !self.free_pool().contains(id) by {
+            let p = choose|p: int| 0 <= p < n && (#[trigger] indices[p]).as_nat() == id;
+            if self.free_pool().contains(id) {
+                let k = choose|k: int| 0 <= k < (cap - n)
+                    && (#[trigger] self.free_pool()[k]) == id;
+                assert(indices[n + k].as_nat() == id);
+                assert(p != n + k);  // p < n <= n+k
+                // injectivity: indices[p] != indices[n+k], contradiction.
+                assert(indices[p].as_nat() != indices[n + k].as_nat());
+            }
+        }
+        // exhaustive: id < cap. By surjectivity of the permutation (in-range +
+        // injective on a finite set ⇒ bijective), id == indices[p] for some
+        // p < cap; p < n ⇒ live, else pooled.
+        assert forall|id: nat| id < cap implies
+            (self.id_set().contains(id) || self.free_pool().contains(id)) by {
+            lemma_perm_surjective(indices, cap as int, id);
+            let p = choose|p: int| 0 <= p < cap && (#[trigger] indices[p]).as_nat() == id;
+            if p < n {
+                assert(self.id_set().contains(id));
+            } else {
+                assert(self.free_pool()[p - n] == id);
+                assert(self.free_pool().contains(id));
+            }
+        }
+    }
+
     pub fn len(&self) -> (n: Idx)
         requires self.wf(),
         ensures n.as_nat() == self.dense_view().len(),
@@ -186,6 +278,19 @@ where
             self.n_spec() == old(self).n_spec() + 1,
             // the returned id is now live
             self.contains_spec(id),
+            // ABSTRACT EFFECT: the live set gains exactly `id`, which was not
+            // live before.
+            !old(self).id_set().contains(id.as_nat()),
+            self.id_set() =~= old(self).id_set().insert(id.as_nat()),
+            // INDEX-POOL REUSE: if a free id was available, `add` recycles the
+            // one parked at the pool front (LIFO with `remove`), and the pool
+            // shrinks by that element; otherwise a fresh id `== old cap` is
+            // allocated and the (empty) pool stays empty.
+            old(self).free_pool().len() > 0 ==>
+                (id.as_nat() == old(self).free_pool()[0]
+                 && self.free_pool() =~= old(self).free_pool().drop_first()),
+            old(self).free_pool().len() == 0 ==>
+                (id.as_nat() == old(self).cap_spec() && self.free_pool().len() == 0),
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -226,6 +331,48 @@ where
                 // returned id (recycled_id) is live: sparse[recycled_id]=old_n<n,
                 // indices[old_n]==recycled_id.
                 assert(recycled_id.as_nat() < old_cap);
+
+                // --- abstract effect: set gains recycled_id, pool drops front.
+                // indices unchanged, n: old_n -> old_n+1. id_set is the image of
+                // [0,n); the only new position is old_n, whose value is
+                // recycled_id == old free_pool[0].
+                assert(old(self).free_pool().len() > 0);   // old_n < old_cap
+                assert(old(self).free_pool()[0] == recycled_id.as_nat()) by {
+                    assert(old(self).indices.view()[old_n as int].as_nat()
+                        == recycled_id.as_nat());
+                }
+                assert(!old(self).id_set().contains(recycled_id.as_nat())) by {
+                    // recycled_id at position old_n >= old_n; a live witness p
+                    // would be < old_n, violating injectivity.
+                    if old(self).id_set().contains(recycled_id.as_nat()) {
+                        let p = choose|p: int| 0 <= p < old_n
+                            && (#[trigger] old(self).indices.view()[p]).as_nat()
+                                == recycled_id.as_nat();
+                        assert(old(self).indices.view()[p].as_nat()
+                            != old(self).indices.view()[old_n as int].as_nat());
+                    }
+                }
+                assert(self.id_set() =~= old(self).id_set().insert(recycled_id.as_nat())) by {
+                    assert forall|v: nat| self.id_set().contains(v)
+                        <==> old(self).id_set().insert(recycled_id.as_nat()).contains(v) by {
+                        if self.id_set().contains(v) {
+                            let p = choose|p: int| 0 <= p < n
+                                && (#[trigger] indices[p]).as_nat() == v;
+                            if p < old_n { } else { assert(v == recycled_id.as_nat()); }
+                        }
+                    }
+                }
+                assert(self.free_pool() =~= old(self).free_pool().drop_first()) by {
+                    // both have length old_cap - old_n - 1; element k of the new
+                    // pool is indices[(old_n+1)+k] == old pool element k+1.
+                    assert(self.free_pool().len() == old(self).free_pool().drop_first().len());
+                    assert forall|k: int| 0 <= k < self.free_pool().len() implies
+                        self.free_pool()[k] == old(self).free_pool().drop_first()[k] by {
+                        assert(self.free_pool()[k] == indices[(old_n + 1) + k].as_nat());
+                        assert(old(self).free_pool().drop_first()[k]
+                            == old(self).free_pool()[k + 1]);
+                    }
+                }
             }
             recycled_id
         } else {
@@ -269,6 +416,43 @@ where
                         assert(sparse[old_cap as int].as_nat() == pos.as_nat() == old_cap);
                     }
                 }
+                // --- abstract effect: fresh allocation. old pool was empty
+                // (old_n == old_cap), new id == old_cap, new pool empty too.
+                assert(old(self).free_pool().len() == 0);   // old_cap - old_n == 0
+                assert(!old(self).id_set().contains(old_cap as nat)) by {
+                    // a live witness p < old_n would have indices[p] < old_cap.
+                    if old(self).id_set().contains(old_cap as nat) {
+                        let p = choose|p: int| 0 <= p < old_n
+                            && (#[trigger] old(self).indices.view()[p]).as_nat() == old_cap as nat;
+                    }
+                }
+                assert(self.id_set() =~= old(self).id_set().insert(old_cap as nat)) by {
+                    assert forall|v: nat| self.id_set().contains(v)
+                        <==> old(self).id_set().insert(old_cap as nat).contains(v) by {
+                        if self.id_set().contains(v) {
+                            let p = choose|p: int| 0 <= p < n
+                                && (#[trigger] indices[p]).as_nat() == v;
+                            if p < old_n {
+                                assert(indices[p] == old(self).indices.view()[p]);
+                            } else {
+                                assert(v == old_cap);
+                            }
+                        }
+                        // reverse: old members keep their witness; old_cap is at
+                        // position old_n == old_cap.
+                        if old(self).id_set().contains(v) {
+                            let q = choose|q: int| 0 <= q < old_n
+                                && (#[trigger] old(self).indices.view()[q]).as_nat() == v;
+                            assert(indices[q] == old(self).indices.view()[q]);
+                            assert(0 <= q < n);
+                        }
+                        if v == old_cap as nat {
+                            assert(indices[old_cap as int].as_nat() == old_cap);
+                            assert(0 <= old_cap < n);
+                        }
+                    }
+                }
+                assert(self.free_pool().len() == 0);  // cap == n == old_cap+1
             }
             pos
         }
@@ -283,6 +467,12 @@ where
             self.wf(),
             self.n_spec() == old(self).n_spec() - 1,
             self.cap_spec() == old(self).cap_spec(),
+            // ABSTRACT EFFECT: the live set loses exactly `id`.
+            self.id_set() =~= old(self).id_set().remove(id.as_nat()),
+            // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
+            // (so the next `add` recycles it — LIFO), the rest of the pool
+            // shifts back by one.
+            self.free_pool() =~= old(self).free_pool().insert(0, id.as_nat()),
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -384,6 +574,105 @@ where
                 }
             }
         }
+        // --- abstract effect (both branches): set loses `id`, pool gains it
+        // at the front. Branch-uniform facts established locally above:
+        //   - indices[n].as_nat() == id  (id parked at the new pool front);
+        //   - for every OLD live position q < old_n with old value v != id, the
+        //     NEW indices still has v at some position < n (proved per branch
+        //     into `old_to_new_live` below);
+        //   - the prefix relation for the pool tail.
+        proof {
+            let indices = self.indices.view();
+            let n = self.dense.view().len();   // old_n - 1
+            assert(n == old_n - 1);
+            assert(indices[n as int].as_nat() == id.as_nat());
+            // id is NOT in the new live image (it sits at position n; a live
+            // witness q < n would collide by injectivity).
+            assert(!self.id_set().contains(id.as_nat())) by {
+                if self.id_set().contains(id.as_nat()) {
+                    let q = choose|q: int| 0 <= q < n && (#[trigger] indices[q]).as_nat() == id.as_nat();
+                    assert(indices[q].as_nat() != indices[n as int].as_nat());
+                }
+            }
+            assert(self.id_set() =~= old(self).id_set().remove(id.as_nat())) by {
+                assert forall|v: nat| self.id_set().contains(v)
+                    <==> old(self).id_set().remove(id.as_nat()).contains(v) by {
+                    // forward: v new-live ⇒ v old-live (its new witness q<n maps,
+                    // in both branches, back to an old live position) and v != id.
+                    if self.id_set().contains(v) {
+                        let q = choose|q: int| 0 <= q < n && (#[trigger] indices[q]).as_nat() == v;
+                        assert(indices[q].as_nat() != indices[n as int].as_nat());  // v != id
+                        // q's value came from some old live position:
+                        //  - last-element branch: indices==old_indices, q<n<old_n.
+                        //  - swap branch: if q==pos, indices[pos]==last_id==
+                        //    old_indices[old_n-1] (old live); else indices[q]==
+                        //    old_indices[q] (old live, q<n<old_n).
+                        assert(old(self).id_set().contains(v)) by {
+                            if pos.as_nat() == last_pos.as_nat() {
+                                assert(old_indices[q].as_nat() == v);
+                            } else if q == pos.as_nat() {
+                                assert(indices[pos.as_nat() as int].as_nat()
+                                    == old_indices[(old_n - 1) as int].as_nat());
+                            } else {
+                                assert(old_indices[q].as_nat() == v);
+                            }
+                        }
+                    }
+                    // reverse: v old-live and v != id ⇒ v new-live. v's old
+                    // witness q0 < old_n. The only old live position that loses
+                    // its value is `pos` (held id, now last_id) — but v != id,
+                    // so v survives at some new position < n.
+                    if old(self).id_set().remove(id.as_nat()).contains(v) {
+                        let q0 = choose|q0: int| 0 <= q0 < old_n
+                            && (#[trigger] old_indices[q0]).as_nat() == v;
+                        assert(v != id.as_nat());
+                        // old_indices[pos]==id (inverse-on-live), so q0 != pos.
+                        assert(old_indices[pos.as_nat() as int].as_nat() == id.as_nat());
+                        assert(q0 != pos.as_nat());
+                        if pos.as_nat() == last_pos.as_nat() {
+                            // last-element: indices==old_indices, q0 != pos==n,
+                            // so q0 < n and indices[q0]==v.
+                            assert(q0 < n);
+                            assert(indices[q0].as_nat() == v);
+                        } else {
+                            // swap: last value (old_indices[old_n-1]) moved to pos.
+                            if q0 == old_n - 1 {
+                                assert(indices[pos.as_nat() as int].as_nat() == v);
+                                assert(pos.as_nat() < n);
+                            } else {
+                                // q0 < old_n-1 == n and q0 != pos ⇒ unchanged.
+                                assert(q0 < n);
+                                assert(indices[q0].as_nat() == v);
+                            }
+                        }
+                    }
+                }
+            }
+            // pool gains id at the front: new pool is indices[n..cap], and
+            // indices[n] == id, indices[n+1..cap] == old indices[n+1..cap]
+            // == old pool (old pool was indices[old_n..cap] = indices[n+1..cap]).
+            assert(self.free_pool() =~= old(self).free_pool().insert(0, id.as_nat())) by {
+                let np = self.free_pool();
+                let op = old(self).free_pool().insert(0, id.as_nat());
+                assert(np.len() == op.len());
+                assert forall|k: int| 0 <= k < np.len() implies np[k] == op[k] by {
+                    if k == 0 {
+                        assert(np[0] == indices[n as int].as_nat());
+                    } else {
+                        assert(np[k] == indices[n as int + k].as_nat());
+                        assert(op[k] == old(self).free_pool()[k - 1]);
+                        assert(old(self).free_pool()[k - 1]
+                            == old_indices[old_n as int + (k - 1)].as_nat());
+                        // position n+k == old_n+k-1 > n is unchanged: the swap
+                        // touched only pos (< n) and last_pos (== n); the
+                        // last-element branch left indices == old_indices.
+                        assert(n as int + k > n);
+                        assert(indices[n as int + k] == old_indices[n as int + k]);
+                        assert(n as int + k == old_n as int + (k - 1));
+                    }
+                }
+            }
+        }
     }
 
     // ---- semi-persistence: delegate to the three inner vectors ----
@@ -456,6 +745,100 @@ pub open spec fn sparse_set_snap_wf<T, Idx: IndexLike>(
             (#[trigger] indices[p]).as_nat() != (#[trigger] indices[q]).as_nat())
     &&& (forall|p: int| 0 <= p < n ==>
             sparse[(#[trigger] indices[p]).as_nat() as int].as_nat() == p)
+}
+
+/// The set of values `{ indices[p].as_nat() : 0 <= p < m }`.
+pub open spec fn image_prefix<Idx: IndexLike>(indices: Seq<Idx>, m: int) -> Set<nat> {
+    Set::new(|id: nat| exists|p: int| 0 <= p < m && (#[trigger] indices[p]).as_nat() == id)
+}
+
+/// An injective, in-range `indices` (over `[0, cap)`) hits every value in
+/// `[0, cap)`: there is a `p < cap` with `indices[p].as_nat() == id` for each
+/// `id < cap`. This is finite surjectivity-from-injectivity (pigeonhole),
+/// proved via image cardinality: `|image_prefix(cap)| == cap` (each position
+/// contributes a fresh value, by injectivity), and a `cap`-sized subset of the
+/// `cap`-sized range `[0, cap)` must be the whole range.
+pub proof fn lemma_perm_surjective<Idx: IndexLike>(indices: Seq<Idx>, cap: int, id: nat)
+    requires
+        cap <= indices.len(),
+        id < cap,
+        forall|p: int| 0 <= p < cap ==> (#[trigger] indices[p]).as_nat() < cap,
+        forall|p: int, q: int| 0 <= p < cap && 0 <= q < cap && p != q ==>
+            (#[trigger] indices[p]).as_nat() != (#[trigger] indices[q]).as_nat(),
+    ensures
+        exists|p: int| 0 <= p < cap && (#[trigger] indices[p]).as_nat() == id,
+{
+    lemma_image_prefix_card(indices, cap);
+    let img = image_prefix(indices, cap);
+    let rng = Set::new(|v: nat| v < cap);
+    // img subset of rng (in-range), both size cap ⇒ equal ⇒ id in img.
+    assert(img.subset_of(rng)) by {
+        assert forall|v: nat| img.contains(v) implies rng.contains(v) by {
+            let p = choose|p: int| 0 <= p < cap && (#[trigger] indices[p]).as_nat() == v;
+        }
+    }
+    lemma_nat_range_card(cap);
+    vstd::set_lib::lemma_len_subset(img, rng);
+    vstd::set_lib::lemma_subset_equality(img, rng);
+    assert(rng.contains(id));
+    assert(img.contains(id));
+}
+
+/// `|image_prefix(indices, m)| == m` for injective in-range `indices`, by
+/// induction on `m`: the value at position `m-1` is fresh (injectivity), so it
+/// extends the prefix image by exactly one.
+pub proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m: int)
+    requires
+        0 <= m <= indices.len(),
+        forall|p: int, q: int| 0 <= p < m && 0 <= q < m && p != q ==>
+            (#[trigger] indices[p]).as_nat() != (#[trigger] indices[q]).as_nat(),
+    ensures
+        image_prefix(indices, m).finite(),
+        image_prefix(indices, m).len() == m,
+    decreases m,
+{
+    if m == 0 {
+        assert(image_prefix(indices, 0) =~= Set::<nat>::empty());
+    } else {
+        lemma_image_prefix_card(indices, m - 1);
+        let prev = image_prefix(indices, m - 1);
+        let cur = image_prefix(indices, m);
+        let last = indices[m - 1].as_nat();
+        // last is not in prev (injectivity: no p < m-1 equals position m-1).
+        assert(!prev.contains(last)) by {
+            if prev.contains(last) {
+                let p = choose|p: int| 0 <= p < m - 1 && (#[trigger] indices[p]).as_nat() == last;
+                assert(indices[p].as_nat() != indices[m - 1].as_nat());
+            }
+        }
+        // cur == prev ∪ {last}.
+        assert(cur =~= prev.insert(last)) by {
+            assert forall|v: nat| cur.contains(v) <==> prev.insert(last).contains(v) by {
+                if cur.contains(v) {
+                    let p = choose|p: int| 0 <= p < m && (#[trigger] indices[p]).as_nat() == v;
+                    if p < m - 1 { assert(prev.contains(v)); } else { assert(v == last); }
+                }
+            }
+        }
+        assert(cur.len() == prev.len() + 1);
+    }
+}
+
+/// `{ v : v < cap }` is finite with size `cap`.
+pub proof fn lemma_nat_range_card(cap: int)
+    requires cap >= 0,
+    ensures
+        Set::new(|v: nat| v < cap).finite(),
+        Set::new(|v: nat| v < cap).len() == cap,
+    decreases cap,
+{
+    if cap == 0 {
+        assert(Set::new(|v: nat| v < 0) =~= Set::<nat>::empty());
+    } else {
+        lemma_nat_range_card(cap - 1);
+        assert(Set::new(|v: nat| v < cap)
+            =~= Set::new(|v: nat| v < cap - 1).insert((cap - 1) as nat));
+    }
 }
 
 /// A transposition of two positions in an injective sequence is injective.
