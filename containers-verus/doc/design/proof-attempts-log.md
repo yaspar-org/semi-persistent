@@ -192,10 +192,32 @@ concrete step.
 
 ## Current state of the tree
 
-HEAD `99b6788`: **142 verified, 0 errors, no admits/assumes**. Proved = ladder
-rungs 1–5 — **faithful pop is LANDED**. The full vector now supports pop into a
-frame's marked region, arbitrary nesting, and the headline restore theorem
-(`view() == snapshots[token]`) across non-monotone saved_lens.
+HEAD `31fd7a3`: **173 verified, 0 errors, no admits/assumes**. Proved = ladder
+rungs 1–5 (**faithful pop**) PLUS **M5 fork-history / branch-cut safety** PLUS
+**production API parity**. The full vector supports pop into a frame's marked
+region, arbitrary nesting, the headline restore theorem
+(`view() == snapshots[token]`) across non-monotone saved_lens, AND stale-token
+rejection (branch-cut safety).
+
+### M5 fork history / branch-cut safety — LANDED (6 commits)
+- `b1153aa` ContainerId (external_body u32 + ghost id) + ForkHistory port +
+  `is_valid` while-loop ⟺ `fork_valid` refinement + `fh_wf`.
+- `15e51ac` GENERAL branch-safety theorem `lemma_fork_valid_characterization`:
+  `fork_valid` ⟺ `reaches(current, tb)` ∧ `td ≤ walk_bound(current, cd, tb)`
+  (all cases: current branch, ancestors, off-path rejection). Induction on
+  `branch` under `fh_wf`.
+- `7491d6c` wired into `Vec`: `forks`/`id` fields (wf carries `forks.wf()`),
+  `VecToken` + branch_id/depth/container_id, `mark` stamps, `restore` requires
+  `is_token_valid_spec` + records the cut via `forks.fork(...)`. Reconstruction
+  theorem UNCHANGED (validity is a parallel precondition, not coupled to it).
+- `1a05b8e` `is_valid_token`/`depth` exec methods + `with_store`/`new`.
+- `67fda81` `VecView`/`VecViewIter` iteration; `31fd7a3` `ShrinkPolicy`+`mark`,
+  byte-accounting.
+  Verus gotcha: a struct named `View` collides with vstd's `@`-desugaring
+  (`.view()`) and breaks `@` on std Vec — use `VecView`. Also: the replay loop
+  havocs unmentioned fields, so `forks` had to be pinned in the loop invariant.
+
+### Faithful pop — how it landed (5 commits, each green)
 
 ### Faithful pop — how it landed (5 commits, each green)
 1. `7b28f29` `lemma_overlay_lowest` — lowest-position-in-range wins (cross-
@@ -227,10 +249,10 @@ site — `lt()`'s ensures won't unfold to `as_nat() < as_nat()`. Compare via
 `as_usize()` (whose spec relation to `as_nat` is concrete) instead.
 
 ## What's left
-- **Fork history / branch-cut safety** (M5): ContainerId + ghost ForkTree +
-  `is_valid` characterization. Not started; scheduled next.
-- `TRACK = false` observational-equivalence theorem.
+- `TRACK = false` observational-equivalence theorem (compile-out-tracking).
 - Other containers (AppendOnlyVec, Map, SparseSet, BPlusTreeSet, ListArena).
+- Optional: `as_slice` (omitted — backend-specific fast path); upgrade the
+  ContainerId distinctness from assumed to a proved tracked-counter property.
 
 ## Recurring lessons
 - Declarative/pointwise invariants beat operational/replay ones for these

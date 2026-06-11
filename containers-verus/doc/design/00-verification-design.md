@@ -616,17 +616,30 @@ Effort: comparable to the M4 nested-restore proof. Scheduled after push/pop.
 
 ## 10. What's proved vs pending (summary)
 
-Proved, no admits/assumes, arbitrary nesting depth:
-- push, set, get, mark, restore, and **transient** pop, with the headline
-  `view() == snapshots[token.frame_idx]` restore theorem.
+Proved, no admits/assumes, arbitrary nesting depth (173 verified across the
+tree):
+- push, set, get, mark, restore, and **faithful** pop (pop INTO the marked
+  region), with the headline `view() == snapshots[token.frame_idx]` restore
+  theorem. (Faithful pop landed via the flat target-clamped central lemma +
+  dropping saved_len monotonicity & top-fullness for per-frame coverage.)
+- **Fork history / branch-cut safety (M5)** — `fork_history.rs`: the general
+  branch-safety theorem `lemma_fork_valid_characterization` (`fork_valid` ⟺
+  reachable-on-current-path ∧ depth ≤ branch's bound), the `is_valid`
+  while-loop ⟺ `fork_valid` refinement, and `fh_wf` maintenance. Wired into
+  `Vec`: `VecToken` carries branch_id/depth/container_id, `mark` stamps them,
+  `restore` requires `is_token_valid_spec` (rejecting stale/cross-container
+  tokens) and records the cut via `forks.fork(...)`. `is_valid_token` exec
+  method computes the validity predicate. (§0.6 / m5-fork-history-design.md.)
 - Both storage backends satisfy the DiffStore contract.
 - Production `Frame.saved_len` u32→I truncation bug fixed (and mirrored).
+- **API parity with production** (constructors `with_store`/`new`, `depth`,
+  `is_valid_token`, `VecView`/`VecViewIter` iteration, `ShrinkPolicy`+`mark`,
+  byte-accounting diagnostics). Deliberate exceptions: `as_slice` (Option<&[T]>
+  fast-path only ParallelStore can satisfy); `T: Copy + Default` instead of
+  production's `T: Clone` (documented divergence — Copy ⊂ Clone for the
+  e-graph domain; Default enables the DoS-free bounded-capture pop).
 
 Pending:
-- Faithful pop (pop into the marked region) — §8. Design fully understood;
-  central-lemma restatement (flat/target-clamped) + invariant relaxations
-  remain.
-- Fork history / branch-cut safety — §9, not started.
 - `TRACK = false` observational-equivalence theorem.
 - Other containers (AppendOnlyVec, Map, SparseSet, BPlusTreeSet, ListArena).
 
