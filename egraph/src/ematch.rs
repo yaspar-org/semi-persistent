@@ -9,11 +9,67 @@ use crate::ast::{CmpOp, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, V
 use crate::canon::{ACCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::egraph::EGraph;
-use crate::index::{IndexStore, SortedVec, SortedVecIter};
-use crate::leapfrog::LeapfrogJoin;
+use crate::index::{IndexMode, IndexStore, SortedVec, SortedVecCursor, VariantIndex};
+use crate::leapfrog::{Difference, LeapfrogJoin, SortedCursor};
 use crate::literal::LitVal;
 use crate::resolve::{PatVar, RMult};
 use crate::schedule::{IndexLookup, QueryPlan, Step};
+
+// ---------------------------------------------------------------------------
+// Match-work instrumentation
+// ---------------------------------------------------------------------------
+//
+// A thread-local counter of "matching steps": one increment per `run_step`
+// entry, i.e. per partial-match extension the DFS explores. This is the
+// faithful measure of e-matching work — it reflects how many candidate
+// bindings the join machinery walks, which is exactly what semi-naive (and
+// driver-narrowing lookups like `ByContains`) aim to reduce.
+//
+// Counting is gated at runtime by a thread-local flag, off by default, so a
+// normal (release) run can be profiled by flipping the flag — e.g. the
+// `--count-match-steps` CLI flag — with no test-mode rebuild. When disabled the
+// hot path pays a single thread-local bool load per step and nothing else; the
+// counter is never touched, so its cost is zero in production runs.
+//
+// Use `set_match_step_counting(true)` to enable, `reset_match_steps()` before a
+// measured region, and `match_steps()` after to read the delta.
+
+use std::cell::Cell;
+
+thread_local! {
+    static MATCH_STEPS: Cell<u64> = const { Cell::new(0) };
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Enable or disable match-step counting at runtime. Off by default. Turn it on
+/// to profile a run (the `--count-match-steps` CLI flag, or a measuring test)
+/// without rebuilding in test mode.
+pub fn set_match_step_counting(on: bool) {
+    COUNTING.with(|c| c.set(on));
+}
+
+/// Whether match-step counting is currently enabled on this thread.
+pub fn match_step_counting_enabled() -> bool {
+    COUNTING.with(|c| c.get())
+}
+
+/// Reset the match-step counter to zero.
+pub fn reset_match_steps() {
+    MATCH_STEPS.with(|c| c.set(0));
+}
+
+/// Read the match-step counter (number of `run_step` entries counted while
+/// counting was enabled, since the last reset).
+pub fn match_steps() -> u64 {
+    MATCH_STEPS.with(|c| c.get())
+}
+
+#[inline]
+fn bump_match_steps() {
+    if COUNTING.with(|c| c.get()) {
+        MATCH_STEPS.with(|c| c.set(c.get() + 1));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Binding environment
@@ -291,7 +347,7 @@ where
 pub fn run_query<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     plan: &QueryPlan<Cfg::O>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
 ) -> Vec<Match<Cfg>>
 where
@@ -309,7 +365,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     plan: &QueryPlan<Cfg::O>,
     step_idx: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -318,15 +374,20 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     ACCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    bump_match_steps();
     if step_idx >= plan.steps.len() {
         results.push(env.clone());
         return;
     }
 
     match &plan.steps[step_idx] {
-        Step::Join { target, lookups } => {
+        Step::Join {
+            target,
+            lookups,
+            atom_id,
+        } => {
             run_join(
-                plan, step_idx, *target, lookups, eg, index, globals, env, results,
+                plan, step_idx, *target, lookups, *atom_id, eg, index, globals, env, results,
             );
         }
         Step::ExtractChild {
@@ -439,7 +500,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     suf: Option<SeqVarId>,
     seq: &[Cfg::G],
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -509,7 +570,7 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
     seq: &[Cfg::G],
     offset: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -604,7 +665,7 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     rest: Option<MsetVarId>,
     residual: &mut [(Cfg::G, Cfg::M)],
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -626,7 +687,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     rest: Option<MsetVarId>,
     residual: &mut [(Cfg::G, Cfg::M)],
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -757,7 +818,7 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     rest: Option<SetVarId>,
     residual: &[Cfg::G],
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -781,7 +842,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     residual: &[Cfg::G],
     used: &mut crate::containers::bitset::BitSet,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -876,8 +937,9 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     step_idx: usize,
     target: VarId,
     lookups: &[IndexLookup<Cfg::O>],
+    atom_id: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
     results: &mut Vec<Match<Cfg>>,
@@ -886,37 +948,104 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     ACCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    // Materialize each lookup into a SortedVecIter.
-    // We need to hold references to the SortedVecs, so collect them first.
-    let empty = SortedVec { data: vec![] };
-
-    let vecs: Vec<&SortedVec<Cfg::G>> = lookups
-        .iter()
-        .map(|l| match l {
-            IndexLookup::ByOp { op } => index.by_op.get(op).unwrap_or(&empty),
-            IndexLookup::ByChildPos { child, pos } => {
-                let repr = eg.find_const(env.resolve_pv(*child, globals));
-                index.by_child_pos.get(&(repr, *pos)).unwrap_or(&empty)
-            }
-            IndexLookup::ByRepr { repr } => {
-                let r = eg.find_const(env.get(*repr));
-                index.by_repr.get(&r).unwrap_or(&empty)
-            }
-            IndexLookup::ByContains { child } => {
-                let repr = eg.find_const(env.resolve_pv(*child, globals));
-                index.by_contains.get(&repr).unwrap_or(&empty)
-            }
-        })
-        .collect();
-
-    if vecs.is_empty() {
-        // No constraints — shouldn't happen in practice for Join.
+    if lookups.is_empty() {
+        // No constraints — preserve original behavior (no match emitted).
         return;
     }
+    // Build a homogeneous cursor vector for this atom's mode, then run the
+    // generic leapfrog. The mode is fixed for the whole atom (all its
+    // lookups read the same flavor); see design doc "How a Variant Executes".
+    match index.mode(atom_id) {
+        IndexMode::Full => {
+            let cursors: Vec<SortedVecCursor<'_, Cfg::G>> = lookups
+                .iter()
+                .map(|l| cursor_in(index.full, l, eg, globals, env))
+                .collect();
+            leapfrog_join(
+                cursors, plan, step_idx, target, eg, index, globals, env, results,
+            );
+        }
+        IndexMode::Delta => {
+            let cursors: Vec<SortedVecCursor<'_, Cfg::G>> = lookups
+                .iter()
+                .map(|l| cursor_in(index.delta, l, eg, globals, env))
+                .collect();
+            leapfrog_join(
+                cursors, plan, step_idx, target, eg, index, globals, env, results,
+            );
+        }
+        IndexMode::FullMinusDelta => {
+            let cursors: Vec<Difference<SortedVecCursor<'_, Cfg::G>, SortedVecCursor<'_, Cfg::G>>> =
+                lookups
+                    .iter()
+                    .map(|l| {
+                        Difference::new(
+                            cursor_in(index.full, l, eg, globals, env),
+                            cursor_in(index.delta, l, eg, globals, env),
+                        )
+                    })
+                    .collect();
+            leapfrog_join(
+                cursors, plan, step_idx, target, eg, index, globals, env, results,
+            );
+        }
+    }
+}
 
-    let iters: Vec<SortedVecIter<'_, Cfg::G>> = vecs.iter().map(|v| (*v).iter()).collect();
-    let mut join = LeapfrogJoin::new(iters);
+/// Resolve one lookup's key against a single index store, returning a cursor
+/// over the matching bucket (empty if the key is absent).
+fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    store: &'a IndexStore<Cfg>,
+    l: &IndexLookup<Cfg::O>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> SortedVecCursor<'a, Cfg::G>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let sv: Option<&SortedVec<Cfg::G>> = match l {
+        IndexLookup::ByOp { op } => store.by_op.get(op),
+        IndexLookup::ByChildPos { child, pos } => {
+            let r = eg.find_const(env.resolve_pv(*child, globals));
+            store.by_child_pos.get(&(r, *pos))
+        }
+        IndexLookup::ByRepr { repr } => {
+            let r = eg.find_const(env.get(*repr));
+            store.by_repr.get(&r)
+        }
+        IndexLookup::ByContains { child } => {
+            let r = eg.find_const(env.resolve_pv(*child, globals));
+            store.by_contains.get(&r)
+        }
+    };
+    match sv {
+        Some(v) => v.iter(),
+        None => SortedVecCursor::new(&[]),
+    }
+}
 
+/// Run a leapfrog intersection over `cursors` (any `SortedCursor` flavor),
+/// binding `target` to each match and recursing into the next plan step.
+fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
+    cursors: Vec<C>,
+    plan: &QueryPlan<Cfg::O>,
+    step_idx: usize,
+    target: VarId,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &mut Match<Cfg>,
+    results: &mut Vec<Match<Cfg>>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    C: SortedCursor<Key = Cfg::G>,
+    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut join = LeapfrogJoin::new(cursors);
     while join.is_valid() {
         let id = join.key();
         env.set(target, id);
@@ -930,12 +1059,13 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // MatchIterator — explicit DFS stack machine (lazy, pull-based)
 // ---------------------------------------------------------------------------
 
-/// Resolve an `IndexLookup` to a `&SortedVec` from the index.
+/// Resolve an `IndexLookup` to a `&SortedVec` from the **full** index (the
+/// pull-based engine runs naive only — see semi-naive design notes).
 /// Returns `None` when the lookup key is absent (i.e. no matches).
 fn resolve_lookup<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool>(
     l: &IndexLookup<Cfg::O>,
     eg: &EGraph<Cfg, L, T, P>,
-    index: &'a IndexStore<Cfg>,
+    index: &'a VariantIndex<'a, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
 ) -> Option<&'a SortedVec<Cfg::G>>
@@ -943,18 +1073,18 @@ where
     ACCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match l {
-        IndexLookup::ByOp { op } => index.by_op.get(op),
+        IndexLookup::ByOp { op } => index.full.by_op.get(op),
         IndexLookup::ByChildPos { child, pos } => {
             let r = eg.find_const(env.resolve_pv(*child, globals));
-            index.by_child_pos.get(&(r, *pos))
+            index.full.by_child_pos.get(&(r, *pos))
         }
         IndexLookup::ByRepr { repr } => {
             let r = eg.find_const(env.get(*repr));
-            index.by_repr.get(&r)
+            index.full.by_repr.get(&r)
         }
         IndexLookup::ByContains { child } => {
             let r = eg.find_const(env.resolve_pv(*child, globals));
-            index.by_contains.get(&r)
+            index.full.by_contains.get(&r)
         }
     }
 }
@@ -962,7 +1092,7 @@ where
 enum FrameKind<'a, Cfg: EGraphConfig> {
     Join {
         target: VarId,
-        join: LeapfrogJoin<'a, Cfg::G>,
+        join: LeapfrogJoin<SortedVecCursor<'a, Cfg::G>>,
     },
     SlidingWindow {
         children: Vec<PatVar>,
@@ -997,7 +1127,7 @@ struct Frame<'a, Cfg: EGraphConfig> {
 pub struct MatchIterator<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool> {
     plan: &'a QueryPlan<Cfg::O>,
     eg: &'a EGraph<Cfg, L, T, P>,
-    index: &'a IndexStore<Cfg>,
+    index: &'a VariantIndex<'a, Cfg>,
     globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
     env: Match<Cfg>,
     frames: Vec<Frame<'a, Cfg>>,
@@ -1015,7 +1145,7 @@ where
     pub fn new(
         plan: &'a QueryPlan<Cfg::O>,
         eg: &'a EGraph<Cfg, L, T, P>,
-        index: &'a IndexStore<Cfg>,
+        index: &'a VariantIndex<'a, Cfg>,
         globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
     ) -> Self {
         Self {
@@ -1144,7 +1274,9 @@ where
                 self.cursor += 1;
                 Enter::Advanced
             }
-            Step::Join { target, lookups } => {
+            Step::Join {
+                target, lookups, ..
+            } => {
                 let target = *target;
                 let lookups = lookups.clone();
                 self.enter_join(target, &lookups)
@@ -1892,7 +2024,7 @@ enum Enter {
 pub fn run_query_iter<Cfg, L, const T: bool, const P: bool>(
     plan: &QueryPlan<Cfg::O>,
     eg: &EGraph<Cfg, L, T, P>,
-    index: &IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
 ) -> Vec<Match<Cfg>>
 where
     Cfg: EGraphConfig,
@@ -1957,6 +2089,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(eg);
+        let index = VariantIndex::naive(&index);
         run_query(
             &plan,
             eg,
@@ -2081,6 +2214,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(&eg);
+        let index = VariantIndex::naive(&index);
         let matches = run_query(
             &plan,
             &eg,
@@ -2239,6 +2373,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(eg);
+        let index = VariantIndex::naive(&index);
         (
             run_query(
                 &plan,
@@ -2489,6 +2624,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(eg);
+        let index = VariantIndex::naive(&index);
         let matches = run_query(
             &plan,
             eg,
@@ -3080,6 +3216,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(eg);
+        let index = VariantIndex::naive(&index);
         let recursive = run_query(
             &plan,
             eg,
@@ -3277,6 +3414,7 @@ mod tests {
 
         let model = NiraModel;
         let index = IndexStore::build(&eg);
+        let index = VariantIndex::naive(&index);
 
         for pat in patterns {
             let p = parse_pattern(pat);
@@ -3347,6 +3485,7 @@ mod tests {
         let shape = rq.shape.clone();
         let plan = schedule(&rq);
         let index = IndexStore::build(eg);
+        let index = VariantIndex::naive(&index);
         let ng = crate::resolve::GlobalCtx::<(), _>::new();
         let mut iter = MatchIterator::new(&plan, eg, &index, &ng);
         let set = iter.collect_set(&shape);
@@ -3498,6 +3637,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(&eg);
+        let index = VariantIndex::naive(&index);
 
         let ng = crate::resolve::GlobalCtx::<(), _>::new();
         let vec_matches = run_query(&plan, &eg, &index, &ng);
@@ -3554,6 +3694,7 @@ mod tests {
         .unwrap();
         let plan = schedule(&rq);
         let index = IndexStore::build(&eg);
+        let index = VariantIndex::naive(&index);
 
         let x = rq.shape.find_var("x").unwrap();
         // Use cloned_iter with filter + take

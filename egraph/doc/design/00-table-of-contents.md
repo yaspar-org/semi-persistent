@@ -128,6 +128,17 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     rebuild → index → schedule → match → apply. Push/pop scoping.
     `GlobalCtx` for let-bound names.
 
+## Part VII: Incremental Saturation
+
+18. **[Semi-Naive Evaluation](18-semi-naive-evaluation.md)**
+    `saturate_semi`: match only what changed each round via the
+    k-variant delta decomposition. `touched` log on the e-graph +
+    `IndexStore::build_delta`; `VariantIndex` three-way mode
+    (delta / full∖delta / full) realized on `Step::Join` via the
+    `Difference` cursor combinator. Per-atom, per-flavor scheduling.
+    Selectable via `SaturationStrategy` / `--strategy semi-naive`;
+    default remains naive, with no automatic fallback.
+
 ---
 
 ## See Also

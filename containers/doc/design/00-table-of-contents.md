@@ -40,3 +40,8 @@ to record mutations and replay them in reverse on restore.
    Cache-line-aligned B+ tree set with O(log n) insert, O(log n)
    seek, and O(1) step via linked leaves. Semi-persistent via
    a tag bit stolen from the node header.
+
+8. **[B+ Tree Parameterization: Benchmark Analysis](08-bplus-benchmark-analysis.md)**
+   Sweep across node size (64/128/256 bytes) and search strategy
+   (`BinarySearch` vs `Branchless`). Recommendation to raise the
+   default node size to 256 bytes.

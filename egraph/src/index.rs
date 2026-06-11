@@ -23,18 +23,18 @@ impl<G: DenseId> SortedVec<G> {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-    pub fn iter(&self) -> SortedVecIter<'_, G> {
-        SortedVecIter::new(&self.data)
+    pub fn iter(&self) -> SortedVecCursor<'_, G> {
+        SortedVecCursor::new(&self.data)
     }
 }
 
 /// Cursor into a `SortedVec<G>`. Implements seek/step for leapfrog.
-pub struct SortedVecIter<'a, G> {
+pub struct SortedVecCursor<'a, G> {
     data: &'a [G],
     pos: usize,
 }
 
-impl<'a, G: DenseId> SortedVecIter<'a, G> {
+impl<'a, G: DenseId> SortedVecCursor<'a, G> {
     pub fn new(data: &'a [G]) -> Self {
         Self { data, pos: 0 }
     }
@@ -83,15 +83,40 @@ where
     pub fn build<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     ) -> Self {
-        let n = eg.node_count();
+        Self::build_from(eg, (0..eg.node_count()).map(Cfg::G::from_usize))
+    }
 
+    /// Build the per-round **delta** index from the touched-node log: the
+    /// same four crosscutting maps as [`build`](Self::build), but restricted
+    /// to the nodes that were created or recanonicalized this round.
+    ///
+    /// `touched` may contain duplicates (a node added then recanonicalized);
+    /// they are deduplicated here. Subsumed nodes are skipped, exactly as in
+    /// `build`, so for every key `k` the delta is a subset of the full
+    /// index's `k` bucket — `build_delta(eg, eg.touched())` ⊆ `build(eg)`.
+    pub fn build_delta<L: LitVal, const TRACK: bool, const PROOFS: bool>(
+        eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+        touched: &[Cfg::G],
+    ) -> Self {
+        let mut ids: Vec<Cfg::G> = touched.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        Self::build_from(eg, ids.into_iter())
+    }
+
+    /// Shared bucketing core for [`build`](Self::build) and
+    /// [`build_delta`](Self::build_delta): index the given node ids into the
+    /// four crosscutting maps. Skips subsumed nodes.
+    fn build_from<L: LitVal, const TRACK: bool, const PROOFS: bool>(
+        eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+        ids: impl Iterator<Item = Cfg::G>,
+    ) -> Self {
         let mut by_op: HashMap<Cfg::O, Vec<Cfg::G>> = HashMap::new();
         let mut by_repr: HashMap<Cfg::G, Vec<Cfg::G>> = HashMap::new();
         let mut by_child_pos: HashMap<(Cfg::G, u32), Vec<Cfg::G>> = HashMap::new();
         let mut by_contains: HashMap<Cfg::G, Vec<Cfg::G>> = HashMap::new();
 
-        for i in 0..n {
-            let gid = Cfg::G::from_usize(i);
+        for gid in ids {
             if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
                 continue;
             }
@@ -149,34 +174,100 @@ where
     }
 
     /// Get an iterator over nodes with the given operator.
-    pub fn iter_by_op(&self, op: Cfg::O) -> SortedVecIter<'_, Cfg::G> {
+    pub fn iter_by_op(&self, op: Cfg::O) -> SortedVecCursor<'_, Cfg::G> {
         match self.by_op.get(&op) {
-            Some(sv) => SortedVecIter::new(&sv.data),
-            None => SortedVecIter::new(&[]),
+            Some(sv) => SortedVecCursor::new(&sv.data),
+            None => SortedVecCursor::new(&[]),
         }
     }
 
     /// Get an iterator over nodes in the given e-class.
-    pub fn iter_by_repr(&self, repr: Cfg::G) -> SortedVecIter<'_, Cfg::G> {
+    pub fn iter_by_repr(&self, repr: Cfg::G) -> SortedVecCursor<'_, Cfg::G> {
         match self.by_repr.get(&repr) {
-            Some(sv) => SortedVecIter::new(&sv.data),
-            None => SortedVecIter::new(&[]),
+            Some(sv) => SortedVecCursor::new(&sv.data),
+            None => SortedVecCursor::new(&[]),
         }
     }
 
     /// Get an iterator over parent nodes that have `child_repr` at position `pos`.
-    pub fn iter_by_child_pos(&self, child_repr: Cfg::G, pos: u32) -> SortedVecIter<'_, Cfg::G> {
+    pub fn iter_by_child_pos(&self, child_repr: Cfg::G, pos: u32) -> SortedVecCursor<'_, Cfg::G> {
         match self.by_child_pos.get(&(child_repr, pos)) {
-            Some(sv) => SortedVecIter::new(&sv.data),
-            None => SortedVecIter::new(&[]),
+            Some(sv) => SortedVecCursor::new(&sv.data),
+            None => SortedVecCursor::new(&[]),
         }
     }
 
     /// Get an iterator over variadic nodes containing `child_repr`.
-    pub fn iter_by_contains(&self, child_repr: Cfg::G) -> SortedVecIter<'_, Cfg::G> {
+    pub fn iter_by_contains(&self, child_repr: Cfg::G) -> SortedVecCursor<'_, Cfg::G> {
         match self.by_contains.get(&child_repr) {
-            Some(sv) => SortedVecIter::new(&sv.data),
-            None => SortedVecIter::new(&[]),
+            Some(sv) => SortedVecCursor::new(&sv.data),
+            None => SortedVecCursor::new(&[]),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Semi-naive: per-variant index view
+// ---------------------------------------------------------------------------
+
+/// Which slice an atom reads, in a given semi-naive variant.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IndexMode {
+    /// Read the full index (naive, or an atom after the delta atom).
+    Full,
+    /// Read the delta index (the variant's delta atom).
+    Delta,
+    /// Read full minus delta (an atom before the delta atom — "old only").
+    FullMinusDelta,
+}
+
+/// The context one semi-naive variant needs: the full and delta indices,
+/// and which atom (by stable `atom_id`) is the delta-restricted one.
+///
+/// Not a new abstraction — just the bundle the matcher needs in place of a
+/// bare `&IndexStore`. A `delta_atom` of `None` is the **naive** view: every
+/// atom reads `full` (and `delta` is never consulted).
+#[derive(Clone, Copy)]
+pub struct VariantIndex<'a, Cfg: EGraphConfig> {
+    pub full: &'a IndexStore<Cfg>,
+    pub delta: &'a IndexStore<Cfg>,
+    pub delta_atom: Option<usize>,
+}
+
+impl<'a, Cfg: EGraphConfig> VariantIndex<'a, Cfg> {
+    /// Naive view: every atom reads `full`. `delta` is aliased to `full` and
+    /// never read (mode is always `Full`).
+    pub fn naive(full: &'a IndexStore<Cfg>) -> Self {
+        Self {
+            full,
+            delta: full,
+            delta_atom: None,
+        }
+    }
+
+    /// Variant `i`: atom `i` reads delta, atoms `< i` read full∖delta, atoms
+    /// `> i` read full.
+    pub fn variant(
+        full: &'a IndexStore<Cfg>,
+        delta: &'a IndexStore<Cfg>,
+        delta_atom: usize,
+    ) -> Self {
+        Self {
+            full,
+            delta,
+            delta_atom: Some(delta_atom),
+        }
+    }
+
+    /// Mode for an atom given its stable `atom_id`. Independent of the
+    /// scheduler's execution order — purely a function of the numbering.
+    #[inline]
+    pub fn mode(&self, atom_id: usize) -> IndexMode {
+        match self.delta_atom {
+            None => IndexMode::Full,
+            Some(i) if atom_id == i => IndexMode::Delta,
+            Some(i) if atom_id < i => IndexMode::FullMinusDelta,
+            Some(_) => IndexMode::Full,
         }
     }
 }
@@ -270,7 +361,7 @@ mod tests {
             crate::id::ENodeId::from_usize(8),
             crate::id::ENodeId::from_usize(12),
         ];
-        let mut it = SortedVecIter::new(&data);
+        let mut it = SortedVecCursor::new(&data);
         assert!(it.is_valid());
         assert_eq!(it.key().to_usize(), 2);
 

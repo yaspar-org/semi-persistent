@@ -1,19 +1,29 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use proptest::prelude::*;
-use semi_persistent_containers::{BPlusToken, BPlusTreeSet, ShrinkPolicy};
+use semi_persistent_containers::{
+    BPlusToken, BPlusTreeSet, BinarySearch, Layout64U32, ShrinkPolicy,
+};
 
-type Tree = BPlusTreeSet<true>;
+semi_persistent_containers::define_id31! {
+    pub struct PropId / StoredPropId, "p";
+}
 
-/// Oracle: a sorted Vec<u32> with no duplicates.
+type Tree = BPlusTreeSet<PropId, Layout64U32, BinarySearch, true>;
+
+fn k(n: u32) -> PropId {
+    PropId::new(n & 0x7FFF_FFFF)
+}
+
+/// Oracle: a sorted `Vec<PropId>` with no duplicates.
 #[derive(Clone, Debug)]
-struct Oracle(Vec<u32>);
+struct Oracle(Vec<PropId>);
 
 impl Oracle {
     fn new() -> Self {
         Self(Vec::new())
     }
-    fn insert(&mut self, key: u32) -> bool {
+    fn insert(&mut self, key: PropId) -> bool {
         match self.0.binary_search(&key) {
             Ok(_) => false,
             Err(pos) => {
@@ -22,7 +32,7 @@ impl Oracle {
             }
         }
     }
-    fn iter(&self) -> &[u32] {
+    fn iter(&self) -> &[PropId] {
         &self.0
     }
     fn len(&self) -> usize {
@@ -30,7 +40,7 @@ impl Oracle {
     }
 }
 
-fn collect(tree: &Tree) -> Vec<u32> {
+fn collect(tree: &Tree) -> Vec<PropId> {
     let mut c = tree.cursor();
     c.seek_first();
     std::iter::from_fn(|| {
@@ -66,16 +76,16 @@ fn run_ops(ops: Vec<Op>) {
     for op in ops {
         match op {
             Op::Insert(key) => {
-                let got = tree.insert(key);
-                let expected = oracle.insert(key);
+                let got = tree.insert(k(key));
+                let expected = oracle.insert(k(key));
                 assert_eq!(got, expected, "insert mismatch for key {key}");
             }
             Op::SeekCheck(key) => {
                 let mut c = tree.cursor();
-                c.seek(key);
+                c.seek(k(key));
                 let got = c.key();
                 // Oracle: first element >= key
-                let expected = oracle.iter().iter().copied().find(|&k| k >= key);
+                let expected = oracle.iter().iter().copied().find(|x| *x >= k(key));
                 assert_eq!(got, expected, "seek mismatch for key {key}");
             }
             Op::Mark => {
@@ -98,7 +108,6 @@ fn run_ops(ops: Vec<Op>) {
         }
     }
 
-    // Final consistency: full iteration matches oracle.
     let got = collect(&tree);
     assert_eq!(got, oracle.iter(), "final iteration mismatch");
     assert_eq!(tree.len(), oracle.len(), "final len mismatch");

@@ -16,3 +16,5 @@ target/
 
 # Kiro
 .kiro/
+session*.json
+session*.md

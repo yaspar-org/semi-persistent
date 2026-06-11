@@ -49,3 +49,11 @@ harness = false
 [[bench]]
 name = "lca_bench"
 harness = false
+
+[[bench]]
+name = "leapfrog_bench"
+harness = false
+
+[[bench]]
+name = "seek_microbench"
+harness = false

@@ -108,7 +108,7 @@ extracting the literal value.
 
 | Step | Semantics |
 |------|-----------|
-| `Join { target, lookups }` | Leapfrog intersection, bind target to each result |
+| `Join { target, lookups, atom_id }` | Leapfrog intersection, bind target to each result. `atom_id` identifies which query atom this join scans — used by semi-naive evaluation to delta-restrict one atom at a time (Chapter 18); ignored by naive matching |
 | `ExtractChild { target, parent, pos }` | Read child at position from parent node |
 | `ExtractLitVal { node, val }` | Extract literal value id from node |
 | `CheckChildEq { parent, pos, expected }` | Verify child equals expected (by find) |
