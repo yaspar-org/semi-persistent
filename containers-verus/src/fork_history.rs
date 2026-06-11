@@ -340,6 +340,12 @@ impl ForkHistory {
         }
         token_depth <= current_depth
     }
+
+    /// Heap bytes used by the origins list (diagnostic; no spec content).
+    #[verifier::external_body]
+    pub fn heap_bytes(&self) -> usize {
+        self.origins.len() * core::mem::size_of::<ForkOrigin>()
+    }
 }
 
 // ===========================================================================

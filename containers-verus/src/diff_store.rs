@@ -269,6 +269,13 @@ where
             self.wf(),
             self.data() == old(self).data(),
             self.captured() == old(self).captured();
+
+    /// Heap bytes used by the backing storage (diagnostic; no spec content —
+    /// it's a capacity measurement, not part of the semi-persistent contract).
+    /// Default 0 for backends that don't introspect capacity.
+    fn heap_bytes(&self) -> usize {
+        0
+    }
 }
 
 } // verus!
