@@ -140,51 +140,88 @@ indices, so only cells in `p ∩ r` need re-setting — but testing membership i
 `p` in O(1) needs a per-cell "captured-in-which-frame" structure, i.e. it just
 relocates the cost to option E. Not worth it.)
 
-## E. Generation / epoch counter (rejected)
+## E. Per-cell capture-depth (the predecessor `semper` design)
 
-Replace the bit with a per-cell **epoch**: "this cell was last captured in
-frame-generation `g`." A monotone `current_gen` is bumped on every `mark`;
-`capture` compares `cell.gen == current_gen` (already captured) vs `<`
-(capture, then `cell.gen := current_gen`). Then `mark` and `restore` touch
-**no cells at all** — they only change `current_gen` — so flag bookkeeping
-drops to **O(1)** and `restore` becomes a clean O(r).
+> This is **not** a hypothetical: the predecessor research vehicle, `semper`
+> (`~/projects/semper_overview.md` §4), shipped exactly this. The earlier
+> analysis here dismissed it on two grounds that, on review of `semper`, are
+> *wrong* — recorded honestly below.
 
-Why we rejected it:
+Store a per-cell **capture-depth** `capture_depths[i]: C` (`C = u8`/`u16`) =
+"the frame *depth* that last captured cell `i`", in a **separate** array (not
+inline). With a frame at depth `d`, a first write to cell `i` is
+`capture_depths[i] < d` → capture `(i, old, old_capture_depth)` and set
+`capture_depths[i] = d`; a repeat is `≥ d` → skip. The diff entry carries the
+*old capture-depth*, and backtrack restores it during the **same reverse
+replay** that restores values. Crucially:
 
-- **The epoch is not the stack depth — it is a never-reused mark id.** It must
-  be unique per `mark` (like `branch_id`): after a restore the parent
-  re-becomes current, and a re-marked frame landing at the *same depth* as a
-  discarded one must not alias its captured cells. So `current_gen` grows with
-  the **total number of marks over the whole run**, not the backtracking depth.
-- **A fixed-width epoch caps total marks, not depth.** 8 bits ⇒ 256 marks
-  *ever*; 16 bits ⇒ 65 536 marks ever. Equality saturation marks on every
-  speculative trial, so it blows the cap almost immediately. The cap is on
-  cumulative history — strictly worse than "max nesting levels".
-- **It defeats the inline design.** An epoch needs ≥ a byte of real per-cell
-  storage that cannot be niched into the value, so `InlineStore` loses its
-  zero-extra-memory property (e.g. a `u32` id cell grows from 4 to 5–8 bytes).
-  For `ParallelStore` it replaces an `n/64`-word bitset with an `n`-word epoch
-  array — 32–64× more tracking memory.
-- **Lifting the cap reintroduces O(n).** The textbook fix for narrow epochs is
-  an O(n) sweep (reset all cells to gen 0, reset the counter) once per `2^width`
-  marks — amortized cheap, but it is an occasional linear pass, the very thing
-  the epoch was meant to avoid, and the sweep must itself be made
-  semi-persistent or a restore across a sweep boundary corrupts the flags.
+- **`mark` is O(1)** — bump the depth counter; no per-cell touch, no bitset
+  zero, no allocation. (Our chosen design's `mark` is O(parent)/O(n/64).)
+- **No parent rescan on backtrack.** Because each diff entry stores the
+  `old_capture_depth`, the O(r) reverse replay that restores values *also*
+  restores the capture-depths — there is no separate `finish_restore` scan, so
+  backtrack is a clean **O(r)**. The `+p` term disappears.
+- **The cap is on NESTING DEPTH, not total marks.** Depth *decreases* on
+  backtrack (it is restored, not monotone), so `C` bounds *simultaneous nested*
+  marks: `u16` ⇒ 65 535 nested, `u8` ⇒ 255 — far past any real search depth.
+  (This is the correction: the depth is rolled back with the diff, so it never
+  accumulates over the run. The "256 marks *ever*" objection was simply wrong;
+  it confused depth with a never-reused generation id.)
+- **Memory: `N × sizeof(C)` per vec, separate array.** `semper` §4.2 argues
+  this is actually *cheaper* than per-frame bitsets (`5 × 1.25 MB × 50 frames ≈
+  312 MB` of bitsets vs `~100 MB` for `u16` depths at 10⁷ nodes) — and keeps
+  the depth out of the value's cache line, which matters because the e-graph is
+  read-dominated (`find()` chases pointers): inline `(u32,u32)` halves cache
+  density on the hottest loop, so `semper` deliberately keeps depths separate.
+
+So E is a real, coherent point with a *better time profile* than our chosen D
+(O(1) mark, O(r) backtrack, no rescan). Its costs are (i) `N × sizeof(C)`
+permanent memory per vector and (ii) a hard ceiling on nesting depth.
+
+### Why this crate chose D (the stolen bit) instead
+
+The current `containers`/`containers-verus` design takes the opposite point on
+the same axis, for reasons specific to *this* codebase rather than a flaw in E:
+
+- **Zero per-cell tracking memory on the hot backend.** `InlineStore` niches
+  the capture flag into a spare bit of the value's repr (`DenseId` ids reserve
+  the MSB anyway), so tracking costs *0* extra bytes — vs E's `N × sizeof(C)`.
+  For an e-graph storing several 10⁷-element id vectors, that difference is the
+  10–100 MB of `semper`'s table.
+- **No depth ceiling.** D imposes no bound on nesting (the bit has no width to
+  overflow). Minor in practice, but free.
+- **Simpler niche story to verify.** A 1-bit flag with the `Tagged`
+  `into_repr`/`repr_wf` contract (§3, §6) is a small, self-contained
+  obligation; a separate depth array threaded through every store op and proved
+  consistent across nested frames is a larger surface. D's bridge invariant
+  (`captured()[j] ⟺ j in top stratum`) is the price, and it is what makes the
+  O(p) rescan necessary on restore.
+
+The trade is therefore **read cache-density + zero tracking memory + no depth
+cap + a tighter verification surface (D)** against **O(1) mark + rescan-free
+O(r) backtrack + a depth cap + `N·sizeof(C)` memory (E)**. For the inline,
+read-dominated, deeply-nested-but-not-65k e-graph workload, D's memory and
+cache wins dominate; `semper`'s own §4.2 reaches the same read-density
+conclusion from the other side (it keeps depths in a separate array precisely
+to protect read density). A *time-critical, write-heavy, memory-rich* workload
+could prefer E — the axis is genuinely two-sided.
 
 ## Summary (Part 2)
 
-| | `mark` flag cost | `restore` flag cost | memory / cell | marks |
+| | `mark` flag cost | backtrack flag cost | tracking memory | cap |
 |---|---|---|---|---|
-| D. stolen bit + rescan (chosen) | O(parent) / O(n/64) | **O(p)** | **1 bit (0 inline)** | **unbounded** |
-| E. epoch counter | O(1) | O(1) | ≥ 1 word | **capped** (or amortized O(n) sweep) |
+| D. stolen bit + rescan (chosen) | O(parent) / O(n/64) | **+O(p) rescan** | **1 bit; 0 inline** | none |
+| E. capture-depths (`semper`) | **O(1)** | **none (folded into O(r))** | `N · sizeof(C)`/vec | **nesting depth** (`u16`=65k) |
 
-Net: the O(p) parent rescan is the price of an **unbounded-marks, 1-bit,
-zero-extra-memory** capture flag — three properties the design deliberately
-keeps. An epoch buys O(1) bookkeeping but pays in per-cell memory and a hard
-mark cap, fatal for the inline backend and for a long-running saturation. The
-only place E could win cleanly is `ParallelStore` *if* tracking memory were
-free and the mark cap acceptable — not the case for the e-graph (inline, LIFO,
-long-lived), so D stands.
+Net: the O(p) parent rescan is **not** intrinsic to semi-persistence — `semper`
+avoids it by storing+restoring a per-cell depth. It *is* intrinsic to the
+**1-bit, zero-inline-memory** flag this crate chose: with only a boolean, the
+parent's "captured" set can only be recovered by re-deriving it from the diff,
+hence the rescan. We accept that O(p) (proportional to the frame returned into,
+not total history) to keep tracking memory at zero on the inline backend and to
+keep the verification surface small. Switching to E later is possible but
+changes the store's flag type, `mark`, backtrack, and the bridge invariant — a
+backend-level change, not a `restore`-local one.
 
 ---
 [← Table of Contents](00-table-of-contents.md)
