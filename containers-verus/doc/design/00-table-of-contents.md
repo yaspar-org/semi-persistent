@@ -41,9 +41,12 @@ same patterns recur as more containers are verified.
    The reconstruction lemma restated per-cell and base-parametric, so it needs
    no `saved_len` monotonicity — what made dropping that invariant clean.
 
-4. **[Restore Regrow — Design Alternatives](restore-regrow-alternatives.md)**
-   Default-pad vs Clone-scan vs force-record (and why production's unbounded
-   `force_capture` is a latent DoS we deliberately diverge from).
+4. **[Design Alternatives: Regrow & Capture-Flag Representation](restore-regrow-alternatives.md)**
+   Two rejected-options records. Regrow: Default-pad vs Clone-scan vs
+   force-record (and why production's unbounded `force_capture` is a latent
+   DoS). Capture flag: the chosen 1-bit-+-rescan vs a generation/epoch counter
+   (why the stolen bit wins — unbounded marks, zero inline memory — at the
+   price of an O(parent) rescan on restore).
 
 5. **[Default Implementations & `Tagged` Niche Safety](default-impls-design.md)**
    Why every container element type needs `Default`, why a fabricated filler is
