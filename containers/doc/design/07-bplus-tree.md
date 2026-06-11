@@ -1,6 +1,6 @@
 # Chapter 7 — `BPlusTreeSet` — Arena-Backed B+ Tree
 
-[← Ch 6: SparseSet](06-sparse-set.md) · [Table of Contents](00-table-of-contents.md)
+[← Ch 6: SparseSet](06-sparse-set.md) · [Ch 8: Benchmark Analysis →](08-bplus-benchmark-analysis.md) · [Table of Contents](00-table-of-contents.md)
 
 A cache-line-aligned B+ tree set of `u32` keys, backed by an arena
 of fixed-size 64-byte nodes. Supports O(log n) insert, O(log n) seek,
@@ -171,4 +171,4 @@ eliminates all capture tracking at compile time, and `mark()`/
 once and never backtracked.
 
 ---
-[← Ch 6: SparseSet](06-sparse-set.md) · [Table of Contents](00-table-of-contents.md)
+[← Ch 6: SparseSet](06-sparse-set.md) · [Ch 8: Benchmark Analysis →](08-bplus-benchmark-analysis.md) · [Table of Contents](00-table-of-contents.md)

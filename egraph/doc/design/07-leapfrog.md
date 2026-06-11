@@ -74,5 +74,15 @@ This intersects `by_op[Add]` with `by_child_pos[(e3, 0)]`, yielding
 Add nodes whose first child is in class e3. For each result, `n0` is
 bound and execution continues to the next step.
 
+## The `Difference` Combinator
+
+`LeapfrogJoin` is generic over any `SortedCursor`. Semi-naive
+evaluation (Chapter 18) exploits this with `Difference<A, B>`, a
+two-cursor combinator that is *itself* a `SortedCursor`: it yields the
+keys of `A` (a full-index cursor) that are absent from `B` (the
+delta-index cursor), i.e. `full ∖ delta`. Because it satisfies the
+same monotonic-forward seek contract, it drops into a `LeapfrogJoin`
+anywhere a base cursor would, with no change to the join algorithm.
+
 ---
 [← Ch 6: Index Construction](06-index.md) · [Table of Contents](00-table-of-contents.md) · [Ch 8: Query Compilation →](08-query-compilation.md)

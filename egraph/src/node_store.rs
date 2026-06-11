@@ -296,6 +296,7 @@ where
         g_buf: &mut Vec<G>,
         ac_buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
+        touched: &mut Vec<G>,
     ) where
         ACCanon: VarCanon<G, C>,
     {
@@ -303,26 +304,28 @@ where
             NodeRef::Plain0(_) => {}
             NodeRef::Plain1(l) => self
                 .plain1
-                .recanonize_node::<PlainCanon>(l, &find, collisions),
+                .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
             NodeRef::Plain2(l) => self
                 .plain2
-                .recanonize_node::<PlainCanon>(l, &find, collisions),
+                .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
             NodeRef::Plain3(l) => self
                 .plain3
-                .recanonize_node::<PlainCanon>(l, &find, collisions),
-            NodeRef::C(l) => self.c.recanonize_node::<CCanon>(l, &find, collisions),
+                .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
+            NodeRef::C(l) => self
+                .c
+                .recanonize_node::<CCanon>(l, &find, collisions, touched),
             NodeRef::PlainN(l) => self
                 .plain_n
-                .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions),
+                .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions, touched),
             NodeRef::A(l) => self
                 .a
-                .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions),
+                .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions, touched),
             NodeRef::AC(l) => self
                 .ac
-                .recanonize_node::<ACCanon>(l, &find, ac_buf, collisions),
+                .recanonize_node::<ACCanon>(l, &find, ac_buf, collisions, touched),
             NodeRef::ACI(l) => self
                 .aci
-                .recanonize_node::<ACICanon>(l, &find, g_buf, collisions),
+                .recanonize_node::<ACICanon>(l, &find, g_buf, collisions, touched),
             NodeRef::Lit(_) => {}
         }
     }
@@ -533,6 +536,7 @@ mod tests {
             &mut g_buf,
             &mut ac_buf,
             &mut collisions,
+            &mut Vec::new(),
         );
         // neg(e1) became neg(e0) → collision with na
         assert_eq!(collisions, vec![(nb, na)]);
@@ -550,7 +554,14 @@ mod tests {
         let mut g_buf = Vec::new();
         let mut ac_buf = Vec::new();
         let mut collisions = Vec::new();
-        ns.recanonize_node(_na, |g| g, &mut g_buf, &mut ac_buf, &mut collisions);
+        ns.recanonize_node(
+            _na,
+            |g| g,
+            &mut g_buf,
+            &mut ac_buf,
+            &mut collisions,
+            &mut Vec::new(),
+        );
         assert!(collisions.is_empty());
     }
 }

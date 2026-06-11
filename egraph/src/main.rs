@@ -27,6 +27,24 @@ struct Cli {
     /// Comma-separated type groups: machine, bignum
     #[arg(long, default_value = "bignum", value_delimiter = ',')]
     types: Vec<String>,
+
+    /// Saturation strategy: "naive" or "semi-naive"
+    #[arg(long, default_value = "naive", value_parser = parse_strategy)]
+    strategy: semi_persistent_egraph::saturate::SaturationStrategy,
+
+    /// Count and report total e-matching steps (match-work instrumentation).
+    /// Off by default; enabling it has negligible cost and needs no rebuild.
+    #[arg(long, default_value_t = false)]
+    count_match_steps: bool,
+}
+
+fn parse_strategy(s: &str) -> Result<semi_persistent_egraph::saturate::SaturationStrategy, String> {
+    use semi_persistent_egraph::saturate::SaturationStrategy;
+    match s {
+        "naive" => Ok(SaturationStrategy::Naive),
+        "semi-naive" | "semi" => Ok(SaturationStrategy::SemiNaive),
+        _ => Err(format!("expected 'naive' or 'semi-naive', got '{s}'")),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,15 +107,24 @@ fn main() {
     macro_rules! dispatch {
         ($Cfg:ty, $proofs:expr) => {
             match choice {
-                LitValChoice::Machine => {
-                    run::<$Cfg, MachineLit, MachineModel, $proofs>(&surface_cmds, MachineModel)
-                }
-                LitValChoice::Bignum => {
-                    run::<$Cfg, BignumLit, BignumModel, $proofs>(&surface_cmds, BignumModel)
-                }
-                LitValChoice::All => {
-                    run::<$Cfg, AllLit, AllModel, $proofs>(&surface_cmds, AllModel)
-                }
+                LitValChoice::Machine => run::<$Cfg, MachineLit, MachineModel, $proofs>(
+                    &surface_cmds,
+                    MachineModel,
+                    cli.strategy,
+                    cli.count_match_steps,
+                ),
+                LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
+                    &surface_cmds,
+                    BignumModel,
+                    cli.strategy,
+                    cli.count_match_steps,
+                ),
+                LitValChoice::All => run::<$Cfg, AllLit, AllModel, $proofs>(
+                    &surface_cmds,
+                    AllModel,
+                    cli.strategy,
+                    cli.count_match_steps,
+                ),
             }
         };
     }
@@ -114,6 +141,8 @@ fn main() {
 fn run<Cfg, L, M, const PROOFS: bool>(
     surface_cmds: &[semi_persistent_egraph::surface_ast::SurfaceCommand],
     model: M,
+    strategy: semi_persistent_egraph::saturate::SaturationStrategy,
+    count_match_steps: bool,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
     Cfg::O: std::hash::Hash,
@@ -121,8 +150,12 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     M: semi_persistent_egraph::lit_model::LitModel<Value = L>,
     semi_persistent_egraph::canon::ACCanon: semi_persistent_egraph::canon::VarCanon<Cfg::G, Cfg::C>,
 {
+    if count_match_steps {
+        semi_persistent_egraph::ematch::set_match_step_counting(true);
+    }
     let mut interp =
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
+    interp.set_strategy(strategy);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds.to_vec(),
@@ -141,4 +174,10 @@ fn run<Cfg, L, M, const PROOFS: bool>(
         process::exit(1);
     }
     eprintln!("ok — {} nodes", interp.eg.len());
+    if count_match_steps {
+        eprintln!(
+            "match steps: {}",
+            semi_persistent_egraph::ematch::match_steps()
+        );
+    }
 }
