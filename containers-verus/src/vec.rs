@@ -1017,6 +1017,13 @@ where
         self.frames.len()
     }
 
+    /// A read-only view over the current contents (parity with production).
+    pub fn view_handle(&self) -> (v: VecView<'_, T, I, S, TRACK>)
+        ensures v.vec == self,
+    {
+        VecView { vec: self }
+    }
+
     /// Token validity check (design §0.6). Returns exactly
     /// `is_token_valid_spec(token)`: same container AND on the live branch path
     /// within its depth bound. Callers use this to satisfy `restore`'s validity
@@ -2406,6 +2413,116 @@ where
             // saved_len monotonicity is no longer a wf clause — nothing to
             // re-establish for the truncated stack.
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// View / VecViewIter — read-only iteration over the current contents (parity with
+// production's `view()`). A `View` is a thin borrow exposing `len`/`get`; a
+// `VecViewIter` walks `[0, len)`. Both carry verified contracts tying results to
+// the underlying `view()` sequence.
+// ---------------------------------------------------------------------------
+
+/// Read-only handle over a `Vec`'s current contents.
+pub struct VecView<'a, T, I, S, const TRACK: bool>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+    S: DiffStore<T, I, TRACK>,
+{
+    pub vec: &'a Vec<T, I, S, TRACK>,
+}
+
+impl<'a, T, I, S, const TRACK: bool> VecView<'a, T, I, S, TRACK>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+    S: DiffStore<T, I, TRACK>,
+{
+    /// The abstract sequence this view exposes (the vec's current contents).
+    pub open spec fn seq(&self) -> Seq<T> {
+        self.vec.view()
+    }
+
+    pub fn len(&self) -> (n: I)
+        requires self.vec.wf(),
+        ensures n.as_nat() == self.seq().len(),
+    {
+        self.vec.len()
+    }
+
+    pub fn is_empty(&self) -> (b: bool)
+        requires self.vec.wf(),
+        ensures b == (self.seq().len() == 0),
+    {
+        self.vec.is_empty()
+    }
+
+    pub fn get(&self, i: I) -> (v: T)
+        requires self.vec.wf(), i.as_nat() < self.seq().len(),
+        ensures v == self.seq()[i.as_nat() as int],
+    {
+        self.vec.get(i)
+    }
+
+    /// Iterator over `[0, len)` in order.
+    pub fn iter(&self) -> (it: VecViewIter<'a, T, I, S, TRACK>)
+        requires self.vec.wf(),
+        ensures it.vec == self.vec, it.pos == 0,
+    {
+        VecViewIter { vec: self.vec, pos: 0 }
+    }
+}
+
+/// Forward index iterator over a `Vec`'s contents.
+pub struct VecViewIter<'a, T, I, S, const TRACK: bool>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+    S: DiffStore<T, I, TRACK>,
+{
+    pub vec: &'a Vec<T, I, S, TRACK>,
+    pub pos: usize,
+}
+
+impl<'a, T, I, S, const TRACK: bool> VecViewIter<'a, T, I, S, TRACK>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+    S: DiffStore<T, I, TRACK>,
+{
+    /// Advance one step. Yields `Some(view[pos])` and increments `pos` while
+    /// in range; `None` (leaving `pos` unchanged) at the end. Mirrors
+    /// production's `VecViewIter::next`. (Inherent method with an explicit
+    /// contract — the `Iterator` trait spec plumbing isn't needed for the
+    /// correctness property.)
+    pub fn next(&mut self) -> (r: Option<T>)
+        requires
+            old(self).vec.wf(),
+            old(self).pos <= old(self).vec.view().len(),
+            old(self).vec.view().len() < I::max_nat(),
+        ensures
+            self.vec == old(self).vec,
+            old(self).pos < old(self).vec.view().len() ==> {
+                &&& r == Some(old(self).vec.view()[old(self).pos as int])
+                &&& self.pos == old(self).pos + 1
+            },
+            old(self).pos >= old(self).vec.view().len() ==> {
+                &&& r is None
+                &&& self.pos == old(self).pos
+            },
+    {
+        let len = self.vec.len();
+        if self.pos >= len.as_usize() {
+            return None;
+        }
+        let i = match I::try_from_usize(self.pos) {
+            Some(x) => x,
+            None => { assert(false); return None; },
+        };
+        let v = self.vec.get(i);
+        self.pos = self.pos + 1;
+        Some(v)
     }
 }
 
