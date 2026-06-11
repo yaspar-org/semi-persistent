@@ -26,6 +26,7 @@
 
 #![allow(unused_imports)]
 
+pub mod append_only_vec;
 pub mod container_id;
 pub mod diff_store;
 pub mod fork_history;
