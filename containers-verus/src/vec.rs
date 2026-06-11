@@ -963,6 +963,70 @@ where
     }
 
 
+    /// "Untracked" state: no marks are live. Production compiles out tracking
+    /// when `TRACK == false`; the verus model instead proves that whenever the
+    /// frame stack is empty there is ZERO tracking storage and operations are
+    /// pure `std::Vec` operations on the view. (`mark` is the only way to make
+    /// the stack non-empty, so a vector that is never marked stays untracked.)
+    pub open spec fn untracked(&self) -> bool {
+        self.frames@.len() == 0
+    }
+
+    /// No tracking overhead while untracked: `wf` already forces an empty diff
+    /// log when the frame stack is empty, so an unmarked vector carries no
+    /// diff entries. This is the TRACK=false guarantee at the model level.
+    pub proof fn lemma_untracked_no_overhead(&self)
+        requires self.wf(), self.untracked(),
+        ensures self.diff_log@.len() == 0,
+    {
+        // Directly from wf_for_snap's `frames.len()==0 ==> diff_log.len()==0`.
+    }
+
+    /// Observational equivalence to `std::Vec` while untracked: push appends,
+    /// set updates, pop drops the last element — exactly the std operations on
+    /// the view — AND the vector stays untracked with no diff log. These are
+    /// thin wrappers asserting the equivalence explicitly; the heavy lifting is
+    /// in push/set/pop's own contracts, which hold for ALL states.
+    pub fn push_untracked(&mut self, value: T)
+        requires
+            old(self).wf(), old(self).untracked(),
+            old(self).view().len() + 1 < I::max_nat(),
+        ensures
+            self.wf(), self.untracked(),
+            self.view() == old(self).view().push(value),   // std::Vec::push
+            self.diff_log@.len() == 0,                       // no overhead
+    {
+        self.push(value);
+        proof { self.lemma_untracked_no_overhead(); }
+    }
+
+    pub fn pop_untracked(&mut self) -> (r: Option<T>)
+        requires old(self).wf(), old(self).untracked(),
+        ensures
+            self.wf(), self.untracked(),
+            old(self).view().len() == 0 ==> r is None && self.view() == old(self).view(),
+            old(self).view().len() > 0 ==> r == Some(old(self).view().last())
+                && self.view() == old(self).view().drop_last(),   // std::Vec::pop
+            self.diff_log@.len() == 0,                             // no overhead
+    {
+        let r = self.pop();
+        proof { self.lemma_untracked_no_overhead(); }
+        r
+    }
+
+    pub fn set_untracked(&mut self, i: I, value: T)
+        requires
+            old(self).wf(), old(self).untracked(),
+            i.as_nat() < old(self).view().len(),
+        ensures
+            self.wf(), self.untracked(),
+            self.view() == old(self).view().update(i.as_nat() as int, value),  // std update
+            self.diff_log@.len() == 0,                                          // no overhead
+    {
+        self.set(i, value);
+        proof { self.lemma_untracked_no_overhead(); }
+    }
+
     pub fn len(&self) -> (n: I)
         requires self.wf(),
         ensures n.as_nat() == self.view().len(),
