@@ -227,6 +227,29 @@ pub proof fn lemma_fork_valid_characterization(
         token_branch, token_depth);
 }
 
+/// A reachable branch is a real branch id (`<= origins.len()`). Used at the
+/// `Vec` level: `is_valid(token)` ⇒ `reaches(current, token.branch)` ⇒
+/// `token.branch <= origins.len()`, which discharges `fork`'s precondition
+/// when restoring a valid token. By induction on `branch` under `fh_wf`.
+pub proof fn lemma_reaches_in_range(origins: Seq<ForkOrigin>, branch: nat, q: nat)
+    requires
+        fh_wf(origins, branch),
+        reaches(origins, branch, q),
+    ensures
+        q <= origins.len(),
+    decreases branch,
+{
+    if branch == q {
+    } else if branch == 0 {
+        // reaches false here, contradiction discharged by the requires.
+    } else if branch > origins.len() {
+    } else {
+        let parent = origins[branch - 1].parent_branch_id as nat;
+        assert(parent < branch);  // fh_wf
+        lemma_reaches_in_range(origins, parent, q);
+    }
+}
+
 impl ForkHistory {
     pub open spec fn wf(self) -> bool {
         fh_wf(self.origins@, self.current_branch_id as nat)

@@ -35,17 +35,29 @@
 
 use vstd::prelude::*;
 
+use crate::container_id::ContainerId;
 use crate::diff_store::DiffStore;
+use crate::fork_history::{fork_valid, ForkHistory};
 use crate::frame::Frame;
 use crate::index_like::IndexLike;
 
 verus! {
 
-/// Opaque token returned by `mark()`. M3b carries only `frame_idx`; M5
-/// will add container_id + branch_id + depth.
+/// Opaque token returned by `mark()`.
+///
+/// `frame_idx` is the reconstruction coordinate (which frame `restore` rolls
+/// back to). `branch_id`/`depth` are the validity coordinates consumed by the
+/// fork-history check (design doc §0.6): `branch_id` is the branch live at
+/// mark time, `depth` the token's position along it. `container_id` rejects
+/// cross-container use. `frame_idx` and `depth` are numerically equal at mark
+/// but are DIFFERENT quantities (reconstruction index vs. validity depth) —
+/// see m5-fork-history-design.md §0.5.
 #[derive(Copy, Clone)]
 pub struct VecToken {
     pub frame_idx: usize,
+    pub branch_id: u32,
+    pub depth: u32,
+    pub container_id: ContainerId,
 }
 
 /// Spec helper: there is some entry in `diffs` pointing at index `j`.
@@ -614,6 +626,10 @@ where
     /// The saved_len of the topmost (active) frame, cached for the hot path.
     /// `I::min()` when the stack is empty. Mirrors production.
     pub active_saved_len: I,
+    /// Branching genealogy for token-validity / branch-cut safety (M5).
+    pub forks: ForkHistory,
+    /// Per-container identity; rejects cross-container token use.
+    pub id: ContainerId,
     pub phantom: core::marker::PhantomData<(T, I)>,
     /// Ghost stack of deep copies. `snapshots[k]` is `view()` at the
     /// moment frame `k` was pushed. Always `snapshots.len() == frames.len()`.
@@ -634,6 +650,21 @@ where
     /// Snapshot stack (ghost).
     pub open spec fn snapshots_view(&self) -> Seq<Seq<T>> {
         self.snapshots@
+    }
+
+    /// Token validity (design doc §0.6): same container AND on the live branch
+    /// path at a depth within that branch's bound. This is the M5 precondition
+    /// of `restore` — separate from the structural `frame_idx < frames.len()`
+    /// reconstruction precondition (design §0.5). `current_depth` is the live
+    /// depth `frames.len()`.
+    pub open spec fn is_token_valid_spec(&self, token: VecToken) -> bool {
+        &&& token.container_id.id() == self.id.id()
+        &&& fork_valid(
+                self.forks.origins@,
+                self.forks.current_branch_id as nat,
+                self.frames@.len() as nat,
+                token.branch_id as nat,
+                token.depth as nat)
     }
 
     /// Well-formedness. M3b invariants:
@@ -749,6 +780,10 @@ where
                             frames[(frames.len() - 1) as int].diff_start as int,
                             diffs.len() as int,
                             j as nat))
+        // Fork history is well-formed (parent-decreasing; current branch a real
+        // branch). Independent of the snapshot stack — validity is a separate
+        // predicate, not a structural snapshot invariant (design §0.5).
+        &&& self.forks.wf()
     }
 
     /// Every frame's diff_start is `<= diff_log.len()`. Follows from
@@ -1815,6 +1850,13 @@ where
         let saved_len = self.store.len();
         let diff_start = self.diff_log.len();
 
+        // Token validity coordinates, captured BEFORE the frame push (so
+        // `depth` is the count of frames below this one — its own frame index,
+        // matching production). `branch_id` is the branch live at mark time.
+        let token_branch = self.forks.current_branch();
+        let token_depth = self.frames.len() as u32;
+        let token_container = self.id;
+
         let ghost old_frames = self.frames@;
         let ghost old_snaps = self.snapshots@;
         let ghost old_view = self.view();
@@ -1944,7 +1986,12 @@ where
             }
         }
 
-        VecToken { frame_idx: self.frames.len() - 1 }
+        VecToken {
+            frame_idx: self.frames.len() - 1,
+            branch_id: token_branch,
+            depth: token_depth,
+            container_id: token_container,
+        }
     }
 
     /// Restore the vector to the state captured by `token`.
@@ -1962,7 +2009,17 @@ where
         where T: core::default::Default
         requires
             old(self).wf(),
+            // M5 validity precondition (the formal form of production's
+            // is_valid + container asserts). Rejects stale/cross-container
+            // tokens. Parallel to — not a substitute for — the structural
+            // frame_idx-in-range precondition (design §0.5).
+            old(self).is_token_valid_spec(token),
+            // Structural reconstruction precondition (mechanism, not validity).
             token.frame_idx < old(self).frames@.len(),
+            // Depths fit in u32 (token.depth and frames.len() are u32 in the
+            // exec API); needed for fork's u32 push.
+            old(self).frames@.len() < u32::MAX,
+            old(self).forks.origins@.len() + 1 <= u32::MAX,
         ensures
             self.wf(),
             self.view() == old(self).snapshots_view()[token.frame_idx as int],
@@ -1977,6 +2034,25 @@ where
         let ghost pre_view = self.view();
         let ghost pre_diffs = self.diff_log@;
         let ghost snap_target = self.snapshots@[target_index as int];
+        // forks is untouched by reconstruction. Establish the fork() precondition
+        // facts NOW, while self == old(self) and validity holds, and carry them
+        // as scalar ghosts (Verus loses whole-struct field tracking across the
+        // many reconstruction mutations + the `*self` snapshot below).
+        let ghost forks_origins0 = self.forks.origins@;
+        let ghost forks_branch0 = self.forks.current_branch_id;
+        proof {
+            crate::fork_history::lemma_fork_valid_characterization(
+                self.forks.origins@,
+                self.forks.current_branch_id as nat,
+                self.frames@.len() as nat,
+                token.branch_id as nat,
+                token.depth as nat);
+            crate::fork_history::lemma_reaches_in_range(
+                self.forks.origins@,
+                self.forks.current_branch_id as nat,
+                token.branch_id as nat);
+            assert(token.branch_id as nat <= forks_origins0.len());
+        }
 
         // Resize the view to EXACTLY the target's saved_len (truncate, or grow
         // with `T::default()` fillers). After this the base length is
@@ -1987,7 +2063,12 @@ where
         // not after (default fillers break the top frame's uncaptured arm),
         // and the lemma is base-parametric so it accepts the resized base.
         let ghost old_self = *self;
-        proof { saved_len.lemma_as_nat_bounded(); }
+        proof {
+            saved_len.lemma_as_nat_bounded();
+            // Confirm the *self read didn't disturb forks tracking.
+            assert(self.forks.origins@ == forks_origins0);
+            assert(self.forks.current_branch_id == forks_branch0);
+        }
         self.store.resize_default(saved_len);
 
         let ghost base = self.store.data();
@@ -2033,6 +2114,10 @@ where
                 self.diff_log@.len() == n,
                 self.frames@ == old(self).frames@,
                 self.snapshots@ == old(self).snapshots@,
+                // forks is untouched by the replay loop (needed for fork()'s
+                // precondition after the loop).
+                self.forks.origins@ == forks_origins0,
+                self.forks.current_branch_id == forks_branch0,
                 diff_start <= i <= n,
                 self.store.data().len() == saved_len.as_nat(),
                 base.len() == saved_len.as_nat(),
@@ -2104,10 +2189,28 @@ where
             self.active_saved_len = I::min();
         }
 
+        // Record the branch cut (design §0.6): fork off the token's branch at
+        // the token's depth. Only `self.forks` is mutated — the store,
+        // diff_log, frames, snapshots (hence the reconstruction result) are
+        // untouched. `fork`'s precondition `token.branch_id <= origins.len()`
+        // is discharged by the validity precondition: a valid token's branch
+        // is reachable, hence a real branch id.
+        proof {
+            // forks untouched since entry; the fork() precondition
+            // `token.branch_id <= origins.len()` was established at the top
+            // (over the then-pristine forks) and carries because forks is
+            // unchanged by reconstruction.
+            assert(self.forks.origins@ == forks_origins0);
+            assert(self.forks.current_branch_id == forks_branch0);
+            assert(token.branch_id as nat <= self.forks.origins@.len());
+        }
+        self.forks.fork(token.branch_id, token.depth);
+
         proof {
             // view() now has length saved_len and agrees with snap_target
             // pointwise, so they're equal by extensionality.
             assert(self.view() =~= snap_target);
+            assert(self.forks.wf());  // fork maintains fh_wf
 
             // Re-establish wf for the truncated stack [0, target_index).
             let frames = self.frames@;
