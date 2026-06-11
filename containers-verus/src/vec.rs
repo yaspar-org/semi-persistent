@@ -43,6 +43,16 @@ use crate::index_like::IndexLike;
 
 verus! {
 
+/// Capacity-reclamation policy applied at `mark` time (parity with
+/// production). The verus model treats both variants as observationally
+/// inert: shrinking is a capacity hint that never changes `view()` or any
+/// tracked sequence, so it carries no spec content.
+#[derive(Copy, Clone)]
+pub enum ShrinkPolicy {
+    Never,
+    IfOverallocated { factor: usize, headroom: usize },
+}
+
 /// Opaque token returned by `mark()`.
 ///
 /// `frame_idx` is the reconstruction coordinate (which frame `restore` rolls
@@ -1009,6 +1019,46 @@ where
         v
     }
 
+    /// Capacity reclamation (production parity). `Never` is a no-op;
+    /// `IfOverallocated` asks the store to shrink its backing capacity. Both
+    /// are observationally inert: `shrink_if` preserves `data()`/`captured()`,
+    /// so `view()`, `wf`, and all tracked sequences are unchanged. (The
+    /// production diff_log capacity hint is omitted — it's a pure allocator
+    /// hint with no effect on `diff_log@`.)
+    fn maybe_shrink(&mut self, policy: ShrinkPolicy)
+        requires old(self).wf(),
+        ensures
+            self.wf(),
+            self.view() == old(self).view(),
+            self.diff_log@ == old(self).diff_log@,
+            self.frames@ == old(self).frames@,
+            self.snapshots@ == old(self).snapshots@,
+            self.active_saved_len == old(self).active_saved_len,
+            self.forks == old(self).forks,
+    {
+        match policy {
+            ShrinkPolicy::Never => {}
+            ShrinkPolicy::IfOverallocated { factor, headroom } => {
+                self.store.shrink_if(factor, headroom);
+            }
+        }
+        proof {
+            // shrink_if preserves data()/captured(); all other fields untouched.
+            // Every wf conjunct reads only store.data()/captured() (unchanged),
+            // diff_log@/frames@/snapshots@/active_saved_len/forks (untouched),
+            // so wf transfers. layer_above_at/stratum_end are functions of
+            // those, hence unchanged.
+            assert(self.view() == old(self).view());
+            assert(self.store.captured() == old(self).store.captured());
+            assert(self.diff_log@ == old(self).diff_log@);
+            assert(self.frames@ == old(self).frames@);
+            assert(self.snapshots@ == old(self).snapshots@);
+            assert forall|k: int| 0 <= k < self.frames@.len() implies
+                self.layer_above_at(k) == old(self).layer_above_at(k)
+                && self.stratum_end(k) == old(self).stratum_end(k) by {}
+        }
+    }
+
     /// Current frame-stack depth (number of live marks). Mirrors production.
     pub fn depth(&self) -> (d: usize)
         requires self.wf(),
@@ -1022,6 +1072,21 @@ where
         ensures v.vec == self,
     {
         VecView { vec: self }
+    }
+
+    /// Bytes consumed by diff tracking only: diff_log + frames + fork history.
+    /// Diagnostic; no spec content (capacity measurement, external_body).
+    #[verifier::external_body]
+    pub fn tracking_bytes(&self) -> usize {
+        self.diff_log.len() * core::mem::size_of::<(T, I)>()
+            + self.frames.len() * core::mem::size_of::<Frame<I>>()
+            + self.forks.heap_bytes()
+    }
+
+    /// Total bytes: store backing + tracking. Diagnostic; no spec content.
+    #[verifier::external_body]
+    pub fn total_bytes(&self) -> usize {
+        self.store.heap_bytes() + self.tracking_bytes()
     }
 
     /// Token validity check (design §0.6). Returns exactly
@@ -1903,7 +1968,7 @@ where
     /// equals the view — so its frame_inv_range transfers.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
-    pub fn mark(&mut self) -> (token: VecToken)
+    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
             old(self).wf(),
             old(self).view().len() < I::max_nat(),
@@ -1914,6 +1979,10 @@ where
             self.frames@.len() == old(self).frames@.len() + 1,
             self.snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
+        // Capacity reclamation (production parity). Observationally inert:
+        // preserves view(), diff_log@, frames@, snapshots@, and wf.
+        self.maybe_shrink(shrink);
+
         let saved_len = self.store.len();
         let diff_start = self.diff_log.len();
 
