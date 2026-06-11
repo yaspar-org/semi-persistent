@@ -206,3 +206,6 @@ top stratum empty, so the bridge degenerates to `captured()[j] ⟺ false` over
 `[0, saved_len)` — a strictly simpler obligation — but the fork-history
 validity theorem (`lemma_fork_valid_characterization`) would need an analogue
 for "t survives its own restore".
+
+---
+[← Table of Contents](00-table-of-contents.md)

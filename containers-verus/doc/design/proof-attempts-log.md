@@ -27,7 +27,7 @@ weaker version, then we relaxed a restriction:
 4. **Mutation under a mark** (M4 set/pop): `set` and `pop` callable with live
    frames — but `pop` restricted to **transient** elements only
    (`active_saved_len < view.len()`), i.e. never pop into a marked region.
-5. **Faithful pop**: pop into the marked region. **LANDED** (HEAD `99b6788`) —
+5. **Faithful pop**: pop into the marked region. **LANDED** —
    the invariant was relaxed twice (top-fullness + saved_len monotonicity both
    dropped for per-frame coverage) and the central lemma restated flat/target-
    clamped. See the "Faithful pop — how it landed" section below.
@@ -40,26 +40,26 @@ Nothing was faked: when we couldn't prove a rung we either weakened the
 
 ## Chronological log
 
-### M1 — trait specs ✅ (`208fc38`)
+### M1 — trait specs ✅
 `Tagged`, `IndexLike`, `DiffStore` as Verus traits. Notable: the **niche
 obligation** on `Tagged` (`repr_wf` + `lemma_repr_extensional`) was added after
 a critic flagged that without it a bit-stealing impl could verify vacuously.
 Also caught: `u64::as_usize` truncation on 32-bit hosts (gated to 64-bit).
 
-### M2 — storage impls ✅ (`3e595bd`)
+### M2 — storage impls ✅
 `ParallelStore` (`Vec<bool>` flag) and `InlineStore` (tag in `T::Repr`) both
 satisfy `DiffStore`. Sanity-checked by deliberately deleting a `diff_log.push`
 and confirming the verifier rejects it — i.e. the contract isn't vacuous.
 
-### Production bug fix ✅ (`21c0665`)
+### Production bug fix ✅
 `Frame.saved_len` was `u32` in production → silent wrap past 4 G slots for
 `I = u64`. Changed to `Frame<I> { saved_len: I, diff_start: usize }` in both
 production and the verus model.
 
-### M3a — Vec scaffold ✅ (`820ad80`)
+### M3a — Vec scaffold ✅
 push/set/get/view refine to `std::Vec`. No mark/restore.
 
-### M3b — single-frame mark/restore ✅ (`f29453d`)
+### M3b — single-frame mark/restore ✅
 First real correctness theorem: `view() == snapshots[0]` after restore.
 
 🔁 **The `replay_reverse` dead-end (within M3b).** First attempt modeled
@@ -72,11 +72,11 @@ structural-induction lemma (`lemma_replay_reverse_*`) that wouldn't close; left
 removed the admits. This pointwise/declarative framing became the backbone of
 everything after.
 
-### Declarative refactor ✅ (`a2384f6`)
+### Declarative refactor ✅
 Rewrote the invariant into the two-arm per-cell form (`frame_inv`). Same
 theorem, simpler proofs — `push`/`mark` lost their proof hints entirely.
 
-### M4 core — arbitrary nesting + nested restore ✅ (`cb08eaf`)
+### M4 core — arbitrary nesting + nested restore ✅
 The big one. Introduced:
 - `overlay(base, diffs, lo, hi)` — spec model of the restore loop, **lowest-
   index entry wins** (applied outermost).
@@ -87,12 +87,12 @@ The big one. Introduced:
 Proved restore across N strata. This was ~M4-sized effort; the `overlay`
 split/uncaptured/captured lemmas are the foundation.
 
-### Nested mark ✅ (`8a9ca56`); capture-flag bridge ✅ (`4dd9c9d`)
+### Nested mark ✅; capture-flag bridge ✅
 `mark` allows nesting. Added the **bridge**: `store.captured()[j] ⟺ j ∈ top
 stratum`, tying the runtime flag to the ghost diff log — needed so `set`/`pop`
 can reason about `capture`'s first-write-wins branch.
 
-### set under a frame ✅ (`7af40e9`); pop (transient) ✅ (`6cc0332`)
+### set under a frame ✅; pop (transient) ✅
 Capturing `set` at any depth. `pop` at any depth **but transient-only**
 (`active_saved_len < view.len()`). Rung 4 of the ladder.
 
@@ -129,13 +129,13 @@ observable — it's *entailed by the headline theorem* (`view()==snapshot`), so
 
 ### ✅ Default groundwork that LANDED
 - `mark_captured` + `resize_default` added to `DiffStore` + both stores
-  (`a271cbb`).
+.
 - `frame_cell_inv` refactor + **coverage-aware uncaptured arm**
-  (uncaptured ⟹ `j < above.len()`) (`68d224f`). This *also* cracked a nasty
+  (uncaptured ⟹ `j < above.len()`). This *also* cracked a nasty
   Verus blocker (below).
-- bridge restricted to *present* cells (`2332096`).
+- bridge restricted to *present* cells.
 - `wf` split into `wf_for_snap` (+ bridge) so reconstruction lemmas run on the
-  bridge-free core (`1f979ae`), which `resize_default` preserves.
+  bridge-free core, which `resize_default` preserves.
 
 ### 🔁 The Verus "forall won't re-assemble" blocker (cracked)
 While weakening `frame_inv_range`, `lemma_frame_inv_range_local` stopped
@@ -145,7 +145,7 @@ goal-forall" trigger mismatch). Tried: `&&&` vs `&&`, `spinoff_prover` +
 `rlimit(300)`, explicit `snap[j]` mentions — none worked. **Fix**: extract the
 per-cell body into a *named* spec fn `frame_cell_inv`, giving the `forall` a
 clean function-application trigger (`#[trigger] frame_cell_inv(...)`). This is
-why the invariant is factored that way. (`68d224f`)
+why the invariant is factored that way.
 
 ### 🔁 Faithful pop body — proved then reverted (twice)
 Wrote the full faithful `pop` (conditional capture into the marked region) and
@@ -192,7 +192,7 @@ concrete step.
 
 ## Current state of the tree
 
-HEAD `31fd7a3`: **173 verified, 0 errors, no admits/assumes**. Proved = ladder
+The tree verifies clean (0 errors, no admits/assumes). Proved = ladder
 rungs 1–5 (**faithful pop**) PLUS **M5 fork-history / branch-cut safety** PLUS
 **production API parity**. The full vector supports pop into a frame's marked
 region, arbitrary nesting, the headline restore theorem
@@ -200,18 +200,18 @@ region, arbitrary nesting, the headline restore theorem
 rejection (branch-cut safety).
 
 ### M5 fork history / branch-cut safety — LANDED (6 commits)
-- `b1153aa` ContainerId (external_body u32 + ghost id) + ForkHistory port +
+- ContainerId (external_body u32 + ghost id) + ForkHistory port +
   `is_valid` while-loop ⟺ `fork_valid` refinement + `fh_wf`.
-- `15e51ac` GENERAL branch-safety theorem `lemma_fork_valid_characterization`:
+- GENERAL branch-safety theorem `lemma_fork_valid_characterization`:
   `fork_valid` ⟺ `reaches(current, tb)` ∧ `td ≤ walk_bound(current, cd, tb)`
   (all cases: current branch, ancestors, off-path rejection). Induction on
   `branch` under `fh_wf`.
-- `7491d6c` wired into `Vec`: `forks`/`id` fields (wf carries `forks.wf()`),
+- wired into `Vec`: `forks`/`id` fields (wf carries `forks.wf()`),
   `VecToken` + branch_id/depth/container_id, `mark` stamps, `restore` requires
   `is_token_valid_spec` + records the cut via `forks.fork(...)`. Reconstruction
   theorem UNCHANGED (validity is a parallel precondition, not coupled to it).
-- `1a05b8e` `is_valid_token`/`depth` exec methods + `with_store`/`new`.
-- `67fda81` `VecView`/`VecViewIter` iteration; `31fd7a3` `ShrinkPolicy`+`mark`,
+- `is_valid_token`/`depth` exec methods + `with_store`/`new`.
+- `VecView`/`VecViewIter` iteration; `ShrinkPolicy`+`mark`,
   byte-accounting.
   Verus gotcha: a struct named `View` collides with vstd's `@`-desugaring
   (`.view()`) and breaks `@` on std Vec — use `VecView`. Also: the replay loop
@@ -220,25 +220,25 @@ rejection (branch-cut safety).
 ### Faithful pop — how it landed (5 commits, each green)
 
 ### Faithful pop — how it landed (5 commits, each green)
-1. `7b28f29` `lemma_overlay_lowest` — lowest-position-in-range wins (cross-
+1. `lemma_overlay_lowest` — lowest-position-in-range wins (cross-
    stratum), replacing the uniqueness-only `lemma_overlay_captured` for the
    flat proof.
-2. `1ff6888` `lemma_cell_eq_overlay` — the **flat, base-parametric, target-
+2. `lemma_cell_eq_overlay` — the **flat, base-parametric, target-
    clamped** central lemma. Reconstructs a single `snapshots[k][j]` by
    overlaying the whole tail `[diff_start_k, n)` onto a base, via downward
    induction; captured cells pinned by `lemma_overlay_lowest`, uncaptured
    cells recurse one frame up (coverage gives `j < layer_above.len()`),
    terminating at the top frame. Uses NO saved_len monotonicity.
-3. `0002620` `restore` reworked: `resize_default(saved_len)` → base of length
+3. `restore` reworked: `resize_default(saved_len)` → base of length
    exactly the target's saved_len → flat lemma on the pre-resize `old_self`
    (it's base-parametric, so the resized data is the base) → overwrite-only
    replay. Adds `T: Default` on `restore`.
-4. `d6585a2` dropped the two now-false `wf_for_snap` clauses (top-fullness +
+4. dropped the two now-false `wf_for_snap` clauses (top-fullness +
    saved_len monotonicity), replaced by per-frame coverage. Deleted the dead
    layered `lemma_snap_eq_overlay` and the three false lemmas
    `lemma_saved_len_{monotone,le_active,le_view}`. `push` now REQUIRED to call
    `store.mark_captured(old_len)` on re-entry (bridge would break otherwise).
-5. `99b6788` faithful `pop`: dropped the transient-only precondition;
+5. faithful `pop`: dropped the transient-only precondition;
    conditionally captures the popped cell when it's inside the marked region.
    New free lemma `lemma_captured_in_range_append_other` (a one-entry append at
    the popped index doesn't change any other cell's captured-status).
@@ -265,3 +265,6 @@ site — `lt()`'s ensures won't unfold to `as_nat() < as_nat()`. Compare via
 - One milestone per commit; always leave the tree verifying; never commit a
   broken half-migration. Several faithful-pop attempts were reverted precisely
   to honor this.
+
+---
+[← Table of Contents](00-table-of-contents.md)

@@ -227,3 +227,6 @@ If this sketch looks right, the build order is:
 5. Faithful `pop` + `push` mark_captured.
 
 Each step green before the next.
+
+---
+[← Table of Contents](00-table-of-contents.md)

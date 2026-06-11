@@ -171,3 +171,6 @@ In `containers-verus` the same split holds:
 `node_types.rs`/`bplus.rs` against the merged versions before step 1 — the
 generalized `NodeLayout` B+tree changes `BPlusNode` into multiple layout
 structs, each needing the §3 treatment.)
+
+---
+[← Table of Contents](00-table-of-contents.md)
