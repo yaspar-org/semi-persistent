@@ -176,9 +176,12 @@ ancestor chain of `current_branch_id`.
    `fork_valid(origins@, current_branch_id, d, t_branch, t_depth)`. Pure over
    `ForkHistory`; no vec.rs.
 2. **Branch-safety theorem** (§0.6) — `fork_valid` equals the declarative
-   predicate "`token.branch_id` is on the current path AND `token.depth ≤
-   bound(token.branch_id)`". Pure over `ForkHistory`. NOT yet proved in
-   general; see §2.1 for what IS proved so far.
+   predicate "`token.branch_id` is reachable from `current_branch_id` AND
+   `token.depth ≤ walk_bound(token.branch_id)`". Pure over `ForkHistory`.
+   **PROVED** — `lemma_fork_valid_characterization` (via
+   `lemma_fork_walk_characterization`, induction on `branch` under `fh_wf`).
+   `reaches`/`walk_bound` are the spec fns realizing "on the current path" and
+   "the branch's depth bound".
 3. **`mark`/`restore`/`fork` maintain `fh_wf`**, and `restore` calls
    `forks.fork(token, frames.len())` after reconstruction (records the cut).
    The only vec.rs wiring; `fork` mutates only the `ForkHistory` field, so the
@@ -187,27 +190,26 @@ ancestor chain of `current_branch_id`.
    `forks.is_valid(...)`. `restore` requires it as a precondition, alongside —
    not in place of — its own `frame_index < frames.len()` precondition (§0.5).
 
-### 2.1. Proved so far vs. remaining
+### 2.1. Proof status (all DONE)
 
-- DONE: refinement (item 1); `fork`/`new` maintain `fh_wf`; and `lemma_branch_cut`
-  — the SINGLE-CUT INSTANCE of item 2: *immediately after* `fork(p, d)`, a
-  token on branch `p` satisfies `fork_valid` iff `token.depth ≤ d`. Plus
-  `lemma_fork_valid_current_branch` (the same-current-branch case).
-- NOT YET PROVED: the GENERAL branch-safety theorem (§0.6) for arbitrary
-  current paths — i.e. that `fork_valid` equals "on current path AND depth ≤
-  bound", covering strict-grandparent branches and the off-path (sibling
-  subtree) rejection. `lemma_branch_cut` is only the depth-`d`-just-cut case;
-  it does NOT by itself establish the full characterization.
+- Refinement (item 1): `is_valid` while-loop == `fork_valid`.
+- `new`/`fork` maintain `fh_wf`.
+- GENERAL branch-safety theorem (item 2, §0.6): `lemma_fork_valid_characterization`
+  proves `fork_valid == reaches(current, tb) && td ≤ walk_bound(current, cd, tb)`
+  for ALL cases — current branch, strict ancestors (parent, grandparent, …),
+  and off-path rejection (`reaches` false ⇒ invalid). Proved by induction on
+  `branch` under `fh_wf` (which kills the `parent ≥ branch` dead guards so the
+  three recursions align).
+- `lemma_branch_cut` (single-cut instance) and `lemma_fork_valid_current_branch`
+  (current-branch case) remain as convenient specializations.
 
 ## 3. Build order (each commit green)
 
 1. **`ContainerId`** — concrete id wrapper. **[DONE — see §4c.]**
 2. **`ForkHistory` + `fork_valid` + refinement lemma**. **[DONE.]**
-3. **Branch-safety theorem**: define on-path / bound as spec fns and prove
-   `fork_valid ⟺ on_path(token_branch) && token_depth ≤ bound(token_branch)`
-   (§0.6). Pure over `ForkHistory`, no vec.rs. **[`lemma_branch_cut` +
-   `lemma_fork_valid_current_branch` DONE — the single-cut and current-branch
-   instances. General theorem PENDING.]**
+3. **Branch-safety theorem**: `reaches`/`walk_bound` spec fns +
+   `lemma_fork_valid_characterization` proving `fork_valid ⟺ reaches(tb) &&
+   td ≤ walk_bound(tb)` (§0.6). Pure over `ForkHistory`, no vec.rs. **[DONE.]**
 4. **Wire into `Vec`**: add `forks: ForkHistory` + `id: ContainerId` fields,
    extend `VecToken` with `branch_id`/`depth`/`container_id` (real `u32`/
    `ContainerId`), `mark` stamps them, `restore` `assert`s `is_valid_token` and
