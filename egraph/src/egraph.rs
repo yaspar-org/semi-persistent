@@ -44,6 +44,10 @@ pub struct EGraph<
     collisions: Vec<(Cfg::G, Cfg::G)>,
     g_buf: Vec<Cfg::G>,
     ac_buf: Vec<Cfg::C>,
+    /// Semi-naive touched log: node ids created or recanonicalized since the
+    /// last `clear_touched`. Round-local scratch (cleared on `restore`);
+    /// drives the per-round delta index. Not part of persistent state.
+    touched: Vec<Cfg::G>,
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -82,6 +86,7 @@ where
             collisions: Vec::new(),
             g_buf: Vec::new(),
             ac_buf: Vec::new(),
+            touched: Vec::new(),
         }
     }
 
@@ -211,8 +216,9 @@ where
         plan: &crate::schedule::QueryPlan<Cfg::O>,
     ) -> Vec<crate::ematch::Match<Cfg>> {
         let index = crate::index::IndexStore::build(self);
+        let vindex = crate::index::VariantIndex::naive(&index);
         let empty: crate::resolve::GlobalCtx<Cfg::S, Cfg::G> = crate::resolve::GlobalCtx::new();
-        crate::ematch::run_query(plan, self, &index, &empty)
+        crate::ematch::run_query(plan, self, &vindex, &empty)
     }
 
     /// Saturate: apply rules to fixpoint or until `limit` iterations.
@@ -224,6 +230,18 @@ where
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     ) -> crate::saturate::SatResult {
         crate::saturate::saturate(rules, self, model, limit, globals)
+    }
+
+    /// Semi-naive saturation (each round matches only what changed). No
+    /// automatic fallback to the naive path.
+    pub fn saturate_semi<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        limit: usize,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_semi(rules, self, model, limit, globals)
     }
 
     pub fn find(&mut self, x: Cfg::G) -> Cfg::G {
@@ -522,6 +540,7 @@ where
                     &mut self.g_buf,
                     &mut self.ac_buf,
                     &mut self.collisions,
+                    &mut self.touched,
                 );
             }
 
@@ -574,13 +593,28 @@ where
         self.lits.restore(token.lits);
         self.worklist.clear();
         self.collisions.clear();
+        self.touched.clear();
     }
 
     fn register_if_fresh(&mut self, result: Added<Cfg::G>) -> Cfg::G {
         if result.is_fresh() {
             self.classes.add_singleton(result.id());
+            self.touched.push(result.id());
         }
         result.id()
+    }
+
+    /// Semi-naive: node ids created or recanonicalized since the last
+    /// `clear_touched` (or `restore`). May contain duplicates; the delta
+    /// index builder deduplicates. Superset of all genuinely-changed nodes.
+    pub fn touched(&self) -> &[Cfg::G] {
+        &self.touched
+    }
+
+    /// Clear the touched log (call at a semi-naive round boundary, after the
+    /// delta index for the round has been built).
+    pub fn clear_touched(&mut self) {
+        self.touched.clear();
     }
 
     // -----------------------------------------------------------------------

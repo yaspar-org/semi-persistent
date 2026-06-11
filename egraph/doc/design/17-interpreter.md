@@ -104,10 +104,10 @@ pub fn saturate(rules, eg, model, limit, globals) -> SatResult {
             }
         }
         if changes == 0 {
-            return SatResult { iterations: i + 1, saturated: true };
+            return SatResult { iterations: i + 1, saturated: true, match_steps };
         }
     }
-    SatResult { iterations: limit, saturated: false }
+    SatResult { iterations: limit, saturated: false, match_steps }
 }
 ```
 
@@ -116,6 +116,35 @@ detecting congruences), then constructs sorted indices from scratch,
 schedules each rule based on current cardinalities, executes the
 plans via leapfrog triejoin, and applies the resulting actions. If
 no actions produced changes, saturation is complete.
+
+`SatResult` also carries `match_steps`: the total number of
+partial-match extensions explored across all rounds. It is populated
+only when match-step counting is enabled (off by default; see the
+instrumentation note below), and is the direct measure used to compare
+match work between strategies.
+
+## Saturation Strategy
+
+The loop above is the **naive** strategy: every round rediscovers all
+matches against the freshly-built full index. The interpreter can
+instead run **semi-naive** evaluation, which matches only what changed
+each round:
+
+```rust
+pub enum SaturationStrategy { Naive, SemiNaive }  // default: Naive
+
+interp.set_strategy(SaturationStrategy::SemiNaive);
+```
+
+`(run N)` dispatches on the selected strategy: `Naive` calls
+`saturate`, `SemiNaive` calls `saturate_semi`. On the CLI the strategy
+is chosen with `--strategy naive|semi-naive` (default `naive`), and
+match-step counting is enabled with `--count-match-steps`, which prints
+the total match work at the end of the run. The default is unchanged,
+so existing programs behave identically. Semi-naive is sound,
+fixpoint-equivalent to naive, and has no automatic fallback. Its
+mechanism — the `touched` log, delta index, `VariantIndex`, and the
+k-variant fan-out — is the subject of Chapter 18.
 
 ## Push/Pop Scoping
 

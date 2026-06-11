@@ -31,6 +31,11 @@ pub enum Step<O> {
     Join {
         target: VarId,
         lookups: Vec<IndexLookup<O>>,
+        /// Stable atom index in the compile-time numbering. Bridges the
+        /// fixed atom order (which defines semi-naive variants) to the
+        /// dynamic execution order chosen by the scheduler. Not used by
+        /// the naive matcher; consumed by semi-naive variant dispatch.
+        atom_id: usize,
     },
     ExtractChild {
         target: VarId,
@@ -88,7 +93,17 @@ pub struct QueryPlan<O> {
 // ---------------------------------------------------------------------------
 
 pub struct IndexStats<O: Eq + Hash> {
+    /// Per-op driver-scan cardinality (`|by_op[op]|`). The base estimate for an
+    /// atom when no per-atom override is present — correct for naive matching,
+    /// where every atom of an op reads the same full bucket.
     pub op_card: std::collections::HashMap<O, usize>,
+    /// Per-atom (`atom_id`) driver-scan cardinality, overriding `op_card` for
+    /// that atom. Needed for semi-naive: an atom's base cardinality is set by
+    /// its **mode** (delta / full / full∖delta), which is per-atom, not per-op —
+    /// two atoms with the same op can have different modes in one flavor (e.g.
+    /// `(f (f x y) z)` variant 1: atom 0 is full∖delta, atom 1 is delta, both
+    /// op `f`). `op_card` cannot represent that; `atom_card` can.
+    pub atom_card: std::collections::HashMap<usize, usize>,
 }
 
 impl<O: Eq + Hash> Default for IndexStats<O> {
@@ -101,6 +116,7 @@ impl<O: Eq + Hash> IndexStats<O> {
     pub fn new() -> Self {
         Self {
             op_card: std::collections::HashMap::new(),
+            atom_card: std::collections::HashMap::new(),
         }
     }
 }
@@ -113,6 +129,7 @@ impl<O: Eq + Hash + Copy> IndexStats<O> {
     {
         Self {
             op_card: index.by_op.iter().map(|(&op, v)| (op, v.len())).collect(),
+            atom_card: std::collections::HashMap::new(),
         }
     }
 }
@@ -134,26 +151,59 @@ fn pv_mark_bound(pv: &PatVar, bound: &mut [bool]) {
     }
 }
 
+/// Base driver-scan cardinality for an atom: its per-atom override
+/// (`atom_card[atom_id]`, set per semi-naive flavor) if present, else the
+/// per-op bucket size (`op_card[op]`, the naive default).
+fn base_card<O: Eq + Hash>(op: &O, atom_id: usize, stats: &IndexStats<O>) -> usize {
+    stats
+        .atom_card
+        .get(&atom_id)
+        .copied()
+        .or_else(|| stats.op_card.get(op).copied())
+        .unwrap_or(usize::MAX)
+}
+
+/// Halve `base` once per bound key, modelling each bound child/element as an
+/// index intersection that narrows the driver. Mirrors the discount the join
+/// actually applies: `Plain`/`AExact` intersect `by_child_pos` per bound child;
+/// the variadic atoms (A*/AC*/ACI*) intersect `by_contains` per bound element
+/// (see `emit_variadic_join`). Without this, a fully-bound variadic atom is
+/// mis-costed as a full `by_op` scan and the scheduler may refuse to drive from
+/// it even though `by_contains` makes it the cheapest atom.
+fn cost_discounted<O: Eq + Hash>(
+    op: &O,
+    atom_id: usize,
+    n_bound: usize,
+    stats: &IndexStats<O>,
+) -> usize {
+    base_card(op, atom_id, stats) >> n_bound.min(16)
+}
+
 fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
     atom: &RAtom<O, S, V>,
+    atom_id: usize,
     bound: &[bool],
     stats: &IndexStats<O>,
 ) -> usize {
+    let bound_count = |pvs: &[PatVar]| pvs.iter().filter(|p| pv_is_bound(p, bound)).count();
     match atom {
         RAtom::Plain { op, children, .. } | RAtom::AExact { op, children, .. } => {
-            let base = stats.op_card.get(op).copied().unwrap_or(usize::MAX);
-            let bc = children.iter().filter(|c| pv_is_bound(c, bound)).count();
-            base >> bc.min(16)
+            cost_discounted(op, atom_id, bound_count(children), stats)
         }
-        RAtom::APrefix { op, .. }
-        | RAtom::ASuffix { op, .. }
-        | RAtom::ABoth { op, .. }
-        | RAtom::ACExact { op, .. }
-        | RAtom::ACSub { op, .. }
-        | RAtom::ACIExact { op, .. }
-        | RAtom::ACISub { op, .. } => stats.op_card.get(op).copied().unwrap_or(usize::MAX),
+        // Variadic atoms narrow via `by_contains` per bound element, exactly
+        // like Plain's `by_child_pos` — so apply the same per-bound discount.
+        RAtom::APrefix { op, fixed, .. }
+        | RAtom::ASuffix { op, fixed, .. }
+        | RAtom::ABoth { op, fixed, .. } => cost_discounted(op, atom_id, bound_count(fixed), stats),
+        RAtom::ACExact { op, elems, .. } | RAtom::ACSub { op, elems, .. } => {
+            let nb = elems.iter().filter(|(p, _)| pv_is_bound(p, bound)).count();
+            cost_discounted(op, atom_id, nb, stats)
+        }
+        RAtom::ACIExact { op, elems, .. } | RAtom::ACISub { op, elems, .. } => {
+            cost_discounted(op, atom_id, bound_count(elems), stats)
+        }
         RAtom::Lit { .. } => 1,
-        RAtom::LitBind { op, .. } => stats.op_card.get(op).copied().unwrap_or(usize::MAX),
+        RAtom::LitBind { op, .. } => base_card(op, atom_id, stats),
         RAtom::Eq(..) | RAtom::EqGlobal(..) => 0,
     }
 }
@@ -181,81 +231,10 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V>(
                 if used[ai] {
                     continue;
                 }
-                match &rq.atoms[ai] {
-                    RAtom::Eq(a, b) => {
-                        if bound[(*a).idx()] && bound[(*b).idx()] {
-                            steps.push(Step::CheckEq { a: *a, b: *b });
-                        } else if bound[(*a).idx()] {
-                            steps.push(Step::CopyBinding {
-                                target: *b,
-                                other: *a,
-                            });
-                            bound[(*b).idx()] = true;
-                        } else if bound[(*b).idx()] {
-                            steps.push(Step::CopyBinding {
-                                target: *a,
-                                other: *b,
-                            });
-                            bound[(*a).idx()] = true;
-                        } else {
-                            continue;
-                        }
-                        used[ai] = true;
-                        progress = true;
-                    }
-                    RAtom::EqGlobal(local, global) if bound[(*local).idx()] => {
-                        steps.push(Step::CheckEqGlobal {
-                            local: *local,
-                            global: *global,
-                        });
-                        used[ai] = true;
-                        progress = true;
-                    }
-                    RAtom::Lit { node, .. } => {
-                        if !bound[(*node).idx()] {
-                            steps.push(Step::Join {
-                                target: *node,
-                                lookups: vec![],
-                            });
-                            bound[(*node).idx()] = true;
-                        }
-                        used[ai] = true;
-                        progress = true;
-                    }
-                    RAtom::LitBind { node, op, val } if bound[(*node).idx()] => {
-                        // Node is bound to a class rep — re-join to find
-                        // the node with the right lit op in that class.
-                        steps.push(Step::Join {
-                            target: *node,
-                            lookups: vec![
-                                IndexLookup::ByRepr { repr: *node },
-                                IndexLookup::ByOp { op: *op },
-                            ],
-                        });
-                        steps.push(Step::ExtractLitVal {
-                            node: *node,
-                            val: *val,
-                        });
-                        used[ai] = true;
-                        progress = true;
-                    }
-                    // Otherwise defer to cost-based selection.
-                    RAtom::Plain { node, op, .. } if bound[(*node).idx()] => {
-                        // The node var is bound to a class representative, but
-                        // we need a node with the specific op in that class.
-                        // Re-join within the class: ByRepr ∩ ByOp.
-                        steps.push(Step::Join {
-                            target: *node,
-                            lookups: vec![
-                                IndexLookup::ByRepr { repr: *node },
-                                IndexLookup::ByOp { op: *op },
-                            ],
-                        });
-                        emit_read_children(&rq.atoms[ai], &mut bound, &mut steps);
-                        used[ai] = true;
-                        progress = true;
-                    }
-                    _ => {}
+                if let Some(eager) = try_eager_lower(&rq.atoms[ai], ai, &mut bound) {
+                    steps.extend(eager);
+                    used[ai] = true;
+                    progress = true;
                 }
             }
         }
@@ -265,10 +244,10 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V>(
             .filter(|&ai| {
                 !used[ai] && !matches!(&rq.atoms[ai], RAtom::Eq(..) | RAtom::EqGlobal(..))
             })
-            .min_by_key(|&ai| estimate_cost(&rq.atoms[ai], &bound, stats));
+            .min_by_key(|&ai| estimate_cost(&rq.atoms[ai], ai, &bound, stats));
 
         let Some(ai) = best else { break };
-        emit_atom(&rq.atoms[ai], &mut bound, &mut steps);
+        emit_atom(&rq.atoms[ai], ai, &mut bound, &mut steps);
         used[ai] = true;
     }
 
@@ -308,6 +287,7 @@ fn emit_read_children<O: DenseId + Hash + Copy, S, V>(
 
 fn emit_atom<O: DenseId + Hash + Copy, S, V>(
     atom: &RAtom<O, S, V>,
+    atom_id: usize,
     bound: &mut [bool],
     steps: &mut Vec<Step<O>>,
 ) {
@@ -325,6 +305,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             steps.push(Step::Join {
                 target: *node,
                 lookups,
+                atom_id,
             });
             bound[(*node).idx()] = true;
             for (pos, &cv) in children.iter().enumerate() {
@@ -352,6 +333,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
                 steps.push(Step::Join {
                     target: *node,
                     lookups: vec![],
+                    atom_id,
                 });
                 bound[(*node).idx()] = true;
             }
@@ -361,6 +343,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
                 steps.push(Step::Join {
                     target: *node,
                     lookups: vec![IndexLookup::ByOp { op: *op }],
+                    atom_id,
                 });
                 bound[(*node).idx()] = true;
             }
@@ -371,7 +354,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
         }
         RAtom::Eq(..) | RAtom::EqGlobal(..) => {}
         RAtom::AExact { node, op, children } => {
-            emit_variadic_join(node, *op, bound, steps);
+            emit_variadic_join(node, *op, atom_id, children, bound, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: children.clone(),
@@ -388,7 +371,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             pre,
             fixed,
         } => {
-            emit_variadic_join(node, *op, bound, steps);
+            emit_variadic_join(node, *op, atom_id, fixed, bound, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: fixed.clone(),
@@ -405,7 +388,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             fixed,
             suf,
         } => {
-            emit_variadic_join(node, *op, bound, steps);
+            emit_variadic_join(node, *op, atom_id, fixed, bound, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: fixed.clone(),
@@ -423,7 +406,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             fixed,
             suf,
         } => {
-            emit_variadic_join(node, *op, bound, steps);
+            emit_variadic_join(node, *op, atom_id, fixed, bound, steps);
             steps.push(Step::ExpandA {
                 node: *node,
                 children: fixed.clone(),
@@ -435,7 +418,8 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             }
         }
         RAtom::ACExact { node, op, elems } => {
-            emit_variadic_join(node, *op, bound, steps);
+            let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+            emit_variadic_join(node, *op, atom_id, &evs, bound, steps);
             steps.push(Step::DecomposeAC {
                 node: *node,
                 elems: elems.clone(),
@@ -452,7 +436,8 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             elems,
             rest,
         } => {
-            emit_variadic_join(node, *op, bound, steps);
+            let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+            emit_variadic_join(node, *op, atom_id, &evs, bound, steps);
             steps.push(Step::DecomposeAC {
                 node: *node,
                 elems: elems.clone(),
@@ -464,7 +449,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             }
         }
         RAtom::ACIExact { node, op, elems } => {
-            emit_variadic_join(node, *op, bound, steps);
+            emit_variadic_join(node, *op, atom_id, elems, bound, steps);
             steps.push(Step::DecomposeACI {
                 node: *node,
                 elems: elems.clone(),
@@ -480,7 +465,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
             elems,
             rest,
         } => {
-            emit_variadic_join(node, *op, bound, steps);
+            emit_variadic_join(node, *op, atom_id, elems, bound, steps);
             steps.push(Step::DecomposeACI {
                 node: *node,
                 elems: elems.clone(),
@@ -493,18 +478,133 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
     }
 }
 
+/// Try to lower an atom that is *forced or free* given the current bindings —
+/// the "eager pass" cases that cost nothing to resolve and only shrink the
+/// problem: `Eq`/`EqGlobal` constraints between bound vars, `Lit` (always),
+/// and `LitBind`/`Plain` whose node var is already bound (re-join within its
+/// class). Returns `Some(steps)` and marks newly-bound vars if the atom is
+/// eagerly resolvable now; `None` if it must wait for cost-based selection
+/// (an unbound scanning atom). Single source of truth shared by the static
+/// scheduler's eager pass and the runtime-adaptive matcher.
+pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V>(
+    atom: &RAtom<O, S, V>,
+    atom_id: usize,
+    bound: &mut [bool],
+) -> Option<Vec<Step<O>>> {
+    let mut steps = Vec::new();
+    match atom {
+        RAtom::Eq(a, b) => {
+            if bound[(*a).idx()] && bound[(*b).idx()] {
+                steps.push(Step::CheckEq { a: *a, b: *b });
+            } else if bound[(*a).idx()] {
+                steps.push(Step::CopyBinding {
+                    target: *b,
+                    other: *a,
+                });
+                bound[(*b).idx()] = true;
+            } else if bound[(*b).idx()] {
+                steps.push(Step::CopyBinding {
+                    target: *a,
+                    other: *b,
+                });
+                bound[(*a).idx()] = true;
+            } else {
+                return None;
+            }
+        }
+        RAtom::EqGlobal(local, global) if bound[(*local).idx()] => {
+            steps.push(Step::CheckEqGlobal {
+                local: *local,
+                global: *global,
+            });
+        }
+        RAtom::Lit { node, .. } => {
+            if !bound[(*node).idx()] {
+                steps.push(Step::Join {
+                    target: *node,
+                    lookups: vec![],
+                    atom_id,
+                });
+                bound[(*node).idx()] = true;
+            }
+        }
+        RAtom::LitBind { node, op, val } if bound[(*node).idx()] => {
+            steps.push(Step::Join {
+                target: *node,
+                lookups: vec![
+                    IndexLookup::ByRepr { repr: *node },
+                    IndexLookup::ByOp { op: *op },
+                ],
+                atom_id,
+            });
+            steps.push(Step::ExtractLitVal {
+                node: *node,
+                val: *val,
+            });
+        }
+        RAtom::Plain { node, op, .. } if bound[(*node).idx()] => {
+            steps.push(Step::Join {
+                target: *node,
+                lookups: vec![
+                    IndexLookup::ByRepr { repr: *node },
+                    IndexLookup::ByOp { op: *op },
+                ],
+                atom_id,
+            });
+            emit_read_children(atom, bound, &mut steps);
+        }
+        _ => return None,
+    }
+    Some(steps)
+}
+
 fn emit_variadic_join<O: DenseId + Hash + Copy>(
     node: &VarId,
     op: O,
+    atom_id: usize,
+    elems: &[PatVar],
     bound: &mut [bool],
     steps: &mut Vec<Step<O>>,
 ) {
     if !bound[(*node).idx()] {
+        // Drive from `by_op[op]`, intersected with `by_contains[e]` for every
+        // element `e` already bound. A matching variadic node MUST contain each
+        // bound element, so `by_contains[e]` is a sound (membership-only) filter
+        // — the following DecomposeAC/ExpandA/DecomposeACI does the precise
+        // multiplicity/position check. This narrows the driver to the few
+        // parents containing the bound element instead of scanning the whole
+        // `by_op` bucket — the variadic analogue of `Plain`'s `ByChildPos`.
+        let mut lookups = vec![IndexLookup::ByOp { op }];
+        for &pv in elems {
+            if pv_is_bound(&pv, bound) {
+                lookups.push(IndexLookup::ByContains { child: pv });
+            }
+        }
         steps.push(Step::Join {
             target: *node,
-            lookups: vec![IndexLookup::ByOp { op }],
+            lookups,
+            atom_id,
         });
         bound[(*node).idx()] = true;
+    } else {
+        // The node var is already bound — e.g. extracted as an enclosing
+        // atom's child via `ExtractChild`. Re-join within its class
+        // (`ByRepr ∩ ByOp`), exactly as the `Plain` bound-node path does, so
+        // this atom still emits a `Step::Join` carrying `atom_id`. Without it,
+        // the semi-naive variant mode (delta / full∖delta / full) — which is
+        // realized *only* on `Step::Join` (see `ematch::run_join`) — would
+        // never be applied to a parent-driven variadic atom, letting the
+        // parent-driven variant re-discover matches the delta-driven variants
+        // already own. In the naive path this re-join is a no-op intersection
+        // (the node re-selects itself within its own class).
+        steps.push(Step::Join {
+            target: *node,
+            lookups: vec![
+                IndexLookup::ByRepr { repr: *node },
+                IndexLookup::ByOp { op },
+            ],
+            atom_id,
+        });
     }
 }
 
@@ -740,5 +840,63 @@ mod tests {
                     .any(|l| matches!(l, IndexLookup::ByChildPos { .. }))
             );
         }
+    }
+
+    /// A bound element discounts a variadic atom's cost, just as a bound child
+    /// discounts a `Plain` atom — so `estimate_cost` reflects the `by_contains`
+    /// narrowing that `emit_variadic_join` performs. Without the discount a
+    /// fully-bound variadic atom would be mis-costed as a full `by_op` scan.
+    #[test]
+    fn bound_element_discounts_variadic_cost() {
+        let (ops, _, _) = setup();
+        let add = ops.id_by_name("add").unwrap();
+        let mut stats = IndexStats::<OpId>::new();
+        stats.op_card.insert(add, 1000);
+
+        // ACSub `(add x:1 ..rest)` with one element var `x` (VarId 0).
+        let atom = RAtom::<OpId, SortId, NiraLitVal>::ACSub {
+            node: VarId::new(1),
+            op: add,
+            elems: vec![(PatVar::Local(VarId::new(0)), RMult::Exact(1))],
+            rest: crate::ast::MsetVarId::new(0),
+        };
+
+        // x unbound → full op cardinality. (atom_id 0; no per-atom override,
+        // so it falls back to op_card.)
+        let bound_none = [false, false];
+        assert_eq!(estimate_cost(&atom, 0, &bound_none, &stats), 1000);
+
+        // x bound → discounted (halved per bound element), reflecting the
+        // `by_contains[x]` intersection the join will apply.
+        let bound_x = [true, false];
+        let cost_bound = estimate_cost(&atom, 0, &bound_x, &stats);
+        assert!(
+            cost_bound < 1000,
+            "binding an element must discount a variadic atom's cost, got {cost_bound}"
+        );
+        assert_eq!(cost_bound, 500, "one bound element halves the estimate");
+    }
+
+    /// End-to-end: with a bound element, the scheduler must be willing to drive
+    /// from a high-cardinality variadic atom. `(g x)` binds x cheaply; the
+    /// `add` atom has 100× g's cardinality, but once x is bound its discounted
+    /// cost lets `by_contains[x]` carry the join (lookups include ByContains).
+    #[test]
+    fn scheduler_drives_variadic_from_bound_element() {
+        let (qp, vars) =
+            do_plan_with_stats(&["(g x)", "(add x ..rest)"], &[("g", 10), ("add", 1000)]);
+        let x = vars.find_var("x").unwrap();
+        // The add-atom join must intersect by_contains on the bound element x.
+        let has_by_contains = qp.steps.iter().any(|s| match s {
+            Step::Join { lookups, .. } => lookups.iter().any(
+                |l| matches!(l, IndexLookup::ByContains { child } if *child == PatVar::Local(x)),
+            ),
+            _ => false,
+        });
+        assert!(
+            has_by_contains,
+            "variadic atom with a bound element should drive via ByContains: {:?}",
+            qp.steps
+        );
     }
 }

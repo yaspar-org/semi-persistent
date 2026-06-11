@@ -70,6 +70,7 @@ pub struct Interpreter<
     globals: crate::resolve::GlobalCtx<Cfg::S, Cfg::G>,
     marks: Vec<Mark<Cfg, Cfg::O>>,
     shrink_policy: ShrinkPolicy,
+    strategy: crate::saturate::SaturationStrategy,
 }
 
 impl<Cfg: EGraphConfig, L: LitVal, M: LitModel<Value = L>, const TRACK: bool, const PROOFS: bool>
@@ -87,6 +88,7 @@ where
             globals: crate::resolve::GlobalCtx::new(),
             marks: Vec::new(),
             shrink_policy: ShrinkPolicy::Never,
+            strategy: crate::saturate::SaturationStrategy::default(),
         }
     }
 
@@ -104,12 +106,18 @@ where
             globals: crate::resolve::GlobalCtx::new(),
             marks: Vec::new(),
             shrink_policy: ShrinkPolicy::Never,
+            strategy: crate::saturate::SaturationStrategy::default(),
         }
     }
 
     /// Set the shrink policy used by `push`/`pop`.
     pub fn set_shrink_policy(&mut self, policy: ShrinkPolicy) {
         self.shrink_policy = policy;
+    }
+
+    /// Select the saturation strategy used by `(run …)`.
+    pub fn set_strategy(&mut self, strategy: crate::saturate::SaturationStrategy) {
+        self.strategy = strategy;
     }
 
     fn alloc_axiom_id(&mut self, lhs: Cfg::G, rhs: Cfg::G) -> crate::id::AxiomId {
@@ -223,8 +231,17 @@ where
                 });
             }
             CCommand::Run(n) => {
-                self.eg
-                    .saturate(&self.rules, &self.model, *n as usize, &self.globals);
+                let limit = *n as usize;
+                match self.strategy {
+                    crate::saturate::SaturationStrategy::Naive => {
+                        self.eg
+                            .saturate(&self.rules, &self.model, limit, &self.globals);
+                    }
+                    crate::saturate::SaturationStrategy::SemiNaive => {
+                        self.eg
+                            .saturate_semi(&self.rules, &self.model, limit, &self.globals);
+                    }
+                }
             }
             CCommand::Push(shrink) => {
                 let policy = if *shrink {

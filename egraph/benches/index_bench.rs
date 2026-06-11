@@ -1,7 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use criterion::{Criterion, criterion_group, criterion_main};
-use semi_persistent_containers::bplus::BPlusTreeSet;
+use semi_persistent_containers::DenseId;
+use semi_persistent_containers::bplus::{BPlusTreeSet, BinarySearch, Layout64};
+use semi_persistent_egraph::id::ENodeId;
 use std::collections::{BTreeSet, HashSet};
 
 const N: usize = 10_000_000;
@@ -25,17 +27,22 @@ fn bench_10m(c: &mut Criterion) {
     // Pre-build sorted vec (not timed).
     let mut sorted = random_keys.clone();
     sorted.sort_unstable();
+    let sorted_ids: Vec<ENodeId> = sorted
+        .iter()
+        .map(|&x| ENodeId::new(x & 0x7FFF_FFFF))
+        .collect();
 
     // Pre-build BTreeSet (not timed).
     let btree: BTreeSet<u32> = random_keys.iter().copied().collect();
 
     // Pre-build B+Tree from sorted (not timed).
-    let bplus_bulk = BPlusTreeSet::<false>::from_sorted(&sorted);
+    let bplus_bulk =
+        BPlusTreeSet::<ENodeId, Layout64, BinarySearch, false>::from_sorted(&sorted_ids);
 
     // Pre-build B+Tree via insert (not timed).
-    let mut bplus_inc = BPlusTreeSet::<false>::new();
+    let mut bplus_inc = BPlusTreeSet::<ENodeId, Layout64, BinarySearch, false>::new();
     for &k in &random_keys {
-        bplus_inc.insert(k);
+        bplus_inc.insert(ENodeId::new(k & 0x7FFF_FFFF));
     }
 
     // --- Build benchmarks ---
@@ -54,16 +61,17 @@ fn bench_10m(c: &mut Criterion) {
         b.iter(|| {
             let mut v = random_keys.clone();
             v.sort_unstable();
-            let t = BPlusTreeSet::<false>::from_sorted(&v);
+            let vi: Vec<ENodeId> = v.iter().map(|&x| ENodeId::new(x & 0x7FFF_FFFF)).collect();
+            let t = BPlusTreeSet::<ENodeId, Layout64, BinarySearch, false>::from_sorted(&vi);
             std::hint::black_box(t.len());
         });
     });
 
     group.bench_function("bplus_insert", |b| {
         b.iter(|| {
-            let mut t = BPlusTreeSet::<false>::new();
+            let mut t = BPlusTreeSet::<ENodeId, Layout64, BinarySearch, false>::new();
             for &k in &random_keys {
-                t.insert(k);
+                t.insert(ENodeId::new(k & 0x7FFF_FFFF));
             }
             std::hint::black_box(t.len());
         });
@@ -98,7 +106,7 @@ fn bench_10m(c: &mut Criterion) {
             cur.seek_first();
             let mut sum = 0u64;
             while let Some(k) = cur.key() {
-                sum = sum.wrapping_add(k as u64);
+                sum = sum.wrapping_add(k.to_usize() as u64);
                 cur.step();
             }
             std::hint::black_box(sum);
@@ -111,7 +119,7 @@ fn bench_10m(c: &mut Criterion) {
             cur.seek_first();
             let mut sum = 0u64;
             while let Some(k) = cur.key() {
-                sum = sum.wrapping_add(k as u64);
+                sum = sum.wrapping_add(k.to_usize() as u64);
                 cur.step();
             }
             std::hint::black_box(sum);
@@ -153,9 +161,9 @@ fn bench_10m(c: &mut Criterion) {
             let mut cur = bplus_bulk.cursor();
             let mut sum = 0u64;
             for &target in &seeks {
-                cur.seek(target);
+                cur.seek(ENodeId::new(target & 0x7FFF_FFFF));
                 if let Some(k) = cur.key() {
-                    sum = sum.wrapping_add(k as u64);
+                    sum = sum.wrapping_add(k.to_usize() as u64);
                 }
             }
             std::hint::black_box(sum);
@@ -184,9 +192,9 @@ fn bench_monotonic_insert(c: &mut Criterion) {
 
     group.bench_function("bplus", |b| {
         b.iter(|| {
-            let mut t = BPlusTreeSet::<false>::new();
+            let mut t = BPlusTreeSet::<ENodeId, Layout64, BinarySearch, false>::new();
             for i in 0..n {
-                t.insert(i);
+                t.insert(ENodeId::new(i));
             }
             std::hint::black_box(t.len());
         });
@@ -196,7 +204,7 @@ fn bench_monotonic_insert(c: &mut Criterion) {
         b.iter(|| {
             let mut t = BTreeSet::new();
             for i in 0..n {
-                t.insert(i);
+                t.insert(ENodeId::new(i));
             }
             std::hint::black_box(t.len());
         });

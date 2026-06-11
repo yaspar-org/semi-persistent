@@ -199,6 +199,7 @@ impl<
         local_id: L,
         find: impl Fn(G) -> G,
         collisions: &mut Vec<(G, G)>,
+        touched: &mut Vec<G>,
     ) {
         let mut node = self.nodes.get(local_id);
         let old_hash = self.hash_content(&node.op(), &node.children);
@@ -212,6 +213,10 @@ impl<
                 return;
             }
         }
+
+        // Node's canonical form genuinely changed this round — record it for
+        // the semi-naive delta (after the no-change early-return above).
+        touched.push(node.global_id());
 
         // save to history on first recanonize
         if let Some(hist) = &mut self.history
@@ -447,6 +452,7 @@ impl<
         find: impl Fn(G) -> G,
         buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
+        touched: &mut Vec<G>,
     ) {
         let node = self.nodes.get(local_id);
         let (start, end) = node.span();
@@ -469,6 +475,10 @@ impl<
                 return;
             }
         }
+
+        // Node's canonical form genuinely changed this round — record it for
+        // the semi-naive delta (after the no-change early-return above).
+        touched.push(node.global_id());
 
         // save to history on first recanonize
         if let (Some(hn), Some(hc)) = (&mut self.history_nodes, &mut self.history_children)
@@ -792,7 +802,7 @@ mod tests {
         let op = OpId::new(0);
         c.probe_or_insert(id(0), op, [id(1), id(2)]);
         let mut collisions = Vec::new();
-        c.recanonize_node::<PlainCanon>(Plain2Id::new(0), |g| g, &mut collisions);
+        c.recanonize_node::<PlainCanon>(Plain2Id::new(0), |g| g, &mut collisions, &mut Vec::new());
         assert!(collisions.is_empty());
         // node unchanged
         assert!(c.probe(&op, &[id(1), id(2)]).is_some());
@@ -811,6 +821,7 @@ mod tests {
                 if g == id(2) { id(1) } else { g }
             },
             &mut collisions,
+            &mut Vec::new(),
         );
         assert!(collisions.is_empty());
         // old key gone, new key present
@@ -832,6 +843,7 @@ mod tests {
                 if g == id(2) { id(1) } else { g }
             },
             &mut collisions,
+            &mut Vec::new(),
         );
         assert_eq!(collisions.len(), 1);
         assert_eq!(collisions[0], (id(20), id(10)));
@@ -850,6 +862,7 @@ mod tests {
                 if g == id(1) { id(9) } else { g }
             },
             &mut collisions,
+            &mut Vec::new(),
         );
         assert!(collisions.is_empty());
         assert!(c.probe(&op, &[id(5), id(9)]).is_some());
@@ -862,7 +875,13 @@ mod tests {
         c.probe_or_insert(id(0), op, &[id(1), id(2), id(3)]);
         let mut buf = Vec::new();
         let mut collisions = Vec::new();
-        c.recanonize_node::<OrderedCanon>(PlainNId::new(0), |g| g, &mut buf, &mut collisions);
+        c.recanonize_node::<OrderedCanon>(
+            PlainNId::new(0),
+            |g| g,
+            &mut buf,
+            &mut collisions,
+            &mut Vec::new(),
+        );
         assert!(collisions.is_empty());
     }
 
@@ -881,6 +900,7 @@ mod tests {
             },
             &mut buf,
             &mut collisions,
+            &mut Vec::new(),
         );
         assert_eq!(collisions, vec![(id(20), id(10))]);
     }
@@ -901,6 +921,7 @@ mod tests {
             },
             &mut buf,
             &mut collisions,
+            &mut Vec::new(),
         );
         assert!(collisions.is_empty());
         assert!(c.probe(op, &[id(1), id(3)]).is_some());
@@ -928,6 +949,7 @@ mod tests {
             },
             &mut buf,
             &mut collisions,
+            &mut Vec::new(),
         );
         assert!(collisions.is_empty());
         let expected: &[ACChild] = &[(id(1), Multiplicity(2)), (id(3), Multiplicity(1))];

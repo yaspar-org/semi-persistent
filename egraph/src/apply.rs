@@ -530,7 +530,8 @@ where
     crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
-    let mut matches = run_query(&plan, eg, index, globals);
+    let vindex = crate::index::VariantIndex::naive(index);
+    let mut matches = run_query(&plan, eg, &vindex, globals);
     let mut changes = 0;
     for m in &mut matches {
         for action in &rule.actions {

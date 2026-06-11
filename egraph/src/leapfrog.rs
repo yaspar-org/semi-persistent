@@ -6,7 +6,98 @@
 //! Veldhuizen, "Leapfrog Triejoin: A Simple, Worst-Case Optimal Join Algorithm" (ICDT 2014)
 
 use crate::containers::DenseId;
-use crate::index::SortedVecIter;
+use crate::index::SortedVecCursor;
+pub use semi_persistent_containers::SortedCursor;
+
+impl<'a, G: DenseId> SortedCursor for SortedVecCursor<'a, G> {
+    type Key = G;
+    #[inline]
+    fn key(&self) -> Option<G> {
+        if SortedVecCursor::is_valid(self) {
+            Some(SortedVecCursor::key(self))
+        } else {
+            None
+        }
+    }
+    #[inline]
+    fn step(&mut self) {
+        SortedVecCursor::step(self);
+    }
+    #[inline]
+    fn seek(&mut self, target: G) {
+        SortedVecCursor::seek(self, target);
+    }
+}
+
+/// Cursor combinator yielding `full ∖ delta`: every key from `full` that is
+/// absent from `delta`. Generic over any two `SortedCursor`s with the same
+/// key type — works for `SortedVecCursor`, `BPlusCursor`, or nested
+/// combinators, with no coupling to a backend. Itself a `SortedCursor`, so
+/// leapfrog consumes it like any other cursor.
+///
+/// Used by semi-naive evaluation to restrict an atom to "old" nodes
+/// (`full ∖ delta`) without materialising a third index.
+///
+/// Invariant: after construction and after every `step`/`seek`, the `full`
+/// sub-cursor points at a non-excluded key or is exhausted, so `key()` just
+/// reads `full`. Relies on leapfrog's monotonic-forward seeks — the `delta`
+/// sub-cursor only ever advances, never rewinds. Cost is `O(|full|+|delta|)`
+/// across a full scan.
+pub struct Difference<A, B> {
+    full: A,
+    delta: B,
+}
+
+impl<K, A, B> Difference<A, B>
+where
+    K: Copy + Ord,
+    A: SortedCursor<Key = K>,
+    B: SortedCursor<Key = K>,
+{
+    /// Wrap `full` and `delta`, establishing the skip invariant.
+    pub fn new(full: A, delta: B) -> Self {
+        let mut d = Self { full, delta };
+        d.skip();
+        d
+    }
+
+    /// Advance `full` past any key currently present in `delta`.
+    #[inline]
+    fn skip(&mut self) {
+        while let Some(k) = self.full.key() {
+            self.delta.seek(k);
+            if self.delta.key() == Some(k) {
+                self.full.step();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl<K, A, B> SortedCursor for Difference<A, B>
+where
+    K: Copy + Ord,
+    A: SortedCursor<Key = K>,
+    B: SortedCursor<Key = K>,
+{
+    type Key = K;
+    #[inline]
+    fn key(&self) -> Option<K> {
+        self.full.key()
+    }
+    #[inline]
+    fn step(&mut self) {
+        self.full.step();
+        self.skip();
+    }
+    #[inline]
+    fn seek(&mut self, target: K) {
+        self.full.seek(target);
+        self.delta.seek(target);
+        self.skip();
+    }
+}
 
 /// Leapfrog join over k sorted iterators.
 ///
@@ -14,24 +105,30 @@ use crate::index::SortedVecIter;
 /// minimum key; `(p + k - 1) % k` is the index at the maximum key.
 /// After `search()`, either all iterators point to the same key (a match)
 /// or some iterator is exhausted.
-pub struct LeapfrogJoin<'a, G: DenseId> {
-    iters: Vec<SortedVecIter<'a, G>>,
+pub struct LeapfrogJoin<C: SortedCursor> {
+    iters: Vec<C>,
     p: usize,
     at_end: bool,
 }
 
-impl<'a, G: DenseId> LeapfrogJoin<'a, G> {
+impl<C: SortedCursor> LeapfrogJoin<C> {
     /// leapfrog-init (Algorithm 1 in the paper).
-    pub fn new(mut iters: Vec<SortedVecIter<'a, G>>) -> Self {
+    pub fn new(iters: Vec<C>) -> Self {
         assert!(!iters.is_empty());
-        if iters.iter().any(|it| !it.is_valid()) {
+        // Fetch each cursor's current key. If any is exhausted, the join is empty.
+        let keys: Option<Vec<C::Key>> = iters.iter().map(|it| it.key()).collect();
+        let Some(keys) = keys else {
             return Self {
                 iters,
                 p: 0,
                 at_end: true,
             };
-        }
-        iters.sort_by_key(|it| it.key().to_usize());
+        };
+        // Sort iters by current key.
+        let mut with_keys: Vec<(C::Key, C)> = keys.into_iter().zip(iters).collect();
+        with_keys.sort_by_key(|(k, _)| *k);
+        let iters: Vec<C> = with_keys.into_iter().map(|(_, it)| it).collect();
+
         let mut join = Self {
             iters,
             p: 0,
@@ -47,14 +144,16 @@ impl<'a, G: DenseId> LeapfrogJoin<'a, G> {
     }
 
     #[inline]
-    pub fn key(&self) -> G {
-        self.iters[self.p].key()
+    pub fn key(&self) -> C::Key {
+        self.iters[self.p]
+            .key()
+            .expect("leapfrog: key on invalid cursor")
     }
 
     /// leapfrog-next (Algorithm 3).
     pub fn next(&mut self) {
         self.iters[self.p].step();
-        if !self.iters[self.p].is_valid() {
+        if self.iters[self.p].key().is_none() {
             self.at_end = true;
             return;
         }
@@ -65,19 +164,24 @@ impl<'a, G: DenseId> LeapfrogJoin<'a, G> {
     /// leapfrog-search (Algorithm 2).
     fn search(&mut self) {
         let k = self.iters.len();
-        // x' = max key = Iter[(p-1) mod k].key()
-        let mut max_key = self.iters[(self.p + k - 1) % k].key();
+        let mut max_key = self.iters[(self.p + k - 1) % k]
+            .key()
+            .expect("leapfrog: invariant broken");
         loop {
-            let min_key = self.iters[self.p].key();
+            let min_key = self.iters[self.p]
+                .key()
+                .expect("leapfrog: invariant broken");
             if min_key == max_key {
-                return; // all iterators agree
-            }
-            self.iters[self.p].seek(max_key);
-            if !self.iters[self.p].is_valid() {
-                self.at_end = true;
                 return;
             }
-            max_key = self.iters[self.p].key();
+            self.iters[self.p].seek(max_key);
+            match self.iters[self.p].key() {
+                Some(k) => max_key = k,
+                None => {
+                    self.at_end = true;
+                    return;
+                }
+            }
             self.p = (self.p + 1) % k;
         }
     }
@@ -94,7 +198,7 @@ mod tests {
         }
     }
 
-    fn collect<G: DenseId>(j: &mut LeapfrogJoin<G>) -> Vec<usize> {
+    fn collect<'a, G: DenseId>(j: &mut LeapfrogJoin<SortedVecCursor<'a, G>>) -> Vec<usize> {
         let mut out = Vec::new();
         while j.is_valid() {
             out.push(j.key().to_usize());
@@ -264,6 +368,102 @@ mod tests {
             let lcm = 97 * 101 * 103; // 1_009_691
             let expected: Vec<usize> = (0..2_000_000).step_by(lcm).collect();
             assert_eq!(result, expected);
+        }
+    }
+
+    // -- A4: Difference combinator (full ∖ delta) tests --
+    mod difference {
+        use super::*;
+        use crate::id::ENodeId;
+        use proptest::prelude::*;
+
+        /// Iterate a `Difference` by `step` and collect the keys.
+        fn diff_step(full: &[usize], delta: &[usize]) -> Vec<usize> {
+            let fv = svec::<ENodeId>(full);
+            let dv = svec::<ENodeId>(delta);
+            let mut d = Difference::new(fv.iter(), dv.iter());
+            let mut out = Vec::new();
+            while let Some(k) = d.key() {
+                out.push(k.to_usize());
+                d.step();
+            }
+            out
+        }
+
+        #[test]
+        fn basic_step() {
+            assert_eq!(diff_step(&[1, 2, 3, 4, 5], &[2, 4]), vec![1, 3, 5]);
+        }
+
+        #[test]
+        fn empty_delta_is_identity() {
+            assert_eq!(diff_step(&[1, 2, 3], &[]), vec![1, 2, 3]);
+        }
+
+        #[test]
+        fn delta_covers_all() {
+            assert_eq!(diff_step(&[1, 2, 3], &[1, 2, 3]), Vec::<usize>::new());
+        }
+
+        #[test]
+        fn delta_outside_full_ignored() {
+            // delta entries not in full simply match nothing.
+            assert_eq!(diff_step(&[1, 3, 5], &[2, 4, 6]), vec![1, 3, 5]);
+        }
+
+        #[test]
+        fn basic_seek() {
+            // For every target, seek lands on the first key ≥ target in [1,3,5].
+            let fv = svec::<ENodeId>(&[1, 2, 3, 4, 5]);
+            let dv = svec::<ENodeId>(&[2, 4]);
+            let present = [1usize, 3, 5];
+            for t in 0..7usize {
+                let mut d = Difference::new(fv.iter(), dv.iter());
+                d.seek(ENodeId::from_usize(t));
+                let got = d.key().map(|k| k.to_usize());
+                let exp = present.iter().copied().find(|&x| x >= t);
+                assert_eq!(got, exp, "seek({t})");
+            }
+        }
+
+        fn sorted_unique() -> impl Strategy<Value = Vec<usize>> {
+            proptest::collection::vec(0usize..60, 0..30).prop_map(|mut v| {
+                v.sort_unstable();
+                v.dedup();
+                v
+            })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(2000))]
+
+            /// `Difference` by step == `full.filter(|x| !delta.contains(x))`,
+            /// for arbitrary sorted-unique full and delta (delta need not be
+            /// a subset of full).
+            #[test]
+            fn matches_filter(full in sorted_unique(), delta in sorted_unique()) {
+                let got = diff_step(&full, &delta);
+                let expected: Vec<usize> =
+                    full.iter().copied().filter(|x| !delta.contains(x)).collect();
+                prop_assert_eq!(got, expected);
+            }
+
+            /// Seek to every possible target and confirm it lands on the first
+            /// non-excluded key ≥ target.
+            #[test]
+            fn seek_matches_filter(full in sorted_unique(), delta in sorted_unique()) {
+                let present: Vec<usize> =
+                    full.iter().copied().filter(|x| !delta.contains(x)).collect();
+                let fv = svec::<ENodeId>(&full);
+                let dv = svec::<ENodeId>(&delta);
+                for t in 0..62usize {
+                    let mut d = Difference::new(fv.iter(), dv.iter());
+                    d.seek(ENodeId::from_usize(t));
+                    let got = d.key().map(|k| k.to_usize());
+                    let exp = present.iter().copied().find(|&x| x >= t);
+                    prop_assert_eq!(got, exp, "seek({})", t);
+                }
+            }
         }
     }
 }

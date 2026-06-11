@@ -15,8 +15,14 @@
 
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
+use semi_persistent_egraph::saturate::SaturationStrategy;
 
-fn run_egg_file(path: &str) -> (String, Vec<String>) {
+/// Every `.egg` test runs under both saturation strategies; semi-naive must
+/// reach the same outcome (EXPECT directive) as naive.
+const STRATEGIES: [SaturationStrategy; 2] =
+    [SaturationStrategy::Naive, SaturationStrategy::SemiNaive];
+
+fn run_egg_file(path: &str, strategy: SaturationStrategy) -> (String, Vec<String>) {
     let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
 
     let mut expect = "ok".to_string();
@@ -38,9 +44,9 @@ fn run_egg_file(path: &str) -> (String, Vec<String>) {
     let choice = choose_litval(&groups);
 
     let result = match choice {
-        LitValChoice::Machine => run_with::<MachineLit, MachineModel>(&src, MachineModel),
-        LitValChoice::Bignum => run_with::<BignumLit, BignumModel>(&src, BignumModel),
-        LitValChoice::All => run_with::<AllLit, AllModel>(&src, AllModel),
+        LitValChoice::Machine => run_with::<MachineLit, MachineModel>(&src, MachineModel, strategy),
+        LitValChoice::Bignum => run_with::<BignumLit, BignumModel>(&src, BignumModel, strategy),
+        LitValChoice::All => run_with::<AllLit, AllModel>(&src, AllModel, strategy),
     };
 
     (expect, result)
@@ -52,6 +58,7 @@ fn run_with<
 >(
     src: &str,
     model: M,
+    strategy: SaturationStrategy,
 ) -> Vec<String> {
     let surface_cmds = match semi_persistent_egraph::parser::parse_program_v2(src) {
         Ok(c) => c,
@@ -59,6 +66,7 @@ fn run_with<
     };
     let mut interp =
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
+    interp.set_strategy(strategy);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds,
@@ -76,51 +84,60 @@ fn run_with<
 }
 
 fn check(path: &str) {
-    let (expect, results) = run_egg_file(path);
-    let output = results.join("\n");
-    match expect.as_str() {
-        "ok" => assert!(
-            output.starts_with("ok"),
-            "{path}: expected ok, got: {output}"
-        ),
-        "check-failed" => assert!(
-            output.contains("check failed"),
-            "{path}: expected check-failed, got: {output}"
-        ),
-        "parse-error" => assert!(
-            output.contains("parse-error"),
-            "{path}: expected parse-error, got: {output}"
-        ),
-        "error" => assert!(
-            output.starts_with("error"),
-            "{path}: expected error, got: {output}"
-        ),
-        other => panic!("{path}: unknown EXPECT directive: {other}"),
+    for strategy in STRATEGIES {
+        let (expect, results) = run_egg_file(path, strategy);
+        let output = results.join("\n");
+        match expect.as_str() {
+            "ok" => assert!(
+                output.starts_with("ok"),
+                "{path} [{strategy:?}]: expected ok, got: {output}"
+            ),
+            "check-failed" => assert!(
+                output.contains("check failed"),
+                "{path} [{strategy:?}]: expected check-failed, got: {output}"
+            ),
+            "parse-error" => assert!(
+                output.contains("parse-error"),
+                "{path} [{strategy:?}]: expected parse-error, got: {output}"
+            ),
+            "error" => assert!(
+                output.starts_with("error"),
+                "{path} [{strategy:?}]: expected error, got: {output}"
+            ),
+            other => panic!("{path}: unknown EXPECT directive: {other}"),
+        }
     }
 }
 
 fn check_panic(path: &str) {
     let src = std::fs::read_to_string(path).unwrap();
-    let result = std::panic::catch_unwind(|| {
-        let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
-        let mut interp = Interpreter::<
-            semi_persistent_egraph::nodes::DefaultConfig,
-            MachineLit,
-            MachineModel,
-            true,
-            false,
-        >::new(MachineModel);
-        let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
-        let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
-            surface_cmds,
-            &mut interp.eg,
-            &interp.model,
-            &mut globals,
-        )
-        .unwrap();
-        let _ = interp.run_checked(&checked);
-    });
-    assert!(result.is_err(), "{path}: expected panic but succeeded");
+    for strategy in STRATEGIES {
+        let src = src.clone();
+        let result = std::panic::catch_unwind(move || {
+            let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
+            let mut interp = Interpreter::<
+                semi_persistent_egraph::nodes::DefaultConfig,
+                MachineLit,
+                MachineModel,
+                true,
+                false,
+            >::new(MachineModel);
+            interp.set_strategy(strategy);
+            let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
+            let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
+                surface_cmds,
+                &mut interp.eg,
+                &interp.model,
+                &mut globals,
+            )
+            .unwrap();
+            let _ = interp.run_checked(&checked);
+        });
+        assert!(
+            result.is_err(),
+            "{path} [{strategy:?}]: expected panic but succeeded"
+        );
+    }
 }
 
 macro_rules! egg_test {
