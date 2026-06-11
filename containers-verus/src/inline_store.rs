@@ -50,6 +50,18 @@ where
     pub open spec fn captured_spec(&self) -> Seq<bool> {
         Seq::new(self.data@.len(), |i: int| T::tag_of(self.data@[i]))
     }
+
+    /// A fresh, empty store. Well-formed for any `TRACK` (the repr_wf forall
+    /// is vacuous on empty data).
+    pub fn new<const TRACK: bool>() -> (s: InlineStore<T, I>)
+        ensures
+            DiffStore::<T, I, TRACK>::wf(&s),
+            s.data_spec().len() == 0,
+            s.captured_spec().len() == 0,
+    {
+        proof { I::lemma_min_as_nat(); I::min_spec().lemma_as_nat_bounded(); }  // 0 < I::max_nat()
+        InlineStore { data: Vec::new(), _phantom: core::marker::PhantomData }
+    }
 }
 
 impl<T, I, const TRACK: bool> DiffStore<T, I, TRACK> for InlineStore<T, I>

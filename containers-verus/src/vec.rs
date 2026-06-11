@@ -976,6 +976,66 @@ where
         self.store.get(i)
     }
 
+    /// Build an empty tracked vector over a freshly-empty store. Mirrors
+    /// production's `with_store`. The store must be well-formed and empty
+    /// (no data, no capture flags) — the concrete `new()` of each backend
+    /// supplies that.
+    pub fn with_store(store: S) -> (v: Self)
+        requires
+            store.wf(),
+            store.data().len() == 0,
+        ensures
+            v.wf(),
+            v.view().len() == 0,
+            v.snapshots_view().len() == 0,
+    {
+        proof { store.lemma_wf_captured_len(); }  // captured().len() == 0
+        let v = Vec {
+            store,
+            diff_log: std::vec::Vec::new(),
+            frames: std::vec::Vec::new(),
+            active_saved_len: I::min(),
+            forks: ForkHistory::new(),
+            id: ContainerId::new(),
+            phantom: core::marker::PhantomData,
+            snapshots: Ghost(Seq::empty()),
+        };
+        proof {
+            I::lemma_min_as_nat();
+            assert(v.active_saved_len == I::min_spec());
+            assert(v.frames@.len() == 0);
+            assert(v.snapshots@.len() == 0);
+        }
+        v
+    }
+
+    /// Current frame-stack depth (number of live marks). Mirrors production.
+    pub fn depth(&self) -> (d: usize)
+        requires self.wf(),
+        ensures d == self.frames@.len(),
+    {
+        self.frames.len()
+    }
+
+    /// Token validity check (design §0.6). Returns exactly
+    /// `is_token_valid_spec(token)`: same container AND on the live branch path
+    /// within its depth bound. Callers use this to satisfy `restore`'s validity
+    /// precondition. Mirrors production's `is_valid_token`.
+    pub fn is_valid_token(&self, token: VecToken) -> (b: bool)
+        requires
+            self.wf(),
+            self.frames@.len() < u32::MAX,
+        ensures
+            b == self.is_token_valid_spec(token),
+    {
+        let same_container = token.container_id.eq(self.id);
+        if !same_container {
+            return false;
+        }
+        let cur_depth = self.frames.len() as u32;
+        self.forks.is_valid(token.branch_id, token.depth, cur_depth)
+    }
+
     pub fn push(&mut self, value: T)
         requires
             old(self).wf(),
@@ -2346,6 +2406,35 @@ where
             // saved_len monotonicity is no longer a wf clause — nothing to
             // re-establish for the truncated stack.
         }
+    }
+}
+
+// Concrete constructors, mirroring production's two `new()` impls.
+
+impl<T, I, const TRACK: bool> Vec<T, I, crate::parallel_store::ParallelStore<T, I>, TRACK>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+{
+    /// Empty tracked vector backed by a `ParallelStore` (flag vector).
+    pub fn new() -> (v: Self)
+        ensures v.wf(), v.view().len() == 0, v.snapshots_view().len() == 0,
+    {
+        Vec::with_store(crate::parallel_store::ParallelStore::new::<TRACK>())
+    }
+}
+
+impl<T, I, const TRACK: bool> Vec<T, I, crate::inline_store::InlineStore<T, I>, TRACK>
+where
+    T: crate::tagged::Tagged,
+    I: IndexLike,
+{
+    /// Empty tracked vector backed by an `InlineStore` (tag bit stolen from
+    /// the value's repr).
+    pub fn new() -> (v: Self)
+        ensures v.wf(), v.view().len() == 0, v.snapshots_view().len() == 0,
+    {
+        Vec::with_store(crate::inline_store::InlineStore::new::<TRACK>())
     }
 }
 
