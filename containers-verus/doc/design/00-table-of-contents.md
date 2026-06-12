@@ -11,37 +11,37 @@ proved with **no `admit`s or `assume`s**. Run `./verify-all.sh` from the
 `containers-verus/` package root for the current per-module tally.
 
 These documents are organized in two layers. The **reference** layer
-(Chapter 0–1) is the durable description of the data-structure layout,
-invariants, and proved theorems. The **method** layer (Chapter 2–) records the
+(chapters 01–02) is the durable description of the data-structure layout,
+invariants, and proved theorems. The **method** layer (chapters 03–08) records the
 proof techniques, the ladder of progressively-stronger theorems we proved, and
 the design alternatives we weighed — the "how we got here", kept because the
 same patterns recur as more containers are verified.
 
 ## Reference
 
-0. **[Master Verification Design](00-verification-design.md)**
+01. **[Master Verification Design](01-verification-design.md)**
    The data-structure layout, the declarative two-arm frame invariant, the
    `overlay` reconstruction model, stratification across nested frames, the
    capture-flag bridge, and fork-history / branch-cut safety. 2-D diagrams of
    every invariant. Start here.
 
-1. **[Fork History / Branch-Cut Safety](m5-fork-history-design.md)**
+02. **[Fork History / Branch-Cut Safety](02-fork-history.md)**
    How tokens are validated: the fork tree, how a restore records a cut, the
    precise definition of "on the current path", and the branch-safety theorem
    (`fork_valid` ⟺ reachable-on-path ∧ depth ≤ bound).
 
 ## Method & techniques
 
-2. **[Faithful Pop — Plan & Decisions](faithful-pop-plan.md)**
+03. **[Faithful Pop — Plan & Decisions](03-faithful-pop.md)**
    Lifting `pop` to remove cells from inside a marked region. The locked
    decisions (`Copy + Default`, resize-default regrow vs production's
    push-from-diff), and the commit sequence.
 
-3. **[Flat / Target-Clamped Central Lemma](flat-central-lemma-design.md)**
+04. **[Flat / Target-Clamped Central Lemma](04-flat-central-lemma.md)**
    The reconstruction lemma restated per-cell and base-parametric, so it needs
    no `saved_len` monotonicity — what made dropping that invariant clean.
 
-4. **[Design Alternatives: Regrow & Capture-Flag Representation](restore-regrow-alternatives.md)**
+05. **[Design Alternatives: Regrow & Capture-Flag Representation](05-restore-regrow-alternatives.md)**
    Two design axes, with the rejected/predecessor options on record. Regrow:
    Default-pad vs Clone-scan vs force-record (and why production's unbounded
    `force_capture` is a latent DoS). Capture flag: the chosen inline 1-bit —
@@ -50,17 +50,17 @@ same patterns recur as more containers are verified.
    capture-depth array, which is actually faster to mark/backtrack but pays in
    read density and `N·sizeof(C)` memory. A genuinely two-sided trade.
 
-5. **[Default Implementations & `Tagged` Niche Safety](default-impls-design.md)**
+06. **[Default Implementations & `Tagged` Niche Safety](06-default-impls.md)**
    Why every container element type needs `Default`, why a fabricated filler is
    sound (never observable), and how a `Tagged` type's stolen niche bit stays
    safe — with a per-type recipe table for the whole production codebase.
 
-6. **[Token Reuse & Restore Semantics](token-reuse-and-restore-semantics.md)**
+07. **[Token Reuse & Restore Semantics](07-token-reuse-and-restore.md)**
    What `restore(t)` does to the frame stack, how capture tags are *recomputed*
    (not stored), why re-using a token is trapped, and the "reusable checkpoint"
    alternative semantics.
 
-7. **[Proof Attempts Log](proof-attempts-log.md)**
+08. **[Proof Attempts Log](08-proof-attempts-log.md)**
    The chronological narrative: the ladder of weakened theorems we proved in
    sequence, the dead-ends we reverted, and the recurring Verus lessons.
 

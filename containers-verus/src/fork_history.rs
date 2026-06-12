@@ -15,7 +15,7 @@
 //!   - `ForkHistory::is_valid` — the production while-loop, proved to compute
 //!     exactly `fork_valid(...)`.
 //!
-//! See `doc/design/m5-fork-history-design.md`.
+//! See `doc/design/02-fork-history.md`.
 
 use vstd::prelude::*;
 

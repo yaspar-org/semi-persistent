@@ -9,7 +9,7 @@ per-type recipe table for the whole production codebase.
 ## 0. Why `Default` is now required
 
 `restore` regrows a popped/shrunk region with `resize_default(saved_len)`
-BEFORE replaying the diff log (see `faithful-pop-plan.md`, `restore-regrow-
+BEFORE replaying the diff log (see `03-faithful-pop.md`, `restore-regrow-
 alternatives.md`). Growing the backing store needs *some* value to put in the
 new slots, and we use `T::default()`:
 
@@ -29,7 +29,7 @@ built on `Vec`) must implement `Default`. The crate models the `Copy` subset of
 The headline restore theorem is `view() == snapshots[token.frame_idx]`. A
 filler written by `resize_default` lives at a position that the backward replay
 then **overwrites** with the captured diff value (coverage guarantees every
-regrown cell has a diff — `00-verification-design.md` §8). Therefore:
+regrown cell has a diff — `01-verification-design.md` §8). Therefore:
 
 > The fabricated `T::default()` value is *entailed-away* by the theorem: no
 > observation of `view()` after `restore` can ever return a filler, so the

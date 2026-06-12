@@ -416,7 +416,7 @@ truncated to `target`.
 
 Production allows **popping into the marked region** (popping a cell with
 `index < saved_len`). On restore, that pop "becomes a push": the regrown slot
-needs a real `T`. Three ways to supply it (see `restore-regrow-alternatives.md`):
+needs a real `T`. Three ways to supply it (see `05-restore-regrow-alternatives.md`):
 
 - **C. force-record (production)**: pop logs *unconditionally*. Correct, but a
   `push/pop` loop on one index grows the log without bound — a latent **DoS**.
@@ -553,7 +553,7 @@ Lifecycle — how each op handles coverage + uniqueness (top frame's
 
 This is the "either it's already snapshotted, or we record a diff" intuition,
 formalized: `pop` is the only op that opens a gap, and it pays for each gapped
-cell with a capture. See `flat-central-lemma-design.md` for the lemma that
+cell with a capture. See `04-flat-central-lemma.md` for the lemma that
 turns coverage into the `view() == snapshots[target]` reconstruction.
 
 ### How faithful pop landed
@@ -561,18 +561,18 @@ turns coverage into the `view() == snapshots[target]` reconstruction.
 The pieces, in the order they were built (each kept the tree green): the store
 methods `mark_captured`/`resize_default`; the `frame_cell_inv` coverage
 refactor and the `wf_for_snap` split; the **flat, target-clamped central
-lemma** (§3 of `flat-central-lemma-design.md`) that reconstructs one cell at a
+lemma** (§3 of `04-flat-central-lemma.md`) that reconstructs one cell at a
 time and so needs no `saved_len` monotonicity; dropping the two now-false `wf`
 clauses; the `restore` body (resize to the target's `saved_len`, then replay);
 `push`'s `mark_captured` on re-entry; and `pop`'s conditional capture into the
 marked region. The chronological account, including the reverted attempts, is
-in [the proof attempts log](proof-attempts-log.md).
+in [the proof attempts log](08-proof-attempts-log.md).
 
 ---
 
 ## 9. Fork history / branch-cut safety
 
-> **Authoritative formal statement: [`m5-fork-history-design.md`](m5-fork-history-design.md) §0.6** —
+> **Authoritative formal statement: [`02-fork-history.md`](02-fork-history.md) §0.6** —
 > precise definitions of the fork tree, how a cut is recorded, "on the current
 > path", the per-branch depth bound, and the branch-safety theorem. This
 > section is the informal overview; where the prose below uses loose words
@@ -717,7 +717,7 @@ their modules and the [table of contents](00-table-of-contents.md).
 **Deliberate divergences from production** (documented, not gaps): `T: Copy +
 Default` instead of `T: Clone` (`Copy ⊂ Clone` suffices for the e-graph
 domain; `Default` enables the DoS-free bounded-capture pop — see
-`restore-regrow-alternatives.md`); `as_slice` omitted (a backend-specific fast
+`05-restore-regrow-alternatives.md`); `as_slice` omitted (a backend-specific fast
 path outside the persistence contract).
 
 **Remaining work**: `ListArena` `append`/`splice` (need acyclicity decoupled

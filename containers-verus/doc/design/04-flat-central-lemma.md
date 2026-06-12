@@ -197,7 +197,7 @@ actual `overlay` result on the resized base. Two clean pieces.
 - **Reworked lemma**: the central one becomes the `target_cell` downward
   induction (§4). Comparable size to the current layered one, arguably simpler
   (scalar per-cell, not sequence-per-frame).
-- Restore (§3 of faithful-pop-plan) then: `resize_default(saved_target)` →
+- Restore (§3 of [03-faithful-pop](03-faithful-pop.md)) then: `resize_default(saved_target)` →
   base of length `saved_target` agreeing with `snap_target` on uncaptured cells
   → `lemma_overlay_lowest` + flat lemma → `view == snap_target`.
 

@@ -71,7 +71,7 @@ mark, rescan-free backtrack). It *is* intrinsic to the inline 1-bit flag this
 crate chose — a choice made for cache density and read/write access cost on the
 hot loops, not backtracking speed, and which therefore accepts the rescan as a
 price. The full two-sided trade is in
-[Design Alternatives, Part 2](restore-regrow-alternatives.md#e-per-cell-capture-depth-the-predecessor-semper-design).
+[Design Alternatives, Part 2](05-restore-regrow-alternatives.md#e-per-cell-capture-depth-the-predecessor-semper-design).
 
 **Why the parent's tags must be SET, not left at zero** (a tempting wrong
 intuition): you land in the parent mid-stratum; the parent already captured

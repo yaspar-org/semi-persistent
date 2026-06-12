@@ -2,7 +2,7 @@
 
 Status: **COMPLETE** (verifies clean, no admits). All
 five steps landed in order, each leaving the tree green — see
-`proof-attempts-log.md` "Faithful pop — how it landed" for the commit-by-commit
+`08-proof-attempts-log.md` "Faithful pop — how it landed" for the commit-by-commit
 record. The transient-only `pop` restriction is gone; pop into the marked
 region works, with the Default-resize regrow strategy and conditional (bounded)
 capture. The text below is the original plan, kept for reference.
@@ -51,8 +51,8 @@ capture. The text below is the original plan, kept for reference.
   `saved_len` param, no push branch, no new overlay lemmas → step 2 is small.
   (`restore_entry`'s push branch becomes dead-but-harmless under our design.)
 
-References: `00-verification-design.md` §8 (faithful pop), §6 (invariant),
-`restore-regrow-alternatives.md`, `proof-attempts-log.md`.
+References: `01-verification-design.md` §8 (faithful pop), §6 (invariant),
+`05-restore-regrow-alternatives.md`, `08-proof-attempts-log.md`.
 
 ---
 
