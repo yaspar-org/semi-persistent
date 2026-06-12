@@ -61,7 +61,7 @@ pub enum ShrinkPolicy {
 /// mark time, `depth` the token's position along it. `container_id` rejects
 /// cross-container use. `frame_idx` and `depth` are numerically equal at mark
 /// but are DIFFERENT quantities (reconstruction index vs. validity depth) —
-/// see m5-fork-history-design.md §0.5.
+/// see 02-fork-history.md §0.5.
 #[derive(Copy, Clone)]
 pub struct VecToken {
     pub frame_idx: usize,

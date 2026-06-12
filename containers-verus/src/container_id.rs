@@ -23,7 +23,7 @@
 //! monotone counter threaded as a linear resource and advanced on each `new()`
 //! (`ensures fresh > all prior`), no global mutable static required. Deferred
 //! because the check is off the critical path. See
-//! `doc/design/m5-fork-history-design.md` §4(c).
+//! `doc/design/02-fork-history.md` §4(c).
 
 use vstd::prelude::*;
 

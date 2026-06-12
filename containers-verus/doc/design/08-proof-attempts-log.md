@@ -3,7 +3,7 @@
 A chronological narrative of the verification effort: the milestones that
 landed, the *weakened* versions of the theorem we proved along the way, the
 approaches we tried and reverted, and the dead ends. Read alongside
-`00-verification-design.md` (the design) and `restore-regrow-alternatives.md`
+`01-verification-design.md` (the design) and `05-restore-regrow-alternatives.md`
 (the pop/regrow option analysis).
 
 Convention: ✅ landed & committed (verifies, no admits) · ⚠️ landed but
@@ -120,7 +120,7 @@ Rather than faithfully reproduce the unbounded `force_capture`, we chose:
 regrows the popped region with `resize_default` (`T::default()` fillers that
 the replay overwrites). Required `T: Default`. We documented the three options
 (Default / Clone-scan / force-record) and why Default wins for the e-graph
-domain (`restore-regrow-alternatives.md`). The user's DoS observation is what
+domain (`05-restore-regrow-alternatives.md`). The user's DoS observation is what
 made us *diverge from* production here rather than match it.
 
 We also established **filler soundness**: a fabricated default is never
