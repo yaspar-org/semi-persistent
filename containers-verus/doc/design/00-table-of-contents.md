@@ -44,10 +44,11 @@ same patterns recur as more containers are verified.
 4. **[Design Alternatives: Regrow & Capture-Flag Representation](restore-regrow-alternatives.md)**
    Two design axes, with the rejected/predecessor options on record. Regrow:
    Default-pad vs Clone-scan vs force-record (and why production's unbounded
-   `force_capture` is a latent DoS). Capture flag: the chosen inline 1-bit
-   (zero memory, O(parent) rescan on restore) vs the predecessor `semper`'s
-   per-cell capture-depth array (O(1) mark, rescan-free backtrack, but
-   `N·sizeof(C)` memory and a nesting-depth cap) — a genuinely two-sided trade.
+   `force_capture` is a latent DoS). Capture flag: the chosen inline 1-bit —
+   picked for raw cache density and read/write access cost on the hot loops,
+   *not* backtracking speed — vs the predecessor `semper`'s per-cell
+   capture-depth array, which is actually faster to mark/backtrack but pays in
+   read density and `N·sizeof(C)` memory. A genuinely two-sided trade.
 
 5. **[Default Implementations & `Tagged` Niche Safety](default-impls-design.md)**
    Why every container element type needs `Default`, why a fabricated filler is

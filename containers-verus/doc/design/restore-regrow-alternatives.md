@@ -174,54 +174,70 @@ replay** that restores values. Crucially:
   read-dominated (`find()` chases pointers): inline `(u32,u32)` halves cache
   density on the hottest loop, so `semper` deliberately keeps depths separate.
 
-So E is a real, coherent point with a *better time profile* than our chosen D
-(O(1) mark, O(r) backtrack, no rescan). Its costs are (i) `N × sizeof(C)`
-permanent memory per vector and (ii) a hard ceiling on nesting depth.
+So E has a strictly *better backtracking profile* than our chosen D — O(1)
+mark, rescan-free O(r) backtrack — at the cost of `N × sizeof(C)` memory and a
+nesting-depth ceiling.
 
-### Why this crate chose D (the stolen bit) instead
+### Why this crate chose D (the stolen bit) — for cache density and access cost, NOT backtracking
 
-The current `containers`/`containers-verus` design takes the opposite point on
-the same axis, for reasons specific to *this* codebase rather than a flaw in E:
+The deciding factor is **raw cache density and per-access (read/write) cost on
+the hot loops — not backtracking performance**, where E is in fact faster. The
+e-graph is overwhelmingly read-dominated: `find()` and canonicalization chase
+id pointers, each step reading one word and nothing else. The capture flag has
+to live *somewhere*, and the only representation that doesn't degrade that
+read path is a bit stolen from the value's own word:
 
-- **Zero per-cell tracking memory on the hot backend.** `InlineStore` niches
-  the capture flag into a spare bit of the value's repr (`DenseId` ids reserve
-  the MSB anyway), so tracking costs *0* extra bytes — vs E's `N × sizeof(C)`.
-  For an e-graph storing several 10⁷-element id vectors, that difference is the
-  10–100 MB of `semper`'s table.
-- **No depth ceiling.** D imposes no bound on nesting (the bit has no width to
-  overflow). Minor in practice, but free.
-- **Simpler niche story to verify.** A 1-bit flag with the `Tagged`
-  `into_repr`/`repr_wf` contract (§3, §6) is a small, self-contained
-  obligation; a separate depth array threaded through every store op and proved
-  consistent across nested frames is a larger surface. D's bridge invariant
-  (`captured()[j] ⟺ j in top stratum`) is the price, and it is what makes the
-  O(p) rescan necessary on restore.
+- **D keeps full read density and adds nothing to an access.** `InlineStore`
+  niches the flag into a spare bit of the value's repr (`DenseId` ids already
+  reserve the MSB), so a `Vec<u32>` of ids stays at **16 per cache line** and a
+  read is a single load + mask — no second array, no second stream, no extra
+  cache line touched. The capture state rides *for free* in bytes that already
+  exist.
+- **E perturbs every access, however it is laid out.** Inline `(value, depth)`
+  pairs double the footprint and **halve read density** (8 per line) — fatal on
+  the hottest loop. A *separate* `capture_depths` array (what `semper` chose,
+  §4.2, precisely to protect read density) avoids that but makes every captured
+  write touch a **second cache line / second memory stream**, and costs
+  `N × sizeof(C)` resident memory (10–100 MB across the e-graph's id vectors).
+  Either way the *steady-state read and write access cost* is worse than D's
+  ride-along bit.
 
-The trade is therefore **read cache-density + zero tracking memory + no depth
-cap + a tighter verification surface (D)** against **O(1) mark + rescan-free
-O(r) backtrack + a depth cap + `N·sizeof(C)` memory (E)**. For the inline,
-read-dominated, deeply-nested-but-not-65k e-graph workload, D's memory and
-cache wins dominate; `semper`'s own §4.2 reaches the same read-density
-conclusion from the other side (it keeps depths in a separate array precisely
-to protect read density). A *time-critical, write-heavy, memory-rich* workload
-could prefer E — the axis is genuinely two-sided.
+In short: D is chosen because the flag must not cost a cache line or an extra
+load on the read-dominated hot path — the stolen bit is the only zero-density-
+cost option. The O(p) restore rescan and the bridge-invariant proof burden are
+**accepted consequences** of that choice, not themselves reasons for it; on the
+backtracking axis alone, E (the `semper` capture-depth design) wins. The trade
+is genuinely two-sided, decided here by access-path performance and memory:
+
+- **D (stolen bit):** full read density, zero-cost accesses, zero tracking
+  memory, no depth cap — paying an O(p) rescan on restore and a niche/bridge
+  proof obligation.
+- **E (capture-depths):** O(1) mark, rescan-free O(r) backtrack — paying read
+  density / an extra access stream and `N·sizeof(C)` memory, with a
+  nesting-depth ceiling.
+
+A write-heavy, backtrack-bound, memory-rich workload that does *not* live or
+die by read density could rationally prefer E.
 
 ## Summary (Part 2)
 
-| | `mark` flag cost | backtrack flag cost | tracking memory | cap |
-|---|---|---|---|---|
-| D. stolen bit + rescan (chosen) | O(parent) / O(n/64) | **+O(p) rescan** | **1 bit; 0 inline** | none |
-| E. capture-depths (`semper`) | **O(1)** | **none (folded into O(r))** | `N · sizeof(C)`/vec | **nesting depth** (`u16`=65k) |
+The **deciding column is read density / access cost** — everything else is a
+consequence. D wins it; E wins the backtracking columns.
 
-Net: the O(p) parent rescan is **not** intrinsic to semi-persistence — `semper`
-avoids it by storing+restoring a per-cell depth. It *is* intrinsic to the
-**1-bit, zero-inline-memory** flag this crate chose: with only a boolean, the
-parent's "captured" set can only be recovered by re-deriving it from the diff,
-hence the rescan. We accept that O(p) (proportional to the frame returned into,
-not total history) to keep tracking memory at zero on the inline backend and to
-keep the verification surface small. Switching to E later is possible but
-changes the store's flag type, `mark`, backtrack, and the bridge invariant — a
-backend-level change, not a `restore`-local one.
+| | read density & access cost | tracking memory | `mark` | backtrack flag | cap |
+|---|---|---|---|---|---|
+| D. stolen bit (chosen) | **full (16 u32/line), single load+mask** | **1 bit; 0 inline** | O(parent)/O(n/64) | +O(p) rescan | none |
+| E. capture-depths (`semper`) | extra stream (separate) / ½ density (inline) | `N · sizeof(C)`/vec | **O(1)** | **none (in O(r))** | **nesting depth** (`u16`=65k) |
+
+Net: D is chosen for **raw cache density and read/write access cost on the
+hot, read-dominated loops** — the stolen bit is the only representation that
+costs neither a cache line nor an extra load per access, and zero resident
+tracking memory. It is explicitly **not** chosen for backtracking speed: there
+E (the predecessor `semper` capture-depth design) is faster (O(1) mark,
+rescan-free O(r) backtrack). The O(p) restore rescan and the bridge-invariant
+proof obligation are the *accepted price* of the access-path win, not reasons
+for it. Switching to E later is a backend-level change (the store's flag type,
+`mark`, backtrack, and the bridge invariant), not a `restore`-local one.
 
 ---
 [← Table of Contents](00-table-of-contents.md)

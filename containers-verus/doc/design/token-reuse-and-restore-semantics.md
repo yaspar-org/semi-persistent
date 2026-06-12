@@ -67,9 +67,10 @@ Restore recomputes the tags for the frame it lands in, in three steps:
 This `finish_restore` rescan is **O(parent stratum)** on top of the O(replayed
 diff) of the rollback. The `+p` term is *not* intrinsic to semi-persistence —
 the predecessor `semper` design avoids it with a per-cell capture-depth (O(1)
-mark, rescan-free backtrack) at the cost of `N·sizeof(C)` memory and a
-nesting-depth cap. It *is* intrinsic to the 1-bit, zero-inline-memory flag this
-crate chose. The full two-sided trade is in
+mark, rescan-free backtrack). It *is* intrinsic to the inline 1-bit flag this
+crate chose — a choice made for cache density and read/write access cost on the
+hot loops, not backtracking speed, and which therefore accepts the rescan as a
+price. The full two-sided trade is in
 [Design Alternatives, Part 2](restore-regrow-alternatives.md#e-per-cell-capture-depth-the-predecessor-semper-design).
 
 **Why the parent's tags must be SET, not left at zero** (a tempting wrong
