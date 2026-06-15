@@ -26,8 +26,9 @@ The engine synthesizes ideas from several lines of work into a single
 coherent execution engine:
 
 - Semi-persistent data structures (Conchon and Filliâtre, 2008)
-  provide O(1) snapshots and O(k) restore, enabling backtracking
-  and stratification through the same generational mechanism.
+  provide memory-cheap snapshots (a sparse diff, not a copy) and O(k)
+  restore, enabling backtracking and stratification through the same
+  generational mechanism.
 - Matching modulo AC via canonization, inspired by the AC(X)
   decision procedure in Alt-Ergo (Conchon, Iguernlala, and Mebsout;
   Iguernlala, 2013), handles associative, commutative, and
@@ -56,9 +57,13 @@ stratum boundaries.
 
 The entire e-graph state (nodes, e-classes, union-find, hash-cons
 caches, literal store, registries) can be snapshotted with `(push)`
-and restored with `(pop)`. Snapshots are O(1): a single frame push
-across all containers. Restore is O(k), where k is the number of
-cells modified since the snapshot, not the total size of the e-graph.
+and restored with `(pop)`. A snapshot is a single frame push across all
+containers; its *memory* cost is only the cells subsequently modified
+(a sparse diff), never a copy of the e-graph — that is the decisive
+saving. (The push also resets each container's per-cell capture flags,
+which is sublinear, not a copy; see the containers design docs.) Restore
+is O(k), where k is the number of cells modified since the snapshot, not
+the total size of the e-graph.
 Each semi-persistent vector achieves this by recording only the first
 write to each cell per generation (a diff-log protocol).
 
@@ -166,7 +171,7 @@ The project is organized in layers, each building on the one below:
 The foundation layer provides 31-bit dense identifiers with a stolen
 tag bit for inline capture tracking, enabling semi-persistent
 containers with zero auxiliary storage per cell. The container layer
-builds semi-persistent vectors (O(1) mark, O(k) restore), maps,
+builds semi-persistent vectors (sparse-diff snapshots, O(k) restore), maps,
 append-only vectors, sparse sets, and intrusive linked-list arenas.
 The e-graph layer composes these containers into node storage,
 e-classes with circular use-lists, a dual-array union-find, and

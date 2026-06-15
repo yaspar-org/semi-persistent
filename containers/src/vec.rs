@@ -25,7 +25,7 @@ pub enum ShrinkPolicy {
 pub struct Vec<T, I: IndexLike, S, const TRACK: bool = true> {
     store: S,
     diff_log: std::vec::Vec<(T, I)>,
-    frames: std::vec::Vec<Frame>,
+    frames: std::vec::Vec<Frame<I>>,
     active_saved_len: I,
     forks: ForkHistory,
     id: ContainerId,
@@ -103,7 +103,7 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.maybe_shrink(shrink);
 
         let saved_len = self.store.len();
-        let diff_start = self.frames.last().map_or(0, |f| f.diff_start as usize);
+        let diff_start = self.frames.last().map_or(0, |f| f.diff_start);
         self.store
             .prepare_mark(saved_len, &self.diff_log[diff_start..]);
 
@@ -115,8 +115,8 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         };
 
         self.frames.push(Frame {
-            saved_len: saved_len.as_usize() as u32,
-            diff_start: self.diff_log.len() as u32,
+            saved_len,
+            diff_start: self.diff_log.len(),
         });
         self.active_saved_len = saved_len;
         token
@@ -140,9 +140,8 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         );
 
         let target_frame = self.frames[target_index];
-        let saved_len =
-            I::try_from_usize(target_frame.saved_len as usize).expect("saved_len overflow");
-        let diff_start = target_frame.diff_start as usize;
+        let saved_len = target_frame.saved_len;
+        let diff_start = target_frame.diff_start;
 
         self.store.truncate(saved_len);
 
@@ -155,12 +154,12 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.frames.truncate(target_index);
 
         let surviving_start = if target_index > 0 {
-            self.frames[target_index - 1].diff_start as usize
+            self.frames[target_index - 1].diff_start
         } else {
             0
         };
         let surviving_saved = if target_index > 0 {
-            I::try_from_usize(self.frames[target_index - 1].saved_len as usize).expect("overflow")
+            self.frames[target_index - 1].saved_len
         } else {
             I::MIN
         };
@@ -169,7 +168,7 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
             .finish_restore(&self.diff_log[surviving_start..], surviving_saved);
 
         self.active_saved_len = if let Some(f) = self.frames.last() {
-            I::try_from_usize(f.saved_len as usize).expect("overflow")
+            f.saved_len
         } else {
             I::MIN
         };
@@ -195,7 +194,7 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
     /// Bytes consumed by diff tracking only: diff_log + frames + fork history.
     pub fn tracking_bytes(&self) -> usize {
         self.diff_log.capacity() * core::mem::size_of::<(T, I)>()
-            + self.frames.capacity() * core::mem::size_of::<Frame>()
+            + self.frames.capacity() * core::mem::size_of::<Frame<I>>()
             + self.forks.heap_bytes()
     }
 
