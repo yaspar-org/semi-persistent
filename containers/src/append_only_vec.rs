@@ -12,7 +12,7 @@ use super::token::{ContainerId, ForkHistory, VecToken};
 /// `TRACK=false` compiles out all fork history and frame tracking.
 pub struct AppendOnlyVec<T, const TRACK: bool = true> {
     data: Vec<T>,
-    frames: Vec<u32>,
+    frames: Vec<usize>,
     forks: ForkHistory,
     id: ContainerId,
 }
@@ -72,7 +72,7 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             frame_index: self.frames.len() as u32,
             container_id: self.id,
         };
-        self.frames.push(self.data.len() as u32);
+        self.frames.push(self.data.len());
         token
     }
 
@@ -80,7 +80,7 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         assert!(TRACK, "restore() called on untracked AppendOnlyVec");
         self.validate_token(&token);
         let target = token.frame_index as usize;
-        let saved_len = self.frames[target] as usize;
+        let saved_len = self.frames[target];
         self.data.truncate(saved_len);
         self.frames.truncate(target);
         self.forks.fork(&token, self.frames.len() as u32);
