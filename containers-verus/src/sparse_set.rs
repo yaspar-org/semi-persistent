@@ -353,7 +353,7 @@ where
                     }
                 }
                 assert(self.id_set() =~= old(self).id_set().insert(recycled_id.as_nat())) by {
-                    assert forall|v: nat| self.id_set().contains(v)
+                    assert forall|v: nat| #![auto] self.id_set().contains(v)
                         <==> old(self).id_set().insert(recycled_id.as_nat()).contains(v) by {
                         if self.id_set().contains(v) {
                             let p = choose|p: int| 0 <= p < n
@@ -366,7 +366,7 @@ where
                     // both have length old_cap - old_n - 1; element k of the new
                     // pool is indices[(old_n+1)+k] == old pool element k+1.
                     assert(self.free_pool().len() == old(self).free_pool().drop_first().len());
-                    assert forall|k: int| 0 <= k < self.free_pool().len() implies
+                    assert forall|k: int| #![auto] 0 <= k < self.free_pool().len() implies
                         self.free_pool()[k] == old(self).free_pool().drop_first()[k] by {
                         assert(self.free_pool()[k] == indices[(old_n + 1) + k].as_nat());
                         assert(old(self).free_pool().drop_first()[k]
@@ -427,7 +427,7 @@ where
                     }
                 }
                 assert(self.id_set() =~= old(self).id_set().insert(old_cap as nat)) by {
-                    assert forall|v: nat| self.id_set().contains(v)
+                    assert forall|v: nat| #![auto] self.id_set().contains(v)
                         <==> old(self).id_set().insert(old_cap as nat).contains(v) by {
                         if self.id_set().contains(v) {
                             let p = choose|p: int| 0 <= p < n
@@ -595,7 +595,7 @@ where
                 }
             }
             assert(self.id_set() =~= old(self).id_set().remove(id.as_nat())) by {
-                assert forall|v: nat| self.id_set().contains(v)
+                assert forall|v: nat| #![auto] self.id_set().contains(v)
                     <==> old(self).id_set().remove(id.as_nat()).contains(v) by {
                     // forward: v new-live ⇒ v old-live (its new witness q<n maps,
                     // in both branches, back to an old live position) and v != id.
@@ -813,7 +813,7 @@ pub proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m: int)
         }
         // cur == prev ∪ {last}.
         assert(cur =~= prev.insert(last)) by {
-            assert forall|v: nat| cur.contains(v) <==> prev.insert(last).contains(v) by {
+            assert forall|v: nat| #![auto] cur.contains(v) <==> prev.insert(last).contains(v) by {
                 if cur.contains(v) {
                     let p = choose|p: int| 0 <= p < m && (#[trigger] indices[p]).as_nat() == v;
                     if p < m - 1 { assert(prev.contains(v)); } else { assert(v == last); }
@@ -854,7 +854,7 @@ pub proof fn lemma_transposition_injective<Idx: IndexLike>(
         i != j,
         b[i].as_nat() == a[j].as_nat(),
         b[j].as_nat() == a[i].as_nat(),
-        forall|k: int| 0 <= k < cap && k != i && k != j ==> b[k].as_nat() == a[k].as_nat(),
+        forall|k: int| #![auto] 0 <= k < cap && k != i && k != j ==> b[k].as_nat() == a[k].as_nat(),
         forall|p: int, q: int| 0 <= p < cap && 0 <= q < cap && p != q ==>
             (#[trigger] a[p]).as_nat() != (#[trigger] a[q]).as_nat(),
     ensures
