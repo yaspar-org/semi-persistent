@@ -44,6 +44,7 @@
 
 pub mod append_only_vec;
 pub mod capture_bits;
+pub mod circular_list;
 pub mod container_id;
 pub mod dense_id;
 pub mod diff_store;
