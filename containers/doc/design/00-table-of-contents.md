@@ -1,9 +1,9 @@
 # Semi-Persistent Containers — Design Documents
 
-Semi-persistent data structures with O(1) snapshots and O(k) restoration.
-Building blocks for applications that need fast state snapshots and
-backtracking — e-graph engines, SAT solvers, constraint propagators,
-game-tree searchers, and similar systems.
+Semi-persistent data structures with memory-cheap snapshots (a sparse diff,
+not a copy) and O(k) restoration. Building blocks for applications that need
+fast state snapshots and backtracking — e-graph engines, SAT solvers,
+constraint propagators, game-tree searchers, and similar systems.
 
 All containers are built on top of a single core primitive: the
 semi-persistent vector (Chapter 2), which uses a diff-log protocol
@@ -16,9 +16,9 @@ to record mutations and replay them in reverse on restore.
    `DenseId`, `Tagged`, `Opt<T>`, `BoolTagged`. Bit-stealing vs bool-pair.
 
 2. **[Semi-Persistent Vectors](02-semi-persistent-vectors.md)**
-   The core primitive. O(1) snapshot, O(k) restore. `InlineStore` vs
-   `ParallelStore`. The diff-log protocol. Compile-time elision via
-   `const TRACK: bool`.
+   The core primitive. Sparse-diff snapshots (memory ∝ changes, not a copy),
+   O(k) restore. `InlineStore` vs `ParallelStore`. The diff-log protocol.
+   Compile-time elision via `const TRACK: bool`.
 
 3. **[`AppendOnlyVec`](03-append-only-vec.md)**
    Push-only vector. Restore = truncate. Useful for interned data,

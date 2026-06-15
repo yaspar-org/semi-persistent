@@ -11,15 +11,27 @@ SAT solving, constraint propagation, and game-tree search all share
 this pattern. Backtracking requires snapshotting the entire mutable
 state and restoring it later.
 
-A naive clone-on-snapshot is O(n) per mark. The semi-persistent
-vector takes a different approach: it records negative diffs into a
-stack. On `mark()`, the vector stores its current length and starts
-logging negative diffs in a frame of its private diff stack. On each
-mutation, before overwriting a slot, it pushes the old value into the
-negative diff stack. On `restore()`, it replays the log in reverse to
-restore captured values, then truncates back to the saved length.
-This gives O(1) mark and O(k) restore, where k is the number of
-mutations since `mark()`.
+A naive clone-on-snapshot is O(n) in both time and memory per mark —
+and with many nested snapshots the memory is what hurts. The
+semi-persistent vector takes a different approach: it records negative
+diffs into a stack. On `mark()`, the vector stores its current length
+and starts logging negative diffs in a frame of its private diff
+stack. On each mutation, before overwriting a slot, it pushes the old
+value into the negative diff stack. On `restore()`, it replays the log
+in reverse to restore captured values, then truncates back to the
+saved length.
+
+The decisive win is **memory**: a snapshot costs only the cells that
+subsequently change (the sparse diff), never a full copy, so deeply
+nested marks stay cheap. `restore()` is O(k), where k is the number of
+mutations since `mark()`. `mark()` is *not* unconditionally O(1) in
+time — it must reset the per-slot capture flags for the new frame — but
+it is always sublinear in that work, never a copy: `InlineStore` clears
+only the flags the parent frame actually captured (O(k)), and
+`ParallelStore` zeroes a packed `u64` capture bitfield (O(n/64)). Make
+the capture bitfield small relative to the data and `mark()` approaches
+O(1); regardless, the memory footprint is the real, design-defining
+advantage.
 
 The tricky part is the first-write-wins protocol: each slot of the Vec
 must be logged at most once per frame (logging the same slot twice wastes
@@ -110,8 +122,8 @@ type VecP<T: Clone, I, TRACK>  = Vec<T, I, ParallelStore<T, I, TRACK>, TRACK>;
 | `get(i)` | O(1) | Read element at index |
 | `view().set(i, val)` | O(1) | Write element (with capture) |
 | `len()` | O(1) | Current length |
-| `mark()` → `VecToken` | O(1) | Snapshot current state |
-| `restore(token)` | O(k) | Undo all mutations since mark |
+| `mark()` → `VecToken` | sublinear; O(parent diff) inline / O(n/64) parallel | Snapshot — clears per-slot capture flags, never copies. Memory cost is only the diff. |
+| `restore(token)` | O(k) | Undo all mutations since mark (k = mutations) |
 
 ## The Diff-Log Protocol
 
