@@ -22,7 +22,7 @@ FAIL=0
 # Modules are added here as their bodies land. Empty `verus! {}` blocks are
 # erased by the macro and become invisible to `--verify-module`, so listing a
 # stub-only module here would fail.
-for mod in tagged index_like dense_id diff_store capture_bits parallel_store inline_store frame; do
+for mod in tagged index_like dense_id diff_store capture_bits parallel_store inline_store frame container_id fork_history; do
   printf "%-20s " "$mod:"
   output=$(run_verus src/lib.rs --crate-type=lib --verify-module "$mod" 2>&1)
   status=$?

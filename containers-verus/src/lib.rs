@@ -43,8 +43,10 @@
 )]
 
 pub mod capture_bits;
+pub mod container_id;
 pub mod dense_id;
 pub mod diff_store;
+pub mod fork_history;
 pub mod frame;
 pub mod index_like;
 pub mod inline_store;
