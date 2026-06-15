@@ -42,5 +42,11 @@
     clippy::doc_overindented_list_items   // same: design-doc-style comment formatting
 )]
 
+pub mod capture_bits;
+pub mod dense_id;
+pub mod diff_store;
+pub mod frame;
 pub mod index_like;
+pub mod inline_store;
+pub mod parallel_store;
 pub mod tagged;
