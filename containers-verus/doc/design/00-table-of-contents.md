@@ -72,6 +72,14 @@ same patterns recur as more containers are verified.
    non-aliasing as proved predicates; the frame/anti-frame (bi-abduction) shape
    of the operation proofs. Companion to [Ch 1 §10](01-verification-design.md).
 
+## Future work
+
+- **[B+Tree Set — Design and a Bi-Abductive Proof Plan](future/bplus-tree-design.md)**
+  Scoping for the one container not yet verified: the data structure, the
+  recursive/balanced `wf` invariant, and how an insert-with-split proof
+  decomposes under the dynamic-frames discipline. Proof not yet attempted;
+  insert-only (production has no `remove`).
+
 ## Relationship to the production design docs
 
 The production crate's design docs (one chapter per container) live in
