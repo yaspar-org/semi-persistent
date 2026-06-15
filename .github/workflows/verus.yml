@@ -34,7 +34,17 @@ jobs:
 
       - name: Read pinned Verus version
         id: version
-        run: echo "verus=$(cat abstract-domains/.verus-version)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          # Both verified crates must pin the same Verus toolchain so one
+          # download verifies both. Fail fast if the pins ever drift.
+          ad="$(cat abstract-domains/.verus-version)"
+          cv="$(cat containers-verus/.verus-version)"
+          if [ "$ad" != "$cv" ]; then
+            echo "::error::Verus version pins differ: abstract-domains=$ad containers-verus=$cv"
+            exit 1
+          fi
+          echo "verus=$ad" >> "$GITHUB_OUTPUT"
 
       - name: Download Verus
         id: verus
@@ -86,13 +96,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: abstract-domains
+          workspaces: |
+            abstract-domains
+            containers-verus
 
       - name: Verify abstract-domains
         working-directory: abstract-domains
         run: |
           verus --version
           cargo verus verify -- --trace
+
+      - name: Verify containers-verus
+        working-directory: containers-verus
+        run: cargo verus verify -- --trace
 
   # abstract-domains fuzz tests run with regular stable rustc
   fuzz-test:

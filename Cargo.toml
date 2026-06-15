@@ -6,6 +6,7 @@ members = [
     "traversals",
     "traversals/derive",
     "abstract-domains",
+    "containers-verus",
 ]
 resolver = "3"
 
