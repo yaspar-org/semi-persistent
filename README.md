@@ -1,6 +1,6 @@
 # Semi-Persistent E-Graph
 
-A semi-persistent equality saturation engine in Rust, with O(1) snapshots and O(k) restore across all core data structures.
+A semi-persistent equality saturation engine in Rust: memory-cheap snapshots (a sparse diff rather than a full copy) and O(k) restore across all core data structures.
 
 Three contributions:
 
@@ -17,29 +17,31 @@ Both semi-persistence (`const TRACK: bool`) and proof logging (`const PROOFS: bo
 | Crate | Description |
 |-------|-------------|
 | [`semi-persistent`](semi-persistent/) | CLI front-end and integration surface for the engine. |
-| [`containers`](containers/) | Semi-persistent core data structures: `Vec`, `Map`, `BPlusTreeSet`, `SparseSet`, `ListArena`, bitsets, dense-id utilities. All support O(1) snapshots and O(k) restore. ([design docs](containers/doc/design/00-table-of-contents.md)) |
+| [`containers`](containers/) | Semi-persistent core data structures: `Vec`, `Map`, `BPlusTreeSet`, `SparseSet`, `ListArena`, bitsets, dense-id utilities. Snapshots cost only the changed cells (a sparse diff, not a copy); O(k) restore. ([design docs](containers/doc/design/00-table-of-contents.md)) |
 | [`egraph`](egraph/) | Equality saturation engine: e-graphs, e-matching, rewrite scheduling, term extraction, proofs. ([design docs](egraph/doc/design/00-table-of-contents.md)) |
 | [`traversals`](traversals/) | Arena-based recursion schemes. Stack-safe folds, unfolds, transforms, zippers. Includes `traversals-derive` proc-macro. ([tutorial](traversals/TUTORIAL.md)) |
 | [`abstract-domains`](abstract-domains/) | Verified bitvector abstract domains (Tnums, Anums, Unums, Intervals, reduced products). 754 Verus proofs, 0 admits. Built separately from the default workflow. |
+| [`containers-verus`](containers-verus/) | Verus port of `containers`, built for formal verification of the semi-persistent protocol. Excluded from the default workflow. |
 
 ## Building
 
 ```bash
-# Build all crates (except abstract-domains)
+# Build all crates (except Verus-only ones)
 cargo build
 
-# Run all tests (except abstract-domains)
-cargo test --workspace --exclude semi-persistent-abstract-domains
+# Run all tests (except Verus-only ones)
+cargo test --workspace --exclude semi-persistent-abstract-domains --exclude semi-persistent-containers-verus
 
-# abstract-domains is verified with Verus and built separately
+# abstract-domains and containers-verus are verified with Verus and built separately
 cd abstract-domains && cargo verus verify
+cd containers-verus && cargo verus verify
 ```
 
 ## Design Principles
 
 - **Correctness first**: proofs and tests before optimization.
 - **Zero-overhead abstractions**: pool indices, not heap allocations, on hot paths. `Copy` over `Clone` for all pool-index and bitfield types.
-- **Semi-persistence as the unifying mechanism**: the same generational protocol that yields O(1) snapshots also supplies stratum boundaries for stratified negation and rollback for exploratory search.
+- **Semi-persistence as the unifying mechanism**: the same generational protocol that yields memory-cheap snapshots also supplies stratum boundaries for stratified negation and rollback for exploratory search.
 
 ## Security
 
