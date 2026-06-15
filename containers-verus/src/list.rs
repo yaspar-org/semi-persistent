@@ -368,7 +368,7 @@ where T: Sized + Copy + core::default::Default {
             } by {
                 if l2 != l as int { assert(heads[l2] == old(self).heads_view()[l2]); }
             }
-            assert forall|l2: int| 0 <= l2 < model.len() && model[l2].len() > 0 implies
+            assert forall|l2: int| #![auto] 0 <= l2 < model.len() && model[l2].len() > 0 implies
                 heads[l2].tail == model[l2][model[l2].len() - 1] by {
                 if l2 != l as int { assert(heads[l2] == old(self).heads_view()[l2]); }
                 else if !was_empty {
@@ -395,7 +395,7 @@ where T: Sized + Copy + core::default::Default {
                 #[trigger] self.list_seq(m) == old(self).list_seq(m) by {
                 assert(model[m] == old_model[m]);
                 assert(self.list_seq(m) =~= old(self).list_seq(m)) by {
-                    assert forall|p: int| 0 <= p < model[m].len() implies
+                    assert forall|p: int| #![auto] 0 <= p < model[m].len() implies
                         nodes[model[m][p] as int].payload == old_nodes[old_model[m][p] as int].payload by {
                         assert(model[m][p] == old_model[m][p]);
                         assert(model[m][p] < slot);  // old index, unchanged node
@@ -541,7 +541,7 @@ where T: Sized + Copy + core::default::Default {
                     assert(model[l as int][0] == old_model[l as int][0]);
                 }
             }
-            assert forall|l2: int| 0 <= l2 < model.len() && model[l2].len() > 0 implies
+            assert forall|l2: int| #![auto] 0 <= l2 < model.len() && model[l2].len() > 0 implies
                 heads[l2].tail == model[l2][model[l2].len() - 1] by {
                 if l2 != l as int { assert(heads[l2] == old(self).heads_view()[l2]); }
             }
@@ -566,7 +566,7 @@ where T: Sized + Copy + core::default::Default {
                 #[trigger] self.list_seq(m) == old(self).list_seq(m) by {
                 assert(model[m] == old_model[m]);
                 assert(self.list_seq(m) =~= old(self).list_seq(m)) by {
-                    assert forall|p: int| 0 <= p < model[m].len() implies
+                    assert forall|p: int| #![auto] 0 <= p < model[m].len() implies
                         nodes[model[m][p] as int].payload == old_nodes[old_model[m][p] as int].payload by {
                         assert(model[m][p] == old_model[m][p]);
                         assert(model[m][p] < slot);
@@ -724,7 +724,7 @@ where T: Sized + Copy + core::default::Default {
                     assert(heads[l2] == old(self).heads_view()[l2]);
                 }
             }
-            assert forall|l2: int| 0 <= l2 < model.len() && model[l2].len() > 0 implies
+            assert forall|l2: int| #![auto] 0 <= l2 < model.len() && model[l2].len() > 0 implies
                 heads[l2].tail == model[l2][model[l2].len() - 1] by {
                 if l2 == dst as int {
                     if old_model[src as int].len() > 0 {
@@ -747,7 +747,7 @@ where T: Sized + Copy + core::default::Default {
                 let pre_d = old(self).list_seq(dst as int);
                 let pre_s = old(self).list_seq(src as int);
                 assert(post.len() == pre_d.len() + pre_s.len());
-                assert forall|p: int| 0 <= p < post.len() implies
+                assert forall|p: int| #![auto] 0 <= p < post.len() implies
                     post[p] == (if p < pre_d.len() { pre_d[p] } else { pre_s[p - pre_d.len()] }) by {
                     if p < dlen {
                         assert(model[dst as int][p] == old_model[dst as int][p]);
@@ -760,7 +760,7 @@ where T: Sized + Copy + core::default::Default {
                 #[trigger] self.list_seq(m) == old(self).list_seq(m) by {
                 assert(model[m] == old_model[m]);
                 assert(self.list_seq(m) =~= old(self).list_seq(m)) by {
-                    assert forall|p: int| 0 <= p < model[m].len() implies
+                    assert forall|p: int| #![auto] 0 <= p < model[m].len() implies
                         nodes[model[m][p] as int].payload == old_nodes[old_model[m][p] as int].payload by {
                         assert(model[m][p] == old_model[m][p]);
                         // m's nodes are disjoint from dst's relinked tail.

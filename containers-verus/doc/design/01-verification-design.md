@@ -224,7 +224,7 @@ are exactly the ones a wrong mask would break:
   together pin down the whole word, so the bit wastes no state space and
   `from_repr` inverts `into_repr`.
 
-A type that has no bit to spare uses the fallback `BoolPair<T>`, which stores
+A type that has no bit to spare uses the fallback `BoolTagged<T>`, which stores
 the tag in a separate `bool` field beside the value. It steals nothing, so
 `repr_wf` is `true` everywhere and the niche axiom is vacuous — it pays a word
 of padding to remain usable. The impl that makes the obligations *bite* is
@@ -901,7 +901,7 @@ the `DiffStore` contract; the bit-stealing layer is exercised by a *real*
 niche-packing identifier, `DenseId31`, which is *both* `IndexLike` and `Tagged`
 on one `u32` (it indexes a vector and is stored in one, capture bit in the
 stolen MSB; niche-injectivity discharged by the bit-vector solver, not left
-vacuous as in the `BoolPair` fallback — and the witness
+vacuous as in the `BoolTagged` fallback — and the witness
 `InlineStore<DenseId31, DenseId31>` is proved well-formed), and
 `ParallelStore`'s flags use a packed `CaptureBits` (`Vec<u64>`, one bit per
 cell, proved to refine a ghost `Seq<bool>`); the
