@@ -35,7 +35,7 @@ excluding the B+tree and the id-macro/bitset/cursor utilities.
 | `sparse_set.rs` | `sparse_set` | **Verified** (real spec: bijection + id pool) |
 | `list.rs` | `list` (+ `opt`) | **Verified** (prepend/append/splice) |
 | *(e-graph `classes.rs` ring)* | `circular_list` | **Verified** (not a production `containers` module; the class-membership ring, ported here) |
-| `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolPair` + a real bit-stealer) |
+| `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolTagged` + a real bit-stealer) |
 | `dense_id.rs` | `dense_id`, `index_like` | **Partial** — `DenseId31` + `IndexLike` trait verified; **`IdFactory` absent** |
 | `id.rs` (`define_id7/15/31/63!`) | — | **ABSENT** — no macro; `DenseId31` is one hand-written instance |
 | `bplus.rs` | `bplus` | **Scaffold only** — milestone 1 of 7 (see §4) |

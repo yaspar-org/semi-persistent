@@ -20,14 +20,14 @@
 //! ### What this exercises
 //!
 //! Both trait layers are discharged against `DenseId31`'s *real* masking
-//! encoding, not the `BoolPair` fallback's vacuous `repr_wf := true`:
+//! encoding, not the `BoolTagged` fallback's vacuous `repr_wf := true`:
 //!   - **`Tagged`**: the niche axiom `lemma_repr_extensional` is a genuine
 //!     `bit_vector` theorem (equal low-31 bits and equal MSB force word
 //!     equality), and `into_repr`/`set_tag`/`clear_tag` carry their
 //!     value-preservation ensures through the masks.
 //!   - **`IndexLike`**: `as_nat` is the identity on the clean value (so
 //!     injectivity is immediate), and the `[0, 2^31)` bound — which the
-//!     `BoolPair`/primitive impls get structurally — comes from the type
+//!     `BoolTagged`/primitive impls get structurally — comes from the type
 //!     invariant. `lemma_as_nat_bounded` takes `tracked self`, the receiver
 //!     mode that lets `use_type_invariant` read `raw < 2^31` in a proof; that
 //!     single trait-signature choice is what lets one `u32`-backed type carry

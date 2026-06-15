@@ -152,7 +152,7 @@ In `containers-verus` the same split holds:
   bit-stealing identifier: `DenseId31` (`dense_id.rs`) packs the capture bit in
   the stolen MSB of a `u32`, and its niche-injectivity / value-preservation
   obligations are proved by the bit-vector solver — not left vacuous as in the
-  `BoolPair` fallback (`repr_wf := true`). Since every concrete `Tagged` impl
+  `BoolTagged` fallback (`repr_wf := true`). Since every concrete `Tagged` impl
   owes the same ensures, a verified `Default` impl needs **no new proof** about
   the niche — `into_repr`'s postcondition discharges it at the regrow site.
 - Filler soundness (§1) is not an assumed axiom: it is a *consequence* of the

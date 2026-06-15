@@ -24,7 +24,7 @@
 //!     are equal. This is the niche-injectivity property — without it the
 //!     encoding wastes state.
 //!
-//! For the `BoolPair<T>` fallback every `Repr` is `repr_wf`, so the niche
+//! For the `BoolTagged<T>` fallback every `Repr` is `repr_wf`, so the niche
 //! obligations collapse. Bit-stealing impls (lands later) must discharge
 //! all of them explicitly.
 
@@ -46,7 +46,7 @@ pub trait Tagged: Sized + Copy {
 
     /// Niche predicate: `r` is in the image of the encoding. Bit-stealing
     /// impls use this to exclude reprs whose stolen bit is in an inconsistent
-    /// state. Fallback impls (`BoolPair<T>`) make this `true` everywhere.
+    /// state. Fallback impls (`BoolTagged<T>`) make this `true` everywhere.
     spec fn repr_wf(r: Self::Repr) -> bool;
 
     // -- niche-injectivity axiom (proof obligation) --------------------------
@@ -98,21 +98,21 @@ pub trait Tagged: Sized + Copy {
 }
 
 // ---------------------------------------------------------------------------
-// `BoolPair<T>` — the canonical `(bool, T)` repr as a named struct.
+// `BoolTagged<T>` — the canonical `(bool, T)` repr as a named struct.
 //
 // Verus's trait-conflict checker doesn't like tuple-typed associated types
 // here, so we use a named struct. Layout-wise this is exactly `(bool, T)`.
 // ---------------------------------------------------------------------------
 
 #[derive(Copy)]
-pub struct BoolPair<T: Copy> {
-    pub tag: bool,
+pub struct BoolTagged<T: Copy> {
+    pub tagged: bool,
     pub value: T,
 }
 
 // Hand-written `Clone` (a plain copy); the autoderived `Clone` on a generic
 // struct emits a "clone is not a copy" warning under Verus otherwise.
-impl<T: Copy> Clone for BoolPair<T> {
+impl<T: Copy> Clone for BoolTagged<T> {
     fn clone(&self) -> (r: Self)
         ensures r == *self,
     {
@@ -121,75 +121,75 @@ impl<T: Copy> Clone for BoolPair<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Primitive integer impls — `BoolPair<$T>` repr.
+// Primitive integer impls — `BoolTagged<$T>` repr.
 //
-// Every `BoolPair` is well-formed (no niche stolen), so the niche obligations
+// Every `BoolTagged` is well-formed (no niche stolen), so the niche obligations
 // collapse to `true` and extensionality follows from the struct layout.
 // ---------------------------------------------------------------------------
 
 impl Tagged for u8 {
-    type Repr = BoolPair<u8>;
+    type Repr = BoolTagged<u8>;
     open spec fn value_of(r: Self::Repr) -> Self { r.value }
-    open spec fn tag_of(r: Self::Repr) -> bool { r.tag }
+    open spec fn tag_of(r: Self::Repr) -> bool { r.tagged }
     open spec fn repr_wf(_r: Self::Repr) -> bool { true }
     proof fn lemma_repr_extensional(_r1: Self::Repr, _r2: Self::Repr) {}
-    fn into_repr(self) -> Self::Repr { BoolPair { tag: false, value: self } }
+    fn into_repr(self) -> Self::Repr { BoolTagged { tagged: false, value: self } }
     fn from_repr(r: &Self::Repr) -> Self { r.value }
-    fn tag(r: &Self::Repr) -> bool { r.tag }
-    fn set_tag(r: &mut Self::Repr) { r.tag = true; }
-    fn clear_tag(r: &mut Self::Repr) { r.tag = false; }
+    fn tag(r: &Self::Repr) -> bool { r.tagged }
+    fn set_tag(r: &mut Self::Repr) { r.tagged = true; }
+    fn clear_tag(r: &mut Self::Repr) { r.tagged = false; }
 }
 
 impl Tagged for u16 {
-    type Repr = BoolPair<u16>;
+    type Repr = BoolTagged<u16>;
     open spec fn value_of(r: Self::Repr) -> Self { r.value }
-    open spec fn tag_of(r: Self::Repr) -> bool { r.tag }
+    open spec fn tag_of(r: Self::Repr) -> bool { r.tagged }
     open spec fn repr_wf(_r: Self::Repr) -> bool { true }
     proof fn lemma_repr_extensional(_r1: Self::Repr, _r2: Self::Repr) {}
-    fn into_repr(self) -> Self::Repr { BoolPair { tag: false, value: self } }
+    fn into_repr(self) -> Self::Repr { BoolTagged { tagged: false, value: self } }
     fn from_repr(r: &Self::Repr) -> Self { r.value }
-    fn tag(r: &Self::Repr) -> bool { r.tag }
-    fn set_tag(r: &mut Self::Repr) { r.tag = true; }
-    fn clear_tag(r: &mut Self::Repr) { r.tag = false; }
+    fn tag(r: &Self::Repr) -> bool { r.tagged }
+    fn set_tag(r: &mut Self::Repr) { r.tagged = true; }
+    fn clear_tag(r: &mut Self::Repr) { r.tagged = false; }
 }
 
 impl Tagged for u32 {
-    type Repr = BoolPair<u32>;
+    type Repr = BoolTagged<u32>;
     open spec fn value_of(r: Self::Repr) -> Self { r.value }
-    open spec fn tag_of(r: Self::Repr) -> bool { r.tag }
+    open spec fn tag_of(r: Self::Repr) -> bool { r.tagged }
     open spec fn repr_wf(_r: Self::Repr) -> bool { true }
     proof fn lemma_repr_extensional(_r1: Self::Repr, _r2: Self::Repr) {}
-    fn into_repr(self) -> Self::Repr { BoolPair { tag: false, value: self } }
+    fn into_repr(self) -> Self::Repr { BoolTagged { tagged: false, value: self } }
     fn from_repr(r: &Self::Repr) -> Self { r.value }
-    fn tag(r: &Self::Repr) -> bool { r.tag }
-    fn set_tag(r: &mut Self::Repr) { r.tag = true; }
-    fn clear_tag(r: &mut Self::Repr) { r.tag = false; }
+    fn tag(r: &Self::Repr) -> bool { r.tagged }
+    fn set_tag(r: &mut Self::Repr) { r.tagged = true; }
+    fn clear_tag(r: &mut Self::Repr) { r.tagged = false; }
 }
 
 impl Tagged for u64 {
-    type Repr = BoolPair<u64>;
+    type Repr = BoolTagged<u64>;
     open spec fn value_of(r: Self::Repr) -> Self { r.value }
-    open spec fn tag_of(r: Self::Repr) -> bool { r.tag }
+    open spec fn tag_of(r: Self::Repr) -> bool { r.tagged }
     open spec fn repr_wf(_r: Self::Repr) -> bool { true }
     proof fn lemma_repr_extensional(_r1: Self::Repr, _r2: Self::Repr) {}
-    fn into_repr(self) -> Self::Repr { BoolPair { tag: false, value: self } }
+    fn into_repr(self) -> Self::Repr { BoolTagged { tagged: false, value: self } }
     fn from_repr(r: &Self::Repr) -> Self { r.value }
-    fn tag(r: &Self::Repr) -> bool { r.tag }
-    fn set_tag(r: &mut Self::Repr) { r.tag = true; }
-    fn clear_tag(r: &mut Self::Repr) { r.tag = false; }
+    fn tag(r: &Self::Repr) -> bool { r.tagged }
+    fn set_tag(r: &mut Self::Repr) { r.tagged = true; }
+    fn clear_tag(r: &mut Self::Repr) { r.tagged = false; }
 }
 
 impl Tagged for usize {
-    type Repr = BoolPair<usize>;
+    type Repr = BoolTagged<usize>;
     open spec fn value_of(r: Self::Repr) -> Self { r.value }
-    open spec fn tag_of(r: Self::Repr) -> bool { r.tag }
+    open spec fn tag_of(r: Self::Repr) -> bool { r.tagged }
     open spec fn repr_wf(_r: Self::Repr) -> bool { true }
     proof fn lemma_repr_extensional(_r1: Self::Repr, _r2: Self::Repr) {}
-    fn into_repr(self) -> Self::Repr { BoolPair { tag: false, value: self } }
+    fn into_repr(self) -> Self::Repr { BoolTagged { tagged: false, value: self } }
     fn from_repr(r: &Self::Repr) -> Self { r.value }
-    fn tag(r: &Self::Repr) -> bool { r.tag }
-    fn set_tag(r: &mut Self::Repr) { r.tag = true; }
-    fn clear_tag(r: &mut Self::Repr) { r.tag = false; }
+    fn tag(r: &Self::Repr) -> bool { r.tagged }
+    fn set_tag(r: &mut Self::Repr) { r.tagged = true; }
+    fn clear_tag(r: &mut Self::Repr) { r.tagged = false; }
 }
 
 } // verus!
