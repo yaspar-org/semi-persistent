@@ -902,6 +902,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "semi-persistent-containers-verus"
+version = "0.1.0"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
 name = "semi-persistent-egraph"
 version = "0.1.0"
 dependencies = [
