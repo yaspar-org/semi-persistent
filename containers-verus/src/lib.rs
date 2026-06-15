@@ -53,5 +53,6 @@ pub mod index_like;
 pub mod inline_store;
 pub mod map;
 pub mod parallel_store;
+pub mod sparse_set;
 pub mod tagged;
 pub mod vec;
