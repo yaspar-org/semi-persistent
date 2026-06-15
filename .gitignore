@@ -18,3 +18,8 @@ target/
 .kiro/
 session*.json
 session*.md
+
+# Claude Code (agent state / transcripts — never commit)
+.claude/
+**/.claude/
+CLAUDE.md
