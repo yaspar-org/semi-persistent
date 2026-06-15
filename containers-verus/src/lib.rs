@@ -42,6 +42,7 @@
     clippy::doc_overindented_list_items   // same: design-doc-style comment formatting
 )]
 
+pub mod append_only_vec;
 pub mod capture_bits;
 pub mod container_id;
 pub mod dense_id;
@@ -50,6 +51,7 @@ pub mod fork_history;
 pub mod frame;
 pub mod index_like;
 pub mod inline_store;
+pub mod map;
 pub mod parallel_store;
 pub mod tagged;
 pub mod vec;
