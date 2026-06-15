@@ -42,6 +42,27 @@ excluding the B+tree and the id-macro/bitset/cursor utilities.
 | `bitset.rs` | *(internal use covered by `capture_bits`)* | **ABSENT as a public type** (see §3) |
 | `sorted_cursor.rs` | — | **ABSENT** — no `SortedCursor` trait / cursor iteration |
 
+### 1.1 Public type-name mapping
+
+Public type names match production **except** for the four below. The first two
+are *forced* by name collisions with `vstd` and cannot be the production name;
+the rest are deliberate. Everything else (`Vec`, `AppendOnlyVec`, `SparseSet`,
+`ListArena`, `BPlusTreeSet`, `Opt`, `InlineStore`, `ParallelStore`, `ContainerId`,
+`ForkHistory`, `ShrinkPolicy`, the `*Token` types, and the `DiffStore` / `Tagged`
+/ `IndexLike` / `DenseId` traits) is name-identical.
+
+| Production | Verus | Reason |
+|---|---|---|
+| `Map` / `MapToken` | **`SpMap`** / `MapToken` | *forced*: `Map` collides with `vstd::map::Map` (a spec type). Token name matches. |
+| `View` / `ViewIter` | **`VecView`** / **`VecViewIter`** | *forced*: `View` collides with vstd's `View` trait (the `@` operator). |
+| `BoolTagged` | **`BoolTagged`** | aligned (was briefly `BoolPair`; renamed to match, incl. field `tag` → `tagged`). |
+| *(e-graph `EClassEntry`)* | **`CircularList`** / `CircularListNode` | the class-membership ring lives in `egraph/src/classes.rs`, not `containers/`; given a descriptive container name here. |
+
+Verus-internal types with no production public equivalent (proof scaffolding or
+modeling choices, intentionally `pub` for the proofs): `CaptureBits`, `Frame`,
+`ForkOrigin`, `NodeRef`, `ListHead`, `ListNode`, `DenseId31`, `DenseUsize`,
+`OptElem`, `BNode`.
+
 ## 2. Method-level parity (the verified containers)
 
 Status legend: **✓** verified (proved `ensures` capturing production behavior, no
