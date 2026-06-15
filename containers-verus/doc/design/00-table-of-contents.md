@@ -74,11 +74,15 @@ same patterns recur as more containers are verified.
 
 ## Future work
 
+- **[Feature-Parity Audit and Verification Plan](future/parity-audit-and-plan.md)**
+  A skeptical, method-by-method accounting of what this crate verifies vs. the
+  production crate — every gap, every weaker/diverging spec, and the recommended
+  PR scope statement. Start here to understand exactly what is and isn't covered.
 - **[B+Tree Set — Design and a Bi-Abductive Proof Plan](future/bplus-tree-design.md)**
   Scoping for the one container not yet verified: the data structure, the
   recursive/balanced `wf` invariant, and how an insert-with-split proof
   decomposes under the dynamic-frames discipline. Proof not yet attempted;
-  insert-only (production has no `remove`).
+  insert-only (production has no `remove`). B+tree status today: milestone 1 of 7.
 
 ## Relationship to the production design docs
 
