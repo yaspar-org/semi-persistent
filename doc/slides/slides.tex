@@ -1,0 +1,495 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usetheme{metropolis}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+% To rehearse with presenter notes visible, uncomment ONE of:
+% \setbeameroption{show notes}                 % notes interleaved after each slide
+% \setbeameroption{show notes on second screen=right}
+
+\definecolor{accent}{HTML}{2A6F97}
+\definecolor{codebg}{HTML}{F4F4F4}
+\setbeamercolor{frametitle}{bg=accent}
+
+\lstdefinelanguage{Rust}{
+  keywords={fn,let,mut,struct,enum,impl,trait,for,in,if,else,match,return,const,
+            pub,self,Self,Some,None,true,false,as,where,usize,u8,u32,u64,bool,Vec},
+  sensitive=true, comment=[l]{//}, morestring=[b]",
+}
+\lstset{
+  basicstyle=\ttfamily\scriptsize, keywordstyle=\bfseries\color{accent},
+  commentstyle=\itshape\color{gray}, backgroundcolor=\color{codebg},
+  columns=fullflexible, keepspaces=true, breaklines=true, frame=none, xleftmargin=4pt,
+  literate={→}{$\rightarrow$}1 {≡}{$\equiv$}1 {≤}{$\leq$}1 {≥}{$\geq$}1
+           {∩}{$\cap$}1 {²}{$^2$}1 {³}{$^3$}1,
+}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\bigO}[1]{$\mathcal{O}(#1)$}
+
+\title{A Semi-Persistent E-Graph}
+\subtitle{Verified foundations, native AC canonization, leapfrog AC matching}
+\author{R\'emi Delmas}
+\institute{Amazon Web Services --- Automated Reasoning Group}
+\date{EGRAPHS @ PLDI --- June 15, 2026}
+
+\begin{document}
+
+\maketitle
+\note{One-line pitch: egglog is great, but we needed it to live \emph{inside} a
+backtracking search, to handle AC natively, to reason over unbounded arithmetic,
+and to rest on a \emph{verified} foundation. This talk is how. I'll keep slides
+sparse and do the talking.}
+
+% ============================================================
+% 2 — Motivation
+\begin{frame}{Why a new e-graph?}
+We love \textsc{egglog} --- its features, its performance. We also wanted to:
+\begin{itemize}
+  \item Embed e-graphs \emph{inside} tree search \hfill$\Rightarrow$ \alert{semi-persistence}
+  \item High performance \hfill$\Rightarrow$ \alert{arenas $+$ integers-as-pointers $+$ Verus verification}
+  \item Avoid AC explosion \hfill$\Rightarrow$ \alert{native AC canonization}
+  \item Batch proof extraction for all equivalent nodes \hfill$\Rightarrow$ \alert{dual UF $+$ copy-on-first-re-canon $+$ LCA}
+\end{itemize}
+\vfill
+\footnotesize \emph{Prior art:} semi-persistence $+$ canonized AC live in \textsc{Alt-Ergo} (OCaml) since 2008. New here: performance \& low-level data-structure design, \alert{first-write} marking, \alert{leapfrog} worst-case-optimal join, and Verus proofs.\\[2mm]
+\normalsize Open source --- \texttt{github.com/yaspar-org/semi-persistent} --- Apache 2.0
+\end{frame}
+\note{%
+- egglog = Datalog + equality saturation; relational e-matching via leapfrog. Fast, expressive. \\
+- (1) We do SMT / abstract-interpretation-style search: each decision should be a checkpoint we can roll back cheaply. Equality saturation needs to be a citizen of a backtracking search, not a one-shot batch job. \\
+- (2) Modelling +, * as AC by rewrite rules blows up the e-graph combinatorially. Handle it structurally instead. \\
+- (3) We want \texttt{BigInt}/\texttt{BigRational}, intervals, bitvectors --- pluggable, not baked in. \\
+- (4) The whole thing is built on integer indices into vectors, not pointers. That discipline is exactly what's easy to get subtly wrong --- so we proved it. \\
+- PRIOR ART, say it out loud: none of the IDEAS are new. The Alt-Ergo SMT solver (OCaml, French academic origin) has had semi-persistent data structures since Conchon \& Filli\^atre's ESOP'08 paper, and native AC reasoning via Iguernlala's AC(X). What IS new here: (a) the performance and low-level data-structure engineering --- arenas, integers-as-pointers, bit-stealing; (b) explicit CONTROL over which version is marked --- we log only the FIRST write after a mark, whereas Alt-Ergo tracks every mutation; (c) leapfrog worst-case-optimal join for e-matching (from egglog), now extended to AC; (d) the Verus proofs. \\
+These four wants map 1:1 to the four parts of the talk.}
+
+% ============================================================
+% 3 — Semi-persistence primitive
+\begin{frame}[fragile]{Semi-persistence: one vector primitive}
+\begin{itemize}\small
+  \item drop full persistence $\Rightarrow$ \alert{full read/write speed} on the current version
+  \item cost: backtracking to a version \alert{invalidates all ulterior versions}
+\end{itemize}
+\vspace{-2mm}
+\begin{lstlisting}[basicstyle=\ttfamily\normalsize]
+cell index:      0     1     2     3     4
+since m2 (top):              (2,c)
+since m1:              (1,b)       (3,d)
+--------------------------------------------
+current (live):  v0    b'    c'    d'    v4
+\end{lstlisting}
+\vspace{-1mm}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\footnotesize
+\begin{itemize}\footnotesize
+  \item bottom = single live array; a snapshot is a \alert{sparse negative diff (no deep copy)}
+  \item each \code{mark} opens a \alert{stratum}; first write to a cell logs \code{(i, old)} \alert{once}
+  \item a cell appears in $\le 1$ entry per stratum (first-write-wins) $\Rightarrow$ diffs are \alert{sparse}
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\footnotesize
+\code{restore(tok)}: replay strata above the target \alert{in reverse}, writing each \code{(i,old)} back.
+\smallskip
+\code{restore(m1)} $\Rightarrow$ cells 1,2,3 $\to$ b,c,d; cells 0,4 untouched $=$ snapshot at \code{m1}.
+\end{column}
+\end{columns}
+\end{frame}
+\note{%
+- The protocol: \texttt{mark()} opens a frame; the first write to any cell after that logs the old value once (a per-cell capture flag enforces ``first-write-wins''). \texttt{restore(tok)} replays the log backwards. \\
+- The capture flag is bit-stolen (MSB of a 31- or 63-bit id), so tracking costs zero extra memory. \\
+- \texttt{mark}/\texttt{restore} are NOT O(1): mark resets the capture flags (O(n/64) bitset, or O(parent-diff) inline), restore is O(cells-touched) replay plus re-tagging the parent frame. The diff is bounded by \emph{distinct cells touched} --- the dominant, usually tiny, term. \\
+- VecToken carries a branch id + depth; ForkHistory makes a token from an abandoned branch invalid, so you can't restore into a future you already discarded. \\
+- \texttt{const TRACK} compiles all of this away to a plain Vec when you don't need it.}
+
+% ============================================================
+% 4 — The deliberate tradeoff
+\begin{frame}[fragile]{Backtracking, not full persistence}
+\begin{itemize}\small
+  \item token $=$ \alert{(branch, depth)}; \code{depth} $=$ \alert{\# frames on the mark stack} (position along the branch)
+\end{itemize}
+\vspace{1mm}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+  br2:    *------(2,2)----(2,3)--- ...     restore to (0,2) forked br2 here:
+          |                                depth RESUMES at 2 (stack truncated to 2)
+  br1:    |       *------(1,3)--- ...       restore to (0,3) forked br1 at depth 3
+          |       |
+  br0: (0,0)----(0,1)----(0,2)----(0,3)    node = (branch, depth)
+\end{lstlisting}
+\vspace{1mm}
+\footnotesize
+\code{restore} truncates the mark stack to the target, so a new \code{mark} \alert{resumes the depth count from the fork}. Validity: \code{tok.branch} $=$ current $\Rightarrow$ \code{tok.depth} $\le$ current depth; \code{tok.branch} an \alert{ancestor} $\Rightarrow$ \code{tok.depth} $\le$ that branch's \alert{fork-depth} (its cut). Otherwise \alert{rejected}.
+\end{frame}
+\note{%
+- This is the key design bet. Fully-persistent structures (every version live forever) pay on every access --- pointer chasing, structure sharing, GC. \\
+- A search only ever rolls back to a point on its current path. It never resurrects an abandoned branch. So we keep ONE mutable present + an undo log. \\
+- Result: the hot path (saturation) runs at plain-vector speed; you only pay when you actually checkpoint or roll back. \\
+- This is the Conchon \& Filli\^atre (ESOP'08) insight; our contribution is making it \emph{pervasive}, arena-style (deterministic truncation, no GC), and \emph{proved}.}
+
+% ============================================================
+% 5 — Everything composes, all verified
+\begin{frame}{A verified library of semi-persistent containers}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+From the one primitive:
+\begin{itemize}\small
+  \item hash maps, sparse sets
+  \item arena linked lists, circular lists
+  \item union-find, node caches, symbol registries
+  \item $\Rightarrow$ a full \alert{semi-persistent e-graph}
+\end{itemize}
+\end{column}
+\begin{column}{0.5\textwidth}
+\alert{300+ properties proved in Verus}
+\begin{itemize}\small
+  \item each structure: math abstraction $+$ well-formedness predicate (\code{Seq}, \code{Set}, \code{Map}, \dots)
+  \item with tracking $\equiv$ a \alert{stack of deep copies} (but stored as sparse diffs)
+  \item perf tricks, \alert{no bugs}: arenas, int-as-pointer, bit-packing, compressed diffs
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+\note{%
+- TWO things the proofs buy us. (1) Every container is proved equivalent to its mathematical abstraction --- the Vec to a Seq, SparseSet to a Set (+ index pool), Map to a partial map, ListArena to a sequence with acyclicity. And with TRACK on, mark/restore is proved equivalent to keeping a STACK OF DEEP COPIES --- except we store only sparse negative diffs. Headline: after restore(tok), view() == snapshots[tok.frame], where snapshots is the ghost stack of full copies. \\
+- (2) The nice part: Verus lets us do aggressive performance engineering WITHOUT introducing bugs --- arena allocation, integers-as-pointers, bit-stealing the capture/history flags into the MSB, packed capture bitsets, compressed diff representations. All of those are exactly the tricks that silently corrupt data; the proof certifies each one. \\
+- WHY it matters here: the core is integer indices into vectors, not references --- the borrow checker can't help. A stale index, an off-by-one in replay, a token reused across a fork: all silent. \\
+- Faithful API-parity port, checked separately (cargo verus verify); production ships the plain Rust crate. Sibling precedent: abstract-domains, 754 proofs.}
+
+
+% ============================================================
+% SECTION: Canonization for A, C, AC, ACI
+% ============================================================
+
+% ---- user-facing syntax
+\begin{frame}[fragile]{Canonization for A, C, AC, ACI --- surface syntax}
+\begin{lstlisting}[basicstyle=\ttfamily\normalsize]
+(function add (Expr) Expr :assoc-comm)        ; AC  (multiset)
+(function or  (Expr) Expr :assoc-comm-idem)   ; ACI (set)
+(function seq (Expr) Expr :assoc)             ; A   (sequence)
+
+;; ACI: double-negation elimination, keep the rest of the set
+(rewrite (or (not (not x)) ..rest) (or x ..rest))
+
+;; AC: drop additive identity, any multiplicity
+(rewrite (add (zero) ..rest) (add ..rest))
+\end{lstlisting}
+\medskip
+\small \code{..rest} = the unmatched remainder:
+\alert{multiset} (AC) / \alert{set} (ACI) / \alert{sequence} \code{..pre}\,\code{..suf} (A).
+\end{frame}
+\note{%
+- These are real declarations/rules from our test corpus (extract\_ac\_aci.egg). \\
+- Attributes pick the theory: :assoc-comm (AC, multiset), :assoc-comm-idem (ACI, set), :assoc (A, sequence). The engine treats them structurally --- no rewrite rules for commutativity. \\
+- The rest variable's TYPE follows the operator: a multiset for AC, a set for ACI, and head/tail sequences (..pre, ..suf) for A. Point at \texttt{..rest} on the slide and say what it binds in each case. \\
+- \texttt{x:k} on an element binds its multiplicity (next slide shows constraints).}
+
+% ---- comprehensions
+\begin{frame}[fragile]{Canonization for A, C, AC, ACI --- comprehensions}
+\begin{lstlisting}[basicstyle=\ttfamily\normalsize]
+;; distribute mul over add (mul is plain, add is AC)
+(rewrite (mul a (add x:k ..rest))
+         (add (mul a x):k ..{(mul a v):m for v:m in rest}))
+
+;; with a filter (include only if (p v) evaluates to a truthy literal)
+(rewrite (f ..rest) (g ..{(h v):k for v:k in rest if (p v)}))
+\end{lstlisting}
+\medskip
+\small RHS syntax: \alert{set} \code{..\{e for v in r\}} \;/\; \alert{mset} \code{..\{e:k for v:k in r\}} \;/\; \alert{seq} \code{..[e for v in r]}
+\end{frame}
+\note{%
+- Comprehensions are how the RHS rebuilds a variadic term from a captured rest. The distribute rule is the one to walk slowly --- it's the memorable one. \\
+- The multiset form threads the multiplicity: \texttt{for v:k in rest} binds element v and its count k; \texttt{(h v):k} re-emits with the same count. \\
+- Optional \texttt{if} filter. These are real parser tests (parser\_rhs.rs). \\
+- Construction canonicalizes on the fly: the built term is flattened + sorted + merged before insertion, so surface order doesn't matter.}
+
+% ---- canonization algorithm
+\begin{frame}[fragile]{Canonization for A, C, AC, ACI --- the algorithm}
+\begin{center}\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Kind & Build step & Canonical form & On merge \\
+\midrule
+C          & ---            & sorted pair      & re-sort \\
+A (seq)    & \alert{flatten} & order preserved & in place \\
+ACI (set)  & \alert{flatten} & sorted, unique  & \alert{dedup} \\
+AC (mset)  & \alert{flatten} & sorted, sum mults & \alert{sum mults} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{lstlisting}[basicstyle=\ttfamily\normalsize]
+ (And (And a b) c)  --flatten-->  (And a b c)
+ (Add a b a)        --canon-->    (Add a:2 b)
+\end{lstlisting}
+\begin{center}\small
+canonize $=$ \alert{flatten} same-op children $\to$ \code{map(find)} $\to$ sort $+$ merge/dedup
+\end{center}
+\end{frame}
+\note{%
+- The point: commutativity/associativity/idempotence are handled by STORING children in canonical form, not by emitting rewrite rules (which blows the e-graph up combinatorially --- and commutativity can't even be a terminating rule). \\
+- THREE steps: (1) flatten nested same-op children into the parent (associativity), (2) apply find to each child (use current reps), (3) sort + merge mults (AC) / dedup (ACI). C is just a sorted pair, no flatten. \\
+- SORTING needs a total order on terms: we order by the child's DenseId. Every node gets a global DenseId in [0,N) in CONSTRUCTION ORDER (routing.reserve()), so the order is just integer comparison --- cheap and total. \\
+- (Flattening is landing before the talk --- see notes; everything else here is in canon.rs / egraph.rs add().) \\
+- Canonization re-runs after a union because find may change child reps --- that triggers the slice shrink two slides on.}
+
+% ============================================================
+% 8 — Node storage
+\begin{frame}[fragile]{Canonization for A, C, AC, ACI --- node storage}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+ ROUTING              PARTITIONED CACHES
+ gid->(kind,local)
+ +---------------+    +----------------------------------------------+
+ | 0 (Plain2, 0) |--->| plain2  nodes: Vec<FixedArityNode>           |
+ | 3 (Plain2, 1) |--->|   [0] op=Mul children=[e3,e7]                |
+ +---------------+    |   [1] op=Mul children=[e2,e2]                |
+ | 1 (AC,     0) |-+  |   index: {hash(op,children) -> local_id}     |
+ | 4 (AC,     1) |-+  +----------------------------------------------+
+ +---------------+ +->| ac   nodes: Vec<VariableArityNode>           |
+ | 2 (Lit,    0) |-+  |      pool:  Vec<(id, mult)>                  |
+ +---------------+ |  |   [0] op=Add span=[0,2) -> {e3:1, e9:2}      |
+                   |  |   index: {hash(op,elems) -> local_id}        |
+                   |  +----------------------------------------------+
+                   +->| lit  nodes: Vec<LitNode>                     |
+                      |   [0] op=@Int val=42                         |
+                      +----------------------------------------------+
+\end{lstlisting}
+\vspace{-1mm}
+\begin{itemize}\small
+  \item routing \code{Vec}: global id $\to$ \alert{(kind, cache-local id)}; caches gap-free
+  \item cache $=$ semi-persistent \code{Vec} (truth) $+$ \alert{transient} hash-cons index (rebuilt on restore)
+  \item insert: \code{reserve} gid $\to$ \code{commit}; hash-cons hit $\to$ \code{unreserve} \& reuse
+\end{itemize}
+\end{frame}
+\note{%
+- Nodes are partitioned by kind and arity. The routing table maps a global dense id to a (partition, cache-local dense id). Both arrays are densely packed --- no wasted slots, great locality for the leapfrog scans. \\
+- Each cache is a semi-persistent Vec (source of truth, diff-tracked) PLUS a transient HashMap for hash-consing. The HashMap is derived: we don't diff-track it, we rebuild it after a restore. This keeps the diff small. \\
+- Reserve/commit: \texttt{routing.reserve()} hands out the next global id; if hash-consing finds a duplicate we \texttt{unreserve} and reuse, otherwise \texttt{finalize} commits the NodeRef. \\
+- This separation --- diff-tracked source of truth vs. rebuilt derived index --- is the recurring software-engineering pattern.}
+
+% ============================================================
+% 9 — Variadic layout
+\begin{frame}[fragile]{Canonization for A, C, AC, ACI --- variadic layout}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+ header[n0] = { op | start=0 | end=2 }   header[n1] = { op | start=2 | end=5 }
+
+ pool idx:        0      1      2      3      4
+ AC pool:        e2:1   e5:2   e2:3   e7:1   e9:1
+ n0 = pool[0,2)  \__________/                        = add{e2:1, e5:2}
+ n1 = pool[2,5)               \___________________/  = add{e2:3, e7:1, e9:1}
+
+ union(e7,e9) folds n1's last two; re-canonize n1 in place:
+ AC pool:        e2:1   e5:2   e2:3   e9:2  (e9:1)    header[n1].end: 5 -> 4
+ n1 = pool[2,4)               \___________/  ^^^^^^ left in place (now outside n1)
+\end{lstlisting}
+\begin{itemize}\small
+  \item many nodes share \emph{one} pool, each a slice $\Rightarrow$ no per-node allocation
+  \item re-canonize rewrites the front \& moves \code{end} left; \alert{tail left in place} (no ripple edits)
+\end{itemize}
+\end{frame}
+\note{%
+- Variadic kinds keep a fixed-size header pointing at a slice of one shared per-kind pool. Two nodes' children sit back-to-back; multiplicity is written in the SAME surface notation as rules (e5:2 = element e5, multiplicity 2). \\
+- WORKED EXAMPLE: n1 = add{e2:3, e7:1, e9:1} in pool[2..5]. Now union(e7,e9): find maps both to e9, so e7:1 + e9:1 fold to e9:2. We re-canonize n1's slice IN PLACE: rewrite [e2:3, e9:2] into the front (slots 2,3) and move header end from 5 to 4. Slot 4 still holds the old e9:1 but is now outside n1's slice --- unreachable dead space. \\
+- We never compact the pool or move other nodes' data. Cheap (one header write + a couple of slot writes), and semi-persistence-friendly. The leaked slot is reclaimed only by a full rebuild/restore truncation. \\
+- If re-canonizing makes n1 equal to an existing node, that's a collision --- queued as a new union.}
+
+% ============================================================
+% 10 — Matching: indexes + leapfrog (fused)
+\begin{frame}{Matching: four sorted indexes, joined by leapfrog}
+A pattern is a conjunctive query over four \alert{sorted} indexes into the nodes:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\code{by\_op} & op $\to$ nodes & drive a scan by operator \\
+\code{by\_repr} & e-class $\to$ nodes & re-join inside an e-class \\
+\code{by\_child\_pos} & (e-class, pos) $\to$ parents & parents at a child slot \\
+\code{by\_contains} & e-class $\to$ variadic parents & AC/ACI parents holding an elem \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}\small
+  \item \alert{Leapfrog} $=$ fast \alert{$n$-way intersection} of sorted sets; \bigO{\log n} seek skips non-matching runs
+\end{itemize}
+\end{frame}
+\note{%
+- Egglog-style relational e-matching: a pattern is a conjunctive query over sorted indexes. Four index shapes: by\_op (drive by operator), by\_repr (re-join within an e-class once a node var is bound), by\_child\_pos (plain parents at a child position), by\_contains (variadic parents containing an element). \\
+- LEAPFROG: to intersect several sorted sets, keep a cursor in each, take the current max key, seek every cursor forward to >= that key (log-time seek skips runs that can't be in the intersection), and when all agree that's a hit. n-WAY, not pairwise --- that's what makes it worst-case optimal. \\
+- Each index is a sorted vector (cursor with log seek); contiguous memory beats incrementally-maintained trees today. B+tree variant (incremental between iterations) in progress.}
+
+% ============================================================
+% 11 — Query execution as nested loops
+\begin{frame}[fragile]{A pattern executes as nested joins (forall loops)}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+pattern (f (g x) (h x))    x is SHARED -> the join key
+atoms:  u=g(x)   v=h(x)   root=f(u,v)
+
+  for u in by_op[g]:                                                 # all g-nodes
+    x = child(u, 0)
+    for v in by_op[h] ∩ by_child_pos[x, pos=0]:                      # h with child0=x
+      for root in by_op[f] ∩ by_child_pos[u, pos=0] ∩ by_child_pos[v, pos=1]:  # 3-way
+        emit { x, u, v, root }                                       # full binding
+\end{lstlisting}
+\begin{itemize}\footnotesize
+  \item a shared var (\code{x}) $=$ a \alert{join key}: each loop \alert{intersects several indexes} at once (leapfrog)
+  \item the loop \alert{order} is selectivity-chosen --- drive the rarest atom first (next slide)
+  \item these loops are run by a \alert{stack-based VM} over a sequence of \alert{instructions} the scheduler emits
+\end{itemize}
+\end{frame}
+\note{%
+- THE mental model: a pattern is a conjunctive query; we evaluate it as NESTED LOOPS, outer-to-inner, and each loop ranges over a leapfrog INTERSECTION of indexes (not a single index). \\
+- Walk the code: outer loop scans every g-node (by\_op[g]); bind u, read its child as x. Middle loop wants h-nodes whose child-0 is THAT x --- so it intersects by\_op[h] with by\_child\_pos[x@0]. Innermost wants an f-node whose child-0 is u AND child-1 is v --- intersect THREE index lists at once (this is the n-way leapfrog). When all agree, we have a full binding {x,u,v,root}. \\
+- So a JOIN is over MULTIPLE indexes --- that was the confusion before. The intersection narrows candidates using everything already bound. \\
+- The loop ORDER isn't fixed: the scheduler picks which atom is the outer loop by cardinality (rarest first). Same query, the loops can nest in any order --- next slide. \\
+- IMPLEMENTATION: we don't literally emit nested Rust loops. The scheduler compiles the query to a flat SEQUENCE OF INSTRUCTIONS (Join, ExtractChild, CheckEq, DecomposeAC, ...) and a STACK-BASED VM runs them --- the explicit frame stack IS the nesting. That's what makes it pausable/resumable (the lazy match iterator a few slides on).}
+
+% ============================================================
+% 13 — AC decomposition in the join
+\begin{frame}[fragile]{Integrating AC decomposition into leapfrog}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+pattern (f a (add x:k1 y:k2 ..rest))
+atoms:  n1=add{x:k1, y:k2, ..rest}   root=f(a, n1)
+
+  for root in by_op[f]:                                 # plain join
+    a = child(root, 0);  n1 = child(root, 1)
+    if n1 in by_op[add]:                                # confirm n1 is an add
+      residual = find(children(n1))                     # build multiset
+      for x in residual:                                # DECOMPOSE loop
+        k1 = mult(x); residual -= {x:k1}
+        for y in residual:                              # x already removed
+          k2 = mult(y); residual -= {y:k2}
+          rest = residual                               # leftover
+          emit { a, root, n1, x, k1, y, k2, rest }
+          restore y into residual                       # backtrack
+        restore x into residual
+\end{lstlisting}
+\begin{itemize}\small
+  \item a \alert{plain join} (leapfrog) narrows to an AC node; then a \alert{decompose loop} walks the residual multiset
+  \item maximum partition: each var takes the element's \alert{entire} multiplicity $\Rightarrow$ $\mathcal{O}(d^p)$
+\end{itemize}
+\end{frame}
+\note{%
+- This is the KEY integration slide. The plain join finds f-nodes top-down, binds their children. When a child n1 is an AC node, the engine reads its children into a residual multiset (apply find to each), then enters the DECOMPOSE loop --- a nested for-loop over the residual entries, backtracking on each. \\
+- The decompose loop is conceptually INSIDE the plain join (it's a deeper nesting level). In the stack VM, it pushes ACDecompose frames onto the same stack as Join frames --- same mechanism, just different iteration logic (iterate over multiset entries vs leapfrog over index cursors). \\
+- Maximum partition: each unbound var takes ALL of its element's multiplicity (not one copy at a time). So branching = number of DISTINCT elements d, not total copies. For p pattern variables: O(d\^{}p). \\
+- Multiplicity constraints (x:k>=2 etc) compile to interval checks applied at bind time, pruning branches before they start.}
+
+
+% ============================================================
+% 14 — Iterator
+\begin{frame}[fragile]{Matches stream from an iterator with an explicit stack}
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+ MatchIterator { frames: Vec<Frame>, ... }   // resumable search
+ FrameKind: Join(cursor) | ACDecompose(residual) | ACIDecompose | Window
+ next_match(): push frames per choice point; YIELD on full binding; backtrack
+\end{lstlisting}
+\begin{itemize}\small
+  \item every choice point is a \alert{frame} (a join cursor, an AC element, \dots)
+  \item pull matches \alert{one at a time} --- pause \& resume the search
+  \item AC frame: residual $\{A{:}2,B{:}2,C{:}3\}$; \code{x=A} takes all of $A^2$ then tries \code{y=B} ($2{=}2$) $\to$ yield; backtrack $\to$ \code{x=B}\dots
+  \item \alert{maximum partition}: unbound var takes the element's \emph{entire} multiplicity $\Rightarrow$ branch over distinct elements only ($\mathcal{O}(d^p)$)
+\end{itemize}
+\end{frame}
+\note{%
+- THE point of this slide: matching is a backtracking search, and we expose it as a LAZY iterator with an EXPLICIT stack (MatchIterator, frames: Vec<Frame>). That's the unusual feature --- you can pull matches one at a time, pause, inspect, resume. No recursion: the whole search state lives on the frames vector. \\
+- A frame is one choice point. FrameKind: Join (holds a live leapfrog cursor), ACDecompose (residual multiset + which element we're on), ACIDecompose (used-bitset), SlidingWindow (A sequences). next\_match() enters steps pushing frames; on a complete binding it yields; the next call backtracks into the top frame and resumes from where it left off. \\
+- AC frame walk (right column): residual {A:2,B:2,C:3}, non-linear k. x=A takes ALL of A (max partition); y must also have mult 2 -> B works (yield Balanced A B), C (mult 3) skipped; backtrack, x=B, etc. \\
+- MAXIMUM PARTITION justification (sharp Q): a var binds an e-class = a distinct element; splitting one element's copies across vars only yields alpha-variants we already enumerate. So branch over distinct elements d, giving O(d\^{}p), independent of counts. ACI: mults=1 + used-bitset; A: contiguous window with ..pre/..suf. \\
+- There's also an eager run\_query that just collects all matches into a Vec --- same engine, same frames, drained fully.}
+
+% ============================================================
+% 15 — Multiplicity constraints
+\begin{frame}[fragile]{Multiplicity constraints $\to$ interval on $k$}
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+ x:k>=2  ->  k in [2, inf)       x:k<5  ->  k in [1, 4]
+
+ ;; same k, two constraints:
+ (rewrite (Add x:k>=2 y:k<5 ..rest) ...)
+   k in [2,inf) INTERSECT [1,4]  =  [2,4]
+\end{lstlisting}
+\begin{itemize}\small
+  \item same $k$ in several places (non-linear) $\Rightarrow$ \alert{intersect} the intervals into one
+  \item empty intersection (e.g.\ \code{k>=5} $\cap$ \code{k<3}) $\Rightarrow$ rule \alert{statically unsatisfiable}, dropped at compile time
+  \item checked at \emph{bind time}: a candidate whose count is out of $[2,4]$ is skipped, no branch
+\end{itemize}
+\end{frame}
+\note{%
+- Each annotation compiles to an interval: bare x:k = [1,inf); x:k>=2 = [2,inf); x:k<5 = [1,4]. \\
+- The interesting case (on the slide): the SAME variable k constrains two elements differently --- x must occur >=2 times, y must occur <5 times, and k must be the SAME value for both. We intersect: [2,inf) cap [1,4] = [2,4]. So both x and y must occur 2,3, or 4 times, the same number. \\
+- If the intersection is empty (k>=5 and k<3), the rule can never fire --- caught at compile time, rule dropped. \\
+- At match time we test an element's available count against the final interval before branching on it.}
+
+% ============================================================
+% 17 — Proof logging
+\begin{frame}{Proof logging: log every trail}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\begin{itemize}\small
+  \item second \alert{uncompressed} parent array $=$ merge tree
+  \item each union records a \code{Justification}
+  \item \alert{copy-on-first-re-canonization} keeps old children
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{itemize}\small
+  \item explain $a\equiv b$ $=$ LCA in the proof forest
+  \item Euler-tour LCA [Bender--Farach-Colton 2000]: \alert{\bigO{n}} preprocess, \alert{\bigO{1}} per pair
+  \item \code{const PROOFS=false} compiles it all away
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+\note{%
+- Two parent arrays: the fast path is path-compressed (near-O(1) find); the proof path is NEVER compressed, so it keeps the actual merge tree. Each union stores why it happened: Rewrite / Congruence / Axiom. \\
+- Rebuild re-canonizes nodes in place, destroying original children that proofs need. So: a history bit (stolen from a niche, like the capture flag) marks ``already saved''; the first time a node's children change we copy them once. The bit is itself diff-tracked --- restore rolls it back. \\
+- To explain a≡b we find their LCA in the proof forest. Euler-tour + ±1 RMQ gives O(n) preprocessing and O(1) per query --- the point is batch export: log ALL trails, then answer any pair in O(1). \\
+- And all of this is gated by \texttt{const PROOFS} --- zero residual cost when off.}
+
+% ============================================================
+% — AC soundness and completeness
+\begin{frame}{AC matching: soundness claim}
+\begin{itemize}\small
+  \item \alert{Sound}: every merge is a true AC consequence (local per-operation invariant)
+  \item \textbf{Known limitation}: flattening erases sub-sum subterms; rebuild only does atom substitution (\code{find} per child), not sub-sum substitution
+  \item \textbf{Example}: \code{+(a,b)=c} known, \code{+\{a,b,d\}} exists --- we do NOT substitute \code{c} in to get \code{+\{c,d\}}
+  \item \textbf{Fix} (in progress): Kapur-style critical pairs + inter-reduction [Kapur FSCD 2021, Rosin et al.\ 2026]
+\end{itemize}
+\end{frame}
+\note{%
+- We claim SOUNDNESS only: every merge is a true AC consequence. This is a local per-operation invariant, provable in Verus. \\
+- We do NOT claim completeness. Flattening erases sub-sum subterms; our rebuild only substitutes equal atoms (find per child), never notices that a sub-multiset is itself a known sum. So some AC-entailed equalities are missed. \\
+- Concrete example: +(a,b)=c known and +\{a,b,d\} exists. Under AC, +\{a,b,d\} = +\{c,d\} but our rebuild doesn't derive it because it never substitutes the sub-sum c in for \{a,b\}. \\
+- The fix is Kapur's ground AC-CC: (A) inter-reduction (substitute known sub-sums into containing nodes), (B) superposition (build the lcm of overlapping nodes, reduce both ways, merge). Finite by Dickson's Lemma. In progress.}
+
+% ============================================================
+% — Perspectives
+\begin{frame}{Perspectives}
+\begin{itemize}
+  \item formally verified \alert{slotted e-graphs} (edge labels $\to$ alpha-equivalence)
+  \item verified versions of e-graph extensions \dots
+\end{itemize}
+\vfill
+\begin{center}\small
+We hope this becomes the framework of choice for people interested in \alert{formally verified e-graph algorithms}.
+\end{center}
+\end{frame}
+\note{%
+- Stratified negation falls out for free: \texttt{mark} freezes a congruence-closed snapshot, so stratum k+1 queries negatively against the frozen stratum k. \\
+- Slotted e-graphs: every e-class reference already carries a generic edge label (default unit, zero overhead). Instantiate with director matrices / slot maps for bound variables --- and extend the Verus proofs up through that layer. \\
+- Abstraction learning IS Monte-Carlo graph search for anti-unification: mine common generalizations (abstractions) by searching the e-graph. Semi-persistence is the enabler --- each rollout is a mark, each backtrack an O(k) restore. \\
+- Common thread: cheap checkpoints make the e-graph a substrate for SEARCH; proofs make that substrate trustworthy.}
+
+% ============================================================
+\begin{frame}{}
+\begin{center}
+\Large Thank you --- questions? \\[6mm]
+\normalsize \texttt{github.com/yaspar-org/semi-persistent} \quad Apache-2.0
+\end{center}
+\end{frame}
+\note{Recap: embed in search (semi-persistence), native AC, unbounded arithmetic, verified core. Open the floor.}
+
+\end{document}
