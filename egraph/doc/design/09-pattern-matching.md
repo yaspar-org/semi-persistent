@@ -101,6 +101,89 @@ If the interval intersection is empty (e.g., `>= 10` and `< 10`),
 the query is statically unsatisfiable and returns zero matches without
 touching the e-graph.
 
+### Cost and Correctness of AC Matching
+
+`DecomposeAC` enumerates bindings of pattern elements against a node's
+multiset. It is worth being precise about what is enumerated, because
+"enumerate all sub-multisets" overstates it, and about which costs are
+intrinsic versus avoided.
+
+What we do and do not enumerate:
+
+1. Bound or concrete pattern elements cost O(1). When a pattern element's
+   variable is already bound (its e-class is known), the matcher does a
+   direct lookup of that class in the residual multiset, checks
+   multiplicity, and subtracts. (In `decompose_ac_elem`, this is the
+   `bound_repr.is_some()` fast path.)
+2. Only unbound scalar variables cause branches, and they branch
+   over the distinct residual elements, not over sub-multisets. The matched
+   multiplicity is taken whole, so we do not enumerate "1 of this element,
+   or 2, or 3…". This is the overview's *maximal partition matching*: the
+   multiplicity sub-count blowup is avoided, and branching is restricted to
+   distributing unique residual elements among unbound variables.
+3. The `rest` variable absorbs the entire remainder in one binding. A
+   pattern `(+ ?x ..rest)` yields `O(distinct elements)` matches — bind `?x`
+   to each distinct element, `rest` captures the rest as one multiset-typed
+   binding — not `O(2ⁿ)` over sub-multisets of the residual.
+
+So for a pattern with `k` unbound scalar variables against a node with `d`
+distinct children, the branching is the `k`-permutations of `d`, i.e.
+`O(dᵏ)`: polynomial in the term, exponential only in the pattern arity `k`
+(small, and fixed by the rule author). Leapfrog narrowing over the indices
+(`by_op ∩ by_contains[e]`, [Ch 6](06-index.md)/[Ch 7](07-leapfrog.md))
+selects which nodes are worth decomposing, so `DecomposeAC` rarely runs
+against more than a small slice of the graph.
+
+#### The matching relation we implement
+
+A correctness claim only means something against a relation defined
+independently of the algorithm. The relevant one is the classical AC
+matching problem (Contejean, RTA 2004; also Hullot 1979), defined purely
+from the equational theory:
+
+> Given a pattern `p` and a subject `s`, a match is a substitution `σ` with
+> `pσ =_AC s`, where `=_AC` is equality modulo associativity and
+> commutativity. The set of matches is well-defined — and finite, since the
+> AC-equivalence class of `s` is finite — before any matching algorithm is
+> written.
+
+Specialized here: `s` is an AC node with child multiset `M` over e-class
+ids, `σ` maps each scalar variable to an e-class id and each `rest` variable
+to a sub-multiset, and `pσ =_AC s` becomes the multiset equation
+
+```
+{{ σ(x₁)^{m₁}, …, σ(xₖ)^{mₖ} }}  ⊎  σ(rest)  =  M.
+```
+
+We claim *soundness* against this relation: every `σ` that `DecomposeAC`
+emits satisfies the equation — its images, with multiplicities, plus the
+`rest` binding sum to `M`, and every multiplicity constraint holds, so no
+spurious match is produced. This is the property we rely on, and the one that
+makes matching safe to drive rebuild, our matcher never fabricates a binding.
+
+We do *not* claim completeness here, i.e. that `DecomposeAC` emits every solution
+of the equation. AC matching is NP-complete (Benanav, Kapur, Narendran
+1987), and complete enumeration is exactly where matchers tend to go wrong
+(missed distributions, mishandled multiplicities, non-linear variables).
+Contejean's inference-rule algorithm for this same relation is
+verified complete in Coq; ours is a different algorithm, and its
+completeness is left as future verification work.
+The [ac-congruence-completeness.md](ac-congruence-completeness.md)
+verification plan is where that would be taken up.
+
+One scope note, so the relation itself is not misread. The variables in `σ`
+range over what exists: an e-class id for a scalar, an existing sub-multiset
+for `rest`. A scalar variable is not quantified over implicit sub-sums —
+matching `(+ ?x ?y)` against a node stored only as `+(a, b, c)` does not
+admit `?x = a+b`, because `a+b` is not an e-class id. That extension is AC
+*unification*, a strictly larger problem whose decision would require
+materializing every sub-sum (the `O(3ⁿ)` blowup the multiset representation
+exists to avoid); Contejean and Conchon et al. (2012, §8) leave it aside.
+The entailed equalities this scope leaves out are recovered not by a larger
+matcher but by congruence closure in rebuild materializing the relevant
+sub-sum nodes — see
+[ac-congruence-completeness.md §5b](ac-congruence-completeness.md).
+
 ## Subset Matching (ACI operators)
 
 `DecomposeACI` enumerates all ways to match pattern elements against a
