@@ -184,19 +184,14 @@ It is tempting to think our `rest` machinery already covers sub-sums. When a
 user-rule pattern `(+ ?x ..rest)` matches `+{a,b,c}`, `DecomposeAC`
 ([Ch 9](09-pattern-matching.md)) does enumerate sub-multisets (`?x=a, rest={b,c}`,
 then `?x=b, rest={a,c}`, and so on), so the matcher does encounter the sub-sum
-`{b,c}`. But it encounters it as a transient binding, not as a node:
-
-| | `rest` binding during matching | a materialized node |
-|---|---|---|
-| Exists in the e-graph DAG? | no | yes |
-| Visible to the union-find? | no | yes |
-| Survives past the current match? | no (discarded on backtrack) | yes |
-| Can host a future congruence merge? | no | yes |
-
-Unless a rule's RHS explicitly constructs `+{b,c}`, no node is created, the
-union-find never learns it, and the binding is discarded when matching finishes.
-`rest`-variable matching enumerates the sub-sums temporarily to produce user-rule
-matches; it does not persist them as nodes.
+`{b,c}`. But it encounters it only as a transient value bound to `rest` in the
+matcher's environment, not as a node in the e-graph. The distinction is what makes
+the difference for congruence: a `rest` binding does not exist in the e-graph DAG,
+the union-find never learns about it, and it is discarded the moment the match
+completes or backtracks, so it can never sit in a class and trigger a later merge.
+A materialized node is the opposite on every count: it lives in the DAG, has a
+class in the union-find, persists, and so can host future congruence. Unless a
+rule's RHS explicitly constructs `+{b,c}`, no such node is created.
 
 This is how the matcher is simultaneously sound for the e-matching relation (every
 binding of pattern variables to existing e-classes is found; see
@@ -329,14 +324,19 @@ The fix is a new rebuild pass over pairs of existing AC nodes. It reuses two
 mechanisms we already have, and it is worth being precise about what each does,
 because the search and the arithmetic are separate steps.
 
+First, the reading that makes the rest of this section work: an AC node `+A` whose
+class representative is `a` records the equality `+A = a`, which we read as the
+ground rewrite rule `+A → a` (substitute the single class `a` wherever the sub-sum
+`+A` occurs). So every existing AC node is also a substitution rule, and the set of
+rules is exactly the set of AC nodes; we do not build a separate rule store.
+
 The search is rule-driven, not target-driven. It is tempting to picture it the
 other way: take a node `+M`, split it into `(part, rest)`, and probe the e-graph
 asking "is `+rest` a known node?" That direction forces enumerating sub-multisets of
 `M` (up to `2^|M|` splits) and probing each, the blowup we are trying to avoid. We
-invert it. Every AC node `+A = a` is already a known sum by construction, so the set
-of rules we substitute by is just the set of AC nodes (no probing to discover them).
-We only need to find, for each rule `+A`, the nodes it applies to, and that is a
-`by_contains` query.
+invert it. Since every AC node `+A` is already such a rule by construction, no
+probing is needed to discover the rules; we only need to find, for each rule `+A`,
+the nodes it applies to, and that is a `by_contains` query.
 
 `by_contains` is keyed by a single child class (`by_contains[x]` is every variadic
 node containing child `x`), so candidate-finding, per node `+M = d`, is:
