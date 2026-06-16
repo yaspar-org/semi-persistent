@@ -10,6 +10,57 @@ document predates the implementation. Full design documents are in
 
 ## Planned
 
+### AC Congruence Completeness via Critical Pairs
+
+The problem and the fix are fully analyzed in
+[AC Congruence Completeness](ac-congruence-completeness.md). This entry records
+**where we stand and what remains.**
+
+**Where we stand.** AC handling is **sound** and **complete for matching against
+explicit nodes** (flattened multisets; candidate narrowing over the four indices
++ leapfrog; `DecomposeAC` recursive multiset split with multiplicity tracking and
+`rest`-variables). It is **not AC-congruence-complete**: `rebuild` only
+re-canonicalizes AC nodes (substitutes equal *atoms*), so sub-sum equalities are
+missed — e.g. `+(a,b)=c` and `+(b,d)=e` (sharing `b`) entail `+(c,d)=+(a,e)`,
+which we never derive. Our rebuild is Kapur's ground AC-CC (FSCD 2021) **minus**
+its completion steps: we have Algo-1 steps 1–2 (union-find + node
+re-canonicalization), we lack steps 3–4 (superposition + inter-reduction).
+
+**What remains — implementation.** Add to `rebuild()`, per AC op, to fixpoint:
+1. **Inter-reduction** (substitute a contained known sum `+A=a` into `+M`, i.e.
+   replace the sub-multiset `A` with the class `a`) — reuses `DecomposeAC` + `rest`
+   to compute the residual, `by_contains` to find the super-multiset candidates.
+2. **lcm superposition** (overlapping `+A=a`, `+B=b` → materialize `+AB`, reduce
+   both ways, merge) — reuses `⋃ by_contains` for overlap candidates.
+   *Not* sub-multiset containment (a strict, incomplete special case).
+Termination: Dickson's Lemma (Kapur Thm 6). Cost: quadratic in #AC-equations
+(Conchon et al. §7.3). We can skip Kapur's monomial ordering — the union-find is
+our canonical layer.
+
+**What remains — verification.** The two halves have different proof character
+(see [the design doc §12](ac-congruence-completeness.md) for the sketch), so:
+
+- Soundness → Verus, on the real Rust `rebuild`. It is an invariant-preservation
+  proof (every rule/merge stays `⊆ ACCC(S)`), which suits Verus's imperative
+  reasoning and reuses this workspace's `vstd::multiset` + union-find modeling. It
+  certifies the *shipping* code never asserts a false AC equality. Provable today
+  on the current recanonize-only rebuild; extend the invariant when the
+  substitution steps land.
+- Completeness → Lean (or Coq), on the abstract model. It requires Newman's Lemma,
+  a Dickson well-quasi-order, and the critical-pair lemma — abstract-rewriting
+  metatheory that Verus's trigger-based quantifier automation handles poorly. Lean
+  `mathlib` has the well-founded recursion / `Multiset` / order theory; Coq has
+  direct precedent (Contejean's RTA 2004 certified AC matching in Coq; CoLoR
+  formalizes termination / Dickson).
+- Why split: all-Verus would push the confluence metatheory into a tool poorly
+  suited to it; all-Lean would prove soundness about an *idealized* model, not the
+  real Rust, losing the main benefit. The split proves soundness on the running
+  code and completeness in a tool that supports the metatheory.
+
+Staging: (1) Verus soundness invariant on today's rebuild; (2) extend it as
+inter-reduction/superposition land; (3) Lean abstract completeness theorem,
+parameterized to transfer to the implementation by refinement.
+
 ### Variables and Binders via Parameterized Edge Labels
 
 Standard e-graphs share structurally identical subterms, but
