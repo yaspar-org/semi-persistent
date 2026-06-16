@@ -82,6 +82,17 @@ pub trait IndexLike: Sized + Copy {
     proof fn lemma_max_as_nat()
         ensures Self::max_spec().as_nat() == (Self::max_nat() - 1) as nat;
 
+    /// The order `lt_spec`/`le_spec` is exactly the `as_nat` order. Trivially
+    /// true from the `open` default bodies at a concrete type, but Verus does
+    /// not unfold a default-bodied trait spec method through a generic type
+    /// parameter, so generic code (e.g. binary search over `Self`) needs this
+    /// lemma to reason about the order via `as_nat` (where transitivity and
+    /// totality come for free on `nat`).
+    proof fn lemma_order_is_as_nat(a: Self, b: Self)
+        ensures
+            a.lt_spec(b) == (a.as_nat() < b.as_nat()),
+            a.le_spec(b) == (a.as_nat() <= b.as_nat());
+
     // -- exec API ------------------------------------------------------------
 
     /// Exec: zero / minimum value.
@@ -132,6 +143,7 @@ impl IndexLike for u8 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { 0u8 }
     fn max() -> Self { u8::MAX }
@@ -159,6 +171,7 @@ impl IndexLike for u16 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { 0u16 }
     fn max() -> Self { u16::MAX }
@@ -186,6 +199,7 @@ impl IndexLike for u32 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { 0u32 }
     fn max() -> Self { u32::MAX }
@@ -217,6 +231,7 @@ impl IndexLike for u64 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { 0u64 }
     fn max() -> Self { u64::MAX }
@@ -242,6 +257,7 @@ impl IndexLike for usize {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { 0usize }
     fn max() -> Self { usize::MAX }
