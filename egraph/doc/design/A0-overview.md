@@ -105,6 +105,19 @@ structurally prevents the combinatorial e-graph bloat that occurs when
 they are encoded as rewrite rules. Pattern matching dispatches
 automatically based on the operator's registered kind.
 
+**Caveat (AC congruence completeness):** the structural canonization
+gives correct matching and prevents the exponential blowup, but it
+does *not* provide full AC congruence closure. Rebuild re-canonicalizes
+AC nodes but generates no AC critical pairs: given `+(a,b) = c` and
+`+(b,d) = e`, the entailed equality `+(c,d) = +(a,e)` (via the shared
+`b`) is not discovered. Our rebuild is Kapur's ground AC-CC algorithm
+minus its completion steps (we have the union-find and node
+re-canonicalization; we lack superposition and rule inter-reduction).
+Closing the gap means adding those steps — a known extension (Kapur,
+FSCD 2021). See
+[AC Congruence Completeness](ac-congruence-completeness.md) for the full
+problem/fix analysis and [Future Work](A3-future-work.md) for status.
+
 ### Relational pattern matching via leapfrog triejoin
 
 Patterns compile to flat relational atoms joined by a
