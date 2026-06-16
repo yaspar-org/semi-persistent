@@ -124,6 +124,7 @@ impl IndexLike for DenseId31 {
     proof fn lemma_max_as_nat() {}  // max_spec().as_nat() == 0x7fff_ffff == 2^31 - 1
 
     proof fn lemma_max_nat_positive() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { DenseId31 { raw: 0 } }
 
@@ -328,6 +329,7 @@ impl IndexLike for DenseId63 {
     proof fn lemma_max_as_nat() {}
 
     proof fn lemma_max_nat_positive() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { DenseId63 { raw: 0 } }
 
