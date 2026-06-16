@@ -124,13 +124,29 @@ pub trait DenseId: Sized + Copy {
     /// Ghost projection to a natural number (the dense index).
     spec fn id_nat(self) -> nat;
 
+    /// One past the largest representable dense index (`2^31` for a 31-bit id,
+    /// `usize::MAX + 1` for `DenseUsize`). `from_usize` round-trips exactly the
+    /// indices below this bound; `id_nat` is always within it.
+    spec fn id_bound() -> nat;
+
+    /// Exec: serialize the id to its storage word (production's
+    /// `Into<Self::Index>`, used as `key_to_word(k) = k.into()`). The word's
+    /// dense index equals the id's, so ordering on words agrees with ordering
+    /// on ids; this is what lets the B+tree store and compare `Index` words
+    /// while reasoning about the abstract `id_nat` model.
+    fn to_index(self) -> (w: Self::Index)
+        ensures w.as_nat() == self.id_nat();
+
     /// Exec: project to `usize`.
     fn as_usize(self) -> (r: usize)
         ensures r as nat == self.id_nat();
 
-    /// Exec: construct from a `usize`. Inverse of `as_usize` (round-trips).
+    /// Exec: construct from a `usize`. Round-trips with `as_usize` for any
+    /// representable index (`n < id_bound()`); out-of-range `n` has no
+    /// guarantee (a bounded id may mask). `DenseUsize`'s bound is `usize::MAX +
+    /// 1`, so it round-trips unconditionally.
     fn from_usize(n: usize) -> (r: Self)
-        ensures r.id_nat() == n as nat;
+        ensures (n as nat) < Self::id_bound() ==> r.id_nat() == n as nat;
 
     /// Injectivity: distinct ids project to distinct nats.
     proof fn lemma_id_injective(a: Self, b: Self)
@@ -151,6 +167,14 @@ impl DenseId for DenseUsize {
 
     open spec fn id_nat(self) -> nat {
         self.raw as nat
+    }
+
+    open spec fn id_bound() -> nat {
+        usize::MAX as nat + 1
+    }
+
+    fn to_index(self) -> (w: usize) {
+        self.raw
     }
 
     fn as_usize(self) -> (r: usize) {
