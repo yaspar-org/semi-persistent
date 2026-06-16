@@ -23,10 +23,18 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   soundness guarantees.
 
 - **[Future Work and Recently Completed Features](A3-future-work.md)**
-  Implemented: globals in patterns. Planned: variables and binders
-  (parameterized edge labels),
-  cost-based extraction via partial weighted Max-SAT, stratified
-  negation.
+  Implemented: globals in patterns. Planned: AC congruence completeness
+  via critical pairs, variables and binders (parameterized edge labels),
+  cost-based extraction via partial weighted Max-SAT, stratified negation.
+
+- **[AC Congruence Completeness](ac-congruence-completeness.md)**
+  Part I explains why flattening AC nodes into canonical multisets erases the 
+  intermediate sub-sum subterms and breaks congruence completeness
+  (even though matching stays complete), and why `rest`-variable
+  matching doesn't restore completeness. Part II gives the fix — Kapur-style
+  inter-reduction and lcm-superposition critical pairs — and shows it can reuse
+  our existing `DecomposeAC`/`by_contains` machinery, with a correctness/termination
+  argument and a proof sketch. Status and verification plan live in Future Work.
 
 ## Part I: E-Graph Core
 
