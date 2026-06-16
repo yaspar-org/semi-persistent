@@ -115,6 +115,12 @@ impl<T: Tagged + core::default::Default> Opt<T> {
 /// `IndexLike` (ghost `as_nat` + injective + bounded) plus exec `as_usize` /
 /// `from_usize`.
 pub trait DenseId: Sized + Copy {
+    /// Natural storage word for this id (production's `DenseId::Index`: u8, u16,
+    /// u32, or u64). This is the `Word` a `NodeLayout` stores keys as, and is
+    /// what makes the B+tree generic over the 31-bit (`u32`) and 63-bit (`u64`)
+    /// id families.
+    type Index: crate::index_like::IndexLike;
+
     /// Ghost projection to a natural number (the dense index).
     spec fn id_nat(self) -> nat;
 
@@ -141,6 +147,8 @@ pub struct DenseUsize {
 }
 
 impl DenseId for DenseUsize {
+    type Index = usize;
+
     open spec fn id_nat(self) -> nat {
         self.raw as nat
     }
