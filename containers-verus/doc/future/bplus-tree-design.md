@@ -128,6 +128,67 @@ Clauses 4+5+7 together are the soundness of search: `contains` and `insert`
 descend by `s::find_*` comparisons and must reach the unique leaf that would
 hold `k`.
 
+### 3.3 Arena-capacity sufficiency: why a `Word`-width index never overflows
+
+The arena index type is paired with the key width on purpose: 31-bit keys use a
+`u32` arena index, 63-bit keys a `usize` (= `u64` on 64-bit) index — the child
+slots in `data` and the keys are the same `Word` width, so they overlay in one
+`[Word; DATA_LEN]` array with no size mismatch, and the in-`data` child slots
+need no cast (u32) or a value-preserving 64-bit cast (u64). The question this
+raises: with only a `Word`-width index, can the arena run out of indices before
+the key space is exhausted? The answer is no, by a counting argument that the
+`wf` invariant already contains the ingredients for.
+
+**The node-count bound.** Minimum occupancy (clause 6: every non-root node
+`≥ ⌈cap/2⌉` full) forces the node count to be a fraction of the key count. Write
+`m_L = ⌈LEAF_CAP/2⌉` (min keys per non-root leaf) and `d = ⌈CHILD_CAP/2⌉` (min
+children per non-root internal node). For `N` keys:
+
+```
+#leaves   L ≤ N / m_L
+#internal I ≤ L / (d − 1)          (geometric series up the levels)
+#nodes    M = L + I ≤ L · d/(d−1) ≤ (N / m_L) · d/(d−1)
+```
+
+For `Layout64U32` (`LEAF_CAP = 14`, `CHILD_CAP = 8`, so `m_L = 7`, `d = 4`):
+`M ≤ (N/7)·(4/3) = 4N/21 ≈ 0.19 · N`. So **`M < N`** — strictly fewer nodes than
+keys — for every layout (`cap ≥ 14`).
+
+**Sufficiency.** Chain that with the width pairing:
+
+```
+M  <  N  ≤  keyspace  =  ½ · max_nat(ArenaIdx)
+└──┬──┘    └─────────────────┬─────────────────┘
+ occupancy        31-bit keys ↔ u32 index : keyspace = 2³¹ = 2³²/2
+                  63-bit keys ↔ usize     : keyspace = 2⁶³ = 2⁶⁴/2
+```
+
+The index type has exactly one bit more than the key space, so the live node
+count occupies at most half of it and `ArenaIdx::MAX` (reserved as NIL) sits in
+the unused half. For `Layout64U32` the worst case is `M ≈ 0.19 · 2³¹ ≈ 4.1×10⁸`
+nodes against a usable `u32` capacity `≈ 4.29×10⁹` — roughly 10× headroom. So
+31-bit keys use a *native* 32-bit arena index (never a truncated `usize`), and
+it provably suffices.
+
+**What is enforced vs. proved (today).** The verified code enforces overflow
+safety locally and honestly: `Vec::push` carries `view().len() + 1 < max_nat()`
+and `insert` requires arena headroom as a precondition, so reaching
+`ArenaIdx::MAX` is a precondition failure, never a silent wraparound. The global
+sufficiency theorem above is, for now, a meta-level argument (as in production).
+It *is* formalizable from the existing invariant — `tree_wf` carries the
+occupancy clause and `tree_disjoint` makes `|tree_ids(t)|` the true distinct node
+count, so a structural induction
+
+```
+tree_wf(t,h,cap,key_cap,root) ∧ tree_disjoint(t)
+    ⟹ |tree_ids(t)| ≤ ceil_div(|tree_keys(t)|, m_L) · d/(d−1) + 1
+```
+
+would let `insert`'s headroom precondition be *derived* from the key type's bound
+(`K::id_bound() ≤ keyspace`) rather than assumed. Deferred to a milestone after
+the split/propagation insert (it needs multi-level trees to be meaningful);
+tracked separately.
+
 ## 4. Insert, and its bi-abductive decomposition
 
 `insert(k)` has three layers, and each maps onto the
