@@ -286,6 +286,18 @@ site — `lt()`'s ensures won't unfold to `as_nat() < as_nat()`. Compare via
   empty proof body whose discharge silently depends on auto-unfolding a default
   trait body; make the unfold explicit, especially for foundational lemmas every
   other module consumes.
+- Same fragility, second instance, *worse* trigger: a **heavy default-bodied
+  trait method**. Adding `internal_insert_at` to `NodeLayout` with a full default
+  body (a child-shift loop + two helper calls) destabilized previously-green
+  *sibling* methods in the same trait impl — the `child` accessor and
+  `set_internal_child` started failing their postconditions, though their bodies
+  were unchanged. The heavy body bloated the per-impl proof context enough that
+  the pruner dropped facts the lean methods had relied on. Fix: move the generic
+  composite *out of the trait* into a free `fn internal_insert_at<L: NodeLayout>`
+  — the trait keeps only the small per-layout primitives (`set_internal_child`,
+  `internal_key_insert`), and the composition lives in a free function with its
+  own proof context. Rule of thumb: trait bodies stay small and per-layout;
+  multi-step generic logic goes in free functions over `L`.
 
 ---
 [← Table of Contents](00-table-of-contents.md)
