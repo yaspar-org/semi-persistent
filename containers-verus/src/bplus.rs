@@ -168,6 +168,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 true,
             )
         &&& leaf_links_ok::<L>(self.arena(), self.tree@)
+        &&& crate::bplus_tree::tree_disjoint(self.tree@)
         &&& self.nkeys as nat == self.model().len()
     }
 
@@ -868,6 +869,37 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 Ghost(root_id), Ghost(right_idx.as_nat()), Ghost(new_root_idx.as_nat()),
                 Ghost(left), Ghost(right),
             );
+
+            // tree_disjoint(Inner{new_root, [lt, rt]}): new_root_idx not in the
+            // children's footprints {root_id, right_idx}, the two leaves'
+            // footprints {root_id} / {right_idx} disjoint, leaves trivially
+            // disjoint. All three ids distinct (root_id < right_idx <
+            // new_root_idx).
+            let kids = seq![lt, rt];
+            assert(crate::bplus_tree::tree_ids(lt) =~= set![root_id]);
+            assert(crate::bplus_tree::tree_ids(rt) =~= set![right_idx.as_nat()]);
+            crate::bplus_tree::lemma_forest_ids_cons(kids);
+            assert(kids.drop_first() =~= seq![rt]);
+            crate::bplus_tree::lemma_forest_ids_cons(seq![rt]);
+            assert(seq![rt].drop_first() =~= Seq::<Tree>::empty());
+            assert(crate::bplus_tree::forest_ids(kids)
+                =~= set![root_id].union(set![right_idx.as_nat()]));
+            assert(!crate::bplus_tree::forest_ids(kids).contains(new_root_idx.as_nat()));
+            // forest_disjoint([lt, rt]): both leaves tree_disjoint (Leaf arm).
+            crate::bplus_tree::lemma_forest_disjoint_cons(kids);
+            crate::bplus_tree::lemma_forest_disjoint_cons(seq![rt]);
+            assert(crate::bplus_tree::forest_disjoint(Seq::<Tree>::empty()));
+            assert(crate::bplus_tree::forest_disjoint(seq![rt]));
+            assert(crate::bplus_tree::forest_disjoint(kids));
+            assert forall|i: int, j: int| 0 <= i < j < kids.len() implies
+                (#[trigger] crate::bplus_tree::tree_ids(kids[i]))
+                    .disjoint(#[trigger] crate::bplus_tree::tree_ids(kids[j])) by {
+                // only i==0, j==1: {root_id} disjoint {right_idx}, root_id != right_idx.
+                assert(crate::bplus_tree::tree_ids(kids[0]) =~= set![root_id]);
+                assert(crate::bplus_tree::tree_ids(kids[1]) =~= set![right_idx.as_nat()]);
+            }
+            assert(crate::bplus_tree::tree_disjoint(self.tree@));
+
             assert(self.nkeys as nat == self.model().len());
         }
         true

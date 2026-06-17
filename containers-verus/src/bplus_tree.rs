@@ -547,6 +547,62 @@ pub proof fn lemma_descent_step(
 }
 
 // ===========================================================================
+// Disjointness (the dynamic-frames separation clause). No arena id repeats
+// within the tree: an internal node's own id is outside every child's
+// footprint, and distinct children have disjoint footprints. This is what makes
+// "this subtree" a well-defined region a descent-based split can mutate while
+// framing out every other subtree (via `bplus::lemma_binds_frame`).
+// ===========================================================================
+
+/// No id repeats anywhere in `t`. Leaf: trivially true. Inner: the node's id is
+/// not in any child's footprint, the children's footprints are pairwise
+/// disjoint, and each child is itself disjoint.
+pub open spec fn tree_disjoint(t: Tree) -> bool
+    decreases t
+{
+    match t {
+        Tree::Leaf { .. } => true,
+        Tree::Inner { id, kids, .. } => {
+            &&& !forest_ids(kids).contains(id)
+            &&& forest_disjoint(kids)
+            &&& (forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+                    (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j])))
+        }
+    }
+}
+
+pub open spec fn forest_disjoint(kids: Seq<Tree>) -> bool
+    decreases kids
+{
+    if kids.len() == 0 {
+        true
+    } else {
+        tree_disjoint(kids[0]) && forest_disjoint(kids.drop_first())
+    }
+}
+
+pub proof fn lemma_forest_disjoint_cons(kids: Seq<Tree>)
+    requires kids.len() > 0,
+    ensures forest_disjoint(kids) == (tree_disjoint(kids[0]) && forest_disjoint(kids.drop_first())),
+{
+}
+
+/// Project `forest_disjoint` to one child.
+pub proof fn lemma_forest_disjoint_at(kids: Seq<Tree>, m: int)
+    requires forest_disjoint(kids), 0 <= m < kids.len(),
+    ensures tree_disjoint(kids[m]),
+    decreases kids,
+{
+    lemma_forest_disjoint_cons(kids);
+    if m == 0 {
+    } else {
+        let df = kids.drop_first();
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_disjoint_at(df, m - 1);
+    }
+}
+
+// ===========================================================================
 // Leaf-id order (clause 5 support). `tree_leaf_ids(t)` is the in-order
 // (left-to-right) sequence of leaf arena ids. The executable leaf `link`
 // pointers are *bound* to this sequence (see `bplus::leaf_links_ok`): walking
