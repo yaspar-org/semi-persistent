@@ -91,6 +91,27 @@ pub open spec fn forest_binds_l<L: NodeLayout>(arena: Seq<L::Node>, kids: Seq<Tr
     }
 }
 
+/// The NIL leaf-link sentinel (`max_nat - 1`), the `u32::MAX`/`usize::MAX` value
+/// `new_leaf` writes. Terminates the leaf-link chain; provably distinct from
+/// every real arena id because `Vec::push` keeps `len < max_nat - 1`.
+pub open spec fn nil_link<L: NodeLayout>() -> nat {
+    (<L::ArenaIdx as IndexLike>::max_nat() - 1) as nat
+}
+
+/// Leaf-link consistency (clause 5): the executable leaf `link` pointers realize
+/// the tree's in-order leaf order. Let `lids = tree_leaf_ids(t)`; for each
+/// position `p`, the leaf at `lids[p]` links to `lids[p+1]`, and the last leaf
+/// links to NIL. Bound to the tree (single source of truth), so the sorted
+/// cursor's walk is sound by `tree_wf`'s cross-node ordering, not by an
+/// independent assumption.
+pub open spec fn leaf_links_ok<L: NodeLayout>(arena: Seq<L::Node>, t: Tree) -> bool {
+    let lids = crate::bplus_tree::tree_leaf_ids(t);
+    forall|p: int| 0 <= p < lids.len() ==>
+        #[trigger] L::link_view(arena[lids[p] as int]) == (
+            if p + 1 < lids.len() { lids[p + 1] } else { nil_link::<L>() }
+        )
+}
+
 /// The semi-persistent B+tree set. `nodes` is the `InlineStore`-backed arena,
 /// `root` the root's arena index, `nkeys` the cached key count, and `tree` the
 /// ghost recursive model `wf`/`model` are stated over.
@@ -146,6 +167,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 L::key_cap_spec(),
                 true,
             )
+        &&& leaf_links_ok::<L>(self.arena(), self.tree@)
         &&& self.nkeys as nat == self.model().len()
     }
 
@@ -552,6 +574,19 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 assert(L::keys_view(self.arena()[root_id])[j] == old_kview[j]);
             }
         }
+        // The old single-leaf tree's link is NIL (leaf_links_ok at the lone
+        // leaf), and leaf_insert_at preserves the link, so the new leaf's link
+        // is still NIL — which is exactly what the new single-leaf chain needs.
+        proof {
+            let lids = crate::bplus_tree::tree_leaf_ids(self.tree@);
+            assert(lids =~= seq![root_id as nat]);  // old tree is Leaf{root_id, ..}
+            assert(lids.len() == 1 && lids[0] == root_id as nat);
+            // leaf_links_ok at p==0 (trigger on lids[0]): last leaf links NIL.
+            assert(L::link_view(self.arena()[lids[0] as int]) == nil_link::<L>());
+            assert(self.arena()[lids[0] as int] == self.arena()[root_id]);
+            assert(L::link_view(self.arena()[root_id]) == nil_link::<L>());
+            assert(L::link_view(leaf) == nil_link::<L>());  // leaf == arena[root_id]
+        }
 
         // key absent and there is room: shift-insert into the leaf, write back.
         L::leaf_insert_at(&mut leaf, pos, kw);
@@ -597,6 +632,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 }
             }
             assert(binds::<L>(self.arena(), self.tree@));
+
+            // leaf_links_ok(new tree): single leaf [root_id], link still NIL.
+            assert(crate::bplus_tree::tree_leaf_ids(self.tree@) =~= seq![root_id as nat]);
+            assert(L::link_view(leaf) == nil_link::<L>());                   // preserved above
+            assert(self.arena()[root_id] == leaf);
+            assert(leaf_links_ok::<L>(self.arena(), self.tree@));
 
             // tree_wf(Leaf{.., new_keys}): h==0, len<=cap (n+1<=leaf_cap), sorted.
             crate::bplus_tree::lemma_sorted_insert(gkeys, key.id_nat(), pos as int);

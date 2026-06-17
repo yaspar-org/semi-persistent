@@ -131,12 +131,15 @@ pub trait NodeLayout: Sized {
 
     // -- construction --
 
-    /// A fresh empty leaf.
+    /// A fresh empty leaf. Its `link` is NIL (`max_nat - 1`, the
+    /// `u32::MAX`/`usize::MAX` sentinel), so a single-leaf tree's leaf-link
+    /// chain terminates at it (clause 5).
     fn new_leaf() -> (n: Self::Node)
         ensures
             Self::is_leaf_spec(n),
             Self::count_spec(n) == 0,
-            Self::node_wf(n);
+            Self::node_wf(n),
+            Self::link_view(n) == (<Self::ArenaIdx as IndexLike>::max_nat() - 1);
 
     // -- mutation (M3+) --
 
@@ -155,7 +158,8 @@ pub trait NodeLayout: Sized {
             Self::is_leaf_spec(*n),
             Self::node_wf(*n),
             Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
-            Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w);
+            Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w),
+            Self::link_view(*n) == Self::link_view(*old(n));
 
     // -- proof glue --
 
