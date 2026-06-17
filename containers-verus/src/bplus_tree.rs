@@ -138,6 +138,27 @@ pub proof fn lemma_forest_ids_cons(kids: Seq<Tree>)
 {
 }
 
+/// Membership in a forest footprint comes from some child: `forest_ids(kids)
+/// .contains(id) ==> exists m. tree_ids(kids[m]).contains(id)`. The reverse of
+/// the union definition; needed to derive pairwise facts from `forest_ids`.
+pub proof fn lemma_forest_id_in_some_child(kids: Seq<Tree>, id: nat)
+    requires forest_ids(kids).contains(id),
+    ensures exists|m: int| 0 <= m < kids.len() && (#[trigger] tree_ids(kids[m])).contains(id),
+    decreases kids,
+{
+    lemma_forest_ids_cons(kids);
+    if tree_ids(kids[0]).contains(id) {
+        assert(tree_ids(kids[0]).contains(id));  // witness m == 0
+    } else {
+        let df = kids.drop_first();
+        assert(forest_ids(df).contains(id));
+        lemma_forest_id_in_some_child(df, id);
+        let m = choose|m: int| 0 <= m < df.len() && tree_ids(df[m]).contains(id);
+        assert(df[m] == kids[m + 1]);
+        assert(tree_ids(kids[m + 1]).contains(id));  // witness m + 1
+    }
+}
+
 pub proof fn lemma_forest_max_height_cons(kids: Seq<Tree>)
     requires kids.len() > 0,
     ensures
