@@ -42,23 +42,35 @@ node is fixed-size and packed:
     flags: u8,            // bit0 = is-leaf; bit1 = Tagged capture bit
     count: u8,            // # keys currently used
     _pad: u16,
-    data: [Word; DATA_LEN],   // Word = u32 or u64
-    link: Link,           // leaf: next-leaf arena index; internal: unused
+    data: [Word; DATA_LEN],   // Word = u32 or u64; DATA_LEN = LEAF_CAP
+    link: Link,           // leaf: next-leaf arena index; internal: last child
 }
 ```
 
 `NodeLayout` is a compile-time trait fixing the geometry (`LEAF_CAP`,
 `INTERNAL_KEY_CAP`, `INTERNAL_CHILD_CAP`, `MAX_DEPTH`) for each `(size, word)`
-pairing. Two readings of `data`:
+pairing, with `INTERNAL_CHILD_CAP = INTERNAL_KEY_CAP + 1` and
+`2 · INTERNAL_KEY_CAP ≤ DATA_LEN`. Two readings of `data`:
 
 - **Leaf**: `data[0..count]` are the sorted keys; `link` is the arena index of
   the next leaf in key order (NIL `= ArenaIdx::MAX` at the last leaf). The
   header's `last_leaf` caches the rightmost leaf for the sorted-append fast path.
-- **Internal**: `data[0..count]` are `count` separator keys; the
-  `count+1` children are packed into the same backing array past the keys (the
-  `internal_child(i)` / `set_internal_child(i, _)` accessors encode the slot
-  arithmetic). Child `i` holds keys `< data[i]`; child `count` holds keys
-  `≥ data[count-1]`.
+- **Internal**: `data[0..count]` are `count` separator keys; the `count+1`
+  children are packed into the same node — the first `INTERNAL_KEY_CAP` in
+  `data[INTERNAL_KEY_CAP .. 2·INTERNAL_KEY_CAP]` (so child `i` for
+  `i < INTERNAL_KEY_CAP` lives at `data[INTERNAL_KEY_CAP + i]`), and the **last
+  child** (index `INTERNAL_KEY_CAP`) reuses the `link` field. That overload is
+  unambiguous because the node kind is known from `flags` bit 0: `link` is a
+  leaf sibling pointer iff the node is a leaf, and the last-child slot iff it is
+  internal; a leaf never indexes children and an internal node never walks the
+  leaf chain. The `internal_child(i)` / `set_internal_child(i, _)` accessors
+  encode this slot arithmetic. Child `i` holds keys `< data[i]`; child `count`
+  holds keys `≥ data[count-1]`.
+
+On u64 layouts the in-`data` child slots are `u64` while `link` is `usize`; both
+are value-preserving views of an `ArenaIdx` on a 64-bit host (the crate
+feature-gates 32-bit), and `ArenaIdx::MAX` is reserved as NIL so no real index
+collides with the sentinel.
 
 Each `Node` is `Tagged` (the capture bit is `flags` bit 1), so the whole tree is
 a `Vec<Node>` over the verified semi-persistent backend — `mark`/`restore`

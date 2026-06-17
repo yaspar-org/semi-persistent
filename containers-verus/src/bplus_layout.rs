@@ -10,6 +10,15 @@
 //! bit. The arena is an [`InlineStore`](crate::inline_store)-backed `VecI`, so
 //! the node must be [`Tagged`]: the capture bit is stolen from the node itself.
 //!
+//! The `data`/`link` fields are read two ways by node kind (decided by
+//! `FLAG_LEAF`): a leaf uses `data[0..count]` for its sorted keys and `link` for
+//! the next-leaf sibling pointer; an internal node uses `data[0..count]` for
+//! separators, `data[KEY_CAP..KEY_CAP+KEY_CAP]` for its first `KEY_CAP`
+//! children, and reuses `link` for the last child (index `KEY_CAP`). So `link`
+//! is the leaf chain iff leaf, the last-child slot iff internal — never
+//! ambiguous. The `child_view`/`link_view` specs and the `child`/`link`
+//! accessors model exactly this (`2 * KEY_CAP <= DATA_LEN`, per `lemma_geometry`).
+//!
 //! We encode that bit-steal exactly like [`DenseId31`](crate::dense_id), by
 //! splitting the *clean value* from the *stored repr* (production uses one type
 //! for both, which unverified Rust can do but the `Tagged` niche contract
@@ -95,10 +104,18 @@ pub trait NodeLayout: Sized {
     /// `data[0..count]` as a sequence of words (leaf keys / internal separators).
     spec fn keys_view(n: Self::Node) -> Seq<Self::Word>;
 
-    /// Arena index of internal child `i` (`0 <= i <= count`), as a nat.
+    /// Arena index of internal child `i` (`0 <= i <= count`), as a nat. The
+    /// first `key_cap` children pack into `data[key_cap + i]` (which is why
+    /// `2 * key_cap <= data_len`); the last child, index `key_cap`, reuses the
+    /// `link` field (production's `internal_child`: `if i < KEY_CAP {
+    /// data[KEY_CAP + i] } else { link }`). The overload of `link` is
+    /// unambiguous — it is the last-child slot iff the node is internal, the
+    /// leaf sibling pointer iff it is a leaf (decided by `is_leaf_spec`).
     spec fn child_view(n: Self::Node, i: int) -> nat;
 
-    /// The `link` field, as a nat (leaf: next-leaf idx; internal: last child).
+    /// The `link` field, as a nat. Leaf: the next-leaf arena index (the sibling
+    /// chain, NIL at the last leaf). Internal: the last child's arena index
+    /// (child index `key_cap`) — see `child_view`.
     spec fn link_view(n: Self::Node) -> nat;
 
     /// Node-local well-formedness: `count` fits its node kind's capacity. The
@@ -118,7 +135,9 @@ pub trait NodeLayout: Sized {
         requires Self::node_wf(*n), i < Self::count_spec(*n),
         ensures k == Self::keys_view(*n)[i as int];
 
-    /// `child_view(i)`, read from the packed array (internal nodes only).
+    /// `child_view(i)`, read from the packed array (internal nodes only). `i`
+    /// ranges over `0 ..= count` (one more child than separators); `i == count
+    /// <= key_cap` may be the `link`-held last child.
     fn child(n: &Self::Node, i: usize) -> (c: Self::ArenaIdx)
         requires
             Self::node_wf(*n),
@@ -229,8 +248,11 @@ pub trait NodeLayout: Sized {
         requires Self::node_wf(n),
         ensures Self::count_spec(n) <= Self::leaf_cap_spec();
 
-    /// The geometry facts: the backing array holds a full leaf, and an internal
-    /// node's separators + in-array children (`2 * key_cap`) fit within it.
+    /// The geometry facts: the backing array holds a full leaf
+    /// (`data_len == leaf_cap`), and an internal node's `key_cap` separators plus
+    /// its first `key_cap` children both fit in `data` (`2 * key_cap <=
+    /// data_len`). The `(key_cap+1)`-th child does not need an array slot — it
+    /// lives in `link` — so `2 * key_cap` (not `2 * key_cap + 1`) is the bound.
     proof fn lemma_geometry()
         ensures
             Self::data_len_spec() == Self::leaf_cap_spec(),
