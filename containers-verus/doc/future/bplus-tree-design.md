@@ -189,6 +189,69 @@ would let `insert`'s headroom precondition be *derived* from the key type's boun
 the split/propagation insert (it needs multi-level trees to be meaningful);
 tracked separately.
 
+### 3.4 Two design decisions, and why they hold up
+
+Two recurring questions about the representation — both resolved in favor of what
+is implemented. Recorded here so they are not re-litigated.
+
+**Why one arena-associated ghost `Tree`, not ghost subtree state on each node.**
+A tempting alternative is to give each node value a ghost field describing its own
+subtree (height, key-set, footprint, children) — so a node "knows" its subtree and
+no separate `Tree` is threaded. We deliberately do not, for three reasons:
+
+1. *It is the ListArena trap.* ListArena first put content/ordering on the nodes
+   (`next` points at a smaller index; content reached by chasing pointers). That
+   made the invariant pointer-chasing, needed a false ordering assumption to
+   terminate, and died on `append`/`splice`
+   ([Ch 9](../design/09-arena-aliasing-dynamic-frames.md),
+   [proof-attempts log](../design/08-proof-attempts-log.md)). The fix was to move
+   content *off* the nodes into a ghost sequence, leaving the only per-node fact
+   "id in range." Node-local subtree ghost state re-introduces exactly that: a
+   node's ghost field would reference its children's ghost state in *other* arena
+   slots, so reading one node's invariant transitively reads others, and a
+   mutation's frame becomes "every node whose ghost field mentions a touched id" —
+   unbounded and pointer-chasing again.
+2. *Semi-persistence makes it actively wrong.* The arena is semi-persistent;
+   `restore(token)` rewinds `view()` to a prior snapshot. The whole tree invariant
+   is stated over `view()`, so a restore brings back a structurally valid prior
+   tree for free (the `Vec` theorem `view() == snapshots[token]` does the work,
+   because `wf` reads only `view()`). Node-local ghost state would have to be
+   snapshotted and restored in lockstep with each node value and re-proven
+   consistent after every rewind. The single ghost `Tree` sidesteps this entirely:
+   one ghost object, the exec arena its representation, restore transparent.
+3. *The locality benefit is already obtained without the coupling.*
+   `subtree_wf(arena, t, h, succ, is_root)` is a predicate about *one* ghost
+   subtree against the arena, and `lemma_subtree_wf_frame` says a mutation outside
+   `t`'s `tree_ids` preserves it. So the recursive insert reasons locally about its
+   subtree and frames the siblings — the upside of node-local state — while the
+   ghost `Tree` stays a single clean object off the arena.
+
+The price is the framing machinery (`tree_disjoint`, `lemma_binds_frame`,
+`lemma_leaf_links_frame`, `lemma_subtree_wf_frame`): with node-local state,
+"a node's invariant mentions only its own slot" would be definitional rather than a
+lemma. But that is a *one-time fixed* cost (now paid and verified), against
+node-local state's *recurring* cost on every semi-persistence operation plus the
+re-introduced pointer-chasing trap. The trade strongly favors the single ghost
+tree.
+
+**Why keep the `link`-overloaded last child (rather than `key_cap` children only).**
+Overloading `link` as the last (index `key_cap`) child of an internal node forces
+the branch `if i < key_cap { data[key_cap+i] } else { link }`. One could instead
+store *all* children in `data` and never touch `link` for internal nodes — but a
+B+tree internal node with `s` separators needs `s+1` children, so fitting them all
+in `data` requires `2·key_cap + 1 ≤ data_len`, which forces `key_cap` down by one
+(e.g. 7→6 for the 64-byte u32 layout). That changes the capacity constants, the
+branching factor, and the split points: it is observably a *different* data
+structure from production's `BPlusTreeSet`, and parity with production is a hard
+requirement of this project. The proof cost of the overload, meanwhile, is fully
+contained: the branch appears in exactly three layout-layer places (the
+`child_view` spec, the `child` accessor, `set_internal_child`), all child writes
+are funneled through `set_internal_child`, and everything above that line (the
+tree lemmas, frame lemmas, the recursive insert) reasons through the `child_view`
+abstraction and never sees the branch. So de-overloading would save nothing for
+the remaining work, churn three already-verified functions, and break parity — net
+negative. Kept.
+
 ## 4. Insert, and its bi-abductive decomposition
 
 `insert(k)` has three layers, and each maps onto the
