@@ -259,6 +259,27 @@ pub trait NodeLayout: Sized {
             forall|j: int| 0 <= j <= Self::key_cap_spec() && j != i ==>
                 Self::child_view(*n, j) == Self::child_view(*old(n), j);
 
+    /// Insert separator `w` into an internal node at key-position `pos`,
+    /// shifting `[pos..count)` up. The node must have separator room (`count <
+    /// key_cap`). Refines `keys_view` by `Seq::insert` and leaves the children
+    /// untouched (they live in `data[key_cap..]` + `link`, disjoint from the
+    /// separators at `data[0..count]`). The internal analogue of
+    /// `leaf_insert_at`; `internal_insert_at` shifts children separately via
+    /// `set_internal_child`.
+    fn internal_key_insert(n: &mut Self::Node, pos: usize, w: Self::Word)
+        requires
+            !Self::is_leaf_spec(*old(n)),
+            Self::node_wf(*old(n)),
+            Self::count_spec(*old(n)) < Self::key_cap_spec(),
+            pos <= Self::count_spec(*old(n)),
+        ensures
+            Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
+            Self::node_wf(*n),
+            Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
+            Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w),
+            forall|j: int| 0 <= j <= Self::key_cap_spec() ==>
+                Self::child_view(*n, j) == Self::child_view(*old(n), j);
+
     // -- proof glue --
 
     /// `node_wf` bounds `count` by the leaf capacity (the loosest bound; an
@@ -310,6 +331,57 @@ pub trait NodeLayout: Sized {
     /// layout-private). Lets generic code relate `keys_view(n).len()` to counts.
     proof fn lemma_keys_view_len(n: Self::Node)
         ensures Self::keys_view(n).len() == Self::count_spec(n);
+}
+
+/// Insert separator `sep` at key-position `cp` and child `child` at
+/// child-position `cp+1` into a non-full internal node — the parent-absorb step
+/// of a propagating split. Generic over `L`, built on `set_internal_child`
+/// (shift children `[cp+1..=count]` up, then place `child` at `cp+1`) and
+/// `internal_key_insert` (place `sep`; children untouched). A free function, not
+/// a trait method, to keep the trait's spec surface lean (heavy default bodies
+/// perturb crate-wide spec pruning — see the proof-attempts log).
+pub fn internal_insert_at<L: NodeLayout>(n: &mut L::Node, cp: usize, sep: L::Word, child: L::ArenaIdx)
+    requires
+        !L::is_leaf_spec(*old(n)),
+        L::node_wf(*old(n)),
+        L::count_spec(*old(n)) < L::key_cap_spec(),
+        cp <= L::count_spec(*old(n)),
+    ensures
+        !L::is_leaf_spec(*n),
+        L::node_wf(*n),
+        L::count_spec(*n) == L::count_spec(*old(n)) + 1,
+        L::keys_view(*n) == L::keys_view(*old(n)).insert(cp as int, sep),
+        forall|j: int| 0 <= j <= cp ==> L::child_view(*n, j) == L::child_view(*old(n), j),
+        L::child_view(*n, cp + 1) == child.as_nat(),
+        forall|j: int| cp + 1 < j <= L::count_spec(*old(n)) + 1 ==>
+            L::child_view(*n, j) == L::child_view(*old(n), (j - 1)),
+{
+    let ghost old_n = *n;
+    let cnt = L::count(n);
+    let kc = L::key_cap();  // exec key_cap; cnt < kc, so m+1, cp+1 <= kc.
+    // Phase A: shift children [cp+1..=cnt] up to [cp+2..=cnt+1], descending.
+    let mut m = cnt;
+    while m > cp
+        invariant
+            cp <= m <= cnt,
+            cnt < kc,
+            kc as nat == L::key_cap_spec(),
+            !L::is_leaf_spec(*n),
+            L::node_wf(*n),
+            L::count_spec(*n) == cnt as nat,
+            L::keys_view(*n) == L::keys_view(old_n),
+            forall|j: int| 0 <= j <= m ==> L::child_view(*n, j) == L::child_view(old_n, j),
+            forall|j: int| m + 1 < j <= cnt + 1 ==>
+                L::child_view(*n, j) == L::child_view(old_n, (j - 1)),
+        decreases m - cp,
+    {
+        let cm = L::child(n, m);
+        L::set_internal_child(n, m + 1, cm);
+        m = m - 1;
+    }
+    L::set_internal_child(n, cp + 1, child);
+    // Phase B: insert the separator at key-pos cp (children untouched).
+    L::internal_key_insert(n, cp, sep);
 }
 
 /// `flags` bit 0: set iff the node is a leaf (production `FLAG_LEAF`).
@@ -542,16 +614,44 @@ macro_rules! gen_layout_u32 {
                 n.link = l;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
             }
+            fn internal_key_insert(n: &mut $node, pos: usize, w: u32) {
+                let ghost old_n = *n;
+                let cnt = n.count;
+                let mut j = cnt;
+                while j > pos
+                    invariant
+                        pos <= j <= cnt, cnt < $key_cap, n.count == cnt,
+                        n.is_leaf == old_n.is_leaf, n.link == old_n.link,
+                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
+                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
+                        forall|k: int| $key_cap <= k < $data_len ==> n.data[k] == old_n.data[k],
+                    decreases j - pos,
+                {
+                    n.data[j] = n.data[j - 1];
+                    j = j - 1;
+                }
+                n.data[pos] = w;
+                n.count = cnt + 1;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
+                assert forall|jj: int| 0 <= jj <= $key_cap implies
+                    Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
+            }
             fn set_internal_child(n: &mut $node, i: usize, v: u32) {
                 let ghost old_n = *n;
                 if i < $key_cap {
+                    // i < key_cap and 2*key_cap <= data_len ⟹ key_cap + i in bounds.
+                    assert($key_cap + i < $data_len);
                     n.data[$key_cap + i] = v;
                 } else {
                     n.link = v;
                 }
                 // children sit at data[key_cap..] (>= count for an internal
-                // node), so keys_view (data[0..count]) is untouched.
+                // node), so keys_view (data[0..count]) is untouched. Other
+                // children: writing data[key_cap+i] (or link) leaves data[key_cap+j]
+                // (j != i) and the other of data/link untouched.
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
+                assert forall|j: int| 0 <= j <= $key_cap && j != i implies
+                    Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
@@ -792,6 +892,28 @@ macro_rules! gen_layout_u64 {
                 let ghost old_n = *n;
                 n.link = l;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
+            }
+            fn internal_key_insert(n: &mut $node, pos: usize, w: u64) {
+                let ghost old_n = *n;
+                let cnt = n.count;
+                let mut j = cnt;
+                while j > pos
+                    invariant
+                        pos <= j <= cnt, cnt < $key_cap, n.count == cnt,
+                        n.is_leaf == old_n.is_leaf, n.link == old_n.link,
+                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
+                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
+                        forall|k: int| $key_cap <= k < $data_len ==> n.data[k] == old_n.data[k],
+                    decreases j - pos,
+                {
+                    n.data[j] = n.data[j - 1];
+                    j = j - 1;
+                }
+                n.data[pos] = w;
+                n.count = cnt + 1;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
+                assert forall|jj: int| 0 <= jj <= $key_cap implies
+                    Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
             }
             // Stores a `usize` arena id into the `u64` data slot (or the `usize`
             // link). The usize->u64->usize round-trip (child_view casts back) is
