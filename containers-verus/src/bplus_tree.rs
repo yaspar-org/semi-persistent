@@ -485,6 +485,94 @@ pub proof fn lemma_forest_wf_at(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat,
     }
 }
 
+/// Replace child `m` by a new subtree `nc` that is itself `wf` at height `h`:
+/// the forest stays `wf`. The internal-node *absorb* step (a child that did not
+/// split returns an updated subtree at the same position).
+pub proof fn lemma_forest_wf_update(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat, m: int, nc: Tree)
+    requires
+        forest_wf(kids, h, cap, key_cap),
+        0 <= m < kids.len(),
+        tree_wf(nc, h, cap, key_cap, false),
+    ensures
+        forest_wf(kids.update(m, nc), h, cap, key_cap),
+    decreases kids,
+{
+    lemma_forest_wf_cons(kids, h, cap, key_cap);
+    let u = kids.update(m, nc);
+    if m == 0 {
+        assert(u[0] == nc);
+        assert(u.drop_first() =~= kids.drop_first());
+        lemma_forest_wf_cons(u, h, cap, key_cap);
+    } else {
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= kids.drop_first().update(m - 1, nc));
+        lemma_forest_wf_update(kids.drop_first(), h, cap, key_cap, m - 1, nc);
+        lemma_forest_wf_cons(u, h, cap, key_cap);
+    }
+}
+
+/// Updating child `m` to a subtree with the *same root id* and the *same id
+/// footprint* preserves the forest's id set and disjointness. The absorb step's
+/// new subtree keeps the child's arena slot (id unchanged) and allocates no new
+/// nodes that escape the old footprint, so `tree_ids(nc) == tree_ids(kids[m])`.
+pub proof fn lemma_forest_disjoint_update(kids: Seq<Tree>, m: int, nc: Tree)
+    requires
+        forest_disjoint(kids),
+        0 <= m < kids.len(),
+        tree_disjoint(nc),
+        tree_ids(nc) == tree_ids(kids[m]),
+        (forall|i: int| 0 <= i < kids.len() && i != m ==>
+            (#[trigger] tree_ids(kids[i])).disjoint(tree_ids(kids[m]))),
+    ensures
+        forest_disjoint(kids.update(m, nc)),
+        forest_ids(kids.update(m, nc)) == forest_ids(kids),
+    decreases kids,
+{
+    lemma_forest_disjoint_cons(kids);
+    lemma_forest_ids_cons(kids);
+    let u = kids.update(m, nc);
+    lemma_forest_disjoint_cons(u);
+    lemma_forest_ids_cons(u);
+    if m == 0 {
+        assert(u[0] == nc);
+        assert(u.drop_first() =~= kids.drop_first());
+        assert(tree_ids(u[0]) == tree_ids(kids[0]));
+    } else {
+        let df = kids.drop_first();
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= df.update(m - 1, nc));
+        assert(df[m - 1] == kids[m]);
+        assert forall|i: int| 0 <= i < df.len() && i != m - 1 implies
+            (#[trigger] tree_ids(df[i])).disjoint(tree_ids(df[m - 1])) by {
+            assert(df[i] == kids[i + 1]);
+        }
+        lemma_forest_disjoint_update(df, m - 1, nc);
+    }
+}
+
+/// Updating child `m` to a subtree with the same in-order keys preserves the
+/// forest's in-order keys. (The absorb step changes one child's keys; this is
+/// used with the child's *new* keys, so the caller supplies the per-child key
+/// relation; here we state the structural `update`-splits-`forest_keys` fact.)
+pub proof fn lemma_forest_keys_update(kids: Seq<Tree>, m: int, nc: Tree)
+    requires 0 <= m < kids.len(),
+    ensures
+        forest_keys(kids.update(m, nc))
+            == forest_keys(kids.subrange(0, m)) + tree_keys(nc)
+                + forest_keys(kids.subrange(m + 1, kids.len() as int)),
+{
+    let u = kids.update(m, nc);
+    // u == kids[0..m] + [nc] + kids[m+1..]; forest_keys splits at m and m+1.
+    lemma_forest_keys_split(u, m);
+    lemma_forest_keys_split(u.subrange(m, u.len() as int), 1);
+    assert(u.subrange(0, m) =~= kids.subrange(0, m));
+    assert(u.subrange(m, u.len() as int).subrange(0, 1) =~= seq![nc]);
+    assert(u.subrange(m, u.len() as int).subrange(1, u.subrange(m, u.len() as int).len() as int)
+        =~= kids.subrange(m + 1, kids.len() as int));
+    lemma_forest_keys_cons(seq![nc]);
+    assert(seq![nc].drop_first() =~= Seq::<Tree>::empty());
+}
+
 /// A contiguous subrange `[lo, hi)` of a wf forest is itself a wf forest. The
 /// internal split carves the children into two subranges, each of which must be
 /// a wf forest for the two halves to be wf.
