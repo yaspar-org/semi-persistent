@@ -129,7 +129,11 @@ Tree layer:
    grew under the recursive call, so frame the parent's *other* children with
    `lemma_subtree_wf_frame`, reconstruct the parent over the updated `kids`
    (`lemma_forest_wf_update` for absorb; `lemma_internal_split_tree_wf` for
-   split). Decreases `tree_height(cur)`.
+   split). Decreases `tree_height(cur)`. **All supporting lemmas are now landed**
+   — this step is pure assembly of: `lemma_forest_binds_update` (binds),
+   `lemma_forest_disjoint_update` (disjoint), `lemma_forest_keys_update` (keys),
+   `lemma_forest_links_compose` (leaf-links), `lemma_subtree_wf_frame` (siblings),
+   the forest subrange/height lemmas (`tree_wf`). No new theory remains.
 4. **Top-level `insert` rewrite** — call `insert_rec`, grow a new root on `Some`
    (reuse the M4b new-root construction), update `self.tree`/`root`/`nkeys`.
 
