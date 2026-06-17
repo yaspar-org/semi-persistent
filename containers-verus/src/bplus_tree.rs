@@ -485,6 +485,66 @@ pub proof fn lemma_forest_wf_at(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat,
     }
 }
 
+/// A contiguous subrange `[lo, hi)` of a wf forest is itself a wf forest. The
+/// internal split carves the children into two subranges, each of which must be
+/// a wf forest for the two halves to be wf.
+pub proof fn lemma_forest_wf_subrange(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat, lo: int, hi: int)
+    requires
+        forest_wf(kids, h, cap, key_cap),
+        0 <= lo <= hi <= kids.len(),
+    ensures
+        forest_wf(kids.subrange(lo, hi), h, cap, key_cap),
+    decreases hi - lo,
+{
+    let sub = kids.subrange(lo, hi);
+    if lo == hi {
+        assert(sub.len() == 0);
+    } else {
+        lemma_forest_wf_at(kids, h, cap, key_cap, lo);
+        assert(sub[0] == kids[lo]);
+        lemma_forest_wf_subrange(kids, h, cap, key_cap, lo + 1, hi);
+        assert(sub.drop_first() =~= kids.subrange(lo + 1, hi));
+        lemma_forest_wf_cons(sub, h, cap, key_cap);
+    }
+}
+
+/// Every child's height is `<= forest_max_height(kids)`, so a subrange's max
+/// height is too: `forest_max_height(kids.subrange(lo,hi)) <= forest_max_height(kids)`.
+/// Lets the split halves' heights be bounded by the parent's child height.
+pub proof fn lemma_forest_max_height_subrange(kids: Seq<Tree>, lo: int, hi: int)
+    requires 0 <= lo <= hi <= kids.len(),
+    ensures forest_max_height(kids.subrange(lo, hi)) <= forest_max_height(kids),
+    decreases hi - lo,
+{
+    let sub = kids.subrange(lo, hi);
+    if lo == hi {
+        assert(sub.len() == 0);
+    } else {
+        lemma_forest_max_height_cons(sub);
+        assert(sub[0] == kids[lo]);
+        assert(sub.drop_first() =~= kids.subrange(lo + 1, hi));
+        lemma_forest_max_height_at(kids, lo);          // height(kids[lo]) <= max(kids)
+        lemma_forest_max_height_subrange(kids, lo + 1, hi);
+    }
+}
+
+/// If every child in a forest is `wf` at height `h`, then `forest_max_height <=
+/// h` (each child has `tree_height <= h`). Combined with the subrange lemma this
+/// pins a split half's height.
+pub proof fn lemma_forest_wf_max_height(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat)
+    requires forest_wf(kids, h, cap, key_cap),
+    ensures forest_max_height(kids) <= h,
+    decreases kids,
+{
+    if kids.len() == 0 {
+    } else {
+        lemma_forest_wf_cons(kids, h, cap, key_cap);
+        lemma_forest_max_height_cons(kids);
+        lemma_tree_wf_height(kids[0], h, cap, key_cap, false);  // height(kids[0]) == h
+        lemma_forest_wf_max_height(kids.drop_first(), h, cap, key_cap);
+    }
+}
+
 /// A non-root-wf tree is also root-wf (the root form only drops the minimum-
 /// occupancy lower bound; everything else is shared). Lets the descent carry a
 /// single root-form `tree_wf` while stepping into children, which bind at the
