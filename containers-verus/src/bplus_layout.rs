@@ -161,6 +161,66 @@ pub trait NodeLayout: Sized {
             Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w),
             Self::link_view(*n) == Self::link_view(*old(n));
 
+    /// The leaf-split median: `ceil(leaf_cap / 2) = (leaf_cap + 1) / 2`. The
+    /// left half keeps `split_mid` keys, the right half gets `leaf_cap + 1 -
+    /// split_mid` (production's `mid = LEAF_CAP.div_ceil(2)`).
+    spec fn split_mid_spec() -> nat;
+
+    fn split_mid() -> (m: usize)
+        ensures m as nat == Self::split_mid_spec();
+
+    /// Split a FULL leaf, inserting `w` at sorted position `pos`. Returns
+    /// `(left, right)`: `left` keeps the low half, `right` the high half, of the
+    /// combined sequence `keys_view(n).insert(pos, w)` (length `leaf_cap + 1`),
+    /// split at `split_mid`. Both are leaves; `right` inherits `n`'s old link
+    /// (the caller re-points `left`'s link to `right`'s fresh arena id). This is
+    /// production's leaf split, expressed by `Seq::subrange` rather than its
+    /// in-place two-case `copy_within` (which a fixed-width array forces but
+    /// verification need not mirror).
+    fn leaf_split_at(n: &Self::Node, pos: usize, w: Self::Word) -> (res: (Self::Node, Self::Node))
+        requires
+            Self::is_leaf_spec(*n),
+            Self::count_spec(*n) == Self::leaf_cap_spec(),
+            pos <= Self::leaf_cap_spec(),
+        ensures
+            ({
+                let combined = Self::keys_view(*n).insert(pos as int, w);
+                let mid = Self::split_mid_spec();
+                &&& Self::is_leaf_spec(res.0)
+                &&& Self::is_leaf_spec(res.1)
+                &&& Self::node_wf(res.0)
+                &&& Self::node_wf(res.1)
+                &&& Self::count_spec(res.0) == mid
+                &&& Self::count_spec(res.1) == (Self::leaf_cap_spec() + 1 - mid) as nat
+                &&& Self::keys_view(res.0) == combined.subrange(0, mid as int)
+                &&& Self::keys_view(res.1) == combined.subrange(mid as int, combined.len() as int)
+                &&& Self::link_view(res.1) == Self::link_view(*n)
+            });
+
+    /// Build a fresh internal node with one separator `sep` and two children
+    /// `(left, right)` arena ids. Production's new-root construction
+    /// (`set_count(1); set_internal_child(0, left); set_internal_child(1,
+    /// right)`). `count == 1`, `keys_view == [sep]`, `child_view(0) == left`,
+    /// `child_view(1) == right`.
+    fn new_internal2(sep: Self::Word, left: Self::ArenaIdx, right: Self::ArenaIdx) -> (n: Self::Node)
+        ensures
+            !Self::is_leaf_spec(n),
+            Self::node_wf(n),
+            Self::count_spec(n) == 1,
+            Self::keys_view(n) == seq![sep],
+            Self::child_view(n, 0) == left.as_nat(),
+            Self::child_view(n, 1) == right.as_nat();
+
+    /// Set a leaf's forward link (production `set_link`). Used to splice the new
+    /// right leaf into the chain. Only the link changes.
+    fn set_link(n: &mut Self::Node, l: Self::ArenaIdx)
+        ensures
+            Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
+            Self::count_spec(*n) == Self::count_spec(*old(n)),
+            Self::keys_view(*n) == Self::keys_view(*old(n)),
+            Self::node_wf(*n) == Self::node_wf(*old(n)),
+            Self::link_view(*n) == l.as_nat();
+
     // -- proof glue --
 
     /// `node_wf` bounds `count` by the leaf capacity (the loosest bound; an
@@ -360,6 +420,79 @@ macro_rules! gen_layout_u32 {
                 n.count = cnt + 1;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
             }
+
+            open spec fn split_mid_spec() -> nat { (($leaf_cap + 1) / 2) as nat }
+            fn split_mid() -> (m: usize) { ($leaf_cap + 1) / 2 }
+
+            fn leaf_split_at(n: &$node, pos: usize, w: u32) -> (res: ($node, $node)) {
+                let ghost old_n = *n;
+                let mid: usize = ($leaf_cap + 1) / 2;
+                let rc: usize = $leaf_cap + 1 - mid;
+                let mut left = $node { is_leaf: true, count: mid, data: [0; $data_len], link: n.link };
+                let mut right = $node { is_leaf: true, count: rc, data: [0; $data_len], link: n.link };
+                let mut j: usize = 0;
+                while j < mid
+                    invariant
+                        mid == ($leaf_cap + 1) / 2, rc == $leaf_cap + 1 - mid,
+                        n.count == $leaf_cap, pos <= $leaf_cap, mid <= $leaf_cap,
+                        0 <= j <= mid, left.is_leaf, left.count == mid,
+                        forall|t: int| 0 <= t < j ==> #[trigger] left.data[t]
+                            == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }),
+                    decreases mid - j,
+                {
+                    let v: u32 = if j < pos { n.data[j] } else if j == pos { w } else { n.data[j - 1] };
+                    left.data[j] = v;
+                    j = j + 1;
+                }
+                let mut k: usize = 0;
+                while k < rc
+                    invariant
+                        mid == ($leaf_cap + 1) / 2, rc == $leaf_cap + 1 - mid,
+                        n.count == $leaf_cap, pos <= $leaf_cap, mid <= $leaf_cap,
+                        0 <= k <= rc, right.is_leaf, right.count == rc, right.link == n.link,
+                        forall|t: int| 0 <= t < k ==> #[trigger] right.data[t]
+                            == (if mid + t < pos { n.data[mid + t] } else if mid + t == pos { w } else { n.data[mid + t - 1] }),
+                    decreases rc - k,
+                {
+                    let idx: usize = mid + k;
+                    let v: u32 = if idx < pos { n.data[idx] } else if idx == pos { w } else { n.data[idx - 1] };
+                    right.data[k] = v;
+                    k = k + 1;
+                }
+                proof {
+                    let combined = Self::keys_view(old_n).insert(pos as int, w);
+                    assert(combined.len() == $leaf_cap + 1);
+                    assert(Self::keys_view(left) =~= combined.subrange(0, mid as int)) by {
+                        assert forall|t: int| 0 <= t < mid implies
+                            Self::keys_view(left)[t] == combined.subrange(0, mid as int)[t] by {
+                            assert(left.data[t] == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }));
+                        }
+                    }
+                    assert(Self::keys_view(right) =~= combined.subrange(mid as int, combined.len() as int)) by {
+                        assert forall|t: int| 0 <= t < rc implies
+                            Self::keys_view(right)[t] == combined.subrange(mid as int, combined.len() as int)[t] by {
+                            assert(right.data[t] == (if mid + t < pos { n.data[mid + t] } else if mid + t == pos { w } else { n.data[mid + t - 1] }));
+                        }
+                    }
+                }
+                (left, right)
+            }
+
+            fn new_internal2(sep: u32, left: u32, right: u32) -> (nn: $node) {
+                let mut data = [0; $data_len];
+                data[0] = sep;
+                data[$key_cap] = left;
+                data[$key_cap + 1] = right;
+                let nn = $node { is_leaf: false, count: 1, data, link: 0u32 };
+                assert(Self::keys_view(nn) =~= seq![sep]);
+                nn
+            }
+
+            fn set_link(n: &mut $node, l: u32) {
+                let ghost old_n = *n;
+                n.link = l;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
+            }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
@@ -514,6 +647,90 @@ macro_rules! gen_layout_u64 {
                 n.data[pos] = w;
                 n.count = cnt + 1;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
+            }
+
+            open spec fn split_mid_spec() -> nat { (($leaf_cap + 1) / 2) as nat }
+            fn split_mid() -> (m: usize) { ($leaf_cap + 1) / 2 }
+
+            fn leaf_split_at(n: &$node, pos: usize, w: u64) -> (res: ($node, $node)) {
+                let ghost old_n = *n;
+                let mid: usize = ($leaf_cap + 1) / 2;
+                let rc: usize = $leaf_cap + 1 - mid;
+                let mut left = $node { is_leaf: true, count: mid, data: [0; $data_len], link: n.link };
+                let mut right = $node { is_leaf: true, count: rc, data: [0; $data_len], link: n.link };
+                let mut j: usize = 0;
+                while j < mid
+                    invariant
+                        mid == ($leaf_cap + 1) / 2, rc == $leaf_cap + 1 - mid,
+                        n.count == $leaf_cap, pos <= $leaf_cap, mid <= $leaf_cap,
+                        0 <= j <= mid, left.is_leaf, left.count == mid,
+                        forall|t: int| 0 <= t < j ==> #[trigger] left.data[t]
+                            == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }),
+                    decreases mid - j,
+                {
+                    let v: u64 = if j < pos { n.data[j] } else if j == pos { w } else { n.data[j - 1] };
+                    left.data[j] = v;
+                    j = j + 1;
+                }
+                let mut k: usize = 0;
+                while k < rc
+                    invariant
+                        mid == ($leaf_cap + 1) / 2, rc == $leaf_cap + 1 - mid,
+                        n.count == $leaf_cap, pos <= $leaf_cap, mid <= $leaf_cap,
+                        0 <= k <= rc, right.is_leaf, right.count == rc, right.link == n.link,
+                        forall|t: int| 0 <= t < k ==> #[trigger] right.data[t]
+                            == (if mid + t < pos { n.data[mid + t] } else if mid + t == pos { w } else { n.data[mid + t - 1] }),
+                    decreases rc - k,
+                {
+                    let idx: usize = mid + k;
+                    let v: u64 = if idx < pos { n.data[idx] } else if idx == pos { w } else { n.data[idx - 1] };
+                    right.data[k] = v;
+                    k = k + 1;
+                }
+                proof {
+                    let combined = Self::keys_view(old_n).insert(pos as int, w);
+                    assert(combined.len() == $leaf_cap + 1);
+                    assert(Self::keys_view(left) =~= combined.subrange(0, mid as int)) by {
+                        assert forall|t: int| 0 <= t < mid implies
+                            Self::keys_view(left)[t] == combined.subrange(0, mid as int)[t] by {
+                            assert(left.data[t] == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }));
+                        }
+                    }
+                    assert(Self::keys_view(right) =~= combined.subrange(mid as int, combined.len() as int)) by {
+                        assert forall|t: int| 0 <= t < rc implies
+                            Self::keys_view(right)[t] == combined.subrange(mid as int, combined.len() as int)[t] by {
+                            assert(right.data[t] == (if mid + t < pos { n.data[mid + t] } else if mid + t == pos { w } else { n.data[mid + t - 1] }));
+                        }
+                    }
+                }
+                (left, right)
+            }
+
+            // Stores `usize` arena ids into the `u64` data array. The
+            // `usize -> u64 -> usize` round-trip (child_view casts back) is
+            // value-preserving on 64-bit hosts; external_body mirrors the u64
+            // `child` accessor's treatment of the same cast.
+            #[verifier::external_body]
+            fn new_internal2(sep: u64, left: usize, right: usize) -> (nn: $node)
+                ensures
+                    !Self::is_leaf_spec(nn),
+                    Self::node_wf(nn),
+                    Self::count_spec(nn) == 1,
+                    Self::keys_view(nn) == seq![sep],
+                    Self::child_view(nn, 0) == left.as_nat(),
+                    Self::child_view(nn, 1) == right.as_nat(),
+            {
+                let mut data = [0u64; $data_len];
+                data[0] = sep;
+                data[$key_cap] = left as u64;
+                data[$key_cap + 1] = right as u64;
+                $node { is_leaf: false, count: 1, data, link: 0usize }
+            }
+
+            fn set_link(n: &mut $node, l: usize) {
+                let ghost old_n = *n;
+                n.link = l;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
             }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
