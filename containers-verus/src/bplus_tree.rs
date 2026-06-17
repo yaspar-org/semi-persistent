@@ -192,6 +192,40 @@ pub open spec fn keys_all_ge(t: Tree, bound: nat) -> bool {
     forall|i: int| 0 <= i < tree_keys(t).len() ==> bound <= (#[trigger] tree_keys(t)[i])
 }
 
+/// `keys_all_lt` via membership: it holds iff every key in the model set is `<
+/// bound`. The index form and the set form coincide; this bridge lets the absorb
+/// step argue over `to_set()` (where the new child's keys are old ∪ {key}).
+pub proof fn lemma_keys_all_lt_set(t: Tree, bound: nat)
+    ensures keys_all_lt(t, bound) == (forall|k: nat| tree_keys(t).to_set().contains(k) ==> k < bound),
+{
+    if keys_all_lt(t, bound) {
+        assert forall|k: nat| tree_keys(t).to_set().contains(k) implies k < bound by {
+            let i = choose|i: int| 0 <= i < tree_keys(t).len() && tree_keys(t)[i] == k;
+        }
+    }
+    if forall|k: nat| tree_keys(t).to_set().contains(k) ==> k < bound {
+        assert forall|i: int| 0 <= i < tree_keys(t).len() implies (#[trigger] tree_keys(t)[i]) < bound by {
+            assert(tree_keys(t).to_set().contains(tree_keys(t)[i]));
+        }
+    }
+}
+
+/// Companion set bridge for `keys_all_ge`.
+pub proof fn lemma_keys_all_ge_set(t: Tree, bound: nat)
+    ensures keys_all_ge(t, bound) == (forall|k: nat| tree_keys(t).to_set().contains(k) ==> bound <= k),
+{
+    if keys_all_ge(t, bound) {
+        assert forall|k: nat| tree_keys(t).to_set().contains(k) implies bound <= k by {
+            let i = choose|i: int| 0 <= i < tree_keys(t).len() && tree_keys(t)[i] == k;
+        }
+    }
+    if forall|k: nat| tree_keys(t).to_set().contains(k) ==> bound <= k {
+        assert forall|i: int| 0 <= i < tree_keys(t).len() implies bound <= (#[trigger] tree_keys(t)[i]) by {
+            assert(tree_keys(t).to_set().contains(tree_keys(t)[i]));
+        }
+    }
+}
+
 /// Structural well-formedness, height-indexed for balance. `tree_wf(t, h, cap,
 /// key_cap, is_root)` holds when `t` is a valid B+tree of height exactly `h`:
 ///   - balance: every leaf is at depth `h` (a Leaf requires `h == 0`; an Inner
