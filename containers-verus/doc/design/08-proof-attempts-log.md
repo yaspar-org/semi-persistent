@@ -263,6 +263,17 @@ site — `lt()`'s ensures won't unfold to `as_nat() < as_nat()`. Compare via
 - One milestone per commit; always leave the tree verifying; never commit a
   broken half-migration. Several marked-region-pop attempts were reverted precisely
   to honor this.
+- Recursive ghost datatype with `Seq<Self>` children (the B+tree's ghost `Tree`):
+  the `Tree` ↔ `Seq<Tree>` mutual recursion must have *type-compatible* decreases
+  clauses. Use `decreases t` for the node fn and `decreases kids` (the
+  `Seq<Tree>` value itself — Verus orders it by element height) for the forest
+  fn; using `decreases kids.len()` (an `int`) gives "decreases clauses must have
+  compatible types". And the recursion must be *explicit cons* (`f(kids[0]) +
+  forest(kids.drop_first())`) — a closure `Seq::new(len, |i| f(kids[i]))` hides
+  `kids[i] < t` from the termination checker and fails. One-step unfolding of the
+  forest fn needs a small `lemma_*_cons` (ensures `forest(kids) == f(kids[0]) ∪
+  forest(kids.drop_first())` for non-empty `kids`). Validated in a 40-line probe
+  before the module reshape.
 
 ---
 [← Table of Contents](00-table-of-contents.md)
