@@ -152,6 +152,15 @@ pub trait NodeLayout: Sized {
         ensures
             Self::data_len_spec() == Self::leaf_cap_spec(),
             2 * Self::key_cap_spec() <= Self::data_len_spec();
+
+    /// The arena index type can address a useful arena, and a leaf holds at
+    /// least one key. Both hold for every real layout (u32/usize arena;
+    /// `leaf_cap` 14..62). Lets the tree push a root node without overflow and
+    /// gives a non-degenerate capacity.
+    proof fn lemma_arena_capacity()
+        ensures
+            1 <= Self::leaf_cap_spec(),
+            Self::leaf_cap_spec() < <Self::ArenaIdx as IndexLike>::max_nat();
 }
 
 /// `flags` bit 0: set iff the node is a leaf (production `FLAG_LEAF`).
@@ -290,6 +299,7 @@ macro_rules! gen_layout_u32 {
             }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
+            proof fn lemma_arena_capacity() {}
         }
 
         } // verus!
@@ -419,6 +429,7 @@ macro_rules! gen_layout_u64 {
             }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
+            proof fn lemma_arena_capacity() {}
         }
 
         } // verus!
