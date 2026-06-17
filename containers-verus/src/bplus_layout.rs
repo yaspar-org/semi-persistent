@@ -243,6 +243,7 @@ pub trait NodeLayout: Sized {
     proof fn lemma_arena_capacity()
         ensures
             1 <= Self::leaf_cap_spec(),
+            1 <= Self::key_cap_spec(),
             Self::leaf_cap_spec() < <Self::ArenaIdx as IndexLike>::max_nat();
 
     /// `node_wf` characterization, exposed so generic code can establish it
@@ -256,6 +257,13 @@ pub trait NodeLayout: Sized {
             } else {
                 Self::count_spec(n) <= Self::key_cap_spec()
             });
+
+    /// `split_mid` is `ceil(leaf_cap / 2)` (`(leaf_cap + 1) / 2`), exposed so
+    /// generic code can relate it to `leaf_cap_spec` (both layout-private).
+    proof fn lemma_split_mid()
+        ensures
+            Self::split_mid_spec() == (Self::leaf_cap_spec() + 1) / 2,
+            1 <= Self::split_mid_spec() <= Self::leaf_cap_spec();
 
     /// The key view has length `count` (`keys_view` is `Seq::new(count, ..)`,
     /// layout-private). Lets generic code relate `keys_view(n).len()` to counts.
@@ -498,6 +506,7 @@ macro_rules! gen_layout_u32 {
             proof fn lemma_arena_capacity() {}
             proof fn lemma_node_wf_iff(n: $node) {}
             proof fn lemma_keys_view_len(n: $node) {}
+            proof fn lemma_split_mid() {}
         }
 
         } // verus!
@@ -737,6 +746,7 @@ macro_rules! gen_layout_u64 {
             proof fn lemma_arena_capacity() {}
             proof fn lemma_node_wf_iff(n: $node) {}
             proof fn lemma_keys_view_len(n: $node) {}
+            proof fn lemma_split_mid() {}
         }
 
         } // verus!
