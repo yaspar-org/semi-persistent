@@ -240,6 +240,25 @@ pub trait NodeLayout: Sized {
             Self::node_wf(*n) == Self::node_wf(*old(n)),
             Self::link_view(*n) == l.as_nat();
 
+    /// Set internal child `i` (`0 <= i <= key_cap`) to arena id `v`. Production's
+    /// `set_internal_child`: writes `data[key_cap + i]` for `i < key_cap`, else
+    /// the `link` field (the last child). Leaves `keys_view`, `count`, leaf-ness,
+    /// and every *other* child unchanged. The single primitive that owns the
+    /// `link`-as-last-child packing wrinkle; the internal insert/split build on it.
+    fn set_internal_child(n: &mut Self::Node, i: usize, v: Self::ArenaIdx)
+        requires
+            !Self::is_leaf_spec(*old(n)),
+            Self::node_wf(*old(n)),
+            i <= Self::key_cap_spec(),
+        ensures
+            Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
+            Self::node_wf(*n),
+            Self::count_spec(*n) == Self::count_spec(*old(n)),
+            Self::keys_view(*n) == Self::keys_view(*old(n)),
+            Self::child_view(*n, i as int) == v.as_nat(),
+            forall|j: int| 0 <= j <= Self::key_cap_spec() && j != i ==>
+                Self::child_view(*n, j) == Self::child_view(*old(n), j);
+
     // -- proof glue --
 
     /// `node_wf` bounds `count` by the leaf capacity (the loosest bound; an
@@ -523,6 +542,17 @@ macro_rules! gen_layout_u32 {
                 n.link = l;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
             }
+            fn set_internal_child(n: &mut $node, i: usize, v: u32) {
+                let ghost old_n = *n;
+                if i < $key_cap {
+                    n.data[$key_cap + i] = v;
+                } else {
+                    n.link = v;
+                }
+                // children sit at data[key_cap..] (>= count for an internal
+                // node), so keys_view (data[0..count]) is untouched.
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
+            }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
@@ -762,6 +792,27 @@ macro_rules! gen_layout_u64 {
                 let ghost old_n = *n;
                 n.link = l;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
+            }
+            // Stores a `usize` arena id into the `u64` data slot (or the `usize`
+            // link). The usize->u64->usize round-trip (child_view casts back) is
+            // value-preserving on 64-bit; external_body mirrors the u64 child
+            // accessor + new_internal2.
+            #[verifier::external_body]
+            fn set_internal_child(n: &mut $node, i: usize, v: usize)
+                ensures
+                    Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
+                    Self::node_wf(*n),
+                    Self::count_spec(*n) == Self::count_spec(*old(n)),
+                    Self::keys_view(*n) == Self::keys_view(*old(n)),
+                    Self::child_view(*n, i as int) == v.as_nat(),
+                    forall|j: int| 0 <= j <= Self::key_cap_spec() && j != i ==>
+                        Self::child_view(*n, j) == Self::child_view(*old(n), j),
+            {
+                if i < $key_cap {
+                    n.data[$key_cap + i] = v as u64;
+                } else {
+                    n.link = v;
+                }
             }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
