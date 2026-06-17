@@ -216,6 +216,78 @@ pub trait NodeLayout: Sized {
                 &&& Self::link_view(res.1) == Self::link_view(*n)
             });
 
+    /// The internal-split median: `key_cap / 2` (production's `imid =
+    /// INTERNAL_KEY_CAP / 2`). A full internal node has `key_cap` separators;
+    /// inserting one more makes `key_cap + 1`. `isplit_mid` separators stay left,
+    /// one (`combined[isplit_mid]`) is promoted out, the remaining
+    /// `key_cap - isplit_mid` go right.
+    spec fn isplit_mid_spec() -> nat;
+
+    fn isplit_mid() -> (m: usize)
+        ensures m as nat == Self::isplit_mid_spec();
+
+    proof fn lemma_isplit_mid()
+        ensures
+            Self::isplit_mid_spec() == Self::key_cap_spec() / 2,
+            1 <= Self::isplit_mid_spec(),
+            Self::isplit_mid_spec() < Self::key_cap_spec();
+
+    /// Split a FULL internal node (`count == key_cap`) that is absorbing a new
+    /// `(new_sep at key-pos cp, new_child at child-pos cp+1)`. Forms the combined
+    /// separator sequence `cseps = keys_view(n).insert(cp, new_sep)` (length
+    /// `key_cap + 1`) and the combined child sequence `cchild` (length
+    /// `key_cap + 2`, `new_child` inserted at `cp+1`). Splits at `imid =
+    /// isplit_mid`: returns `(left, right, promoted)` where
+    ///   - `left.seps  == cseps[0 .. imid]`, `left.children  == cchild[0 ..= imid]`
+    ///   - `promoted    == cseps[imid]` (removed from both halves — B-tree style)
+    ///   - `right.seps == cseps[imid+1 ..]`, `right.children == cchild[imid+1 ..]`
+    /// Both are internal nodes. Mirrors production's internal-node split.
+    fn internal_split_at(
+        n: &Self::Node,
+        cp: usize,
+        new_sep: Self::Word,
+        new_child: Self::ArenaIdx,
+    ) -> (res: (Self::Node, Self::Node, Self::Word))
+        requires
+            !Self::is_leaf_spec(*n),
+            Self::node_wf(*n),
+            Self::count_spec(*n) == Self::key_cap_spec(),
+            cp <= Self::key_cap_spec(),
+        ensures
+            ({
+                let cseps = Self::keys_view(*n).insert(cp as int, new_sep);
+                let imid = Self::isplit_mid_spec();
+                let kc = Self::key_cap_spec();
+                &&& !Self::is_leaf_spec(res.0)
+                &&& !Self::is_leaf_spec(res.1)
+                &&& Self::node_wf(res.0)
+                &&& Self::node_wf(res.1)
+                &&& Self::count_spec(res.0) == imid
+                &&& Self::count_spec(res.1) == (kc - imid) as nat
+                &&& Self::keys_view(res.0) == cseps.subrange(0, imid as int)
+                &&& Self::keys_view(res.1) == cseps.subrange(imid as int + 1, cseps.len() as int)
+                &&& res.2 == cseps[imid as int]
+                // children: left gets cchild[0..=imid], right gets cchild[imid+1..].
+                // cchild at child-pos j = (j<=cp: child(n,j); j==cp+1: new_child;
+                //                          else: child(n,j-1)).
+                &&& (forall|j: int| 0 <= j <= imid ==>
+                        #[trigger] Self::child_view(res.0, j) == Self::isplit_cchild(*n, cp as int, new_child, j))
+                &&& (forall|j: int| 0 <= j <= (kc - imid) ==>
+                        #[trigger] Self::child_view(res.1, j) == Self::isplit_cchild(*n, cp as int, new_child, imid as int + 1 + j))
+            });
+
+    /// The combined child arena-id at child-position `j` after inserting
+    /// `new_child` at position `cp+1` (spec helper for `internal_split_at`).
+    open spec fn isplit_cchild(n: Self::Node, cp: int, new_child: Self::ArenaIdx, j: int) -> nat {
+        if j <= cp {
+            Self::child_view(n, j)
+        } else if j == cp + 1 {
+            new_child.as_nat()
+        } else {
+            Self::child_view(n, j - 1)
+        }
+    }
+
     /// Build a fresh internal node with one separator `sep` and two children
     /// `(left, right)` arena ids. Production's new-root construction
     /// (`set_count(1); set_internal_child(0, left); set_internal_child(1,
@@ -653,6 +725,108 @@ macro_rules! gen_layout_u32 {
                 assert forall|j: int| 0 <= j <= $key_cap && j != i implies
                     Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
+            open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
+            fn isplit_mid() -> (m: usize) { $key_cap / 2 }
+            proof fn lemma_isplit_mid() {}
+
+            fn internal_split_at(n: &$node, cp: usize, new_sep: u32, new_child: u32)
+                -> (res: ($node, $node, u32))
+            {
+                let imid: usize = $key_cap / 2;
+                let kc: usize = $key_cap;
+                let ghost cseps = Self::keys_view(*n).insert(cp as int, new_sep);
+                // Fresh left/right, counts set upfront so keys_view reads the
+                // filled prefix. is_leaf=false; link is a child slot, set via children loop.
+                let mut left = *n;
+                let mut right = *n;
+                left.count = imid;
+                right.count = kc - imid;
+                // left separators [0..imid) = cseps[0..imid].
+                let mut j: usize = 0;
+                while j < imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        0 <= j <= imid, !left.is_leaf, left.count == imid,
+                        forall|t: int| 0 <= t < j ==> #[trigger] left.data[t]
+                            == (if t < cp { n.data[t] } else if t == cp { new_sep } else { n.data[t - 1] }),
+                    decreases imid - j,
+                {
+                    let v: u32 = if j < cp { n.data[j] } else if j == cp { new_sep } else { n.data[j - 1] };
+                    left.data[j] = v;
+                    j = j + 1;
+                }
+                // right separators [0..kc-imid) = cseps[imid+1..].
+                let mut j2: usize = 0;
+                while j2 < kc - imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        imid < kc, 0 <= j2 <= kc - imid, !right.is_leaf, right.count == kc - imid,
+                        forall|t: int| 0 <= t < j2 ==> #[trigger] right.data[t]
+                            == (if imid as int + 1 + t < cp { n.data[imid as int + 1 + t] }
+                                else if imid as int + 1 + t == cp { new_sep } else { n.data[imid as int + 1 + t - 1] }),
+                    decreases (kc - imid) - j2,
+                {
+                    let idx: usize = imid + 1 + j2;
+                    let v: u32 = if idx < cp { n.data[idx] } else if idx == cp { new_sep } else { n.data[idx - 1] };
+                    right.data[j2] = v;
+                    j2 = j2 + 1;
+                }
+                proof {
+                    // establish both seps subranges now (children loops preserve keys_view).
+                    assert forall|i: int| 0 <= i < cseps.len() implies
+                        cseps[i] == (if i < cp { n.data[i] } else if i == cp { new_sep } else { n.data[i - 1] }) by {
+                        if i < cp { assert(cseps[i] == Self::keys_view(*n)[i]); }
+                        else if i > cp { assert(cseps[i] == Self::keys_view(*n)[i - 1]); }
+                    }
+                    assert forall|t: int| 0 <= t < imid implies
+                        Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
+                        assert(Self::keys_view(left)[t] == left.data[t]);
+                    }
+                    assert(Self::keys_view(left) =~= cseps.subrange(0, imid as int));
+                    assert forall|t: int| 0 <= t < (kc - imid) implies
+                        Self::keys_view(right)[t] == cseps.subrange(imid as int + 1, cseps.len() as int)[t] by {
+                        assert(Self::keys_view(right)[t] == right.data[t]);
+                    }
+                    assert(Self::keys_view(right) =~= cseps.subrange(imid as int + 1, cseps.len() as int));
+                }
+                // left children [0..=imid] = cchild[0..=imid].
+                let mut k: usize = 0;
+                while k <= imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        imid < kc, 0 <= k <= imid + 1, !left.is_leaf, left.count == imid, Self::node_wf(left),
+                        !n.is_leaf, Self::node_wf(*n),
+                        Self::keys_view(left) == cseps.subrange(0, imid as int),
+                        Self::keys_view(right) == cseps.subrange(imid as int + 1, cseps.len() as int),
+                        forall|t: int| 0 <= t < k ==> #[trigger] Self::child_view(left, t)
+                            == Self::isplit_cchild(*n, cp as int, new_child, t),
+                    decreases imid + 1 - k,
+                {
+                    let cv: u32 = if k <= cp { Self::child(n, k) } else if k == cp + 1 { new_child } else { Self::child(n, k - 1) };
+                    Self::set_internal_child(&mut left, k, cv);
+                    k = k + 1;
+                }
+                // right children [0..=kc-imid] = cchild[imid+1..].
+                let mut k2: usize = 0;
+                while k2 <= kc - imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        imid < kc, 0 <= k2 <= (kc - imid) + 1, !right.is_leaf, right.count == kc - imid, Self::node_wf(right),
+                        !n.is_leaf, Self::node_wf(*n),
+                        Self::keys_view(left) == cseps.subrange(0, imid as int),
+                        Self::keys_view(right) == cseps.subrange(imid as int + 1, cseps.len() as int),
+                        forall|t: int| 0 <= t < k2 ==> #[trigger] Self::child_view(right, t)
+                            == Self::isplit_cchild(*n, cp as int, new_child, imid as int + 1 + t),
+                    decreases (kc - imid) + 1 - k2,
+                {
+                    let cidx: usize = imid + 1 + k2;
+                    let cv: u32 = if cidx <= cp { Self::child(n, cidx) } else if cidx == cp + 1 { new_child } else { Self::child(n, cidx - 1) };
+                    Self::set_internal_child(&mut right, k2, cv);
+                    k2 = k2 + 1;
+                }
+                let promoted: u32 = if imid < cp { n.data[imid] } else if imid == cp { new_sep } else { n.data[imid - 1] };
+                (left, right, promoted)
+            }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
@@ -935,6 +1109,130 @@ macro_rules! gen_layout_u64 {
                 } else {
                     n.link = v;
                 }
+            }
+            open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
+            fn isplit_mid() -> (m: usize) { $key_cap / 2 }
+            proof fn lemma_isplit_mid() {}
+
+            fn internal_split_at(n: &$node, cp: usize, new_sep: u64, new_child: usize)
+                -> (res: ($node, $node, u64))
+            {
+                let imid: usize = $key_cap / 2;
+                let kc: usize = $key_cap;
+                let ghost cseps = Self::keys_view(*n).insert(cp as int, new_sep);
+                // Fresh left/right, counts set upfront so keys_view reads the
+                // filled prefix. is_leaf=false; link is a child slot, set via children loop.
+                let mut left = *n;
+                let mut right = *n;
+                left.count = imid;
+                right.count = kc - imid;
+                // left separators [0..imid) = cseps[0..imid].
+                let mut j: usize = 0;
+                while j < imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        0 <= j <= imid, !left.is_leaf, left.count == imid,
+                        forall|t: int| 0 <= t < j ==> #[trigger] left.data[t]
+                            == (if t < cp { n.data[t] } else if t == cp { new_sep } else { n.data[t - 1] }),
+                    decreases imid - j,
+                {
+                    let v: u64 = if j < cp { n.data[j] } else if j == cp { new_sep } else { n.data[j - 1] };
+                    left.data[j] = v;
+                    j = j + 1;
+                }
+                // right separators [0..kc-imid) = cseps[imid+1..].
+                let mut j2: usize = 0;
+                while j2 < kc - imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        imid < kc, 0 <= j2 <= kc - imid, !right.is_leaf, right.count == kc - imid,
+                        forall|t: int| 0 <= t < j2 ==> #[trigger] right.data[t]
+                            == (if imid as int + 1 + t < cp { n.data[imid as int + 1 + t] }
+                                else if imid as int + 1 + t == cp { new_sep } else { n.data[imid as int + 1 + t - 1] }),
+                    decreases (kc - imid) - j2,
+                {
+                    let idx: usize = imid + 1 + j2;
+                    let v: u64 = if idx < cp { n.data[idx] } else if idx == cp { new_sep } else { n.data[idx - 1] };
+                    right.data[j2] = v;
+                    j2 = j2 + 1;
+                }
+                proof {
+                    // establish both seps subranges now (children loops preserve keys_view).
+                    assert forall|i: int| 0 <= i < cseps.len() implies
+                        cseps[i] == (if i < cp { n.data[i] } else if i == cp { new_sep } else { n.data[i - 1] }) by {
+                        if i < cp { assert(cseps[i] == Self::keys_view(*n)[i]); }
+                        else if i > cp { assert(cseps[i] == Self::keys_view(*n)[i - 1]); }
+                    }
+                    assert forall|t: int| 0 <= t < imid implies
+                        Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
+                        assert(Self::keys_view(left)[t] == left.data[t]);
+                    }
+                    assert(Self::keys_view(left) =~= cseps.subrange(0, imid as int));
+                    assert forall|t: int| 0 <= t < (kc - imid) implies
+                        Self::keys_view(right)[t] == cseps.subrange(imid as int + 1, cseps.len() as int)[t] by {
+                        assert(Self::keys_view(right)[t] == right.data[t]);
+                    }
+                    assert(Self::keys_view(right) =~= cseps.subrange(imid as int + 1, cseps.len() as int));
+                }
+                // left children [0..=imid] = cchild[0..=imid].
+                let mut k: usize = 0;
+                while k <= imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        imid < kc, 0 <= k <= imid + 1, !left.is_leaf, left.count == imid, Self::node_wf(left),
+                        !n.is_leaf, Self::node_wf(*n),
+                        Self::keys_view(left) == cseps.subrange(0, imid as int),
+                        Self::keys_view(right) == cseps.subrange(imid as int + 1, cseps.len() as int),
+                        forall|t: int| 0 <= t < k ==> #[trigger] Self::child_view(left, t)
+                            == Self::isplit_cchild(*n, cp as int, new_child, t),
+                    decreases imid + 1 - k,
+                {
+                    let cv: usize = if k <= cp { Self::child(n, k) } else if k == cp + 1 { new_child } else { Self::child(n, k - 1) };
+                    Self::set_internal_child(&mut left, k, cv);
+                    k = k + 1;
+                }
+                // right children [0..=kc-imid] = cchild[imid+1..].
+                let mut k2: usize = 0;
+                while k2 <= kc - imid
+                    invariant
+                        imid as nat == Self::isplit_mid_spec(), kc as nat == Self::key_cap_spec(), Self::count_spec(*n) == Self::key_cap_spec(), cp as nat <= Self::key_cap_spec(),
+                        imid < kc, 0 <= k2 <= (kc - imid) + 1, !right.is_leaf, right.count == kc - imid, Self::node_wf(right),
+                        !n.is_leaf, Self::node_wf(*n),
+                        Self::keys_view(left) == cseps.subrange(0, imid as int),
+                        Self::keys_view(right) == cseps.subrange(imid as int + 1, cseps.len() as int),
+                        forall|t: int| 0 <= t < k2 ==> #[trigger] Self::child_view(right, t)
+                            == Self::isplit_cchild(*n, cp as int, new_child, imid as int + 1 + t),
+                    decreases (kc - imid) + 1 - k2,
+                {
+                    let cidx: usize = imid + 1 + k2;
+                    let cv: usize = if cidx <= cp { Self::child(n, cidx) } else if cidx == cp + 1 { new_child } else { Self::child(n, cidx - 1) };
+                    Self::set_internal_child(&mut right, k2, cv);
+                    k2 = k2 + 1;
+                }
+                let promoted: u64 = if imid < cp { n.data[imid] } else if imid == cp { new_sep } else { n.data[imid - 1] };
+                proof {
+                    assert forall|i: int| 0 <= i < cseps.len() implies
+                        cseps[i] == (if i < cp { n.data[i] } else if i == cp { new_sep } else { n.data[i - 1] }) by {
+                        if i < cp {
+                            assert(cseps[i] == Self::keys_view(*n)[i]);
+                        } else if i > cp {
+                            assert(cseps[i] == Self::keys_view(*n)[i - 1]);
+                        }
+                    }
+                    // per-index: keys_view(left)[t] == left.data[t] == formula(t)
+                    //          == cseps[t] == cseps.subrange(0, imid)[t].
+                    assert forall|t: int| 0 <= t < imid implies
+                        Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
+                        assert(Self::keys_view(left)[t] == left.data[t]);
+                    }
+                    assert(Self::keys_view(left) =~= cseps.subrange(0, imid as int));
+                    assert forall|t: int| 0 <= t < (kc - imid) implies
+                        Self::keys_view(right)[t] == cseps.subrange(imid as int + 1, cseps.len() as int)[t] by {
+                        assert(Self::keys_view(right)[t] == right.data[t]);
+                    }
+                    assert(Self::keys_view(right) =~= cseps.subrange(imid as int + 1, cseps.len() as int));
+                }
+                (left, right, promoted)
             }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
