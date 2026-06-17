@@ -1063,6 +1063,338 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             }
         }
     }
+
+    /// Recursive insert into the subtree rooted at `idx` (binding ghost `cur`,
+    /// height `h`, leaf-link successor `succ`). Mutates only `self.nodes` (the
+    /// arena); `self.tree`/`self.root`/`self.nkeys` are the caller's to update.
+    ///
+    /// Returns `(added, split, new_left, new_right)`:
+    ///   - `split == None`: absorbed. The subtree is now `new_left@`, same root
+    ///     id, `subtree_wf` at `(h, succ)`, model gained `key` (if `added`).
+    ///   - `split == Some((sep, rid))`: the subtree split into `new_left@` (at
+    ///     `idx`, successor = first leaf of `new_right@`) and `new_right@` (at
+    ///     `rid`, successor `succ`), separated by `sep`, each `subtree_wf` at `h`.
+    ///
+    /// LEAF BASE CASE ONLY for now (`requires is_leaf`); the internal recursive
+    /// case is the next step. The arena only grows (pushes) plus a `set` on
+    /// `idx`, so disjoint sibling subtrees frame out via `lemma_subtree_wf_frame`.
+    fn insert_rec_leaf(
+        &mut self,
+        idx: L::ArenaIdx,
+        key: K,
+        kw: L::Word,
+        cur: Ghost<Tree>,
+        h: Ghost<nat>,
+        succ: Ghost<nat>,
+    ) -> (res: (bool, Option<(L::Word, L::ArenaIdx)>, Ghost<Tree>, Ghost<Tree>))
+        requires
+            old(self).nodes.wf(),
+            Self::subtree_wf(old(self).arena(), cur@, h@, succ@, false),
+            idx.as_nat() == crate::bplus_tree::tree_root_id(cur@),
+            L::is_leaf_spec(old(self).arena()[idx.as_nat() as int]),
+            kw.as_nat() == key.id_nat(),
+            old(self).arena().len() + 2 < <L::ArenaIdx as IndexLike>::max_nat(),
+        ensures
+            self.nodes.wf(),
+            old(self).arena().len() <= self.arena().len(),
+            ({
+                let (added, split, nl, nr) = res;
+                match split {
+                    Option::None => {
+                        &&& Self::subtree_wf(self.arena(), nl@, h@, succ@, false)
+                        &&& crate::bplus_tree::tree_root_id(nl@) == idx.as_nat()
+                        &&& crate::bplus_tree::tree_keys(nl@).to_set()
+                                == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
+                        &&& added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat())
+                    }
+                    Option::Some((sep, rid)) => {
+                        &&& added
+                        &&& Self::subtree_wf(self.arena(), nl@, h@,
+                                crate::bplus_tree::tree_leaf_ids(nr@)[0], false)
+                        &&& Self::subtree_wf(self.arena(), nr@, h@, succ@, false)
+                        &&& crate::bplus_tree::tree_root_id(nl@) == idx.as_nat()
+                        &&& crate::bplus_tree::tree_root_id(nr@) == rid.as_nat()
+                        &&& crate::bplus_tree::tree_keys(nr@).len() >= 1
+                        &&& sep.as_nat() == crate::bplus_tree::tree_keys(nr@)[0]
+                        &&& (crate::bplus_tree::tree_keys(nl@) + crate::bplus_tree::tree_keys(nr@)).to_set()
+                                == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
+                    }
+                }
+            }),
+    {
+        let ghost gkeys = crate::bplus_tree::tree_keys(cur@);
+        let ghost lid = idx.as_nat();
+        // cur is a Leaf (arena node at idx is a leaf, binds consistent).
+        proof {
+            match cur@ {
+                Tree::Leaf { id, keys } => {
+                    assert(id == lid);
+                    assert(gkeys == keys);
+                    // binds leaf arm: count == keys.len, node_wf via the iff.
+                    assert(L::count_spec(self.arena()[lid as int]) == keys.len());
+                    L::lemma_node_wf_iff(self.arena()[lid as int]);
+                }
+                Tree::Inner { id, .. } => {
+                    assert(id == lid);
+                    assert(!L::is_leaf_spec(self.arena()[lid as int]));
+                    assert(false);
+                }
+            }
+        }
+
+        // cur@ is exactly Leaf{lid, gkeys} (established above) — name it for the
+        // per-key binds projection and the sortedness fact.
+        proof { assert(cur@ == Tree::Leaf { id: lid, keys: gkeys }); }
+
+        let leaf = self.nodes.get(idx);
+        let n = L::count(&leaf);
+        proof {
+            assert(self.arena()[lid as int] == leaf);
+            assert(gkeys.len() == n as nat);
+            assert(L::node_wf(leaf));
+        }
+
+        // Scan for the sorted position + presence (the M3 condition-driven loop).
+        let mut pos: usize = 0;
+        let mut stop = false;
+        while !stop && pos < n
+            invariant
+                0 <= pos <= n,
+                n as nat == L::count_spec(leaf),
+                leaf == self.arena()[lid as int],
+                lid == idx.as_nat(),
+                L::node_wf(leaf),
+                L::is_leaf_spec(leaf),
+                gkeys.len() == n as nat,
+                kw.as_nat() == key.id_nat(),
+                gkeys == crate::bplus_tree::tree_keys(cur@),
+                cur@ == (Tree::Leaf { id: lid, keys: gkeys }),
+                binds::<L>(self.arena(), cur@),
+                forall|j: int| 0 <= j < pos ==> gkeys[j] < key.id_nat(),
+                stop ==> (pos < n && key.id_nat() <= gkeys[pos as int]),
+                forall|j: int| 0 <= j < gkeys.len() ==>
+                    (#[trigger] L::keys_view(leaf)[j]).as_nat() == gkeys[j],
+            decreases (if stop { 0int } else { (n - pos) as int + 1 }),
+        {
+            let ki: L::Word = L::key(&leaf, pos);
+            let lt = ki.lt(kw);
+            proof {
+                <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
+                lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, pos as int);
+                assert(ki == L::keys_view(leaf)[pos as int]);
+                assert(ki.as_nat() == gkeys[pos as int]);
+            }
+            if lt {
+                proof { assert(gkeys[pos as int] < key.id_nat()); }
+                pos = pos + 1;
+            } else {
+                stop = true;
+            }
+        }
+
+        // presence at the boundary.
+        let mut present = false;
+        if stop {
+            let ki: L::Word = L::key(&leaf, pos);
+            let le = kw.le(ki);
+            let ge = ki.le(kw);
+            proof {
+                <L::Word as IndexLike>::lemma_order_is_as_nat(kw, ki);
+                <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
+                lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, pos as int);
+                assert(ki == L::keys_view(leaf)[pos as int]);
+                assert(ki.as_nat() == gkeys[pos as int]);
+            }
+            if le && ge {
+                present = true;
+                proof { assert(gkeys[pos as int] == key.id_nat()); }
+            }
+        }
+
+        if present {
+            proof { assert(gkeys.contains(key.id_nat())); }
+            return (false, None, cur, cur);
+        }
+
+        // absent: establish the find-position characterization.
+        proof {
+            assert(crate::bplus_tree::strictly_sorted(gkeys));  // leaf tree_wf
+            assert forall|j: int| pos <= j < n implies key.id_nat() < gkeys[j] by {
+                if stop {
+                    assert(key.id_nat() <= gkeys[pos as int]);
+                    assert(gkeys[pos as int] <= gkeys[j]);
+                }
+            }
+            assert(!gkeys.contains(key.id_nat()));
+        }
+
+        // capture old key view + the NIL/successor link before mutating.
+        let ghost old_kview = L::keys_view(leaf);
+        proof {
+            L::lemma_keys_view_len(leaf);
+            assert forall|j: int| 0 <= j < gkeys.len() implies old_kview[j].as_nat() == gkeys[j] by {
+                lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, j);
+            }
+            // subtree leaf-link: this leaf's link is `succ` (single-leaf chain).
+            let lids = crate::bplus_tree::tree_leaf_ids(cur@);
+            assert(lids =~= seq![lid]);
+            assert(lids.len() == 1 && lids[0] == lid);
+            // leaf_links_to at p==0: p+1==1 not < len 1, so link == succ.
+            assert(L::link_view(self.arena()[lids[0] as int]) == succ@);
+            assert(L::link_view(self.arena()[lid as int]) == succ@);
+        }
+
+        let leaf_cap = L::leaf_cap();
+        if n < leaf_cap {
+            // -- absorb: shift-insert, write back, return None --------------
+            let mut nleaf = leaf;
+            L::leaf_insert_at(&mut nleaf, pos, kw);
+            proof {
+                assert(L::count_spec(nleaf) == n as nat + 1);
+                assert(L::keys_view(nleaf) == old_kview.insert(pos as int, kw));
+                assert(L::link_view(nleaf) == succ@);  // leaf_insert_at preserves link
+            }
+            self.nodes.set(idx, nleaf);
+            let ghost new_keys = gkeys.insert(pos as int, key.id_nat());
+            let ghost nl = Tree::Leaf { id: lid, keys: new_keys };
+            proof {
+                // arena[lid] == nleaf now; binds(nl): per-key projection from the
+                // insert shift (old_kview projects to gkeys, kw to key).
+                assert(self.arena()[lid as int] == nleaf);
+                let kvi = L::keys_view(nleaf);
+                assert(kvi == old_kview.insert(pos as int, kw));
+                assert(old_kview.len() == gkeys.len());
+                assert forall|i: int| 0 <= i < new_keys.len() implies
+                    (#[trigger] kvi[i]).as_nat() == new_keys[i] by {
+                    if i < pos {
+                        assert(kvi[i] == old_kview[i]); assert(new_keys[i] == gkeys[i]);
+                    } else if i == pos {
+                        assert(kvi[i] == kw); assert(new_keys[i] == key.id_nat());
+                    } else {
+                        assert(kvi[i] == old_kview[i - 1]); assert(new_keys[i] == gkeys[i - 1]);
+                    }
+                }
+                assert(binds::<L>(self.arena(), nl));
+                // tree_wf(nl, h==0): sorted + count. lemma_sorted_insert.
+                crate::bplus_tree::lemma_sorted_insert(gkeys, key.id_nat(), pos as int);
+                assert(crate::bplus_tree::tree_wf(nl, h@, L::leaf_cap_spec(), L::key_cap_spec(), false));
+                // leaf_links_to(nl, succ): single leaf [lid], link == succ.
+                assert(crate::bplus_tree::tree_leaf_ids(nl) =~= seq![lid]);
+                assert(leaf_links_to::<L>(self.arena(), nl, succ@));
+                // tree_disjoint(nl): single leaf, trivial.
+                assert(crate::bplus_tree::tree_disjoint(nl));
+                // model set: new_keys.to_set() == gkeys.to_set() ∪ {key}.
+                assert(new_keys.to_set() =~= gkeys.to_set().insert(key.id_nat()));
+            }
+            return (true, None, Ghost(nl), cur);
+        }
+
+        // -- split: full leaf, allocate a right sibling, return Some ---------
+        let ghost combined = old_kview.insert(pos as int, kw);
+        let (mut nleft, right) = L::leaf_split_at(&leaf, pos, kw);
+        let ghost mid = L::split_mid_spec();
+        proof {
+            assert(combined == L::keys_view(leaf).insert(pos as int, kw));
+            assert(combined.len() == L::leaf_cap_spec() + 1);
+            assert(L::keys_view(nleft) == combined.subrange(0, mid as int));
+            assert(L::keys_view(right) == combined.subrange(mid as int, combined.len() as int));
+            assert(L::link_view(right) == succ@);  // right inherits the old leaf's link
+            L::lemma_arena_capacity();
+            L::lemma_split_mid();
+            assert(1 <= mid <= L::leaf_cap_spec());
+            assert(L::is_leaf_spec(right) && L::node_wf(right));
+            assert(L::count_spec(right) == (L::leaf_cap_spec() + 1 - mid) as nat);
+            assert(L::count_spec(right) >= 1);
+        }
+
+        // allocate the right leaf at the tail.
+        let right_idx = self.nodes.len();
+        proof {
+            assert(right_idx.as_nat() == self.arena().len());
+            assert(self.arena().len() + 1 < <L::ArenaIdx as IndexLike>::max_nat());
+        }
+        self.nodes.push(right);
+        // re-point left's link to the new right id, write left back at idx.
+        L::set_link(&mut nleft, right_idx);
+        proof { assert(L::link_view(nleft) == right_idx.as_nat()); }
+        self.nodes.set(idx, nleft);
+
+        let sep = L::key(&right, 0);
+
+        // ghost halves: left keys / right keys (nat projections of the subranges).
+        let ghost combined_nat = gkeys.insert(pos as int, key.id_nat());
+        let ghost left_keys = combined_nat.subrange(0, mid as int);
+        let ghost right_keys = combined_nat.subrange(mid as int, combined_nat.len() as int);
+        let ghost nl = Tree::Leaf { id: lid, keys: left_keys };
+        let ghost nr = Tree::Leaf { id: right_idx.as_nat(), keys: right_keys };
+
+        proof {
+            let arena = self.arena();
+            // arena[lid] == nleft, arena[right_idx] == right, lid != right_idx.
+            assert(arena[lid as int] == nleft);
+            assert(arena[right_idx.as_nat() as int] == right);
+            assert(lid < right_idx.as_nat());
+
+            // combined (words) projects to combined_nat index-wise.
+            assert(combined.len() == combined_nat.len());
+            assert forall|i: int| 0 <= i < combined.len() implies combined[i].as_nat() == combined_nat[i] by {
+                if i < pos {
+                    assert(combined[i] == old_kview[i]); assert(combined_nat[i] == gkeys[i]);
+                } else if i == pos {
+                    assert(combined[i] == kw); assert(combined_nat[i] == key.id_nat());
+                } else {
+                    assert(combined[i] == old_kview[i - 1]); assert(combined_nat[i] == gkeys[i - 1]);
+                }
+            }
+            crate::bplus_tree::lemma_sorted_insert(gkeys, key.id_nat(), pos as int);
+            crate::bplus_tree::lemma_median_split(combined_nat, mid as int);
+
+            // separator: sep word's nat == combined_nat[mid] == right_keys[0].
+            assert(sep == L::keys_view(right)[0]);
+            assert(sep == combined[mid as int]);
+            assert(sep.as_nat() == combined_nat[mid as int]);
+            assert(right_keys[0] == combined_nat[mid as int]);
+
+            // binds(nl), binds(nr): per-key projections from the word subranges.
+            assert forall|i: int| 0 <= i < left_keys.len() implies
+                (#[trigger] L::keys_view(nleft)[i]).as_nat() == left_keys[i] by {
+                assert(L::keys_view(nleft)[i] == combined[i]);
+                assert(left_keys[i] == combined_nat[i]);
+            }
+            assert(binds::<L>(arena, nl));
+            assert forall|i: int| 0 <= i < right_keys.len() implies
+                (#[trigger] L::keys_view(right)[i]).as_nat() == right_keys[i] by {
+                assert(L::keys_view(right)[i] == combined[mid as int + i]);
+                assert(right_keys[i] == combined_nat[mid as int + i]);
+            }
+            assert(binds::<L>(arena, nr));
+
+            // tree_wf both halves (h, non-root): sorted + count bounds + occupancy.
+            assert(crate::bplus_tree::strictly_sorted(left_keys));
+            assert(crate::bplus_tree::strictly_sorted(right_keys));
+            assert(left_keys.len() == mid);          // == (cap+1)/2 >= 1
+            assert(right_keys.len() == (L::leaf_cap_spec() + 1 - mid) as nat);
+            assert(crate::bplus_tree::tree_wf(nl, h@, L::leaf_cap_spec(), L::key_cap_spec(), false));
+            assert(crate::bplus_tree::tree_wf(nr, h@, L::leaf_cap_spec(), L::key_cap_spec(), false));
+
+            // leaf-links: nl -> right_idx (== nr's first leaf), nr -> succ.
+            assert(crate::bplus_tree::tree_leaf_ids(nl) =~= seq![lid]);
+            assert(crate::bplus_tree::tree_leaf_ids(nr) =~= seq![right_idx.as_nat()]);
+            assert(crate::bplus_tree::tree_keys(nr) == right_keys);
+            assert(leaf_links_to::<L>(arena, nl, right_idx.as_nat()));
+            assert(leaf_links_to::<L>(arena, nr, succ@));
+
+            // tree_disjoint both (single leaves).
+            assert(crate::bplus_tree::tree_disjoint(nl));
+            assert(crate::bplus_tree::tree_disjoint(nr));
+
+            // model: left_keys + right_keys == combined_nat == gkeys ∪ {key}.
+            assert(left_keys + right_keys == combined_nat);
+            assert((left_keys + right_keys).to_set() =~= gkeys.to_set().insert(key.id_nat()));
+            assert(crate::bplus_tree::tree_keys(nr)[0] == right_keys[0]);
+        }
+        (true, Some((sep, right_idx)), Ghost(nl), Ghost(nr))
+    }
 }
 
 /// Frame lemma for `binds` (the dynamic-frames separation). If two arenas agree
@@ -1311,6 +1643,37 @@ pub proof fn lemma_binds_leaf_facts<L: NodeLayout>(
     let node = arena[id as int];
     assert(L::count_spec(node) == keys.len());  // binds leaf arm
     L::lemma_node_wf_iff(node);  // keys.len() <= leaf_cap ⟹ node_wf
+}
+
+/// Per-key projection from `binds` at a leaf subtree, without needing `tree_wf`:
+/// if `cur == Leaf{id, keys}` binds in `arena` and `0 <= i < keys.len()`, the
+/// arena node's `i`-th word projects to `keys[i]`. The recursion's leaf scan
+/// uses this (it has `subtree_wf`'s `binds`, not a root-form `tree_wf`).
+pub proof fn lemma_leaf_binds_key_at<K, L, S, const TRACK: bool>(
+    arena: Seq<L::Node>,
+    cur: Tree,
+    id: nat,
+    i: int,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        binds::<L>(arena, cur),
+        cur == (Tree::Leaf { id, keys: crate::bplus_tree::tree_keys(cur) }),
+        0 <= i < crate::bplus_tree::tree_keys(cur).len(),
+    ensures
+        (#[trigger] L::keys_view(arena[id as int])[i]).as_nat() == crate::bplus_tree::tree_keys(cur)[i],
+{
+    match cur {
+        Tree::Leaf { id: cid, keys } => {
+            // binds leaf arm: forall j. keys_view(arena[cid])[j].as_nat() == keys[j].
+            assert(cid == id);
+            assert(crate::bplus_tree::tree_keys(cur) == keys);
+        }
+        Tree::Inner { .. } => { assert(false); }
+    }
 }
 
 /// The model of a leaf-root tree is strictly sorted (`tree_wf`'s leaf arm).
