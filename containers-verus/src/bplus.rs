@@ -120,6 +120,108 @@ pub open spec fn leaf_links_ok<L: NodeLayout>(arena: Seq<L::Node>, t: Tree) -> b
     leaf_links_to::<L>(arena, t, nil_link::<L>())
 }
 
+/// Compositional leaf-links over a forest: child `i`'s chain ends at child
+/// `i+1`'s first leaf (or `succ` for the last child). The decomposition of an
+/// internal node's `leaf_links_to` into its children's — what lets the recursion
+/// re-assemble the parent's chain from the (updated) child chains.
+pub open spec fn forest_links_to<L: NodeLayout>(arena: Seq<L::Node>, kids: Seq<Tree>, succ: nat) -> bool
+    decreases kids
+{
+    if kids.len() == 0 {
+        true
+    } else {
+        let s0 = if kids.len() > 1 {
+            crate::bplus_tree::tree_leaf_ids(kids[1])[0]
+        } else {
+            succ
+        };
+        &&& leaf_links_to::<L>(arena, kids[0], s0)
+        &&& forest_links_to::<L>(arena, kids.drop_first(), succ)
+    }
+}
+
+/// `forest_links_to(kids)` composes to `leaf_links_to(Inner{.., kids})`: if every
+/// child's chain threads to the next child's first leaf (and the last to `succ`),
+/// the parent's whole-subtree chain holds. Each child must be non-empty
+/// (`tree_leaf_ids(kids[i]).len() >= 1`), which `tree_wf` guarantees. Ported from
+/// a standalone 7-lemma probe.
+pub proof fn lemma_forest_links_compose<L: NodeLayout>(
+    arena: Seq<L::Node>,
+    id: nat,
+    seps: Seq<nat>,
+    kids: Seq<Tree>,
+    succ: nat,
+)
+    requires
+        forest_links_to::<L>(arena, kids, succ),
+        forall|i: int| 0 <= i < kids.len() ==> #[trigger] crate::bplus_tree::tree_leaf_ids(kids[i]).len() >= 1,
+    ensures
+        leaf_links_to::<L>(arena, Tree::Inner { id, seps, kids }, succ),
+    decreases kids,
+{
+    let t = Tree::Inner { id, seps, kids };
+    let l = crate::bplus_tree::tree_leaf_ids(t);
+    assert(l == crate::bplus_tree::forest_leaf_ids(kids));
+    if kids.len() == 0 {
+        assert(l =~= Seq::<nat>::empty());
+    } else {
+        let df = kids.drop_first();
+        let head = crate::bplus_tree::tree_leaf_ids(kids[0]);
+        let tl = crate::bplus_tree::forest_leaf_ids(df);
+        crate::bplus_tree::lemma_forest_leaf_ids_cons(kids);
+        assert(l == head + tl);
+        let s0 = if kids.len() > 1 { crate::bplus_tree::tree_leaf_ids(kids[1])[0] } else { succ };
+        // recurse: leaf_links_to(Inner{.., df}, succ).
+        let did = id;  // any id; the inner-node id is irrelevant to tree_leaf_ids.
+        assert forall|i: int| 0 <= i < df.len() implies
+            #[trigger] crate::bplus_tree::tree_leaf_ids(df[i]).len() >= 1 by {
+            assert(df[i] == kids[i + 1]);
+        }
+        lemma_forest_links_compose::<L>(arena, did, seps, df, succ);
+        let ld = crate::bplus_tree::tree_leaf_ids(Tree::Inner { id: did, seps, kids: df });
+        assert(ld == tl);
+        assert forall|p: int| 0 <= p < l.len() implies
+            #[trigger] L::link_view(arena[l[p] as int]) == (if p + 1 < l.len() { l[p + 1] } else { succ }) by {
+            if p < head.len() {
+                assert(l[p] == head[p]);
+                // leaf_links_to(kids[0], s0) at p.
+                assert(L::link_view(arena[head[p] as int])
+                    == (if p + 1 < head.len() { head[p + 1] } else { s0 }));
+                if p + 1 < head.len() {
+                    assert(l[p + 1] == head[p + 1]);
+                } else {
+                    // p == head.len()-1.
+                    if df.len() > 0 {
+                        assert(kids[1] == df[0]);
+                        let hd0 = crate::bplus_tree::tree_leaf_ids(df[0]);
+                        crate::bplus_tree::lemma_forest_leaf_ids_cons(df);
+                        assert(tl == hd0 + crate::bplus_tree::forest_leaf_ids(df.drop_first()));
+                        assert(hd0.len() >= 1);
+                        assert(tl[0] == hd0[0]);
+                        assert(s0 == hd0[0]);
+                        assert(l[head.len() as int] == tl[0]);
+                        assert(l[p + 1] == s0);
+                    } else {
+                        assert(l =~= head);
+                        assert(s0 == succ);
+                    }
+                }
+            } else {
+                let q = p - head.len();
+                assert(l[p] == tl[q]);
+                // recursive leaf_links_to(Inner{.., df}, succ) at q (trigger ld[q]).
+                assert(L::link_view(arena[ld[q] as int])
+                    == (if q + 1 < ld.len() { ld[q + 1] } else { succ }));
+                assert(L::link_view(arena[tl[q] as int])
+                    == (if q + 1 < tl.len() { tl[q + 1] } else { succ }));
+                if p + 1 < l.len() {
+                    assert(l[p + 1] == tl[q + 1]);
+                }
+            }
+        }
+    }
+}
+
 /// The semi-persistent B+tree set. `nodes` is the `InlineStore`-backed arena,
 /// `root` the root's arena index, `nkeys` the cached key count, and `tree` the
 /// ghost recursive model `wf`/`model` are stated over.
