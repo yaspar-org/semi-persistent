@@ -343,6 +343,210 @@ pub proof fn lemma_leaf_search_membership(keys: Seq<nat>, k: nat, r: int)
 }
 
 // ===========================================================================
+// Descent (the cross-node-ordering / clause-3 reduction). A root-to-leaf
+// `contains`/`insert` descent picks, at each internal node, the child
+// `cp = find_gt(seps, k)`; these lemmas justify that the search may follow that
+// one child without losing `k`: `tree_contains(Inner, k) <==>
+// tree_contains(kids[cp], k)`.
+// ===========================================================================
+
+/// Concatenation membership: `k` is in `a + b` iff it is in `a` or in `b`.
+pub proof fn lemma_concat_contains<A>(a: Seq<A>, b: Seq<A>, k: A)
+    ensures (a + b).contains(k) <==> a.contains(k) || b.contains(k),
+{
+    let c = a + b;
+    if c.contains(k) {
+        let i = choose|i: int| 0 <= i < c.len() && c[i] == k;
+        if i < a.len() {
+            assert(a[i] == k);
+        } else {
+            assert(b[i - a.len()] == k);
+        }
+    }
+    if a.contains(k) {
+        let i = choose|i: int| 0 <= i < a.len() && a[i] == k;
+        assert(c[i] == k);
+    }
+    if b.contains(k) {
+        let j = choose|j: int| 0 <= j < b.len() && b[j] == k;
+        assert(c[a.len() + j] == k);
+    }
+}
+
+/// Forest membership: a key is in the forest's in-order keys iff it is in some
+/// child's keys. (The recursive companion of `lemma_concat_contains`.)
+pub proof fn lemma_forest_keys_membership(kids: Seq<Tree>, k: nat)
+    ensures
+        forest_keys(kids).contains(k) <==> (exists|m: int|
+            0 <= m < kids.len() && (#[trigger] tree_keys(kids[m])).contains(k)),
+    decreases kids,
+{
+    if kids.len() == 0 {
+        assert(forest_keys(kids) =~= Seq::<nat>::empty());
+    } else {
+        let df = kids.drop_first();
+        lemma_forest_keys_cons(kids);
+        lemma_concat_contains(tree_keys(kids[0]), forest_keys(df), k);
+        lemma_forest_keys_membership(df, k);
+        // df[m'] == kids[m' + 1]; bridge the existentials in both directions.
+        assert forall|m2: int| 0 <= m2 < df.len() implies df[m2] == kids[m2 + 1] by {}
+        if forest_keys(kids).contains(k) {
+            if tree_keys(kids[0]).contains(k) {
+                assert(tree_keys(kids[0]).contains(k));  // witness m == 0
+            } else {
+                let m2 = choose|m2: int| 0 <= m2 < df.len() && tree_keys(df[m2]).contains(k);
+                assert(tree_keys(kids[m2 + 1]).contains(k));  // witness m == m2 + 1
+            }
+        }
+        if exists|m: int| 0 <= m < kids.len() && tree_keys(kids[m]).contains(k) {
+            let m = choose|m: int| 0 <= m < kids.len() && tree_keys(kids[m]).contains(k);
+            if m == 0 {
+            } else {
+                assert(df[m - 1] == kids[m]);
+                assert(tree_keys(df[m - 1]).contains(k));  // forest_keys(df) contains k
+            }
+        }
+    }
+}
+
+/// `tree_wf` pins the height: a tree well-formed at height `h` has
+/// `tree_height == h`. Lets a descent that knows a child is `wf` at `h-1`
+/// conclude its `tree_height` is `h-1` (so the loop measure is the child's own
+/// `tree_height`).
+pub proof fn lemma_tree_wf_height(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
+    requires tree_wf(t, h, cap, key_cap, is_root),
+    ensures tree_height(t) == h,
+    decreases t,
+{
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { seps, kids, .. } => {
+            lemma_forest_wf_height(kids, (h - 1) as nat, cap, key_cap);
+        }
+    }
+}
+
+/// Forest companion: a non-empty forest `wf` at height `h` has
+/// `forest_max_height == h` (balance — every child is at the same height).
+pub proof fn lemma_forest_wf_height(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat)
+    requires forest_wf(kids, h, cap, key_cap), kids.len() > 0,
+    ensures forest_max_height(kids) == h,
+    decreases kids,
+{
+    lemma_forest_wf_cons(kids, h, cap, key_cap);
+    lemma_forest_max_height_cons(kids);
+    lemma_tree_wf_height(kids[0], h, cap, key_cap, false);
+    let df = kids.drop_first();
+    if df.len() > 0 {
+        lemma_forest_wf_height(df, h, cap, key_cap);
+    }
+}
+
+/// A child's height is at most the forest max (so a descent into child `m`
+/// strictly decreases `tree_height` of an `Inner` node, `1 + forest_max`). The
+/// descent loop's `decreases` measure.
+pub proof fn lemma_forest_max_height_at(kids: Seq<Tree>, m: int)
+    requires 0 <= m < kids.len(),
+    ensures tree_height(kids[m]) <= forest_max_height(kids),
+    decreases kids,
+{
+    lemma_forest_max_height_cons(kids);
+    if m == 0 {
+    } else {
+        let df = kids.drop_first();
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_max_height_at(df, m - 1);
+    }
+}
+
+/// Project `forest_wf` to one child: every child is `wf` at the forest height
+/// (non-root). The arena descent needs the specific child it follows.
+pub proof fn lemma_forest_wf_at(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat, m: int)
+    requires
+        forest_wf(kids, h, cap, key_cap),
+        0 <= m < kids.len(),
+    ensures
+        tree_wf(kids[m], h, cap, key_cap, false),
+    decreases kids,
+{
+    lemma_forest_wf_cons(kids, h, cap, key_cap);
+    if m == 0 {
+    } else {
+        let df = kids.drop_first();
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_wf_at(df, h, cap, key_cap, m - 1);
+    }
+}
+
+/// A non-root-wf tree is also root-wf (the root form only drops the minimum-
+/// occupancy lower bound; everything else is shared). Lets the descent carry a
+/// single root-form `tree_wf` while stepping into children, which bind at the
+/// stronger non-root form.
+pub proof fn lemma_tree_wf_relax_root(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires tree_wf(t, h, cap, key_cap, false),
+    ensures tree_wf(t, h, cap, key_cap, true),
+{
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { .. } => {}
+    }
+}
+
+/// Descent step. In a wf internal node, if `cp` is the `find_gt` position over
+/// the separators (`seps[i] <= k` for `i < cp`, `k < seps[i]` for `i >= cp`),
+/// then `k` is in the node's key space iff it is in child `cp` — so a search may
+/// follow that one child. `cp` is a valid child index (`cp < kids.len()`).
+pub proof fn lemma_descent_step(
+    id: nat,
+    seps: Seq<nat>,
+    kids: Seq<Tree>,
+    k: nat,
+    cp: int,
+    h: nat,
+    cap: nat,
+    key_cap: nat,
+    is_root: bool,
+)
+    requires
+        tree_wf(Tree::Inner { id, seps, kids }, h, cap, key_cap, is_root),
+        0 <= cp <= seps.len(),
+        forall|i: int| 0 <= i < cp ==> seps[i] <= k,
+        forall|i: int| cp <= i < seps.len() ==> k < seps[i],
+    ensures
+        cp < kids.len(),
+        tree_contains(Tree::Inner { id, seps, kids }, k) <==> tree_contains(kids[cp], k),
+{
+    let t = Tree::Inner { id, seps, kids };
+    // tree_wf Inner arm: kids.len() == seps.len() + 1, so cp <= seps.len() < kids.len().
+    assert(kids.len() == seps.len() + 1);
+    assert(tree_keys(t) == forest_keys(kids));
+    lemma_forest_keys_membership(kids, k);
+    if tree_contains(t, k) {
+        // k in forest ⟹ k in some kids[m]; show m == cp via cross-node ordering.
+        let m = choose|m: int| 0 <= m < kids.len() && tree_keys(kids[m]).contains(k);
+        if m < cp {
+            // keys_all_lt(kids[m], seps[m]): k < seps[m] <= k, contradiction.
+            let j = choose|j: int| 0 <= j < tree_keys(kids[m]).len() && tree_keys(kids[m])[j] == k;
+            assert(keys_all_lt(kids[m], seps[m]));
+            assert(tree_keys(kids[m])[j] < seps[m]);
+            assert(seps[m] <= k);
+            assert(false);
+        } else if m > cp {
+            // keys_all_ge(kids[m], seps[m-1]): k >= seps[m-1] > k, contradiction.
+            let j = choose|j: int| 0 <= j < tree_keys(kids[m]).len() && tree_keys(kids[m])[j] == k;
+            assert(keys_all_ge(kids[m], seps[m - 1]));
+            assert(seps[m - 1] <= tree_keys(kids[m])[j]);
+            assert(k < seps[m - 1]);
+            assert(false);
+        }
+        assert(m == cp);
+    }
+    if tree_contains(kids[cp], k) {
+        assert(tree_keys(kids[cp]).contains(k));  // witness m == cp for forest membership
+    }
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 
