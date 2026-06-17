@@ -198,7 +198,14 @@ pub open spec fn tree_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
             &&& seps.len() <= key_cap
             &&& kids.len() == seps.len() + 1
             &&& strictly_sorted(seps)
-            &&& (is_root || seps.len() >= (key_cap + 1) / 2)
+            // Non-root internal minimum: `ceil(child_cap/2)` children, i.e.
+            // `key_cap / 2` separators (floor). A split's left half has exactly
+            // `key_cap / 2` separators, so this is the tight bound it meets;
+            // `(key_cap + 1) / 2` (ceil) would be too strong for odd `key_cap`
+            // (Layout64U32, key_cap = 7: a split gives 3 separators, ceil wants
+            // 4). Insert-only ever *establishes* this; deletion (which would
+            // consume it) is out of scope.
+            &&& (is_root || seps.len() >= key_cap / 2)
             // every child is a wf subtree of height h-1 (balance)
             &&& forest_wf(kids, (h - 1) as nat, cap, key_cap)
             // cross-node ordering: child i bounded by surrounding separators
