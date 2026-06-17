@@ -120,11 +120,18 @@ Tree layer:
 1. **`lemma_internal_split_tree_wf`** (ghost) — DONE (commit 74a29ec), on the
    forest subrange lemmas (d56ae12). Also fixed the internal-occupancy bound
    ceil→floor (652fc9f). The genuinely new structural proof is landed.
-2. **`insert_rec` leaf base case** — leaf split/absorb, assembled from M3 + M4b
-   pieces, returning `Option` instead of mutating the root directly.
-3. **`insert_rec` internal recursive case** — descend, recurse, then absorb
-   (`internal_insert_at`, landed) or split (`internal_split_at`, landed).
-4. **Top-level `insert` rewrite** — call `insert_rec`, grow a new root on `Some`.
+2. **`insert_rec` leaf base case** — DONE (commit 938471d): `insert_rec_leaf`,
+   absorb + split, returns the `Option<(sep, child)>` product, touches only the
+   arena, no assumes. Supported by `subtree_wf` + the frame lemmas (b80843e) and
+   the forest-update lemmas (4dc92b4).
+3. **`insert_rec` internal recursive case** — descend, recurse into child `cp`,
+   then absorb (`internal_insert_at`) or split (`internal_split_at`). The arena
+   grew under the recursive call, so frame the parent's *other* children with
+   `lemma_subtree_wf_frame`, reconstruct the parent over the updated `kids`
+   (`lemma_forest_wf_update` for absorb; `lemma_internal_split_tree_wf` for
+   split). Decreases `tree_height(cur)`.
+4. **Top-level `insert` rewrite** — call `insert_rec`, grow a new root on `Some`
+   (reuse the M4b new-root construction), update `self.tree`/`root`/`nkeys`.
 
 Steps 2–4 are the remaining work: the recursive exec method that ties the
 landed layout mutators + ghost lemmas together with the arena framing
