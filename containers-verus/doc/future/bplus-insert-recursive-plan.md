@@ -112,12 +112,19 @@ Bounded by `MAX_DEPTH` (~24).
 
 ## Build order (each unit committable green)
 
-1. **`internal_split_at`** (layout mutator) + **`lemma_internal_split_tree_wf`**
-   (ghost) — the full-internal-node split, analogue of M4b's leaf split.
+Layout layer (DONE — all 6 layouts green):
+- `set_internal_child` (commit 9ad8168), `internal_key_insert` +
+  `internal_insert_at` (8418e54), `internal_split_at` (c151abd).
+
+Tree layer (remaining):
+1. **`lemma_internal_split_tree_wf`** (ghost) — analogue of M4b's
+   `lemma_split_tree_wf` for the B-tree-style promotion; the genuinely new
+   structural proof (a child subtree moves into one half — its `binds` /
+   `tree_wf` / `tree_ids` must transfer, via the frame lemma + a sub-forest split).
 2. **`insert_rec` leaf base case** — leaf split/absorb, assembled from M3 + M4b
    pieces, returning `Option` instead of mutating the root directly.
 3. **`insert_rec` internal recursive case** — descend, recurse, then absorb
-   (`internal_insert_at`, landed) or split (`internal_split_at`).
+   (`internal_insert_at`, landed) or split (`internal_split_at`, landed).
 4. **Top-level `insert` rewrite** — call `insert_rec`, grow a new root on `Some`.
 
 ## What is genuinely new vs. reused
