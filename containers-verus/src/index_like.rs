@@ -143,7 +143,12 @@ impl IndexLike for u8 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
-    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {
+        // Explicit unfold of the `open` default order bodies; stated (not
+        // auto-unfolded) for stability under crate-wide spec pruning.
+        assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
+        assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
+    }
 
     fn min() -> Self { 0u8 }
     fn max() -> Self { u8::MAX }
@@ -171,7 +176,12 @@ impl IndexLike for u16 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
-    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {
+        // Explicit unfold of the `open` default order bodies; stated (not
+        // auto-unfolded) for stability under crate-wide spec pruning.
+        assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
+        assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
+    }
 
     fn min() -> Self { 0u16 }
     fn max() -> Self { u16::MAX }
@@ -199,7 +209,12 @@ impl IndexLike for u32 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
-    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {
+        // Explicit unfold of the `open` default order bodies; stated (not
+        // auto-unfolded) for stability under crate-wide spec pruning.
+        assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
+        assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
+    }
 
     fn min() -> Self { 0u32 }
     fn max() -> Self { u32::MAX }
@@ -231,7 +246,12 @@ impl IndexLike for u64 {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
-    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {
+        // Explicit unfold of the `open` default order bodies; stated (not
+        // auto-unfolded) for stability under crate-wide spec pruning.
+        assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
+        assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
+    }
 
     fn min() -> Self { 0u64 }
     fn max() -> Self { u64::MAX }
@@ -257,7 +277,13 @@ impl IndexLike for usize {
     proof fn lemma_min_as_nat() {}
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_max_as_nat() {}
-    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {
+        // Explicitly unfold the `open` default bodies (`lt_spec(b) == as_nat() <
+        // as_nat()`, likewise `le_spec`). Stated rather than left to auto-unfold
+        // so the proof is stable under crate-wide spec pruning.
+        assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
+        assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
+    }
 
     fn min() -> Self { 0usize }
     fn max() -> Self { usize::MAX }
