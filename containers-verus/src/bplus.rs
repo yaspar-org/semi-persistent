@@ -1554,6 +1554,124 @@ pub proof fn lemma_forest_binds_at<L: NodeLayout>(arena: Seq<L::Node>, kids: Seq
     }
 }
 
+/// Rebuild `forest_binds_l` after replacing child `cp` by a new subtree `nc` in
+/// the *new* arena `a2`: the absorb step's reconstruction. `a2` binds `nc` (the
+/// recursive result) and agrees with the old arena `a1` on every *other* child's
+/// footprint (the recursion grew the arena and touched only `nc`'s region; the
+/// siblings' ids are disjoint from `nc`'s, by `tree_disjoint` on the parent).
+pub proof fn lemma_forest_binds_update<L: NodeLayout>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    kids: Seq<Tree>,
+    cp: int,
+    nc: Tree,
+)
+    requires
+        forest_binds_l::<L>(a1, kids),
+        a1.len() <= a2.len(),
+        0 <= cp < kids.len(),
+        binds::<L>(a2, nc),
+        crate::bplus_tree::forest_disjoint(kids),
+        // pairwise disjointness of the children (the parent's tree_disjoint clause).
+        (forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+            (#[trigger] crate::bplus_tree::tree_ids(kids[i]))
+                .disjoint(#[trigger] crate::bplus_tree::tree_ids(kids[j]))),
+        crate::bplus_tree::tree_ids(nc) == crate::bplus_tree::tree_ids(kids[cp]),
+        // a2 agrees with a1 on the forest footprint EXCEPT the replaced child's
+        // region (the recursion mutated only inside `tree_ids(kids[cp])`).
+        forall|id: nat| (#[trigger] crate::bplus_tree::forest_ids(kids).contains(id))
+            && !crate::bplus_tree::tree_ids(kids[cp]).contains(id)
+            ==> a1[id as int] == a2[id as int],
+    ensures
+        forest_binds_l::<L>(a2, kids.update(cp, nc)),
+    decreases kids,
+{
+    crate::bplus_tree::lemma_forest_disjoint_cons(kids);
+    crate::bplus_tree::lemma_forest_ids_cons(kids);
+    let u = kids.update(cp, nc);
+    let df = kids.drop_first();
+    // tree_ids(kids[0]) disjoint from forest_ids(df): df[m]==kids[m+1], pairwise (0,m+1).
+    assert forall|id: nat| crate::bplus_tree::tree_ids(kids[0]).contains(id)
+        implies !crate::bplus_tree::forest_ids(df).contains(id) by {
+        if crate::bplus_tree::forest_ids(df).contains(id) {
+            crate::bplus_tree::lemma_forest_id_in_some_child(df, id);
+            let m = choose|m: int| 0 <= m < df.len() && crate::bplus_tree::tree_ids(df[m]).contains(id);
+            assert(df[m] == kids[m + 1]);
+            assert(crate::bplus_tree::tree_ids(kids[0]).disjoint(crate::bplus_tree::tree_ids(kids[m + 1])));
+        }
+    }
+    if cp == 0 {
+        assert(u[0] == nc);
+        assert(u.drop_first() =~= df);
+        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            assert(crate::bplus_tree::forest_ids(kids).contains(id));
+            assert(!crate::bplus_tree::tree_ids(kids[0]).contains(id));
+        }
+        lemma_forest_binds_frame_tail::<L>(a1, a2, df);
+    } else {
+        assert(df[cp - 1] == kids[cp]);
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= df.update(cp - 1, nc));
+        // head kids[0] binds in a2: disjoint from kids[cp] (0 < cp), so framed.
+        assert forall|id: nat| crate::bplus_tree::tree_ids(kids[0]).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            assert(crate::bplus_tree::forest_ids(kids).contains(id));
+            assert(crate::bplus_tree::tree_ids(kids[0]).disjoint(crate::bplus_tree::tree_ids(kids[cp])));
+            assert(!crate::bplus_tree::tree_ids(kids[cp]).contains(id));
+        }
+        lemma_binds_frame::<L>(a1, a2, kids[0]);
+        // recurse on the tail.
+        assert forall|i: int, j: int| 0 <= i < j < df.len() implies
+            (#[trigger] crate::bplus_tree::tree_ids(df[i]))
+                .disjoint(#[trigger] crate::bplus_tree::tree_ids(df[j])) by {
+            assert(df[i] == kids[i + 1]); assert(df[j] == kids[j + 1]);
+        }
+        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+            && !crate::bplus_tree::tree_ids(df[cp - 1]).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            assert(crate::bplus_tree::forest_ids(kids).contains(id));
+        }
+        lemma_forest_binds_update::<L>(a1, a2, df, cp - 1, nc);
+    }
+}
+
+/// Helper: every subtree in a forest binds in `a2` if it binds in `a1` and `a2`
+/// agrees with `a1` on the whole forest footprint `forest_ids(kids)`. (Frame the
+/// entire forest.) Single-variable agreement over `forest_ids` (the union of the
+/// children's footprints) so the quantifier has a clean trigger.
+pub proof fn lemma_forest_binds_frame_tail<L: NodeLayout>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    kids: Seq<Tree>,
+)
+    requires
+        forest_binds_l::<L>(a1, kids),
+        a1.len() <= a2.len(),
+        forall|id: nat| (#[trigger] crate::bplus_tree::forest_ids(kids).contains(id))
+            ==> a1[id as int] == a2[id as int],
+    ensures
+        forest_binds_l::<L>(a2, kids),
+    decreases kids,
+{
+    if kids.len() == 0 {
+    } else {
+        let df = kids.drop_first();
+        crate::bplus_tree::lemma_forest_ids_cons(kids);
+        // kids[0] binds in a2: its footprint ⊆ forest_ids(kids), so agreement holds.
+        assert forall|id: nat| crate::bplus_tree::tree_ids(kids[0]).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            assert(crate::bplus_tree::forest_ids(kids).contains(id));
+        }
+        lemma_binds_frame::<L>(a1, a2, kids[0]);
+        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            assert(crate::bplus_tree::forest_ids(kids).contains(id));
+        }
+        lemma_forest_binds_frame_tail::<L>(a1, a2, df);
+    }
+}
+
 /// Descent binding step (arena side). From `binds` at an internal subtree, the
 /// arena binds child `cp` and the executable `child_view(node, cp)` equals that
 /// child's root id, so a descent following `child(node, cp)` lands at the arena
