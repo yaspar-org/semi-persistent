@@ -161,6 +161,18 @@ pub trait NodeLayout: Sized {
         ensures
             1 <= Self::leaf_cap_spec(),
             Self::leaf_cap_spec() < <Self::ArenaIdx as IndexLike>::max_nat();
+
+    /// `node_wf` characterization, exposed so generic code can establish it
+    /// from the counts it controls (`node_wf` itself is layout-private): a leaf
+    /// is `node_wf` iff `count <= leaf_cap`; an internal node iff
+    /// `count <= key_cap`.
+    proof fn lemma_node_wf_iff(n: Self::Node)
+        ensures
+            Self::node_wf(n) == (if Self::is_leaf_spec(n) {
+                Self::count_spec(n) <= Self::leaf_cap_spec()
+            } else {
+                Self::count_spec(n) <= Self::key_cap_spec()
+            });
 }
 
 /// `flags` bit 0: set iff the node is a leaf (production `FLAG_LEAF`).
@@ -300,6 +312,7 @@ macro_rules! gen_layout_u32 {
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
+            proof fn lemma_node_wf_iff(n: $node) {}
         }
 
         } // verus!
@@ -430,6 +443,7 @@ macro_rules! gen_layout_u64 {
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
+            proof fn lemma_node_wf_iff(n: $node) {}
         }
 
         } // verus!
