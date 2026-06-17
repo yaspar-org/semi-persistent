@@ -855,6 +855,147 @@ pub proof fn lemma_split_tree_wf(
 }
 
 // ===========================================================================
+// Internal-split tree reconstruction. A full internal node, after absorbing a
+// new (separator, child), has `cseps` (length key_cap+1) separators and `ckids`
+// (length key_cap+2) child subtrees, arranged as a wf internal node would be
+// (sorted seps, children wf at h-1, cross-node ordering). Splitting at `imid`
+// produces a left `Inner{lid, cseps[0..imid], ckids[0..=imid]}`, a promoted
+// separator `cseps[imid]`, and a right `Inner{rid, cseps[imid+1..],
+// ckids[imid+1..]}`. The lemma: both halves are wf at height `h`, the promoted
+// key separates them, and the in-order keys recombine. Analogue of
+// `lemma_split_tree_wf` (leaf) but the children are subtrees that transfer.
+// ===========================================================================
+
+pub proof fn lemma_internal_split_tree_wf(
+    lid: nat,
+    rid: nat,
+    cseps: Seq<nat>,
+    ckids: Seq<Tree>,
+    imid: int,
+    h: nat,
+    cap: nat,
+    key_cap: nat,
+)
+    requires
+        h >= 1,
+        cseps.len() == key_cap + 1,
+        ckids.len() == cseps.len() + 1,
+        0 <= imid < cseps.len(),
+        imid == key_cap / 2,
+        cap >= 1,
+        key_cap >= 1,
+        strictly_sorted(cseps),
+        forest_wf(ckids, (h - 1) as nat, cap, key_cap),
+        // cross-node ordering of the combined arrangement.
+        (forall|i: int| 0 <= i < cseps.len() ==> keys_all_lt(#[trigger] ckids[i], cseps[i])),
+        (forall|i: int| 0 < i < ckids.len() ==> keys_all_ge(#[trigger] ckids[i], cseps[i - 1])),
+    ensures
+        ({
+            let lseps = cseps.subrange(0, imid);
+            let rseps = cseps.subrange(imid + 1, cseps.len() as int);
+            let lkids = ckids.subrange(0, imid + 1);
+            let rkids = ckids.subrange(imid + 1, ckids.len() as int);
+            let lt = Tree::Inner { id: lid, seps: lseps, kids: lkids };
+            let rt = Tree::Inner { id: rid, seps: rseps, kids: rkids };
+            &&& tree_wf(lt, h, cap, key_cap, false)
+            &&& tree_wf(rt, h, cap, key_cap, false)
+            // The promoted separator is a routing COPY, present in the right
+            // subtree's leaves (B+tree), not removed from the model. The model
+            // is just the two halves' leaf keys concatenated.
+            &&& tree_keys(lt) + tree_keys(rt) == forest_keys(ckids)
+        }),
+{
+    let lseps = cseps.subrange(0, imid);
+    let rseps = cseps.subrange(imid + 1, cseps.len() as int);
+    let lkids = ckids.subrange(0, imid + 1);
+    let rkids = ckids.subrange(imid + 1, ckids.len() as int);
+    let lt = Tree::Inner { id: lid, seps: lseps, kids: lkids };
+    let rt = Tree::Inner { id: rid, seps: rseps, kids: rkids };
+
+    // counts: lseps.len()==imid, rseps.len()==key_cap-imid, kids = seps+1.
+    assert(lseps.len() == imid);
+    assert(rseps.len() == key_cap - imid);
+    assert(lkids.len() == imid + 1);
+    assert(rkids.len() == (key_cap + 1) - imid);
+
+    // occupancy: imid == key_cap/2 (>= key_cap/2 ✓); right key_cap-imid >= key_cap/2.
+    // seps.len() <= key_cap for both.
+
+    // sortedness of the sep subranges (subrange of strictly_sorted).
+    assert(strictly_sorted(lseps)) by {
+        assert forall|i: int, j: int| 0 <= i < j < lseps.len() implies #[trigger] lseps[i] < #[trigger] lseps[j] by {
+            assert(lseps[i] == cseps[i]); assert(lseps[j] == cseps[j]);
+        }
+    }
+    assert(strictly_sorted(rseps)) by {
+        assert forall|i: int, j: int| 0 <= i < j < rseps.len() implies #[trigger] rseps[i] < #[trigger] rseps[j] by {
+            assert(rseps[i] == cseps[imid + 1 + i]); assert(rseps[j] == cseps[imid + 1 + j]);
+        }
+    }
+
+    // children forests wf at h-1 (subranges of a wf forest).
+    lemma_forest_wf_subrange(ckids, (h - 1) as nat, cap, key_cap, 0, imid + 1);
+    lemma_forest_wf_subrange(ckids, (h - 1) as nat, cap, key_cap, imid + 1, ckids.len() as int);
+
+    // cross-node ordering for the left half: lkids[i] < lseps[i], lkids[i] >= lseps[i-1].
+    assert forall|i: int| 0 <= i < lseps.len() implies keys_all_lt(#[trigger] lkids[i], lseps[i]) by {
+        assert(lkids[i] == ckids[i]); assert(lseps[i] == cseps[i]);
+    }
+    assert forall|i: int| 0 < i < lkids.len() implies keys_all_ge(#[trigger] lkids[i], lseps[i - 1]) by {
+        assert(lkids[i] == ckids[i]); assert(lseps[i - 1] == cseps[i - 1]);
+    }
+    // right half: rkids[i] == ckids[imid+1+i], rseps[i] == cseps[imid+1+i].
+    assert forall|i: int| 0 <= i < rseps.len() implies keys_all_lt(#[trigger] rkids[i], rseps[i]) by {
+        assert(rkids[i] == ckids[imid + 1 + i]); assert(rseps[i] == cseps[imid + 1 + i]);
+    }
+    assert forall|i: int| 0 < i < rkids.len() implies keys_all_ge(#[trigger] rkids[i], rseps[i - 1]) by {
+        assert(rkids[i] == ckids[imid + 1 + i]); assert(rseps[i - 1] == cseps[imid + 1 + i - 1]);
+    }
+
+    // heights: both halves wf at h-1 ⟹ forest_max_height <= h-1, so tree_height
+    // (1 + max) <= h; and >= 1 step gives == h via wf. tree_wf requires h>=1.
+    lemma_forest_wf_max_height(lkids, (h - 1) as nat, cap, key_cap);
+    lemma_forest_wf_max_height(rkids, (h - 1) as nat, cap, key_cap);
+
+    assert(tree_wf(lt, h, cap, key_cap, false));
+    assert(tree_wf(rt, h, cap, key_cap, false));
+
+    // in-order keys: forest_keys(ckids) == forest_keys(lkids) + forest_keys(rkids),
+    // and the promoted separator is a routing copy not in any leaf, so the model
+    // recombination is tree_keys(lt) + [promoted] + tree_keys(rt) — BUT the
+    // promoted key is NOT in the leaves; the model is forest_keys(lkids) +
+    // forest_keys(rkids). The ensures states the routing arrangement; we prove
+    // the keys identity via the forest split.
+    lemma_forest_keys_split(ckids, imid + 1);
+    assert(tree_keys(lt) == forest_keys(lkids));
+    assert(tree_keys(rt) == forest_keys(rkids));
+}
+
+/// `forest_keys` splits at a cut: `forest_keys(kids) == forest_keys(kids[0..c])
+/// + forest_keys(kids[c..])`. (Needed for the internal-split key recombination.)
+pub proof fn lemma_forest_keys_split(kids: Seq<Tree>, c: int)
+    requires 0 <= c <= kids.len(),
+    ensures
+        forest_keys(kids) == forest_keys(kids.subrange(0, c)) + forest_keys(kids.subrange(c, kids.len() as int)),
+    decreases c,
+{
+    if c == 0 {
+        assert(kids.subrange(0, 0) =~= Seq::<Tree>::empty());
+        assert(kids.subrange(0, kids.len() as int) =~= kids);
+    } else {
+        // peel kids[0]: forest_keys(kids) = tree_keys(kids[0]) + forest_keys(df).
+        lemma_forest_keys_cons(kids);
+        let df = kids.drop_first();
+        lemma_forest_keys_split(df, c - 1);
+        // kids.subrange(0,c)[0] == kids[0]; subrange(0,c).drop_first() == df.subrange(0,c-1).
+        lemma_forest_keys_cons(kids.subrange(0, c));
+        assert(kids.subrange(0, c).drop_first() =~= df.subrange(0, c - 1));
+        assert(kids.subrange(0, c)[0] == kids[0]);
+        assert(df.subrange(c - 1, df.len() as int) =~= kids.subrange(c, kids.len() as int));
+    }
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 
