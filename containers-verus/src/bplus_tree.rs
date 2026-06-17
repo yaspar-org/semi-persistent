@@ -547,6 +547,108 @@ pub proof fn lemma_descent_step(
 }
 
 // ===========================================================================
+// Leaf-id order (clause 5 support). `tree_leaf_ids(t)` is the in-order
+// (left-to-right) sequence of leaf arena ids. The executable leaf `link`
+// pointers are *bound* to this sequence (see `bplus::leaf_links_ok`): walking
+// `link` from the leftmost leaf visits ids in exactly this order, NIL-
+// terminated. This backs the incremental sorted cursor (leapfrog join). No
+// second independent view: the links realize the tree's own in-order leaf order.
+// ===========================================================================
+
+/// In-order sequence of leaf arena ids. A leaf contributes its own id; an
+/// internal node concatenates its children's leaf-id sequences left to right.
+pub open spec fn tree_leaf_ids(t: Tree) -> Seq<nat>
+    decreases t
+{
+    match t {
+        Tree::Leaf { id, .. } => seq![id],
+        Tree::Inner { kids, .. } => forest_leaf_ids(kids),
+    }
+}
+
+pub open spec fn forest_leaf_ids(kids: Seq<Tree>) -> Seq<nat>
+    decreases kids
+{
+    if kids.len() == 0 {
+        Seq::empty()
+    } else {
+        tree_leaf_ids(kids[0]) + forest_leaf_ids(kids.drop_first())
+    }
+}
+
+pub proof fn lemma_forest_leaf_ids_cons(kids: Seq<Tree>)
+    requires kids.len() > 0,
+    ensures forest_leaf_ids(kids) == tree_leaf_ids(kids[0]) + forest_leaf_ids(kids.drop_first()),
+{
+}
+
+/// The in-order leaf-id sequence is non-empty for any tree (a leaf has one id;
+/// an internal node has `kids.len() >= 1` under `tree_wf`, and the head child
+/// contributes at least one). Lets the cursor/link clause name a first leaf.
+pub proof fn lemma_tree_leaf_ids_nonempty(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
+    requires tree_wf(t, h, cap, key_cap, is_root),
+    ensures tree_leaf_ids(t).len() >= 1,
+    decreases t,
+{
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { seps, kids, .. } => {
+            // kids.len() == seps.len() + 1 >= 1; head child is wf at h-1.
+            lemma_forest_leaf_ids_cons(kids);
+            lemma_forest_wf_cons(kids, (h - 1) as nat, cap, key_cap);
+            lemma_tree_leaf_ids_nonempty(kids[0], (h - 1) as nat, cap, key_cap, false);
+        }
+    }
+}
+
+// ===========================================================================
+// Median split (the leaf-split key redistribution, as a pure Seq fact). The
+// full leaf's keys plus the inserted key form a strictly sorted `combined` of
+// length `cap + 1`; splitting at `mid` gives a left prefix and right suffix that
+// recombine to `combined`, each strictly sorted, with `right[0]` a true B+tree
+// separator (every left key `<`, every right key `>=` it). De-risked in a
+// standalone probe before lifting here.
+// ===========================================================================
+
+pub proof fn lemma_median_split(combined: Seq<nat>, mid: int)
+    requires
+        strictly_sorted(combined),
+        0 < mid < combined.len(),
+    ensures
+        ({
+            let left = combined.subrange(0, mid);
+            let right = combined.subrange(mid, combined.len() as int);
+            &&& strictly_sorted(left)
+            &&& strictly_sorted(right)
+            &&& left + right == combined
+            &&& left.len() == mid
+            &&& right.len() == combined.len() - mid
+            &&& (forall|i: int| 0 <= i < left.len() ==> #[trigger] left[i] < right[0])
+            &&& (forall|i: int| 0 <= i < right.len() ==> right[0] <= #[trigger] right[i])
+        }),
+{
+    let left = combined.subrange(0, mid);
+    let right = combined.subrange(mid, combined.len() as int);
+    assert(left + right =~= combined);
+    assert forall|i: int, j: int| 0 <= i < j < left.len() implies #[trigger] left[i] < #[trigger] left[j] by {
+        assert(left[i] == combined[i]);
+        assert(left[j] == combined[j]);
+    }
+    assert forall|i: int, j: int| 0 <= i < j < right.len() implies #[trigger] right[i] < #[trigger] right[j] by {
+        assert(right[i] == combined[mid + i]);
+        assert(right[j] == combined[mid + j]);
+    }
+    assert forall|i: int| 0 <= i < left.len() implies #[trigger] left[i] < right[0] by {
+        assert(left[i] == combined[i]);
+        assert(right[0] == combined[mid]);
+    }
+    assert forall|i: int| 0 <= i < right.len() implies right[0] <= #[trigger] right[i] by {
+        assert(right[i] == combined[mid + i]);
+        assert(right[0] == combined[mid]);
+    }
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 

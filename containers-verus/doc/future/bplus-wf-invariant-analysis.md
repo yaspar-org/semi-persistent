@@ -47,6 +47,25 @@ A B+tree (insert-only here; production has no `remove`) over a key order `<`:
 Clauses 2+3+5 together are *the* property `contains`/`insert` lean on: the search
 descends by `find_*` comparisons and must reach the one leaf that would hold `k`.
 
+Clause 5 is not optional. The reason this B+tree exists (over a plain sorted set)
+is the leaf-link chain: it backs an incremental sorted cursor (`seek`/`next`/
+`key`) used for leapfrog join in e-graph pattern matching. A model that cannot
+express the chain cannot verify that cursor, so the link is a first-class `wf`
+clause and a ghost view, not a detail to defer.
+
+The framing that keeps it tractable (and avoids the "two views might diverge"
+trap below): the chain is *bound to the tree*, single source of truth, exactly as
+`child_view` is bound to `kids[i].id`. Define `tree_leaf_ids(t): Seq<nat>` as the
+in-order (left-to-right) leaf-id sequence (a node fn + forest companion + a
+`_cons` unfold lemma, the same idiom as `keys`). The link clause is then: for each
+position `p` in `tree_leaf_ids`, `link_view(arena[lids[p]]) == lids[p+1]`, and NIL
+at the last (NIL `= max_nat() - 1`, the `u32::MAX`/`usize::MAX` that `new_leaf`
+writes, provably distinct from every real id because `push` keeps `len <
+max_nat - 1`). There is no second independent ghost sequence to keep in sync — the
+executable links simply realize the tree's own in-order leaf order. The property
+the cursor needs, "walking links enumerates keys in ascending order," is then a
+*derived* lemma from clause 3 (cross-node ordering), not an axiom.
+
 ## 2. The ghost model: a recursive tree over arena ids
 
 Following Ch 9, the executable structure (arena `Vec<L::Node>` + `root` id) is a
@@ -176,13 +195,20 @@ Checks against this design:
   one depth: a split raises height only by creating a new root above *both*
   halves, so every leaf's depth increases by exactly 1 simultaneously. Clause 1 is
   preserved, not violated, by split. (A `remove` would threaten it — out of scope.)
-- **Leaf-link vs tree-order agreement (clause 5).** This is the subtle one: two
-  independent ghost views (the tree's in-order `keys`, and the linear leaf-link
-  chain) must *agree*. This is precisely the ListArena/CircularList "two views
-  must coincide" obligation, and the risk is they silently diverge after a split
-  if the link splice is wrong. The invariant must state the agreement explicitly
-  (not derive it), and split must re-prove it for the two new leaves. Flagged as
-  the highest-risk clause.
+- **Leaf-link vs tree-order agreement (clause 5).** The naive framing — two
+  *independent* ghost views (the tree's in-order `keys`, and a separate linear
+  leaf-link chain) that must coincide — is the ListArena/CircularList "two views
+  must agree" trap, where the risk is silent divergence after a split. We avoid it
+  by *not* introducing a second independent view: the chain is derived from the
+  tree (`tree_leaf_ids`) and the links are *bound* to it (`link_view(lids[p]) ==
+  lids[p+1]`), the same single-source-of-truth move that `child_view ==
+  kids[i].id` already makes for the downward pointers. There is then nothing to
+  "agree" — there is one ghost object and the links realize its in-order leaf
+  order. A split's remaining obligation is local: the splice inserts the new
+  right leaf's id immediately after the split leaf's id in `tree_leaf_ids`, and
+  the two touched `link`s (old leaf → new right, new right → old next) match.
+  Still the most intricate splice, but the divergence risk is designed out, not
+  defended against.
 - **`as_nat` ordering is total and matches `find_*`.** Already discharged:
   `bplus_search` is proven over the `as_nat` order, and `lemma_order_is_as_nat`
   bridges exec compares to it. Clause 3 must be stated in `as_nat` too, so the
