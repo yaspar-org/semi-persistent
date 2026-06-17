@@ -98,18 +98,26 @@ pub open spec fn nil_link<L: NodeLayout>() -> nat {
     (<L::ArenaIdx as IndexLike>::max_nat() - 1) as nat
 }
 
-/// Leaf-link consistency (clause 5): the executable leaf `link` pointers realize
-/// the tree's in-order leaf order. Let `lids = tree_leaf_ids(t)`; for each
-/// position `p`, the leaf at `lids[p]` links to `lids[p+1]`, and the last leaf
-/// links to NIL. Bound to the tree (single source of truth), so the sorted
-/// cursor's walk is sound by `tree_wf`'s cross-node ordering, not by an
-/// independent assumption.
-pub open spec fn leaf_links_ok<L: NodeLayout>(arena: Seq<L::Node>, t: Tree) -> bool {
+/// Subtree-relative leaf-link consistency: within `t`'s in-order leaf sequence
+/// `lids`, each leaf links to the next, and the *last* leaf links to `succ` (the
+/// subtree's global successor — the first leaf of whatever follows `t`, or NIL
+/// if `t` is the whole tree). This is the form the recursion needs: a subtree's
+/// last leaf points *out* of the subtree, so the predicate must be parameterized
+/// by the successor rather than hard-coding NIL.
+pub open spec fn leaf_links_to<L: NodeLayout>(arena: Seq<L::Node>, t: Tree, succ: nat) -> bool {
     let lids = crate::bplus_tree::tree_leaf_ids(t);
     forall|p: int| 0 <= p < lids.len() ==>
         #[trigger] L::link_view(arena[lids[p] as int]) == (
-            if p + 1 < lids.len() { lids[p + 1] } else { nil_link::<L>() }
+            if p + 1 < lids.len() { lids[p + 1] } else { succ }
         )
+}
+
+/// Leaf-link consistency (clause 5) for the whole tree: the chain ends at NIL.
+/// The `wf`-level instance of [`leaf_links_to`] with `succ == nil_link`. Bound to
+/// the tree (single source of truth), so the sorted cursor's walk is sound by
+/// `tree_wf`'s cross-node ordering, not by an independent assumption.
+pub open spec fn leaf_links_ok<L: NodeLayout>(arena: Seq<L::Node>, t: Tree) -> bool {
+    leaf_links_to::<L>(arena, t, nil_link::<L>())
 }
 
 /// The semi-persistent B+tree set. `nodes` is the `InlineStore`-backed arena,
