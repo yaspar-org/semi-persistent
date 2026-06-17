@@ -231,6 +231,53 @@ pub proof fn lemma_forest_wf_cons(kids: Seq<Tree>, h: nat, cap: nat, key_cap: na
 }
 
 // ===========================================================================
+// Membership and the contains-descent lemmas. `contains(k)` decides
+// `tree_keys(t).contains(k)`; these reduce that to the per-node search steps a
+// root-to-leaf descent performs.
+// ===========================================================================
+
+/// Key membership in a tree's model (the spec `contains` decides).
+pub open spec fn tree_contains(t: Tree, k: nat) -> bool {
+    tree_keys(t).contains(k)
+}
+
+/// Leaf step. In a sorted leaf, `find_ge` lands at the first index `>= k`;
+/// membership is exactly "that index is in range and holds `k`". This is the
+/// spec justification for the exec leaf test `r < count && keys[r] == k`.
+pub proof fn lemma_leaf_search_membership(keys: Seq<nat>, k: nat, r: int)
+    requires
+        strictly_sorted(keys),
+        0 <= r <= keys.len(),
+        forall|i: int| 0 <= i < r ==> keys[i] < k,
+        forall|i: int| r <= i < keys.len() ==> k <= keys[i],
+    ensures
+        keys.contains(k) <==> (r < keys.len() && keys[r] == k),
+{
+    if r < keys.len() && keys[r] == k {
+        assert(keys.contains(k));
+    } else {
+        // No element equals k: indices < r are < k, indices >= r are > k
+        // (>= k and != k, using r's element if present).
+        assert forall|i: int| 0 <= i < keys.len() implies keys[i] != k by {
+            if i < r {
+                // keys[i] < k
+            } else {
+                // i >= r: k <= keys[i]; if keys[i] == k then i == r contradicts
+                // the else branch (strictly_sorted makes the first >= unique).
+                if keys[i] == k {
+                    // then keys[r] <= keys[i] == k <= keys[r] ⟹ keys[r] == k,
+                    // and r < len, contradicting the else branch.
+                    assert(r <= i);
+                    assert(k <= keys[r]);   // r-arm of the hypothesis at i=r (if r<len)
+                    assert(keys[r] <= keys[i]);  // sorted, r <= i
+                }
+            }
+        }
+        assert(!keys.contains(k));
+    }
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 
