@@ -138,6 +138,25 @@ pub trait NodeLayout: Sized {
             Self::count_spec(n) == 0,
             Self::node_wf(n);
 
+    // -- mutation (M3+) --
+
+    /// Insert `w` into a leaf at sorted position `pos`, shifting `[pos..count)`
+    /// up by one. The leaf must have room (`count < leaf_cap`). Refines the
+    /// logical key view by `Seq::insert`: `keys_view' == keys_view.insert(pos,
+    /// w)`, `count' == count + 1`, still a leaf, still `node_wf`. Production's
+    /// `data_mut(&mut leaf).copy_within(pos..n, pos+1); data_mut[pos] = w`.
+    fn leaf_insert_at(n: &mut Self::Node, pos: usize, w: Self::Word)
+        requires
+            Self::node_wf(*old(n)),
+            Self::is_leaf_spec(*old(n)),
+            Self::count_spec(*old(n)) < Self::leaf_cap_spec(),
+            pos <= Self::count_spec(*old(n)),
+        ensures
+            Self::is_leaf_spec(*n),
+            Self::node_wf(*n),
+            Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
+            Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w);
+
     // -- proof glue --
 
     /// `node_wf` bounds `count` by the leaf capacity (the loosest bound; an
@@ -173,6 +192,11 @@ pub trait NodeLayout: Sized {
             } else {
                 Self::count_spec(n) <= Self::key_cap_spec()
             });
+
+    /// The key view has length `count` (`keys_view` is `Seq::new(count, ..)`,
+    /// layout-private). Lets generic code relate `keys_view(n).len()` to counts.
+    proof fn lemma_keys_view_len(n: Self::Node)
+        ensures Self::keys_view(n).len() == Self::count_spec(n);
 }
 
 /// `flags` bit 0: set iff the node is a leaf (production `FLAG_LEAF`).
@@ -309,10 +333,34 @@ macro_rules! gen_layout_u32 {
             fn new_leaf() -> (n: $node) {
                 $node { is_leaf: true, count: 0, data: [0; $data_len], link: u32::MAX }
             }
+
+            fn leaf_insert_at(n: &mut $node, pos: usize, w: u32) {
+                let ghost old_n = *n;
+                let cnt = n.count;
+                let mut j = cnt;
+                while j > pos
+                    invariant
+                        pos <= j <= cnt,
+                        cnt < $leaf_cap,
+                        n.count == cnt,
+                        n.is_leaf == old_n.is_leaf,
+                        n.link == old_n.link,
+                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
+                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
+                    decreases j - pos,
+                {
+                    n.data[j] = n.data[j - 1];
+                    j = j - 1;
+                }
+                n.data[pos] = w;
+                n.count = cnt + 1;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
+            }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
             proof fn lemma_node_wf_iff(n: $node) {}
+            proof fn lemma_keys_view_len(n: $node) {}
         }
 
         } // verus!
@@ -440,10 +488,34 @@ macro_rules! gen_layout_u64 {
             fn new_leaf() -> (n: $node) {
                 $node { is_leaf: true, count: 0, data: [0; $data_len], link: usize::MAX }
             }
+
+            fn leaf_insert_at(n: &mut $node, pos: usize, w: u64) {
+                let ghost old_n = *n;
+                let cnt = n.count;
+                let mut j = cnt;
+                while j > pos
+                    invariant
+                        pos <= j <= cnt,
+                        cnt < $leaf_cap,
+                        n.count == cnt,
+                        n.is_leaf == old_n.is_leaf,
+                        n.link == old_n.link,
+                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
+                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
+                    decreases j - pos,
+                {
+                    n.data[j] = n.data[j - 1];
+                    j = j - 1;
+                }
+                n.data[pos] = w;
+                n.count = cnt + 1;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
+            }
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
             proof fn lemma_node_wf_iff(n: $node) {}
+            proof fn lemma_keys_view_len(n: $node) {}
         }
 
         } // verus!

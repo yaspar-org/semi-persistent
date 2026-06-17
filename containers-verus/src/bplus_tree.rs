@@ -241,6 +241,71 @@ pub open spec fn tree_contains(t: Tree, k: nat) -> bool {
     tree_keys(t).contains(k)
 }
 
+/// Inserting a fresh key `k` at its sorted position `pos` (the `find_ge`
+/// landing) into a strictly-sorted sequence keeps it strictly sorted, and the
+/// resulting key set is the old set plus `k`. The position is characterized by
+/// `[0..pos) < k <= [pos..len)` and `k` absent. This is the leaf-insert
+/// correctness step: `model' == model ∪ {k}`.
+pub proof fn lemma_sorted_insert(keys: Seq<nat>, k: nat, pos: int)
+    requires
+        strictly_sorted(keys),
+        0 <= pos <= keys.len(),
+        forall|i: int| 0 <= i < pos ==> keys[i] < k,
+        forall|i: int| pos <= i < keys.len() ==> k < keys[i],   // k fresh ⟹ strict
+    ensures
+        strictly_sorted(keys.insert(pos, k)),
+        keys.insert(pos, k).to_set() == keys.to_set().insert(k),
+{
+    let r = keys.insert(pos, k);
+    // strict sortedness of r: case-split each pair (i<j) on their relation to pos.
+    assert forall|i: int, j: int| 0 <= i < j < r.len() implies r[i] < r[j] by {
+        // r[m] == keys[m] for m < pos; r[pos] == k; r[m] == keys[m-1] for m > pos.
+        if j < pos {
+        } else if i < pos && j == pos {
+        } else if i < pos && j > pos {
+        } else if i == pos {
+            // r[i] == k < keys[j-1] == r[j]  (j-1 >= pos)
+        } else {
+            // pos < i < j: keys[i-1] < keys[j-1]
+        }
+    }
+    // set equality: r's elements are keys' elements plus k.
+    assert(r.to_set() =~= keys.to_set().insert(k)) by {
+        assert forall|x: nat| r.to_set().contains(x) <==> keys.to_set().insert(k).contains(x) by {
+            // forward: every r element is k or a keys element (by index region).
+            if r.to_set().contains(x) {
+                let m = choose|m: int| 0 <= m < r.len() && r[m] == x;
+                assert(0 <= m < r.len() && r[m] == x);
+                if m < pos {
+                    assert(keys[m] == x);
+                    assert(keys.to_set().contains(x));
+                } else if m == pos {
+                    assert(x == k);
+                } else {
+                    assert(keys[m - 1] == x);
+                    assert(keys.to_set().contains(x));
+                }
+            }
+            // backward: k is r[pos]; a keys element keys[i] is r[i] or r[i+1].
+            if keys.to_set().insert(k).contains(x) {
+                if x == k {
+                    assert(r[pos] == k);
+                    assert(r.to_set().contains(x));
+                } else {
+                    let i = choose|i: int| 0 <= i < keys.len() && keys[i] == x;
+                    assert(0 <= i < keys.len() && keys[i] == x);
+                    if i < pos {
+                        assert(r[i] == x);
+                    } else {
+                        assert(r[i + 1] == x);
+                    }
+                    assert(r.to_set().contains(x));
+                }
+            }
+        }
+    }
+}
+
 /// Leaf step. In a sorted leaf, `find_ge` lands at the first index `>= k`;
 /// membership is exactly "that index is in range and holds `k`". This is the
 /// spec justification for the exec leaf test `r < count && keys[r] == k`.
