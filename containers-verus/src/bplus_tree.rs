@@ -705,6 +705,46 @@ pub proof fn lemma_forest_leaf_ids_cons(kids: Seq<Tree>)
 {
 }
 
+/// Every in-order leaf id is in the tree's footprint: `tree_leaf_ids(t)[p] ∈
+/// tree_ids(t)`. So a frame agreeing on `tree_ids(t)` agrees on every leaf-link
+/// slot — the basis of the leaf-link frame lemma.
+pub proof fn lemma_leaf_id_in_tree_ids(t: Tree, p: int)
+    requires 0 <= p < tree_leaf_ids(t).len(),
+    ensures tree_ids(t).contains(tree_leaf_ids(t)[p]),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { id, .. } => {
+            // tree_leaf_ids(Leaf) == [id], tree_ids(Leaf) == {id}.
+        }
+        Tree::Inner { id, kids, .. } => {
+            // tree_leaf_ids(Inner) == forest_leaf_ids(kids); find the child.
+            lemma_forest_leaf_id_in_forest_ids(kids, p);
+            assert(forest_ids(kids).subset_of(tree_ids(t)));
+        }
+    }
+}
+
+/// Forest companion: `forest_leaf_ids(kids)[p] ∈ forest_ids(kids)`.
+pub proof fn lemma_forest_leaf_id_in_forest_ids(kids: Seq<Tree>, p: int)
+    requires 0 <= p < forest_leaf_ids(kids).len(),
+    ensures forest_ids(kids).contains(forest_leaf_ids(kids)[p]),
+    decreases kids,
+{
+    lemma_forest_leaf_ids_cons(kids);
+    lemma_forest_ids_cons(kids);
+    let head = tree_leaf_ids(kids[0]);
+    if p < head.len() {
+        // leaf id comes from kids[0]: in tree_ids(kids[0]) ⊆ forest_ids(kids).
+        lemma_leaf_id_in_tree_ids(kids[0], p);
+        assert(forest_leaf_ids(kids)[p] == head[p]);
+    } else {
+        let df = kids.drop_first();
+        assert(forest_leaf_ids(kids)[p] == forest_leaf_ids(df)[p - head.len()]);
+        lemma_forest_leaf_id_in_forest_ids(df, p - head.len());
+    }
+}
+
 /// The in-order leaf-id sequence is non-empty for any tree (a leaf has one id;
 /// an internal node has `kids.len() >= 1` under `tree_wf`, and the head child
 /// contributes at least one). Lets the cursor/link clause name a first leaf.

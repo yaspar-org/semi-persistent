@@ -180,6 +180,26 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         &&& self.nkeys as nat == self.model().len()
     }
 
+    /// Subtree well-formedness, the recursion's local invariant: `arena` realizes
+    /// the ghost subtree `t` as a structurally valid B+tree of height `h` (non-
+    /// root), with its last leaf linking to `succ` and its ids disjoint. The
+    /// whole-tree `wf` is essentially `subtree_wf(arena, tree@, height, NIL,
+    /// true)` plus the arena-`Vec` and `nkeys` bookkeeping. `insert_rec` consumes
+    /// `subtree_wf` for the child it descends into and re-establishes it for the
+    /// (one or two) subtrees it returns.
+    pub open spec fn subtree_wf(
+        arena: Seq<L::Node>,
+        t: Tree,
+        h: nat,
+        succ: nat,
+        is_root: bool,
+    ) -> bool {
+        &&& binds::<L>(arena, t)
+        &&& crate::bplus_tree::tree_wf(t, h, L::leaf_cap_spec(), L::key_cap_spec(), is_root)
+        &&& leaf_links_to::<L>(arena, t, succ)
+        &&& crate::bplus_tree::tree_disjoint(t)
+    }
+
     pub fn new() -> (t: Self)
         ensures t.wf(), t.model() == Seq::<nat>::empty(),
     {
@@ -1127,6 +1147,61 @@ pub proof fn lemma_forest_binds_frame<L: NodeLayout>(
         }
         lemma_forest_binds_frame::<L>(a1, a2, df, dparent);
     }
+}
+
+/// Frame lemma for `leaf_links_to`. `leaf_links_to` reads `link_view` only at
+/// `tree_leaf_ids(t)` slots, all of which are in `tree_ids(t)`
+/// (`lemma_leaf_id_in_tree_ids`); so two arenas agreeing on `tree_ids(t)` agree
+/// on the chain. A mutation outside `t`'s region preserves its leaf links.
+pub proof fn lemma_leaf_links_frame<L: NodeLayout>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    t: Tree,
+    succ: nat,
+)
+    requires
+        leaf_links_to::<L>(a1, t, succ),
+        forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
+    ensures
+        leaf_links_to::<L>(a2, t, succ),
+{
+    let lids = crate::bplus_tree::tree_leaf_ids(t);
+    assert forall|p: int| 0 <= p < lids.len() implies
+        #[trigger] L::link_view(a2[lids[p] as int]) == (if p + 1 < lids.len() { lids[p + 1] } else { succ }) by {
+        crate::bplus_tree::lemma_leaf_id_in_tree_ids(t, p);  // lids[p] in tree_ids(t)
+        assert(a1[lids[p] as int] == a2[lids[p] as int]);
+        // the leaf_links_to(a1) instance at p gives the rhs.
+        assert(L::link_view(a1[lids[p] as int]) == (if p + 1 < lids.len() { lids[p + 1] } else { succ }));
+    }
+}
+
+/// Combined frame for `subtree_wf` (modulo the height/occupancy, which are
+/// arena-independent ghost facts). If `a2` agrees with `a1` on `tree_ids(t)`,
+/// then `binds` and `leaf_links_to` transfer; `tree_wf` and `tree_disjoint` are
+/// pure ghost (no arena), so the whole `subtree_wf` carries. The frame step for
+/// a sibling subtree untouched by a mutation in another subtree's region.
+pub proof fn lemma_subtree_wf_frame<K, L, S, const TRACK: bool>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    t: Tree,
+    h: nat,
+    succ: nat,
+    is_root: bool,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a1, t, h, succ, is_root),
+        a1.len() <= a2.len(),
+        forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
+    ensures
+        BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a2, t, h, succ, is_root),
+{
+    lemma_binds_frame::<L>(a1, a2, t);
+    lemma_leaf_links_frame::<L>(a1, a2, t, succ);
+    // tree_wf and tree_disjoint are arena-independent, carried by the requires.
 }
 
 /// Forest companion of [`lemma_inner_binds_child`]: project `forest_binds_l` to
