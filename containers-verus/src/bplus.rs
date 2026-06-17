@@ -1005,6 +1005,90 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     }
 }
 
+/// Frame lemma for `binds` (the dynamic-frames separation). If two arenas agree
+/// on every id in `tree_ids(t)` — `t`'s footprint — then `t` binds in one iff it
+/// binds in the other. So a mutation confined to ids outside `tree_ids(t)`
+/// preserves `binds(_, t)`. This is what lets a split touch one subtree's nodes
+/// and frame out every disjoint subtree's binding for free.
+pub proof fn lemma_binds_frame<L: NodeLayout>(a1: Seq<L::Node>, a2: Seq<L::Node>, t: Tree)
+    requires
+        binds::<L>(a1, t),
+        a1.len() <= a2.len(),
+        forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
+    ensures
+        binds::<L>(a2, t),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { id, keys } => {
+            // tree_ids(Leaf) == {id}; a1[id]==a2[id], so the leaf arm transfers.
+            assert(crate::bplus_tree::tree_ids(t).contains(id));
+            assert(a1[id as int] == a2[id as int]);
+        }
+        Tree::Inner { id, seps, kids } => {
+            // id and every child's footprint are in tree_ids(t); recurse on kids.
+            assert(crate::bplus_tree::tree_ids(t).contains(id));
+            assert(a1[id as int] == a2[id as int]);
+            lemma_forest_binds_frame::<L>(a1, a2, kids, t);
+        }
+    }
+}
+
+/// Forest companion of [`lemma_binds_frame`]. `parent` carries the `tree_ids`
+/// containment: every `forest_ids(kids)` id is in `tree_ids(parent)`, so the
+/// agreement hypothesis lifts to each child.
+pub proof fn lemma_forest_binds_frame<L: NodeLayout>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    kids: Seq<Tree>,
+    parent: Tree,
+)
+    requires
+        forest_binds_l::<L>(a1, kids),
+        a1.len() <= a2.len(),
+        parent is Inner,
+        parent->Inner_kids == kids,
+        forall|id: nat| crate::bplus_tree::tree_ids(parent).contains(id)
+            ==> a1[id as int] == a2[id as int],
+    ensures
+        forest_binds_l::<L>(a2, kids),
+    decreases kids,
+{
+    if kids.len() == 0 {
+    } else {
+        let df = kids.drop_first();
+        // tree_ids(parent) ⊇ forest_ids(kids) = tree_ids(kids[0]) ∪ forest_ids(df).
+        crate::bplus_tree::lemma_forest_ids_cons(kids);
+        // head child binds under a2 (its footprint ⊆ parent's, agreement lifts).
+        assert forall|id: nat| crate::bplus_tree::tree_ids(kids[0]).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            // tree_ids(kids[0]) ⊆ forest_ids(kids) ⊆ tree_ids(parent).
+            assert(crate::bplus_tree::forest_ids(kids).contains(id));
+            assert(crate::bplus_tree::tree_ids(parent).contains(id));
+        }
+        lemma_binds_frame::<L>(a1, a2, kids[0]);
+        // tail: build a synthetic parent over df to carry containment.
+        let dparent = Tree::Inner {
+            id: parent->Inner_id,
+            seps: parent->Inner_seps,
+            kids: df,
+        };
+        assert forall|id: nat| crate::bplus_tree::tree_ids(dparent).contains(id)
+            implies a1[id as int] == a2[id as int] by {
+            // tree_ids(dparent) = {pid} ∪ forest_ids(df) ⊆ {pid} ∪ forest_ids(kids)
+            //                   ⊆ tree_ids(parent).
+            if id == parent->Inner_id {
+                assert(crate::bplus_tree::tree_ids(parent).contains(id));
+            } else {
+                assert(crate::bplus_tree::forest_ids(df).contains(id));
+                assert(crate::bplus_tree::forest_ids(kids).contains(id));
+                assert(crate::bplus_tree::tree_ids(parent).contains(id));
+            }
+        }
+        lemma_forest_binds_frame::<L>(a1, a2, df, dparent);
+    }
+}
+
 /// Forest companion of [`lemma_inner_binds_child`]: project `forest_binds_l` to
 /// one child (the arena binds each child subtree). Mirrors `lemma_forest_wf_at`.
 pub proof fn lemma_forest_binds_at<L: NodeLayout>(arena: Seq<L::Node>, kids: Seq<Tree>, m: int)
