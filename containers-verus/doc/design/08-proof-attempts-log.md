@@ -274,6 +274,18 @@ site — `lt()`'s ensures won't unfold to `as_nat() < as_nat()`. Compare via
   forest fn needs a small `lemma_*_cons` (ensures `forest(kids) == f(kids[0]) ∪
   forest(kids.drop_first())` for non-empty `kids`). Validated in a 40-line probe
   before the module reshape.
+- Default-bodied trait spec methods are pruning-fragile *crate-wide*. A
+  `lemma_order_is_as_nat {}` whose empty body relied on Verus auto-unfolding the
+  `open` default `lt_spec`/`le_spec` bodies verified fine for a year, then broke
+  (only the `usize` impl) the moment unrelated spec surface was added in
+  `bplus_layout` (the leaf-split mutators). The added definitions changed which
+  facts the pruner pulled into the SMT context for `index_like`, an upstream
+  module that wasn't even edited. Fix: state the unfold explicitly —
+  `assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()))` inside the lemma body — so
+  the proof no longer depends on the pruner's choices. Lesson: don't leave an
+  empty proof body whose discharge silently depends on auto-unfolding a default
+  trait body; make the unfold explicit, especially for foundational lemmas every
+  other module consumes.
 
 ---
 [← Table of Contents](00-table-of-contents.md)

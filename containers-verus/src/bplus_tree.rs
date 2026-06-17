@@ -649,6 +649,89 @@ pub proof fn lemma_median_split(combined: Seq<nat>, mid: int)
 }
 
 // ===========================================================================
+// Leaf-split tree reconstruction. After splitting a full root leaf into two
+// sorted leaves with separator `right_keys[0]`, the new height-1 root
+// `Inner{ new_root_id, [sep], [left_leaf, right_leaf] }` is a wf B+tree whose
+// in-order keys are `left_keys + right_keys`. Isolates the structural B+tree
+// reasoning (balance, ordering, occupancy) from the arena plumbing in `insert`.
+// ===========================================================================
+
+pub proof fn lemma_split_tree_wf(
+    new_root_id: nat,
+    lid: nat,
+    rid: nat,
+    left_keys: Seq<nat>,
+    right_keys: Seq<nat>,
+    cap: nat,
+    key_cap: nat,
+)
+    requires
+        strictly_sorted(left_keys),
+        strictly_sorted(right_keys),
+        right_keys.len() >= 1,
+        left_keys.len() == (cap + 1) / 2,
+        right_keys.len() == (cap + 1 - (cap + 1) / 2) as nat,
+        cap >= 1,
+        key_cap >= 1,
+        forall|i: int| 0 <= i < left_keys.len() ==> #[trigger] left_keys[i] < right_keys[0],
+        forall|i: int| 0 <= i < right_keys.len() ==> right_keys[0] <= #[trigger] right_keys[i],
+    ensures
+        ({
+            let lt = Tree::Leaf { id: lid, keys: left_keys };
+            let rt = Tree::Leaf { id: rid, keys: right_keys };
+            let root = Tree::Inner { id: new_root_id, seps: seq![right_keys[0]], kids: seq![lt, rt] };
+            &&& tree_wf(root, 1, cap, key_cap, true)
+            &&& tree_height(root) == 1
+            &&& tree_keys(root) == left_keys + right_keys
+        }),
+{
+    let lt = Tree::Leaf { id: lid, keys: left_keys };
+    let rt = Tree::Leaf { id: rid, keys: right_keys };
+    let kids = seq![lt, rt];
+    let root = Tree::Inner { id: new_root_id, seps: seq![right_keys[0]], kids };
+
+    // occupancy: left == (cap+1)/2; right == cap+1-(cap+1)/2 >= (cap+1)/2 (floor).
+    assert(left_keys.len() <= cap);
+    assert(right_keys.len() <= cap);
+    assert(left_keys.len() >= (cap + 1) / 2);
+    assert(right_keys.len() >= (cap + 1) / 2);
+
+    // both children wf at height 0 (non-root): sorted, count bounds, occupancy.
+    assert(tree_wf(lt, 0, cap, key_cap, false));
+    assert(tree_wf(rt, 0, cap, key_cap, false));
+    // forest_wf(kids, 0): head wf + tail (single rt) wf.
+    lemma_forest_wf_cons(kids, 0, cap, key_cap);
+    assert(kids.drop_first() =~= seq![rt]);
+    lemma_forest_wf_cons(seq![rt], 0, cap, key_cap);
+    assert(seq![rt].drop_first() =~= Seq::<Tree>::empty());
+    assert(forest_wf(kids, 0, cap, key_cap));
+
+    // cross-node ordering clauses, instantiated at the single separator.
+    assert forall|i: int| 0 <= i < 1 implies keys_all_lt(#[trigger] kids[i], seq![right_keys[0]][i]) by {
+        // i == 0: kids[0] == lt; every left key < right_keys[0] == seps[0].
+        assert(kids[0] == lt);
+        assert(tree_keys(lt) == left_keys);
+    }
+    assert forall|i: int| 0 < i < 2 implies keys_all_ge(#[trigger] kids[i], seq![right_keys[0]][i - 1]) by {
+        // i == 1: kids[1] == rt; every right key >= right_keys[0] == seps[0].
+        assert(kids[1] == rt);
+        assert(tree_keys(rt) == right_keys);
+    }
+    assert(tree_wf(root, 1, cap, key_cap, true));
+
+    // height: 1 + forest_max_height(kids) == 1 (both leaves height 0).
+    lemma_forest_max_height_cons(kids);
+    lemma_forest_max_height_cons(seq![rt]);
+    assert(tree_height(root) == 1);
+
+    // in-order keys: forest_keys([lt, rt]) == left_keys + right_keys.
+    lemma_forest_keys_cons(kids);
+    lemma_forest_keys_cons(seq![rt]);
+    assert(forest_keys(Seq::<Tree>::empty()) =~= Seq::<nat>::empty());
+    assert(tree_keys(root) =~= left_keys + right_keys);
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 
