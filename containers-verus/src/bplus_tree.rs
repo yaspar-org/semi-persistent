@@ -1940,9 +1940,10 @@ pub proof fn lemma_parent_split_tree_wf(
 /// immediately to its right (separators are routing copies of leaf minima), not
 /// merely a bound. `tree_wf` only carries the `keys_all_ge`/`keys_all_lt`
 /// inequalities. PROOF PENDING — needs the separator-equals-right-min invariant
-/// added to `tree_wf` (or a side condition threaded from the split mutators).
-/// Validated meanwhile by the `parent_split_promoted_holds` runtime probe.
-#[verifier::external_body]
+/// added to `tree_wf`. Now PROVEN from the separator-equals-right-min invariant:
+/// `rt`'s least key is its first child `ckids[imid+1]`'s least key, and the
+/// combined sep-min at index `imid+1` says `cseps[imid] == tree_keys(ckids[imid+
+/// 1])[0]` — exactly `promoted == rt`'s minimum.
 pub proof fn lemma_parent_split_promoted(
     gid: nat, rid: nat, cseps: Seq<nat>, ckids: Seq<Tree>, imid: int, h: nat, cap: nat, key_cap: nat,
 )
@@ -1956,6 +1957,8 @@ pub proof fn lemma_parent_split_promoted(
         forest_wf(ckids, (h - 1) as nat, cap, key_cap),
         (forall|i: int| 0 <= i < cseps.len() ==> keys_all_lt(#[trigger] ckids[i], cseps[i])),
         (forall|i: int| 0 < i < ckids.len() ==> keys_all_ge(#[trigger] ckids[i], cseps[i - 1])),
+        // separator = right-subtree min for the combined arrangement.
+        (forall|i: int| 0 < i < ckids.len() ==> cseps[i - 1] == #[trigger] tree_keys(ckids[i])[0]),
     ensures
         ({
             let rt = Tree::Inner { id: rid, seps: cseps.subrange(imid + 1, cseps.len() as int), kids: ckids.subrange(imid + 1, ckids.len() as int) };
@@ -1963,6 +1966,21 @@ pub proof fn lemma_parent_split_promoted(
             &&& cseps[imid] == tree_keys(rt)[0]
         }),
 {
+    let rkids = ckids.subrange(imid + 1, ckids.len() as int);
+    let rt = Tree::Inner { id: rid, seps: cseps.subrange(imid + 1, cseps.len() as int), kids: rkids };
+    // rt is non-empty: its first child ckids[imid+1] is wf at h-1, hence >= 1 key.
+    assert(rkids.len() >= 1);
+    assert(rkids[0] == ckids[imid + 1]);
+    lemma_forest_wf_at(ckids, (h - 1) as nat, cap, key_cap, imid + 1);
+    lemma_tree_keys_nonempty(ckids[imid + 1], (h - 1) as nat, cap, key_cap);
+    // tree_keys(rt) == forest_keys(rkids); its head is rkids[0]'s head.
+    lemma_forest_keys_cons(rkids);
+    assert(tree_keys(rt) == forest_keys(rkids));
+    assert(tree_keys(rt).len() >= 1);
+    assert(tree_keys(rt)[0] == tree_keys(rkids[0])[0]);
+    assert(tree_keys(rkids[0])[0] == tree_keys(ckids[imid + 1])[0]);
+    // combined sep-min at i == imid + 1: cseps[imid] == tree_keys(ckids[imid+1])[0].
+    assert(cseps[imid] == tree_keys(ckids[imid + 1])[0]);
 }
 
 /// `(a + b).to_set().contains(b[i])` for a valid index `i` into `b`.
