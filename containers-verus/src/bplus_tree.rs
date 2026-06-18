@@ -1575,6 +1575,13 @@ pub proof fn lemma_internal_split_tree_wf(
             // subtree's leaves (B+tree), not removed from the model. The model
             // is just the two halves' leaf keys concatenated.
             &&& tree_keys(lt) + tree_keys(rt) == forest_keys(ckids)
+            // Cross-half ordering around the promoted median `cseps[imid]`: every
+            // left-half key is `< cseps[imid]`, every right-half key `>= cseps[imid]`.
+            // This is what the parent splice needs to slot (lt, promoted, rt) back
+            // into the grandparent's children (it replaces the deleted separator-min
+            // ensures `cseps[imid] == tree_keys(rt)[0]`).
+            &&& keys_all_lt(lt, cseps[imid])
+            &&& keys_all_ge(rt, cseps[imid])
         }),
 {
     let lseps = cseps.subrange(0, imid);
@@ -1642,6 +1649,36 @@ pub proof fn lemma_internal_split_tree_wf(
     lemma_forest_keys_split(ckids, imid + 1);
     assert(tree_keys(lt) == forest_keys(lkids));
     assert(tree_keys(rt) == forest_keys(rkids));
+
+    // cross-half ordering around the promoted median cseps[imid]. Each left-half
+    // key lives in some lkids[m] == ckids[m] (m <= imid), bounded < cseps[m] <=
+    // cseps[imid]; each right-half key in ckids[imid+1+m], bounded >= cseps[imid+m]
+    // >= cseps[imid]. Pure consequence of the combined cross-node ordering + the
+    // sorted cseps (no separator-min needed).
+    lemma_keys_all_lt_set(lt, cseps[imid]);
+    assert forall|k: nat| tree_keys(lt).to_set().contains(k) implies k < cseps[imid] by {
+        assert(forest_keys(lkids).contains(k));  // tree_keys(lt)==forest_keys(lkids)
+        lemma_forest_keys_membership(lkids, k);
+        let m = choose|m: int| 0 <= m < lkids.len() && tree_keys(lkids[m]).contains(k);
+        assert(lkids[m] == ckids[m]);
+        assert(keys_all_lt(ckids[m], cseps[m]));  // requires at i == m (m <= imid < cseps.len())
+        lemma_keys_all_lt_set(ckids[m], cseps[m]);
+        assert(tree_keys(ckids[m]).to_set().contains(k));
+        assert(k < cseps[m]);
+        if m < imid { assert(cseps[m] < cseps[imid]); }  // strictly_sorted(cseps)
+    }
+    lemma_keys_all_ge_set(rt, cseps[imid]);
+    assert forall|k: nat| tree_keys(rt).to_set().contains(k) implies cseps[imid] <= k by {
+        assert(forest_keys(rkids).contains(k));  // tree_keys(rt)==forest_keys(rkids)
+        lemma_forest_keys_membership(rkids, k);
+        let m = choose|m: int| 0 <= m < rkids.len() && tree_keys(rkids[m]).contains(k);
+        assert(rkids[m] == ckids[imid + 1 + m]);
+        assert(keys_all_ge(ckids[imid + 1 + m], cseps[imid + m]));  // requires at j == imid+1+m
+        lemma_keys_all_ge_set(ckids[imid + 1 + m], cseps[imid + m]);
+        assert(tree_keys(ckids[imid + 1 + m]).to_set().contains(k));
+        assert(cseps[imid + m] <= k);
+        if m > 0 { assert(cseps[imid] < cseps[imid + m]); }  // strictly_sorted(cseps)
+    }
 }
 
 /// `forest_keys` splits at a cut: `forest_keys(kids) == forest_keys(kids[0..c])
@@ -1700,10 +1737,12 @@ pub proof fn lemma_child_split_combined_wf(
         keys_all_ge(ncr, sep),
         tree_keys(ncl).len() >= 1,
         tree_keys(ncr).len() >= 1,
-        // (weakening) replaced sep == tree_keys(ncr)[0] with the WEAKER membership fact —
-        // sep is one of the two halves' keys (so it lies in the child's key range,
-        // which is all the splice sortedness needs; it need NOT be the exact min).
-        (tree_keys(ncl) + tree_keys(ncr)).to_set().contains(sep),
+        // (second weakening) the `sep ∈ (ncl+ncr)` membership is GONE: it was only
+        // ever used to bound `sep < gseps[cp]`, which we now derive from the median
+        // ordering + model + descent (see the sortedness sub-proof). Carrying it was
+        // an over-strong residual of the first weakening — at a PARENT split the
+        // promoted separator is an original `gseps[j]`, whose membership we deleted
+        // with the separator-min invariant, so it was also UNPROVABLE there.
         (tree_keys(ncl) + tree_keys(ncr)).to_set()
             == tree_keys(gkids[cp]).to_set().insert(key),
         (forall|j: int| 0 <= j < cp ==> gseps[j] <= key),
@@ -1740,21 +1779,36 @@ pub proof fn lemma_child_split_combined_wf(
     // (1) sortedness of nseps.
     assert(cp < gseps.len() ==> keys_all_lt(gkids[cp], gseps[cp]));
     assert(cp > 0 ==> keys_all_ge(gkids[cp], gseps[cp - 1]));
-    // sep ∈ (ncl+ncr) is now a precondition (was derived from sep==ncr[0]).
-    assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(sep));
-    assert(tree_keys(gkids[cp]).to_set().contains(sep) || sep == key);
+    // Bound `sep` strictly between the surrounding separators WITHOUT using any
+    // membership of `sep` itself: the median ordering pins `sep` between the two
+    // halves' boundary keys (`ncl[0] < sep <= ncr[0]` via the index form of
+    // keys_all_lt/ge), and the model places those boundary keys inside the old
+    // child (or at `key`), which the descent + cur's cross-node wf bound by
+    // gseps[cp-1] / gseps[cp]. (This is why the `sep ∈ (ncl+ncr)` precondition is
+    // NOT load-bearing — see the second-weakening fixpoint note; the genuinely
+    // needed facts are the median ordering, the model, and non-emptiness.)
     assert(cp < gseps.len() ==> sep < gseps[cp]) by {
-        if cp < gseps.len() { lemma_keys_all_lt_set(gkids[cp], gseps[cp]); }
+        if cp < gseps.len() {
+            lemma_keys_all_lt_set(gkids[cp], gseps[cp]);   // child keys < gseps[cp] (set form)
+            let m1 = tree_keys(ncr)[0];
+            assert(sep <= m1);                              // keys_all_ge(ncr, sep) at index 0
+            assert((tree_keys(ncl) + tree_keys(ncr))[tree_keys(ncl).len() as int] == m1);
+            assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(m1));
+            assert(tree_keys(gkids[cp]).to_set().contains(m1) || m1 == key);
+            if tree_keys(gkids[cp]).to_set().contains(m1) { assert(m1 < gseps[cp]); }
+            else { assert(m1 == key); assert(key < gseps[cp]); }  // descent at j == cp
+        }
     }
     assert(cp > 0 ==> gseps[cp - 1] < sep) by {
         if cp > 0 {
-            lemma_keys_all_ge_set(gkids[cp], gseps[cp - 1]);
+            lemma_keys_all_ge_set(gkids[cp], gseps[cp - 1]);  // child keys >= gseps[cp-1] (set form)
             let m0 = tree_keys(ncl)[0];
+            assert(m0 < sep);                                  // keys_all_lt(ncl, sep) at index 0
             assert((tree_keys(ncl) + tree_keys(ncr))[0] == m0);
             assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(m0));
             assert(tree_keys(gkids[cp]).to_set().contains(m0) || m0 == key);
-            assert(gseps[cp - 1] <= m0);
-            assert(m0 < sep);
+            if tree_keys(gkids[cp]).to_set().contains(m0) { assert(gseps[cp - 1] <= m0); }
+            else { assert(m0 == key); assert(gseps[cp - 1] <= key); }  // descent at j == cp-1
         }
     }
     assert(strictly_sorted(nseps)) by {
@@ -1891,8 +1945,8 @@ pub proof fn lemma_child_split_absorb_tree_wf(
         // for STRICT sortedness of the new separator list around `sep`.
         tree_keys(ncl).len() >= 1,
         tree_keys(ncr).len() >= 1,
-        // (weakening) sep ∈ (ncl+ncr) (membership), replacing sep == tree_keys(ncr)[0].
-        (tree_keys(ncl) + tree_keys(ncr)).to_set().contains(sep),
+        // (second weakening) `sep ∈ (ncl+ncr)` membership REMOVED — not consumed
+        // (see lemma_child_split_combined_wf's sortedness sub-proof).
         // model: the two halves' keys are the old child's keys plus `key`.
         (tree_keys(ncl) + tree_keys(ncr)).to_set()
             == tree_keys(gkids[cp]).to_set().insert(key),
@@ -1961,8 +2015,9 @@ pub proof fn lemma_parent_split_tree_wf(
         keys_all_ge(ncr, sep),
         tree_keys(ncl).len() >= 1,
         tree_keys(ncr).len() >= 1,
-        // (weakening) sep ∈ (ncl+ncr) (membership), replacing sep == tree_keys(ncr)[0] + ncl-min.
-        (tree_keys(ncl) + tree_keys(ncr)).to_set().contains(sep),
+        // (second weakening) `sep ∈ (ncl+ncr)` membership REMOVED — see
+        // lemma_child_split_combined_wf. (Was unprovable here anyway: the promoted
+        // separator is an original gseps[j], not sep.)
         (tree_keys(ncl) + tree_keys(ncr)).to_set()
             == tree_keys(gkids[cp]).to_set().insert(key),
         (forall|j: int| 0 <= j < cp ==> gseps[j] <= key),
@@ -1977,7 +2032,10 @@ pub proof fn lemma_parent_split_tree_wf(
             &&& tree_wf(rt, h, cap, key_cap, false)
             &&& (tree_keys(lt) + tree_keys(rt)).to_set()
                     == tree_keys(Tree::Inner { id: gid, seps: gseps, kids: gkids }).to_set().insert(key)
-            // (weakening) cseps[imid] == tree_keys(rt)[0] ensures REMOVED.
+            // cross-half ordering around the promoted median `cseps[imid]` — the
+            // routing arrangement the parent splice needs (replaces separator-min).
+            &&& keys_all_lt(lt, cseps[imid])
+            &&& keys_all_ge(rt, cseps[imid])
         }),
 {
     let cseps = gseps.insert(cp, sep);
@@ -2371,6 +2429,71 @@ pub proof fn lemma_parent_split_footprint(
     lemma_forest_leaf_ids_cons(lkids);
     assert(tree_leaf_ids(lt) == forest_leaf_ids(lkids));
     assert(tree_leaf_ids(lt)[0] == tree_leaf_ids(lkids[0])[0]);
+}
+
+/// `tree_ids(lt).disjoint(tree_ids(rt))` for the two parent-split halves. With
+/// `lkids = ckids[0..m]`, `rkids = ckids[m..]` (so `lkids + rkids == ckids`),
+/// `forest_disjoint(ckids)` + pairwise-disjoint children give
+/// `forest_ids(lkids) ⊥ forest_ids(rkids)`; the two distinct roots `gid` (< bound)
+/// and `rid` (>= bound) are outside both child-id sets, so the whole footprints
+/// are disjoint. Pure ghost over `tree_ids`/`forest_ids`.
+pub proof fn lemma_parent_split_disjoint(
+    gid: nat, rid: nat, ckids: Seq<Tree>, lt: Tree, rt: Tree,
+    lkids: Seq<Tree>, rkids: Seq<Tree>, bound: nat,
+)
+    requires
+        lt == (Tree::Inner { id: gid, seps: lt->Inner_seps, kids: lkids }),
+        rt == (Tree::Inner { id: rid, seps: rt->Inner_seps, kids: rkids }),
+        lkids + rkids == ckids,
+        (forall|i: int, j: int| 0 <= i < j < ckids.len() ==>
+            (#[trigger] tree_ids(ckids[i])).disjoint(#[trigger] tree_ids(ckids[j]))),
+        // the two roots are distinct and outside every child's footprint: gid is an
+        // OLD id (< bound) absent from ckids; rid is FRESH (>= bound) and ckids' ids
+        // are all old (< bound) or == rid is excluded by being the brand-new slot.
+        (forall|id: nat| #[trigger] forest_ids(ckids).contains(id) ==> id < bound),
+        gid < bound,
+        rid >= bound,
+        !forest_ids(ckids).contains(gid),
+    ensures
+        tree_ids(lt).disjoint(tree_ids(rt)),
+{
+    lemma_forest_ids_concat(lkids, rkids);
+    assert(forest_ids(ckids) =~= forest_ids(lkids).union(forest_ids(rkids)));
+    assert(tree_ids(lt) =~= set![gid].union(forest_ids(lkids)));
+    assert(tree_ids(rt) =~= set![rid].union(forest_ids(rkids)));
+    // forest_ids(lkids) ⊥ forest_ids(rkids): a shared id would sit in lkids[i] and
+    // rkids[j] == ckids[i] and ckids[lkids.len()+j], two distinct ckids indices.
+    assert forall|id: nat| forest_ids(lkids).contains(id) implies !forest_ids(rkids).contains(id) by {
+        if forest_ids(rkids).contains(id) {
+            lemma_forest_id_in_some_child(lkids, id);
+            lemma_forest_id_in_some_child(rkids, id);
+            let i = choose|i: int| 0 <= i < lkids.len() && tree_ids(lkids[i]).contains(id);
+            let j = choose|j: int| 0 <= j < rkids.len() && tree_ids(rkids[j]).contains(id);
+            assert(ckids[i] == lkids[i]);                      // lkids == ckids[0..m]
+            assert(ckids[lkids.len() + j] == rkids[j]);        // rkids == ckids[m..]
+            assert(tree_ids(ckids[i]).contains(id));
+            assert(tree_ids(ckids[lkids.len() + j]).contains(id));
+            // i < lkids.len() <= lkids.len()+j, so they are distinct ckids indices.
+            assert(tree_ids(ckids[i]).disjoint(tree_ids(ckids[lkids.len() + j])));
+        }
+    }
+    assert forall|id: nat| tree_ids(lt).contains(id) implies !tree_ids(rt).contains(id) by {
+        if id == gid {
+            // gid < bound, and rt's ids are rid (>= bound) or forest_ids(rkids) ⊆
+            // forest_ids(ckids) (< bound but != gid since gid ∉ forest_ids(ckids)).
+            if id == rid { } else if forest_ids(rkids).contains(id) {
+                assert(forest_ids(ckids).contains(id));  // gid ∉ forest_ids(ckids): contradiction
+            }
+        } else {
+            assert(forest_ids(lkids).contains(id));
+            if id == rid {
+                assert(forest_ids(ckids).contains(id));  // id < bound, but rid >= bound
+            } else {
+                assert(!forest_ids(rkids).contains(id));  // disjoint child-id sets
+            }
+        }
+    }
+    assert(tree_ids(lt).disjoint(tree_ids(rt)));
 }
 
 // ===========================================================================
