@@ -257,6 +257,23 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         self.map.get(id.to_usize())
     }
 
+    /// Is this op associative-commutative (`OpKind::AC`)? Note this is `false`
+    /// for ACI ops, which are a distinct kind.
+    pub fn is_ac(&self, id: O) -> bool {
+        matches!(self.map.get(id.to_usize()).kind, OpKind::AC { .. })
+    }
+
+    /// Iterator over the ids of all registered AC ops. Used by AC congruence
+    /// completion to drive the per-AC-op critical-pair pass (see
+    /// `doc/future/ac-congruence-completeness-plan.md`). Excludes ACI ops.
+    pub fn ac_ops(&self) -> impl Iterator<Item = O> + '_ {
+        self.map
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, info))| matches!(info.kind, OpKind::AC { .. }))
+            .map(|(i, _)| O::from_usize(i))
+    }
+
     pub fn id_by_name(&self, name: &str) -> Option<O> {
         self.map.id_of(&name.to_owned()).map(O::from_usize)
     }
@@ -547,5 +564,40 @@ mod tests {
         let mut ops = OR::new();
         ops.register_ac("Add", int_sort, int_sort);
         ops.register_ac("Add", int_sort, int_sort);
+    }
+
+    #[test]
+    fn ac_ops_lists_only_ac() {
+        let mut sorts = SR::new();
+        let bool_sort = sorts.intern("Bool");
+        let int_sort = sorts.intern("Int");
+
+        let mut ops = OR::new();
+        ops.register("Not", &[bool_sort], bool_sort); // Normal
+        ops.register_c("Eq", [int_sort, int_sort], bool_sort); // Commutative
+        ops.register_a("Sub", int_sort, int_sort, AssocDir::Left); // A
+        let add = ops.register_ac("Add", int_sort, int_sort); // AC
+        let mul = ops.register_ac("Mul", int_sort, int_sort); // AC
+        ops.register_aci("And", bool_sort, bool_sort); // ACI — must be excluded
+
+        // ac_ops yields exactly the two AC ids, and is_ac agrees per-op.
+        let mut ac: Vec<OpId> = ops.ac_ops().collect();
+        ac.sort();
+        assert_eq!(ac, vec![add, mul]);
+
+        assert!(ops.is_ac(add));
+        assert!(ops.is_ac(mul));
+        // ACI is a distinct kind — not AC.
+        assert!(!ops.is_ac(ops.id_by_name("And").unwrap()));
+        assert!(!ops.is_ac(ops.id_by_name("Sub").unwrap()));
+        assert!(!ops.is_ac(ops.id_by_name("Not").unwrap()));
+    }
+
+    #[test]
+    fn ac_ops_empty_when_none_registered() {
+        let int_sort = SortId::new(1);
+        let mut ops = OR::new();
+        ops.register("F", &[int_sort], int_sort);
+        assert_eq!(ops.ac_ops().count(), 0);
     }
 }
