@@ -2408,6 +2408,68 @@ pub proof fn lemma_parent_split_half_ids(
     }
 }
 
+/// Footprint of the two parent-split halves vs the original `cur`. With `lt =
+/// Inner{gid, _, lkids}`, `rt = Inner{rid, _, rkids}`, `lkids + rkids == ckids`
+/// (the combined children), and `gid`/`rid` the half roots: the union of the
+/// halves' footprints is `{gid, rid} ∪ forest_ids(ckids)`, which retains all of
+/// `cur`'s ids and adds only fresh ones (`>= bound`); and `lt`'s leftmost leaf is
+/// `cur`'s (lt's first child is ckids[0], whose leftmost leaf is cur's via the
+/// combined first-leaf fact). Pure ghost over `tree_ids`/`forest_ids`.
+pub proof fn lemma_parent_split_footprint(
+    cur: Tree, gid: nat, rid: nat, gkids: Seq<Tree>,
+    lt: Tree, rt: Tree, lkids: Seq<Tree>, rkids: Seq<Tree>, ckids: Seq<Tree>, bound: nat,
+)
+    requires
+        cur is Inner,
+        cur->Inner_id == gid,
+        cur->Inner_kids == gkids,
+        lt == (Tree::Inner { id: gid, seps: lt->Inner_seps, kids: lkids }),
+        rt == (Tree::Inner { id: rid, seps: rt->Inner_seps, kids: rkids }),
+        lkids + rkids == ckids,
+        lkids.len() >= 1,
+        forest_ids(gkids).subset_of(forest_ids(ckids)),
+        (forall|id: nat| #[trigger] forest_ids(ckids).contains(id)
+            ==> forest_ids(gkids).contains(id) || id >= bound),
+        gid < bound,
+        rid >= bound,
+        tree_leaf_ids(lkids[0]).len() >= 1,
+        tree_leaf_ids(lkids[0])[0] == tree_leaf_ids(cur)[0],
+        tree_leaf_ids(cur).len() >= 1,
+    ensures
+        (forall|id: nat| tree_ids(lt).contains(id) ==> tree_ids(cur).contains(id) || id >= bound),
+        (forall|id: nat| tree_ids(rt).contains(id) ==> tree_ids(cur).contains(id) || id >= bound),
+        (forall|id: nat| tree_ids(cur).contains(id) ==> tree_ids(lt).contains(id) || tree_ids(rt).contains(id)),
+        tree_leaf_ids(lt).len() >= 1,
+        tree_leaf_ids(lt)[0] == tree_leaf_ids(cur)[0],
+{
+    assert(tree_ids(lt) =~= set![gid].union(forest_ids(lkids)));
+    assert(tree_ids(rt) =~= set![rid].union(forest_ids(rkids)));
+    assert(tree_ids(cur) =~= set![gid].union(forest_ids(gkids)));
+    lemma_forest_ids_concat(lkids, rkids);
+    assert(forest_ids(ckids) =~= forest_ids(lkids).union(forest_ids(rkids)));
+    assert forall|id: nat| tree_ids(lt).contains(id) implies tree_ids(cur).contains(id) || id >= bound by {
+        if id == gid { } else {
+            assert(forest_ids(lkids).contains(id));
+            assert(forest_ids(ckids).contains(id));
+        }
+    }
+    assert forall|id: nat| tree_ids(rt).contains(id) implies tree_ids(cur).contains(id) || id >= bound by {
+        if id == rid { } else {
+            assert(forest_ids(rkids).contains(id));
+            assert(forest_ids(ckids).contains(id));
+        }
+    }
+    assert forall|id: nat| tree_ids(cur).contains(id) implies tree_ids(lt).contains(id) || tree_ids(rt).contains(id) by {
+        if id == gid { } else {
+            assert(forest_ids(gkids).contains(id));
+            assert(forest_ids(ckids).contains(id));
+        }
+    }
+    lemma_forest_leaf_ids_cons(lkids);
+    assert(tree_leaf_ids(lt) == forest_leaf_ids(lkids));
+    assert(tree_leaf_ids(lt)[0] == tree_leaf_ids(lkids[0])[0]);
+}
+
 // ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
