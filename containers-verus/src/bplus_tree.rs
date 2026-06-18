@@ -1555,6 +1555,185 @@ pub proof fn lemma_forest_keys_split(kids: Seq<Tree>, c: int)
     }
 }
 
+/// The combined-arrangement ingredients shared by BOTH split cases (child-split
+/// absorb when the parent had room, and parent-split when it was full). After a
+/// child `cp` splits into `(ncl, ncr)` separated by `sep`, the combined node
+/// `Inner{gid, gseps.insert(cp,sep), gkids.update(cp,ncl).insert(cp+1,ncr)}` has:
+/// strictly-sorted separators, a wf child forest at `h-1`, cross-node ordering,
+/// and in-order keys = parent's ∪ {key}. This is occupancy-INDEPENDENT (it does
+/// not constrain `nseps.len()` vs `key_cap`); the absorb case adds `< key_cap`,
+/// the parent-split case feeds it to `lemma_internal_split_tree_wf` with
+/// `== key_cap + 1`.
+pub proof fn lemma_child_split_combined_wf(
+    gid: nat,
+    gseps: Seq<nat>,
+    gkids: Seq<Tree>,
+    cp: int,
+    ncl: Tree,
+    ncr: Tree,
+    sep: nat,
+    key: nat,
+    h: nat,
+    cap: nat,
+    key_cap: nat,
+)
+    requires
+        h >= 1,
+        0 <= cp < gkids.len(),
+        tree_wf(Tree::Inner { id: gid, seps: gseps, kids: gkids }, h, cap, key_cap, false),
+        tree_wf(ncl, (h - 1) as nat, cap, key_cap, false),
+        tree_wf(ncr, (h - 1) as nat, cap, key_cap, false),
+        keys_all_lt(ncl, sep),
+        keys_all_ge(ncr, sep),
+        tree_keys(ncl).len() >= 1,
+        tree_keys(ncr).len() >= 1,
+        sep == tree_keys(ncr)[0],
+        (tree_keys(ncl) + tree_keys(ncr)).to_set()
+            == tree_keys(gkids[cp]).to_set().insert(key),
+        (forall|j: int| 0 <= j < cp ==> gseps[j] <= key),
+        (forall|j: int| cp <= j < gseps.len() ==> key < gseps[j]),
+    ensures
+        ({
+            let cseps = gseps.insert(cp, sep);
+            let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+            &&& cseps.len() == gseps.len() + 1
+            &&& ckids.len() == cseps.len() + 1
+            &&& strictly_sorted(cseps)
+            &&& forest_wf(ckids, (h - 1) as nat, cap, key_cap)
+            &&& (forall|i: int| 0 <= i < cseps.len() ==> keys_all_lt(#[trigger] ckids[i], cseps[i]))
+            &&& (forall|i: int| 0 < i < ckids.len() ==> keys_all_ge(#[trigger] ckids[i], cseps[i - 1]))
+            &&& forest_keys(ckids).to_set() == tree_keys(Tree::Inner { id: gid, seps: gseps, kids: gkids }).to_set().insert(key)
+        }),
+{
+    let cur = Tree::Inner { id: gid, seps: gseps, kids: gkids };
+    let nseps = gseps.insert(cp, sep);
+    let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+
+    assert(nseps.len() == gseps.len() + 1);
+    assert(nkids.len() == gkids.len() + 1);
+    assert(nkids.len() == nseps.len() + 1);
+
+    assert forall|i: int| 0 <= i < nkids.len() implies #[trigger] nkids[i] == (
+        if i < cp { gkids[i] } else if i == cp { ncl } else if i == cp + 1 { ncr } else { gkids[i - 1] }
+    ) by {}
+    assert forall|j: int| 0 <= j < nseps.len() implies #[trigger] nseps[j] == (
+        if j < cp { gseps[j] } else if j == cp { sep } else { gseps[j - 1] }
+    ) by {}
+
+    // (1) sortedness of nseps.
+    assert(cp < gseps.len() ==> keys_all_lt(gkids[cp], gseps[cp]));
+    assert(cp > 0 ==> keys_all_ge(gkids[cp], gseps[cp - 1]));
+    assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(sep)) by {
+        lemma_seq_concat_contains_right(tree_keys(ncl), tree_keys(ncr), 0);
+    }
+    assert(tree_keys(gkids[cp]).to_set().contains(sep) || sep == key);
+    assert(cp < gseps.len() ==> sep < gseps[cp]) by {
+        if cp < gseps.len() { lemma_keys_all_lt_set(gkids[cp], gseps[cp]); }
+    }
+    assert(cp > 0 ==> gseps[cp - 1] < sep) by {
+        if cp > 0 {
+            lemma_keys_all_ge_set(gkids[cp], gseps[cp - 1]);
+            let m0 = tree_keys(ncl)[0];
+            assert((tree_keys(ncl) + tree_keys(ncr))[0] == m0);
+            assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(m0));
+            assert(tree_keys(gkids[cp]).to_set().contains(m0) || m0 == key);
+            assert(gseps[cp - 1] <= m0);
+            assert(m0 < sep);
+        }
+    }
+    assert(strictly_sorted(nseps)) by {
+        assert forall|i: int, j: int| 0 <= i < j < nseps.len() implies #[trigger] nseps[i] < #[trigger] nseps[j] by {
+            if j < cp { assert(nseps[i] == gseps[i] && nseps[j] == gseps[j]); }
+            else if i < cp && j == cp {
+                assert(nseps[i] == gseps[i] && nseps[j] == sep);
+                if i < cp - 1 { assert(gseps[i] < gseps[cp - 1]); }
+            }
+            else if i < cp && j == cp + 1 { assert(nseps[i] == gseps[i] && nseps[j] == gseps[cp]); }
+            else if i < cp && j > cp + 1 { assert(nseps[i] == gseps[i] && nseps[j] == gseps[j - 1]); }
+            else if i == cp && j == cp + 1 { assert(nseps[i] == sep && nseps[j] == gseps[cp]); }
+            else if i == cp && j > cp + 1 { assert(nseps[i] == sep && nseps[j] == gseps[j - 1]); assert(gseps[cp] <= gseps[j - 1]); }
+            else { assert(nseps[i] == gseps[i - 1] && nseps[j] == gseps[j - 1]); }
+        }
+    }
+
+    // (2) children forest wf.
+    assert(forest_wf(gkids, (h - 1) as nat, cap, key_cap));
+    let left = gkids.subrange(0, cp);
+    let right = gkids.subrange(cp + 1, gkids.len() as int);
+    lemma_forest_wf_subrange(gkids, (h - 1) as nat, cap, key_cap, 0, cp);
+    lemma_forest_wf_subrange(gkids, (h - 1) as nat, cap, key_cap, cp + 1, gkids.len() as int);
+    assert(forest_wf(seq![ncl, ncr], (h - 1) as nat, cap, key_cap)) by {
+        lemma_forest_wf_cons(seq![ncl, ncr], (h - 1) as nat, cap, key_cap);
+        assert(seq![ncl, ncr].drop_first() =~= seq![ncr]);
+        lemma_forest_wf_cons(seq![ncr], (h - 1) as nat, cap, key_cap);
+        assert(seq![ncr].drop_first() =~= Seq::<Tree>::empty());
+    }
+    assert(nkids =~= left + seq![ncl, ncr] + right);
+    lemma_forest_wf_concat(left, seq![ncl, ncr], (h - 1) as nat, cap, key_cap);
+    lemma_forest_wf_concat(left + seq![ncl, ncr], right, (h - 1) as nat, cap, key_cap);
+    assert(forest_wf(nkids, (h - 1) as nat, cap, key_cap));
+
+    // (3) cross-node ordering.
+    assert forall|i: int| 0 <= i < nseps.len() implies keys_all_lt(#[trigger] nkids[i], nseps[i]) by {
+        if i < cp { assert(nkids[i] == gkids[i] && nseps[i] == gseps[i]); }
+        else if i == cp { assert(nkids[i] == ncl && nseps[i] == sep); }
+        else if i == cp + 1 {
+            assert(nkids[i] == ncr && nseps[i] == gseps[cp]);
+            lemma_keys_all_lt_set(gkids[cp], gseps[cp]);
+            lemma_keys_all_lt_set(ncr, gseps[cp]);
+            assert forall|k: nat| tree_keys(ncr).to_set().contains(k) implies k < gseps[cp] by {
+                assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(k)) by {
+                    lemma_seq_concat_to_set(tree_keys(ncl), tree_keys(ncr));
+                }
+                if tree_keys(gkids[cp]).to_set().contains(k) { } else { assert(k == key); }
+            }
+        }
+        else { assert(nkids[i] == gkids[i - 1] && nseps[i] == gseps[i - 1]); }
+    }
+    assert forall|i: int| 0 < i < nkids.len() implies keys_all_ge(#[trigger] nkids[i], nseps[i - 1]) by {
+        if i < cp { assert(nkids[i] == gkids[i] && nseps[i - 1] == gseps[i - 1]); }
+        else if i == cp {
+            assert(nkids[i] == ncl && nseps[i - 1] == gseps[cp - 1]);
+            lemma_keys_all_ge_set(gkids[cp], gseps[cp - 1]);
+            lemma_keys_all_ge_set(ncl, gseps[cp - 1]);
+            assert forall|k: nat| tree_keys(ncl).to_set().contains(k) implies gseps[cp - 1] <= k by {
+                assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(k)) by {
+                    lemma_seq_concat_to_set(tree_keys(ncl), tree_keys(ncr));
+                }
+                if tree_keys(gkids[cp]).to_set().contains(k) { } else { assert(k == key); }
+            }
+        }
+        else if i == cp + 1 { assert(nkids[i] == ncr && nseps[i - 1] == sep); }
+        else { assert(nkids[i] == gkids[i - 1] && nseps[i - 1] == gseps[i - 2]); }
+    }
+
+    // (4) model recombination.
+    let middle_new = tree_keys(ncl) + tree_keys(ncr);
+    lemma_forest_keys_concat(left + seq![ncl, ncr], right);
+    lemma_forest_keys_concat(left, seq![ncl, ncr]);
+    assert(forest_keys(seq![ncl, ncr]) == middle_new) by {
+        lemma_forest_keys_cons(seq![ncl, ncr]);
+        assert(seq![ncl, ncr].drop_first() =~= seq![ncr]);
+        lemma_forest_keys_cons(seq![ncr]);
+        assert(seq![ncr].drop_first() =~= Seq::<Tree>::empty());
+    }
+    assert(forest_keys(nkids) == forest_keys(left) + middle_new + forest_keys(right)) by {
+        assert(nkids =~= left + seq![ncl, ncr] + right);
+    }
+    lemma_forest_keys_split(gkids, cp);
+    lemma_forest_keys_split(gkids.subrange(cp, gkids.len() as int), 1);
+    assert(gkids.subrange(cp, gkids.len() as int).subrange(0, 1) =~= seq![gkids[cp]]);
+    assert(gkids.subrange(cp, gkids.len() as int).subrange(1, gkids.subrange(cp, gkids.len() as int).len() as int)
+        =~= right);
+    lemma_forest_keys_cons(seq![gkids[cp]]);
+    assert(seq![gkids[cp]].drop_first() =~= Seq::<Tree>::empty());
+    assert(forest_keys(seq![gkids[cp]]) == tree_keys(gkids[cp]));
+    assert(tree_keys(cur) == forest_keys(left) + tree_keys(gkids[cp]) + forest_keys(right));
+    assert(middle_new.to_set() == tree_keys(gkids[cp]).to_set().insert(key));
+    lemma_child_split_model_set(forest_keys(left), tree_keys(gkids[cp]), middle_new,
+        forest_keys(right), key);
+}
+
 /// Structural reconstruction for the child-split ABSORB case: child `cp` of a wf
 /// internal node split into `(ncl, ncr)` separated by `sep`, and the parent had
 /// room. The new node `Inner{gid, gseps.insert(cp, sep), gkids.update(cp,
@@ -1615,170 +1794,16 @@ pub proof fn lemma_child_split_absorb_tree_wf(
     let nseps = gseps.insert(cp, sep);
     let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
     let nt = Tree::Inner { id: gid, seps: nseps, kids: nkids };
-
-    // counts: one more separator, one more child.
+    // the combined-arrangement ingredients (sorted seps, forest_wf, cross-node
+    // ordering, model) from the shared lemma; the absorb case adds occupancy.
+    lemma_child_split_combined_wf(gid, gseps, gkids, cp, ncl, ncr, sep, key, h, cap, key_cap);
     assert(nseps.len() == gseps.len() + 1);
-    assert(nkids.len() == gkids.len() + 1);
-    assert(nkids.len() == nseps.len() + 1);
     assert(nseps.len() <= key_cap);  // gseps.len() < key_cap ⟹ +1 <= key_cap
-
-    // INDEX MAP for nkids (the splice gkids[0..cp] ++ [ncl,ncr] ++ gkids[cp+1..]):
-    //   i < cp        : nkids[i] == gkids[i]
-    //   i == cp       : nkids[cp] == ncl
-    //   i == cp+1     : nkids[cp+1] == ncr
-    //   i > cp+1      : nkids[i] == gkids[i-1]
-    assert forall|i: int| 0 <= i < nkids.len() implies #[trigger] nkids[i] == (
-        if i < cp { gkids[i] } else if i == cp { ncl } else if i == cp + 1 { ncr } else { gkids[i - 1] }
-    ) by {}
-    // INDEX MAP for nseps (gseps[0..cp] ++ [sep] ++ gseps[cp..]):
-    //   j < cp   : nseps[j] == gseps[j]
-    //   j == cp  : nseps[cp] == sep
-    //   j > cp   : nseps[j] == gseps[j - 1]
-    assert forall|j: int| 0 <= j < nseps.len() implies #[trigger] nseps[j] == (
-        if j < cp { gseps[j] } else if j == cp { sep } else { gseps[j - 1] }
-    ) by {}
-
-    // (1) sortedness of nseps. Extract the original cross-node ordering and the
-    // membership `sep ∈ child cp ∪ {key}` once, then case-split.
-    assert(cp < gseps.len() ==> keys_all_lt(gkids[cp], gseps[cp]));  // tree_wf(cur) at i==cp
-    assert(cp > 0 ==> keys_all_ge(gkids[cp], gseps[cp - 1]));        // tree_wf(cur) at i==cp
-    assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(sep)) by {
-        lemma_seq_concat_contains_right(tree_keys(ncl), tree_keys(ncr), 0);  // sep == ncr[0]
-    }
-    // `sep` is a child-cp key or == key.
-    assert(tree_keys(gkids[cp]).to_set().contains(sep) || sep == key);
-    // upper bound: sep < gseps[cp] (child keys < gseps[cp] by ordering; key < gseps[cp] by routing).
-    assert(cp < gseps.len() ==> sep < gseps[cp]) by {
-        if cp < gseps.len() {
-            lemma_keys_all_lt_set(gkids[cp], gseps[cp]);
-        }
-    }
-    // STRICT lower bound: gseps[cp-1] < sep. ncl is non-empty and all its keys are
-    // < sep (keys_all_lt(ncl, sep)) and >= gseps[cp-1] (ncl ⊆ child cp ∪{key}, both
-    // >= gseps[cp-1]). So gseps[cp-1] <= ncl[0] < sep.
-    assert(cp > 0 ==> gseps[cp - 1] < sep) by {
-        if cp > 0 {
-            lemma_keys_all_ge_set(gkids[cp], gseps[cp - 1]);
-            let m0 = tree_keys(ncl)[0];
-            // m0 == (ncl+ncr)[0] ∈ child ∪ {key} ⟹ m0 >= gseps[cp-1].
-            assert((tree_keys(ncl) + tree_keys(ncr))[0] == m0);
-            assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(m0));
-            assert(tree_keys(gkids[cp]).to_set().contains(m0) || m0 == key);
-            assert(gseps[cp - 1] <= m0);
-            // m0 < sep (keys_all_lt(ncl, sep) at index 0).
-            assert(m0 < sep);
-        }
-    }
-    assert(strictly_sorted(nseps)) by {
-        assert forall|i: int, j: int| 0 <= i < j < nseps.len() implies #[trigger] nseps[i] < #[trigger] nseps[j] by {
-            if j < cp { assert(nseps[i] == gseps[i] && nseps[j] == gseps[j]); }
-            else if i < cp && j == cp {
-                assert(nseps[i] == gseps[i] && nseps[j] == sep);
-                // gseps[i] <= gseps[cp-1] < sep (i <= cp-1, gseps sorted).
-                if i < cp - 1 { assert(gseps[i] < gseps[cp - 1]); }
-            }
-            else if i < cp && j == cp + 1 { assert(nseps[i] == gseps[i] && nseps[j] == gseps[cp]); }
-            else if i < cp && j > cp + 1 { assert(nseps[i] == gseps[i] && nseps[j] == gseps[j - 1]); }
-            else if i == cp && j == cp + 1 { assert(nseps[i] == sep && nseps[j] == gseps[cp]); }
-            else if i == cp && j > cp + 1 { assert(nseps[i] == sep && nseps[j] == gseps[j - 1]); assert(gseps[cp] <= gseps[j - 1]); }
-            else { assert(nseps[i] == gseps[i - 1] && nseps[j] == gseps[j - 1]); }
-        }
-    }
-
-    // (2) children forest wf at h-1: left part (gkids[0..cp]) + [ncl,ncr] + right
-    // (gkids[cp+1..]); each piece wf, concat preserves wf.
-    assert(forest_wf(gkids, (h - 1) as nat, cap, key_cap));  // tree_wf(cur)
-    let left = gkids.subrange(0, cp);
-    let right = gkids.subrange(cp + 1, gkids.len() as int);
-    lemma_forest_wf_subrange(gkids, (h - 1) as nat, cap, key_cap, 0, cp);
-    lemma_forest_wf_subrange(gkids, (h - 1) as nat, cap, key_cap, cp + 1, gkids.len() as int);
-    // [ncl, ncr] wf forest.
-    assert(forest_wf(seq![ncl, ncr], (h - 1) as nat, cap, key_cap)) by {
-        lemma_forest_wf_cons(seq![ncl, ncr], (h - 1) as nat, cap, key_cap);
-        assert(seq![ncl, ncr].drop_first() =~= seq![ncr]);
-        lemma_forest_wf_cons(seq![ncr], (h - 1) as nat, cap, key_cap);
-        assert(seq![ncr].drop_first() =~= Seq::<Tree>::empty());
-    }
-    // nkids == left ++ [ncl,ncr] ++ right.
-    assert(nkids =~= left + seq![ncl, ncr] + right);
-    lemma_forest_wf_concat(left, seq![ncl, ncr], (h - 1) as nat, cap, key_cap);
-    lemma_forest_wf_concat(left + seq![ncl, ncr], right, (h - 1) as nat, cap, key_cap);
-    assert(forest_wf(nkids, (h - 1) as nat, cap, key_cap));
-
-    // (3) cross-node ordering of nkids vs nseps. Map each i back:
-    assert forall|i: int| 0 <= i < nseps.len() implies keys_all_lt(#[trigger] nkids[i], nseps[i]) by {
-        if i < cp { assert(nkids[i] == gkids[i] && nseps[i] == gseps[i]); /* tree_wf(cur) */ }
-        else if i == cp { assert(nkids[i] == ncl && nseps[i] == sep); /* keys_all_lt(ncl, sep) given */ }
-        else if i == cp + 1 {
-            // nkids[cp+1] == ncr, nseps[cp+1] == gseps[cp]: ncr ⊆ child cp ∪{key}, < gseps[cp].
-            assert(nkids[i] == ncr && nseps[i] == gseps[cp]);
-            lemma_keys_all_lt_set(gkids[cp], gseps[cp]);  // child cp keys < gseps[cp]
-            lemma_keys_all_lt_set(ncr, gseps[cp]);
-            assert forall|k: nat| tree_keys(ncr).to_set().contains(k) implies k < gseps[cp] by {
-                assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(k)) by {
-                    lemma_seq_concat_to_set(tree_keys(ncl), tree_keys(ncr));
-                }
-                if tree_keys(gkids[cp]).to_set().contains(k) { } else { assert(k == key); }
-            }
-        }
-        else { assert(nkids[i] == gkids[i - 1] && nseps[i] == gseps[i - 1]); /* tree_wf(cur) at i-1 */ }
-    }
-    assert forall|i: int| 0 < i < nkids.len() implies keys_all_ge(#[trigger] nkids[i], nseps[i - 1]) by {
-        if i < cp { assert(nkids[i] == gkids[i] && nseps[i - 1] == gseps[i - 1]); }
-        else if i == cp {
-            // nkids[cp] == ncl, nseps[cp-1] == gseps[cp-1]: ncl ⊆ child cp ∪{key}, >= gseps[cp-1].
-            assert(nkids[i] == ncl && nseps[i - 1] == gseps[cp - 1]);
-            lemma_keys_all_ge_set(gkids[cp], gseps[cp - 1]);
-            lemma_keys_all_ge_set(ncl, gseps[cp - 1]);
-            assert forall|k: nat| tree_keys(ncl).to_set().contains(k) implies gseps[cp - 1] <= k by {
-                assert((tree_keys(ncl) + tree_keys(ncr)).to_set().contains(k)) by {
-                    lemma_seq_concat_to_set(tree_keys(ncl), tree_keys(ncr));
-                }
-                if tree_keys(gkids[cp]).to_set().contains(k) { } else { assert(k == key); }
-            }
-        }
-        else if i == cp + 1 { assert(nkids[i] == ncr && nseps[i - 1] == sep); /* keys_all_ge(ncr, sep) given */ }
-        else { assert(nkids[i] == gkids[i - 1] && nseps[i - 1] == gseps[i - 2]); }
-    }
-
-    // (4) heights: forest wf at h-1 ⟹ tree_wf(nt, h).
+    // heights: forest wf at h-1 ⟹ tree_wf(nt, h).
     lemma_forest_wf_max_height(nkids, (h - 1) as nat, cap, key_cap);
     assert(tree_wf(nt, h, cap, key_cap, false));
-
-    // (5) model: tree_keys(nt) == forest_keys(nkids) == forest_keys(left) +
-    // (tree_keys(ncl)+tree_keys(ncr)) + forest_keys(right). The original is
-    // forest_keys(left) + tree_keys(gkids[cp]) + forest_keys(right). The middle
-    // grows from child to child ∪{key} (as sets).
-    // tree_keys(nt) == forest_keys(nkids) == forest_keys(left) + middle_new +
-    // forest_keys(right), where nkids == left ++ [ncl,ncr] ++ right and middle_new
-    // == tree_keys(ncl) + tree_keys(ncr).
-    let middle_new = tree_keys(ncl) + tree_keys(ncr);
-    lemma_forest_keys_concat(left + seq![ncl, ncr], right);
-    lemma_forest_keys_concat(left, seq![ncl, ncr]);
-    assert(forest_keys(seq![ncl, ncr]) == middle_new) by {
-        lemma_forest_keys_cons(seq![ncl, ncr]);
-        assert(seq![ncl, ncr].drop_first() =~= seq![ncr]);
-        lemma_forest_keys_cons(seq![ncr]);
-        assert(seq![ncr].drop_first() =~= Seq::<Tree>::empty());
-    }
-    assert(tree_keys(nt) == forest_keys(left) + middle_new + forest_keys(right)) by {
-        assert(nkids =~= left + seq![ncl, ncr] + right);
-    }
-    // tree_keys(cur) == forest_keys(left) + tree_keys(gkids[cp]) + forest_keys(right).
-    lemma_forest_keys_split(gkids, cp);          // forest_keys(gkids) split at cp
-    lemma_forest_keys_split(gkids.subrange(cp, gkids.len() as int), 1);
-    assert(gkids.subrange(cp, gkids.len() as int).subrange(0, 1) =~= seq![gkids[cp]]);
-    assert(gkids.subrange(cp, gkids.len() as int).subrange(1, gkids.subrange(cp, gkids.len() as int).len() as int)
-        =~= right);
-    lemma_forest_keys_cons(seq![gkids[cp]]);
-    assert(seq![gkids[cp]].drop_first() =~= Seq::<Tree>::empty());
-    assert(forest_keys(seq![gkids[cp]]) == tree_keys(gkids[cp]));
-    assert(tree_keys(cur) == forest_keys(left) + tree_keys(gkids[cp]) + forest_keys(right));
-    // middle grows from child to child ∪ {key} as SETS:
-    assert(middle_new.to_set() == tree_keys(gkids[cp]).to_set().insert(key));  // precondition
-    lemma_child_split_model_set(forest_keys(left), tree_keys(gkids[cp]), middle_new,
-        forest_keys(right), key);
-    // ⟹ tree_keys(nt).to_set() == tree_keys(cur).to_set().insert(key).
+    // model: tree_keys(nt) == forest_keys(nkids).
+    assert(tree_keys(nt) == forest_keys(nkids));
 }
 
 /// `(a + b).to_set().contains(b[i])` for a valid index `i` into `b`.
