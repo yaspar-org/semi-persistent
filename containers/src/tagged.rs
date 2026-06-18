@@ -64,6 +64,12 @@ impl<T: Tagged + Default> Opt<T> {
     }
 }
 
+impl<T: Tagged + Default> Default for Opt<T> {
+    fn default() -> Self {
+        Opt::none()
+    }
+}
+
 impl<T: Tagged> Opt<T> {
     pub fn some(val: T) -> Self {
         Opt(val.into_repr())

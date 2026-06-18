@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Multiplicities for AC multiset nodes — newtype over u32.
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct Multiplicity(pub u32);
 

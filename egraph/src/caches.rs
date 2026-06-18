@@ -562,7 +562,10 @@ impl<
         }
     }
 
-    pub fn restore(&mut self, token: PoolCacheToken) {
+    pub fn restore(&mut self, token: PoolCacheToken)
+    where
+        C: Default,
+    {
         self.nodes.restore(token.nodes);
         self.children.restore(token.children);
         if let (Some(h), Some(tok)) = (&mut self.history_nodes, token.history_nodes) {

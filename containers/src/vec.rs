@@ -52,7 +52,16 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
     }
 
     pub fn push(&mut self, value: T) {
+        let old_len = self.store.len();
         self.store.push(value);
+        // Re-entering a popped-but-already-captured marked slot: mark it
+        // captured so a later `set` does not log a second diff entry for it
+        // (preserves first-write-wins / the ≤ saved_len bound).
+        let reentered =
+            TRACK && !self.frames.is_empty() && old_len.as_usize() < self.active_saved_len.as_usize();
+        if reentered {
+            self.store.mark_captured(old_len);
+        }
     }
 
     pub fn pop(&mut self) -> Option<T> {
@@ -61,9 +70,11 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         }
         let i = I::try_from_usize(self.store.len().as_usize() - 1).expect("underflow");
         let value = self.store.get(i);
+        // Conditional (first-write-wins) capture: at most one diff entry per
+        // index per frame, so the log stays bounded by saved_len.
         if TRACK && !self.frames.is_empty() {
             self.store
-                .force_capture(i, self.active_saved_len, &mut self.diff_log);
+                .capture(i, self.active_saved_len, &mut self.diff_log);
         }
         self.store.pop();
         Some(value)
@@ -122,7 +133,10 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         token
     }
 
-    pub fn restore(&mut self, token: VecToken) {
+    pub fn restore(&mut self, token: VecToken)
+    where
+        T: Default,
+    {
         assert!(TRACK, "restore() called on untracked vec");
         assert_eq!(
             token.container_id, self.id,
@@ -143,7 +157,12 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         let saved_len = target_frame.saved_len;
         let diff_start = target_frame.diff_start;
 
-        self.store.truncate(saved_len);
+        // Regrow the popped region to `saved_len` BEFORE replay so the backward
+        // replay is a pure overwrite. Conditional capture no longer logs every
+        // popped cell, so the old "regrow by pushing during replay" path lost the
+        // contiguity it relied on. The default fillers are never observed: every
+        // regrown cell is overwritten by its captured diff value below.
+        self.store.resize_default(saved_len);
 
         for i in (diff_start..self.diff_log.len()).rev() {
             let (ref old_val, idx) = self.diff_log[i];
@@ -189,6 +208,13 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
     /// Total bytes used by this Vec: struct + store + diff_log + frames + forks.
     pub fn total_bytes(&self) -> usize {
         core::mem::size_of::<Self>() + self.store.heap_bytes() + self.tracking_bytes()
+    }
+
+    /// Number of entries currently in the diff log. Within a single frame this
+    /// is bounded by `saved_len` (first-write-wins: at most one entry per index
+    /// captured below the active frame's saved length).
+    pub fn diff_log_len(&self) -> usize {
+        self.diff_log.len()
     }
 
     /// Bytes consumed by diff tracking only: diff_log + frames + fork history.

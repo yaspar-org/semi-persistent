@@ -402,7 +402,10 @@ where
         }
     }
 
-    pub fn restore(&mut self, token: NodeStoreToken) {
+    pub fn restore(&mut self, token: NodeStoreToken)
+    where
+        C: Default,
+    {
         self.routing.restore(token.routing);
         self.plain0.restore(token.plain0);
         self.plain1.restore(token.plain1);

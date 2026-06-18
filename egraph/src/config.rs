@@ -23,7 +23,9 @@ pub trait EGraphConfig: 'static {
     /// Use-list node id.
     type UN: DenseId;
     /// AC child type (e.g. `(G, Multiplicity)`).
-    type C: Tagged + Clone + Copy + Hash + Eq + core::fmt::Debug;
+    /// `Default` is required so the semi-persistent stores can regrow popped
+    /// regions with throwaway fillers during `restore` (never observed).
+    type C: Tagged + Clone + Copy + Hash + Eq + core::fmt::Debug + Default;
     /// Multiplicity type for AC nodes.
     type M: Copy + Clone + Eq + Ord + Hash + core::fmt::Debug + From<u32> + Into<u32>;
     /// Extract the global id from an AC child.
