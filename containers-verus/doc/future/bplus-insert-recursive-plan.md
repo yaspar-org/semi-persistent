@@ -142,7 +142,8 @@ landed layout mutators + ghost lemmas together with the arena framing
 (`lemma_binds_frame` + `tree_disjoint`), returning the `Option<(sep, child)>`
 split product and re-establishing `wf` over the new `kids` at each level.
 
-**M4c progress (step-3, absorb path DONE).** `insert_rec` structure:
+**M4c progress (step-3, `insert_rec` VERIFIED end-to-end; two reconstruction
+lemmas remain `external_body`).** `insert_rec` structure:
 - leaf delegation, internal `find_gt` descent, recursive call: VERIFIED.
 - the child-returns-None **absorb branch**: FULLY VERIFIED, no assumes. Rebuilds
   the parent over `kids.update(cp, ncl)` via `reconstruct_absorb`, which composes
@@ -152,14 +153,45 @@ split product and re-establishing `wf` over the new `kids` at each level.
   decompose/compose + `lemma_forest_links_frame_ids`), `lemma_forest_disjoint_
   update` (disjoint), and `reconstruct_absorb_model` (model). The frame ensures
   (slots outside `tree_ids(cur)` unchanged) is threaded from the recursion.
-- the child-returns-Some **split branch**: exec scaffold in place (parent-absorb
-  sub-case via `internal_insert_at` when room; parent-split sub-case via
-  `internal_split_at` otherwise). Two `assume(false)` remain for the two
-  reconstructions (`reconstruct_child_split_absorb` + the parent-split one). These
-  mirror `reconstruct_absorb` / the leaf split; all underlying lemmas are landed.
+- the child-returns-Some **split branch**: VERIFIED at the `insert_rec` level. The
+  parent-absorb sub-case (`internal_insert_at` when room) and parent-split
+  sub-case (`internal_split_at` otherwise) both discharge `insert_rec`'s
+  postcondition. The two reconstruction lemmas they call —
+  `reconstruct_child_split_absorb` and `reconstruct_parent_split` — are still
+  `external_body` (proof pending), but now carry the CORRECT subset+freshness
+  ensures, validated by the `footprint_contract_holds` property test. No
+  `assume(false)` anywhere.
 
-So the absorb half of the internal case is real and verified; the split half's
-reconstructions are the remaining work, then the top-level wrapper (step 4).
+### The footprint-contract spec bug (caught by runtime evaluation, fixed)
+
+`insert_rec`'s `None` postcondition originally claimed *exact* footprint
+equality: `tree_ids(nl) == tree_ids(cur)` and the same for `tree_leaf_ids`. That
+is **false**: a `None` return means only "this node's root id is unchanged", not
+"the footprint is unchanged" — a node deep under child `cp` can split and be
+absorbed at every intervening level, allocating fresh leaf + internal slots, so
+the subtree's id set GROWS even though the recursion returned `None`. A new
+runtime evaluator (`footprint_contract_holds`, which reifies the ghost
+`tree_ids`/`tree_leaf_ids` before and after each insert) measured this: **869 of
+8800 inserts (~10%) grow the footprint on a `None` return.** A state-`wf` check
+cannot see this (the tree stays well-formed); only evaluating the *transition
+contract* exposes it.
+
+The honest contract is the same subset+freshness the `Some` arm already used,
+plus **first-leaf preservation** (a split only ever splices a fresh leaf to the
+RIGHT, so a subtree's leftmost leaf never moves — and that, not full leaf-id
+sequence equality, is all the leaf-link chain reads at child boundaries). The
+fix cascaded through `reconstruct_absorb` and its forest lemmas
+(`lemma_forest_disjoint_update` now takes a freshness `bound` and propagates
+pairwise disjointness; `lemma_forest_leaf_ids_update_first` replaces the
+exact-sequence `lemma_forest_leaf_ids_update`; `lemma_forest_binds_update` dropped
+its unused footprint-equality requires; `lemma_forest_links_update` /
+`lemma_build_forest_links` / `reconstruct_absorb_links` now require only
+first-leaf preservation). All re-verified, no regressions (755 verified, 0
+errors crate-wide).
+
+So the internal case is real and verified end to end; the two split-side
+reconstruction lemmas are the remaining `external_body` proofs, then the
+top-level wrapper (step 4).
 
 ## What is genuinely new vs. reused
 

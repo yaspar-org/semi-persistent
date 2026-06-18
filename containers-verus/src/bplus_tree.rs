@@ -250,27 +250,41 @@ pub proof fn lemma_leaf_id_offset_last(kids: Seq<Tree>, cp: int)
 /// forest's in-order leaf ids. (Absorb keeps the child's leaf sequence — the
 /// leaf base case adds keys not leaves; the internal absorb's recursion preserves
 /// the leaf-id seq by its own ensures.)
-pub proof fn lemma_forest_leaf_ids_update(kids: Seq<Tree>, m: int, nc: Tree)
+/// Updating child `m` to a subtree whose FIRST leaf is unchanged (and which is
+/// non-empty) preserves the forest's first leaf id and keeps every child's
+/// first-leaf at the same boundary position. Full leaf-id-sequence equality is
+/// NOT required (a deep-absorb split grows the sequence) — only the leftmost
+/// leaf is pinned, which is all `forest_links_to` reads at child boundaries.
+/// (Part of the subset+freshness contract fix; see `insert_rec` (F0).)
+pub proof fn lemma_forest_leaf_ids_update_first(kids: Seq<Tree>, m: int, nc: Tree)
     requires
         0 <= m < kids.len(),
-        tree_leaf_ids(nc) == tree_leaf_ids(kids[m]),
+        tree_leaf_ids(nc).len() >= 1,
+        tree_leaf_ids(kids[m]).len() >= 1,
+        tree_leaf_ids(nc)[0] == tree_leaf_ids(kids[m])[0],
+        forall|i: int| 0 <= i < kids.len() ==> #[trigger] tree_leaf_ids(kids[i]).len() >= 1,
     ensures
-        forest_leaf_ids(kids.update(m, nc)) == forest_leaf_ids(kids),
+        // the forest's leftmost leaf is unchanged, and so is every child's first
+        // leaf at its own index (the only leaf-id facts the link chain needs).
+        forest_leaf_ids(kids.update(m, nc)).len() >= 1,
+        forest_leaf_ids(kids.update(m, nc))[0] == forest_leaf_ids(kids)[0],
+        forall|i: int| 0 <= i < kids.len() ==>
+            #[trigger] tree_leaf_ids(kids.update(m, nc)[i])[0] == tree_leaf_ids(kids[i])[0],
     decreases kids,
 {
     lemma_forest_leaf_ids_cons(kids);
     let u = kids.update(m, nc);
     lemma_forest_leaf_ids_cons(u);
-    if m == 0 {
-        assert(u[0] == nc);
-        assert(u.drop_first() =~= kids.drop_first());
-    } else {
-        let df = kids.drop_first();
-        assert(u[0] == kids[0]);
-        assert(u.drop_first() =~= df.update(m - 1, nc));
-        assert(df[m - 1] == kids[m]);
-        lemma_forest_leaf_ids_update(df, m - 1, nc);
+    // per-index first-leaf preservation (i==m gives nc's preserved first leaf).
+    assert forall|i: int| 0 <= i < kids.len() implies
+        #[trigger] tree_leaf_ids(u[i])[0] == tree_leaf_ids(kids[i])[0] by {
+        if i == m { assert(u[i] == nc); } else { assert(u[i] == kids[i]); }
     }
+    // forest_leaf_ids(_) head == tree_leaf_ids(child 0) head (cons unfold), and
+    // child 0's first leaf is preserved by the per-index fact above.
+    assert(tree_leaf_ids(u[0]).len() >= 1);
+    assert(forest_leaf_ids(u)[0] == tree_leaf_ids(u[0])[0]);
+    assert(forest_leaf_ids(kids)[0] == tree_leaf_ids(kids[0])[0]);
 }
 
 /// An internal node's own id is not in any child's footprint (`tree_disjoint`'s
@@ -739,43 +753,138 @@ pub proof fn lemma_forest_wf_update(kids: Seq<Tree>, h: nat, cap: nat, key_cap: 
     }
 }
 
-/// Updating child `m` to a subtree with the *same root id* and the *same id
-/// footprint* preserves the forest's id set and disjointness. The absorb step's
-/// new subtree keeps the child's arena slot (id unchanged) and allocates no new
-/// nodes that escape the old footprint, so `tree_ids(nc) == tree_ids(kids[m])`.
-pub proof fn lemma_forest_disjoint_update(kids: Seq<Tree>, m: int, nc: Tree)
+/// Updating child `m` to a GROWN subtree (same root id; old ids retained; new
+/// ids all `>= bound`, where `bound` is above every old forest id) preserves
+/// `forest_disjoint`. This is the absorb step's real footprint relation: a node
+/// deep under child `m` split, so `nc` has more ids than `kids[m]` — but the new
+/// ids are freshly-allocated tail slots (`>= bound`), hence disjoint from every
+/// sibling (whose ids are all `< bound`). The old exact-`==` form was a spec bug
+/// (a `None` recursion result can still grow the footprint); see `bplus.rs`
+/// `insert_rec`'s `(F0)` clause and the `footprint_contract_holds` runtime test.
+pub proof fn lemma_forest_disjoint_update(kids: Seq<Tree>, m: int, nc: Tree, bound: nat)
     requires
         forest_disjoint(kids),
         0 <= m < kids.len(),
         tree_disjoint(nc),
-        tree_ids(nc) == tree_ids(kids[m]),
-        (forall|i: int| 0 <= i < kids.len() && i != m ==>
-            (#[trigger] tree_ids(kids[i])).disjoint(tree_ids(kids[m]))),
+        // old ids retained, new ids fresh (>= bound).
+        tree_ids(kids[m]).subset_of(tree_ids(nc)),
+        (forall|id: nat| tree_ids(nc).contains(id)
+            ==> tree_ids(kids[m]).contains(id) || id >= bound),
+        // bound is above every old forest id (so siblings are all < bound).
+        (forall|id: nat| #[trigger] forest_ids(kids).contains(id) ==> id < bound),
+        // FULL pairwise disjointness of the old children (tree_disjoint(parent)).
+        (forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+            (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j]))),
     ensures
         forest_disjoint(kids.update(m, nc)),
-        forest_ids(kids.update(m, nc)) == forest_ids(kids),
+        // footprint grew monotonically by fresh ids only.
+        forest_ids(kids).subset_of(forest_ids(kids.update(m, nc))),
+        (forall|id: nat| #[trigger] forest_ids(kids.update(m, nc)).contains(id)
+            ==> forest_ids(kids).contains(id) || id >= bound),
+        // pairwise disjointness propagates to the updated forest (so the caller
+        // can re-establish tree_disjoint's explicit pairwise clause on the parent).
+        (forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+            (#[trigger] tree_ids(kids.update(m, nc)[i]))
+                .disjoint(#[trigger] tree_ids(kids.update(m, nc)[j]))),
     decreases kids,
 {
     lemma_forest_disjoint_cons(kids);
+    // pairwise disjointness of the GROWN forest. For a pair (i, j): if neither is
+    // m, both are old children, disjoint by hypothesis. If one is m, nc's ids are
+    // old-child-m ids (disjoint from the other, by hypothesis) PLUS fresh (>=
+    // bound) ids; the other child's ids are all < bound, so they cannot collide.
+    let u0 = kids.update(m, nc);
+    assert forall|i: int, j: int| 0 <= i < j < kids.len() implies
+        (#[trigger] tree_ids(u0[i])).disjoint(#[trigger] tree_ids(u0[j])) by {
+        assert forall|id: nat| tree_ids(u0[i]).contains(id) && tree_ids(u0[j]).contains(id)
+            implies false by {
+            if i != m && j != m {
+                assert(u0[i] == kids[i] && u0[j] == kids[j]);
+                assert(tree_ids(kids[i]).disjoint(tree_ids(kids[j])));
+            } else if i == m {
+                // u0[i] == nc, u0[j] == kids[j] (j != i == m). id in both.
+                assert(u0[j] == kids[j]);
+                // id in kids[j] ⟹ id < bound (forest_id). id in nc and < bound
+                // ⟹ id in kids[m] (freshness). but kids[m]⊥kids[j].
+                lemma_forest_id_in_forest(kids, j, id);
+                assert(tree_ids(kids[m]).contains(id));
+                assert(tree_ids(kids[m]).disjoint(tree_ids(kids[j])));
+            } else {
+                // j == m: u0[j] == nc, u0[i] == kids[i] (i != m).
+                assert(u0[i] == kids[i]);
+                lemma_forest_id_in_forest(kids, i, id);
+                assert(tree_ids(kids[m]).contains(id));
+                assert(tree_ids(kids[i]).disjoint(tree_ids(kids[m])));
+            }
+        }
+    }
     lemma_forest_ids_cons(kids);
     let u = kids.update(m, nc);
     lemma_forest_disjoint_cons(u);
     lemma_forest_ids_cons(u);
+    // sibling ids are all < bound (subset of forest_ids(kids)), so they are
+    // disjoint from nc's fresh (>= bound) ids; on the old ids nc agrees with
+    // kids[m]. Establish nc disjoint from each sibling.
+    assert forall|i: int| 0 <= i < kids.len() && i != m implies
+        (#[trigger] tree_ids(kids[i])).disjoint(tree_ids(nc)) by {
+        assert forall|id: nat| tree_ids(kids[i]).contains(id) && tree_ids(nc).contains(id)
+            implies false by {
+            // id in sibling i ⟹ id in forest_ids(kids) ⟹ id < bound.
+            lemma_forest_id_in_forest(kids, i, id);
+            // id in nc and < bound ⟹ id in kids[m] (freshness contrapositive).
+            assert(tree_ids(kids[m]).contains(id));
+            // but kids[i] disjoint kids[m] — contradiction.
+            assert(tree_ids(kids[i]).disjoint(tree_ids(kids[m])));
+        }
+    }
     if m == 0 {
         assert(u[0] == nc);
         assert(u.drop_first() =~= kids.drop_first());
-        assert(tree_ids(u[0]) == tree_ids(kids[0]));
+        // forest_ids(u) == tree_ids(nc) ∪ forest_ids(df); forest_ids(kids) ==
+        // tree_ids(kids[0]) ∪ forest_ids(df). subset + freshness follow.
+        assert forall|i: int| 0 <= i < kids.drop_first().len() implies
+            (#[trigger] tree_ids(kids.drop_first()[i])).disjoint(tree_ids(nc)) by {
+            assert(kids.drop_first()[i] == kids[i + 1]);
+        }
     } else {
         let df = kids.drop_first();
         assert(u[0] == kids[0]);
         assert(u.drop_first() =~= df.update(m - 1, nc));
         assert(df[m - 1] == kids[m]);
-        assert forall|i: int| 0 <= i < df.len() && i != m - 1 implies
-            (#[trigger] tree_ids(df[i])).disjoint(tree_ids(df[m - 1])) by {
-            assert(df[i] == kids[i + 1]);
+        assert forall|i: int, j: int| 0 <= i < j < df.len() implies
+            (#[trigger] tree_ids(df[i])).disjoint(#[trigger] tree_ids(df[j])) by {
+            assert(df[i] == kids[i + 1]); assert(df[j] == kids[j + 1]);
         }
-        lemma_forest_disjoint_update(df, m - 1, nc);
+        assert forall|id: nat| #[trigger] forest_ids(df).contains(id) implies id < bound by {
+            lemma_forest_ids_tail_subset(kids, id);
+        }
+        lemma_forest_disjoint_update(df, m - 1, nc, bound);
+        // head kids[0] is a sibling (0 != m), disjoint from nc, all its ids < bound.
+        assert(tree_ids(kids[0]).disjoint(tree_ids(nc)));
     }
+}
+
+/// `tree_ids(kids[i]) ⊆ forest_ids(kids)` for any valid child index.
+pub proof fn lemma_forest_id_in_forest(kids: Seq<Tree>, i: int, id: nat)
+    requires 0 <= i < kids.len(), tree_ids(kids[i]).contains(id),
+    ensures forest_ids(kids).contains(id),
+    decreases kids,
+{
+    lemma_forest_ids_cons(kids);
+    if i == 0 {
+    } else {
+        let df = kids.drop_first();
+        assert(df[i - 1] == kids[i]);
+        lemma_forest_id_in_forest(df, i - 1, id);
+    }
+}
+
+/// `forest_ids(kids.drop_first()) ⊆ forest_ids(kids)`.
+pub proof fn lemma_forest_ids_tail_subset(kids: Seq<Tree>, id: nat)
+    requires kids.len() > 0, forest_ids(kids.drop_first()).contains(id),
+    ensures forest_ids(kids).contains(id),
+{
+    lemma_forest_ids_cons(kids);
 }
 
 /// Updating child `m` to a subtree with the same in-order keys preserves the
