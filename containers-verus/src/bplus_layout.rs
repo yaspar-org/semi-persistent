@@ -288,6 +288,17 @@ pub trait NodeLayout: Sized {
         }
     }
 
+    /// Expose `isplit_cchild`'s three cases generically (a trait spec fn is opaque
+    /// to callers through the generic `L`; this is the same idiom as
+    /// `lemma_isplit_mid`). Trivial per-impl bodies unfold the `open` definition.
+    proof fn lemma_isplit_cchild(n: Self::Node, cp: int, new_child: Self::ArenaIdx, j: int)
+        ensures
+            Self::isplit_cchild(n, cp, new_child, j) == (
+                if j <= cp { Self::child_view(n, j) }
+                else if j == cp + 1 { new_child.as_nat() }
+                else { Self::child_view(n, j - 1) }
+            );
+
     /// Build a fresh internal node with one separator `sep` and two children
     /// `(left, right)` arena ids. Production's new-root construction
     /// (`set_count(1); set_internal_child(0, left); set_internal_child(1,
@@ -728,6 +739,7 @@ macro_rules! gen_layout_u32 {
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
             fn isplit_mid() -> (m: usize) { $key_cap / 2 }
             proof fn lemma_isplit_mid() {}
+            proof fn lemma_isplit_cchild(n: Self::Node, cp: int, new_child: Self::ArenaIdx, j: int) {}
 
             fn internal_split_at(n: &$node, cp: usize, new_sep: u32, new_child: u32)
                 -> (res: ($node, $node, u32))
@@ -1113,6 +1125,7 @@ macro_rules! gen_layout_u64 {
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
             fn isplit_mid() -> (m: usize) { $key_cap / 2 }
             proof fn lemma_isplit_mid() {}
+            proof fn lemma_isplit_cchild(n: Self::Node, cp: int, new_child: Self::ArenaIdx, j: int) {}
 
             fn internal_split_at(n: &$node, cp: usize, new_sep: u64, new_child: usize)
                 -> (res: ($node, $node, u64))

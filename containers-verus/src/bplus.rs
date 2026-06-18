@@ -3030,6 +3030,62 @@ pub proof fn lemma_child_split_binds_node<K, L, S, const TRACK: bool>(
     }
 }
 
+/// The combined node's child slots (`isplit_cchild`, what `internal_split_at`
+/// distributes to the two halves) equal the spliced children's root ids: for all
+/// `0 <= j < ckids.len()`, `isplit_cchild(pnode, cp, rid, j) == tree_root_id(
+/// ckids[j])` where `ckids = gkids.update(cp, ncl).insert(cp+1, ncr)`. `pnode` is
+/// the ORIGINAL parent node (binds `gkids`' root ids); `ncl`/`ncr` carry the new
+/// children's root ids (`gkids[cp]`'s and `rid`). This is the bridge that lets
+/// the parent-split halves' `binds` reduce to the already-bound `ckids`.
+pub proof fn lemma_isplit_cchild_is_ckid<K, L, S, const TRACK: bool>(
+    a1: Seq<L::Node>,
+    gid: nat,
+    gseps: Seq<nat>,
+    gkids: Seq<Tree>,
+    cp: int,
+    ncl: Tree,
+    ncr: Tree,
+    rid: L::ArenaIdx,
+    pnode: L::Node,
+    j: int,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        0 <= cp < gkids.len(),
+        0 <= j < gkids.len() + 1,  // ckids has one more child
+        pnode == a1[gid as int],
+        // pnode binds gkids' root ids (binds(a1, cur) Inner arm).
+        (forall|i: int| 0 <= i < gkids.len() ==> L::child_view(pnode, i) == crate::bplus_tree::tree_root_id(#[trigger] gkids[i])),
+        crate::bplus_tree::tree_root_id(ncl) == crate::bplus_tree::tree_root_id(gkids[cp]),
+        crate::bplus_tree::tree_root_id(ncr) == rid.as_nat(),
+    ensures
+        ({
+            let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+            L::isplit_cchild(pnode, cp, rid, j) == crate::bplus_tree::tree_root_id(ckids[j])
+        }),
+{
+    let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+    // ckids index map (the splice).
+    assert(ckids[j] == (
+        if j < cp { gkids[j] } else if j == cp { ncl } else if j == cp + 1 { ncr } else { gkids[j - 1] }
+    ));
+    // expose isplit_cchild's cases generically.
+    L::lemma_isplit_cchild(pnode, cp, rid, j);
+    // isplit_cchild: j<=cp -> child_view(pnode,j); j==cp+1 -> rid; else child_view(pnode,j-1).
+    if j < cp {
+        assert(L::child_view(pnode, j) == crate::bplus_tree::tree_root_id(gkids[j]));
+    } else if j == cp {
+        assert(L::child_view(pnode, cp) == crate::bplus_tree::tree_root_id(gkids[cp]));
+        assert(crate::bplus_tree::tree_root_id(ncl) == crate::bplus_tree::tree_root_id(gkids[cp]));
+    } else if j == cp + 1 {
+    } else {
+        assert(L::child_view(pnode, j - 1) == crate::bplus_tree::tree_root_id(gkids[j - 1]));
+    }
+}
+
 /// `tree_disjoint(nt)` + footprint subset/freshness + first-leaf preservation for
 /// the child-split splice: a thin arena-side wrapper that supplies the freshness
 /// `bound = arena1.len()` (every old id is in range, every new id is a fresh tail
