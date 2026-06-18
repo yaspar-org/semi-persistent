@@ -3829,6 +3829,43 @@ pub proof fn lemma_forest_links_split_at<L: NodeLayout>(arena: Seq<L::Node>, kid
     }
 }
 
+/// Both halves of a parent split get their `leaf_links_to` from the combined
+/// chain `forest_links_to(a2, ckids, succ)`: split it at `m == imid+1` (the right
+/// half's start), then compose each run into a whole-subtree chain. The left half
+/// `Inner{lid, lseps, ckids[0..m]}` links to `ckids[m]`'s first leaf (the right
+/// half's leftmost leaf); the right half `Inner{rid, rseps, ckids[m..]}` links to
+/// `succ`. `lseps`/`rseps` are arbitrary (leaf_links ignores separators).
+pub proof fn lemma_parent_split_half_links<L: NodeLayout>(
+    a2: Seq<L::Node>,
+    ckids: Seq<Tree>,
+    lid: nat,
+    rid: nat,
+    lseps: Seq<nat>,
+    rseps: Seq<nat>,
+    succ: nat,
+    m: int,
+)
+    requires
+        forest_links_to::<L>(a2, ckids, succ),
+        0 < m < ckids.len(),
+        forall|i: int| 0 <= i < ckids.len() ==> #[trigger] crate::bplus_tree::tree_leaf_ids(ckids[i]).len() >= 1,
+    ensures
+        leaf_links_to::<L>(a2, Tree::Inner { id: lid, seps: lseps, kids: ckids.subrange(0, m) },
+            crate::bplus_tree::tree_leaf_ids(ckids[m])[0]),
+        leaf_links_to::<L>(a2, Tree::Inner { id: rid, seps: rseps, kids: ckids.subrange(m, ckids.len() as int) }, succ),
+{
+    let lkids = ckids.subrange(0, m);
+    let rkids = ckids.subrange(m, ckids.len() as int);
+    lemma_forest_links_split_at::<L>(a2, ckids, succ, m);
+    // each half's children non-empty (subrange of non-empty children).
+    assert forall|i: int| 0 <= i < lkids.len() implies
+        #[trigger] crate::bplus_tree::tree_leaf_ids(lkids[i]).len() >= 1 by { assert(lkids[i] == ckids[i]); }
+    assert forall|i: int| 0 <= i < rkids.len() implies
+        #[trigger] crate::bplus_tree::tree_leaf_ids(rkids[i]).len() >= 1 by { assert(rkids[i] == ckids[m + i]); }
+    lemma_forest_links_compose::<L>(a2, lid, lseps, lkids, crate::bplus_tree::tree_leaf_ids(ckids[m])[0]);
+    lemma_forest_links_compose::<L>(a2, rid, rseps, rkids, succ);
+}
+
 /// The leaf-link analogue of `lemma_forest_links_update`, but for the child-split
 /// SPLICE: child `cp` becomes the two halves `ncl, ncr`. The chain re-threads as
 /// `… -> ncl -> ncr -> (cp+1's first leaf | succ) -> …`. `ncl` chains to `ncr`'s
