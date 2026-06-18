@@ -529,7 +529,32 @@ where
     // Rebuild — worklist-based congruence closure
     // -----------------------------------------------------------------------
 
+    /// Rebuild to a congruence-closed, AC-congruence-closed fixpoint.
+    ///
+    /// Two interleaved closures run to a joint fixpoint (see
+    /// `doc/future/ac-congruence-completeness-plan.md` §2, Option A):
+    /// - [`rebuild_congruence`](Self::rebuild_congruence): ordinary worklist-driven
+    ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
+    /// - [`ac_complete_round`](Self::ac_complete_round): AC completion (substitutes
+    ///   equal *sub-sums*), which canonization alone misses.
+    ///
+    /// A completion round may push new merges onto the worklist; we drain them with
+    /// another congruence pass, then complete again, until a whole completion round
+    /// adds nothing. The fixpoint is the AC congruence closure of the asserted
+    /// equalities.
     pub fn rebuild(&mut self) {
+        loop {
+            self.rebuild_congruence();
+            if !self.ac_complete_round() {
+                break;
+            }
+        }
+    }
+
+    /// Ordinary worklist-driven congruence closure: drain the merge worklist,
+    /// recanonicalizing the parents of each absorbed class and merging the
+    /// resulting hash-cons collisions, to a fixpoint.
+    fn rebuild_congruence(&mut self) {
         while let Some((absorbed_uses, survivor)) = self.worklist.pop() {
             self.collisions.clear();
             for parent in self.classes.uses().iter(absorbed_uses) {
@@ -568,6 +593,125 @@ where
                 }
             }
         }
+    }
+
+    /// One AC congruence-completion round (Kapur FSCD 2021, the steps our rebuild
+    /// otherwise omits). Returns `true` if it scheduled any new merge.
+    ///
+    /// For each AC node `+M = d` and each partner AC node `+A = a` of the same op
+    /// sharing ≥1 child class, on a frozen snapshot of the live AC nodes
+    /// ([`crate::ac_complete::AcPartnerSnapshot`]):
+    ///
+    /// - **(A) inter-reduction** — if `A ⊆ M`, the sub-sum `+A` is virtually
+    ///   contained in `+M` and equals `a`, so substitute `a` for `A`: materialize
+    ///   `+((M − A) ⊎ {a})` and merge it with `d`. This is the sub-sum
+    ///   substitution recanonicalization misses (design doc §3, §4a, §6 (A)).
+    ///
+    /// Disjoint partners are skipped (their critical pair is trivial). Overlap
+    /// partners (neither contains the other) are superposition — handled in (B).
+    ///
+    /// The pass reads the frozen snapshot first, buffers the substitutions, then
+    /// materializes and merges, so the snapshot is not invalidated mid-iteration.
+    /// New nodes/merges go through the standard `add`/`merge` paths, so they land
+    /// on `touched`/the worklist and are picked up by the next round (plan §2b R1).
+    fn ac_complete_round(&mut self) -> bool {
+        use crate::ac_complete::AcPartnerSnapshot;
+        use crate::multiplicity::Multiplicity;
+
+        // Canonical child multiset of an AC node, as sorted (class-repr, mult).
+        // Reuses the find-sort-coalesce that `add` performs, but here we only read.
+        let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
+            let mut raw = Vec::new();
+            eg.ac_children(id, &mut raw);
+            let mut m: Vec<(Cfg::G, Multiplicity)> = raw
+                .into_iter()
+                .map(|(g, mult)| (eg.classes.find_const(g), Multiplicity(mult.into())))
+                .collect();
+            m.sort_by_key(|p| p.0);
+            // Coalesce equal class reprs (a merge can make two distinct children equal).
+            let mut out: Vec<(Cfg::G, Multiplicity)> = Vec::with_capacity(m.len());
+            for (g, mult) in m {
+                if let Some(last) = out.last_mut()
+                    && last.0 == g
+                {
+                    last.1 = Multiplicity(last.1.0 + mult.0);
+                } else {
+                    out.push((g, mult));
+                }
+            }
+            out
+        };
+
+        // Phase 1: read the frozen snapshot and collect substitutions to apply.
+        // Each item is (residual multiset to materialize, class to merge it into).
+        let snapshot = AcPartnerSnapshot::build(self);
+        let mut pending: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G)> = Vec::new();
+
+        for &target in snapshot.ac_nodes() {
+            let op = self.node_op(target);
+            let d = self.classes.find_const(target);
+            let m = multiset_of(self, target);
+
+            // Candidate partners: AC nodes of this op sharing ≥1 child class with M.
+            // Dedup across the per-child partner lists.
+            let mut seen_partners: Vec<Cfg::G> = Vec::new();
+            for &(x, _) in &m {
+                for &partner in snapshot.partners(op, x) {
+                    if partner == target || seen_partners.contains(&partner) {
+                        continue;
+                    }
+                    seen_partners.push(partner);
+
+                    let a = multiset_of(self, partner);
+                    let a_class = self.classes.find_const(partner);
+
+                    // (A) inter-reduction: A ⊆ M. (Disjoint and overlap are not
+                    // handled here; overlap/superposition is fix (B), task T5.)
+                    if crate::ac_multiset::multiset_subset(&a, &m) {
+                        // residual = (M − A) ⊎ {a_class}
+                        let mut residual = crate::ac_multiset::multiset_subtract(&m, &a);
+                        residual = crate::ac_multiset::multiset_union(
+                            &residual,
+                            &[(a_class, Multiplicity(1))],
+                        );
+                        pending.push((op, residual, d));
+                    }
+                }
+            }
+        }
+
+        // Phase 2: materialize each residual and merge it into the target class.
+        let mut changed = false;
+        for (op, residual, d) in pending {
+            // Expand the multiset back to a flat child list; `add` re-sorts and
+            // re-coalesces multiplicities canonically.
+            let mut children: Vec<Cfg::G> = Vec::new();
+            for (g, mult) in &residual {
+                for _ in 0..mult.0 {
+                    children.push(*g);
+                }
+            }
+            let c_prime = self.add(op, &children);
+            if self.classes.find_const(c_prime) != self.classes.find_const(d) {
+                let m = if PROOFS {
+                    self.classes.merge_justified(
+                        c_prime,
+                        d,
+                        Justification::Congruence {
+                            node_a: c_prime,
+                            node_b: d,
+                        },
+                    )
+                } else {
+                    self.classes.merge(c_prime, d)
+                };
+                if let Some(m) = m {
+                    self.worklist.push((m.absorbed_uses, m.survivor));
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> EGraphToken {
