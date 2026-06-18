@@ -23,6 +23,14 @@ pub struct EClassEntry<T: DenseId> {
     repr_stored: <T::Index as Tagged>::Repr,
 }
 
+// Filler for `resize_default` during restore; never observed. Routes the id
+// through `new`/`into_repr` rather than fabricating a raw `Repr`.
+impl<T: DenseId> Default for EClassEntry<T> {
+    fn default() -> Self {
+        Self::new(T::default(), T::Index::default())
+    }
+}
+
 impl<T: DenseId> EClassEntry<T> {
     fn new(next: T, repr_id: T::Index) -> Self {
         Self {

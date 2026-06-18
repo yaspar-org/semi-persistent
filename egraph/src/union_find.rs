@@ -48,11 +48,24 @@ impl<T: DenseId> ProofBuf<T> {
 }
 
 /// Why two e-nodes were unified.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Justification<G: Copy> {
-    Rewrite { rule_id: crate::id::RuleId },
-    Congruence { node_a: G, node_b: G },
-    Axiom { axiom_id: crate::id::AxiomId },
+    /// No-op filler used to default-initialize slots (e.g. as the
+    /// `resize_default` filler during restore, and the initial entry from
+    /// `make_set`). Never carries proof information; never observed as a real
+    /// justification.
+    #[default]
+    Filler,
+    Rewrite {
+        rule_id: crate::id::RuleId,
+    },
+    Congruence {
+        node_a: G,
+        node_b: G,
+    },
+    Axiom {
+        axiom_id: crate::id::AxiomId,
+    },
 }
 
 impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justification<G> {
@@ -124,9 +137,7 @@ impl<T: DenseId, const TRACK: bool, const PROOFS: bool> UnionFind<T, TRACK, PROO
             pp.push(id);
         }
         if let Some(j) = &mut self.justification {
-            j.push(Justification::<T>::Axiom {
-                axiom_id: crate::id::AxiomId::new(0),
-            });
+            j.push(Justification::<T>::Filler);
         }
     }
 

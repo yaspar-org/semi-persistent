@@ -84,6 +84,23 @@ macro_rules! define_node {
                 r.flags &= !FLAG_TAG;
             }
         }
+
+        // All-zero default: a degenerate node used only as a `resize_default`
+        // filler during `restore`. It is never observed (every regrown cell is
+        // overwritten by its captured diff value). `flags: 0` clears the tag
+        // bit, so the all-zero repr is niche-safe. A manual impl (not derive)
+        // because the data array length can exceed `[T; N]: Default`'s limit.
+        impl ::core::default::Default for $name {
+            fn default() -> Self {
+                Self {
+                    flags: 0,
+                    count: 0,
+                    _pad: 0,
+                    data: [<$word as ::core::default::Default>::default(); $data_len],
+                    link: <$link as ::core::default::Default>::default(),
+                }
+            }
+        }
     };
 }
 
@@ -366,7 +383,7 @@ impl SearchKind for Branchless {
 // BPlusTreeSet
 // ===========================================================================
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct BPlusHeader<I: Copy> {
     root: I,
     last_leaf: I,
