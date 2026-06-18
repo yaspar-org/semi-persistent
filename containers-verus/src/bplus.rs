@@ -1274,6 +1274,13 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         &&& sep.as_nat() == crate::bplus_tree::tree_keys(nr@)[0]
                         &&& (crate::bplus_tree::tree_keys(nl@) + crate::bplus_tree::tree_keys(nr@)).to_set()
                                 == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
+                        // cross-node ordering of the two halves around `sep`: the
+                        // left half is all `< sep`, the right half all `>= sep`.
+                        // (The split's median property.) The caller needs this to
+                        // re-establish `tree_wf`'s ordering clause when it slots
+                        // (nl, sep, nr) back into the parent's children.
+                        &&& crate::bplus_tree::keys_all_lt(nl@, sep.as_nat())
+                        &&& crate::bplus_tree::keys_all_ge(nr@, sep.as_nat())
                         // (F1) footprint: every id of the two halves is either an
                         // old id of `cur` or a freshly-pushed tail id. Lets the
                         // caller frame siblings (new ids disjoint from old ones).
@@ -1656,6 +1663,13 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         &&& sep.as_nat() == crate::bplus_tree::tree_keys(nr@)[0]
                         &&& (crate::bplus_tree::tree_keys(nl@) + crate::bplus_tree::tree_keys(nr@)).to_set()
                                 == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
+                        // cross-node ordering of the two halves around `sep`: the
+                        // left half is all `< sep`, the right half all `>= sep`.
+                        // (The split's median property.) The caller needs this to
+                        // re-establish `tree_wf`'s ordering clause when it slots
+                        // (nl, sep, nr) back into the parent's children.
+                        &&& crate::bplus_tree::keys_all_lt(nl@, sep.as_nat())
+                        &&& crate::bplus_tree::keys_all_ge(nr@, sep.as_nat())
                         // (F1) footprint: every id of the two halves is either an
                         // old id of `cur` or a freshly-pushed tail id. Lets the
                         // caller frame siblings (new ids disjoint from old ones).
@@ -1964,6 +1978,11 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                             Ghost(gid), Ghost(h@), Ghost(succ@), key,
                             Ghost(idx.as_nat()), Ghost(new_int.as_nat()));
                         assert(self.arena().len() <= old(self).arena().len() + h@ + 1);
+                        // `added`: recursion's Some carries `added == !contains(gc)`;
+                        // descent lifts the membership to cur.
+                        assert(crate::bplus_tree::tree_contains(cur@, key.id_nat())
+                            == crate::bplus_tree::tree_contains(gc, key.id_nat()));
+                        assert(added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat()));
                     }
                     (added, Some((promoted, new_int)), Ghost(lt), Ghost(rt))
                 }
@@ -2570,6 +2589,12 @@ pub proof fn reconstruct_parent_split<K, L, S, const TRACK: bool>(
         promoted@ == crate::bplus_tree::tree_keys(rt@)[0],
         (crate::bplus_tree::tree_keys(lt@) + crate::bplus_tree::tree_keys(rt@)).to_set()
             == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat()),
+        // cross-node ordering of the two halves around `promoted`: the median
+        // promotion is a B-tree-style split, so the left half is all `< promoted`
+        // and the right half all `>= promoted` (the promoted key is a routing copy
+        // of the right half's first leaf key).
+        crate::bplus_tree::keys_all_lt(lt@, promoted@),
+        crate::bplus_tree::keys_all_ge(rt@, promoted@),
         (forall|id: nat| crate::bplus_tree::tree_ids(lt@).contains(id)
             ==> crate::bplus_tree::tree_ids(cur@).contains(id) || id >= arena1@.len()),
         (forall|id: nat| crate::bplus_tree::tree_ids(rt@).contains(id)
