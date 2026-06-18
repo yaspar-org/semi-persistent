@@ -3779,6 +3779,56 @@ pub proof fn lemma_forest_links_cons<L: NodeLayout>(arena: Seq<L::Node>, kids: S
 {
 }
 
+/// Split a forest chain at `m`: `forest_links_to(kids, succ)` decomposes into the
+/// left run `forest_links_to(kids[0..m], kids[m]'s first leaf)` and the right run
+/// `forest_links_to(kids[m..], succ)`. The left run threads to the right run's
+/// head leaf, exactly the boundary the two split halves need (left half links to
+/// the right half's first leaf, right half links to `succ`). Induction on `m`.
+pub proof fn lemma_forest_links_split_at<L: NodeLayout>(arena: Seq<L::Node>, kids: Seq<Tree>, succ: nat, m: int)
+    requires
+        forest_links_to::<L>(arena, kids, succ),
+        0 < m < kids.len(),
+        forall|i: int| 0 <= i < kids.len() ==> #[trigger] crate::bplus_tree::tree_leaf_ids(kids[i]).len() >= 1,
+    ensures
+        forest_links_to::<L>(arena, kids.subrange(0, m), crate::bplus_tree::tree_leaf_ids(kids[m])[0]),
+        forest_links_to::<L>(arena, kids.subrange(m, kids.len() as int), succ),
+    decreases m,
+{
+    let head_succ = crate::bplus_tree::tree_leaf_ids(kids[m])[0];
+    lemma_forest_links_cons::<L>(arena, kids, succ);
+    let df = kids.drop_first();
+    let s0 = if kids.len() > 1 { crate::bplus_tree::tree_leaf_ids(kids[1])[0] } else { succ };
+    assert(leaf_links_to::<L>(arena, kids[0], s0));
+    assert(forest_links_to::<L>(arena, df, succ));
+    assert forall|i: int| 0 <= i < df.len() implies
+        #[trigger] crate::bplus_tree::tree_leaf_ids(df[i]).len() >= 1 by { assert(df[i] == kids[i + 1]); }
+    if m == 1 {
+        // left run is [kids[0]], threading to kids[1]'s first leaf == s0 == head_succ.
+        assert(kids.subrange(0, 1) =~= seq![kids[0]]);
+        assert(kids[1] == kids[m]);
+        assert(s0 == head_succ);
+        lemma_forest_links_cons::<L>(arena, kids.subrange(0, 1), head_succ);
+        assert(kids.subrange(0, 1).drop_first() =~= Seq::<Tree>::empty());
+        // right run kids[1..] == df.
+        assert(kids.subrange(m, kids.len() as int) =~= df);
+    } else {
+        // recurse on df at m-1: gives forest_links_to(df[0..m-1], df[m-1] first) and
+        // forest_links_to(df[m-1..], succ). df[m-1] == kids[m].
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_links_split_at::<L>(arena, df, succ, m - 1);
+        // left run kids[0..m] == [kids[0]] ++ df[0..m-1], threading to head_succ.
+        assert(kids.subrange(0, m).drop_first() =~= df.subrange(0, m - 1));
+        assert(kids.subrange(0, m)[0] == kids[0]);
+        // head successor of kids[0..m] is kids[1]'s first leaf == s0 == df[0]'s first.
+        lemma_forest_links_cons::<L>(arena, kids.subrange(0, m), head_succ);
+        if m > 1 {
+            assert(kids.subrange(0, m)[1] == kids[1]);
+        }
+        // right run kids[m..] == df[m-1..].
+        assert(kids.subrange(m, kids.len() as int) =~= df.subrange(m - 1, df.len() as int));
+    }
+}
+
 /// The leaf-link analogue of `lemma_forest_links_update`, but for the child-split
 /// SPLICE: child `cp` becomes the two halves `ncl, ncr`. The chain re-threads as
 /// `… -> ncl -> ncr -> (cp+1's first leaf | succ) -> …`. `ncl` chains to `ncr`'s
