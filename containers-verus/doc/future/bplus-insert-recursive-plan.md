@@ -170,19 +170,36 @@ lemmas remain `external_body`).** `insert_rec` structure:
     promoted` (see below). Carries the correct ensures, validated by the property
     tests. No `assume(false)` anywhere.
 
-### The separator-equals-right-min invariant (found proving the promoted key)
+### The separator-equals-right-min invariant (found proving the promoted key) — LANDED
 
 `reconstruct_parent_split` must return `promoted == tree_keys(rt)[0]` (the
 grandparent's `Some` arm needs `sep == tree_keys(nr)[0]`). That is a SHARPER
-B+tree fact than `tree_wf` tracks: every separator EQUALS the minimum key of the
-subtree immediately to its right (separators are routing copies of leaf minima),
-not merely a bound (`keys_all_ge`/`keys_all_lt`). A runtime probe in `check_node`
-(`sep[i-1] == min(child i)`) confirms it HOLDS across all property tests, so the
-remaining work is to add it to `tree_wf`'s cross-node clause (as an extra
-equality clause alongside the inequalities — ~30 `keys_all_ge` consumers keep
-working; each `tree_wf`-construction site gains the new obligation) and discharge
-`lemma_parent_split_promoted` from it. Isolated as one `external_body` (no
-assume) until then.
+B+tree fact than `tree_wf` originally tracked: every separator EQUALS the minimum
+key of the subtree immediately to its right (separators are routing copies of
+leaf minima), not merely a bound. A runtime probe in `check_node` (`sep[i-1] ==
+min(child i)`) confirmed it HOLDS across all property tests; a second trace probe
+(`min_key_preservation_trace`) confirmed `new_min == min(old_min, key)` on every
+insert (13,127 preserved / 65 lowered of 13,192).
+
+`tree_wf`'s cross-node clause now carries `seps[i-1] == tree_keys(kids[i])[0]`
+alongside the inequalities. Threading it through cost: the recursion carries
+min-key preservation (`key >= cur_min ⟹ nl[0] == cur[0]`) on both arms, proven in
+the leaf base case (insert at pos>0 keeps index 0) and propagated by
+`lemma_child_split_combined_wf` → `lemma_internal_split_tree_wf` →
+`reconstruct_absorb`/`reconstruct_child_split_absorb`. The min preconditions are
+key-conditional, matching what descent + the recursion supply.
+`lemma_parent_split_promoted` is now PROVEN from it (no longer external_body).
+
+### Remaining: `reconstruct_parent_split` arena assembly
+
+The structural core is proven (`lemma_parent_split_tree_wf` =
+`lemma_child_split_combined_wf` + `lemma_internal_split_tree_wf` +
+`lemma_parent_split_promoted`). The last `external_body` is the per-half ARENA
+assembly: `binds` / `leaf_links` / `tree_disjoint` / footprint for the two output
+nodes `pl` (at `gid`) and `pr` (fresh at `rid`), given `internal_split_at`'s
+arena layout. It mirrors `reconstruct_child_split_absorb`'s assembly (now fully
+proven) but produces two arena nodes instead of one. Its full ensures are
+validated by the property tests.
 
 ### The footprint-contract spec bug (caught by runtime evaluation, fixed)
 
