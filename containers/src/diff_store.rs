@@ -19,9 +19,21 @@ pub trait DiffStore<T: Clone, I: IndexLike, const TRACK: bool> {
     // Capture protocol (no-ops when TRACK=false)
     fn prepare_mark(&mut self, saved_len: I, prev_diffs: &[(T, I)]);
     fn capture(&mut self, i: I, saved_len: I, diff_log: &mut Vec<(T, I)>);
-    fn force_capture(&mut self, i: I, saved_len: I, diff_log: &mut Vec<(T, I)>);
+    /// Mark slot `i` as already-captured without logging a diff entry.
+    ///
+    /// Used by `push` when re-entering a popped-but-already-captured marked
+    /// slot, so a later `set` on that slot does not re-capture (first-write-wins).
+    fn mark_captured(&mut self, i: I);
     fn restore_entry(&mut self, index: I, old_value: &T, target_saved_len: I);
     fn finish_restore(&mut self, current_frame_diffs: &[(T, I)], saved_len: I);
+
+    /// Resize the backing store to exactly `len`, filling any grown slots with
+    /// `T::default()`. Used by `restore` to regrow the popped region before the
+    /// overwrite-only replay; the fillers are provably never observed (every
+    /// regrown cell is overwritten by its captured diff value during replay).
+    fn resize_default(&mut self, len: I)
+    where
+        T: Default;
 
     fn shrink_if(&mut self, factor: usize, headroom: usize);
 
@@ -128,16 +140,25 @@ impl<T: Clone, I: IndexLike, const TRACK: bool> DiffStore<T, I, TRACK> for Paral
         }
     }
 
-    fn force_capture(&mut self, i: I, saved_len: I, diff_log: &mut Vec<(T, I)>) {
+    fn mark_captured(&mut self, i: I) {
         if !TRACK {
             return;
         }
-        let iu = i.as_usize();
-        if iu >= saved_len.as_usize() {
-            return;
+        self.set_bit(i.as_usize());
+    }
+
+    fn resize_default(&mut self, len: I)
+    where
+        T: Default,
+    {
+        let target = len.as_usize();
+        if self.data.len() > target {
+            self.data.truncate(target);
+            self.captured.truncate(target.div_ceil(64));
         }
-        diff_log.push((self.data[iu].clone(), i));
-        self.set_bit(iu);
+        while self.data.len() < target {
+            self.data.push(T::default());
+        }
     }
 
     fn restore_entry(&mut self, index: I, old_value: &T, target_saved_len: I) {
@@ -276,16 +297,26 @@ impl<T: Tagged, I: IndexLike, const TRACK: bool> DiffStore<T, I, TRACK> for Inli
         }
     }
 
-    fn force_capture(&mut self, i: I, saved_len: I, diff_log: &mut Vec<(T, I)>) {
+    fn mark_captured(&mut self, i: I) {
         if !TRACK {
             return;
         }
-        let iu = i.as_usize();
-        if iu >= saved_len.as_usize() {
-            return;
+        T::set_tag(&mut self.data[i.as_usize()]);
+    }
+
+    fn resize_default(&mut self, len: I)
+    where
+        T: Default,
+    {
+        let target = len.as_usize();
+        if self.data.len() > target {
+            self.data.truncate(target);
         }
-        diff_log.push((T::from_repr(&self.data[iu]), i));
-        T::set_tag(&mut self.data[iu]);
+        while self.data.len() < target {
+            // Route the filler through `into_repr` so the stolen niche bit is
+            // re-cleared for any in-domain default value (niche safety).
+            self.data.push(T::default().into_repr());
+        }
     }
 
     fn restore_entry(&mut self, index: I, old_value: &T, target_saved_len: I) {

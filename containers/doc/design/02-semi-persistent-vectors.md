@@ -117,13 +117,13 @@ type VecP<T: Clone, I, TRACK>  = Vec<T, I, ParallelStore<T, I, TRACK>, TRACK>;
 
 | Operation | Cost | Description |
 |-----------|------|-------------|
-| `push(val)` | O(1) amortized | Append element |
-| `pop()` | O(1) | Remove last element |
+| `push(val)` | O(1) amortized | Append element (marks re-entered captured slots) |
+| `pop()` | O(1) | Remove last element (captures it first-write-wins if below `saved_len`) |
 | `get(i)` | O(1) | Read element at index |
 | `view().set(i, val)` | O(1) | Write element (with capture) |
 | `len()` | O(1) | Current length |
 | `mark()` → `VecToken` | sublinear; O(parent diff) inline / O(n/64) parallel | Snapshot — clears per-slot capture flags, never copies. Memory cost is only the diff. |
-| `restore(token)` | O(k) | Undo all mutations since mark (k = mutations) |
+| `restore(token)` | O(k + regrow) | Undo all mutations since mark (k = mutations). Requires `T: Default`. |
 
 ## The Diff-Log Protocol
 
@@ -151,25 +151,67 @@ log `(old_value, i)` to diff_log and set the tag bit. If tag is
 already set, the slot was already captured, so it skips. This ensures each
 slot is logged at most once per frame.
 
-`push(val)` just appends to the store; no capture is needed because
-truncation on restore handles new elements.
+`pop()` is a mutation too: if the popped slot sits below `saved_len`, it
+goes through the **same first-write-wins `capture`** before removing the
+element. It must *not* use an unconditional record — a `loop { pop(); push() }`
+on a marked index would otherwise log an entry per iteration and grow the
+diff log without bound (a memory-exhaustion DoS). With conditional capture
+the log holds at most one entry per index per frame, so it is bounded by
+`saved_len`.
+
+`push(val)` appends to the store. New elements above `saved_len` need no
+capture — truncation on restore removes them. But when `push` *re-enters* a
+slot below `saved_len` that was popped after already being captured this
+frame, it calls `store.mark_captured(i)` to keep that slot's capture bit set.
+Without this, a later `set` on the re-entered slot would log a second entry
+for it, defeating first-write-wins and re-opening the unbounded-log hole.
 
 ### Restore
 
 ```
-restore(token):
+restore(token):                       // requires T: Default
     frame = frames[token.frame_idx]
+    store.resize_default(frame.saved_len)   // regrow popped region first
     for (old_val, idx) in diff_log[frame.diff_start..].rev():
         store.restore_entry(idx, &old_val, frame.saved_len)
     store.finish_restore(&diff_log[frame.diff_start..], frame.saved_len)
     diff_log.truncate(frame.diff_start)
-    store.truncate(frame.saved_len)
     frames.truncate(token.frame_idx)
 ```
 
-Replays the diff log in reverse order, restoring each modified slot
-to the marked value corresponding to the token. Then truncates to the
-saved length, removing any diff entries that were pushed after the mark.
+`restore` first resizes the store back to exactly `saved_len`: it truncates
+any elements pushed above the mark *and* regrows any region that was popped
+below it, filling the grown slots with `T::default()`. It then replays the
+diff log in reverse, overwriting each modified slot with its marked value.
+
+Regrowing *before* the replay is what makes the replay a pure overwrite.
+Because `pop` now captures conditionally (first-write-wins) rather than
+logging every popped cell, the log no longer contains an entry for every
+slot in the popped region — so the old "regrow by pushing during replay"
+scheme would leave gaps. `resize_default` restores contiguity up front; the
+replay then overwrites every regrown cell with its captured value.
+
+**Why the fillers are safe.** The `T::default()` fillers `resize_default`
+writes are provably never observed: every regrown cell is below `saved_len`
+and was captured this frame, so the backward replay overwrites it with its
+diff value. The filler therefore may be any in-domain value — which is why
+`restore` only requires `T: Default`, and why a degenerate default (an
+all-zero node, an empty list head) is fine. For bit-stealing `Tagged` types
+the filler is routed through `into_repr`, which re-clears the stolen niche
+bit, so a `Default` impl introduces no new niche obligation. This is the one
+reason `restore` carries a `T: Default` bound; every other operation does
+not.
+
+**Where the bound lives.** `Default` is a property of the *stored value*, so it
+belongs on the value facet, `Tagged` (`trait Tagged: Copy + Default`) — the
+trait every inline-storable value already implements. It is deliberately *not*
+on `IndexLike`, which is the orthogonal *indexing* facet (the `I` in
+`Vec<T, I, S>`); an index type that is also stored as a value (e.g. in
+`SparseSet`) is `IndexLike + Tagged` and picks up `Default` through `Tagged`.
+Consequently almost no container needs an explicit `Default` bound: the only
+ones that do are `DiffStore::resize_default` (which *produces* the filler) and
+the two `restore`s whose element is `Clone`-only and never goes through
+`Tagged` — `Vec::restore` itself and `SparseSet::restore`.
 
 ## Nested Marks
 
@@ -201,8 +243,10 @@ the MSB of the `u32`, costing zero extra memory.
 | `push(val)` | Store `val.into_repr()` (tag=0) |
 | `set_raw(i, val)` | Overwrite repr at `i` |
 | `capture(i, ..)` | If `!tag(data[i])`: log old value, `set_tag(data[i])` |
+| `mark_captured(i)` | `set_tag(data[i])` (mark re-entered slot captured, no log) |
 | `prepare_mark(..)` | Clear all tags in `[0..saved_len]` |
 | `restore_entry(i, old)` | `data[i] = old.into_repr()` |
+| `resize_default(len)` | Truncate or regrow to `len`, filling with `T::default().into_repr()` |
 | `get(i)` | `T::from_repr(&data[i])` (strips tag) |
 
 ## `ParallelStore` — For Non-Taggable Types

@@ -25,6 +25,13 @@ struct ListNode<T: Tagged, N: DenseId> {
     next_repr: <N as Tagged>::Repr,
 }
 
+impl<T: Tagged, N: DenseId> Default for ListNode<T, N> {
+    fn default() -> Self {
+        // Filler for `resize_default` during restore; never observed.
+        Self::new(T::default(), Opt::none())
+    }
+}
+
 impl<T: Tagged, N: DenseId> ListNode<T, N> {
     fn new(payload: T, next: Opt<N>) -> Self {
         Self {
@@ -71,6 +78,12 @@ impl<T: Tagged, N: DenseId> Tagged for ListNode<T, N> {
 struct ListHead<N: DenseId> {
     head_repr: <N as Tagged>::Repr,
     tail_repr: <N as Tagged>::Repr,
+}
+
+impl<N: DenseId> Default for ListHead<N> {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 
 impl<N: DenseId> ListHead<N> {

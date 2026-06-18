@@ -1182,6 +1182,7 @@ mod tests {
                 }
                 Justification::Congruence { .. } => {}
                 Justification::Rewrite { .. } => {}
+                Justification::Filler => unreachable!("filler is never a real proof step"),
             }
         }
     }

@@ -463,6 +463,14 @@ impl<G, W: DirectorBits> Edge<G, W> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PoolDirector(u64);
 
+// Filler for `resize_default` during restore; never observed. `new(0)` leaves
+// the MSB tag bit clear, so the all-zero word is niche-safe.
+impl Default for PoolDirector {
+    fn default() -> Self {
+        PoolDirector::new(0)
+    }
+}
+
 impl PoolDirector {
     /// Usable bits per pool word (64 - 1 tag bit).
     pub const USABLE_BITS: u32 = 63;

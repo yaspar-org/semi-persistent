@@ -69,27 +69,31 @@ increasing-index order.
   is `Clone`, not every type is `Default`). Worth revisiting if `T` is ever
   large/expensive-to-construct, where A's filler writes would dominate.
 
-## C. Force-record pops (production today) — UNBOUNDED, do not adopt
+## C. Force-record pops — UNBOUNDED, do not adopt
 
-Production's `pop` calls `force_capture` unconditionally — it logs the popped
-cell every time, ignoring the capture bit. On restore the highest-position
-filler entry supplies the regrow push value (overwritten by the lower
-first-write-wins entry), so it is *correct*.
+An earlier production `pop` called `force_capture` unconditionally — it logged
+the popped cell every time, ignoring the capture bit. On restore the
+highest-position filler entry supplied the regrow push value (overwritten by
+the lower first-write-wins entry), so it was *correct*.
 
 - **Cost:** restore O(k), simplest code.
 - **Bound: NONE.** A `push`/`pop` loop on one index logs an entry every
   iteration (push resets the capture bit; force_capture ignores it). An
-  adversary controlling push/pop exhausts memory. **This is a latent DoS in
-  production.** It is the reason we diverged: if the Default version verifies,
-  propagate the bounded design back to production.
+  adversary controlling push/pop exhausts memory — a memory-exhaustion DoS.
+  This is why this approach is rejected in favor of A.
+
+> **Status:** production has adopted design A (bounded). `pop` now uses
+> first-write-wins `capture`, `push` re-marks re-entered slots, and `restore`
+> regrows with `resize_default` before an overwrite-only replay. `force_capture`
+> has been removed. See `containers/doc/design/02-semi-persistent-vectors.md`.
 
 ## Summary
 
 | | restore time | diff bound | `T` bound |
 |---|---|---|---|
-| A. Default + resize | O(k) | ≤ saved_len | `Default` |
+| A. Default + resize (verus **and** production) | O(k) | ≤ saved_len | `Default` |
 | B. scan/sort regrow | 2k or k·log k | ≤ saved_len | `Clone` |
-| C. force-record (prod) | O(k) | **unbounded (DoS)** | none |
+| C. force-record (old prod) | O(k) | **unbounded (DoS)** | none |
 
 The `frame_cell_inv` / coverage-invariant foundation in `vec.rs` is shared by
 A and B — only the regrow mechanism in `restore` and the `T` bound differ — so

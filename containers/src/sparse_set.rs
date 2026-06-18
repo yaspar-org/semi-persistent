@@ -161,7 +161,10 @@ impl<T: Clone, Idx: IndexLike + Tagged, S: DiffStore<T, Idx, TRACK>, const TRACK
         }
     }
 
-    pub fn restore(&mut self, token: SparseSetToken) {
+    pub fn restore(&mut self, token: SparseSetToken)
+    where
+        T: Default,
+    {
         self.dense.restore(token.dense);
         self.sparse.restore(token.sparse);
         self.indices.restore(token.indices);
