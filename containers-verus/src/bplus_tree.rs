@@ -2359,6 +2359,55 @@ pub proof fn lemma_forest_disjoint_from_pairwise(kids: Seq<Tree>)
     }
 }
 
+/// `tree_disjoint(half)` + footprint subset/freshness for one half of a parent
+/// split: `half = Inner{hid, cseps[off..off+slen], ckids[off..off+slen+1]}`. The
+/// half's children are a contiguous subrange of the combined `ckids` (which is
+/// `forest_disjoint` + pairwise, with all ids `< bound` or fresh `>= bound`), so
+/// they stay pairwise disjoint and `tree_disjoint`; the half's root `hid` is not
+/// among them (`hid ∉ forest_ids(ckids)`).
+pub proof fn lemma_parent_split_half_ids(
+    ckids: Seq<Tree>, hid: nat, off: int, slen: int, bound: nat,
+)
+    requires
+        0 <= off,
+        0 <= slen,
+        off + slen + 1 <= ckids.len(),
+        forest_disjoint(ckids),
+        (forall|i: int, j: int| 0 <= i < j < ckids.len() ==>
+            (#[trigger] tree_ids(ckids[i])).disjoint(#[trigger] tree_ids(ckids[j]))),
+        !forest_ids(ckids).contains(hid),
+    ensures
+        ({
+            let hkids = ckids.subrange(off, off + slen + 1);
+            let half = Tree::Inner { id: hid, seps: Seq::<nat>::empty(), kids: hkids };
+            tree_disjoint(half)
+        }),
+{
+    assert(off <= off + slen + 1 <= ckids.len());
+    let hkids = ckids.subrange(off, off + slen + 1);
+    assert(hkids.len() == slen + 1);
+    // subrange indexing: hkids[k] == ckids[off+k] for k in range (vstd axiom).
+    assert forall|k: int| 0 <= k < hkids.len() implies #[trigger] hkids[k] == ckids[off + k] by {
+        assert(hkids[k] == ckids.subrange(off, off + slen + 1)[k]);
+    }
+    // each child tree_disjoint (subrange of a forest_disjoint forest).
+    assert forall|m: int| 0 <= m < hkids.len() implies tree_disjoint(#[trigger] hkids[m]) by {
+        lemma_forest_disjoint_at(ckids, off + m);
+    }
+    // pairwise (subrange of pairwise).
+    assert forall|i: int, j: int| 0 <= i < j < hkids.len() implies
+        (#[trigger] tree_ids(hkids[i])).disjoint(#[trigger] tree_ids(hkids[j])) by {}
+    lemma_forest_disjoint_from_pairwise(hkids);
+    // hid ∉ forest_ids(hkids): hkids ids ⊆ forest_ids(ckids), which excludes hid.
+    assert(!forest_ids(hkids).contains(hid)) by {
+        if forest_ids(hkids).contains(hid) {
+            lemma_forest_id_in_some_child(hkids, hid);
+            let m = choose|m: int| 0 <= m < hkids.len() && tree_ids(hkids[m]).contains(hid);
+            lemma_forest_id_in_forest(ckids, off + m, hid);  // hkids[m] == ckids[off+m]
+        }
+    }
+}
+
 // ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
