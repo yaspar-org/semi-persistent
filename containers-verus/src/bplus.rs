@@ -3022,8 +3022,14 @@ pub proof fn reconstruct_child_split_links<K, L, S, const TRACK: bool>(
 /// `∪ {key}`. The internal analogue of the leaf split's two-leaf result, built
 /// on `lemma_internal_split_tree_wf` + concat-framing.
 ///
-/// PROOF PENDING (test-first): `external_body` (trusted), validated by the
-/// oracle property tests; body filled in the proof phase.
+/// Decomposed into a structural ghost lemma (`lemma_internal_split_tree_wf` for
+/// the two halves' `tree_wf` + key recombination, plus `lemma_parent_split_ids`
+/// for footprint/disjoint/leaf-ids) and the per-half arena layers (`binds`,
+/// leaf-links). The combined arrangement is the same `(cseps, ckids)` splice the
+/// child-split case builds; `internal_split_at` carves it in two.
+///
+/// Still `external_body` while the per-half arena assembly is filled in; the
+/// structural halves and the contract are validated by the property tests.
 #[verifier::external_body]
 pub proof fn reconstruct_parent_split<K, L, S, const TRACK: bool>(
     arena1: Ghost<Seq<L::Node>>,
