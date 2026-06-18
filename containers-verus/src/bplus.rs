@@ -1258,6 +1258,11 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         &&& crate::bplus_tree::tree_keys(nl@).to_set()
                                 == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
                         &&& added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat())
+                        // min-key preservation when key is not a new min (matches
+                        // insert_rec's None arm, so the leaf delegation discharges it).
+                        &&& (crate::bplus_tree::tree_keys(cur@).len() >= 1
+                                && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                                ==> crate::bplus_tree::tree_keys(nl@)[0] == crate::bplus_tree::tree_keys(cur@)[0])
                     }
                     Option::Some((sep, rid)) => {
                         // a split happens only on a genuinely new key (a full node
@@ -1302,6 +1307,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         // nl (the left half) keeps the subtree's leftmost leaf.
                         &&& crate::bplus_tree::tree_leaf_ids(nl@).len() >= 1
                         &&& crate::bplus_tree::tree_leaf_ids(nl@)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]
+                        // nl keeps the subtree's min key when key is not a new min.
+                        &&& (crate::bplus_tree::tree_keys(cur@).len() >= 1
+                                && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                                ==> crate::bplus_tree::tree_keys(nl@)[0] == crate::bplus_tree::tree_keys(cur@)[0])
                     }
                 }
             }),
@@ -1469,6 +1478,26 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 assert(crate::bplus_tree::tree_disjoint(nl));
                 // model set: new_keys.to_set() == gkeys.to_set() ∪ {key}.
                 assert(new_keys.to_set() =~= gkeys.to_set().insert(key.id_nat()));
+                // min-key preservation: if key >= gkeys[0] (not a new min), then
+                // pos > 0 (the find landed past index 0, since gkeys[0] < key as
+                // key is absent), so new_keys[0] == gkeys[0] == cur's min.
+                assert(crate::bplus_tree::tree_keys(nl) == new_keys);
+                assert(crate::bplus_tree::tree_keys(cur@) == gkeys);
+                if gkeys.len() >= 1 && gkeys[0] <= key.id_nat() {
+                    assert(gkeys[0] != key.id_nat());  // absent (present path returned earlier)
+                    assert(gkeys[0] < key.id_nat());
+                    // find characterization: !gkeys.contains(key) was shown, and the
+                    // loop gives gkeys[j] < key for j < pos. pos==0 ⟹ (stop at 0 ⟹
+                    // key <= gkeys[0]) contradicting gkeys[0] < key; or n==0 ⟹ no
+                    // keys, contradicting gkeys.len() >= 1. So pos > 0.
+                    assert(pos > 0) by {
+                        if pos == 0 {
+                            // stop must hold (else pos would have advanced to n>0).
+                            assert(key.id_nat() <= gkeys[0]);  // boundary char at pos 0
+                        }
+                    }
+                    assert(new_keys[0] == gkeys[0]);  // insert at pos>0 keeps index 0
+                }
             }
             return (true, None, Ghost(nl), cur);
         }
@@ -1583,6 +1612,14 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             assert(crate::bplus_tree::tree_ids(cur@).contains(lid));   // cur == Leaf{lid}
             assert(crate::bplus_tree::tree_ids(nr) =~= set![right_idx.as_nat()]);
             assert(right_idx.as_nat() == old(self).arena().len());
+            // min-key preservation: left_keys[0] == combined_nat[0] == gkeys[0]
+            // when key >= gkeys[0] (then pos > 0, as key is absent so gkeys[0] < key).
+            if gkeys.len() >= 1 && gkeys[0] <= key.id_nat() {
+                assert(gkeys[0] < key.id_nat());  // absent
+                assert(pos > 0);
+                assert(combined_nat[0] == gkeys[0]);
+                assert(left_keys[0] == combined_nat[0]);
+            }
         }
         (true, Some((sep, right_idx)), Ghost(nl), Ghost(nr))
     }
@@ -1656,6 +1693,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         // (Runtime-validated by `footprint_contract_holds`.)
                         &&& crate::bplus_tree::tree_leaf_ids(nl@)[0]
                                 == crate::bplus_tree::tree_leaf_ids(cur@)[0]
+                        // min-key preservation when the inserted key is not a new
+                        // minimum (key >= cur's min): the leftmost key is unchanged.
+                        // Lets a parent re-establish its separator-min clause.
+                        &&& (crate::bplus_tree::tree_keys(cur@).len() >= 1
+                                && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                                ==> crate::bplus_tree::tree_keys(nl@)[0] == crate::bplus_tree::tree_keys(cur@)[0])
                         &&& crate::bplus_tree::tree_keys(nl@).to_set()
                                 == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
                         &&& added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat())
@@ -1703,6 +1746,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         // nl (the left half) keeps the subtree's leftmost leaf.
                         &&& crate::bplus_tree::tree_leaf_ids(nl@).len() >= 1
                         &&& crate::bplus_tree::tree_leaf_ids(nl@)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]
+                        // nl keeps the subtree's min key when key is not a new min.
+                        &&& (crate::bplus_tree::tree_keys(cur@).len() >= 1
+                                && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                                ==> crate::bplus_tree::tree_keys(nl@)[0] == crate::bplus_tree::tree_keys(cur@)[0])
                     }
                 }
             }),
@@ -1843,6 +1890,11 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         // recursion frame: outside tree_ids(gc) ⟹ unchanged.
                         lemma_tree_id_in_range::<L>(arena1, cur@, id);
                     }
+                    // ncl min-preservation (for reconstruct_absorb's sep-min): the
+                    // recursion's None clause gives it for gc == gkids[cp]; gc is wf
+                    // non-root so tree_keys(gc).len() >= 1.
+                    L::lemma_arena_capacity();  // 1 <= leaf_cap
+                    crate::bplus_tree::lemma_tree_keys_nonempty(gc, (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec());
                     reconstruct_absorb::<K, L, S, TRACK>(
                         Ghost(arena1), Ghost(arena2), Ghost(cur@), Ghost(ncl@),
                         Ghost(gid), Ghost(gseps), Ghost(gkids), Ghost(cp as int),
@@ -1872,6 +1924,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     assert(arena1 == old(self).arena());
                     assert(crate::bplus_tree::tree_ids(cur@).subset_of(crate::bplus_tree::tree_ids(nt)));
                     assert(crate::bplus_tree::tree_leaf_ids(nt)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]);
+                    // min-key preservation flows from reconstruct_absorb's ensures.
+                    assert(crate::bplus_tree::tree_keys(cur@).len() >= 1
+                        && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                        ==> crate::bplus_tree::tree_keys(nt)[0] == crate::bplus_tree::tree_keys(cur@)[0]);
                     // `added`: recursion gives added == !tree_keys(gc).contains(key);
                     // descent (key ∈ cur ⟺ key ∈ gc, via lemma_descent_step at the
                     // top) lifts it to !tree_keys(cur).contains(key).
@@ -1952,6 +2008,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         L::lemma_arena_capacity();  // 1 <= leaf_cap
                         crate::bplus_tree::lemma_tree_keys_nonempty(ncl@, (h@ - 1) as nat,
                             L::leaf_cap_spec(), L::key_cap_spec());
+                        // gc == gkids[cp] is wf non-root ⟹ >= 1 key, so the recursion's
+                        // Some min-clause gives the ncl-min reconstruct needs.
+                        crate::bplus_tree::lemma_tree_keys_nonempty(gc, (h@ - 1) as nat,
+                            L::leaf_cap_spec(), L::key_cap_spec());
                         reconstruct_child_split_absorb::<K, L, S, TRACK>(
                             Ghost(arena1), Ghost(self.arena()), Ghost(cur@),
                             Ghost(ncl@), Ghost(ncr@), Ghost(gid), Ghost(gseps), Ghost(gkids),
@@ -1969,6 +2029,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         assert(arena1 == old(self).arena());
                         assert(crate::bplus_tree::tree_ids(cur@).subset_of(crate::bplus_tree::tree_ids(nt)));
                         assert(crate::bplus_tree::tree_leaf_ids(nt)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]);
+                        // min-key preservation from reconstruct_child_split_absorb.
+                        assert(crate::bplus_tree::tree_keys(cur@).len() >= 1
+                            && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                            ==> crate::bplus_tree::tree_keys(nt)[0] == crate::bplus_tree::tree_keys(cur@)[0]);
                         // `added`: recursion's Some result carries `added`; descent
                         // (key ∈ cur ⟺ key ∈ gc) lifts the membership to cur.
                         assert(crate::bplus_tree::tree_contains(cur@, key.id_nat())
@@ -2275,6 +2339,13 @@ pub proof fn reconstruct_absorb<K, L, S, const TRACK: bool>(
         (forall|id: nat| crate::bplus_tree::tree_ids(ncl@).contains(id)
             ==> crate::bplus_tree::tree_ids(gkids@[cp@]).contains(id) || id >= arena1@.len()),
         crate::bplus_tree::tree_leaf_ids(ncl@)[0] == crate::bplus_tree::tree_leaf_ids(gkids@[cp@])[0],
+        // ncl preserves the child's MINIMUM key when `key` is not below it. Drives
+        // both nt's separator-min clause (at cp, needs cp > 0 there, implied by
+        // descent key >= gseps[cp-1] == child min) and nt's own min-preservation
+        // (at cp == 0, where nt[0] == ncl[0]). Stated key-conditionally so it
+        // matches the recursion's `key >= cur_min ⟹ nl preserves min` ensures.
+        (crate::bplus_tree::tree_keys(gkids@[cp@])[0] <= key.id_nat()
+            ==> crate::bplus_tree::tree_keys(ncl@)[0] == crate::bplus_tree::tree_keys(gkids@[cp@])[0]),
         child_succ@ == (if cp@ + 1 < gkids@.len() {
             crate::bplus_tree::tree_leaf_ids(gkids@[cp@ + 1])[0]
         } else { succ@ }),
@@ -2299,6 +2370,11 @@ pub proof fn reconstruct_absorb<K, L, S, const TRACK: bool>(
             &&& (forall|id: nat| crate::bplus_tree::tree_ids(nt).contains(id)
                     ==> crate::bplus_tree::tree_ids(cur@).contains(id) || id >= arena1@.len())
             &&& crate::bplus_tree::tree_leaf_ids(nt)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]
+            // min-key preservation propagated up: when key isn't a new min, nt
+            // keeps cur's leftmost key.
+            &&& (crate::bplus_tree::tree_keys(cur@).len() >= 1
+                    && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                    ==> crate::bplus_tree::tree_keys(nt)[0] == crate::bplus_tree::tree_keys(cur@)[0])
             &&& crate::bplus_tree::tree_keys(nt).to_set()
                     == crate::bplus_tree::tree_keys(cur@).to_set().insert(key.id_nat())
         }),
@@ -2306,6 +2382,7 @@ pub proof fn reconstruct_absorb<K, L, S, const TRACK: bool>(
     let nkids = gkids@.update(cp@, ncl@);
     let nt = Tree::Inner { id: gid@, seps: gseps@, kids: nkids };
     let a1 = arena1@; let a2 = arena2@;
+    L::lemma_arena_capacity();  // 1 <= leaf_cap (for lemma_tree_keys_nonempty)
     // unpack cur's subtree_wf: tree_wf(cur,h), binds, links, disjoint.
     assert(crate::bplus_tree::tree_wf(cur@, h@, L::leaf_cap_spec(), L::key_cap_spec(), false));
     assert(gkids@.len() == gseps@.len() + 1);  // tree_wf Inner arm
@@ -2363,6 +2440,19 @@ pub proof fn reconstruct_absorb<K, L, S, const TRACK: bool>(
             assert(gseps@[cp@ - 1] <= key.id_nat());
         } else {
             assert(nkids[i] == gkids@[i]);
+        }
+    }
+    // separator = right-subtree min for nt: unchanged children keep cur's sep-min;
+    // at cp, ncl preserves the child's min (precondition), and gseps[cp-1] is the
+    // old child's min (cur's sep-min).
+    assert forall|i: int| 0 < i < nkids.len() implies
+        gseps@[i - 1] == #[trigger] crate::bplus_tree::tree_keys(nkids[i])[0] by {
+        if i == cp@ {
+            assert(nkids[i] == ncl@);
+            assert(gseps@[cp@ - 1] == crate::bplus_tree::tree_keys(gkids@[cp@])[0]);  // cur sep-min
+        } else {
+            assert(nkids[i] == gkids@[i]);
+            assert(gseps@[i - 1] == crate::bplus_tree::tree_keys(gkids@[i])[0]);  // cur sep-min
         }
     }
     assert(crate::bplus_tree::tree_wf(nt, h@, L::leaf_cap_spec(), L::key_cap_spec(), false));
@@ -2426,6 +2516,27 @@ pub proof fn reconstruct_absorb<K, L, S, const TRACK: bool>(
     crate::bplus_tree::lemma_tree_leaf_ids_nonempty(ncl@, (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), false);
     crate::bplus_tree::lemma_forest_leaf_ids_update_first(gkids@, cp@, ncl@);
     assert(crate::bplus_tree::tree_leaf_ids(nt)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]);
+
+    // min-key preservation: nt[0] == tree_keys(nkids[0])[0]. cur[0] == gkids[0][0].
+    // cp>0: nkids[0]==gkids[0]. cp==0: nkids[0]==ncl, and cur[0]<=key triggers the
+    // ncl-min precondition (gkids[0][0] == cur[0] <= key).
+    if crate::bplus_tree::tree_keys(cur@).len() >= 1 && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat() {
+        // each child non-empty, so forest_keys' first element is child 0's first.
+        crate::bplus_tree::lemma_tree_keys_nonempty(gkids@[0], (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec());
+        crate::bplus_tree::lemma_forest_keys_cons(gkids@);
+        assert(crate::bplus_tree::tree_keys(cur@) == crate::bplus_tree::forest_keys(gkids@));
+        assert(crate::bplus_tree::tree_keys(cur@)[0] == crate::bplus_tree::tree_keys(gkids@[0])[0]);
+        crate::bplus_tree::lemma_tree_keys_nonempty(nkids[0], (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec());
+        crate::bplus_tree::lemma_forest_keys_cons(nkids);
+        assert(crate::bplus_tree::tree_keys(nt) == crate::bplus_tree::forest_keys(nkids));
+        assert(crate::bplus_tree::tree_keys(nt)[0] == crate::bplus_tree::tree_keys(nkids[0])[0]);
+        if cp@ == 0 {
+            assert(nkids[0] == ncl@);
+            assert(crate::bplus_tree::tree_keys(gkids@[cp@])[0] <= key.id_nat());  // == cur[0]
+        } else {
+            assert(nkids[0] == gkids@[0]);
+        }
+    }
 
     // (6) model: tree_keys(nt) == forest_keys(nkids); update splits to old ∪ {key}.
     crate::bplus_tree::lemma_forest_keys_update(gkids@, cp@, ncl@);
@@ -2598,6 +2709,10 @@ pub proof fn reconstruct_child_split_absorb<K, L, S, const TRACK: bool>(
         // median ordering of the two halves around `sep` (from the split).
         crate::bplus_tree::keys_all_lt(ncl@, sep.as_nat()),
         crate::bplus_tree::keys_all_ge(ncr@, sep.as_nat()),
+        // ncl preserves the child's min key when key isn't below it (matches the
+        // recursion's min clause; drives nt's separator-min at cp).
+        (crate::bplus_tree::tree_keys(gkids@[cp@])[0] <= key.id_nat()
+            ==> crate::bplus_tree::tree_keys(ncl@)[0] == crate::bplus_tree::tree_keys(gkids@[cp@])[0]),
         (crate::bplus_tree::tree_keys(ncl@) + crate::bplus_tree::tree_keys(ncr@)).to_set()
             == crate::bplus_tree::tree_keys(gkids@[cp@]).to_set().insert(key.id_nat()),
         child_succ@ == (if cp@ + 1 < gkids@.len() {
@@ -2656,6 +2771,10 @@ pub proof fn reconstruct_child_split_absorb<K, L, S, const TRACK: bool>(
             &&& (forall|id: nat| crate::bplus_tree::tree_ids(nt).contains(id)
                     ==> crate::bplus_tree::tree_ids(cur@).contains(id) || id >= arena1@.len())
             &&& crate::bplus_tree::tree_leaf_ids(nt)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]
+            // min-key preservation propagated up (same as the absorb path).
+            &&& (crate::bplus_tree::tree_keys(cur@).len() >= 1
+                    && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+                    ==> crate::bplus_tree::tree_keys(nt)[0] == crate::bplus_tree::tree_keys(cur@)[0])
         }),
 {
     let a1 = arena1@; let a2 = arena2@;
@@ -2769,6 +2888,25 @@ pub proof fn reconstruct_child_split_absorb<K, L, S, const TRACK: bool>(
     assert(crate::bplus_tree::tree_disjoint(nt));
     assert(crate::bplus_tree::tree_ids(cur@).subset_of(crate::bplus_tree::tree_ids(nt)));
     assert(crate::bplus_tree::tree_leaf_ids(nt)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0]);
+    // min-key preservation: nt[0] == tree_keys(nkids[0])[0]. cur[0] == gkids[0][0]
+    // (forest_keys head, children non-empty). cp>0: nkids[0]==gkids[0]. cp==0:
+    // nkids[0]==ncl, and cur[0] <= key triggers the ncl-min precondition.
+    if crate::bplus_tree::tree_keys(cur@).len() >= 1 && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat() {
+        crate::bplus_tree::lemma_tree_keys_nonempty(kids[0], (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec());
+        crate::bplus_tree::lemma_forest_keys_cons(kids);
+        assert(crate::bplus_tree::tree_keys(cur@) == crate::bplus_tree::forest_keys(kids));
+        assert(crate::bplus_tree::tree_keys(cur@)[0] == crate::bplus_tree::tree_keys(kids[0])[0]);
+        crate::bplus_tree::lemma_tree_keys_nonempty(nkids[0], (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec());
+        crate::bplus_tree::lemma_forest_keys_cons(nkids);
+        assert(crate::bplus_tree::tree_keys(nt) == crate::bplus_tree::forest_keys(nkids));
+        assert(crate::bplus_tree::tree_keys(nt)[0] == crate::bplus_tree::tree_keys(nkids[0])[0]);
+        if cp@ == 0 {
+            assert(nkids[0] == ncl@);
+            assert(crate::bplus_tree::tree_keys(gkids@[cp@])[0] <= key.id_nat());
+        } else {
+            assert(nkids[0] == kids[0]);
+        }
+    }
 }
 
 /// `binds(a2, nt)` Inner arm for the child-split splice: the parent node `pnode`
@@ -3084,6 +3222,11 @@ pub proof fn reconstruct_parent_split<K, L, S, const TRACK: bool>(
             ==> crate::bplus_tree::tree_ids(lt@).contains(id) || crate::bplus_tree::tree_ids(rt@).contains(id)),
         crate::bplus_tree::tree_leaf_ids(lt@).len() >= 1,
         crate::bplus_tree::tree_leaf_ids(lt@)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0],
+        // min-key preservation: lt (the left half) keeps cur's least key when key
+        // is not a new min (lt's leftmost descendant is cur's, unchanged).
+        (crate::bplus_tree::tree_keys(cur@).len() >= 1
+            && crate::bplus_tree::tree_keys(cur@)[0] <= key.id_nat()
+            ==> crate::bplus_tree::tree_keys(lt@)[0] == crate::bplus_tree::tree_keys(cur@)[0]),
 {
     // external_body: proof assembled in the proof phase.
 }

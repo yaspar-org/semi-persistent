@@ -206,6 +206,55 @@ fn check_wf_and_model(t: &Tree, verbose: bool) -> Vec<u32> {
     tree_keys
 }
 
+/// Execution-trace probe for the min-key-preservation conjecture the recursive
+/// insert proof needs: inserting a key that is NOT a new global minimum leaves
+/// the tree's minimum key unchanged (so a subtree's separator-min survives). Logs
+/// every insert's (old min, key, new min) and asserts: new_min == min(old_min,
+/// key), i.e. the min only ever moves DOWN, and only when key < old_min. This is
+/// the whole-tree shadow of insert_rec's per-subtree `key >= cur_min ⟹ nl[0] ==
+/// cur[0]` clause.
+#[test]
+fn min_key_preservation_trace() {
+    let mut moved_down = 0usize;
+    let mut preserved = 0usize;
+    for &count in &[300usize, 3000] {
+        for seed in 0..4u64 {
+            let keys = arbitrary_keys(count, seed ^ 0xBEEF);
+            let mut t = Tree::new();
+            let mut cur_min: Option<u32> = None;
+            for &x in &keys {
+                let before = check_wf_and_model(&t, false);
+                let old_min = before.first().copied();
+                t.insert_general(key(x));
+                let after = check_wf_and_model(&t, false);
+                let new_min = after.first().copied();
+                // the invariant: new_min == min(old_min, x).
+                let want = match old_min {
+                    None => x,
+                    Some(m) => m.min(x),
+                };
+                assert_eq!(
+                    new_min, Some(want),
+                    "min-key invariant broken: old_min={old_min:?} key={x} -> new_min={new_min:?}, want {want}"
+                );
+                // classify: did the min move down (key was a new min) or hold?
+                match old_min {
+                    Some(m) if x < m => moved_down += 1,
+                    Some(_) => preserved += 1,
+                    None => {}
+                }
+                cur_min = Some(want);
+            }
+            let _ = cur_min;
+        }
+    }
+    println!(
+        "min_key_preservation_trace: OK ({preserved} inserts preserved the min [key >= min], \
+         {moved_down} lowered it [key < min]; new_min == min(old_min, key) held every time)"
+    );
+    assert!(preserved > 0 && moved_down > 0, "expected both preserve and lower cases");
+}
+
 fn key(n: u32) -> DenseId31 {
     DenseId31::new(n)
 }
