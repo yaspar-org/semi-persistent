@@ -57,8 +57,9 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         // Re-entering a popped-but-already-captured marked slot: mark it
         // captured so a later `set` does not log a second diff entry for it
         // (preserves first-write-wins / the ≤ saved_len bound).
-        let reentered =
-            TRACK && !self.frames.is_empty() && old_len.as_usize() < self.active_saved_len.as_usize();
+        let reentered = TRACK
+            && !self.frames.is_empty()
+            && old_len.as_usize() < self.active_saved_len.as_usize();
         if reentered {
             self.store.mark_captured(old_len);
         }

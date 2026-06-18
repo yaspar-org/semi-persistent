@@ -86,7 +86,11 @@ fn restore_roundtrips_after_popping_marked_region() {
     let view = v.view();
     assert_eq!(view.len() as usize, snapshot.len(), "length restored");
     for (i, &expected) in snapshot.iter().enumerate() {
-        assert_eq!(view.get(i as u32), expected, "slot {i} restored to snapshot");
+        assert_eq!(
+            view.get(i as u32),
+            expected,
+            "slot {i} restored to snapshot"
+        );
     }
 }
 

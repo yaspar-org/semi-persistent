@@ -56,9 +56,16 @@ pub enum Justification<G: Copy> {
     /// justification.
     #[default]
     Filler,
-    Rewrite { rule_id: crate::id::RuleId },
-    Congruence { node_a: G, node_b: G },
-    Axiom { axiom_id: crate::id::AxiomId },
+    Rewrite {
+        rule_id: crate::id::RuleId,
+    },
+    Congruence {
+        node_a: G,
+        node_b: G,
+    },
+    Axiom {
+        axiom_id: crate::id::AxiomId,
+    },
 }
 
 impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justification<G> {
