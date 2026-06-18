@@ -220,3 +220,6 @@ egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
+
+// ── AC congruence completeness (superposition + inter-reduction) ──
+egg_test!(ac_complete_containment, "ac_complete_containment.egg");
