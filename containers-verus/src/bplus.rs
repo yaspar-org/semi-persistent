@@ -3086,6 +3086,100 @@ pub proof fn lemma_isplit_cchild_is_ckid<K, L, S, const TRACK: bool>(
     }
 }
 
+/// `binds(a2, half)` for one half of a parent split, where `half = Inner{hid,
+/// cseps[off..off+slen], ckids[off..off+slen+1]}` and the half's arena node `pn`
+/// (at `hid`) is `internal_split_at`'s output: `keys_view(pn) == cseps[off..]`
+/// and `child_view(pn, j) == isplit_cchild(pnode, cp, rid, off+j)`. Reduces to:
+/// the node's keys/children project (via the cseps subrange + the isplit_cchild
+/// bridge), and the half's children bind (subrange of the bound `ckids`).
+pub proof fn lemma_parent_split_half_binds<K, L, S, const TRACK: bool>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    gid: nat,
+    gseps: Seq<nat>,
+    gkids: Seq<Tree>,
+    cp: int,
+    ncl: Tree,
+    ncr: Tree,
+    rid: L::ArenaIdx,
+    pnode: L::Node,
+    hid: nat,
+    pn: L::Node,
+    off: int,
+    slen: int,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        0 <= cp < gkids.len(),
+        gkids.len() == gseps.len() + 1,
+        cp <= gseps.len(),
+        0 <= off,
+        off + slen + 1 <= gkids.len() + 1,  // ckids.len() == gkids.len()+1 (update keeps len, insert +1)
+        pnode == a1[gid as int],
+        hid < a2.len(),
+        a2[hid as int] == pn,
+        !L::is_leaf_spec(pn),
+        // the half node's views (internal_split_at output, shifted by off).
+        L::count_spec(pn) == slen,
+        (forall|i: int| 0 <= i < slen ==>
+            (#[trigger] L::keys_view(pn)[i]).as_nat() == gseps.insert(cp, ncr_first::<L>(ncr))[off + i]),
+        (forall|j: int| 0 <= j < slen + 1 ==>
+            L::child_view(pn, j) == L::isplit_cchild(pnode, cp, rid, off + j)),
+        // pnode binds gkids' roots; ncl/ncr roots; ckids bind in a2.
+        (forall|i: int| 0 <= i < gkids.len() ==> L::child_view(pnode, i) == crate::bplus_tree::tree_root_id(#[trigger] gkids[i])),
+        crate::bplus_tree::tree_root_id(ncl) == crate::bplus_tree::tree_root_id(gkids[cp]),
+        crate::bplus_tree::tree_root_id(ncr) == rid.as_nat(),
+        forest_binds_l::<L>(a2, gkids.update(cp, ncl).insert(cp + 1, ncr)),
+    ensures
+        ({
+            let cseps = gseps.insert(cp, ncr_first::<L>(ncr));
+            let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+            binds::<L>(a2, Tree::Inner {
+                id: hid,
+                seps: cseps.subrange(off, off + slen),
+                kids: ckids.subrange(off, off + slen + 1),
+            })
+        }),
+{
+    let cseps = gseps.insert(cp, ncr_first::<L>(ncr));
+    let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+    // length bookkeeping: update keeps len, insert(cp+1,..) adds 1 (cp+1 <= len).
+    assert(cseps.len() == gseps.len() + 1);   // cp <= gseps.len()
+    assert(gkids.update(cp, ncl).len() == gkids.len());
+    assert(ckids.len() == gkids.len() + 1);   // insert at cp+1 <= gkids.len()
+    assert(off + slen <= cseps.len());        // off+slen+1 <= ckids.len() == cseps.len()+1
+    assert(off + slen + 1 <= ckids.len());
+    let hseps = cseps.subrange(off, off + slen);
+    let hkids = ckids.subrange(off, off + slen + 1);
+    let half = Tree::Inner { id: hid, seps: hseps, kids: hkids };
+    assert(hseps.len() == slen);
+    assert(hkids.len() == slen + 1);
+    // keys: keys_view(pn)[i] == cseps[off+i] == hseps[i].
+    assert forall|i: int| 0 <= i < hseps.len() implies
+        (#[trigger] L::keys_view(pn)[i]).as_nat() == hseps[i] by {
+        assert(hseps[i] == cseps[off + i]);  // subrange index
+    }
+    // children: child_view(pn, j) == isplit_cchild(pnode, cp, rid, off+j)
+    //   == tree_root_id(ckids[off+j]) == tree_root_id(hkids[j]).
+    assert forall|j: int| 0 <= j < hkids.len() implies
+        L::child_view(pn, j) == crate::bplus_tree::tree_root_id(#[trigger] hkids[j]) by {
+        lemma_isplit_cchild_is_ckid::<K, L, S, TRACK>(a1, gid, gseps, gkids, cp, ncl, ncr, rid, pnode, off + j);
+        assert(hkids[j] == ckids[off + j]);
+    }
+    // half's children bind: subrange of forest_binds_l(a2, ckids).
+    lemma_forest_binds_subrange::<L>(a2, ckids, off, off + slen + 1);
+    assert(forest_binds_l::<L>(a2, hkids));
+}
+
+/// Spec helper: the first (least) key of `ncr` (the promoted separator). Named so
+/// the half-binds lemma can refer to the combined seps without threading `sep`.
+pub open spec fn ncr_first<L: NodeLayout>(ncr: Tree) -> nat {
+    crate::bplus_tree::tree_keys(ncr)[0]
+}
+
 /// `tree_disjoint(nt)` + footprint subset/freshness + first-leaf preservation for
 /// the child-split splice: a thin arena-side wrapper that supplies the freshness
 /// `bound = arena1.len()` (every old id is in range, every new id is a fresh tail
