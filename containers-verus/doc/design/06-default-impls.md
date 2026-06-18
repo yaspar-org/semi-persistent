@@ -113,33 +113,54 @@ produce the repr.** The store's `resize_default` already does this, so as long
 as you implement `Default for T` (the value type), you are safe. Never add a
 `Default for T::Repr` shortcut into the regrow path.
 
-## 5. Per-type recipe table (production codebase)
+## 5. Per-type recipe table (production codebase) — LANDED
+
+> **Status: all landed in production.** The recipes below were applied on the
+> `feature/production-bounded-pop` branch. Statuses now read **DONE**; the
+> "as-landed" column records what actually shipped, including a few deviations
+> from the original predictions (called out under Notes).
 
 Audited element types that flow through semi-persistent containers
 (`VecI`/`VecP`/`Map`/`SparseSet`/`ListArena`/`BPlusTreeSet`):
 
-| Type | Where | Kind | Status / recipe |
+| Type | Where | Kind | As landed |
 |---|---|---|---|
-| `*Id`, `*Id64` (all `define_id*!`) | `id.rs`, `egraph/nodes.rs`, … | bit-steal (MSB) | **DONE** — macro emits `impl Default { Self(0) }` (`id.rs:184`). `0` is clean-domain. |
-| `u8`, `usize`, `u32`, … | union-find `rank`, indices | primitive | **DONE** — std `Default`. |
-| `VariableArityNode<G,O>` | `node_types.rs:121` | plain data (`Repr`, `usize`, `u8` fields) | **ADD** `#[derive(Default)]` — all fields `Default`. |
-| `LitNode<G,O,V>` | `node_types.rs:207` | plain data | **ADD** `#[derive(Default)]`. |
-| `EClassEntry<T>` | `classes.rs:21` | `{next: T, repr_stored}` | **ADD** `Default { next: T::default(), repr_stored: T::Index::default().into_repr() }` (route the id through `into_repr`, per §4). |
-| `PoolDirector` | `director.rs:464` | newtype `(u64)` | **ADD** `#[derive(Default)]`. |
-| `Justification<G>` | `union_find.rs:52` | enum | **ADD** an explicit filler: `#[derive(Default)] … #[default] Filler` (or reuse a no-op variant). Filler never observed (§1). |
-| `BPlusNode` | `bplus.rs:33` | `Tagged`, bit-steal `FLAG_TAG` | **ADD** `#[derive(Default)]` (all-zero is repr-safe via §3) OR `default() = new_leaf()` for a non-degenerate filler. |
-| `BPlusHeader` | `bplus.rs:156` | plain data (`u32`,`u32`,`usize`) | **ADD** `#[derive(Default)]`. |
-| `ListNode<T,N>` | `list.rs:23` | `Tagged`, composite repr | **ADD** `Default { payload: T::default(), next: Opt::none() }` (needs `T: Default`). |
-| `ListHead<N>` | `list.rs:71` | `Tagged`, composite repr | **ADD** `Default = ListHead::empty()` (already exists as a fn; wire it to `Default`). |
-| `Opt<T>` | `tagged.rs:57` | niche option | `default() = Opt::none()` when `T: Default` (none is the clean filler). |
+| `*Id`, `*Id64` (all `define_id*!`) | `id.rs`, `egraph/nodes.rs`, … | bit-steal (MSB) | **DONE** — macro emits `impl Default { Self(0) }` (`id.rs:176`). `0` is clean-domain. |
+| `u8`, `usize`, `u32`, … | union-find `rank`, indices | primitive | **DONE** — std `Default`; `IndexLike` now requires `Default` as a supertrait. |
+| `FixedArityNode<G,O,K>` | `node_types.rs:29` | plain data, raw `Repr` fields | **DONE** — hand impl via `new(G::default(), O::default(), [G::default(); K])` (not in original audit; routes ids through `into_repr`). |
+| `VariableArityNode<G,O>` | `node_types.rs:121` | plain data, raw `Repr` fields | **DONE** — hand impl via `make(...)`, not a derive: the struct stores `G::Repr`, so `#[derive(Default)]` would demand `G::Repr: Default`. |
+| `LitNode<G,O,V>` | `node_types.rs:207` | plain data, raw `Repr` fields | **DONE** — hand impl via `new(...)` (same raw-`Repr` reason as above). |
+| `EClassEntry<T>` | `classes.rs:21` | `{next: T, repr_stored}` | **DONE** — `Default { Self::new(T::default(), T::Index::default()) }` (id routed through `into_repr`, per §4). |
+| `PoolDirector` | `director.rs:464` | newtype `(u64)`, bit-steal (MSB) | **DONE** — hand impl `PoolDirector::new(0)` (clears the MSB tag), not a derive. |
+| `Justification<G>` | `union_find.rs:52` | enum | **DONE** — `#[derive(... Default)]` + explicit `#[default] Filler`; `make_set` now pushes `Filler`. Never observed (§1). |
+| six `define_node!` structs | `bplus.rs:46` | `Tagged`, bit-steal `FLAG_TAG` | **DONE** — macro emits a manual all-zero `Default` (`flags: 0` clears the tag); `data` array can exceed `[T; N]: Default`'s 32-element limit, so not a derive. Covers `BPlusNode{64,128,256}U32` + `{128,256,512}U64`. |
+| `BPlusHeader<I>` | `bplus.rs:387` | plain data (`I`,`I`,`usize`) | **DONE** — `#[derive(Default)]` (`I: Copy`, default via `ArenaIdx: Default`). |
+| `ListNode<T,N>` | `list.rs:23` | `Tagged`, composite repr | **DONE** — `Default = Self::new(T::default(), Opt::none())` (needs `T: Default`). |
+| `ListHead<N>` | `list.rs:71` | `Tagged`, composite repr | **DONE** — `Default = ListHead::empty()`. |
+| `Opt<T>` | `tagged.rs:57` | niche option | **DONE** — `default() = Opt::none()` when `T: Tagged + Default`. |
+| `Multiplicity` | `egraph/multiplicity.rs:7` | newtype `(u32)` | **DONE** — `#[derive(Default)]`; needed so `EGraphConfig::C = (G, Multiplicity)` is `Default`. |
 
 Notes:
-- Types parameterized by a `DenseId`/`Tagged` `T` must add `T: Default` to
-  their `Default` impl bound (e.g. `EClassEntry<T> where T: DenseId + Default`).
-  Since the `define_id*!` ids are already `Default`, every concrete
-  instantiation in the egraph satisfies this.
+- Types parameterized by a `DenseId`/`Tagged` `T` add `T: Default` to their
+  `Default` impl bound. Since the `define_id*!` ids are already `Default`, every
+  concrete instantiation in the egraph satisfies this.
 - `Justification<G>` is the **only** enum among stored payloads — the only one
   needing a fabricated variant rather than a mechanical derive.
+- **Deviation — raw-`Repr` node structs.** The three node types
+  (`Fixed`/`Variable`/`Lit`Node) store *raw reprs* (`G::Repr`), not values, so a
+  `#[derive(Default)]` would generate the wrong bound (`G::Repr: Default`). They
+  use hand impls that default the id *values* and route through `into_repr`,
+  which is also the §4-correct (niche-safe) recipe. `FixedArityNode` was missing
+  from the original audit and was added during the landing.
+- **Deviation — `BPlusNode` count.** The merged `NodeLayout` B+tree stamps
+  **six** layout structs via `define_node!`, not one. The `Default` is emitted
+  once inside the macro.
+- **Bound propagation.** Rather than thread `Default` through every index-typed
+  parameter, `Default` was added to the `IndexLike` supertrait (every impl
+  already had it) and to the `EGraphConfig::C` associated-type bound. This
+  collapsed most of the cascade; the remaining `where` clauses sit on the
+  container `restore` methods (`SparseSet`, `ListArena`, `BPlusTreeSet`, the
+  caches, `NodeStore`, `EGraph`).
 
 ## 6. Verus-side correspondence
 
@@ -159,21 +180,27 @@ In `containers-verus` the same split holds:
   proved `view() == snapshots[token]` theorem, so no `Default` impl can weaken
   correctness regardless of the value it returns.
 
-## 7. Recommended landing order
+## 7. Landing order (as executed)
 
-1. Mechanical `#[derive(Default)]` for the plain-data structs
-   (`VariableArityNode`, `LitNode`, `PoolDirector`, `BPlusNode`,
-   `BPlusHeader`) — zero risk.
-2. Hand impls for the two composites with id fields (`EClassEntry`,
-   `ListNode`/`ListHead`) and `Opt` — route ids through `into_repr` (§4).
-3. The one enum (`Justification`) — add the `#[default]` filler variant.
-4. Add `+ Default` to the relevant generic bounds; the `define_id*!` ids
-   already satisfy it, so no call-site churn is expected.
+Landed on `feature/production-bounded-pop` in this order:
 
-(Gate: if the semi-naive→main merge + rebase lands first, re-audit
-`node_types.rs`/`bplus.rs` against the merged versions before step 1 — the
-generalized `NodeLayout` B+tree changes `BPlusNode` into multiple layout
-structs, each needing the §3 treatment.)
+1. `DiffStore` trait + backends: `mark_captured` + `resize_default`; removed the
+   dead `force_capture`.
+2. `Vec` algorithm: `pop` → first-write-wins `capture`; `push` → `mark_captured`
+   re-entry branch; `restore` → `resize_default` + overwrite replay, `where T:
+   Default`.
+3. `Default` impls for the stored types (§5 table) — hand impls for the
+   raw-`Repr` node structs and bit-steal newtypes (route through `into_repr`),
+   the `#[default] Filler` enum variant, the macro-emitted B+tree node default.
+4. Bound propagation: `Default` on the `IndexLike` supertrait + `EGraphConfig::C`,
+   plus `where` clauses on the container `restore` methods.
+5. Tests: the bounded-pop DoS regression (`containers/tests/bounded_pop_test.rs`)
+   + restore round-trip + set-after-reentry.
+
+The gate noted in the original plan (the semi-naive→main merge changing
+`BPlusNode` into multiple layout structs) did land first, and the re-audit
+confirmed **six** `define_node!` structs plus the extra `FixedArityNode` — both
+handled above.
 
 ---
 [← Table of Contents](00-table-of-contents.md)
