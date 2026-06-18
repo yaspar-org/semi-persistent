@@ -156,11 +156,33 @@ lemmas remain `external_body`).** `insert_rec` structure:
 - the child-returns-Some **split branch**: VERIFIED at the `insert_rec` level. The
   parent-absorb sub-case (`internal_insert_at` when room) and parent-split
   sub-case (`internal_split_at` otherwise) both discharge `insert_rec`'s
-  postcondition. The two reconstruction lemmas they call —
-  `reconstruct_child_split_absorb` and `reconstruct_parent_split` — are still
-  `external_body` (proof pending), but now carry the CORRECT subset+freshness
-  ensures, validated by the `footprint_contract_holds` property test. No
-  `assume(false)` anywhere.
+  postcondition.
+  - `reconstruct_child_split_absorb` (parent had room): **FULLY PROVEN** — no
+    `external_body`. `tree_wf`+model via `lemma_child_split_absorb_tree_wf` (on
+    the shared `lemma_child_split_combined_wf`); `binds` via
+    `lemma_forest_binds_concat`/`_pair`/`_subrange` + `lemma_child_split_binds_node`;
+    `tree_disjoint`+footprint+first-leaf via `lemma_child_split_absorb_ids`;
+    leaf-links via `lemma_forest_links_splice` (+ `lemma_forest_links_cons`).
+  - `reconstruct_parent_split` (parent was full): structural `tree_wf`+model
+    **done** (`lemma_parent_split_tree_wf` = `lemma_child_split_combined_wf` +
+    `lemma_internal_split_tree_wf`). REMAINING `external_body`: the arena assembly
+    (binds/links/disjoint/footprint for both halves) and `lemma_parent_split_
+    promoted` (see below). Carries the correct ensures, validated by the property
+    tests. No `assume(false)` anywhere.
+
+### The separator-equals-right-min invariant (found proving the promoted key)
+
+`reconstruct_parent_split` must return `promoted == tree_keys(rt)[0]` (the
+grandparent's `Some` arm needs `sep == tree_keys(nr)[0]`). That is a SHARPER
+B+tree fact than `tree_wf` tracks: every separator EQUALS the minimum key of the
+subtree immediately to its right (separators are routing copies of leaf minima),
+not merely a bound (`keys_all_ge`/`keys_all_lt`). A runtime probe in `check_node`
+(`sep[i-1] == min(child i)`) confirms it HOLDS across all property tests, so the
+remaining work is to add it to `tree_wf`'s cross-node clause (as an extra
+equality clause alongside the inequalities — ~30 `keys_all_ge` consumers keep
+working; each `tree_wf`-construction site gains the new obligation) and discharge
+`lemma_parent_split_promoted` from it. Isolated as one `external_body` (no
+assume) until then.
 
 ### The footprint-contract spec bug (caught by runtime evaluation, fixed)
 
