@@ -8,19 +8,18 @@
 //! arena and walking the leaf-link chain. Instrumented with prints (run with
 //! `cargo test -- --nocapture`).
 //!
-//! IMPORTANT SCOPE (matches current code, 2026-06): the public `insert` is the
-//! M4b version — it requires a *leaf root*, so it handles the no-split case and
-//! exactly ONE root-leaf split (to height 1). A second split would misread the
-//! now-internal root as a leaf. So these tests cap N at `LEAF_CAP + 1` (= 15 for
-//! Layout64U32): enough to exercise no-split inserts AND one split + the
-//! leaf-link splice, but not multi-level propagation (that is M4c, the recursive
-//! insert, not yet wired into `insert`). There is no cursor yet (M5), so the
-//! "cursor in order" check is done by hand-walking the `link` chain.
+//! SCOPE (2026-06, test-first phase): we drive the GENERAL multi-level insert,
+//! `insert_general` (M4c) — descent + split propagation + new-root growth. Its
+//! exec path is complete; its `wf` proof is in progress (so it is currently
+//! `external_body`), and these tests are the harness validating it before the
+//! proof lands. There is no cursor yet (M5), so the "cursor in order" check is
+//! done by hand-walking the `link` chain over the arena.
 
 use semi_persistent_containers_verus::bplus::BPlusTreeSet;
 use semi_persistent_containers_verus::bplus_layout::{Layout64U32, NodeLayout};
 use semi_persistent_containers_verus::bplus_search::BinarySearch;
 use semi_persistent_containers_verus::dense_id::DenseId31;
+use semi_persistent_containers_verus::index_like::IndexLike;
 
 type L = Layout64U32; // leaf_cap = 14, key_cap = 7, u32 words/arena
 type Tree = BPlusTreeSet<DenseId31, L, BinarySearch, false>;
@@ -210,10 +209,10 @@ fn key(n: u32) -> DenseId31 {
 /// covered separately by `the_one_split`; multi-level insert is M4c, pending.)
 #[test]
 fn insert_random_then_cursor_in_order() {
-    for &n in &[1u32, 2, 7, 13, 14] {
+    for &n in &[1u32, 2, 7, 14, 15, 50, 200, 1000] {
         for seed in 0..8u64 {
             let order = shuffled(n, seed);
-            let verbose = n == 14 && seed == 0;
+            let verbose = n == 15 && seed == 0;
             if verbose {
                 println!("\n=== N={n} seed={seed} order={:?} ===", order);
             }
@@ -221,10 +220,10 @@ fn insert_random_then_cursor_in_order() {
             assert!(t.is_empty());
 
             for (step, &x) in order.iter().enumerate() {
-                let added = t.insert(key(x));
+                let added = t.insert_general(key(x));
                 assert!(added, "N={n} seed={seed}: insert {x} (step {step}) reported not-added");
                 // re-insert is a no-op (root is still a leaf since N <= LEAF_CAP).
-                let again = t.insert(key(x));
+                let again = t.insert_general(key(x));
                 assert!(!again, "N={n} seed={seed}: re-insert {x} reported added");
 
                 // every key inserted so far must be present.
@@ -255,7 +254,7 @@ fn empty_and_singleton() {
     assert!(!t.contains(key(0)));
     assert_eq!(check_wf_and_model(&t, true), Vec::<u32>::new());
 
-    assert!(t.insert(key(42)));
+    assert!(t.insert_general(key(42)));
     assert!(!t.is_empty());
     assert_eq!(t.len(), 1);
     assert!(t.contains(key(42)));
@@ -271,14 +270,14 @@ fn the_one_split() {
     let mut t = Tree::new();
     // ascending insert fills the root leaf, then splits on the 15th.
     for x in 0..LEAF_CAP as u32 {
-        assert!(t.insert(key(x)));
+        assert!(t.insert_general(key(x)));
     }
     println!("after {LEAF_CAP} inserts (should be a single full leaf root):");
     let m1 = check_wf_and_model(&t, true);
     assert_eq!(m1, (0..LEAF_CAP as u32).collect::<Vec<_>>());
 
     // the split.
-    assert!(t.insert(key(LEAF_CAP as u32)));
+    assert!(t.insert_general(key(LEAF_CAP as u32)));
     println!("after the split (should be height 1: internal root + 2 leaves):");
     let m2 = check_wf_and_model(&t, true);
     assert_eq!(m2, (0..=LEAF_CAP as u32).collect::<Vec<_>>());
@@ -297,7 +296,7 @@ fn random_fill_then_split() {
         let mut t = Tree::new();
         for &x in &order {
             // only valid while the root is a leaf; the LAST insert does the split.
-            t.insert(key(x));
+            t.insert_general(key(x));
         }
         let model = check_wf_and_model(&t, false);
         let want: Vec<u32> = (0..n).collect();
@@ -309,4 +308,193 @@ fn random_fill_then_split() {
         assert!(!t.contains(key(n)));
     }
     println!("random_fill_then_split: OK (64 seeds)");
+}
+
+/// Report the tree height/shape reached for a few N, to confirm we exercise
+/// genuinely multi-level trees (height >= 2), not just one split.
+#[test]
+fn reports_multilevel_shape() {
+    for &n in &[15u32, 100, 1000, 5000] {
+        let mut t = Tree::new();
+        for x in shuffled(n, 1) {
+            t.insert_general(key(x));
+        }
+        // count nodes + height via a structural walk (reuse check_node's height).
+        let (_keys, height, _l, _r) = check_node(&t, t.root, true, None, None, false);
+        let model = check_wf_and_model(&t, false);
+        assert_eq!(model, (0..n).collect::<Vec<_>>());
+        println!("N={n}: height={height}, arena nodes={}", t.nodes.len().as_usize());
+    }
+    println!("reports_multilevel_shape: OK");
+}
+
+// ---------------------------------------------------------------------------
+// Cursor tests — the real BPlusCursor (production fast path), the leapfrog API.
+// ---------------------------------------------------------------------------
+use semi_persistent_containers_verus::bplus::BPlusCursor;
+
+/// Enumerate the whole set via the cursor (seek_first + key/step) and check it
+/// yields 0..N in order without gaps — the property the leapfrog join relies on.
+#[test]
+fn cursor_enumerates_in_order() {
+    for &n in &[1u32, 14, 15, 100, 1000] {
+        for seed in 0..4u64 {
+            let mut t = Tree::new();
+            for x in shuffled(n, seed) {
+                t.insert_general(key(x));
+            }
+            let mut c = BPlusCursor::new(&t);
+            c.seek_first();
+            let mut got = Vec::new();
+            while let Some(k) = c.key() {
+                got.push(k.index() as u32);
+                c.step();
+            }
+            assert_eq!(got, (0..n).collect::<Vec<_>>(), "N={n} seed={seed}: cursor order wrong");
+        }
+    }
+    println!("cursor_enumerates_in_order: OK");
+}
+
+/// seek(target) lands on the least key >= target (leapfrog's core step), and
+/// stepping from there continues in order. Tests every target in 0..=N.
+#[test]
+fn cursor_seek_lands_on_ge() {
+    let n = 500u32;
+    let mut t = Tree::new();
+    for x in shuffled(n, 7) {
+        t.insert_general(key(x));
+    }
+    // set holds 0..n; seek(target) should land exactly on `target` for target<n,
+    // and be exhausted for target==n.
+    for target in 0..=n {
+        let mut c = BPlusCursor::new(&t);
+        c.seek(key(target));
+        match c.key() {
+            Some(k) => {
+                let v = k.index() as u32;
+                assert_eq!(v, target, "seek({target}) landed on {v}, want {target}");
+            }
+            None => assert_eq!(target, n, "seek({target}) exhausted but target < n"),
+        }
+    }
+    // leapfrog-style: repeated seeks that jump forward stay monotone.
+    let mut c = BPlusCursor::new(&t);
+    let mut last = -1i64;
+    for &target in &[0u32, 1, 50, 51, 200, 499, 250] {
+        c.seek(key(target));
+        if let Some(k) = c.key() {
+            let v = k.index() as i64;
+            assert!(v >= target as i64, "seek({target}) -> {v} < target");
+            // (250 after 499 re-descends; just check it found 250)
+            if target >= last as u32 { /* forward seeks monotone within a run */ }
+            last = v;
+        }
+    }
+    println!("cursor_seek_lands_on_ge: OK");
+}
+
+// ---------------------------------------------------------------------------
+// Oracle-based property test: arbitrary values vs a HashSet reference model.
+// This is the real one — sparse/arbitrary keys (not a dense 0..N), duplicates,
+// with an independent oracle (sorted unique values) compared to cursor output.
+// ---------------------------------------------------------------------------
+use std::collections::HashSet;
+
+/// LCG stream of arbitrary 31-bit keys (DenseId31 requires n < 2^31).
+fn arbitrary_keys(count: usize, seed: u64) -> Vec<u32> {
+    let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0xD1B5);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        out.push(((s >> 33) as u32) & 0x7FFF_FFFF); // 31-bit
+    }
+    out
+}
+
+#[test]
+fn oracle_arbitrary_values_vs_sorted_hashset() {
+    for &count in &[10usize, 100, 1000, 5000] {
+        for seed in 0..6u64 {
+            let keys = arbitrary_keys(count, seed);
+
+            // reference model: a HashSet (dedup), and contains() oracle.
+            let mut oracle: HashSet<u32> = HashSet::new();
+            let mut t = Tree::new();
+
+            for &x in &keys {
+                let was_new = !oracle.contains(&x);
+                let added = t.insert_general(key(x));
+                oracle.insert(x);
+                assert_eq!(
+                    added, was_new,
+                    "count={count} seed={seed}: insert({x}) returned added={added}, oracle says new={was_new}"
+                );
+            }
+
+            // sort the oracle into the expected in-order vector.
+            let mut want: Vec<u32> = oracle.iter().copied().collect();
+            want.sort_unstable();
+
+            // 1) full cursor traversal must equal the sorted oracle, no gaps/dups.
+            let mut c = BPlusCursor::new(&t);
+            c.seek_first();
+            let mut got = Vec::with_capacity(want.len());
+            while let Some(k) = c.key() {
+                got.push(k.index() as u32);
+                c.step();
+            }
+            assert_eq!(
+                got, want,
+                "count={count} seed={seed}: cursor traversal != sorted oracle\n  got.len={} want.len={}",
+                got.len(), want.len()
+            );
+
+            // 2) contains() agrees with the oracle on present + absent probes.
+            for &x in want.iter().take(64) {
+                assert!(t.contains(key(x)), "count={count} seed={seed}: {x} present in oracle, missing in tree");
+            }
+            for probe in arbitrary_keys(64, seed ^ 0xABCD) {
+                assert_eq!(
+                    t.contains(key(probe)),
+                    oracle.contains(&probe),
+                    "count={count} seed={seed}: contains({probe}) disagrees with oracle"
+                );
+            }
+
+            // 3) len() == |oracle|, and the runtime wf invariants hold.
+            assert_eq!(t.len(), oracle.len(), "count={count} seed={seed}: len != oracle size");
+            let model = check_wf_and_model(&t, false);
+            assert_eq!(model, want, "count={count} seed={seed}: wf-model != sorted oracle");
+        }
+    }
+    println!("oracle_arbitrary_values_vs_sorted_hashset: OK");
+}
+
+/// seek(target) for arbitrary (possibly-absent) targets: lands on the least key
+/// >= target per the oracle, or exhausted if none.
+#[test]
+fn oracle_seek_arbitrary_targets() {
+    let count = 2000usize;
+    let keys = arbitrary_keys(count, 99);
+    let mut oracle: HashSet<u32> = HashSet::new();
+    let mut t = Tree::new();
+    for &x in &keys {
+        t.insert_general(key(x));
+        oracle.insert(x);
+    }
+    let mut sorted: Vec<u32> = oracle.iter().copied().collect();
+    sorted.sort_unstable();
+
+    for target in arbitrary_keys(500, 1234) {
+        let mut c = BPlusCursor::new(&t);
+        c.seek(key(target));
+        // oracle answer: least element >= target.
+        let want = sorted.iter().copied().find(|&v| v >= target);
+        match c.key() {
+            Some(k) => assert_eq!(Some(k.index() as u32), want, "seek({target}) mismatch"),
+            None => assert_eq!(want, None, "seek({target}) exhausted but oracle has a >= element"),
+        }
+    }
+    println!("oracle_seek_arbitrary_targets: OK");
 }
