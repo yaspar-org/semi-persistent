@@ -413,6 +413,116 @@ pub proof fn lemma_keys_all_ge_set(t: Tree, bound: nat)
     }
 }
 
+/// Concatenation of two sorted sequences is sorted when every element of the
+/// left is strictly below every element of the right.
+pub proof fn lemma_concat_sorted(a: Seq<nat>, b: Seq<nat>)
+    requires
+        strictly_sorted(a),
+        strictly_sorted(b),
+        forall|i: int, j: int| 0 <= i < a.len() && 0 <= j < b.len() ==> (#[trigger] a[i]) < (#[trigger] b[j]),
+    ensures strictly_sorted(a + b),
+{
+    assert forall|i: int, j: int| 0 <= i < j < (a + b).len() implies (#[trigger] (a + b)[i]) < (#[trigger] (a + b)[j]) by {
+        if j < a.len() {
+            assert((a + b)[i] == a[i]); assert((a + b)[j] == a[j]);
+        } else if i >= a.len() {
+            assert((a + b)[i] == b[i - a.len()]); assert((a + b)[j] == b[j - a.len()]);
+        } else {
+            // i in a, j in b: a[i] < b[j-a.len()] by the cross bound.
+            assert((a + b)[i] == a[i]); assert((a + b)[j] == b[j - a.len()]);
+        }
+    }
+}
+
+/// THE IN-ORDER CORRECTNESS KEYSTONE: a wf ghost tree's in-order key sequence is
+/// strictly increasing. This is the general (any-height) version of
+/// `lemma_leaf_sorted`, and the literal statement that in-order traversal yields
+/// keys in ascending order without duplicates. The cursor's soundness rests on
+/// it. Induction over `t`: a leaf is sorted by `tree_wf`'s leaf arm; an internal
+/// node's `forest_keys(kids)` is sorted because each child is sorted (IH) and the
+/// cross-node ordering (`keys_all_lt`/`keys_all_ge` around the separators) places
+/// every child's keys strictly below the next child's.
+pub proof fn lemma_tree_wf_sorted(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
+    requires tree_wf(t, h, cap, key_cap, is_root),
+    ensures strictly_sorted(tree_keys(t)),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { keys, .. } => {
+            // tree_wf leaf arm gives strictly_sorted(keys); tree_keys(Leaf) == keys.
+        }
+        Tree::Inner { seps, kids, .. } => {
+            // tree_keys(Inner) == forest_keys(kids). Reduce to the forest lemma,
+            // which needs each child sorted (IH) + the cross-node ordering.
+            assert(forest_wf(kids, (h - 1) as nat, cap, key_cap));
+            lemma_forest_keys_sorted(kids, seps, (h - 1) as nat, cap, key_cap);
+        }
+    }
+}
+
+/// `forest_keys(kids)` is sorted, given each child wf (so sorted, by the tree
+/// lemma) and the cross-node ordering around `seps` (child i's keys `< seps[i]`,
+/// child i+1's keys `>= seps[i]`). Induction on `kids`, peeling the head: the
+/// head is sorted and entirely below `seps[0]`, while the tail's keys are all
+/// `>= seps[0]` (every later child is `>= seps[i-1] >= seps[0]`), so the head
+/// concatenates below the tail.
+pub proof fn lemma_forest_keys_sorted(kids: Seq<Tree>, seps: Seq<nat>, h: nat, cap: nat, key_cap: nat)
+    requires
+        forest_wf(kids, h, cap, key_cap),
+        kids.len() == seps.len() + 1,
+        strictly_sorted(seps),
+        (forall|i: int| 0 <= i < seps.len() ==> keys_all_lt(#[trigger] kids[i], seps[i])),
+        (forall|i: int| 0 < i < kids.len() ==> keys_all_ge(#[trigger] kids[i], seps[i - 1])),
+    ensures strictly_sorted(forest_keys(kids)),
+    decreases kids,
+{
+    if kids.len() == 1 {
+        // forest_keys([c]) == tree_keys(c); c is wf hence sorted.
+        lemma_forest_keys_cons(kids);
+        assert(kids.drop_first().len() == 0);
+        assert(forest_keys(kids.drop_first()) =~= Seq::<nat>::empty());
+        lemma_forest_wf_cons(kids, h, cap, key_cap);
+        lemma_tree_wf_sorted(kids[0], h, cap, key_cap, false);
+        assert(forest_keys(kids) =~= tree_keys(kids[0]));
+    } else {
+        let df = kids.drop_first();
+        let dseps = seps.drop_first();
+        lemma_forest_keys_cons(kids);
+        lemma_forest_wf_cons(kids, h, cap, key_cap);
+        // head sorted (IH-tree); tail sorted (IH-forest on df with dseps).
+        lemma_tree_wf_sorted(kids[0], h, cap, key_cap, false);
+        assert forall|i: int| 0 <= i < dseps.len() implies keys_all_lt(#[trigger] df[i], dseps[i]) by {
+            assert(df[i] == kids[i + 1]); assert(dseps[i] == seps[i + 1]);
+        }
+        assert forall|i: int| 0 < i < df.len() implies keys_all_ge(#[trigger] df[i], dseps[i - 1]) by {
+            assert(df[i] == kids[i + 1]); assert(dseps[i - 1] == seps[i]);
+        }
+        lemma_forest_keys_sorted(df, dseps, h, cap, key_cap);
+        // cross bound: every head key < seps[0] <= every tail key. Tail keys are
+        // in some df[m] == kids[m+1], all >= seps[m] >= seps[0] (seps sorted).
+        assert(keys_all_lt(kids[0], seps[0]));  // head bound
+        lemma_keys_all_lt_set(kids[0], seps[0]);
+        assert forall|i: int, j: int| 0 <= i < tree_keys(kids[0]).len()
+            && 0 <= j < forest_keys(df).len()
+            implies (#[trigger] tree_keys(kids[0])[i]) < (#[trigger] forest_keys(df)[j]) by {
+            // head key i < seps[0].
+            assert(tree_keys(kids[0]).to_set().contains(tree_keys(kids[0])[i]));
+            // tail key j >= seps[0]: it lives in some df[m] == kids[m+1], >= seps[m] >= seps[0].
+            let tk = forest_keys(df)[j];
+            assert(forest_keys(df).to_set().contains(tk));
+            lemma_forest_keys_membership(df, tk);
+            let m = choose|m: int| 0 <= m < df.len() && tree_keys(df[m]).contains(tk);
+            assert(df[m] == kids[m + 1]);
+            assert(keys_all_ge(kids[m + 1], seps[m]));
+            lemma_keys_all_ge_set(kids[m + 1], seps[m]);
+            // seps[m] >= seps[0] (sorted, m >= 0).
+            if m > 0 { assert(seps[0] < seps[m]); }
+        }
+        lemma_concat_sorted(tree_keys(kids[0]), forest_keys(df));
+        assert(forest_keys(kids) =~= tree_keys(kids[0]) + forest_keys(df));
+    }
+}
+
 /// Structural well-formedness, height-indexed for balance. `tree_wf(t, h, cap,
 /// key_cap, is_root)` holds when `t` is a valid B+tree of height exactly `h`:
 ///   - balance: every leaf is at depth `h` (a Leaf requires `h == 0`; an Inner
