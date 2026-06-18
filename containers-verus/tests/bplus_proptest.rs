@@ -198,6 +198,189 @@ fn key(n: u32) -> DenseId31 {
 }
 
 // ---------------------------------------------------------------------------
+// Footprint-contract evaluator — reifies the ghost `tree_ids` (the set of arena
+// indices reachable from a root) so we can check `insert`'s *transition
+// contract* at runtime, not just the *state* `wf`. `check_wf_and_model` answers
+// "is the tree well-formed now"; this answers "did the footprint change the way
+// the recursion's `ensures` claims." It is what catches over-strong frame /
+// footprint clauses (the `tree_ids(nl) == tree_ids(cur)` class), which a pure
+// state-invariant check cannot see because the state stays well-formed.
+// ---------------------------------------------------------------------------
+use std::collections::BTreeSet;
+
+/// All arena indices in the subtree rooted at `idx` (the reified `tree_ids`).
+fn reachable_ids(t: &Tree, idx: u32) -> BTreeSet<u32> {
+    let mut out = BTreeSet::new();
+    let node = t.nodes.get(idx);
+    out.insert(idx);
+    if !L::is_leaf(&node) {
+        let count = L::count(&node);
+        for i in 0..=count {
+            out.extend(reachable_ids(t, L::child(&node, i)));
+        }
+    }
+    out
+}
+
+/// All LEAF arena indices in the subtree rooted at `idx` (the reified
+/// `tree_leaf_ids`). The spec's `None`-arm originally claimed these are
+/// unchanged on insert; a split adds a fresh leaf, so the honest contract is
+/// the same subset+freshness as for `tree_ids`.
+fn reachable_leaf_ids(t: &Tree, idx: u32) -> BTreeSet<u32> {
+    let mut out = BTreeSet::new();
+    let node = t.nodes.get(idx);
+    if L::is_leaf(&node) {
+        out.insert(idx);
+    } else {
+        let count = L::count(&node);
+        for i in 0..=count {
+            out.extend(reachable_leaf_ids(t, L::child(&node, i)));
+        }
+    }
+    out
+}
+
+/// The model-level outcome of one insert, plus the footprint delta. Used to
+/// assert the recursion's `ensures` footprint clause: old ids are retained, and
+/// every newly-appearing id is a freshly-allocated (>= old arena length) slot.
+struct InsertObservation {
+    grew: bool,        // did the footprint gain at least one id?
+    height_changed: bool,
+}
+
+/// The leftmost leaf arena id of the subtree at `idx` (`tree_leaf_ids(_)[0]`).
+fn first_leaf_id(t: &Tree, idx: u32) -> u32 {
+    let node = t.nodes.get(idx);
+    if L::is_leaf(&node) {
+        idx
+    } else {
+        first_leaf_id(t, L::child(&node, 0))
+    }
+}
+
+/// Run one insert and check the footprint contract around it:
+///  - retention: `ids_before ⊆ ids_after` (no live node ever drops out);
+///  - freshness: every id in `ids_after \ ids_before` is `>= arena_len_before`
+///    (growth only ever appends fresh tail slots — the F1 clause).
+/// Returns the observation so a test can confirm the EXACT-equality form
+/// (`ids_after == ids_before`) is genuinely violated by real inserts — i.e. the
+/// spec bug is real, not hypothetical.
+fn insert_checked(t: &mut Tree, k: u32) -> InsertObservation {
+    let ids_before = reachable_ids(t, t.root);
+    let leaf_ids_before = reachable_leaf_ids(t, t.root);
+    let arena_len_before = t.nodes.len().as_usize() as u32;
+    let height_before = check_node(t, t.root, true, None, None, false).1;
+    let root_before = t.root;
+    let first_leaf_before = first_leaf_id(t, root_before);
+
+    t.insert_general(key(k));
+
+    let ids_after = reachable_ids(t, t.root);
+    let leaf_ids_after = reachable_leaf_ids(t, t.root);
+    let height_after = check_node(t, t.root, true, None, None, false).1;
+
+    // First-leaf preservation: the leftmost leaf of a subtree NEVER moves on
+    // insert (a split adds a leaf to the RIGHT). This is what the leaf-link
+    // composition needs at child boundaries even when the footprint grows — so
+    // the proof can drop full leaf-id-sequence equality and keep just this.
+    // (Only checkable when the root id is unchanged, i.e. no new-root growth;
+    // new-root growth keeps the old root as child 0, so the leftmost leaf is
+    // still preserved, but `t.root` itself changed.)
+    if t.root == root_before {
+        let first_leaf_after = first_leaf_id(t, t.root);
+        assert!(
+            first_leaf_after == first_leaf_before,
+            "first-leaf moved inserting {k}: {first_leaf_before} -> {first_leaf_after}"
+        );
+    } else {
+        // new root: the old leftmost leaf is still the global leftmost leaf.
+        let first_leaf_after = first_leaf_id(t, t.root);
+        assert!(
+            first_leaf_after == first_leaf_before,
+            "first-leaf moved on root growth inserting {k}: {first_leaf_before} -> {first_leaf_after}"
+        );
+    }
+
+    // retention + freshness on the full footprint (tree_ids).
+    for id in &ids_before {
+        assert!(
+            ids_after.contains(id),
+            "footprint retention violated inserting {k}: id {id} dropped out of the tree"
+        );
+    }
+    for id in ids_after.difference(&ids_before) {
+        assert!(
+            *id >= arena_len_before,
+            "footprint freshness violated inserting {k}: new id {id} < old arena len {arena_len_before} \
+             (a pre-existing sibling slot was pulled into the footprint)"
+        );
+    }
+    // same retention + freshness on the leaf footprint (tree_leaf_ids): the
+    // split-spliced new leaf is always a fresh tail slot, never a re-used id.
+    for id in &leaf_ids_before {
+        assert!(
+            leaf_ids_after.contains(id),
+            "leaf-footprint retention violated inserting {k}: leaf {id} dropped out"
+        );
+    }
+    for id in leaf_ids_after.difference(&leaf_ids_before) {
+        assert!(
+            *id >= arena_len_before,
+            "leaf-footprint freshness violated inserting {k}: new leaf {id} < old arena len {arena_len_before}"
+        );
+    }
+    InsertObservation {
+        grew: ids_after.len() > ids_before.len(),
+        height_changed: height_after != height_before,
+    }
+}
+
+/// The transition-contract test. Drives arbitrary inserts through
+/// `insert_checked`, which asserts the subset+freshness footprint contract on
+/// every step, and confirms that the EXACT-equality form is violated in
+/// practice (some inserts grow the footprint without growing the height — the
+/// deep-absorb path whose `None` return the spec wrongly claimed leaves
+/// `tree_ids` unchanged).
+#[test]
+fn footprint_contract_holds() {
+    let mut grow_without_height_change = 0usize; // refutes exact-equality on None
+    let mut total_inserts = 0usize;
+
+    for &count in &[200usize, 2000] {
+        for seed in 0..4u64 {
+            let keys = arbitrary_keys(count, seed ^ 0x5151);
+            let mut oracle = BTreeSet::new();
+            let mut t = Tree::new();
+            for &x in &keys {
+                let is_new = oracle.insert(x);
+                let obs = insert_checked(&mut t, x);
+                total_inserts += 1;
+                if is_new && obs.grew && !obs.height_changed {
+                    // footprint grew (a split happened below) yet the height
+                    // (hence the top-level recursion result) is unchanged —
+                    // exactly the case the `None`-arm's `tree_ids(nl)==tree_ids(cur)`
+                    // claim is false for.
+                    grow_without_height_change += 1;
+                }
+            }
+            // sanity: wf + model still agree.
+            let model = check_wf_and_model(&t, false);
+            assert_eq!(model.len(), oracle.len(), "count={count} seed={seed}: model size");
+        }
+    }
+    println!(
+        "footprint_contract_holds: OK ({total_inserts} inserts; {grow_without_height_change} grew \
+         the footprint with no height change — these refute the exact-equality `None`-arm claim \
+         and require the subset+freshness contract)"
+    );
+    assert!(
+        grow_without_height_change > 0,
+        "expected at least one deep-absorb insert that grows tree_ids without changing height; \
+         got none — the test is not exercising the path the spec bug lives on"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
