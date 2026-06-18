@@ -1263,6 +1263,27 @@ pub proof fn lemma_tree_leaf_ids_nonempty(t: Tree, h: nat, cap: nat, key_cap: na
     }
 }
 
+/// A NON-root wf tree carries at least one key. Min-occupancy (clause 6) forces
+/// a non-root leaf to `>= (cap+1)/2 >= 1` keys; a non-root internal recurses into
+/// its (also non-root) head child. (Only non-root: an empty ROOT leaf has 0 keys.)
+pub proof fn lemma_tree_keys_nonempty(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires tree_wf(t, h, cap, key_cap, false), cap >= 1,
+    ensures tree_keys(t).len() >= 1,
+    decreases t,
+{
+    match t {
+        Tree::Leaf { keys, .. } => {
+            // non-root leaf: keys.len() >= (cap+1)/2 >= 1.
+        }
+        Tree::Inner { seps, kids, .. } => {
+            // tree_keys(Inner) == forest_keys(kids); head child wf at h-1 non-root.
+            lemma_forest_keys_cons(kids);
+            lemma_forest_wf_cons(kids, (h - 1) as nat, cap, key_cap);
+            lemma_tree_keys_nonempty(kids[0], (h - 1) as nat, cap, key_cap);
+        }
+    }
+}
+
 // ===========================================================================
 // Median split (the leaf-split key redistribution, as a pure Seq fact). The
 // full leaf's keys plus the inserted key form a strictly sorted `combined` of
@@ -1797,6 +1818,233 @@ proof fn lemma_child_split_model_set(l: Seq<nat>, mid_old: Seq<nat>, mid_new: Se
     lemma_seq_concat_to_set(l + mid_old, r);
     lemma_seq_concat_to_set(l, mid_old);
     assert((l + mid_new + r).to_set() =~= (l + mid_old + r).to_set().insert(key));
+}
+
+/// Footprint (`tree_ids`) reasoning for the child-split splice, pure ghost. With
+/// a freshness `bound` separating old ids (`< bound`) from new ones (`>= bound`),
+/// the spliced parent `nt` satisfies `tree_disjoint`, retains all of `cur`'s ids,
+/// adds only fresh ids, and keeps the same leftmost leaf. Used by the arena-level
+/// `reconstruct_child_split_*` wrappers.
+pub proof fn lemma_child_split_absorb_ids(
+    gid: nat, gseps: Seq<nat>, gkids: Seq<Tree>, cp: int, ncl: Tree, ncr: Tree, sep: nat, bound: nat,
+)
+    requires
+        0 <= cp < gkids.len(),
+        // cur is disjoint and all its ids are < bound.
+        tree_disjoint(Tree::Inner { id: gid, seps: gseps, kids: gkids }),
+        (forall|id: nat| #[trigger] tree_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids }).contains(id) ==> id < bound),
+        // the two halves: disjoint, tree_disjoint, footprints = old child ∪ fresh.
+        tree_disjoint(ncl),
+        tree_disjoint(ncr),
+        tree_ids(ncl).disjoint(tree_ids(ncr)),
+        // the old child's ids are retained across the two halves (a split
+        // distributes them, never drops one): gkids[cp] ⊆ ncl ∪ ncr.
+        (forall|id: nat| tree_ids(gkids[cp]).contains(id)
+            ==> tree_ids(ncl).contains(id) || tree_ids(ncr).contains(id)),
+        (forall|id: nat| tree_ids(ncl).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        (forall|id: nat| tree_ids(ncr).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        // leftmost leaf of ncl == leftmost leaf of the old child (split adds right).
+        tree_leaf_ids(ncl).len() >= 1,
+        tree_leaf_ids(gkids[cp]).len() >= 1,
+        tree_leaf_ids(ncl)[0] == tree_leaf_ids(gkids[cp])[0],
+        (forall|i: int| 0 <= i < gkids.len() ==> #[trigger] tree_leaf_ids(gkids[i]).len() >= 1),
+    ensures
+        ({
+            let nseps = gseps.insert(cp, sep);
+            let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+            let nt = Tree::Inner { id: gid, seps: nseps, kids: nkids };
+            &&& tree_disjoint(nt)
+            &&& tree_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids }).subset_of(tree_ids(nt))
+            &&& (forall|id: nat| tree_ids(nt).contains(id)
+                    ==> tree_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids }).contains(id) || id >= bound)
+            &&& tree_leaf_ids(nt).len() >= 1
+            &&& tree_leaf_ids(nt)[0] == tree_leaf_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids })[0]
+        }),
+{
+    let cur = Tree::Inner { id: gid, seps: gseps, kids: gkids };
+    let nseps = gseps.insert(cp, sep);
+    let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+    let nt = Tree::Inner { id: gid, seps: nseps, kids: nkids };
+    assert(nkids =~= gkids.subrange(0, cp) + seq![ncl, ncr] + gkids.subrange(cp + 1, gkids.len() as int));
+    // index map.
+    assert forall|i: int| 0 <= i < nkids.len() implies #[trigger] nkids[i] == (
+        if i < cp { gkids[i] } else if i == cp { ncl } else if i == cp + 1 { ncr } else { gkids[i - 1] }
+    ) by {}
+
+    // --- forest_ids(nkids) ⊇ forest_ids(gkids), and new ids fresh. ---
+    assert forall|id: nat| #[trigger] forest_ids(gkids).contains(id) implies forest_ids(nkids).contains(id) by {
+        lemma_forest_id_in_some_child(gkids, id);
+        let m = choose|m: int| 0 <= m < gkids.len() && tree_ids(gkids[m]).contains(id);
+        if m < cp { lemma_forest_id_in_forest(nkids, m, id); }
+        else if m == cp {
+            // old child id lands in ncl (slot cp) or ncr (slot cp+1).
+            if tree_ids(ncl).contains(id) { lemma_forest_id_in_forest(nkids, cp, id); }
+            else { assert(tree_ids(ncr).contains(id)); lemma_forest_id_in_forest(nkids, cp + 1, id); }
+        }
+        else { lemma_forest_id_in_forest(nkids, m + 1, id); assert(nkids[m + 1] == gkids[m]); }
+    }
+    assert forall|id: nat| #[trigger] forest_ids(nkids).contains(id)
+        implies forest_ids(gkids).contains(id) || id >= bound by {
+        lemma_forest_id_in_some_child(nkids, id);
+        let m = choose|m: int| 0 <= m < nkids.len() && tree_ids(nkids[m]).contains(id);
+        if m < cp { lemma_forest_id_in_forest(gkids, m, id); }
+        else if m == cp { if tree_ids(gkids[cp]).contains(id) { lemma_forest_id_in_forest(gkids, cp, id); } }
+        else if m == cp + 1 { if tree_ids(gkids[cp]).contains(id) { lemma_forest_id_in_forest(gkids, cp, id); } }
+        else { assert(nkids[m] == gkids[m - 1]); lemma_forest_id_in_forest(gkids, m - 1, id); }
+    }
+    // tree_ids(cur) = {gid} ∪ forest_ids(gkids), tree_ids(nt) = {gid} ∪ forest_ids(nkids).
+    assert(tree_ids(cur) =~= set![gid].union(forest_ids(gkids)));
+    assert(tree_ids(nt) =~= set![gid].union(forest_ids(nkids)));
+    assert(tree_ids(cur).subset_of(tree_ids(nt)));
+    assert forall|id: nat| tree_ids(nt).contains(id) implies tree_ids(cur).contains(id) || id >= bound by {
+        if id == gid { assert(tree_ids(cur).contains(gid)); }
+    }
+
+    // --- tree_disjoint(nt): gid ∉ forest_ids(nkids), forest_disjoint, pairwise. ---
+    // gid ∈ tree_ids(cur) (it's cur's root), so gid < bound.
+    assert(tree_ids(cur).contains(gid));
+    assert(gid < bound);
+    assert(!forest_ids(gkids).contains(gid));  // tree_disjoint(cur)
+    assert(!forest_ids(nkids).contains(gid)) by {
+        if forest_ids(nkids).contains(gid) {
+            // gid ∈ forest_ids(nkids) ⟹ gid ∈ forest_ids(gkids) (gid < bound, so not fresh).
+            assert(forest_ids(gkids).contains(gid) || gid >= bound);
+        }
+    }
+    // every old forest id < bound (project the cur-level bound through forest_ids ⊆ tree_ids).
+    assert forall|id: nat| #[trigger] forest_ids(gkids).contains(id) implies id < bound by {
+        assert(tree_ids(cur).contains(id));  // forest_ids(gkids) ⊆ tree_ids(cur)
+    }
+    // pairwise disjointness of cur's children (tree_disjoint(cur) clause).
+    assert forall|a: int, b: int| 0 <= a < b < gkids.len() implies
+        (#[trigger] tree_ids(gkids[a])).disjoint(#[trigger] tree_ids(gkids[b])) by {}
+    // pairwise disjointness of nkids.
+    assert forall|i: int, j: int| 0 <= i < j < nkids.len() implies
+        (#[trigger] tree_ids(nkids[i])).disjoint(#[trigger] tree_ids(nkids[j])) by {
+        lemma_child_split_pair_disjoint(gkids, cp, ncl, ncr, bound, i, j);
+    }
+    // each child tree_disjoint.
+    assert forall|m: int| 0 <= m < nkids.len() implies tree_disjoint(#[trigger] nkids[m]) by {
+        if m < cp { lemma_forest_disjoint_at(gkids, m); }
+        else if m == cp { } else if m == cp + 1 { }
+        else { lemma_forest_disjoint_at(gkids, m - 1); }
+    }
+    lemma_forest_disjoint_from_pairwise(nkids);
+    assert(tree_disjoint(nt));
+
+    // --- first leaf preserved: nt's leftmost == cur's leftmost. ---
+    assert(tree_leaf_ids(nt) == forest_leaf_ids(nkids));
+    assert(tree_leaf_ids(cur) == forest_leaf_ids(gkids));
+    lemma_forest_leaf_ids_cons(nkids);
+    lemma_forest_leaf_ids_cons(gkids);
+    // nkids[0] == gkids[0] when cp > 0; == ncl when cp == 0 (and ncl[0]==gkids[0][0]).
+    if cp == 0 {
+        assert(nkids[0] == ncl);
+        assert(tree_leaf_ids(ncl)[0] == tree_leaf_ids(gkids[0])[0]);
+    } else {
+        assert(nkids[0] == gkids[0]);
+    }
+    assert(tree_leaf_ids(nkids[0]).len() >= 1);
+    assert(forest_leaf_ids(nkids)[0] == tree_leaf_ids(nkids[0])[0]);
+    assert(forest_leaf_ids(gkids)[0] == tree_leaf_ids(gkids[0])[0]);
+}
+
+/// One pair (i, j) of the child-split splice has disjoint footprints. Old/old
+/// from `cur`'s pairwise; pairs touching ncl/ncr use the freshness `bound` and
+/// `ncl ⊥ ncr`.
+pub proof fn lemma_child_split_pair_disjoint(
+    gkids: Seq<Tree>, cp: int, ncl: Tree, ncr: Tree, bound: nat, i: int, j: int,
+)
+    requires
+        0 <= cp < gkids.len(),
+        0 <= i < j < gkids.update(cp, ncl).insert(cp + 1, ncr).len(),
+        (forall|a: int, b: int| 0 <= a < b < gkids.len() ==>
+            (#[trigger] tree_ids(gkids[a])).disjoint(#[trigger] tree_ids(gkids[b]))),
+        (forall|id: nat| #[trigger] forest_ids(gkids).contains(id) ==> id < bound),
+        tree_ids(ncl).disjoint(tree_ids(ncr)),
+        (forall|id: nat| tree_ids(ncl).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        (forall|id: nat| tree_ids(ncr).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+    ensures
+        ({
+            let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+            tree_ids(nkids[i]).disjoint(tree_ids(nkids[j]))
+        }),
+{
+    let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+    assert forall|i2: int| 0 <= i2 < nkids.len() implies #[trigger] nkids[i2] == (
+        if i2 < cp { gkids[i2] } else if i2 == cp { ncl } else if i2 == cp + 1 { ncr } else { gkids[i2 - 1] }
+    ) by {}
+    // old-child index for slot s (mapping ncl/ncr back to child cp).
+    let oi = if i < cp { i } else if i <= cp + 1 { cp } else { i - 1 };
+    let oj = if j < cp { j } else if j <= cp + 1 { cp } else { j - 1 };
+    // oi, oj are valid old-child indices, and oi != oj unless {i,j} == {cp, cp+1}.
+    assert(0 <= oi < gkids.len() && 0 <= oj < gkids.len());
+    assert(nkids[i] == ncl || nkids[i] == ncr || nkids[i] == gkids[oi]);
+    assert(nkids[j] == ncl || nkids[j] == ncr || nkids[j] == gkids[oj]);
+    assert forall|id: nat| tree_ids(nkids[i]).contains(id) && tree_ids(nkids[j]).contains(id) implies false by {
+        if (i == cp && j == cp + 1) {
+            // both ncl/ncr: ncl ⊥ ncr directly.
+            assert(nkids[i] == ncl && nkids[j] == ncr);
+        } else {
+            // {i,j} != {cp,cp+1}, so oi != oj. Reduce each side to its OLD child:
+            //  - if the slot is gkids[o], id ∈ gkids[o] already;
+            //  - if the slot is ncl/ncr, id ∈ child cp (== gkids[cp] == gkids[o]) OR id is
+            //    fresh (>= bound). A fresh id can't be in gkids[oj] (old, < bound), and if
+            //    BOTH slots were ncl/ncr we'd be in the {cp,cp+1} case — excluded. So at
+            //    least one side is an old child, forcing id < bound, hence both sides land
+            //    in their old child gkids[oi]/gkids[oj], which are disjoint.
+            assert(oi != oj);
+            // id in gkids[oi]:
+            if nkids[i] == ncl { assert(tree_ids(gkids[cp]).contains(id) || id >= bound); }
+            else if nkids[i] == ncr { assert(tree_ids(gkids[cp]).contains(id) || id >= bound); }
+            else { assert(tree_ids(gkids[oi]).contains(id)); }
+            if nkids[j] == ncl { assert(tree_ids(gkids[cp]).contains(id) || id >= bound); }
+            else if nkids[j] == ncr { assert(tree_ids(gkids[cp]).contains(id) || id >= bound); }
+            else { assert(tree_ids(gkids[oj]).contains(id)); }
+            // if id >= bound (fresh): it can't be in any OLD child (old ids < bound). At
+            // least one of slot i / slot j is an old child gkids[o] (else both ncl/ncr ⟹
+            // {cp,cp+1}); contradiction. So id < bound.
+            if id >= bound {
+                if nkids[i] == gkids[oi] { lemma_forest_id_in_forest(gkids, oi, id); }
+                else if nkids[j] == gkids[oj] { lemma_forest_id_in_forest(gkids, oj, id); }
+                else {
+                    // both ncl/ncr but not the {cp,cp+1} pair ⟹ impossible (only slots
+                    // cp, cp+1 are ncl/ncr).
+                    assert((i == cp || i == cp + 1) && (j == cp + 1 || j == cp));
+                }
+            }
+            // now id < bound: both sides reduce to their old child.
+            assert(tree_ids(gkids[oi]).contains(id));
+            assert(tree_ids(gkids[oj]).contains(id));
+            if oi < oj { assert(tree_ids(gkids[oi]).disjoint(tree_ids(gkids[oj]))); }
+            else { assert(tree_ids(gkids[oj]).disjoint(tree_ids(gkids[oi]))); }
+        }
+    }
+}
+
+/// `forest_disjoint` from "each child tree_disjoint + pairwise disjoint footprints".
+pub proof fn lemma_forest_disjoint_from_pairwise(kids: Seq<Tree>)
+    requires
+        (forall|m: int| 0 <= m < kids.len() ==> tree_disjoint(#[trigger] kids[m])),
+        (forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+            (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j]))),
+    ensures forest_disjoint(kids),
+    decreases kids,
+{
+    if kids.len() == 0 {
+    } else {
+        let df = kids.drop_first();
+        lemma_forest_disjoint_cons(kids);
+        assert(tree_disjoint(kids[0]));  // m == 0
+        assert forall|m: int| 0 <= m < df.len() implies tree_disjoint(#[trigger] df[m]) by {
+            assert(df[m] == kids[m + 1]);
+        }
+        assert forall|i: int, j: int| 0 <= i < j < df.len() implies
+            (#[trigger] tree_ids(df[i])).disjoint(#[trigger] tree_ids(df[j])) by {
+            assert(df[i] == kids[i + 1]); assert(df[j] == kids[j + 1]);
+        }
+        lemma_forest_disjoint_from_pairwise(df);
+    }
 }
 
 // ===========================================================================
