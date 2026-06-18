@@ -804,6 +804,60 @@ pub proof fn lemma_forest_keys_update(kids: Seq<Tree>, m: int, nc: Tree)
 /// A contiguous subrange `[lo, hi)` of a wf forest is itself a wf forest. The
 /// internal split carves the children into two subranges, each of which must be
 /// a wf forest for the two halves to be wf.
+/// `forest_keys` distributes over concatenation: `forest_keys(a + b) ==
+/// forest_keys(a) + forest_keys(b)`. (Split-child model recombination.)
+pub proof fn lemma_forest_keys_concat(a: Seq<Tree>, b: Seq<Tree>)
+    ensures forest_keys(a + b) == forest_keys(a) + forest_keys(b),
+    decreases a,
+{
+    if a.len() == 0 {
+        assert(a + b =~= b);
+    } else {
+        lemma_forest_keys_cons(a);
+        let adf = a.drop_first();
+        lemma_forest_keys_concat(adf, b);
+        assert((a + b).drop_first() =~= adf + b);
+        assert((a + b)[0] == a[0]);
+        lemma_forest_keys_cons(a + b);
+    }
+}
+
+/// `forest_ids` distributes over concatenation (as a set union).
+pub proof fn lemma_forest_ids_concat(a: Seq<Tree>, b: Seq<Tree>)
+    ensures forest_ids(a + b) == forest_ids(a).union(forest_ids(b)),
+    decreases a,
+{
+    if a.len() == 0 {
+        assert(a + b =~= b);
+        assert(forest_ids(a) =~= Set::<nat>::empty());
+    } else {
+        lemma_forest_ids_cons(a);
+        let adf = a.drop_first();
+        lemma_forest_ids_concat(adf, b);
+        assert((a + b).drop_first() =~= adf + b);
+        assert((a + b)[0] == a[0]);
+        lemma_forest_ids_cons(a + b);
+        assert(forest_ids(a + b) =~= forest_ids(a).union(forest_ids(b)));
+    }
+}
+
+/// `forest_leaf_ids` distributes over concatenation.
+pub proof fn lemma_forest_leaf_ids_concat(a: Seq<Tree>, b: Seq<Tree>)
+    ensures forest_leaf_ids(a + b) == forest_leaf_ids(a) + forest_leaf_ids(b),
+    decreases a,
+{
+    if a.len() == 0 {
+        assert(a + b =~= b);
+    } else {
+        lemma_forest_leaf_ids_cons(a);
+        let adf = a.drop_first();
+        lemma_forest_leaf_ids_concat(adf, b);
+        assert((a + b).drop_first() =~= adf + b);
+        assert((a + b)[0] == a[0]);
+        lemma_forest_leaf_ids_cons(a + b);
+    }
+}
+
 /// `forest_wf` is preserved by concatenation: if `a` and `b` are both wf
 /// forests at height `h`, so is `a + b`. (The split-child reconstruction builds
 /// the new children as `left ++ [ncl, ncr] ++ right`.)
