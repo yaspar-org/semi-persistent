@@ -202,6 +202,17 @@ bit, so a `Default` impl introduces no new niche obligation. This is the one
 reason `restore` carries a `T: Default` bound; every other operation does
 not.
 
+**Where the bound lives.** `Default` is a property of the *stored value*, so it
+belongs on the value facet, `Tagged` (`trait Tagged: Copy + Default`) — the
+trait every inline-storable value already implements. It is deliberately *not*
+on `IndexLike`, which is the orthogonal *indexing* facet (the `I` in
+`Vec<T, I, S>`); an index type that is also stored as a value (e.g. in
+`SparseSet`) is `IndexLike + Tagged` and picks up `Default` through `Tagged`.
+Consequently almost no container needs an explicit `Default` bound: the only
+ones that do are `DiffStore::resize_default` (which *produces* the filler) and
+the two `restore`s whose element is `Clone`-only and never goes through
+`Tagged` — `Vec::restore` itself and `SparseSet::restore`.
+
 ## Nested Marks
 
 Marks can be nested. Each `mark()` pushes a new `Frame`. `restore()`

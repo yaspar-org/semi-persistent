@@ -38,7 +38,6 @@ fn run_ops<L>(ops: Vec<Op>)
 where
     L: NodeLayout<Word = u64>,
     L::ArenaIdx: IndexLike + Default,
-    L::Node: Default,
 {
     let mut tree: BPlusTreeSet<PropId64, L, BinarySearch, true> = BPlusTreeSet::new();
     let mut oracle: Vec<PropId64> = Vec::new();

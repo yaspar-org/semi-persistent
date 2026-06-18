@@ -500,10 +500,7 @@ where
             meta_token: self.meta.mark(shrink),
         }
     }
-    pub fn restore(&mut self, token: BPlusToken)
-    where
-        L::Node: Default,
-    {
+    pub fn restore(&mut self, token: BPlusToken) {
         self.nodes.restore(token.nodes_token);
         self.meta.restore(token.meta_token);
     }

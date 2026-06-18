@@ -22,7 +22,7 @@
 /// not owners. Bitwise copy is the whole story; `Clone` would misleadingly
 /// suggest deep duplication. This bound also prevents accidentally
 /// introducing a heap-owning field into a performance-critical type.
-pub trait Tagged: Copy {
+pub trait Tagged: Copy + Default {
     type Repr: Copy;
 
     /// Clean value → repr (tag = false).
@@ -56,7 +56,7 @@ pub trait Tagged: Copy {
 #[derive(Clone, Copy)]
 pub struct Opt<T: Tagged>(T::Repr);
 
-impl<T: Tagged + Default> Opt<T> {
+impl<T: Tagged> Opt<T> {
     pub fn none() -> Self {
         let mut r = T::default().into_repr();
         T::set_tag(&mut r);
@@ -64,7 +64,7 @@ impl<T: Tagged + Default> Opt<T> {
     }
 }
 
-impl<T: Tagged + Default> Default for Opt<T> {
+impl<T: Tagged> Default for Opt<T> {
     fn default() -> Self {
         Opt::none()
     }
@@ -154,7 +154,7 @@ impl_tagged_pair!(usize);
 // Pair: tag lives in first element's Repr
 // ---------------------------------------------------------------------------
 
-impl<A: Tagged, B: Copy> Tagged for (A, B) {
+impl<A: Tagged, B: Copy + Default> Tagged for (A, B) {
     type Repr = (A::Repr, B);
 
     #[inline(always)]

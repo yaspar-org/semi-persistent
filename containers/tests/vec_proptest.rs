@@ -214,7 +214,7 @@ mod stress {
     use semi_persistent_containers::{ShrinkPolicy, VecI};
 
     fn run_stress<
-        T: semi_persistent_containers::Tagged + Clone + Default,
+        T: semi_persistent_containers::Tagged + Clone,
         I: semi_persistent_containers::IndexLike + semi_persistent_containers::Tagged,
     >(
         n: u32,

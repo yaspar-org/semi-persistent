@@ -66,7 +66,7 @@ impl<T: DenseId> Default for IdFactory<T> {
 ///
 /// Implementors: u8, u16, u32, u64, and DenseId types.
 /// Determines diff entry size and max capacity.
-pub trait IndexLike: Copy + Ord + Hash + Default + core::fmt::Debug {
+pub trait IndexLike: Copy + Ord + Hash + core::fmt::Debug {
     const MIN: Self;
     const MAX: Self;
     fn as_usize(self) -> usize;

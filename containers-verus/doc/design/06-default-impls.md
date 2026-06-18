@@ -126,7 +126,7 @@ Audited element types that flow through semi-persistent containers
 | Type | Where | Kind | As landed |
 |---|---|---|---|
 | `*Id`, `*Id64` (all `define_id*!`) | `id.rs`, `egraph/nodes.rs`, … | bit-steal (MSB) | **DONE** — macro emits `impl Default { Self(0) }` (`id.rs:176`). `0` is clean-domain. |
-| `u8`, `usize`, `u32`, … | union-find `rank`, indices | primitive | **DONE** — std `Default`; `IndexLike` now requires `Default` as a supertrait. |
+| `u8`, `usize`, `u32`, … | union-find `rank`, indices | primitive | **DONE** — std `Default`. |
 | `FixedArityNode<G,O,K>` | `node_types.rs:29` | plain data, raw `Repr` fields | **DONE** — hand impl via `new(G::default(), O::default(), [G::default(); K])` (not in original audit; routes ids through `into_repr`). |
 | `VariableArityNode<G,O>` | `node_types.rs:121` | plain data, raw `Repr` fields | **DONE** — hand impl via `make(...)`, not a derive: the struct stores `G::Repr`, so `#[derive(Default)]` would demand `G::Repr: Default`. |
 | `LitNode<G,O,V>` | `node_types.rs:207` | plain data, raw `Repr` fields | **DONE** — hand impl via `new(...)` (same raw-`Repr` reason as above). |
@@ -138,12 +138,12 @@ Audited element types that flow through semi-persistent containers
 | `ListNode<T,N>` | `list.rs:23` | `Tagged`, composite repr | **DONE** — `Default = Self::new(T::default(), Opt::none())` (needs `T: Default`). |
 | `ListHead<N>` | `list.rs:71` | `Tagged`, composite repr | **DONE** — `Default = ListHead::empty()`. |
 | `Opt<T>` | `tagged.rs:57` | niche option | **DONE** — `default() = Opt::none()` when `T: Tagged + Default`. |
-| `Multiplicity` | `egraph/multiplicity.rs:7` | newtype `(u32)` | **DONE** — `#[derive(Default)]`; needed so `EGraphConfig::C = (G, Multiplicity)` is `Default`. |
+| `Multiplicity` | `egraph/multiplicity.rs:7` | newtype `(u32)` | **DONE** — `#[derive(Default)]`; needed so the `(A, B): Tagged` impl (with `B = Multiplicity`) satisfies the `Tagged: Default` floor, hence `EGraphConfig::C = (G, Multiplicity)` is `Default`. |
 
 Notes:
-- Types parameterized by a `DenseId`/`Tagged` `T` add `T: Default` to their
-  `Default` impl bound. Since the `define_id*!` ids are already `Default`, every
-  concrete instantiation in the egraph satisfies this.
+- Types parameterized by a `DenseId`/`Tagged` `T` get `T: Default` for free:
+  `DenseId` already lists `Default` as a supertrait, and `Tagged` now does too
+  (see Bound propagation below), so their `Default` impls need no extra bound.
 - `Justification<G>` is the **only** enum among stored payloads — the only one
   needing a fabricated variant rather than a mechanical derive.
 - **Deviation — raw-`Repr` node structs.** The three node types
@@ -155,12 +155,29 @@ Notes:
 - **Deviation — `BPlusNode` count.** The merged `NodeLayout` B+tree stamps
   **six** layout structs via `define_node!`, not one. The `Default` is emitted
   once inside the macro.
-- **Bound propagation.** Rather than thread `Default` through every index-typed
-  parameter, `Default` was added to the `IndexLike` supertrait (every impl
-  already had it) and to the `EGraphConfig::C` associated-type bound. This
-  collapsed most of the cascade; the remaining `where` clauses sit on the
-  container `restore` methods (`SparseSet`, `ListArena`, `BPlusTreeSet`, the
-  caches, `NodeStore`, `EGraph`).
+- **Bound propagation — `Default` belongs on `Tagged`, the value facet.** The
+  store-level requirement is "every *stored value* has a throwaway default for
+  the restore filler." A stored value enters an inline store iff it is `Tagged`
+  (the `Copy`, tag-bit-packed value facet), so `Tagged: Copy + Default` is the
+  minimal, correctly-placed home for the bound. It is *not* placed on
+  `IndexLike`: that trait is the *indexing* facet (the `I` in `Vec<T, I, S>`),
+  orthogonal to whether a type is stored — and `IndexLike` is public, so
+  widening it would force `Default` on every downstream custom index. (Index
+  types that *are* also stored as values — `SparseSet`'s `Idx`, `EClassEntry`'s
+  `T::Index` — are bounded `IndexLike + Tagged`, so they pick up `Default`
+  through `Tagged`, not `IndexLike`.)
+  With `Tagged: Default` (and `DenseId: Default`, pre-existing), the only
+  `Default` bounds that remain in the source are the irreducible ones:
+  - `DiffStore::resize_default` — `where T: Default` (the method that *produces*
+    the filler; the origin of the whole requirement);
+  - `Vec::restore` and `SparseSet::restore` — `where T: Default`, because their
+    element is bounded only `T: Clone` (the `ParallelStore` / foreign-value path
+    that does not go through `Tagged`).
+  Everything else (`ListArena`, `BPlusTreeSet`, the caches, `NodeStore`,
+  `EGraph`, and `EGraphConfig::C`) stores `Tagged` values, so it carries **no**
+  `Default` bound at all. Note `NodeLayout::ArenaIdx` was already declared
+  `IndexLike + Default` independently — evidence the design always treated
+  `Default` as orthogonal to `IndexLike`.
 
 ## 6. Verus-side correspondence
 
@@ -192,8 +209,9 @@ Landed on `feature/production-bounded-pop` in this order:
 3. `Default` impls for the stored types (§5 table) — hand impls for the
    raw-`Repr` node structs and bit-steal newtypes (route through `into_repr`),
    the `#[default] Filler` enum variant, the macro-emitted B+tree node default.
-4. Bound propagation: `Default` on the `IndexLike` supertrait + `EGraphConfig::C`,
-   plus `where` clauses on the container `restore` methods.
+4. Bound propagation: `Default` on the `Tagged` supertrait (the value facet),
+   leaving explicit `where T: Default` only on `DiffStore::resize_default` and
+   the two `Clone`-floor restores (`Vec`, `SparseSet`).
 5. Tests: the bounded-pop DoS regression (`containers/tests/bounded_pop_test.rs`)
    + restore round-trip + set-after-reentry.
 

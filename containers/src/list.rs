@@ -25,7 +25,7 @@ struct ListNode<T: Tagged, N: DenseId> {
     next_repr: <N as Tagged>::Repr,
 }
 
-impl<T: Tagged + Default, N: DenseId> Default for ListNode<T, N> {
+impl<T: Tagged, N: DenseId> Default for ListNode<T, N> {
     fn default() -> Self {
         // Filler for `resize_default` during restore; never observed.
         Self::new(T::default(), Opt::none())
@@ -238,10 +238,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         }
     }
 
-    pub fn restore(&mut self, token: ListArenaToken)
-    where
-        T: Default,
-    {
+    pub fn restore(&mut self, token: ListArenaToken) {
         self.heads.restore(token.heads);
         self.nodes.restore(token.nodes);
     }

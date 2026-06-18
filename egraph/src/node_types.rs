@@ -36,9 +36,7 @@ pub struct FixedArityNode<G: DenseId, O: DenseId, const K: usize> {
 // Filler for `resize_default` during restore; never observed (overwritten by
 // the captured diff value). Routes id values through `new`/`into_repr` rather
 // than fabricating a raw `Repr`, so the stolen niche bit is cleared.
-impl<G: DenseId + Default, O: DenseId + Default, const K: usize> Default
-    for FixedArityNode<G, O, K>
-{
+impl<G: DenseId, O: DenseId, const K: usize> Default for FixedArityNode<G, O, K> {
     fn default() -> Self {
         Self::new(G::default(), O::default(), [G::default(); K])
     }
@@ -139,7 +137,7 @@ pub struct VariableArityNode<G: DenseId, O: DenseId> {
 
 // Filler for `resize_default` during restore; never observed. Routes ids
 // through `make`/`into_repr` so the niche bit is cleared (no raw-Repr fabric).
-impl<G: DenseId + Default, O: DenseId + Default> Default for VariableArityNode<G, O> {
+impl<G: DenseId, O: DenseId> Default for VariableArityNode<G, O> {
     fn default() -> Self {
         Self::make(G::default(), O::default(), 0, 0)
     }
@@ -232,9 +230,7 @@ pub struct LitNode<G: DenseId, O: DenseId, V: DenseId> {
 
 // Filler for `resize_default` during restore; never observed. Routes ids
 // through `new`/`into_repr` so the niche bit is cleared (no raw-Repr fabric).
-impl<G: DenseId + Default, O: DenseId + Default, V: DenseId + Default> Default
-    for LitNode<G, O, V>
-{
+impl<G: DenseId, O: DenseId, V: DenseId> Default for LitNode<G, O, V> {
     fn default() -> Self {
         Self::new(G::default(), O::default(), V::default())
     }
