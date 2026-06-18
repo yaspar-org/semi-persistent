@@ -123,6 +123,19 @@ fn check_node(
             None => child_height = Some(ch),
             Some(h) => assert!(h == ch, "unbalanced under {idx}: child heights {h} != {ch}"),
         }
+        // SEPARATOR-EQUALS-RIGHT-MIN probe (the sharper B+tree invariant the
+        // parent-split proof needs): for child i > 0, separator seps[i-1] equals
+        // the MINIMUM key of child i. Equivalently, every separator is a routing
+        // copy of its right subtree's least leaf key — not merely an upper bound
+        // on the left / lower bound on the right. This is what makes
+        // `promoted == tree_keys(rt)[0]` hold in reconstruct_parent_split.
+        if i > 0 && !ckeys.is_empty() {
+            assert!(
+                seps[i - 1] == ckeys[0],
+                "separator-min mismatch under node {idx}: sep[{}]={} != min(child {})={}",
+                i - 1, seps[i - 1], i, ckeys[0]
+            );
+        }
         if i == 0 {
             leftmost = cl;
         }

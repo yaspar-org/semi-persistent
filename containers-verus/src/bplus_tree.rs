@@ -1806,6 +1806,112 @@ pub proof fn lemma_child_split_absorb_tree_wf(
     assert(tree_keys(nt) == forest_keys(nkids));
 }
 
+/// Structural reconstruction for the PARENT-SPLIT case: child `cp` split into
+/// `(ncl, ncr)` AND the parent was FULL (`gseps.len() == key_cap`). The combined
+/// arrangement `(cseps, ckids)` has `cseps.len() == key_cap + 1`; splitting at
+/// `imid == key_cap/2` gives a left half `lt`, a promoted separator `cseps[imid]`,
+/// and a right half `rt`, both `tree_wf` at height `h`, with combined keys =
+/// parent's ∪ {key}. Composes `lemma_child_split_combined_wf` (the combined
+/// ingredients) with `lemma_internal_split_tree_wf` (the median split).
+pub proof fn lemma_parent_split_tree_wf(
+    gid: nat,
+    rid: nat,
+    gseps: Seq<nat>,
+    gkids: Seq<Tree>,
+    cp: int,
+    ncl: Tree,
+    ncr: Tree,
+    sep: nat,
+    key: nat,
+    imid: int,
+    h: nat,
+    cap: nat,
+    key_cap: nat,
+)
+    requires
+        h >= 1,
+        cap >= 1,
+        key_cap >= 1,
+        0 <= cp < gkids.len(),
+        // parent was FULL.
+        gseps.len() == key_cap,
+        imid == key_cap / 2,
+        tree_wf(Tree::Inner { id: gid, seps: gseps, kids: gkids }, h, cap, key_cap, false),
+        tree_wf(ncl, (h - 1) as nat, cap, key_cap, false),
+        tree_wf(ncr, (h - 1) as nat, cap, key_cap, false),
+        keys_all_lt(ncl, sep),
+        keys_all_ge(ncr, sep),
+        tree_keys(ncl).len() >= 1,
+        tree_keys(ncr).len() >= 1,
+        sep == tree_keys(ncr)[0],
+        (tree_keys(ncl) + tree_keys(ncr)).to_set()
+            == tree_keys(gkids[cp]).to_set().insert(key),
+        (forall|j: int| 0 <= j < cp ==> gseps[j] <= key),
+        (forall|j: int| cp <= j < gseps.len() ==> key < gseps[j]),
+    ensures
+        ({
+            let cseps = gseps.insert(cp, sep);
+            let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+            let lt = Tree::Inner { id: gid, seps: cseps.subrange(0, imid), kids: ckids.subrange(0, imid + 1) };
+            let rt = Tree::Inner { id: rid, seps: cseps.subrange(imid + 1, cseps.len() as int), kids: ckids.subrange(imid + 1, ckids.len() as int) };
+            &&& tree_wf(lt, h, cap, key_cap, false)
+            &&& tree_wf(rt, h, cap, key_cap, false)
+            &&& (tree_keys(lt) + tree_keys(rt)).to_set()
+                    == tree_keys(Tree::Inner { id: gid, seps: gseps, kids: gkids }).to_set().insert(key)
+            &&& cseps[imid] == tree_keys(rt)[0]  // the promoted separator (routing copy)
+            &&& tree_keys(rt).len() >= 1
+        }),
+{
+    let cseps = gseps.insert(cp, sep);
+    let ckids = gkids.update(cp, ncl).insert(cp + 1, ncr);
+    // combined ingredients from the shared lemma.
+    lemma_child_split_combined_wf(gid, gseps, gkids, cp, ncl, ncr, sep, key, h, cap, key_cap);
+    assert(cseps.len() == key_cap + 1);
+    assert(ckids.len() == cseps.len() + 1);
+    // the median split of the combined arrangement.
+    lemma_internal_split_tree_wf(gid, rid, cseps, ckids, imid, h, cap, key_cap);
+    // model: lemma_internal_split_tree_wf gives tree_keys(lt)+tree_keys(rt) ==
+    // forest_keys(ckids); the combined lemma gives forest_keys(ckids).to_set() ==
+    // cur ∪ {key}.
+    let lt = Tree::Inner { id: gid, seps: cseps.subrange(0, imid), kids: ckids.subrange(0, imid + 1) };
+    let rt = Tree::Inner { id: rid, seps: cseps.subrange(imid + 1, cseps.len() as int), kids: ckids.subrange(imid + 1, ckids.len() as int) };
+    assert(tree_keys(lt) + tree_keys(rt) == forest_keys(ckids));  // lemma_internal_split_tree_wf
+    assert((tree_keys(lt) + tree_keys(rt)).to_set() == forest_keys(ckids).to_set());
+    // promoted == cseps[imid] is the routing copy == rt's first leaf key.
+    lemma_parent_split_promoted(gid, rid, cseps, ckids, imid, h, cap, key_cap);
+}
+
+/// The promoted separator `cseps[imid]` equals the right half's least key
+/// (`tree_keys(rt)[0]`). This needs a SHARPER B+tree invariant than `tree_wf`
+/// currently tracks: that each separator equals the MINIMUM key of the subtree
+/// immediately to its right (separators are routing copies of leaf minima), not
+/// merely a bound. `tree_wf` only carries the `keys_all_ge`/`keys_all_lt`
+/// inequalities. PROOF PENDING — needs the separator-equals-right-min invariant
+/// added to `tree_wf` (or a side condition threaded from the split mutators).
+/// Validated meanwhile by the `parent_split_promoted_holds` runtime probe.
+#[verifier::external_body]
+pub proof fn lemma_parent_split_promoted(
+    gid: nat, rid: nat, cseps: Seq<nat>, ckids: Seq<Tree>, imid: int, h: nat, cap: nat, key_cap: nat,
+)
+    requires
+        h >= 1, cap >= 1, key_cap >= 1,
+        cseps.len() == key_cap + 1,
+        ckids.len() == cseps.len() + 1,
+        0 <= imid < cseps.len(),
+        imid == key_cap / 2,
+        strictly_sorted(cseps),
+        forest_wf(ckids, (h - 1) as nat, cap, key_cap),
+        (forall|i: int| 0 <= i < cseps.len() ==> keys_all_lt(#[trigger] ckids[i], cseps[i])),
+        (forall|i: int| 0 < i < ckids.len() ==> keys_all_ge(#[trigger] ckids[i], cseps[i - 1])),
+    ensures
+        ({
+            let rt = Tree::Inner { id: rid, seps: cseps.subrange(imid + 1, cseps.len() as int), kids: ckids.subrange(imid + 1, ckids.len() as int) };
+            &&& tree_keys(rt).len() >= 1
+            &&& cseps[imid] == tree_keys(rt)[0]
+        }),
+{
+}
+
 /// `(a + b).to_set().contains(b[i])` for a valid index `i` into `b`.
 proof fn lemma_seq_concat_contains_right(a: Seq<nat>, b: Seq<nat>, i: int)
     requires 0 <= i < b.len(),
