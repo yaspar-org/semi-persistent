@@ -138,6 +138,179 @@ pub proof fn lemma_forest_ids_cons(kids: Seq<Tree>)
 {
 }
 
+/// The leaf-id offset where child `m` begins in `forest_leaf_ids(kids)`: the
+/// summed leaf counts of the children before `m`.
+pub open spec fn leaf_id_offset(kids: Seq<Tree>, m: int) -> nat
+    decreases m
+{
+    if m <= 0 {
+        0
+    } else {
+        leaf_id_offset(kids, m - 1) + tree_leaf_ids(kids[m - 1]).len()
+    }
+}
+
+/// Child `m`'s leaf ids occupy the contiguous slice `[off, off + len)` of the
+/// forest's leaf ids, where `off = leaf_id_offset(kids, m)`. So a property of
+/// `forest_leaf_ids` at those positions projects to `tree_leaf_ids(kids[m])`.
+/// The inverse of the concatenation, needed to decompose a parent's leaf-link
+/// chain to one child's.
+pub proof fn lemma_forest_leaf_ids_slice(kids: Seq<Tree>, m: int)
+    requires 0 <= m < kids.len(),
+    ensures
+        leaf_id_offset(kids, m) + tree_leaf_ids(kids[m]).len() <= forest_leaf_ids(kids).len(),
+        forall|q: int| 0 <= q < tree_leaf_ids(kids[m]).len() ==>
+            (#[trigger] forest_leaf_ids(kids)[leaf_id_offset(kids, m) + q]) == tree_leaf_ids(kids[m])[q],
+    decreases m,
+{
+    lemma_forest_leaf_ids_cons(kids);
+    let head = tree_leaf_ids(kids[0]);
+    let df = kids.drop_first();
+    if m == 0 {
+        // offset 0; forest_leaf_ids(kids) == head + forest_leaf_ids(df).
+        assert(leaf_id_offset(kids, 0) == 0);
+        assert forall|q: int| 0 <= q < tree_leaf_ids(kids[0]).len() implies
+            forest_leaf_ids(kids)[0 + q] == tree_leaf_ids(kids[0])[q] by {
+            assert(forest_leaf_ids(kids)[q] == head[q]);
+        }
+    } else {
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_leaf_ids_slice(df, m - 1);
+        // offset(kids, m) == head.len() + offset(df, m-1) (peel one child).
+        lemma_leaf_id_offset_cons(kids, m);
+        let offd = leaf_id_offset(df, m - 1);
+        assert forall|q: int| 0 <= q < tree_leaf_ids(kids[m]).len() implies
+            forest_leaf_ids(kids)[leaf_id_offset(kids, m) + q] == tree_leaf_ids(kids[m])[q] by {
+            // forest_leaf_ids(kids)[head.len() + i] == forest_leaf_ids(df)[i].
+            assert(forest_leaf_ids(kids)[head.len() + (offd + q)] == forest_leaf_ids(df)[offd + q]);
+            assert(forest_leaf_ids(df)[offd + q] == tree_leaf_ids(df[m - 1])[q]);
+        }
+    }
+}
+
+/// `leaf_id_offset(kids, m) == tree_leaf_ids(kids[0]).len() + leaf_id_offset(
+/// kids.drop_first(), m-1)` for `m >= 1`. The peel-one-child identity.
+pub proof fn lemma_leaf_id_offset_cons(kids: Seq<Tree>, m: int)
+    requires 1 <= m < kids.len(),
+    ensures
+        leaf_id_offset(kids, m)
+            == tree_leaf_ids(kids[0]).len() + leaf_id_offset(kids.drop_first(), m - 1),
+    decreases m,
+{
+    let df = kids.drop_first();
+    reveal_with_fuel(leaf_id_offset, 2);
+    if m == 1 {
+        assert(leaf_id_offset(df, 0) == 0);
+        // leaf_id_offset(kids,1) == leaf_id_offset(kids,0) + tlids(kids[0]).len()
+        //                        == 0 + head.len().
+    } else {
+        // IH: leaf_id_offset(kids,m-1) == head.len() + leaf_id_offset(df,m-2).
+        lemma_leaf_id_offset_cons(kids, m - 1);
+        assert(df[m - 2] == kids[m - 1]);
+        // LHS one-step unfold (m >= 1): offset(kids,m) == offset(kids,m-1) + tlids(kids[m-1]).len().
+        assert(leaf_id_offset(kids, m)
+            == leaf_id_offset(kids, m - 1) + tree_leaf_ids(kids[m - 1]).len());
+        // RHS one-step unfold (m-1 >= 1): offset(df,m-1) == offset(df,m-2) + tlids(df[m-2]).len().
+        assert(leaf_id_offset(df, m - 1)
+            == leaf_id_offset(df, m - 2) + tree_leaf_ids(df[m - 2]).len());
+    }
+}
+
+/// `leaf_id_offset(kids, cp+1) == leaf_id_offset(kids, cp) +
+/// tree_leaf_ids(kids[cp]).len()` (the offset advances by the child's leaf
+/// count). Definitional, but stated for use in the leaf-links projection.
+pub proof fn lemma_leaf_id_offset_succ(kids: Seq<Tree>, cp: int)
+    requires 0 <= cp,
+    ensures leaf_id_offset(kids, cp + 1) == leaf_id_offset(kids, cp) + tree_leaf_ids(kids[cp]).len(),
+{
+}
+
+/// The last child's slice reaches the end: `leaf_id_offset(kids, len-1) +
+/// tree_leaf_ids(kids[len-1]).len() == forest_leaf_ids(kids).len()`.
+pub proof fn lemma_leaf_id_offset_last(kids: Seq<Tree>, cp: int)
+    requires 0 <= cp < kids.len(), cp + 1 == kids.len(),
+    ensures leaf_id_offset(kids, cp) + tree_leaf_ids(kids[cp]).len() == forest_leaf_ids(kids).len(),
+    decreases kids,
+{
+    lemma_forest_leaf_ids_cons(kids);
+    let df = kids.drop_first();
+    if cp == 0 {
+        // single child: offset 0, forest_leaf_ids == tree_leaf_ids(kids[0]) + [].
+        assert(df.len() == 0);
+        assert(forest_leaf_ids(df) =~= Seq::<nat>::empty());
+    } else {
+        assert(df[cp - 1] == kids[cp]);
+        assert(cp == df.len());
+        lemma_leaf_id_offset_last(df, cp - 1);
+        lemma_leaf_id_offset_cons(kids, cp);
+    }
+}
+
+/// Updating child `m` to a subtree with the same in-order leaf ids preserves the
+/// forest's in-order leaf ids. (Absorb keeps the child's leaf sequence — the
+/// leaf base case adds keys not leaves; the internal absorb's recursion preserves
+/// the leaf-id seq by its own ensures.)
+pub proof fn lemma_forest_leaf_ids_update(kids: Seq<Tree>, m: int, nc: Tree)
+    requires
+        0 <= m < kids.len(),
+        tree_leaf_ids(nc) == tree_leaf_ids(kids[m]),
+    ensures
+        forest_leaf_ids(kids.update(m, nc)) == forest_leaf_ids(kids),
+    decreases kids,
+{
+    lemma_forest_leaf_ids_cons(kids);
+    let u = kids.update(m, nc);
+    lemma_forest_leaf_ids_cons(u);
+    if m == 0 {
+        assert(u[0] == nc);
+        assert(u.drop_first() =~= kids.drop_first());
+    } else {
+        let df = kids.drop_first();
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= df.update(m - 1, nc));
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_leaf_ids_update(df, m - 1, nc);
+    }
+}
+
+/// An internal node's own id is not in any child's footprint (`tree_disjoint`'s
+/// first clause). So a mutation confined to a child's region leaves the parent
+/// node's arena slot untouched.
+pub proof fn lemma_node_id_not_in_child(t: Tree, cp: int)
+    requires
+        t is Inner,
+        tree_disjoint(t),
+        0 <= cp < t->Inner_kids.len(),
+    ensures
+        !tree_ids(t->Inner_kids[cp]).contains(t->Inner_id),
+{
+    let id = t->Inner_id;
+    let kids = t->Inner_kids;
+    // tree_disjoint(Inner): !forest_ids(kids).contains(id). tree_ids(kids[cp]) ⊆
+    // forest_ids(kids), so id not in tree_ids(kids[cp]).
+    if tree_ids(kids[cp]).contains(id) {
+        lemma_child_ids_in_forest(kids, cp, id);
+        assert(forest_ids(kids).contains(id));
+        assert(false);
+    }
+}
+
+/// `tree_ids(kids[m]) ⊆ forest_ids(kids)` at a point: if `id ∈ tree_ids(kids[m])`
+/// then `id ∈ forest_ids(kids)`.
+pub proof fn lemma_child_ids_in_forest(kids: Seq<Tree>, m: int, id: nat)
+    requires 0 <= m < kids.len(), tree_ids(kids[m]).contains(id),
+    ensures forest_ids(kids).contains(id),
+    decreases kids,
+{
+    lemma_forest_ids_cons(kids);
+    if m == 0 {
+    } else {
+        let df = kids.drop_first();
+        assert(df[m - 1] == kids[m]);
+        lemma_child_ids_in_forest(df, m - 1, id);
+    }
+}
+
 /// Membership in a forest footprint comes from some child: `forest_ids(kids)
 /// .contains(id) ==> exists m. tree_ids(kids[m]).contains(id)`. The reverse of
 /// the union definition; needed to derive pairwise facts from `forest_ids`.
@@ -631,6 +804,26 @@ pub proof fn lemma_forest_keys_update(kids: Seq<Tree>, m: int, nc: Tree)
 /// A contiguous subrange `[lo, hi)` of a wf forest is itself a wf forest. The
 /// internal split carves the children into two subranges, each of which must be
 /// a wf forest for the two halves to be wf.
+/// `forest_wf` is preserved by concatenation: if `a` and `b` are both wf
+/// forests at height `h`, so is `a + b`. (The split-child reconstruction builds
+/// the new children as `left ++ [ncl, ncr] ++ right`.)
+pub proof fn lemma_forest_wf_concat(a: Seq<Tree>, b: Seq<Tree>, h: nat, cap: nat, key_cap: nat)
+    requires forest_wf(a, h, cap, key_cap), forest_wf(b, h, cap, key_cap),
+    ensures forest_wf(a + b, h, cap, key_cap),
+    decreases a,
+{
+    if a.len() == 0 {
+        assert(a + b =~= b);
+    } else {
+        lemma_forest_wf_cons(a, h, cap, key_cap);
+        let adf = a.drop_first();
+        lemma_forest_wf_concat(adf, b, h, cap, key_cap);
+        assert((a + b).drop_first() =~= adf + b);
+        assert((a + b)[0] == a[0]);
+        lemma_forest_wf_cons(a + b, h, cap, key_cap);
+    }
+}
+
 pub proof fn lemma_forest_wf_subrange(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat, lo: int, hi: int)
     requires
         forest_wf(kids, h, cap, key_cap),
