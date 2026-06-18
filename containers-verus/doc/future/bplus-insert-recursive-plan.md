@@ -142,17 +142,24 @@ landed layout mutators + ghost lemmas together with the arena framing
 (`lemma_binds_frame` + `tree_disjoint`), returning the `Option<(sep, child)>`
 split product and re-establishing `wf` over the new `kids` at each level.
 
-**M4c progress (mid-step-3).** `insert_rec`'s leaf delegation, internal descent
-scan (`find_gt`), and recursive call all verify (the recursion's preconditions —
-child `subtree_wf` at `h-1` with the right successor, `tree_height(gc)==h-1` — are
-discharged via `lemma_inner_child_subtree_wf` + `lemma_leaf_links_project` +
-`lemma_tree_wf_height`). The leaf-link *projection* lemma (`lemma_leaf_links_
-project`, inverse of compose, via `leaf_id_offset` slices) was the fiddliest
-sub-proof and is now done. Remaining: the post-recursion **reconstruction** —
-absorb branch (rebuild parent over `kids.update(cp, ncl)` via the forest-update
-lemmas) and split branch (`internal_insert_at` if room else `internal_split_at` +
-`lemma_internal_split_tree_wf`). All reconstruction lemmas are landed; this is the
-last assembly before the top-level wrapper (step 4).
+**M4c progress (step-3, absorb path DONE).** `insert_rec` structure:
+- leaf delegation, internal `find_gt` descent, recursive call: VERIFIED.
+- the child-returns-None **absorb branch**: FULLY VERIFIED, no assumes. Rebuilds
+  the parent over `kids.update(cp, ncl)` via `reconstruct_absorb`, which composes
+  `lemma_forest_binds_update` (binds), `lemma_forest_wf_update` + the
+  `keys_all_lt/ge_set` bridges (tree_wf + cross-node ordering),
+  `lemma_forest_links_update` (the leaf-link chain, itself built on
+  decompose/compose + `lemma_forest_links_frame_ids`), `lemma_forest_disjoint_
+  update` (disjoint), and `reconstruct_absorb_model` (model). The frame ensures
+  (slots outside `tree_ids(cur)` unchanged) is threaded from the recursion.
+- the child-returns-Some **split branch**: exec scaffold in place (parent-absorb
+  sub-case via `internal_insert_at` when room; parent-split sub-case via
+  `internal_split_at` otherwise). Two `assume(false)` remain for the two
+  reconstructions (`reconstruct_child_split_absorb` + the parent-split one). These
+  mirror `reconstruct_absorb` / the leaf split; all underlying lemmas are landed.
+
+So the absorb half of the internal case is real and verified; the split half's
+reconstructions are the remaining work, then the top-level wrapper (step 4).
 
 ## What is genuinely new vs. reused
 
