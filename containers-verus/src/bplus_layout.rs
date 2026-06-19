@@ -67,6 +67,57 @@ use crate::tagged::Tagged;
 
 verus! {
 
+// The u64 layouts are compiled only on 64-bit targets (their `IndexLike` impls
+// are `#[cfg(target_pointer_width = "64")]`). Pin the word size so Verus knows
+// `usize::MAX == u64::MAX`, making the arena-index casts (`usize <-> u64`) value-
+// preserving FACTS rather than trusted bodies. `global size_of` is checked
+// against the build `--target`, so this is not an unchecked assumption: a
+// non-8-byte-usize target fails to verify here rather than silently miscompiling.
+global size_of usize == 8;
+
+/// `(v as u64) as nat == v as nat` for a `usize`. The single arena-index cast
+/// fact the u64 layouts' arena writes need: they store a `usize` id into a `u64`
+/// data slot, and `child_view` reads it back as a nat. Verus proves it directly
+/// when `usize::BITS <= 64` (so the widening `usize -> u64` is value-preserving),
+/// which holds on every target this crate builds for (32- and 64-bit; the cast
+/// is lossless on both). Concentrating the cast reasoning in ONE proven lemma
+/// lets `set_internal_child` / `new_internal2` drop their `external_body`.
+pub proof fn lemma_usize_u64_roundtrip(v: usize)
+    ensures (v as u64) as nat == v as nat,
+{
+    // size_of::<usize>() == 8 (pinned above) ⟹ usize::MAX == u64::MAX, so
+    // v <= u64::MAX and the widening cast is the identity (no truncation).
+    lemma_usize_is_u64_wide();
+    assert((v as u64) as nat == v as nat) by (nonlinear_arith)
+        requires v <= u64::MAX as int;
+}
+
+/// `usize::MAX == u64::MAX`, from the pinned `size_of usize == 8`. The single
+/// width fact both cast lemmas rest on.
+pub proof fn lemma_usize_is_u64_wide()
+    ensures usize::MAX as nat == u64::MAX as nat,
+{
+    vstd::layout::unsigned_int_max_values();
+    // usize::MAX == pow2(usize::BITS) - 1, u64::MAX == pow2(64) - 1, and
+    // usize::BITS == 8 * size_of::<usize>() == 64.
+    assert(usize::BITS == 64);
+}
+
+/// `(x as usize) as nat == x as nat` for a `u64`: the NARROWING arena-index cast
+/// the u64 layouts' `child` accessor performs (it reads a `u64` data slot and
+/// returns a `usize`). Lossless iff `u64::MAX <= usize::MAX`, i.e. `usize` is
+/// 64-bit — which is exactly the 64-bit-host assumption the u64 layouts already
+/// declare (32-bit is feature-gated; see the module header). Verus checks it
+/// against the build `--target`, so on a 64-bit build it is a proof, not an
+/// axiom; the cast trust is thereby pinned to the target width, not scattered.
+pub proof fn lemma_u64_usize_roundtrip(x: u64)
+    ensures (x as usize) as nat == x as nat,
+{
+    lemma_usize_is_u64_wide();  // usize::MAX == u64::MAX, so x <= usize::MAX
+    assert((x as usize) as nat == x as nat) by (nonlinear_arith)
+        requires x <= usize::MAX as int;
+}
+
 /// Compile-time node geometry, generic over word/arena width. Mirrors
 /// production's `NodeLayout`. The node value is [`Tagged`] (capture bit stolen
 /// into its packed repr's `flags` byte), so an `InlineStore`-backed arena makes
@@ -962,11 +1013,21 @@ macro_rules! gen_layout_u64 {
             fn count(n: &$node) -> (c: usize) { n.count }
             fn key(n: &$node, i: usize) -> (k: u64) { n.data[i] }
 
-            // u64 word -> usize arena index: a value-preserving cast on 64-bit
-            // hosts. external_body mirrors the crate's u64 `IndexLike::as_usize`.
-            #[verifier::external_body]
+            // u64 word -> usize arena index: the narrowing cast, lossless on a
+            // 64-bit usize (the u64 layouts' declared target), proven via
+            // lemma_u64_usize_roundtrip. The `i == count <= key_cap` case may read
+            // the `link`-held last child (already a usize, no cast). The trait's
+            // requires/ensures (node_wf, !is_leaf, i <= count; c == child_view) are
+            // inherited.
             fn child(n: &$node, i: usize) -> (c: usize) {
-                if i < $key_cap { n.data[$key_cap + i] as usize } else { n.link }
+                if i < $key_cap {
+                    assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
+                    let c = n.data[$key_cap + i] as usize;
+                    proof { lemma_u64_usize_roundtrip(n.data[$key_cap as int + i as int]); }
+                    c
+                } else {
+                    n.link
+                }
             }
             fn link(n: &$node) -> (l: usize) { n.link }
             fn new_leaf() -> (n: $node) {
@@ -1053,11 +1114,10 @@ macro_rules! gen_layout_u64 {
                 (left, right)
             }
 
-            // Stores `usize` arena ids into the `u64` data array. The
-            // `usize -> u64 -> usize` round-trip (child_view casts back) is
-            // value-preserving on 64-bit hosts; external_body mirrors the u64
-            // `child` accessor's treatment of the same cast.
-            #[verifier::external_body]
+            // Stores `usize` arena ids into the `u64` data array; child_view reads
+            // them back as nat. The two stores' value-preservation is the same
+            // `usize as u64 as nat == usize as nat` cast as set_internal_child,
+            // discharged by `lemma_usize_u64_roundtrip` (no longer external_body).
             fn new_internal2(sep: u64, left: usize, right: usize) -> (nn: $node)
                 ensures
                     !Self::is_leaf_spec(nn),
@@ -1071,7 +1131,17 @@ macro_rules! gen_layout_u64 {
                 data[0] = sep;
                 data[$key_cap] = left as u64;
                 data[$key_cap + 1] = right as u64;
-                $node { is_leaf: false, count: 1, data, link: 0usize }
+                let nn = $node { is_leaf: false, count: 1, data, link: 0usize };
+                proof {
+                    lemma_usize_u64_roundtrip(left);   // (left as u64) as nat == left as nat
+                    lemma_usize_u64_roundtrip(right);
+                }
+                assert(Self::keys_view(nn) =~= seq![sep]);
+                // child_view(nn,0)==data[key_cap]==left as u64; child_view(nn,1)==
+                // data[key_cap+1]==right as u64; the roundtrip gives == left/right.as_nat.
+                assert(Self::child_view(nn, 0) == left.as_nat());
+                assert(Self::child_view(nn, 1) == right.as_nat());
+                nn
             }
 
             fn set_link(n: &mut $node, l: usize) {
@@ -1102,10 +1172,9 @@ macro_rules! gen_layout_u64 {
                     Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
             }
             // Stores a `usize` arena id into the `u64` data slot (or the `usize`
-            // link). The usize->u64->usize round-trip (child_view casts back) is
-            // value-preserving on 64-bit; external_body mirrors the u64 child
-            // accessor + new_internal2.
-            #[verifier::external_body]
+            // link). The store goes through `v as u64`; child_view reads it back
+            // as nat, so the obligation is the value-preserving `usize as u64 as
+            // nat == usize as nat` cast, discharged by `lemma_usize_u64_roundtrip`.
             fn set_internal_child(n: &mut $node, i: usize, v: usize)
                 ensures
                     Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
@@ -1116,11 +1185,19 @@ macro_rules! gen_layout_u64 {
                     forall|j: int| 0 <= j <= Self::key_cap_spec() && j != i ==>
                         Self::child_view(*n, j) == Self::child_view(*old(n), j),
             {
+                let ghost old_n = *n;
                 if i < $key_cap {
+                    assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
                     n.data[$key_cap + i] = v as u64;
+                    proof { lemma_usize_u64_roundtrip(v); }  // (v as u64) as nat == v as nat
                 } else {
                     n.link = v;
                 }
+                // keys_view (data[0..count]) untouched; other children unchanged.
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
+                assert(Self::child_view(*n, i as int) == v.as_nat());
+                assert forall|j: int| 0 <= j <= $key_cap && j != i implies
+                    Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
             fn isplit_mid() -> (m: usize) { $key_cap / 2 }
