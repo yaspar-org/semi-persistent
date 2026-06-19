@@ -368,6 +368,24 @@ pub open spec fn strictly_sorted(s: Seq<nat>) -> bool {
     forall|i: int, j: int| 0 <= i < j < s.len() ==> (#[trigger] s[i]) < (#[trigger] s[j])
 }
 
+/// A strictly-sorted sequence has no duplicates, hence its length equals its
+/// set's cardinality (`vstd`'s `unique_seq_to_set`). Bridges the model sequence
+/// (`tree_keys`, strictly sorted by `wf`) to the cached `nkeys` count: lets the
+/// insert track `nkeys == model.len()` via the set, since the set is what the
+/// model-transition ensures (`model' set == old set ∪ {key}`) speaks about.
+pub proof fn lemma_strictly_sorted_len_eq_set(s: Seq<nat>)
+    requires strictly_sorted(s),
+    ensures s.len() == s.to_set().len(),
+{
+    assert(s.no_duplicates()) by {
+        assert forall|i: int, j: int| 0 <= i < s.len() && 0 <= j < s.len() && i != j
+            implies s[i] != s[j] by {
+            if i < j { assert(s[i] < s[j]); } else { assert(s[j] < s[i]); }
+        }
+    }
+    s.unique_seq_to_set();
+}
+
 /// Every key in the tree is `< bound` (used to state the cross-node ordering:
 /// a child subtree's keys are bounded above by its right separator).
 pub open spec fn keys_all_lt(t: Tree, bound: nat) -> bool {
@@ -1169,6 +1187,26 @@ pub proof fn lemma_tree_wf_relax_root(t: Tree, h: nat, cap: nat, key_cap: nat)
     }
 }
 
+/// A FULL node that is root-wf is also non-root-wf: the only clause the non-root
+/// form adds is the minimum-occupancy lower bound, which a full node (leaf at
+/// `cap` keys / internal at `key_cap` separators) trivially meets (`cap >=
+/// (cap+1)/2`, `key_cap >= key_cap/2`). Lets the split branch — which fires only
+/// on a full node — feed a root-form `cur` to the non-root reconstruction.
+pub proof fn lemma_tree_wf_full_nonroot(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires
+        tree_wf(t, h, cap, key_cap, true),
+        match t {
+            Tree::Leaf { keys, .. } => keys.len() == cap,
+            Tree::Inner { seps, .. } => seps.len() == key_cap,
+        },
+    ensures tree_wf(t, h, cap, key_cap, false),
+{
+    match t {
+        Tree::Leaf { keys, .. } => { assert(keys.len() >= (cap + 1) / 2); }
+        Tree::Inner { seps, .. } => { assert(seps.len() >= key_cap / 2); }
+    }
+}
+
 /// Descent step. In a wf internal node, if `cp` is the `find_gt` position over
 /// the separators (`seps[i] <= k` for `i < cp`, `k < seps[i]` for `i >= cp`),
 /// then `k` is in the node's key space iff it is in child `cp` — so a search may
@@ -1730,7 +1768,10 @@ pub proof fn lemma_child_split_combined_wf(
     requires
         h >= 1,
         0 <= cp < gkids.len(),
-        tree_wf(Tree::Inner { id: gid, seps: gseps, kids: gkids }, h, cap, key_cap, false),
+        // root-form (weakest) input: this lemma reads only structural facts of
+        // `cur` (sortedness, forest_wf, cross-node ordering), NEVER its occupancy,
+        // so the is_root=true form suffices and both callers can relax into it.
+        tree_wf(Tree::Inner { id: gid, seps: gseps, kids: gkids }, h, cap, key_cap, true),
         tree_wf(ncl, (h - 1) as nat, cap, key_cap, false),
         tree_wf(ncr, (h - 1) as nat, cap, key_cap, false),
         keys_all_lt(ncl, sep),
@@ -1929,12 +1970,15 @@ pub proof fn lemma_child_split_absorb_tree_wf(
     h: nat,
     cap: nat,
     key_cap: nat,
+    is_root: bool,
 )
     requires
         h >= 1,
         0 <= cp < gkids.len(),
-        // the original parent is wf (non-root) AND had room (gseps.len() < key_cap).
-        tree_wf(Tree::Inner { id: gid, seps: gseps, kids: gkids }, h, cap, key_cap, false),
+        // the original parent is wf at the caller's root-ness AND had room. The
+        // rebuilt `nt` GAINS a separator, so when is_root==false its occupancy
+        // (gseps.len()+1 >= key_cap/2) follows from cur's; when true it is dropped.
+        tree_wf(Tree::Inner { id: gid, seps: gseps, kids: gkids }, h, cap, key_cap, is_root),
         gseps.len() < key_cap,
         // the two halves are wf at h-1 with the median ordering around `sep`.
         tree_wf(ncl, (h - 1) as nat, cap, key_cap, false),
@@ -1958,7 +2002,7 @@ pub proof fn lemma_child_split_absorb_tree_wf(
             let nseps = gseps.insert(cp, sep);
             let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
             let nt = Tree::Inner { id: gid, seps: nseps, kids: nkids };
-            &&& tree_wf(nt, h, cap, key_cap, false)
+            &&& tree_wf(nt, h, cap, key_cap, is_root)
             &&& tree_keys(nt).to_set() == tree_keys(Tree::Inner { id: gid, seps: gseps, kids: gkids }).to_set().insert(key)
         }),
 {
@@ -1966,14 +2010,20 @@ pub proof fn lemma_child_split_absorb_tree_wf(
     let nseps = gseps.insert(cp, sep);
     let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
     let nt = Tree::Inner { id: gid, seps: nseps, kids: nkids };
+    // combined_wf takes the root-form (weakest) input; relax cur into it.
+    if !is_root { lemma_tree_wf_relax_root(cur, h, cap, key_cap); }
     // the combined-arrangement ingredients (sorted seps, forest_wf, cross-node
-    // ordering, model) from the shared lemma; the absorb case adds occupancy.
+    // ordering, model) from the shared lemma.
     lemma_child_split_combined_wf(gid, gseps, gkids, cp, ncl, ncr, sep, key, h, cap, key_cap);
     assert(nseps.len() == gseps.len() + 1);
     assert(nseps.len() <= key_cap);  // gseps.len() < key_cap ⟹ +1 <= key_cap
     // heights: forest wf at h-1 ⟹ tree_wf(nt, h).
     lemma_forest_wf_max_height(nkids, (h - 1) as nat, cap, key_cap);
-    assert(tree_wf(nt, h, cap, key_cap, false));
+    // occupancy of nt at the caller's is_root: nseps.len() == gseps.len()+1.
+    // When is_root==false, cur (non-root) gave gseps.len() >= key_cap/2, so
+    // nseps.len() > key_cap/2 holds; when true, dropped.
+    if !is_root { assert(gseps.len() >= key_cap / 2); }
+    assert(tree_wf(nt, h, cap, key_cap, is_root));
     // model: tree_keys(nt) == forest_keys(nkids).
     assert(tree_keys(nt) == forest_keys(nkids));
 }
