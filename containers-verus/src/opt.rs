@@ -152,6 +152,13 @@ pub trait DenseId: Sized + Copy {
     proof fn lemma_id_injective(a: Self, b: Self)
         requires a.id_nat() == b.id_nat(),
         ensures a == b;
+
+    /// `id_nat` is always within `id_bound` (the doc invariant on `id_bound`).
+    /// What makes `from_usize(self.as_usize())` round-trip: the cursor's `key()`
+    /// reads a stored word back into a `K`, and this is the precondition
+    /// (`as_usize() < id_bound`) the `from_usize` round-trip needs.
+    proof fn lemma_id_nat_bounded(tracked self)
+        ensures self.id_nat() < Self::id_bound();
 }
 
 /// A concrete `DenseId` over `usize` (the dense index is the value itself).
@@ -187,6 +194,10 @@ impl DenseId for DenseUsize {
 
     proof fn lemma_id_injective(a: Self, b: Self) {
         // id_nat is `raw as nat`, injective on usize.
+    }
+
+    proof fn lemma_id_nat_bounded(tracked self) {
+        // id_nat == raw as nat <= usize::MAX < usize::MAX + 1 == id_bound.
     }
 }
 
