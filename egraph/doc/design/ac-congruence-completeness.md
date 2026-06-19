@@ -2,14 +2,13 @@
 
 This chapter explains why modeling AC nodes as canonical multisets can miss
 equalities during congruence closure, what the exact root cause is, and how to
-close the gap by extending the machinery we already have. At its heart the problem is
-maintaining a small *reduced canonical basis* of rewrite rules incrementally, as
-saturation feeds facts in — §0 states this in one breath and §5c works it through one
-example with no jargon.
+close the gap by extending the machinery we already have. The problem is maintaining a
+small *reduced canonical basis* of rewrite rules incrementally, as saturation feeds
+facts in; §0 states this and §5c works it through one example.
 
 It is the single design reference for the AC completeness story, and is
-self-contained. Part I derives the problem from first principles (start with §0 for the
-one-breath framing); Part II gives the solution and the argument for why it works. For
+self-contained. Part I derives the problem from first principles (§0 is the short
+framing); Part II gives the solution and the argument for why it works. For
 where we stand and what remains, see [Future Work](A3-future-work.md). For the cost of
 AC matching (a separate, matching-side concern), see [Ch 9](09-pattern-matching.md).
 
@@ -17,7 +16,7 @@ AC matching (a separate, matching-side concern), see [Ch 9](09-pattern-matching.
 
 # Part I, the problem
 
-## 0. The core problem, in one breath
+## 0. The core problem
 
 Two AC facts force *infinitely* many equalities. `a+b = p` already entails `a+b+c =
 p+c`, `a+b+d = p+d`, … — every bag with `{a,b}` inside it, with the same junk on both
@@ -49,8 +48,7 @@ fixpoint, so the surviving rules are a reduced canonical basis** — the smalles
 that decides the theory. The whole of this chapter is how to do that inside an e-graph
 where "a rule" is just an AC node and "delete a rule" cannot mean delete a node.
 
-§5c walks this through one concrete example, line by line, before the formal treatment.
-Readers who want the intuition first should jump there now.
+§5c works this through one concrete example before the formal treatment.
 
 ## 1. Why ordinary congruence closure is complete
 
@@ -318,12 +316,10 @@ convergence," and that splits into two separate procedures:
 before convergence it may return different normal forms for different rule orders.
 Making it a function is the content of the completeness argument (§10).
 
-## 5c. The whole idea in one worked example, no jargon
+## 5c. A worked example
 
-This section is the core problem (§0) and its solution, worked line by line on one
-example, in plain terms — the didactic version of the entire chapter. `+` is a *bag*
-(order doesn't matter, no nesting — `a+b+c` is just the bag `{a,b,c}`). We are handed
-exactly two facts:
+`+` is a *bag* (order doesn't matter, no nesting — `a+b+c` is just the bag `{a,b,c}`).
+We are handed exactly two facts:
 
 ```
 FACT 1:   a + b      is the same thing as   p
@@ -362,20 +358,19 @@ they stop, check they land in the same place. Is `a+b+c+d = q+d`? Left:
 ever storing it. The compressed version is not a lookup table; it is a little machine
 that regenerates any line on demand.
 
-**Why keep `p+c` and not `a+b+c`** (this is the "incomparable left-sides" condition
-in plain words): `a+b+c` *contains* `a+b`, which is already RULE 1. A rule starting
+**Why keep `p+c` and not `a+b+c`** (the "incomparable left-sides" condition): `a+b+c`
+*contains* `a+b`, which is already RULE 1. A rule starting
 with `a+b+c` would immediately get chewed by RULE 1 down to `p+c` anyway — it rewrites
 itself, so it is dead weight. Store the already-chewed version. The rule of thumb is
 just: **never keep a rule whose left side contains another rule's left side.** After
 you delete all such dead weight, no left side contains any other — that "antichain"
 property is not a goal, it is simply *what is left* once the redundant rules are gone.
 
-**How the machine builds this live — the part that matters for saturation.** This is
-the crux: the basis is *not* computed once from a fixed input. Saturation feeds facts
-in one at a time (each rewrite firing produces a new equality), and the reduced basis
-must be maintained *incrementally* as they arrive — every new fact can both spawn
-collisions and make existing rules redundant. Every fact is a rule; on each new rule you
-do two chores, then repeat until quiet:
+**How the machine builds this live.** The basis is not computed once from a fixed
+input. Saturation feeds facts in one at a time (each rewrite firing produces a new
+equality), and the reduced basis is maintained incrementally as they arrive — every new
+fact can both spawn collisions and make existing rules redundant. Every fact is a rule;
+on each new rule you do two chores, then repeat until quiet:
 
 - **Chore A (clean up / collapse):** does the new rule's left side sit *inside* an
   existing rule's left side? Then that existing rule is stale: chew it down with the
@@ -393,8 +388,8 @@ rule is chewed on arrival into `p+c→q`. We never store `a+b+c→q`. Knowledge 
 machine reached the two-rule compressed form by itself, and FACT 2 was swallowed by
 Chore A on the way in.
 
-The collision case bare, since it is the part that feels like magic. Suppose instead
-the facts were `a+b→p` and `b+c→r` (they share `b`, neither inside the other). Chore A:
+The collision case on its own. Suppose instead the facts were `a+b→p` and `b+c→r`
+(they share `b`, neither inside the other). Chore A:
 neither sits in the other, nothing stale. Chore B: shared `b`, smallest bag containing
 both is `a+b+c` (take the shared `b` once); rewrite two ways — `a+b+c —(a+b→p)→ p+c`
 and `a+b+c —(b+c→r)→ r+a`; two results of reducing the *same* bag, so `p+c = r+a`, a
