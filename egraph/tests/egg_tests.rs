@@ -27,13 +27,17 @@ fn run_egg_file(path: &str, strategy: SaturationStrategy) -> (String, Vec<String
 
     let mut expect = "ok".to_string();
     let mut types = "bignum".to_string();
-    for line in src.lines().take(5) {
+    let mut ac_complete = false;
+    for line in src.lines().take(6) {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix(";; EXPECT:") {
             expect = rest.trim().to_string();
         }
         if let Some(rest) = line.strip_prefix(";; TYPES:") {
             types = rest.trim().to_string();
+        }
+        if let Some(rest) = line.strip_prefix(";; AC_COMPLETE:") {
+            ac_complete = rest.trim() == "on";
         }
     }
 
@@ -44,9 +48,13 @@ fn run_egg_file(path: &str, strategy: SaturationStrategy) -> (String, Vec<String
     let choice = choose_litval(&groups);
 
     let result = match choice {
-        LitValChoice::Machine => run_with::<MachineLit, MachineModel>(&src, MachineModel, strategy),
-        LitValChoice::Bignum => run_with::<BignumLit, BignumModel>(&src, BignumModel, strategy),
-        LitValChoice::All => run_with::<AllLit, AllModel>(&src, AllModel, strategy),
+        LitValChoice::Machine => {
+            run_with::<MachineLit, MachineModel>(&src, MachineModel, strategy, ac_complete)
+        }
+        LitValChoice::Bignum => {
+            run_with::<BignumLit, BignumModel>(&src, BignumModel, strategy, ac_complete)
+        }
+        LitValChoice::All => run_with::<AllLit, AllModel>(&src, AllModel, strategy, ac_complete),
     };
 
     (expect, result)
@@ -59,6 +67,7 @@ fn run_with<
     src: &str,
     model: M,
     strategy: SaturationStrategy,
+    ac_complete: bool,
 ) -> Vec<String> {
     let surface_cmds = match semi_persistent_egraph::parser::parse_program_v2(src) {
         Ok(c) => c,
@@ -67,6 +76,7 @@ fn run_with<
     let mut interp =
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
+    interp.set_ac_complete(ac_complete);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds,
@@ -111,6 +121,10 @@ fn check(path: &str) {
 
 fn check_panic(path: &str) {
     let src = std::fs::read_to_string(path).unwrap();
+    let ac_complete = src
+        .lines()
+        .take(6)
+        .any(|l| l.trim().strip_prefix(";; AC_COMPLETE:").is_some_and(|r| r.trim() == "on"));
     for strategy in STRATEGIES {
         let src = src.clone();
         let result = std::panic::catch_unwind(move || {
@@ -123,6 +137,7 @@ fn check_panic(path: &str) {
                 false,
             >::new(MachineModel);
             interp.set_strategy(strategy);
+            interp.set_ac_complete(ac_complete);
             let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
             let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
                 surface_cmds,
@@ -223,3 +238,8 @@ egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 
 // ── AC congruence completeness (superposition + inter-reduction) ──
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");
+egg_test!(ac_complete_superposition, "ac_complete_superposition.egg");
+egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
+// Pins the nested-same-op flattening blocker: completion ON + no flattening panics
+// the matcher. Flips to a normal `egg_test!` (EXPECT: ok) once flattening lands.
+egg_test!(ac_complete_nested_match, "ac_complete_nested_match.egg", panic);

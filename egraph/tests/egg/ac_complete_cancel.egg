@@ -1,0 +1,32 @@
+;; EXPECT: ok
+;; AC_COMPLETE: on
+;; AC congruence completeness — §5b cancellation (matching reaches a virtual sub-sum).
+;;
+;; Insert  a + b + neg(a+b).  Building neg(a+b) forces the node +(a,b) to exist;
+;; call its class c.  But the outer sum flattens by substituting each summand's
+;; class, and a, b are summands in their own right, so the outer node is
+;;     +{ a, b, neg(c) }     (NOT +{ c, neg(c) }).
+;; The rule (+ ?x (neg ?x)) ⇒ 0 needs ?x = c AND c a summand, but the outer
+;; multiset has a, b separately. The match fails — a real AC consequence is lost.
+;;
+;; Completion's inter-reduction fixes it: +(a,b)=c is known and {a,b} ⊆ the outer
+;; multiset, so substituting c materializes +{c, neg(c)}. Then the ordinary
+;; matcher binds ?x = c and the rule fires, reducing the whole term to 0.
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function neg (E) E)
+(function a () E)
+(function b () E)
+(function Zero () E)
+
+;; (+ ?x (neg ?x)) ⇒ 0   — exactly two summands, no rest.
+(rewrite (Add x (neg x)) (Zero))
+
+;; a + b + neg(a+b). Building neg(a+b) materializes +(a,b) as its own class.
+(let t (Add (a) (b) (neg (Add (a) (b)))))
+
+(run 10)
+
+;; Without completion the rule never fires; with it, the term reduces to 0.
+(check (= t (Zero)))

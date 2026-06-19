@@ -48,6 +48,13 @@ pub struct EGraph<
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
     touched: Vec<Cfg::G>,
+    /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
+    /// inter-reduction). **Default off**: completion can materialize nested same-op
+    /// nodes, which the matcher cannot handle until AC flattening lands (`WF_flat`,
+    /// see `doc/design/ac-congruence-completeness.md` §6b). Opt in with
+    /// [`set_ac_complete`](Self::set_ac_complete) once flattening is in place; the
+    /// completion tests enable it for the flat scenarios they exercise.
+    ac_complete: bool,
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -87,7 +94,14 @@ where
             g_buf: Vec::new(),
             ac_buf: Vec::new(),
             touched: Vec::new(),
+            ac_complete: false,
         }
+    }
+
+    /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
+    /// Off until nested same-op flattening lands — see `ac_complete` field docs.
+    pub fn set_ac_complete(&mut self, enabled: bool) {
+        self.ac_complete = enabled;
     }
 
     /// Create an e-graph with built-in sorts and reserved op names from a `LitModel`.
@@ -543,10 +557,44 @@ where
     /// adds nothing. The fixpoint is the AC congruence closure of the asserted
     /// equalities.
     pub fn rebuild(&mut self) {
+        // Ordinary atom-level congruence closure always runs. AC completion runs only
+        // when opted in (default off until nested same-op flattening lands — §6b).
+        if !self.ac_complete {
+            self.rebuild_congruence();
+            return;
+        }
+        let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
+        // Safety backstop against a diverging completion (minting unbounded
+        // critical-pair nodes). A convergent completion adds few nodes; if the AC
+        // node count balloons past this many beyond where it started, we stop
+        // rather than OOM. This is NOT the termination argument — it is a guard
+        // rail while the proper inter-reduction is being put in place.
+        const MAX_COMPLETION_NODE_GROWTH: usize = 50_000;
+        let start_nodes = self.node_count();
+        let mut round = 0usize;
         loop {
             self.rebuild_congruence();
-            if !self.ac_complete_round() {
-                break;
+            let before = self.node_count();
+            let changed = self.ac_complete_round();
+            if trace {
+                eprintln!(
+                    "[ac-complete] round {round}: nodes {before} -> {} (+{}), changed={changed}",
+                    self.node_count(),
+                    self.node_count() - before
+                );
+            }
+            round += 1;
+            if !changed {
+                return;
+            }
+            if self.node_count() - start_nodes > MAX_COMPLETION_NODE_GROWTH {
+                self.rebuild_congruence();
+                debug_assert!(
+                    false,
+                    "ac completion diverged: added >{MAX_COMPLETION_NODE_GROWTH} nodes \
+                     without converging (set AC_COMPLETE_TRACE=1 to inspect growth)"
+                );
+                return;
             }
         }
     }
@@ -595,31 +643,39 @@ where
         }
     }
 
-    /// One AC congruence-completion round (Kapur FSCD 2021, the steps our rebuild
-    /// otherwise omits). Returns `true` if it scheduled any new merge.
+    /// One AC congruence-completion round (Kapur FSCD 2021 Algorithm 1, the steps our
+    /// rebuild otherwise omits). Returns `true` if it scheduled any new merge.
     ///
-    /// For each AC node `+M = d` and each partner AC node `+A = a` of the same op
-    /// sharing ≥1 child class, on a frozen snapshot of the live AC nodes
-    /// ([`crate::ac_complete::AcPartnerSnapshot`]):
+    /// Reading each non-subsumed AC node `+M = d` as a ground rule `+M → d`, over a
+    /// frozen snapshot of the active AC nodes
+    /// ([`crate::ac_complete::AcPartnerSnapshot`]), for each pair of partners (same op,
+    /// sharing ≥1 child class):
     ///
-    /// - **(A) inter-reduction** — if `A ⊆ M`, the sub-sum `+A` is virtually
-    ///   contained in `+M` and equals `a`, so substitute `a` for `A`: materialize
-    ///   `+((M − A) ⊎ {a})` and merge it with `d`. This is the sub-sum
-    ///   substitution recanonicalization misses (design doc §3, §4a, §6 (A)).
+    /// - **(A) inter-reduction + Collapse** — if `A ⊊ M`, the sub-sum `+A` equals `a`,
+    ///   so the residual `(M − A) ⊎ {a}`, **normalized to a fixpoint**, equals `d`:
+    ///   merge, then **mark `+M` subsumed** so it leaves the active set. The collapse
+    ///   is what keeps the active rule LHSs a Dickson antichain — without it completion
+    ///   diverges (design doc §6b).
+    /// - **(B) superposition** — if `A` and `M` overlap but neither contains the other,
+    ///   build the lcm `AB`, **normalize both reducts** `(AB−M)⊎{d}` and `(AB−A)⊎{a}`
+    ///   to normal form, and merge if they still differ (design doc §4b, §6 (B)).
     ///
-    /// Disjoint partners are skipped (their critical pair is trivial). Overlap
-    /// partners (neither contains the other) are superposition — handled in (B).
+    /// Disjoint partners are skipped (trivial critical pair). The crucial corrections
+    /// over a naïve materialize-and-merge (design §6b): every reduct is reduced to
+    /// **normal form before** being materialized (a raw reduct can be a superset of an
+    /// existing rule's LHS, hence itself reducible, and would persist as a runaway
+    /// superposition source), and reducible source rules are **collapsed** (subsumed).
     ///
-    /// The pass reads the frozen snapshot first, buffers the substitutions, then
-    /// materializes and merges, so the snapshot is not invalidated mid-iteration.
-    /// New nodes/merges go through the standard `add`/`merge` paths, so they land
-    /// on `touched`/the worklist and are picked up by the next round (plan §2b R1).
+    /// "Subsumed" is the non-deletable form of Kapur/Conchon's rule retirement: the
+    /// node and the equality it established stay in the DAG (sound, restorable), but the
+    /// snapshot/index builders skip it, so it is no longer a partner or a match target.
     fn ac_complete_round(&mut self) -> bool {
-        use crate::ac_complete::AcPartnerSnapshot;
+        use crate::ac_multiset::{
+            NfRule, multiset_disjoint, multiset_lcm, multiset_subset, normalize_ms,
+        };
         use crate::multiplicity::Multiplicity;
 
-        // Canonical child multiset of an AC node, as sorted (class-repr, mult).
-        // Reuses the find-sort-coalesce that `add` performs, but here we only read.
+        // Canonical child multiset of an AC node as sorted, coalesced (class-repr, mult).
         let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
             let mut raw = Vec::new();
             eg.ac_children(id, &mut raw);
@@ -628,7 +684,6 @@ where
                 .map(|(g, mult)| (eg.classes.find_const(g), Multiplicity(mult.into())))
                 .collect();
             m.sort_by_key(|p| p.0);
-            // Coalesce equal class reprs (a merge can make two distinct children equal).
             let mut out: Vec<(Cfg::G, Multiplicity)> = Vec::with_capacity(m.len());
             for (g, mult) in m {
                 if let Some(last) = out.last_mut()
@@ -642,74 +697,256 @@ where
             out
         };
 
-        // Phase 1: read the frozen snapshot and collect substitutions to apply.
-        // Each item is (residual multiset to materialize, class to merge it into).
-        let snapshot = AcPartnerSnapshot::build(self);
-        let mut pending: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G)> = Vec::new();
+        use crate::ac_multiset::monomial_cmp;
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+        use std::collections::{HashMap, HashSet};
 
-        for &target in snapshot.ac_nodes() {
-            let op = self.node_op(target);
-            let d = self.classes.find_const(target);
-            let m = multiset_of(self, target);
+        // Completion's active set excludes nodes that are user-subsumed (not matchable)
+        // OR AC-collapsed (reducible by a smaller rule). Either way they are not rules.
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
 
-            // Candidate partners: AC nodes of this op sharing ≥1 child class with M.
-            // Dedup across the per-child partner lists.
-            let mut seen_partners: Vec<Cfg::G> = Vec::new();
-            for &(x, _) in &m {
-                for &partner in snapshot.partners(op, x) {
-                    if partner == target || seen_partners.contains(&partner) {
-                        continue;
-                    }
-                    seen_partners.push(partner);
+        // Scan all live nodes once to classify each e-class and gather its f-monomials.
+        // - `child_set`: classes used as a child of some node (so referenced as an atom).
+        // - `atomic`: classes with a non-AC node (leaf/plain/lit/ACI) — also atomic.
+        // - `monos[class]`: the AC f-monomials of that class, as (op, multiset, node).
+        let mut child_set: HashSet<Cfg::G> = HashSet::new();
+        let mut atomic: HashSet<Cfg::G> = HashSet::new();
+        let mut monos: HashMap<Cfg::G, Vec<(usize, Vec<(Cfg::G, Multiplicity)>, Cfg::G)>> =
+            HashMap::new();
+        let mut kids: Vec<Cfg::G> = Vec::new();
+        for i in 0..self.node_count() {
+            let gid = Cfg::G::from_usize(i);
+            if self.node_flags(gid) & inactive != 0 {
+                continue;
+            }
+            let cls = self.classes.find_const(gid);
+            kids.clear();
+            self.for_each_child(gid, |ch, _| kids.push(ch));
+            for &ch in &kids {
+                child_set.insert(self.classes.find_const(ch));
+            }
+            let op = self.node_op(gid);
+            if self.ops.is_ac(op) {
+                monos
+                    .entry(cls)
+                    .or_default()
+                    .push((op.to_usize(), multiset_of(self, gid), gid));
+            } else {
+                atomic.insert(cls);
+            }
+        }
 
-                    let a = multiset_of(self, partner);
-                    let a_class = self.classes.find_const(partner);
+        // The class's **minimal monomial** — its normal-form representative (design §6b).
+        // A class is atomic (singleton `{κ}` is the normal form) iff it is referenced as
+        // a child, has a non-AC node, or is a monomial of a *different* op (so it cannot
+        // be expanded within op `f`). Otherwise — a pure f-sum, like a class created only
+        // by a critical-pair merge — its normal form is the degree-lex-least f-monomial.
+        // Substituting `{κ}` for a pure-sum class is the class-as-atom bug that diverges.
+        let min_mono = |op_u: usize, cls: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
+            let is_atomic = atomic.contains(&cls)
+                || child_set.contains(&cls)
+                || monos
+                    .get(&cls)
+                    .is_some_and(|v| v.iter().any(|(o, _, _)| *o != op_u));
+            if is_atomic {
+                return vec![(cls, Multiplicity(1))];
+            }
+            monos
+                .get(&cls)
+                .expect("non-atomic class has at least one f-monomial")
+                .iter()
+                .filter(|(o, _, _)| *o == op_u)
+                .map(|(_, m, _)| m.clone())
+                .min_by(|a, b| monomial_cmp(a, b))
+                .expect("non-atomic class has an f-monomial of its op")
+        };
 
-                    // (A) inter-reduction: A ⊆ M. (Disjoint and overlap are not
-                    // handled here; overlap/superposition is fix (B), task T5.)
-                    if crate::ac_multiset::multiset_subset(&a, &m) {
-                        // residual = (M − A) ⊎ {a_class}
-                        let mut residual = crate::ac_multiset::multiset_subtract(&m, &a);
-                        residual = crate::ac_multiset::multiset_union(
-                            &residual,
-                            &[(a_class, Multiplicity(1))],
-                        );
-                        pending.push((op, residual, d));
-                    }
+        // Rules drive completion: every non-subsumed f-monomial that is *not* its class's
+        // minimal monomial, oriented `lhs ≫ rhs` (rhs = the class's minimal monomial, a
+        // monomial over existing constants — never a bare class id). A monomial that *is*
+        // the minimal representative is the normal form: no rule, never a superposition
+        // source. `class` is the rule's e-class; `node` lets us collapse (subsume) it.
+        struct Rule<G> {
+            op: usize,
+            lhs: Vec<(G, Multiplicity)>,
+            rhs: Vec<(G, Multiplicity)>,
+            node: G,
+        }
+        let mut rules: Vec<Rule<Cfg::G>> = Vec::new();
+        for (&cls, list) in &monos {
+            for (op_u, mset, node) in list {
+                let rhs = min_mono(*op_u, cls);
+                if mset != &rhs {
+                    debug_assert!(monomial_cmp(mset, &rhs) == std::cmp::Ordering::Greater);
+                    rules.push(Rule {
+                        op: *op_u,
+                        lhs: mset.clone(),
+                        rhs,
+                        node: *node,
+                    });
                 }
             }
         }
 
-        // Phase 2: materialize each residual and merge it into the target class.
-        let mut changed = false;
-        for (op, residual, d) in pending {
-            // Expand the multiset back to a flat child list; `add` re-sorts and
-            // re-coalesces multiplicities canonically.
+        // Expand a multiset to a flat child list; `add` re-sorts and re-coalesces.
+        let materialize = |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)]| -> Cfg::G {
             let mut children: Vec<Cfg::G> = Vec::new();
-            for (g, mult) in &residual {
+            for (g, mult) in ms {
                 for _ in 0..mult.0 {
                     children.push(*g);
                 }
             }
-            let c_prime = self.add(op, &children);
-            if self.classes.find_const(c_prime) != self.classes.find_const(d) {
-                let m = if PROOFS {
-                    self.classes.merge_justified(
-                        c_prime,
-                        d,
-                        Justification::Congruence {
-                            node_a: c_prime,
-                            node_b: d,
-                        },
-                    )
-                } else {
-                    self.classes.merge(c_prime, d)
-                };
-                if let Some(m) = m {
-                    self.worklist.push((m.absorbed_uses, m.survivor));
-                    changed = true;
-                }
+            eg.add(op, &children)
+        };
+        let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G| -> bool {
+            if eg.classes.find_const(x) == eg.classes.find_const(y) {
+                return false;
             }
+            let m = if PROOFS {
+                eg.classes.merge_justified(
+                    x,
+                    y,
+                    Justification::Congruence {
+                        node_a: x,
+                        node_b: y,
+                    },
+                )
+            } else {
+                eg.classes.merge(x, y)
+            };
+            match m {
+                Some(m) => {
+                    eg.worklist.push((m.absorbed_uses, m.survivor));
+                    true
+                }
+                None => false,
+            }
+        };
+
+        // Collect work over pairs of rules (same op), then apply (so the rule set we
+        // normalize against does not shift mid-scan). Superposition (B) and collapse (A)
+        // both range over *rules*: Kapur superposes/inter-reduces rule left sides, and a
+        // class's minimal monomial (a normal form) is never a rule, so it cannot be a
+        // source or a collapse target. The search ranges over the `rules` Vec directly
+        // (already the small active set), via an all-pairs loop.
+        //   targets — (A): collapse a node's class into its residual's normal form.
+        //   crit    — (B): merge the normal forms of the two lcm reducts.
+        let mut crit: Vec<(
+            Cfg::O,
+            Vec<(Cfg::G, Multiplicity)>,
+            Vec<(Cfg::G, Multiplicity)>,
+        )> = Vec::new();
+
+        // (A′) Normalize every active monomial node against the rules and merge its
+        // normal form back in (Kapur Algo 2 step 2, "normalize Sf"). This subsumes plain
+        // inter-reduction (A): a node +{a,b,neg(c)} with rule +{a,b}→{c} reduces to
+        // +{c,neg(c)}, which is *materialized* so the ordinary matcher reaches it
+        // (design §5b). `(op, monomial, class, node, is_rule)`: a node that was itself a
+        // rule (its own LHS reducible) is collapsed/subsumed after the merge (design §6b).
+        let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)> =
+            Vec::new();
+        for (&cls, list) in &monos {
+            for (op_u, mset, node) in list {
+                targets.push((
+                    Cfg::O::from_usize(*op_u),
+                    mset.clone(),
+                    cls,
+                    *node,
+                    rules.iter().any(|r| r.node == *node),
+                ));
+            }
+        }
+
+        // (B) Superposition critical pairs over pairs of *rules* sharing ≥1 element but
+        // neither containing the other (overlap). Both reducts are normalized before merge.
+        for ti in 0..rules.len() {
+            for pi in (ti + 1)..rules.len() {
+                if rules[ti].op != rules[pi].op {
+                    continue;
+                }
+                let op = Cfg::O::from_usize(rules[ti].op);
+                let m = &rules[ti].lhs;
+                let a = &rules[pi].lhs;
+                if multiset_disjoint(a, m) || multiset_subset(a, m) || multiset_subset(m, a) {
+                    continue; // disjoint => trivial; containment handled by (A′) normalize
+                }
+                let ab = multiset_lcm(m, a);
+                let r1 = crate::ac_multiset::multiset_union(
+                    &crate::ac_multiset::multiset_subtract(&ab, m),
+                    &rules[ti].rhs,
+                );
+                let r2 = crate::ac_multiset::multiset_union(
+                    &crate::ac_multiset::multiset_subtract(&ab, a),
+                    &rules[pi].rhs,
+                );
+                crit.push((op, r1, r2));
+            }
+        }
+
+        // Per-op rewrite rules for normalization. `nf` reduces a multiset to normal
+        // form against these (rewrite by any LHS ⊆ current, substitute its monomial RHS,
+        // to a fixpoint), then materializes the NORMAL FORM. Each step strictly lowers
+        // the multiset in degree-lex order, so it terminates; only the irreducible result
+        // becomes a node — this is what stops the runaway (design §6b).
+        let nf = |eg: &mut Self,
+                  op: Cfg::O,
+                  ms: &[(Cfg::G, Multiplicity)],
+                  rules: &[Rule<Cfg::G>]|
+         -> Cfg::G {
+            let nf_rules: Vec<NfRule<Cfg::G>> = rules
+                .iter()
+                .filter(|r| r.op == op.to_usize())
+                .map(|r| NfRule {
+                    lhs: r.lhs.clone(),
+                    rhs: r.rhs.clone(),
+                })
+                .collect();
+            let normal = normalize_ms(ms, &nf_rules);
+            materialize(eg, op, &normal)
+        };
+
+        if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
+            eprintln!(
+                "[ac-complete]   active(rules)={} targets(A′)={} crit(B)={}",
+                rules.len(),
+                targets.len(),
+                crit.len()
+            );
+        }
+
+        let mut changed = false;
+        // (A′) normalize each monomial; materialize+merge its normal form; collapse rules.
+        // A node is normalized by all OTHER rules, never by its own node-rule (a rule's
+        // LHS is in normal form w.r.t. itself; reducing it by itself would subsume the
+        // rule before it can superpose — the §4b regression). So a node is collapsed only
+        // when a *different*, strictly-contained rule reduces it (genuine inter-reduction).
+        for (op, mset, class, node, _is_rule) in targets {
+            let normal = {
+                let nf_rules: Vec<NfRule<Cfg::G>> = rules
+                    .iter()
+                    .filter(|r| r.op == op.to_usize() && r.node != node)
+                    .map(|r| NfRule {
+                        lhs: r.lhs.clone(),
+                        rhs: r.rhs.clone(),
+                    })
+                    .collect();
+                normalize_ms(&mset, &nf_rules)
+            };
+            if normal != mset {
+                let c_prime = materialize(self, op, &normal);
+                changed |= do_merge(self, c_prime, class);
+                // Collapse: the node was reducible by another rule (proper containment),
+                // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
+                // NOT subsume — the node stays matchable and a legal child; only
+                // completion's active set excludes it. Merge first, mark second.
+                self.set_ac_collapsed(node);
+            }
+        }
+        // (B) close each critical pair by merging the normal forms of its two reducts.
+        for (op, r1, r2) in crit {
+            let c1 = nf(self, op, &r1, &rules);
+            let c2 = nf(self, op, &r2, &rules);
+            changed |= do_merge(self, c1, c2);
         }
         changed
     }
@@ -811,12 +1048,13 @@ where
         }
     }
 
-    pub fn subsume(&mut self, id: Cfg::G) {
-        use crate::node_types::FLAG_SUBSUMED;
+    /// Set one of the per-node control flags ([`FLAG_SUBSUMED`](crate::node_types::FLAG_SUBSUMED),
+    /// [`FLAG_AC_COLLAPSED`](crate::node_types::FLAG_AC_COLLAPSED)) on `id`'s node.
+    fn set_node_flag(&mut self, id: Cfg::G, flag: u8) {
         macro_rules! flag {
             ($store:expr, $l:expr) => {{
                 let mut n = $store.get($l);
-                n.flags |= FLAG_SUBSUMED;
+                n.flags |= flag;
                 $store.set($l, n);
             }};
         }
@@ -832,6 +1070,24 @@ where
             NodeRef::ACI(l) => flag!(self.nodes.aci, l),
             NodeRef::Lit(l) => flag!(self.nodes.lit, l),
         }
+    }
+
+    /// User-level subsumption: exclude `id` from future pattern matching (the matcher's
+    /// indices skip `FLAG_SUBSUMED`). Distinct from AC-collapse — see `FLAG_AC_COLLAPSED`.
+    pub fn subsume(&mut self, id: Cfg::G) {
+        self.set_node_flag(id, crate::node_types::FLAG_SUBSUMED);
+    }
+
+    /// AC-completion collapse: retire `id` from the active AC rule set (its child
+    /// multiset is reducible by a smaller AC rule, so it is no longer a superposition or
+    /// inter-reduction source). The node stays **matchable** and a legal child; only
+    /// completion's active set excludes it (design §6b). Distinct from `subsume`.
+    pub(crate) fn set_ac_collapsed(&mut self, id: Cfg::G) {
+        debug_assert!(
+            matches!(self.node_ref(id), NodeRef::AC(_)),
+            "set_ac_collapsed on a non-AC node"
+        );
+        self.set_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
     }
 
     /// If `id` is a literal node, return its interned value. Otherwise `None`.

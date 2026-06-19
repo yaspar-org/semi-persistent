@@ -78,10 +78,11 @@ existing AC differential tests (`src/saturate.rs:1373-1908`) still pass.
 
 ### T5b — Collapse + orientation to make (B) converge  → T5  ⊘
 The three load-bearing corrections from design §6b, without which (B) diverges:
-1. **Collapse:** on `A ⊊ M`, after the (A) merge, mark `+M` `FLAG_SUBSUMED`
-   (`EGraph::subsume`) so it leaves the active set → active LHSs stay a Dickson
-   antichain → termination. "Retire" = subsume, never delete (nodes immutable + needed
-   for rollback).
+1. **Collapse:** on `A ⊊ M`, after the (A) merge, mark `+M` `FLAG_AC_COLLAPSED`
+   (`EGraph::set_ac_collapsed`) so it leaves the active set → active LHSs stay a Dickson
+   antichain → termination. "Retire" = flag, never delete (nodes immutable + needed for
+   rollback). Distinct from `FLAG_SUBSUMED`: a collapsed node stays matchable; only
+   completion's active scan excludes it (design §6b).
 2. **Normalize-before-materialize:** `normalize_ms` reduces every reduct to normal form
    against ALL current rules (incl. same-round) before it becomes a node.
 3. **Orient + minimal-monomial RHS:** degree-lex monomial order (`monomial_cmp`); each
@@ -108,16 +109,16 @@ Harden the round loop and prove the evaluation-strategy interaction (plan §2b):
   *pre-existing* nodes (`+{c,d}`, `+{a,e}`) and creates no fresh node; assert a rule
   keyed on the merged class still fires under semi-naive. Use the differential idiom
   in `src/saturate.rs:1373-1908`.
-- **Subsumed-non-matchable (design §6b):** a node collapsed by completion
-  (`FLAG_SUBSUMED`) must not be bound by any user pattern thereafter. The matcher reads
-  only through `IndexStore`, which skips subsumed — but add an explicit test: subsume a
-  node via completion, then a rule whose LHS would match the subsumed multiset must NOT
-  fire (mirror of `subsume.egg`). Guards against any future matching path that bypasses
-  the index. Also assert the collapsed node's *equality* still holds (class unchanged).
+- **Collapse-flag separation (design §6b):** `FLAG_AC_COLLAPSED` ≠ `FLAG_SUBSUMED`. A
+  collapsed node leaves completion's active set but stays **matchable** (its reduced form
+  is in the same class) and stays a legal child. Covered by the lib test
+  `ac_collapsed_leaves_completion_set_but_stays_matchable`: collapsed node gone from
+  `AcPartnerSnapshot` but still in `IndexStore`; user `subsume` then hides it. Assert the
+  collapsed node's *equality* still holds (class unchanged).
 - **Rollback:** semi-persistent restore interaction (`rebuild_after_restore`,
   `src/egraph.rs:1055`) — completion-created nodes restore correctly; `touched`
-  cleared on restore (`src/egraph.rs:596`); `FLAG_SUBSUMED` set by collapse is rolled
-  back with the node store (a node subsumed after a `mark` is un-subsumed on `restore`).
+  cleared on restore (`src/egraph.rs:596`); `FLAG_AC_COLLAPSED` set by collapse is rolled
+  back with the node store (a node collapsed after a `mark` is un-collapsed on `restore`).
 - **PROOFS path:** new merges carry a justification (`merge_justified`,
   `src/egraph.rs:394`); a PROOFS-on run explains a completion-derived equality.
 

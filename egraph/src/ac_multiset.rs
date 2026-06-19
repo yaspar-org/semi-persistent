@@ -160,6 +160,63 @@ pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>>
     out
 }
 
+/// Total size of a monomial: the sum of its multiplicities.
+pub fn multiset_size<G: Copy>(m: &[Pair<G>]) -> u64 {
+    m.iter().map(|(_, mult)| mult.0 as u64).sum()
+}
+
+/// Degree-lexicographic order on monomials — a *total admissible* monomial order
+/// (Kapur §3.1): compare total size first, then lexicographically by the sorted
+/// `(class id, multiplicity)` sequence. Admissible = subterm property (a proper
+/// super-multiset is strictly larger, since size grows) + compatibility (`a ≫ b ⟹
+/// a⊎x ≫ b⊎x`). The `≫`-smaller monomial is a class's normal-form representative;
+/// orienting every rule "larger → smaller" is what makes AC rewriting shrink and
+/// terminate (design doc §6b, §9).
+pub fn monomial_cmp<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> std::cmp::Ordering {
+    multiset_size(a)
+        .cmp(&multiset_size(b))
+        .then_with(|| a.iter().cmp(b.iter()))
+}
+
+/// A ground AC rewrite rule `+lhs → +rhs`, both monomials, oriented `lhs ≫ rhs` by
+/// [`monomial_cmp`]. `rhs` is the **minimal monomial** of `lhs`'s e-class (its
+/// normal-form representative) — *not* a bare fresh class id, which would reintroduce
+/// an atom every critical pair and diverge (design doc §6b).
+pub struct NfRule<G> {
+    pub lhs: Vec<Pair<G>>,
+    pub rhs: Vec<Pair<G>>,
+}
+
+/// Normalize a monomial to a fixpoint by AC rewriting (Kapur Def. 3): while some rule
+/// `+A → +B` has `A ⊆ ms`, replace `A` by `B` (`ms := (ms − A) ⊎ B`). Every rule is
+/// oriented `A ≫ B` ([`monomial_cmp`]), so each step strictly lowers `ms` in the
+/// degree-lex order (compatibility) and the loop terminates; the result is irreducible.
+///
+/// `rules` must already be filtered to the relevant AC op, and each must satisfy
+/// `monomial_cmp(lhs, rhs) == Greater` (the caller builds them that way). This is the
+/// "normalize the reduct before materializing" step whose omission diverges (§6b).
+pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
+    let mut cur = ms.to_vec();
+    // Defensive iteration cap: each rewrite strictly lowers cur in the well-founded
+    // degree-lex order, but guard against a mis-oriented rule slipping in.
+    let mut guard = 4 * (multiset_size(&cur) as usize + 1);
+    'outer: loop {
+        for rule in rules {
+            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
+            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, &cur) {
+                cur = multiset_union(&multiset_subtract(&cur, &rule.lhs), &rule.rhs);
+                guard = guard.saturating_sub(1);
+                if guard == 0 {
+                    break 'outer;
+                }
+                continue 'outer;
+            }
+        }
+        break;
+    }
+    cur
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

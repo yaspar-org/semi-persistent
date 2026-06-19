@@ -120,6 +120,12 @@ where
         self.strategy = strategy;
     }
 
+    /// Enable/disable the AC congruence-completion pass (default off; see
+    /// `EGraph::set_ac_complete`).
+    pub fn set_ac_complete(&mut self, enabled: bool) {
+        self.eg.set_ac_complete(enabled);
+    }
+
     fn alloc_axiom_id(&mut self, lhs: Cfg::G, rhs: Cfg::G) -> crate::id::AxiomId {
         let name = format!("axiom_{}", self.eg.axioms().len());
         self.eg.register_axiom(&name, lhs, rhs)

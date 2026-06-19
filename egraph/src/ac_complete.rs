@@ -55,9 +55,12 @@ where
         let mut by_op_contains: HashMap<(Cfg::O, Cfg::G), Vec<Cfg::G>> = HashMap::new();
         let mut ac_nodes: Vec<Cfg::G> = Vec::new();
 
+        // Active AC nodes only: skip user-subsumed (not matchable) and AC-collapsed
+        // (reducible by a smaller rule) — neither is a completion rule. See §6b.
+        let inactive = crate::node_types::FLAG_SUBSUMED | crate::node_types::FLAG_AC_COLLAPSED;
         for i in 0..eg.node_count() {
             let gid = Cfg::G::from_usize(i);
-            if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
+            if eg.node_flags(gid) & inactive != 0 {
                 continue;
             }
             let op = eg.node_op(gid);
@@ -120,9 +123,10 @@ mod tests {
     ) -> Vec<crate::id::ENodeId> {
         let mut out = Vec::new();
         let mut buf = Vec::new();
+        let inactive = crate::node_types::FLAG_SUBSUMED | crate::node_types::FLAG_AC_COLLAPSED;
         for i in 0..eg.node_count() {
             let gid = crate::id::ENodeId::new(i as u32);
-            if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
+            if eg.node_flags(gid) & inactive != 0 {
                 continue;
             }
             if eg.node_op(gid) != op || !eg.ops().is_ac(op) {
@@ -221,5 +225,46 @@ mod tests {
             got.sort_unstable();
             assert_eq!(got, ref_partners(&eg, plus, cr), "mismatch for child {cr:?}");
         }
+    }
+
+    #[test]
+    fn ac_collapsed_leaves_completion_set_but_stays_matchable() {
+        // FLAG_AC_COLLAPSED and FLAG_SUBSUMED are distinct (design §6b): a collapsed node
+        // drops out of completion's active set but remains visible to the matcher's index.
+        use crate::index::IndexStore;
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let plus = eg.register_ac("plus", int, int);
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let pab = eg.add(plus, &[a, b]);
+
+        // Baseline: pab is both a completion candidate and in the matcher index.
+        assert_eq!(AcPartnerSnapshot::build(&eg).ac_nodes(), &[pab]);
+        assert!(IndexStore::build(&eg).by_op[&plus].data.contains(&pab));
+
+        // Collapse it (the completion-internal retirement).
+        eg.set_ac_collapsed(pab);
+
+        // Gone from completion's active set...
+        assert!(
+            AcPartnerSnapshot::build(&eg).ac_nodes().is_empty(),
+            "AC-collapsed node must leave the completion active set"
+        );
+        // ...but still matchable: present in the index and still in its class.
+        assert!(
+            IndexStore::build(&eg).by_op[&plus].data.contains(&pab),
+            "AC-collapsed node must stay visible to the matcher (not subsumed)"
+        );
+        assert_eq!(eg.class_repr(pab), eg.class_repr(pab));
+
+        // Contrast: user subsume DOES hide it from the matcher.
+        eg.subsume(pab);
+        assert!(
+            !IndexStore::build(&eg).by_op.get(&plus).is_some_and(|v| v.data.contains(&pab)),
+            "subsumed node must be hidden from the matcher index"
+        );
     }
 }
