@@ -1,0 +1,43 @@
+;; EXPECT: ok
+;; AC_COMPLETE: on
+;; AC congruence completeness — §4b overlap (superposition / critical pairs).
+;;
+;; Assert  +(a,b) = c  and  +(b,d) = e.
+;; The two left multisets share b, but neither contains the other, so no
+;; existing node can be inter-reduced. The term that exposes the equality is
+;; their superposition (lcm) +(a,b,d), which is in NO existing node:
+;;     +(a,b,d) = +((a,b),d) = +(c,d)   using +(a,b)=c
+;;     +(a,b,d) = +(a,(b,d)) = +(a,e)   using +(b,d)=e
+;;   ⟹  +(c,d) = +(a,e)
+;; Completion must materialize +(a,b,d), reduce it both ways, and merge.
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function e () E)
+
+(let s_ab (Add (a) (b)))
+(let s_bd (Add (b) (d)))
+(union s_ab (c))
+(union s_bd (e))
+
+;; The two reducts of the superposition.
+(let s_cd (Add (c) (d)))
+(let s_ae (Add (a) (e)))
+
+;; Pure congruence closure — no rewrite rules.
+(run 5)
+
+;; The entailed equality from the critical pair.
+(check (= s_cd s_ae))
+
+;; Sanity: the asserted equalities still hold.
+(check (= s_ab (c)))
+(check (= s_bd (e)))
+
+;; Negative control: an unrelated sum is not dragged in.
+(let s_ac (Add (a) (c)))
+(check (!= s_ac s_cd))

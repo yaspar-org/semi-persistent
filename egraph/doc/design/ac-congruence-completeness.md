@@ -470,19 +470,14 @@ Algorithm 1 **step 4** ("inter-reduce rules by the new rule") and Conchon et al.
 > reducible by `+A`), rewrite `+M` via `+A` (this is exactly (A)), merge the reduct
 > into `d`, and **retire `+M` from the active set**.
 
-**"Retire" means mark subsumed, not delete.** Kapur and Conchon work over an abstract
-rule set they can shrink; an e-graph cannot remove nodes — they are immutable, shared,
-and must survive for semi-persistent rollback (`restore`). The realization is to set
-the existing **`FLAG_SUBSUMED`** flag on `+M`. The node stays in the DAG and in its
-class (so soundness and rollback are untouched, and the equality `+M = d` it
-established is preserved), but it is **excluded from the matchable / active set**: the
-index builders (`IndexStore::build`/`build_delta`) and the completion's own AC-node
-snapshot already skip `FLAG_SUBSUMED` nodes, so a subsumed node is automatically
-neither a superposition source nor a user-rule match target from then on. This is the
-same flag and the same semantics as user-level `(subsume …)`; collapse is just an
-internally-triggered subsumption. So "remove from `active`" throughout this section is
-implemented as "mark `FLAG_SUBSUMED`," and the antichain is the set of
-*non-subsumed* AC nodes.
+**"Retire" means flag, not delete** (the realization is the next subsection,
+"Retirement = `FLAG_AC_COLLAPSED`"). Kapur and Conchon work over an abstract rule set
+they can shrink; an e-graph cannot remove nodes — they are immutable, shared, and must
+survive for semi-persistent rollback (`restore`). So we mark `+M` with `FLAG_AC_COLLAPSED`,
+which drops it from completion's active set while leaving it hash-consed, in its class
+(the equality `+M = d` is preserved), and matchable. "Remove from `active`" throughout
+this section means "mark `FLAG_AC_COLLAPSED`," and the antichain is the set of AC nodes
+carrying neither that flag nor `FLAG_SUBSUMED`.
 
 The active set is then a **Dickson antichain**: a set of multisets over the finite
 class pool `C`, pairwise `⊆`-incomparable. Dickson's Lemma makes every such antichain
@@ -491,31 +486,31 @@ ranges over pairs of *active* rules, the work per round is `O(|active|²)` — C
 empirically quadratic cost (§7.3) is a statement about `|active|`, and it holds **only
 because collapse keeps `|active|` an antichain**.
 
-Subsuming a rule loses no equality. Before `+M` is marked subsumed, its content is
-*already preserved twice*: the merge `reduct(+M) = d` has been performed (so `+M`'s
-class is still `d`), and the reduct itself is a live, non-subsumed node carrying the
-same class. So every consequence `+M` could contribute as a superposition source is
-also derivable from its reduct, which *is* active. Subsumption therefore prunes only
-*redundant* sources (the composite superpositions of Kapur–Musser–Narendran), never a
-prime one — which is exactly why completeness survives. The subsumed node remains a
-legal *child* of other live nodes and keeps its class membership; it simply stops
-being enumerated as a rule LHS or a match target.
+Collapsing a rule loses no equality. Before `+M` is collapsed, its content is *already
+preserved twice*: the merge `reduct(+M) = d` has been performed (so `+M`'s class is still
+`d`), and the reduct itself is a live, non-collapsed node carrying the same class. So
+every consequence `+M` could contribute as a superposition source is also derivable from
+its reduct, which *is* active. Collapse therefore prunes only *redundant* sources (the
+composite superpositions of Kapur–Musser–Narendran), never a prime one — which is exactly
+why completeness survives. The collapsed node remains a legal *child* of other live nodes,
+keeps its class membership, and stays matchable; it simply stops being enumerated as a
+completion rule LHS.
 
-### Retirement = `FLAG_SUBSUMED`: tombstone two roles, keep two
+### Retirement = `FLAG_AC_COLLAPSED`: tombstone two roles, keep two
 
 "Retire a rule" cannot mean "delete a node" here. A node plays **four** roles, and
-collapse retires only two of them; getting the split — and its *ordering* — right is
-the whole correctness story. The trigger for collapsing a node is precise: **a node is
+collapse retires only two of them; getting the split, and its *ordering*, right is the
+whole correctness story. The trigger for collapsing a node is precise: **a node is
 collapsed when its children can be rewritten by *some other* node.** `+{a,b,c}` with
-`+{a,b}=p` known → its sub-multiset `{a,b}` reduces to `p`, so it is collapsed. (Note "some
-*other* node": a rule's own left side is never reducible by itself — only a smaller,
+`+{a,b}=p` known has its sub-multiset `{a,b}` reduce to `p`, so it is collapsed. (Note
+"some *other* node": a rule's own left side is never reducible by itself; only a smaller,
 different rule makes a node reducible.)
 
-**Retire it from the two *active* roles:**
+**Retire it from the two *active* roles** (both completion-internal):
 
 1. **Superposition source.** A collapsed node must never again be the node we build
-   overlap multisets *from* (Chore B). It is reducible, so every collision computed off it
-   is redundant (a *composite* superposition, Kapur–Musser–Narendran) — and these are
+   overlap multisets *from* (Chore B). It is reducible, so every collision computed off
+   it is redundant (a *composite* superposition, Kapur–Musser–Narendran), and these are
    exactly the copies that bred the divergence. Pull it out of the set Chore B iterates.
 2. **Collapse source for others.** It must not be used to rewrite *other* nodes either.
    A reducible rule reducing things only lengthens derivations and adds churn; let
@@ -524,45 +519,52 @@ different rule makes a node reducible.)
 **Keep it in the two *passive* roles:**
 
 3. **Its class membership / the merge it caused.** Collapsing `+{a,b,c}` rewrote it to
-   `+{p,c}` and merged that into `q`. *That merge is the whole point* — it is the
-   equality we set out to derive. Retiring the node must not undo it; the fact did not
-   vanish, it relocated to `+{p,c}`, which is live.
-4. **Being a child of larger nodes.** If `+{a,b,c}` sits inside some `h(+{a,b,c}, x)`,
-   that parent still points at it and needs it to recanonicalize. Hard-erasing it from
-   the hash-cons would dangle that pointer.
+   `+{p,c}` and merged that into `q`. That merge is the point: it is the equality we set
+   out to derive. Retiring the node must not undo it; the fact did not vanish, it
+   relocated to `+{p,c}`, which is live.
+4. **Being a child of larger nodes, and being matchable.** If `+{a,b,c}` sits inside some
+   `h(+{a,b,c}, x)`, that parent still points at it and needs it to recanonicalize.
+   Hard-erasing it from the hash-cons would dangle that pointer. It also stays a legal
+   match target: it is a real node in a real class, and the matcher binding it is
+   harmless (its reduced form `+{p,c}` is in the same class).
 
-So collapse is a **`FLAG_SUBSUMED` bit, not a delete**: it removes the node from the
-superposition/collapse-source iteration, while leaving it fully hash-consed and in its
-class for parents and for matching. (Nodes are immutable and shared, and `mark`/`restore`
-rolls the node store back to a token — deleting would corrupt that history. The bit is
-itself part of the rolled-back node state, so a node subsumed after a `mark` is
-un-subsumed on `restore`.) This is the same flag and semantics as user-level
-`(subsume …)`; completion's collapse is just an internally-triggered subsumption.
+So collapse sets **`FLAG_AC_COLLAPSED`, a flag distinct from `FLAG_SUBSUMED`, not a
+delete.** It removes the node from completion's active set (the superposition / collapse
+sources), while leaving it fully hash-consed, in its class for parents, and **matchable**.
+(Nodes are immutable and shared, and `mark`/`restore` rolls the node store back to a
+token; deleting would corrupt that history. The flag is part of the rolled-back node
+state, so a node collapsed after a `mark` is un-collapsed on `restore`.)
 
-**The load-bearing ordering — materialize+merge first, mark second, eager before
-Chore B.** Three sub-points, each a way to get it wrong:
+**Two distinct flags, two distinct concepts.** It is tempting to reuse `FLAG_SUBSUMED`
+for collapse, but they mean different things and the conflation hides a bug:
+
+| flag | meaning | matchable? | a completion rule? |
+|---|---|---|---|
+| `FLAG_SUBSUMED` (user `(subsume …)`) | "do not match this node" | **no** (indices skip it) | no |
+| `FLAG_AC_COLLAPSED` (completion) | "not a completion rule" (LHS reducible) | **yes** | no |
+
+Completion's active set is the AC nodes with *neither* flag; the matcher's visible set is
+the nodes without `FLAG_SUBSUMED`. **Matcher visibility is irrelevant to completion's
+termination** — the matcher never superposes, so a collapsed-but-visible node cannot
+breed critical pairs. Divergence is caused only by a collapsed node staying a
+*superposition source*, which `FLAG_AC_COLLAPSED` prevents directly. Hiding a collapsed
+node from the matcher would be a *separate, optional* choice (usually a no-op, since its
+reduced form is in the same class), and forcing it via `FLAG_SUBSUMED` would wrongly
+couple completion to user-subsume semantics.
+
+**The load-bearing ordering: materialize+merge first, mark second, eager before
+Chore B.** Two ways to get it wrong:
 
 - **Merge before mark.** Materialize the reduct `+{p,c}`, merge it into the class, and
-  *only then* set `FLAG_SUBSUMED` on `+{a,b,c}`. Reverse the order and you have removed
-  a node before its equality was re-established elsewhere — deleting information. (This
-  is also why hiding from the matcher is safe: by the time the big node is hidden, the
-  reduced node carrying the same class is already present. The §5b cancellation case
-  depends on this exact ordering — the rule fires only *after* the substituted node
-  exists; mark too early and a real match is lost.)
-- **Eager within the round.** The bit must gate Chore B *in the same round* the node
-  becomes reducible. If a stale snapshot still lets this round's superposition pass see
-  it, it breeds anyway. (Our round structure rebuilds the snapshot each round and skips
-  subsumed, which gives this.)
-- **Matcher exclusion is a free *consequence*, not the mechanism.** Because the matcher
-  reads e-nodes exclusively through `IndexStore` (`by_op`/`by_repr`/`by_child_pos`/
-  `by_contains` via `VariantIndex`), never the raw node store, and the index builders
-  skip `FLAG_SUBSUMED`, a collapsed node is automatically unmatchable. Usually this
-  changes nothing observable (the reduced node in the same class is matched instead),
-  but it must not happen *before* step 3. Standing obligation on future work: **any new
-  matching path must respect `FLAG_SUBSUMED`**, or it silently re-opens divergence and
-  breaks user `(subsume …)`. The completion tests (naive+semi-naive differential plus a
-  subsumed-non-matchable check) guard this; flag it in any review touching the matcher
-  or index.
+  *only then* set `FLAG_AC_COLLAPSED` on `+{a,b,c}`. Reverse the order and you have
+  retired a node before its equality was re-established elsewhere, losing information.
+  (Because collapse keeps the node matchable this is less dangerous than under subsume,
+  but the merge must still land first so the reduced form exists. The §5b cancellation
+  case depends on the reduced node existing before matching proceeds.)
+- **Eager within the round.** The flag must gate Chore B *in the same round* the node
+  becomes reducible. If this round's superposition pass still sees it, it breeds anyway.
+  (Our round structure rebuilds the active set each round and skips `FLAG_AC_COLLAPSED`,
+  which gives this.)
 
 ### Why omitting collapse diverges (and why hash-consing does not save it)
 
@@ -675,11 +677,11 @@ plus normalize-into-minimal-monomial is the step that cannot be skipped.
 ### What this requires of the implementation
 
 1. **Maintain an `active` set of irreducible AC nodes** per op (those with no
-   containment partner) — concretely, the non-`FLAG_SUBSUMED` AC nodes, which the
-   index/snapshot builders already isolate. Superpose (B) only over `active`.
+   containment partner) — concretely, the AC nodes carrying neither `FLAG_AC_COLLAPSED`
+   nor `FLAG_SUBSUMED`. Superpose (B) only over `active`.
 2. **On adding `+A → a`**, find its containment supersets via `by_contains`; for each
-   active `+M` with `A ⊊ M`, reduce (A), merge, and **mark `+M` `FLAG_SUBSUMED`** (the
-   non-deletable form of "retire"; the node and its equality persist for rollback).
+   active `+M` with `A ⊊ M`, reduce (A), merge, and **mark `+M` `FLAG_AC_COLLAPSED`** (the
+   non-deletable form of "retire"; the node, its class, and its matchability persist).
 3. **Normalize every reduct against *all* current rules** (including those minted this
    round) to a fixpoint before comparing — see the `normalize_ac` correction in §9.
    If the two reducts land in one class, add nothing.
@@ -770,19 +772,19 @@ the nodes it applies to, and that is a `by_contains` query.
 node containing child `x`), so candidate-finding, per node `+M = d`, is:
 
 ```
-# by_contains/by_op range over NON-SUBSUMED (active) AC nodes only (§6b).
+# by_contains/by_op range over ACTIVE AC nodes only: no FLAG_AC_COLLAPSED, no FLAG_SUBSUMED (§6b).
 partners = ⋃_{x ∈ distinct(M)} by_contains[x]  ∩  by_op[+]   # active AC nodes sharing ≥1 element with M
 for each partner +A = a in partners:
     if A ⊊ M:        # (A) inter-reduction:  A properly contained in M
-        substitute a in for A, merge, and mark +M FLAG_SUBSUMED  # collapse (§6b)
+        substitute a in for A, merge, and mark +M FLAG_AC_COLLAPSED  # collapse (§6b)
     elif A ∩ M ≠ ∅:  # (B) superposition:    A and M only overlap
         build the lcm node, normalize both reducts to normal form, merge if distinct
 ```
 
 We never look up a multiset, only individual shared elements; disjoint pairs (no
 shared element) are skipped, since their critical pair is trivial (§6). The collapse
-on `A ⊊ M` (marking `+M` subsumed) and the normalize-before-merge in (B) are the
-non-optional steps §6b derives — without them this loop diverges.
+on `A ⊊ M` (marking `+M` `FLAG_AC_COLLAPSED`) and the normalize-before-merge in (B) are
+the non-optional steps §6b derives — without them this loop diverges.
 
 The `rest` machinery is the arithmetic, not the search. Once a (target `+M`, rule
 `+A`) pair is chosen, the substitution itself (remove the sub-multiset `A`, keep
@@ -810,8 +812,8 @@ The two reused pieces, at a different time than today:
 | Mechanism | Today (user-rule matching) | This rebuild pass |
 |---|---|---|
 | `by_contains` index | narrow candidates for a pattern with a bound child | pair an AC node with the nodes that share an element (substitution / superposition partners) |
-| `DecomposeAC`'s multiset-subtract + `rest` | enumerate sub-sums transiently, then discard | compute `(M − A) ⊎ {a}` for a chosen pair, normalize, materialize, merge — and on `A ⊊ M` mark `+M` subsumed (collapse, §6b) |
-| `FLAG_SUBSUMED` + index/snapshot skip | user-level `(subsume …)` | collapse: retire a reducible rule without deleting the node (§6b) |
+| `DecomposeAC`'s multiset-subtract + `rest` | enumerate sub-sums transiently, then discard | compute `(M − A) ⊎ {a}` for a chosen pair, normalize, materialize, merge — and on `A ⊊ M` mark `+M` `FLAG_AC_COLLAPSED` (collapse, §6b) |
+| per-node flag + skip in the active-set scan | `FLAG_SUBSUMED` hides a node from the matcher (user `(subsume …)`) | `FLAG_AC_COLLAPSED` retires a reducible rule from completion without deleting it or hiding it from the matcher (§6b) |
 
 The two layers stay separate: flattening and recanonicalization keep doing
 atom-substitution congruence; this pass adds the sub-sum-substitution congruence.
@@ -840,7 +842,7 @@ So our rebuild is Kapur's General Congruence Closure (Algorithm 3) with the
 per-AC-symbol completion omitted: we have steps 1 and 2, and lack steps 3 and 4. The
 fix adds exactly those. Note step 4 is *two* things — substituting the reduct (fix
 (A)) **and** retiring the now-reducible source rule (Collapse, §6b, realized by
-marking it `FLAG_SUBSUMED`). An early draft of this chapter described only the
+marking it `FLAG_AC_COLLAPSED`). An early draft of this chapter described only the
 substitution half; the collapse half is what makes the rule set a Dickson antichain
 and is non-optional for termination (§6b, §10).
 
@@ -875,10 +877,11 @@ for parent in active.by_contains-supersets(A1) {              // f(M) -> d with 
     if proper_subset(&A1, &parent.multiset()) {
         let red = normalize_ac(f, substitute(parent.multiset(), A1 => ra));  // (A)
         merge(red, parent.class());
-        set_flag(parent, FLAG_SUBSUMED);   // <-- COLLAPSE: retire +M (not delete; §6b).
-        //                                     index/snapshot builders skip subsumed, so
-        //                                     +M is no longer a partner nor a match target;
-        //                                     node + its equality +M=d stay for rollback.
+        set_flag(parent, FLAG_AC_COLLAPSED);  // <-- COLLAPSE: retire +M (not delete; §6b).
+        //                                       completion's active scan skips collapsed,
+        //                                       so +M is no longer a partner; it stays
+        //                                       matchable, a child, and in class d, for
+        //                                       rollback. (FLAG_AC_COLLAPSED, not subsume.)
     }
 }
 
@@ -915,8 +918,8 @@ Two distinct roles:
   which collapses): this needs a total admissible monomial order `≫_f` — concretely
   **degree-lexicographic** (compare multiset size, ties broken by the total order on
   class ids), which satisfies Kapur's subterm + compatibility properties. The larger
-  LHS is always the one retired (marked subsumed). Without this the active set is not
-  kept reduced, and completion diverges (§6b).
+  LHS is always the one retired (marked `FLAG_AC_COLLAPSED`). Without this the active set
+  is not kept reduced, and completion diverges (§6b).
 
 So we still drop the *machinery* Kapur needs for a unique reduced canonical
 presentation across AC symbols (we do not need canonical signatures to derive

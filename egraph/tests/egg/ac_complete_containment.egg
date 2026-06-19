@@ -1,4 +1,5 @@
 ;; EXPECT: ok
+;; AC_COMPLETE: on
 ;; AC congruence completeness — §4a containment (inter-reduction).
 ;;
 ;; Assert  +(a,b) = c  and  +(a,b,d) = e.

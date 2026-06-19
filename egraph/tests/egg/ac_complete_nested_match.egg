@@ -1,0 +1,28 @@
+;; EXPECT: panic
+;; AC_COMPLETE: on
+;; Regression guard for the nested-same-op / flattening blocker (design §6b "Hard
+;; prerequisite"). With AC completion ON and NO flattening, completion superposes the
+;; two overlapping sums add(a,b), add(b,c) and materializes a nested node add(add..,..).
+;; The matcher assumes flat AC terms (WF_flat): decomposing the nested node reaches an
+;; unbound plan variable and panics. This is the documented reason completion is gated
+;; off by default until flattening lands; this test PINS that it still panics, so when
+;; flattening is implemented this test flips (EXPECT: ok) and proves the fix.
+;;
+;; Reproduced through the real driver under both naive and semi-naive (check_panic runs
+;; both), confirming it is a genuine matcher precondition, not a stale white-box test.
+
+(sort E)
+(function f (E E) E)
+(function g (E) E)
+(function add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+
+;; Two same-op AC atoms with rest variables, the shape that exercises the nested node.
+(rewrite (f (add x ..r1) (add y ..r2)) (g x))
+
+;; The overlapping-sums graph that drives completion's superposition.
+(let t (f (add (a) (b)) (add (b) (c))))
+
+(run 10)
