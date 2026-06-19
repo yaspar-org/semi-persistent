@@ -2,17 +2,55 @@
 
 This chapter explains why modeling AC nodes as canonical multisets can miss
 equalities during congruence closure, what the exact root cause is, and how to
-close the gap by extending the machinery we already have.
+close the gap by extending the machinery we already have. At its heart the problem is
+maintaining a small *reduced canonical basis* of rewrite rules incrementally, as
+saturation feeds facts in — §0 states this in one breath and §5c works it through one
+example with no jargon.
 
 It is the single design reference for the AC completeness story, and is
-self-contained. Part I derives the problem from first principles; Part II gives the
-solution and the argument for why it works. For where we stand and what remains,
-see [Future Work](A3-future-work.md). For the cost of AC matching (a separate,
-matching-side concern), see [Ch 9](09-pattern-matching.md).
+self-contained. Part I derives the problem from first principles (start with §0 for the
+one-breath framing); Part II gives the solution and the argument for why it works. For
+where we stand and what remains, see [Future Work](A3-future-work.md). For the cost of
+AC matching (a separate, matching-side concern), see [Ch 9](09-pattern-matching.md).
 
 ---
 
 # Part I, the problem
+
+## 0. The core problem, in one breath
+
+Two AC facts force *infinitely* many equalities. `a+b = p` already entails `a+b+c =
+p+c`, `a+b+d = p+d`, … — every bag with `{a,b}` inside it, with the same junk on both
+sides. Add a second fact and they *collide*: `a+b = p` and `a+b+c = q` share the bag
+`a+b+c`, which forces `p+c = q` — a fact nobody stated, and the only non-padding line
+in the whole infinite pile.
+
+So the AC-congruence-closure problem is **not** "store the equalities." You cannot —
+there are infinitely many. It is: **maintain, incrementally as facts arrive during
+saturation, a tiny finite set of find-and-replace rules that *regenerates* any of those
+equalities on demand** — and keep that set *reduced* (no rule's left side contained in
+another's), so it stays small. Deciding `g₁ = g₂` is then "rewrite both with the rules
+until they stop; equal iff they land in the same place."
+
+Two forces fight each other while saturation runs and new facts keep arriving:
+
+- **Collision (superposition)** *creates* the genuinely-new rules — like `p+c = q` —
+  that two overlapping facts force. This is the only source of new equalities; without
+  it congruence closure is incomplete (the misses traced in §4).
+- **Reduction (collapse / inter-reduction)** *deletes* rules that a smaller rule already
+  subsumes — like dropping `a+b+c = q` once `a+b = p` and `p+c = q` are known, because
+  `a+b+c` just rewrites to `p+c` first. This is what keeps the set finite.
+
+Get collision without reduction and the rule set explodes — collisions breed redundant
+rules that breed more (the divergence we actually hit, §6b). Get reduction without
+collision and you never derive the cross-fact equalities (incompleteness, §4). **AC
+congruence closure is exactly the discipline of running both, in the right order, to a
+fixpoint, so the surviving rules are a reduced canonical basis** — the smallest machine
+that decides the theory. The whole of this chapter is how to do that inside an e-graph
+where "a rule" is just an AC node and "delete a rule" cannot mean delete a node.
+
+§5c walks this through one concrete example, line by line, before the formal treatment.
+Readers who want the intuition first should jump there now.
 
 ## 1. Why ordinary congruence closure is complete
 
@@ -282,9 +320,10 @@ Making it a function is the content of the completeness argument (§10).
 
 ## 5c. The whole idea in one worked example, no jargon
 
-Before the formal treatment, here is the entire mechanism on one example, in plain
-terms. `+` is a *bag* (order doesn't matter, no nesting — `a+b+c` is just the bag
-`{a,b,c}`). We are handed exactly two facts:
+This section is the core problem (§0) and its solution, worked line by line on one
+example, in plain terms — the didactic version of the entire chapter. `+` is a *bag*
+(order doesn't matter, no nesting — `a+b+c` is just the bag `{a,b,c}`). We are handed
+exactly two facts:
 
 ```
 FACT 1:   a + b      is the same thing as   p
@@ -331,8 +370,12 @@ just: **never keep a rule whose left side contains another rule's left side.** A
 you delete all such dead weight, no left side contains any other — that "antichain"
 property is not a goal, it is simply *what is left* once the redundant rules are gone.
 
-**How the machine builds this live.** Facts arrive one at a time; every fact is a
-rule; on each new rule you do two chores, then repeat until quiet:
+**How the machine builds this live — the part that matters for saturation.** This is
+the crux: the basis is *not* computed once from a fixed input. Saturation feeds facts
+in one at a time (each rewrite firing produces a new equality), and the reduced basis
+must be maintained *incrementally* as they arrive — every new fact can both spawn
+collisions and make existing rules redundant. Every fact is a rule; on each new rule you
+do two chores, then repeat until quiet:
 
 - **Chore A (clean up / collapse):** does the new rule's left side sit *inside* an
   existing rule's left side? Then that existing rule is stale: chew it down with the
