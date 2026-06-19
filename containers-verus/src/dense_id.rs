@@ -189,6 +189,10 @@ impl DenseId for DenseId31 {
     proof fn lemma_id_injective(a: Self, b: Self) {
         // id_nat is the View, which is `raw`; equal views force equal raws.
     }
+
+    proof fn lemma_id_nat_bounded(tracked self) {
+        use_type_invariant(&self);  // raw < 2^31 == DENSE31_BOUND == id_bound
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +449,10 @@ impl DenseId for DenseId63 {
     }
 
     proof fn lemma_id_injective(a: Self, b: Self) {
+    }
+
+    proof fn lemma_id_nat_bounded(tracked self) {
+        use_type_invariant(&self);  // raw < 2^63 == DENSE63_BOUND == id_bound
     }
 }
 
