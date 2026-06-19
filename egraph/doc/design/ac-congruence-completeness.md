@@ -19,34 +19,34 @@ AC matching (a separate, matching-side concern), see [Ch 9](09-pattern-matching.
 ## 0. The core problem
 
 Two AC facts force *infinitely* many equalities. `a+b = p` already entails `a+b+c =
-p+c`, `a+b+d = p+d`, … — every bag with `{a,b}` inside it, with the same junk on both
-sides. Add a second fact and they *collide*: `a+b = p` and `a+b+c = q` share the bag
-`a+b+c`, which forces `p+c = q` — a fact nobody stated, and the only non-padding line
-in the whole infinite pile.
+p+c`, `a+b+d = p+d`, and so on for every multiset with `{a,b}` inside it, with the same
+junk on both sides. Add a second fact and they *collide*: `a+b = p` and `a+b+c = q` share
+the multiset `a+b+c`, which forces `p+c = q`, a fact nobody stated and the only
+non-padding line in the whole infinite pile.
 
-So the AC-congruence-closure problem is **not** "store the equalities." You cannot —
-there are infinitely many. It is: **maintain, incrementally as facts arrive during
-saturation, a tiny finite set of find-and-replace rules that *regenerates* any of those
-equalities on demand** — and keep that set *reduced* (no rule's left side contained in
-another's), so it stays small. Deciding `g₁ = g₂` is then "rewrite both with the rules
-until they stop; equal iff they land in the same place."
+So the AC-congruence-closure problem is **not** "store the equalities"; there are
+infinitely many. It is to **maintain, incrementally as facts arrive during saturation, a
+tiny finite set of find-and-replace rules that *regenerates* any of those equalities on
+demand**, keeping that set *reduced* (no rule's left side contained in another's) so it
+stays small. Deciding `g₁ = g₂` is then "rewrite both with the rules until they stop;
+equal iff they land in the same place."
 
 Two forces fight each other while saturation runs and new facts keep arriving:
 
-- **Collision (superposition)** *creates* the genuinely-new rules — like `p+c = q` —
-  that two overlapping facts force. This is the only source of new equalities; without
-  it congruence closure is incomplete (the misses traced in §4).
+- **Collision (superposition)** *creates* the genuinely-new rules (like `p+c = q`) that
+  two overlapping facts force. This is the only source of new equalities; without it
+  congruence closure is incomplete (the misses traced in §4).
 - **Reduction (collapse / inter-reduction)** *deletes* rules that a smaller rule already
-  subsumes — like dropping `a+b+c = q` once `a+b = p` and `p+c = q` are known, because
-  `a+b+c` just rewrites to `p+c` first. This is what keeps the set finite.
+  subsumes. For instance, drop `a+b+c = q` once `a+b = p` and `p+c = q` are known,
+  because `a+b+c` just rewrites to `p+c` first. This is what keeps the set finite.
 
-Get collision without reduction and the rule set explodes — collisions breed redundant
-rules that breed more (the divergence we actually hit, §6b). Get reduction without
-collision and you never derive the cross-fact equalities (incompleteness, §4). **AC
-congruence closure is exactly the discipline of running both, in the right order, to a
-fixpoint, so the surviving rules are a reduced canonical basis** — the smallest machine
-that decides the theory. The whole of this chapter is how to do that inside an e-graph
-where "a rule" is just an AC node and "delete a rule" cannot mean delete a node.
+Collision without reduction explodes the rule set: collisions breed redundant rules that
+breed more (the divergence we actually hit, §6b). Reduction without collision never
+derives the cross-fact equalities (incompleteness, §4). **AC congruence closure is the
+discipline of running both, in the right order, to a fixpoint, so the surviving rules
+are a reduced canonical basis**, the smallest machine that decides the theory. The rest
+of this chapter is how to do that inside an e-graph, where "a rule" is just an AC node
+and "delete a rule" cannot mean delete a node.
 
 §5c works this through one concrete example before the formal treatment.
 
@@ -318,8 +318,8 @@ Making it a function is the content of the completeness argument (§10).
 
 ## 5c. A worked example
 
-`+` is a *bag* (order doesn't matter, no nesting — `a+b+c` is just the bag `{a,b,c}`).
-We are handed exactly two facts:
+`+` is a multiset (order doesn't matter, no nesting; `a+b+c` is just the multiset
+`{a,b,c}`). We are handed exactly two facts:
 
 ```
 FACT 1:   a + b      is the same thing as   p
@@ -328,18 +328,18 @@ FACT 2:   a + b + c  is the same thing as   q
 
 **The uncompressed version** is everything those two facts force to be true. From
 FACT 1, gluing anything onto both sides: `a+b+c = p+c`, `a+b+d = p+d`,
-`a+b+c+d = p+c+d`, … (infinite). From FACT 2 likewise: `a+b+c+d = q+d`, … And both
-lists contain `a+b+c`, so their right sides must agree, giving `p+c = q`, `p+c+d =
-q+d`, … forever. You do not want to store this infinite pile. Almost every line is
-just "a fact with junk glued onto both sides." The **one** line that is *not* padding
+`a+b+c+d = p+c+d`, and so on (infinite). From FACT 2 likewise: `a+b+c+d = q+d`, and so
+on. Both lists contain `a+b+c`, so their right sides must agree, giving `p+c = q`,
+`p+c+d = q+d`, forever. You do not want to store this infinite pile. Almost every line
+is just "a fact with junk glued onto both sides." The **one** line that is *not* padding
 is
 
 ```
 p + c = q
 ```
 
-— genuinely new, because you cannot get it by gluing onto FACT 1 or FACT 2; it falls
-out of the two facts *colliding* on the shared term `a+b+c`.
+It is genuinely new: you cannot get it by gluing onto FACT 1 or FACT 2; it falls out of
+the two facts *colliding* on the shared term `a+b+c`.
 
 **The compressed version** is two find-and-replace rules:
 
@@ -348,61 +348,61 @@ RULE 1:   a + b   →   p
 RULE 2:   p + c   →   q
 ```
 
-The arrow means "wherever you see the left side as a sub-bag, replace it with the
-right side." FACT 2 is now *redundant* — recompute it: `a+b+c —RULE1→ p+c —RULE2→ q`.
+The arrow means "wherever you see the left side as a sub-multiset, replace it with the
+right side." FACT 2 is now *redundant*; recompute it as `a+b+c —RULE1→ p+c —RULE2→ q`.
 We dropped FACT 2 and kept the collision fact instead.
 
-**Recovering any line of the infinite pile**: run both sides through the rules until
+**Recovering any line of the infinite pile:** run both sides through the rules until
 they stop, check they land in the same place. Is `a+b+c+d = q+d`? Left:
-`a+b+c+d → p+c+d → q+d`. Right: `q+d` (stuck). Same place ⇒ true — recovered without
-ever storing it. The compressed version is not a lookup table; it is a little machine
-that regenerates any line on demand.
+`a+b+c+d → p+c+d → q+d`. Right: `q+d` (stuck). Same place, so it is true, recovered
+without ever storing it. The compressed version is not a lookup table; it is a small
+machine that regenerates any line on demand.
 
 **Why keep `p+c` and not `a+b+c`** (the "incomparable left-sides" condition): `a+b+c`
-*contains* `a+b`, which is already RULE 1. A rule starting
-with `a+b+c` would immediately get chewed by RULE 1 down to `p+c` anyway — it rewrites
-itself, so it is dead weight. Store the already-chewed version. The rule of thumb is
-just: **never keep a rule whose left side contains another rule's left side.** After
-you delete all such dead weight, no left side contains any other — that "antichain"
-property is not a goal, it is simply *what is left* once the redundant rules are gone.
+*contains* `a+b`, which is already RULE 1. A rule starting with `a+b+c` would
+immediately get chewed by RULE 1 down to `p+c` anyway, so it rewrites itself and is dead
+weight. Store the already-chewed version. The rule of thumb: **never keep a rule whose
+left side contains another rule's left side.** After you delete all such dead weight, no
+left side contains any other. That "antichain" property is not a goal; it is simply
+*what is left* once the redundant rules are gone.
 
 **How the machine builds this live.** The basis is not computed once from a fixed
 input. Saturation feeds facts in one at a time (each rewrite firing produces a new
-equality), and the reduced basis is maintained incrementally as they arrive — every new
-fact can both spawn collisions and make existing rules redundant. Every fact is a rule;
-on each new rule you do two chores, then repeat until quiet:
+equality), and the reduced basis is maintained incrementally as they arrive, since every
+new fact can both spawn collisions and make existing rules redundant. Every fact is a
+rule; on each new rule you do two chores, then repeat until quiet:
 
 - **Chore A (clean up / collapse):** does the new rule's left side sit *inside* an
   existing rule's left side? Then that existing rule is stale: chew it down with the
   new rule and replace it. Also chew the new rule down by what's already there.
 - **Chore B (collision / superposition):** does the new rule's left side *partly
   overlap* an existing one (share atoms, neither inside the other)? Build the smallest
-  bag containing both, rewrite it the two ways, and if the results differ, that
-  difference is a new fact — add it as a rule. (Disjoint left sides — no shared atom —
+  multiset containing both, rewrite it the two ways, and if the results differ, that
+  difference is a new fact: add it as a rule. (Disjoint left sides, sharing no atom,
   cannot collide; skip them.)
 
-Run it on our example. FACT 1 arrives → `{a+b→p}`, nothing else exists, no chores.
-FACT 2 `a+b+c→q` arrives → **Chore A fires**: `a+b` sits inside `a+b+c`, so the new
+Run it on our example. FACT 1 arrives, giving `{a+b→p}`; nothing else exists, no chores.
+FACT 2 `a+b+c→q` arrives, and **Chore A fires**: `a+b` sits inside `a+b+c`, so the new
 rule is chewed on arrival into `p+c→q`. We never store `a+b+c→q`. Knowledge is now
-`{a+b→p, p+c→q}`. Chore B: `{a,b}` and `{p,c}` share no atom → no collision. Done. The
+`{a+b→p, p+c→q}`. Chore B: `{a,b}` and `{p,c}` share no atom, so no collision. Done. The
 machine reached the two-rule compressed form by itself, and FACT 2 was swallowed by
 Chore A on the way in.
 
-The collision case on its own. Suppose instead the facts were `a+b→p` and `b+c→r`
-(they share `b`, neither inside the other). Chore A:
-neither sits in the other, nothing stale. Chore B: shared `b`, smallest bag containing
-both is `a+b+c` (take the shared `b` once); rewrite two ways — `a+b+c —(a+b→p)→ p+c`
-and `a+b+c —(b+c→r)→ r+a`; two results of reducing the *same* bag, so `p+c = r+a`, a
-fact nobody stated. Chore B is the only way genuinely-new facts are born.
+The collision case on its own. Suppose instead the facts were `a+b→p` and `b+c→r` (they
+share `b`, neither inside the other). Chore A: neither sits in the other, nothing stale.
+Chore B: shared `b`, smallest multiset containing both is `a+b+c` (take the shared `b`
+once); rewrite two ways, `a+b+c —(a+b→p)→ p+c` and `a+b+c —(b+c→r)→ r+a`; two results of
+reducing the *same* multiset, so `p+c = r+a`, a fact nobody stated. Chore B is the only
+way genuinely-new facts are born.
 
 **This is exactly the blowup we hit.** The first implementation **skipped Chore A**:
 when FACT 2 arrived it kept `a+b+c→q` *and* derived `p+c→q`, so a rule (`a+b+c`)
-containing another rule (`a+b`) stayed live. Next round Chore B built collision bags
-off it, breeding more rules that *also* contained `a+b`, which bred more — generating
-the infinite pile instead of the two-rule machine. The fix is literally: **on each new
+containing another rule (`a+b`) stayed live. Next round Chore B built collision
+multisets off it, breeding more rules that *also* contained `a+b`, which bred more,
+generating the infinite pile instead of the two-rule machine. The fix: **on each new
 rule, do Chore A first (chew down everything it sits inside, and chew it down by what
 exists), and only then Chore B.** Keep the rules chewed-down at all times and the set
-cannot blow up — a chewed-down set is one where no rule contains another, and there
+cannot blow up, since a chewed-down set is one where no rule contains another, and there
 simply cannot be many of those (Dickson's Lemma, §10).
 
 The rest of Part II is this mechanism stated precisely against the e-graph: §6 the two
@@ -507,14 +507,14 @@ being enumerated as a rule LHS or a match target.
 collapse retires only two of them; getting the split — and its *ordering* — right is
 the whole correctness story. The trigger for collapsing a node is precise: **a node is
 collapsed when its children can be rewritten by *some other* node.** `+{a,b,c}` with
-`+{a,b}=p` known → its sub-bag `{a,b}` reduces to `p`, so it is collapsed. (Note "some
+`+{a,b}=p` known → its sub-multiset `{a,b}` reduces to `p`, so it is collapsed. (Note "some
 *other* node": a rule's own left side is never reducible by itself — only a smaller,
 different rule makes a node reducible.)
 
 **Retire it from the two *active* roles:**
 
 1. **Superposition source.** A collapsed node must never again be the node we build
-   overlap-bags *from* (Chore B). It is reducible, so every collision computed off it
+   overlap multisets *from* (Chore B). It is reducible, so every collision computed off it
    is redundant (a *composite* superposition, Kapur–Musser–Narendran) — and these are
    exactly the copies that bred the divergence. Pull it out of the set Chore B iterates.
 2. **Collapse source for others.** It must not be used to rewrite *other* nodes either.
@@ -735,7 +735,7 @@ rule of a node  =  +{ find(child₁), find(child₂), … }  →  find(class the
                    └─────────── left side ──────────┘     └──── right side ────┘
 ```
 
-`find` on the **children** builds the left side (the canonical sub-bag); `find` on the
+`find` on the **children** builds the left side (the canonical sub-multiset); `find` on the
 **class** builds the right side (the single class the node reduces to). The set of
 rules is exactly the set of AC nodes — we build no separate rule store.
 
@@ -750,13 +750,13 @@ need care is firing a kind of rule the union-find never fires; that is the next 
 Recanonicalization already fires the node-rules — but only the *single-child* kind.
 When a child's class moves, recanon swaps that one child for its `find` and rehashes;
 that is exactly rule-firing on `+{ find each child }`. What it never does is notice
-that a whole **sub-bag** of a node's children is itself a known node equal to some
+that a whole **sub-multiset** of a node's children is itself a known node equal to some
 class, and substitute *that*. Concretely: node `+{a,b,c}` with `+{a,b}` in class `p`.
 Recanon runs `find` on `a`, on `b`, on `c` — all atoms, nothing moves — and walks away;
-it never sees that the sub-bag `{a,b}` equals `p`, so it never reaches `+{p,c}`. No
+it never sees that the sub-multiset `{a,b}` equals `p`, so it never reaches `+{p,c}`. No
 choice of representative fixes this: the union-find simply has no operation that
 substitutes a *group* of children at once. **That missing operation — substitute an
-equal sub-bag, not just an equal single child — is the entire fix** (§6 (A)/(B)).
+equal sub-multiset, not just an equal single child — is the entire fix** (§6 (A)/(B)).
 
 The search is rule-driven, not target-driven. It is tempting to picture it the
 other way: take a node `+M`, split it into `(part, rest)`, and probe the e-graph
