@@ -280,6 +280,98 @@ convergence," and that splits into two separate procedures:
 before convergence it may return different normal forms for different rule orders.
 Making it a function is the content of the completeness argument (§10).
 
+## 5c. The whole idea in one worked example, no jargon
+
+Before the formal treatment, here is the entire mechanism on one example, in plain
+terms. `+` is a *bag* (order doesn't matter, no nesting — `a+b+c` is just the bag
+`{a,b,c}`). We are handed exactly two facts:
+
+```
+FACT 1:   a + b      is the same thing as   p
+FACT 2:   a + b + c  is the same thing as   q
+```
+
+**The uncompressed version** is everything those two facts force to be true. From
+FACT 1, gluing anything onto both sides: `a+b+c = p+c`, `a+b+d = p+d`,
+`a+b+c+d = p+c+d`, … (infinite). From FACT 2 likewise: `a+b+c+d = q+d`, … And both
+lists contain `a+b+c`, so their right sides must agree, giving `p+c = q`, `p+c+d =
+q+d`, … forever. You do not want to store this infinite pile. Almost every line is
+just "a fact with junk glued onto both sides." The **one** line that is *not* padding
+is
+
+```
+p + c = q
+```
+
+— genuinely new, because you cannot get it by gluing onto FACT 1 or FACT 2; it falls
+out of the two facts *colliding* on the shared term `a+b+c`.
+
+**The compressed version** is two find-and-replace rules:
+
+```
+RULE 1:   a + b   →   p
+RULE 2:   p + c   →   q
+```
+
+The arrow means "wherever you see the left side as a sub-bag, replace it with the
+right side." FACT 2 is now *redundant* — recompute it: `a+b+c —RULE1→ p+c —RULE2→ q`.
+We dropped FACT 2 and kept the collision fact instead.
+
+**Recovering any line of the infinite pile**: run both sides through the rules until
+they stop, check they land in the same place. Is `a+b+c+d = q+d`? Left:
+`a+b+c+d → p+c+d → q+d`. Right: `q+d` (stuck). Same place ⇒ true — recovered without
+ever storing it. The compressed version is not a lookup table; it is a little machine
+that regenerates any line on demand.
+
+**Why keep `p+c` and not `a+b+c`** (this is the "incomparable left-sides" condition
+in plain words): `a+b+c` *contains* `a+b`, which is already RULE 1. A rule starting
+with `a+b+c` would immediately get chewed by RULE 1 down to `p+c` anyway — it rewrites
+itself, so it is dead weight. Store the already-chewed version. The rule of thumb is
+just: **never keep a rule whose left side contains another rule's left side.** After
+you delete all such dead weight, no left side contains any other — that "antichain"
+property is not a goal, it is simply *what is left* once the redundant rules are gone.
+
+**How the machine builds this live.** Facts arrive one at a time; every fact is a
+rule; on each new rule you do two chores, then repeat until quiet:
+
+- **Chore A (clean up / collapse):** does the new rule's left side sit *inside* an
+  existing rule's left side? Then that existing rule is stale: chew it down with the
+  new rule and replace it. Also chew the new rule down by what's already there.
+- **Chore B (collision / superposition):** does the new rule's left side *partly
+  overlap* an existing one (share atoms, neither inside the other)? Build the smallest
+  bag containing both, rewrite it the two ways, and if the results differ, that
+  difference is a new fact — add it as a rule. (Disjoint left sides — no shared atom —
+  cannot collide; skip them.)
+
+Run it on our example. FACT 1 arrives → `{a+b→p}`, nothing else exists, no chores.
+FACT 2 `a+b+c→q` arrives → **Chore A fires**: `a+b` sits inside `a+b+c`, so the new
+rule is chewed on arrival into `p+c→q`. We never store `a+b+c→q`. Knowledge is now
+`{a+b→p, p+c→q}`. Chore B: `{a,b}` and `{p,c}` share no atom → no collision. Done. The
+machine reached the two-rule compressed form by itself, and FACT 2 was swallowed by
+Chore A on the way in.
+
+The collision case bare, since it is the part that feels like magic. Suppose instead
+the facts were `a+b→p` and `b+c→r` (they share `b`, neither inside the other). Chore A:
+neither sits in the other, nothing stale. Chore B: shared `b`, smallest bag containing
+both is `a+b+c` (take the shared `b` once); rewrite two ways — `a+b+c —(a+b→p)→ p+c`
+and `a+b+c —(b+c→r)→ r+a`; two results of reducing the *same* bag, so `p+c = r+a`, a
+fact nobody stated. Chore B is the only way genuinely-new facts are born.
+
+**This is exactly the blowup we hit.** The first implementation **skipped Chore A**:
+when FACT 2 arrived it kept `a+b+c→q` *and* derived `p+c→q`, so a rule (`a+b+c`)
+containing another rule (`a+b`) stayed live. Next round Chore B built collision bags
+off it, breeding more rules that *also* contained `a+b`, which bred more — generating
+the infinite pile instead of the two-rule machine. The fix is literally: **on each new
+rule, do Chore A first (chew down everything it sits inside, and chew it down by what
+exists), and only then Chore B.** Keep the rules chewed-down at all times and the set
+cannot blow up — a chewed-down set is one where no rule contains another, and there
+simply cannot be many of those (Dickson's Lemma, §10).
+
+The rest of Part II is this mechanism stated precisely against the e-graph: §6 the two
+operations, §6b why Chore A (collapse) is load-bearing and how "retire a rule" is
+realized without deleting a node, §7–9 the implementation, §10 why it terminates and
+is complete.
+
 ## 6. The fix, derived directly from the root cause
 
 The root cause says to re-materialize the erased intermediate terms, but only the
@@ -371,43 +463,68 @@ prime one — which is exactly why completeness survives. The subsumed node rema
 legal *child* of other live nodes and keeps its class membership; it simply stops
 being enumerated as a rule LHS or a match target.
 
-### Retirement = `FLAG_SUBSUMED`, and it must also block pattern matching
+### Retirement = `FLAG_SUBSUMED`: tombstone two roles, keep two
 
-This is important enough to state on its own, as a correctness requirement on the rest
-of the engine, not just an implementation note.
+"Retire a rule" cannot mean "delete a node" here. A node plays **four** roles, and
+collapse retires only two of them; getting the split — and its *ordering* — right is
+the whole correctness story. The trigger for collapsing a node is precise: **a node is
+collapsed when its children can be rewritten by *some other* node.** `+{a,b,c}` with
+`+{a,b}=p` known → its sub-bag `{a,b}` reduces to `p`, so it is collapsed. (Note "some
+*other* node": a rule's own left side is never reducible by itself — only a smaller,
+different rule makes a node reducible.)
 
-**We never remove a node from the e-graph.** Nodes are immutable and shared, and the
-semi-persistent layer (`mark`/`restore`) relies on being able to roll the node store
-back to an earlier token; deleting a node would corrupt that history. So Kapur's and
-Conchon's "delete/retire the rule" is realized as **marking the node `FLAG_SUBSUMED`**.
-A subsumed node keeps its identity, its class membership, and any equality it
-established; it is simply removed from the *active working set* in two senses:
+**Retire it from the two *active* roles:**
 
-1. **It is no longer a completion participant** — neither a superposition source nor an
-   inter-reduction target. The completion's AC-node snapshot (`AcPartnerSnapshot`)
-   skips `FLAG_SUBSUMED`, so a subsumed node never re-enters a critical pair. This is
-   what keeps the active rule set a finite Dickson antichain.
+1. **Superposition source.** A collapsed node must never again be the node we build
+   overlap-bags *from* (Chore B). It is reducible, so every collision computed off it
+   is redundant (a *composite* superposition, Kapur–Musser–Narendran) — and these are
+   exactly the copies that bred the divergence. Pull it out of the set Chore B iterates.
+2. **Collapse source for others.** It must not be used to rewrite *other* nodes either.
+   A reducible rule reducing things only lengthens derivations and adds churn; let
+   irreducible nodes do the rewriting. (Not a soundness issue, a termination/effort one.)
 
-2. **It must no longer be matchable by user rules.** This is the load-bearing
-   requirement on the matcher: once collapse subsumes `+M`, a user pattern must *not*
-   bind to `+M`, or completion would have "removed" a rule that the matcher still acts
-   on — re-deriving the very terms collapse exists to suppress, and re-opening the
-   divergence. The engine already enforces this, and for free: **the matcher reads e-nodes
-   exclusively through `IndexStore`** (the `by_op` / `by_repr` / `by_child_pos` /
-   `by_contains` maps, via `VariantIndex`), never by scanning the raw node store, and
-   `IndexStore::build` / `build_delta` skip `FLAG_SUBSUMED` nodes. So a subsumed node is
-   absent from every index the matcher consults and cannot be bound. This is exactly the
-   mechanism behind the user-facing `(subsume …)` action, which the `subsume.egg`
-   integration test already exercises (a subsumed `A` node is excluded from future
-   matches while its equality survives); completion's collapse is an
-   internally-triggered use of the same path, so it inherits the same guarantee.
+**Keep it in the two *passive* roles:**
 
-The obligation this places on future work: **any new matching path must respect
-`FLAG_SUBSUMED`.** If a code path ever matches against the raw node store or a
-secondary index that does not filter subsumed nodes, it would silently break both the
-user `(subsume …)` semantics and AC-completion termination. The completion tests
-(naive + semi-naive differential, plus a dedicated subsumed-non-matchable check) guard
-this, and it should be called out in any review that touches the matcher or the index.
+3. **Its class membership / the merge it caused.** Collapsing `+{a,b,c}` rewrote it to
+   `+{p,c}` and merged that into `q`. *That merge is the whole point* — it is the
+   equality we set out to derive. Retiring the node must not undo it; the fact did not
+   vanish, it relocated to `+{p,c}`, which is live.
+4. **Being a child of larger nodes.** If `+{a,b,c}` sits inside some `h(+{a,b,c}, x)`,
+   that parent still points at it and needs it to recanonicalize. Hard-erasing it from
+   the hash-cons would dangle that pointer.
+
+So collapse is a **`FLAG_SUBSUMED` bit, not a delete**: it removes the node from the
+superposition/collapse-source iteration, while leaving it fully hash-consed and in its
+class for parents and for matching. (Nodes are immutable and shared, and `mark`/`restore`
+rolls the node store back to a token — deleting would corrupt that history. The bit is
+itself part of the rolled-back node state, so a node subsumed after a `mark` is
+un-subsumed on `restore`.) This is the same flag and semantics as user-level
+`(subsume …)`; completion's collapse is just an internally-triggered subsumption.
+
+**The load-bearing ordering — materialize+merge first, mark second, eager before
+Chore B.** Three sub-points, each a way to get it wrong:
+
+- **Merge before mark.** Materialize the reduct `+{p,c}`, merge it into the class, and
+  *only then* set `FLAG_SUBSUMED` on `+{a,b,c}`. Reverse the order and you have removed
+  a node before its equality was re-established elsewhere — deleting information. (This
+  is also why hiding from the matcher is safe: by the time the big node is hidden, the
+  reduced node carrying the same class is already present. The §5b cancellation case
+  depends on this exact ordering — the rule fires only *after* the substituted node
+  exists; mark too early and a real match is lost.)
+- **Eager within the round.** The bit must gate Chore B *in the same round* the node
+  becomes reducible. If a stale snapshot still lets this round's superposition pass see
+  it, it breeds anyway. (Our round structure rebuilds the snapshot each round and skips
+  subsumed, which gives this.)
+- **Matcher exclusion is a free *consequence*, not the mechanism.** Because the matcher
+  reads e-nodes exclusively through `IndexStore` (`by_op`/`by_repr`/`by_child_pos`/
+  `by_contains` via `VariantIndex`), never the raw node store, and the index builders
+  skip `FLAG_SUBSUMED`, a collapsed node is automatically unmatchable. Usually this
+  changes nothing observable (the reduced node in the same class is matched instead),
+  but it must not happen *before* step 3. Standing obligation on future work: **any new
+  matching path must respect `FLAG_SUBSUMED`**, or it silently re-opens divergence and
+  breaks user `(subsume …)`. The completion tests (naive+semi-naive differential plus a
+  subsumed-non-matchable check) guard this; flag it in any review touching the matcher
+  or index.
 
 ### Why omitting collapse diverges (and why hash-consing does not save it)
 
@@ -539,17 +656,69 @@ Instrument `|active|` against the total AC-node count per round: missing-collaps
 class-as-atom) divergence shows both curves growing together every round; with both fixes
 in place, `|active|` plateaus near the input size while total nodes may be larger but inert.
 
+### Hard prerequisite: nested same-op flattening (`WF_flat`)
+
+There is a precondition the completion pass cannot establish on its own and that the
+rest of the engine silently assumes: **AC terms are flattened** — an `f`-node never has
+an `f`-class child. Call it `WF_flat`. The matcher relies on it: the parent-driven
+variadic re-join (`ByRepr ∩ ByOp`, the semi-naive variadic-mode machinery) dereferences
+a node's repr while `DecomposeAC` walks its children, and if a child is itself an
+`f`-monomial the recursion reaches an unbound plan variable and the matcher panics
+(`Option::unwrap()` on `None`).
+
+Completion routinely violates `WF_flat`: a Kapur reduct `(AB − A) ⊎ {class(+A)}` keeps
+`class(+A)` — itself an `f`-monomial — as an element, so materializing it builds
+`+f(+f(…), …)`. Confirmed end-to-end: a rule `(f (add x ..r1) (add y ..r2))` over
+`f(add(a,b), add(b,c))` (the two sums overlap, completion superposes them) crashes the
+matcher under **both** naive and semi-naive saturation — it is a genuine engine
+precondition, not a test artifact. (The §4a/§4b/§5b examples pass only because none of
+them matches a rule that decomposes two same-op atoms against a completion-built node.)
+
+So **AC completion cannot be enabled by default until nested same-op flattening lands**
+(build side: the AC arm of `add`; pattern side: the flatten passes). This is the
+[ac-flattening TODO] — previously framed as a canonical-form nicety and a scoped
+completeness caveat; the completion work promotes it to a hard blocker. Until it lands,
+completion stays gated/WIP. There is no in-completion shortcut: flattening only at
+materialization time either reintroduces reducible nodes (breaking convergence) or fails
+to flatten children built earlier, so the invariant has to hold globally.
+
 ## 7. Implementing the substitution from existing machinery
 
 The fix is a new rebuild pass over pairs of existing AC nodes. It reuses two
 mechanisms we already have, and it is worth being precise about what each does,
 because the search and the arithmetic are separate steps.
 
-First, the reading that makes the rest of this section work: an AC node `+A` whose
-class representative is `a` records the equality `+A = a`, which we read as the
-ground rewrite rule `+A → a` (substitute the single class `a` wherever the sub-sum
-`+A` occurs). So every existing AC node is also a substitution rule, and the set of
-rules is exactly the set of AC nodes; we do not build a separate rule store.
+First, the reading that makes the rest of this section work: an AC node records a
+rewrite rule, and the rule is recovered by **two separate `find`s in two different
+places**. A node has no `find` of its own — only a *class* does. So:
+
+```
+rule of a node  =  +{ find(child₁), find(child₂), … }  →  find(class the node sits in)
+                   └─────────── left side ──────────┘     └──── right side ────┘
+```
+
+`find` on the **children** builds the left side (the canonical sub-bag); `find` on the
+**class** builds the right side (the single class the node reduces to). The set of
+rules is exactly the set of AC nodes — we build no separate rule store.
+
+A correction worth stating outright, because an earlier draft implied otherwise:
+**which representative the union-find picks for a class does not matter.** Rank-based,
+arbitrary, whatever — it washes out completely; the equalities the procedure decides
+are identical regardless of which class member is the rep. Representative *selection*
+is not a thing to be careful about here. (It would matter only if we later wanted one
+canonical *printed* form for extraction — not for deriving equalities.) What *does*
+need care is firing a kind of rule the union-find never fires; that is the next point.
+
+Recanonicalization already fires the node-rules — but only the *single-child* kind.
+When a child's class moves, recanon swaps that one child for its `find` and rehashes;
+that is exactly rule-firing on `+{ find each child }`. What it never does is notice
+that a whole **sub-bag** of a node's children is itself a known node equal to some
+class, and substitute *that*. Concretely: node `+{a,b,c}` with `+{a,b}` in class `p`.
+Recanon runs `find` on `a`, on `b`, on `c` — all atoms, nothing moves — and walks away;
+it never sees that the sub-bag `{a,b}` equals `p`, so it never reaches `+{p,c}`. No
+choice of representative fixes this: the union-find simply has no operation that
+substitutes a *group* of children at once. **That missing operation — substitute an
+equal sub-bag, not just an equal single child — is the entire fix** (§6 (A)/(B)).
 
 The search is rule-driven, not target-driven. It is tempting to picture it the
 other way: take a node `+M`, split it into `(part, rest)`, and probe the e-graph
