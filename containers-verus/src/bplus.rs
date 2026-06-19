@@ -5337,6 +5337,146 @@ pub proof fn lemma_leaf_binds_key_at<K, L, S, const TRACK: bool>(
     }
 }
 
+// ===========================================================================
+// B2: the leaf-link chain yields the in-order model.
+//
+// `leaf_links_to` (a `wf` clause) already pins the chain's SHAPE: walking `link`
+// from the leftmost leaf visits exactly `tree_leaf_ids(t)` in order, NIL-
+// terminated. B2 is the MODEL half: reading each visited leaf's keys (in chain
+// order) and concatenating them yields `tree_keys(t)` — the sorted model (B1).
+// So a client walking the chain enumerates the set in ascending order with no
+// gaps or repeats. This is the soundness foundation the cursor (B3) stands on.
+// ===========================================================================
+
+/// The key sequence read by walking a list of leaf arena ids `lids` in order:
+/// each leaf contributes `keys_view(arena[lid])` projected to nats. Pure spec
+/// over the arena; `chain_keys(arena, tree_leaf_ids(t))` is what a chain walk
+/// from `t`'s leftmost leaf reads (the ids being the chain by `leaf_links_to`).
+pub open spec fn chain_keys<L: NodeLayout>(arena: Seq<L::Node>, lids: Seq<nat>) -> Seq<nat>
+    decreases lids.len()
+{
+    if lids.len() == 0 {
+        Seq::empty()
+    } else {
+        leaf_word_keys::<L>(arena, lids[0]) + chain_keys::<L>(arena, lids.drop_first())
+    }
+}
+
+/// One leaf's stored keys (at arena id `lid`) projected to nats: `keys_view`
+/// mapped through `as_nat`. The per-leaf piece `chain_keys` concatenates.
+pub open spec fn leaf_word_keys<L: NodeLayout>(arena: Seq<L::Node>, lid: nat) -> Seq<nat> {
+    Seq::new(L::keys_view(arena[lid as int]).len(), |i: int| L::keys_view(arena[lid as int])[i].as_nat())
+}
+
+/// `chain_keys` distributes over `++` of leaf-id lists.
+pub proof fn lemma_chain_keys_concat<L: NodeLayout>(arena: Seq<L::Node>, a: Seq<nat>, b: Seq<nat>)
+    ensures chain_keys::<L>(arena, a + b) == chain_keys::<L>(arena, a) + chain_keys::<L>(arena, b),
+    decreases a.len(),
+{
+    if a.len() == 0 {
+        assert(a + b =~= b);
+        assert(chain_keys::<L>(arena, a) =~= Seq::<nat>::empty());
+    } else {
+        // peel a[0]: (a+b).drop_first() == a.drop_first() + b, (a+b)[0] == a[0].
+        assert((a + b)[0] == a[0]);
+        assert((a + b).drop_first() =~= a.drop_first() + b);
+        lemma_chain_keys_concat::<L>(arena, a.drop_first(), b);
+    }
+}
+
+/// B2 (subtree form): for a `binds`-ing subtree `t`, the chain-key reading over
+/// `t`'s in-order leaf ids equals `t`'s in-order model `tree_keys(t)`. Structural
+/// induction: a leaf reads its own keys (binds leaf arm); an internal node's
+/// leaf-ids and model both split child-by-child, and `chain_keys` /
+/// `forest_keys` distribute over the per-child concatenation identically.
+pub proof fn lemma_chain_keys_eq_model<L: NodeLayout>(arena: Seq<L::Node>, t: Tree)
+    requires binds::<L>(arena, t),
+    ensures chain_keys::<L>(arena, crate::bplus_tree::tree_leaf_ids(t)) == crate::bplus_tree::tree_keys(t),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { id, keys } => {
+            // tree_leaf_ids == [id]; chain_keys([id]) == leaf_word_keys(id) ++ [].
+            assert(crate::bplus_tree::tree_leaf_ids(t) =~= seq![id]);
+            assert(seq![id].drop_first() =~= Seq::<nat>::empty());
+            // leaf_word_keys(id) == keys: binds leaf arm gives count == keys.len()
+            // and keys_view[i].as_nat() == keys[i].
+            assert(L::count_spec(arena[id as int]) == keys.len());
+            L::lemma_keys_view_len(arena[id as int]);
+            let lwk = leaf_word_keys::<L>(arena, id);
+            assert(lwk.len() == keys.len());
+            assert forall|i: int| 0 <= i < keys.len() implies lwk[i] == keys[i] by {
+                assert(L::keys_view(arena[id as int])[i].as_nat() == keys[i]);  // binds
+            }
+            assert(lwk =~= keys);
+            // chain_keys([id]) unfolds: leaf_word_keys(id) ++ chain_keys([]).
+            assert(seq![id][0] == id);
+            assert(chain_keys::<L>(arena, Seq::<nat>::empty()) =~= Seq::<nat>::empty());
+            assert(chain_keys::<L>(arena, seq![id]) == lwk + chain_keys::<L>(arena, seq![id].drop_first()));
+            assert(chain_keys::<L>(arena, seq![id]) =~= lwk);
+            assert(crate::bplus_tree::tree_keys(t) == keys);
+        }
+        Tree::Inner { id, seps, kids } => {
+            lemma_chain_keys_eq_model_forest::<L>(arena, kids);
+            assert(crate::bplus_tree::tree_leaf_ids(t) == crate::bplus_tree::forest_leaf_ids(kids));
+            assert(crate::bplus_tree::tree_keys(t) == crate::bplus_tree::forest_keys(kids));
+        }
+    }
+}
+
+/// Forest companion: `chain_keys(forest_leaf_ids(kids)) == forest_keys(kids)`,
+/// given every child binds. Induction on `kids`, using `lemma_chain_keys_concat`
+/// to split the head child's chain off the tail (mirroring how both
+/// `forest_leaf_ids` and `forest_keys` cons).
+pub proof fn lemma_chain_keys_eq_model_forest<L: NodeLayout>(arena: Seq<L::Node>, kids: Seq<Tree>)
+    requires forest_binds_l::<L>(arena, kids),
+    ensures chain_keys::<L>(arena, crate::bplus_tree::forest_leaf_ids(kids)) == crate::bplus_tree::forest_keys(kids),
+    // mutually recursive with lemma_chain_keys_eq_model (decreases t); the pair
+    // must use type-compatible datatype measures, so `decreases kids` (Verus
+    // orders the Seq<Tree> by element height), NOT `kids.len()` (an int).
+    decreases kids,
+{
+    if kids.len() == 0 {
+        assert(crate::bplus_tree::forest_leaf_ids(kids) =~= Seq::<nat>::empty());
+        assert(crate::bplus_tree::forest_keys(kids) =~= Seq::<nat>::empty());
+    } else {
+        let df = kids.drop_first();
+        // forest_leaf_ids(kids) == tree_leaf_ids(kids[0]) ++ forest_leaf_ids(df).
+        crate::bplus_tree::lemma_forest_leaf_ids_cons(kids);
+        crate::bplus_tree::lemma_forest_keys_cons(kids);
+        // head binds, tail binds (forest_binds_l cons).
+        assert(binds::<L>(arena, kids[0]));
+        assert(forest_binds_l::<L>(arena, df));
+        // chain_keys distributes over the head/tail leaf-id split.
+        lemma_chain_keys_concat::<L>(arena, crate::bplus_tree::tree_leaf_ids(kids[0]),
+            crate::bplus_tree::forest_leaf_ids(df));
+        lemma_chain_keys_eq_model::<L>(arena, kids[0]);   // head: chain == tree_keys(kids[0])
+        lemma_chain_keys_eq_model_forest::<L>(arena, df); // tail: by IH
+    }
+}
+
+/// B2 (whole-tree): for a `wf` tree, walking the leaf-link chain from the
+/// leftmost leaf reads exactly the sorted model. Combines `lemma_chain_keys_eq_
+/// model` (chain reading == `tree_keys`) with B1 (`tree_wf ⟹ strictly_sorted`),
+/// so the enumerated key sequence is the set in ascending order, no gaps/dups.
+/// The first leaf is `tree_leaf_ids(tree@)[0]` and the chain is NIL-terminated
+/// (`leaf_links_ok`), so a client walk reproduces this exact sequence.
+pub proof fn lemma_chain_yields_sorted_model<K, L, S, const TRACK: bool>(t: &BPlusTreeSet<K, L, S, TRACK>)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires t.wf(),
+    ensures
+        chain_keys::<L>(t.arena(), crate::bplus_tree::tree_leaf_ids(t.tree@)) == crate::bplus_tree::tree_keys(t.tree@),
+        crate::bplus_tree::strictly_sorted(crate::bplus_tree::tree_keys(t.tree@)),
+        leaf_links_ok::<L>(t.arena(), t.tree@),
+{
+    lemma_chain_keys_eq_model::<L>(t.arena(), t.tree@);  // binds(arena, tree@) from wf
+    crate::bplus_tree::lemma_tree_wf_sorted(t.tree@,
+        crate::bplus_tree::tree_height(t.tree@), L::leaf_cap_spec(), L::key_cap_spec(), true);
+}
+
 /// The model of a leaf-root tree is strictly sorted (`tree_wf`'s leaf arm).
 pub proof fn lemma_leaf_sorted<K, L, S, const TRACK: bool>(t: &BPlusTreeSet<K, L, S, TRACK>)
     where
