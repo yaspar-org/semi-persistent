@@ -63,15 +63,36 @@ existing worklist closure drains, build the snapshot (T3), and for each AC node
 **Acceptance:** green; the §4a equality is derived; no spurious merges in existing
 `ac_congruence`/`ac_multiplicity_no_false_collision` tests.
 
-### T5 — (B) superposition / critical pairs  → T4  ⊘
+### T5 — (B) superposition / critical pairs  → T4  ⊘  ⚠️ NEEDS collapse+ordering (T5b)
 Add the overlap branch: for partners that overlap but neither contains the other,
-build `AB = lcm(M, A)`, materialize both reducts `(AB−M)⊎{d}` and `(AB−A)⊎{a}`,
-merge them. Guard self-pairs and symmetric double-processing (plan §4).
+build `AB = lcm(M, A)`, **normalize** both reducts `(AB−M)⊎{rm}` and `(AB−A)⊎{ra}` to
+normal form (where `rm`/`ra` are the partners' **minimal-monomial** RHSs, NOT bare
+class ids), merge if distinct. Guard self-pairs and symmetric double-processing.
 **Tests:** spec §4b — `+(a,b)=c`, `+(b,d)=e` ⇒ `find(+(c,d)) == find(+(a,e))`.
-Spec §5b cancellation — `a+b+neg(a+b)` with rule `(+ ?x (neg ?x)) ⇒ 0` reduces to 0
-once the inter-reduced node materializes. Confirm (A) is the `A⊆M` special case of (B).
-**Acceptance:** green; both worked examples derive; existing AC differential tests
-(`src/saturate.rs:1373-1908`) still pass.
+Spec §5b cancellation (already green from T4 — it is an (A) case). Confirm (A) is the
+`A⊊M` special case.
+**Acceptance:** green; §4b derives **and converges** (no node-count blowup — see T5b);
+existing AC differential tests (`src/saturate.rs:1373-1908`) still pass.
+**NOTE:** the naive form of this (merge both raw reducts, no collapse/normalize)
+**diverges** (~5x nodes/round) — see T5b and design §6b. T5 is not complete without T5b.
+
+### T5b — Collapse + orientation to make (B) converge  → T5  ⊘
+The three load-bearing corrections from design §6b, without which (B) diverges:
+1. **Collapse:** on `A ⊊ M`, after the (A) merge, mark `+M` `FLAG_SUBSUMED`
+   (`EGraph::subsume`) so it leaves the active set → active LHSs stay a Dickson
+   antichain → termination. "Retire" = subsume, never delete (nodes immutable + needed
+   for rollback).
+2. **Normalize-before-materialize:** `normalize_ms` reduces every reduct to normal form
+   against ALL current rules (incl. same-round) before it becomes a node.
+3. **Orient + minimal-monomial RHS:** degree-lex monomial order (`monomial_cmp`); each
+   rule is `larger-monomial → its-class-minimal-monomial`; substitute the minimal
+   monomial over existing constants, NEVER a bare class id as a fresh atom (that grows
+   the constant pool every round — the actual explosion).
+**Tests:** §4b converges with bounded node growth; a multi-rule input where `|active|`
+plateaus near input size (instrument via `AC_COMPLETE_TRACE`); the two-rule
+hand-checkable example from design §6b (`{a,b,c}→s, {a,b}→t` ⇒ canonical 2-rule system).
+**Acceptance:** all completion egg tests green under both strategies; no `>50k`-growth
+backstop tripped; `|active|` does not grow unboundedly on any test input.
 
 ### T6 — Fixpoint, eval-strategy, rollback, and proof-path hardening  → T5  ⊘
 Harden the round loop and prove the evaluation-strategy interaction (plan §2b):
@@ -87,9 +108,16 @@ Harden the round loop and prove the evaluation-strategy interaction (plan §2b):
   *pre-existing* nodes (`+{c,d}`, `+{a,e}`) and creates no fresh node; assert a rule
   keyed on the merged class still fires under semi-naive. Use the differential idiom
   in `src/saturate.rs:1373-1908`.
+- **Subsumed-non-matchable (design §6b):** a node collapsed by completion
+  (`FLAG_SUBSUMED`) must not be bound by any user pattern thereafter. The matcher reads
+  only through `IndexStore`, which skips subsumed — but add an explicit test: subsume a
+  node via completion, then a rule whose LHS would match the subsumed multiset must NOT
+  fire (mirror of `subsume.egg`). Guards against any future matching path that bypasses
+  the index. Also assert the collapsed node's *equality* still holds (class unchanged).
 - **Rollback:** semi-persistent restore interaction (`rebuild_after_restore`,
   `src/egraph.rs:1055`) — completion-created nodes restore correctly; `touched`
-  cleared on restore (`src/egraph.rs:596`).
+  cleared on restore (`src/egraph.rs:596`); `FLAG_SUBSUMED` set by collapse is rolled
+  back with the node store (a node subsumed after a `mark` is un-subsumed on `restore`).
 - **PROOFS path:** new merges carry a justification (`merge_justified`,
   `src/egraph.rs:394`); a PROOFS-on run explains a completion-derived equality.
 
@@ -146,9 +174,11 @@ requirement. Gate on the T6 differential test staying green.
 
 ```
 T1 ─┐
-    ├─► T4 ─► T5 ─► T6 ─► T7(extend), T8 ─► L1
-T2 ─► T3 ─┘                       └─► P1
+    ├─► T4 ─► T5 ─► T5b ─► T6 ─► T7(extend), T8 ─► L1
+T2 ─► T3 ─┘                                  └─► P1
 ```
+
+T5b (collapse + orientation) is mandatory: T5's (B) does not converge without it.
 
 T7 baseline and L1 design can proceed in parallel with the coding tasks; their
 *extension/transfer* halves depend on T6.

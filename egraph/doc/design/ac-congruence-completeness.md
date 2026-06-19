@@ -371,6 +371,44 @@ prime one — which is exactly why completeness survives. The subsumed node rema
 legal *child* of other live nodes and keeps its class membership; it simply stops
 being enumerated as a rule LHS or a match target.
 
+### Retirement = `FLAG_SUBSUMED`, and it must also block pattern matching
+
+This is important enough to state on its own, as a correctness requirement on the rest
+of the engine, not just an implementation note.
+
+**We never remove a node from the e-graph.** Nodes are immutable and shared, and the
+semi-persistent layer (`mark`/`restore`) relies on being able to roll the node store
+back to an earlier token; deleting a node would corrupt that history. So Kapur's and
+Conchon's "delete/retire the rule" is realized as **marking the node `FLAG_SUBSUMED`**.
+A subsumed node keeps its identity, its class membership, and any equality it
+established; it is simply removed from the *active working set* in two senses:
+
+1. **It is no longer a completion participant** — neither a superposition source nor an
+   inter-reduction target. The completion's AC-node snapshot (`AcPartnerSnapshot`)
+   skips `FLAG_SUBSUMED`, so a subsumed node never re-enters a critical pair. This is
+   what keeps the active rule set a finite Dickson antichain.
+
+2. **It must no longer be matchable by user rules.** This is the load-bearing
+   requirement on the matcher: once collapse subsumes `+M`, a user pattern must *not*
+   bind to `+M`, or completion would have "removed" a rule that the matcher still acts
+   on — re-deriving the very terms collapse exists to suppress, and re-opening the
+   divergence. The engine already enforces this, and for free: **the matcher reads e-nodes
+   exclusively through `IndexStore`** (the `by_op` / `by_repr` / `by_child_pos` /
+   `by_contains` maps, via `VariantIndex`), never by scanning the raw node store, and
+   `IndexStore::build` / `build_delta` skip `FLAG_SUBSUMED` nodes. So a subsumed node is
+   absent from every index the matcher consults and cannot be bound. This is exactly the
+   mechanism behind the user-facing `(subsume …)` action, which the `subsume.egg`
+   integration test already exercises (a subsumed `A` node is excluded from future
+   matches while its equality survives); completion's collapse is an
+   internally-triggered use of the same path, so it inherits the same guarantee.
+
+The obligation this places on future work: **any new matching path must respect
+`FLAG_SUBSUMED`.** If a code path ever matches against the raw node store or a
+secondary index that does not filter subsumed nodes, it would silently break both the
+user `(subsume …)` semantics and AC-completion termination. The completion tests
+(naive + semi-naive differential, plus a dedicated subsumed-non-matchable check) guard
+this, and it should be called out in any review that touches the matcher or the index.
+
 ### Why omitting collapse diverges (and why hash-consing does not save it)
 
 Drop collapse and the "antichain" stops being one. The reduct `(AB − A) ⊎ {a}`
