@@ -2412,9 +2412,73 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         lo
     }
 
+    /// `find_gt` over an internal node's separators: first child index `cp` such
+    /// that `word < seps[cp]` (descend there). Returns the descent child: every
+    /// separator left of `cp` is `<= word`, every one from `cp` on is `> word`,
+    /// `cp <= count` (a valid child index, since kids.len() == count + 1). Binary
+    /// search; mirrors `leaf_find_ge` with the `find_gt` (strict) boundary.
+    fn find_child(&self, node: &L::Node, word: L::Word) -> (cp: usize)
+        requires
+            L::node_wf(*node),
+            !L::is_leaf_spec(*node),
+            crate::bplus_tree::strictly_sorted(
+                Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat())),
+        ensures
+            cp <= L::count_spec(*node),
+            forall|j: int| 0 <= j < cp ==> (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat(),
+            forall|j: int| cp <= j < L::count_spec(*node) ==> word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat(),
+    {
+        let n = L::count(node);
+        let mut lo: usize = 0;
+        let mut hi: usize = n;
+        let ghost ks = Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat());
+        proof { L::lemma_keys_view_len(*node); }
+        while lo < hi
+            invariant
+                lo <= hi <= n,
+                L::node_wf(*node),
+                n as nat == L::count_spec(*node),
+                L::keys_view(*node).len() == n as nat,
+                ks == Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat()),
+                ks.len() == n as nat,
+                crate::bplus_tree::strictly_sorted(ks),
+                forall|i: int| 0 <= i < n ==> ks[i] == (#[trigger] L::keys_view(*node)[i]).as_nat(),
+                // left of lo is <= word; from hi on is > word.
+                forall|j: int| 0 <= j < lo ==> (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat(),
+                forall|j: int| hi <= j < n ==> word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat(),
+            decreases hi - lo,
+        {
+            let mid = lo + (hi - lo) / 2;
+            assert(mid < n);
+            assert((mid as nat) < L::count_spec(*node));
+            let kmid = L::key(node, mid);
+            let le = kmid.le(word);
+            proof {
+                <L::Word as IndexLike>::lemma_order_is_as_nat(kmid, word);
+                assert(kmid == L::keys_view(*node)[mid as int]);
+            }
+            if le {
+                // seps[mid] <= word; everything left of mid is <= seps[mid] <= word.
+                lo = mid + 1;
+            } else {
+                // seps[mid] > word; sorted ⟹ seps[j] >= seps[mid] > word for j >= mid.
+                proof {
+                    assert forall|j: int| mid <= j < n implies
+                        word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat() by {
+                        if mid < j { assert(ks[mid as int] < ks[j]); }
+                    }
+                }
+                hi = mid;
+            }
+        }
+        lo
+    }
+
     /// Descend root→leaf to the leaf that would hold `word`, returning
     /// `(leaf_idx, find_ge_pos)`. The cursor's *fallback* positioning (used only
-    /// when the fast path along the leaf-link chain misses). TEST-FIRST exec.
+    /// when the fast path along the leaf-link chain misses). TEST-FIRST exec; the
+    /// index-correctness proof (chain_offset(leaf) + pos == seek_target_idx) is
+    /// in progress — its ghost engine `lemma_seek_idx_descent` is landed.
     #[verifier::external_body]
     pub fn seek_leaf(&self, word: L::Word) -> (L::ArenaIdx, usize) {
         let mut idx = self.root;
