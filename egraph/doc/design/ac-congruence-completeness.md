@@ -50,6 +50,60 @@ and "delete a rule" cannot mean delete a node.
 
 §5c works this through one concrete example before the formal treatment.
 
+## 0a. Glossary
+
+The chapter uses a fixed vocabulary. Each concept has one word.
+
+- **node** (AC e-node): the stored structure, an operator `f` plus a flattened
+  **multiset** of child classes. Hash-consed, immutable, shared. When we mean the data
+  in the graph, we say node.
+- **rule**: the same node read as a rewrite rule `+M → find(class)`. Every AC node *is* a
+  rule (§7); "the e-graph is a set of rules" is the central framing (§0, §5c, §7). When
+  we mean the node in its rewrite capacity, we say rule.
+- **monomial** / **left side**: the multiset of child classes of a rule, the rule's LHS.
+  Kapur's term is monomial; we use monomial and "left side" interchangeably for the LHS.
+- **class** (e-class): what `find` returns, the rule's RHS. Always called class. (Kapur
+  calls e-classes "constants"; that word appears only in the explicit Kapur mapping of
+  §8, where "constant = e-class id in our setting".)
+- **superposition** / **critical pair**: the smallest monomial containing two overlapping
+  left sides (the lcm, §6 (B)), and the pair of terms it reduces to two ways. Defined in
+  §6 (B); used in §6b, §7–§10.
+- **collapse** / **inter-reduction**: retiring a rule whose left side contains another
+  rule's left side (§6b). Realized by `FLAG_AC_COLLAPSED` (§6b), never by deleting a node.
+- **antichain** / **reduced canonical basis**: a rule set in which no left side is a
+  sub-multiset of another (an antichain under `⊆`), and which is minimal and confluent.
+  Dickson's Lemma (§10) bounds every such antichain to a finite size.
+
+## 0b. The e-graph state is a set of rewrite rules
+
+This frames what §6 onward operates on; the mechanics are §5c, §7, and §9a.
+
+An e-graph state denotes a rewrite system in two layers.
+
+- **The AC nodes are the f-monomial rules.** Each AC node with operator `f`, child
+  multiset `M`, sitting in class `c`, is the rule `+M → find(c)`: its monomial is the LHS,
+  its class the RHS (§7 recovers this by two `find`s). The set of rules is exactly the set
+  of AC nodes; there is no separate rule store (§9a).
+- **The union-find is the constant/class-rule layer.** It rewrites a class to its
+  representative, `c → find(c)`, the analogue of Kapur's constant rules (§8).
+
+Rebuild optimizes that rule set toward a *reduced canonical basis* (§0): the smallest rule
+set that decides the same equalities. Three properties define the target.
+
+- **Minimal**: no redundant rule. A rule whose LHS rewrites under the others is dropped
+  (collapse, §6b).
+- **Inter-reduced / disjoint** (an antichain): no rule's left side is contained in
+  another's. Collapse enforces this on each new rule; the surviving left sides are pairwise
+  `⊆`-incomparable (§0, §5c, §6b), and Dickson's Lemma keeps that set finite (§10).
+- **Confluent**: every two-way rewrite of one term joins. Superposition (§6 (B)) closes
+  the divergences that block this; at the fixpoint the basis is convergent and `nf_R`
+  decides the theory (§10, §12).
+
+Today's rebuild has only the constant layer and atom-level recanonicalization, so the rule
+set is not confluent (§3, §4); the fix (§6) adds superposition and collapse to drive it to
+a reduced canonical basis. "Restore AC congruence completeness" is "optimize the rule set
+to convergence," worked concretely in §5c and stated against the e-graph in §6–§9.
+
 ## 1. Why ordinary congruence closure is complete
 
 Congruence closure (CC) decides the ground word problem: it computes the least
@@ -102,6 +156,12 @@ Now flatten into a canonical multiset node:
 ```
    +{a, b, c}     (one node; no inner structure at all)
 ```
+
+The children form a **multiset**, not a set: multiplicities matter in general. `a + a + b`
+flattens to the multiset `{a:2, b:1}`, distinct from `a + b = {a:1, b:1}`, and a rule's
+left side carries those counts. The worked examples below (§4, §5c, §6b) all happen to use
+multiplicity-1 children, so they read like sets; the data structure is a multiset
+throughout.
 
 This is the optimization we want: it collapses all `O(3ⁿ)` bracketings of an n-ary
 sum into a single node. But the sub-sum node `(b+c)` no longer exists, and neither
@@ -318,8 +378,10 @@ Making it a function is the content of the completeness argument (§10).
 
 ## 5c. A worked example
 
-`+` is a multiset (order doesn't matter, no nesting; `a+b+c` is just the multiset
-`{a,b,c}`). We are handed exactly two facts:
+`+` flattens to a multiset (order doesn't matter, no nesting; `a+b+c` is just the
+multiset `{a,b,c}`). This example uses distinct children, so every multiset is also a set;
+multiplicities (e.g. `a+a+b = {a:2, b:1}`) are handled the same way but do not arise here.
+We are handed exactly two facts:
 
 ```
 FACT 1:   a + b      is the same thing as   p
@@ -451,20 +513,20 @@ merge yields the missing equality.
 ## 6b. Collapse is load-bearing: (A) and (B) alone diverge
 
 (A) and (B) as stated above are *incomplete as an algorithm*, and a naïve
-implementation of them does not just run slowly — it **diverges**, minting larger
+implementation of them does not just run slowly; it **diverges**, minting larger
 and larger nodes without bound. This section states the missing operation, because
 it is as much part of the fix as (A) and (B) and the rest of the chapter silently
 assumed it. It was found the hard way: a first implementation of (B) that
 materialized both reducts and merged them, with no collapse, grew the node count
 ≈4–5× **per round** and the critical-pair count ≈10× per round on the five-constant
-§4a example — exponential, OOM within ~15 rounds.
+§4a example (exponential, OOM within ~15 rounds).
 
 ### The missing operation: Collapse / inter-reduction
 
 Reading each AC node `+M = d` as a rule `+M → d`, the active rule set must be kept
 **reduced**: no rule's left multiset is a sub-multiset of another's. This is Kapur's
 Algorithm 1 **step 4** ("inter-reduce rules by the new rule") and Conchon et al.'s
-**Collapse** inference rule, and it is *destructive* — it removes rules:
+**Collapse** inference rule, and it is *destructive*; it removes rules:
 
 > When a rule `+A → a` is added and an existing rule `+M → d` has `A ⊊ M` (so `+M` is
 > reducible by `+A`), rewrite `+M` via `+A` (this is exactly (A)), merge the reduct
@@ -472,8 +534,8 @@ Algorithm 1 **step 4** ("inter-reduce rules by the new rule") and Conchon et al.
 
 **"Retire" means flag, not delete** (the realization is the next subsection,
 "Retirement = `FLAG_AC_COLLAPSED`"). Kapur and Conchon work over an abstract rule set
-they can shrink; an e-graph cannot remove nodes — they are immutable, shared, and must
-survive for semi-persistent rollback (`restore`). So we mark `+M` with `FLAG_AC_COLLAPSED`,
+they can shrink; an e-graph cannot remove nodes (they are immutable, shared, and must
+survive for semi-persistent rollback, `restore`). So we mark `+M` with `FLAG_AC_COLLAPSED`,
 which drops it from completion's active set while leaving it hash-consed, in its class
 (the equality `+M = d` is preserved), and matchable. "Remove from `active`" throughout
 this section means "mark `FLAG_AC_COLLAPSED`," and the antichain is the set of AC nodes
@@ -482,7 +544,7 @@ carrying neither that flag nor `FLAG_SUBSUMED`.
 The active set is then a **Dickson antichain**: a set of multisets over the finite
 class pool `C`, pairwise `⊆`-incomparable. Dickson's Lemma makes every such antichain
 finite, and for typical inputs it stays near the input size. Since superposition (B)
-ranges over pairs of *active* rules, the work per round is `O(|active|²)` — Conchon's
+ranges over pairs of *active* rules, the work per round is `O(|active|²)`. Conchon's
 empirically quadratic cost (§7.3) is a statement about `|active|`, and it holds **only
 because collapse keeps `|active|` an antichain**.
 
@@ -491,7 +553,7 @@ preserved twice*: the merge `reduct(+M) = d` has been performed (so `+M`'s class
 `d`), and the reduct itself is a live, non-collapsed node carrying the same class. So
 every consequence `+M` could contribute as a superposition source is also derivable from
 its reduct, which *is* active. Collapse therefore prunes only *redundant* sources (the
-composite superpositions of Kapur–Musser–Narendran), never a prime one — which is exactly
+composite superpositions of Kapur–Musser–Narendran), never a prime one, which is exactly
 why completeness survives. The collapsed node remains a legal *child* of other live nodes,
 keeps its class membership, and stays matchable; it simply stops being enumerated as a
 completion rule LHS.
@@ -545,7 +607,7 @@ for collapse, but they mean different things and the conflation hides a bug:
 
 Completion's active set is the AC nodes with *neither* flag; the matcher's visible set is
 the nodes without `FLAG_SUBSUMED`. **Matcher visibility is irrelevant to completion's
-termination** — the matcher never superposes, so a collapsed-but-visible node cannot
+termination**: the matcher never superposes, so a collapsed-but-visible node cannot
 breed critical pairs. Divergence is caused only by a collapsed node staying a
 *superposition source*, which `FLAG_AC_COLLAPSED` prevents directly. Hiding a collapsed
 node from the matcher would be a *separate, optional* choice (usually a no-op, since its
@@ -571,38 +633,38 @@ Chore B.** Two ways to get it wrong:
 Drop collapse and the "antichain" stops being one. The reduct `(AB − A) ⊎ {a}`
 injects the rule's right-hand class `a`, which need not lie in `AB` (the §10
 correction). So a reduct can be a **proper superset** of an existing rule's
-left side — i.e. itself reducible — yet, materialized raw, it survives as a live node
+left side (i.e. itself reducible), yet, materialized raw, it survives as a live node
 and therefore as a superposition source for the next round. Round 1 superposes `n`
 rules into `~n²` reducts; each becomes a partner; round 2 superposes `~n²` into
 `~n⁴`; cascade. Dickson still guarantees eventual termination, but over a growing
-*chain*, not the antichain, so the bound is astronomical — the observed exponential.
+*chain*, not the antichain, so the bound is astronomical: the observed exponential.
 
 It is tempting to think hash-consing already handles this: "materialize the reduct
 and let the hash-cons merge it with whatever exists." It does not. **Hash-consing
-resolves only *syntactic* collisions — identical multisets — which is the atom-level
+resolves only *syntactic* collisions (identical multisets), which is the atom-level
 congruence we already have.** AC completion is about *sub-multiset* congruence (§3),
 which hash-consing structurally cannot see. Inserting `+{a,b,s}` when `+{a,b} → t`
 exists produces a *fresh* class (no identical multiset is present); the node is
 semantically reducible (`{a,b} ⊊ {a,b,s}`, so `+{a,b,s} = +{t,s}`) but the e-graph
 does not know it, and it now drives superpositions. The reducible form must be
-**normalized away before it becomes a node** — equivalently, reducible nodes must
+**normalized away before it becomes a node**; equivalently, reducible nodes must
 never be superposition sources (the *prime superposition* criterion,
 Kapur–Musser–Narendran 1988: a superposition whose overlap term is reducible
 elsewhere is *composite*, and its critical pair is redundant).
 
 ### Superposition is bounded; substituting a class-as-atom is what explodes
 
-It looks paradoxical that the algorithm superposes rule left-hand sides — which are,
-by orientation, the *larger* (non-minimal) monomials — yet does not blow up. If the
+It looks paradoxical that the algorithm superposes rule left-hand sides (which are,
+by orientation, the *larger* (non-minimal) monomials) yet does not blow up. If the
 sources are the big sides, why don't bigger and bigger terms cascade? Three facts make
 superposition bounded, and locate the real explosion elsewhere.
 
 1. **A critical pair is bounded by the lcm of two existing left sides.** Superposing
-   `A₁ → B₁` and `A₂ → B₂` builds `AB = lcm(A₁, A₂)` — the component-wise max of two
-   left sides already present — and the two reducts `(AB − Aᵢ) ⊎ Bᵢ` are each
+   `A₁ → B₁` and `A₂ → B₂` builds `AB = lcm(A₁, A₂)` (the component-wise max of two
+   left sides already present), and the two reducts `(AB − Aᵢ) ⊎ Bᵢ` are each
    **strictly smaller than `AB`** in the degree-lex order, because each rule is
    oriented `Bᵢ ≺ Aᵢ`. The output of a superposition is bounded by its inputs. There is
-   no upward pressure *from superposition itself* — provided the constant pool does not
+   no upward pressure *from superposition itself*, provided the constant pool does not
    grow.
 
 2. **The explosion comes from introducing a new atom, not from superposition.** It is
@@ -611,7 +673,7 @@ superposition bounded, and locate the real explosion elsewhere.
    monomials. Substitute the **bare class id** `κ` of that class and `κ` becomes a
    *new constant* used as a single summand: `+{b,d,c}` reduces to `+{b, κ}` instead of
    to `+{b} ⊎ {a,e} = +{a,b,e}`. Now lcms range over `{a,b,c,d,e,κ,…}`, the pool grows
-   every round, and *that* is the runaway — not the superposition, the fresh atom.
+   every round, and *that* is the runaway: not the superposition, the fresh atom.
    The fix is to orient the critical pair as a rule between **two monomials** over the
    *existing* constants (`larger → smaller`, never `→ κ`), and to substitute a class by
    its **minimal monomial** (its degree-lex-least representative), never by a
@@ -621,11 +683,11 @@ superposition bounded, and locate the real explosion elsewhere.
 
 3. **Collapse keeps the count finite even though sizes are bounded.** Bounded-size
    monomials could still accumulate in *number*; collapse (above) retires every left
-   side that becomes reducible, so the surviving left sides are a Dickson antichain —
-   finite. Narendran–Rusinowitch (RTA 1991): every ground AC theory has a finite
+   side that becomes reducible, so the surviving left sides are a Dickson antichain,
+   hence finite. Narendran–Rusinowitch (RTA 1991): every ground AC theory has a finite
    canonical system, and this is the construction of it.
 
-So "superpose only non-minimal monomials" is not an extra trick — a rule's left side
+So "superpose only non-minimal monomials" is not an extra trick: a rule's left side
 *is* the non-minimal side, and the minimal monomial of a class is its normal form, has
 no rule on its left, and is therefore never a redex nor a superposition source. The two
 load-bearing choices are the ones above: **orient critical pairs between monomials over
@@ -642,7 +704,7 @@ R1:  +{a, b, c} → s        R2:  +{a, b} → t
 ```
 
 The only structural fact: `{a,b} ⊊ {a,b,c}`, so **R1 is reducible by R2** (no order
-needed — collapse fires on containment alone). The reduced canonical system is the
+needed; collapse fires on containment alone). The reduced canonical system is the
 two-rule antichain
 
 ```
@@ -660,7 +722,7 @@ on its RHS*, which is exactly what stops `s` from re-entering as a summand.
 **Buggy run (no collapse).** Materialize `+{c,t} → s` but keep R1. Now `{c,t}` and
 `{a,b,c}` overlap on `c` → superpose: `AB = {a,b,c,t}`, reducts `{s,t}` and
 `{a,b,s}`, merge as a new class `w`. **`s`, a right-hand class, has re-entered as a
-summand** — and `{a,b,s}` is reducible by R2 but, inserted raw, survives as a
+summand**, and `{a,b,s}` is reducible by R2 but, inserted raw, survives as a
 partner. Round 3 superposes the new nodes against everything sharing an element,
 `w` re-enters as a summand, the constant pool grows `{a,b,c,s,t,w,…}`, and each round
 mints `O(current nodes)` new classes. That is the divergence.
@@ -671,19 +733,19 @@ closes the critical pair into a fresh class `w` used as a summand (the class-as-
 explosion). Either alone diverges; the fix needs both.
 
 The correct run *decides* `{a,b,s} = {s,t}` by normalising (`{a,b,s} → {t,s}` via R2,
-same as the other side, both over existing constants) and stores neither — collapse
+same as the other side, both over existing constants) and stores neither: collapse
 plus normalize-into-minimal-monomial is the step that cannot be skipped.
 
 ### What this requires of the implementation
 
 1. **Maintain an `active` set of irreducible AC nodes** per op (those with no
-   containment partner) — concretely, the AC nodes carrying neither `FLAG_AC_COLLAPSED`
+   containment partner), concretely the AC nodes carrying neither `FLAG_AC_COLLAPSED`
    nor `FLAG_SUBSUMED`. Superpose (B) only over `active`.
 2. **On adding `+A → a`**, find its containment supersets via `by_contains`; for each
    active `+M` with `A ⊊ M`, reduce (A), merge, and **mark `+M` `FLAG_AC_COLLAPSED`** (the
    non-deletable form of "retire"; the node, its class, and its matchability persist).
 3. **Normalize every reduct against *all* current rules** (including those minted this
-   round) to a fixpoint before comparing — see the `normalize_ac` correction in §9.
+   round) to a fixpoint before comparing (see the `normalize_ac` correction in §9).
    If the two reducts land in one class, add nothing.
 4. **Orient rules and substitute minimal monomials, never class-as-atom.** Pick a total
    admissible monomial order `≫_f` (degree-lex: size, then class-id lex). Every rule is
@@ -699,7 +761,7 @@ in place, `|active|` plateaus near the input size while total nodes may be large
 ### Hard prerequisite: nested same-op flattening (`WF_flat`)
 
 There is a precondition the completion pass cannot establish on its own and that the
-rest of the engine silently assumes: **AC terms are flattened** — an `f`-node never has
+rest of the engine silently assumes: **AC terms are flattened**, i.e. an `f`-node never has
 an `f`-class child. Call it `WF_flat`. The matcher relies on it: the parent-driven
 variadic re-join (`ByRepr ∩ ByOp`, the semi-naive variadic-mode machinery) dereferences
 a node's repr while `DecomposeAC` walks its children, and if a child is itself an
@@ -707,16 +769,16 @@ a node's repr while `DecomposeAC` walks its children, and if a child is itself a
 (`Option::unwrap()` on `None`).
 
 Completion routinely violates `WF_flat`: a Kapur reduct `(AB − A) ⊎ {class(+A)}` keeps
-`class(+A)` — itself an `f`-monomial — as an element, so materializing it builds
+`class(+A)` (itself an `f`-monomial) as an element, so materializing it builds
 `+f(+f(…), …)`. Confirmed end-to-end: a rule `(f (add x ..r1) (add y ..r2))` over
 `f(add(a,b), add(b,c))` (the two sums overlap, completion superposes them) crashes the
-matcher under **both** naive and semi-naive saturation — it is a genuine engine
+matcher under **both** naive and semi-naive saturation: it is a genuine engine
 precondition, not a test artifact. (The §4a/§4b/§5b examples pass only because none of
 them matches a rule that decomposes two same-op atoms against a completion-built node.)
 
 So **AC completion cannot be enabled by default until nested same-op flattening lands**
 (build side: the AC arm of `add`; pattern side: the flatten passes). This is the
-[ac-flattening TODO] — previously framed as a canonical-form nicety and a scoped
+[ac-flattening TODO], previously framed as a canonical-form nicety and a scoped
 completeness caveat; the completion work promotes it to a hard blocker. Until it lands,
 completion stays gated/WIP. There is no in-completion shortcut: flattening only at
 materialization time either reintroduces reducible nodes (breaking convergence) or fails
@@ -730,7 +792,7 @@ because the search and the arithmetic are separate steps.
 
 First, the reading that makes the rest of this section work: an AC node records a
 rewrite rule, and the rule is recovered by **two separate `find`s in two different
-places**. A node has no `find` of its own — only a *class* does. So:
+places**. A node has no `find` of its own; only a *class* does. So:
 
 ```
 rule of a node  =  +{ find(child₁), find(child₂), … }  →  find(class the node sits in)
@@ -739,26 +801,26 @@ rule of a node  =  +{ find(child₁), find(child₂), … }  →  find(class the
 
 `find` on the **children** builds the left side (the canonical sub-multiset); `find` on the
 **class** builds the right side (the single class the node reduces to). The set of
-rules is exactly the set of AC nodes — we build no separate rule store.
+rules is exactly the set of AC nodes; we build no separate rule store.
 
 A correction worth stating outright, because an earlier draft implied otherwise:
 **which representative the union-find picks for a class does not matter.** Rank-based,
-arbitrary, whatever — it washes out completely; the equalities the procedure decides
+arbitrary, whatever: it washes out completely; the equalities the procedure decides
 are identical regardless of which class member is the rep. Representative *selection*
 is not a thing to be careful about here. (It would matter only if we later wanted one
-canonical *printed* form for extraction — not for deriving equalities.) What *does*
+canonical *printed* form for extraction, not for deriving equalities.) What *does*
 need care is firing a kind of rule the union-find never fires; that is the next point.
 
-Recanonicalization already fires the node-rules — but only the *single-child* kind.
+Recanonicalization already fires the node-rules, but only the *single-child* kind.
 When a child's class moves, recanon swaps that one child for its `find` and rehashes;
 that is exactly rule-firing on `+{ find each child }`. What it never does is notice
 that a whole **sub-multiset** of a node's children is itself a known node equal to some
 class, and substitute *that*. Concretely: node `+{a,b,c}` with `+{a,b}` in class `p`.
-Recanon runs `find` on `a`, on `b`, on `c` — all atoms, nothing moves — and walks away;
+Recanon runs `find` on `a`, on `b`, on `c` (all atoms, nothing moves) and walks away;
 it never sees that the sub-multiset `{a,b}` equals `p`, so it never reaches `+{p,c}`. No
 choice of representative fixes this: the union-find simply has no operation that
-substitutes a *group* of children at once. **That missing operation — substitute an
-equal sub-multiset, not just an equal single child — is the entire fix** (§6 (A)/(B)).
+substitutes a *group* of children at once. **That missing operation, substitute an
+equal sub-multiset, not just an equal single child, is the entire fix** (§6 (A)/(B)).
 
 The search is rule-driven, not target-driven. It is tempting to picture it the
 other way: take a node `+M`, split it into `(part, rest)`, and probe the e-graph
@@ -784,7 +846,7 @@ for each partner +A = a in partners:
 We never look up a multiset, only individual shared elements; disjoint pairs (no
 shared element) are skipped, since their critical pair is trivial (§6). The collapse
 on `A ⊊ M` (marking `+M` `FLAG_AC_COLLAPSED`) and the normalize-before-merge in (B) are
-the non-optional steps §6b derives — without them this loop diverges.
+the non-optional steps §6b derives; without them this loop diverges.
 
 The `rest` machinery is the arithmetic, not the search. Once a (target `+M`, rule
 `+A`) pair is chosen, the substitution itself (remove the sub-multiset `A`, keep
@@ -812,7 +874,7 @@ The two reused pieces, at a different time than today:
 | Mechanism | Today (user-rule matching) | This rebuild pass |
 |---|---|---|
 | `by_contains` index | narrow candidates for a pattern with a bound child | pair an AC node with the nodes that share an element (substitution / superposition partners) |
-| `DecomposeAC`'s multiset-subtract + `rest` | enumerate sub-sums transiently, then discard | compute `(M − A) ⊎ {a}` for a chosen pair, normalize, materialize, merge — and on `A ⊊ M` mark `+M` `FLAG_AC_COLLAPSED` (collapse, §6b) |
+| `DecomposeAC`'s multiset-subtract + `rest` | enumerate sub-sums transiently, then discard | compute `(M − A) ⊎ {a}` for a chosen pair, normalize, materialize, merge, and on `A ⊊ M` mark `+M` `FLAG_AC_COLLAPSED` (collapse, §6b) |
 | per-node flag + skip in the active-set scan | `FLAG_SUBSUMED` hides a node from the matcher (user `(subsume …)`) | `FLAG_AC_COLLAPSED` retires a reducible rule from completion without deleting it or hiding it from the matcher (§6b) |
 
 The two layers stay separate: flattening and recanonicalization keep doing
@@ -824,7 +886,8 @@ demand-driven set of substituted nodes.
 
 The data structures map one-to-one onto Kapur's ground AC-CC framework (FSCD 2021),
 which flattens AC terms, introduces a constant per subterm, and maintains constant
-rules `c → ĉ` and f-monomial rules `f(M) → c`:
+rules `c → ĉ` and f-monomial rules `f(M) → c`. Kapur's "constant" is our e-class id;
+the word "constant" in this section and §12 means e-class id throughout.
 
 | Kapur (FSCD 2021) | Our e-graph |
 |---|---|
@@ -840,7 +903,7 @@ rules `c → ĉ` and f-monomial rules `f(M) → c`:
 
 So our rebuild is Kapur's General Congruence Closure (Algorithm 3) with the
 per-AC-symbol completion omitted: we have steps 1 and 2, and lack steps 3 and 4. The
-fix adds exactly those. Note step 4 is *two* things — substituting the reduct (fix
+fix adds exactly those. Note step 4 is *two* things: substituting the reduct (fix
 (A)) **and** retiring the now-reducible source rule (Collapse, §6b, realized by
 marking it `FLAG_AC_COLLAPSED`). An early draft of this chapter described only the
 substitution half; the collapse half is what makes the rule set a Dickson antichain
@@ -852,9 +915,9 @@ and is non-optional for termination (§6b, §10).
 // In rebuild(), per AC op f, to fixpoint, alongside recanonize_node.
 // Each ACTIVE AC e-node is the ground rule f(M) -> f(minmono(class(M))), oriented
 // larger -> smaller by the degree-lex monomial order ≫_f. The RHS is the class's
-// MINIMAL MONOMIAL (a multiset over existing constants), NOT the bare class id —
+// MINIMAL MONOMIAL (a multiset over existing constants), NOT the bare class id:
 // substituting a class-as-atom reintroduces a fresh constant each round and diverges (§6b).
-// INVARIANT: `active` holds only IRREDUCIBLE rules (no LHS ⊊ another LHS) — a
+// INVARIANT: `active` holds only IRREDUCIBLE rules (no LHS ⊊ another LHS), a
 // Dickson antichain. Collapse (below) maintains it; without it, diverges (§6b).
 
 // (B) Superposition critical pairs (Kapur Def. 4), over ACTIVE rules only.
@@ -871,7 +934,7 @@ for x in M.distinct() {
     }
 }
 
-// (A)+Collapse — the destructive step that keeps `active` an antichain (§6b).
+// (A)+Collapse: the destructive step that keeps `active` an antichain (§6b).
 // When rule f(A1) -> f(ra) is added, retire every active rule it makes reducible.
 for parent in active.by_contains-supersets(A1) {              // f(M) -> d with A1 ⊆ M
     if proper_subset(&A1, &parent.multiset()) {
@@ -887,7 +950,7 @@ for parent in active.by_contains-supersets(A1) {              // f(M) -> d with 
 
 // normalize_ac reduces a monomial to its NORMAL FORM (a multiset over existing
 // constants) by rewriting with EVERY applicable active rule f(A)->f(rA) (A ⊆ current,
-// substitute rA) to a fixpoint — every rule is oriented ≫_f so each step strictly
+// substitute rA) to a fixpoint; every rule is oriented ≫_f so each step strictly
 // shrinks in degree-lex and it terminates. It must use ALL current rules (clean AND
 // just-minted this round): a reduct still reducible by a same-round rule would persist
 // as a partner and re-open the divergence (§6b). Then probe/insert the normal form.
@@ -912,10 +975,10 @@ that choice is exactly what collapse needs and what keeps `active` a finite anti
 Two distinct roles:
 
 - **Orientation of each rule `+M = d`** (which side is the LHS): the union-find gives
-  this for free — the LHS is the multiset `+M`, the RHS is the canonical class `find(d)`.
+  this for free: the LHS is the multiset `+M`, the RHS is the canonical class `find(d)`.
   Here the original claim holds.
 - **Orientation *between* two rules** (when `+A` and `+M` are containment-comparable,
-  which collapses): this needs a total admissible monomial order `≫_f` — concretely
+  which collapses): this needs a total admissible monomial order `≫_f`, concretely
   **degree-lexicographic** (compare multiset size, ties broken by the total order on
   class ids), which satisfies Kapur's subterm + compatibility properties. The larger
   LHS is always the one retired (marked `FLAG_AC_COLLAPSED`). Without this the active set
@@ -966,25 +1029,51 @@ knowledge, so the comparison is done by the `EGraph::merge` wrapper (which sees 
 classes and the node store) and the result is written into the survivor's slot;
 `MergeInfo` carries the absorbed class's `ac_min` out for that.
 
-**The rule RHS is not always `ac_min`: an `atomic` flag rounds out the slot.** A class's
-normal-form representative is the size-1 monomial `{classid}` (the class used as a single
-atom) **whenever the class is referenced as a child of some node** (because then `+{classid}`
-is a real term smaller than any of its sums). This is load-bearing: the rule `+{a,b} → {c}`
-in §4b/§5b exists precisely because `c` is a child of other nodes; without the `{c}` RHS
-those critical pairs never fire. A single stored node id cannot encode `{classid}` (no node
-in the class has that monomial), and "becomes referenced as a child" flips on `add_use`, not
-on merge, so neither `ac_min` nor merge-only maintenance captures it alone. We therefore
-store a third field in the slot, `atomic: bool`, and the rule RHS is:
+**The rule RHS is not always `ac_min`: an `atomic` flag rounds out the slot.** The right
+side of a rule `+M → R` is the class's normal-form representative, its `≫_f`-least
+*usable* monomial. The size-1 monomial `{classid}` (the class used as a single atom) is a
+candidate for that representative, but only when it is **atomic-usable**, meaning `{classid}`
+actually denotes a node-grounded term. A class `c` is atomic-usable when either:
+
+- the class holds a **non-AC node** (a leaf constant, a `Plain`/`Lit` node, or an op of a
+  different kind); then `c` denotes that term directly; or
+- the class is **referenced as a child of some node**; then `c` already appears as an
+  element inside some other monomial, so `+{…c…}` exists and `{c}` is a usable element.
+
+If neither holds, a pure AC-sum class whose only members are `+`-monomials and which is
+nobody's child (for example a class created solely by a critical-pair merge), then
+`{classid}` is **not** atomic-usable: no node has the monomial `{c}`, so the representative
+must be the smallest actual `+`-monomial (`ac_min`). This is exactly the case where
+substituting `{classid}` as a fresh atom caused the class-as-atom divergence (§6b): using
+`{c}` there invents an element grounded in no node, injecting a fresh constant each round.
+
+**Why this is load-bearing.** The rules `+{a,b} → {c}` in §4b and §5b exist precisely
+because `c` is atomic-usable there (`c` is a child of other nodes). The `{c}` right side is
+what lets those rules superpose (§4b) and inter-reduce (§5b). If `c`'s RHS were instead its
+own monomial `{a,b}`, the rule would be the trivial `+{a,b} → +{a,b}` and those critical
+pairs would never fire; completion would silently lose the equalities it exists to derive.
+
+**Why it needs a stored flag.** "Atomic-usable" cannot be recovered from `ac_min` (a single
+stored node id): no node in a pure-sum class has the monomial `{classid}`, so the slot has
+no way to encode the atom representative. And "becomes referenced as a child" flips on
+`add_use` (when a parent node is built over the class), an add-time event, not a merge, so
+merge-only maintenance of `ac_min` cannot observe it either. We therefore store a third
+field in the slot, `atomic: bool`, and the rule RHS is:
 
 ```
-rhs(class) = if atomic(class) { {classid} } else { monomial_of(ac_min(class)) }
+rhs(class) = if atomic(class) { {classid} }      // size-1 atom, atomic-usable
+             else             { monomial_of(ac_min(class)) }
 ```
 
-`atomic` is set when the class gains a non-AC node and on every `add_use` (any parent
-reference makes `{classid}` a real term; this matches the old `child_set`), OR-combined on
-merge (`survivor.atomic |= absorbed.atomic`), and rolls back with the slot. So the slot is
-`{ use_list, ac_min, atomic }`; `atomic` rides the same `Tagged`/token machinery, and the
-RHS read stays O(1).
+`atomic` is set when the class gains a non-AC node and on every `add_use` (any child
+reference grounds `{classid}`, matching the old `child_set` semantics), OR-combined on merge
+(`survivor.atomic |= absorbed.atomic`), and rolls back with the slot via the existing token.
+So the slot is `{ use_list, ac_min, atomic }`; `atomic` rides the same `Tagged`/token
+machinery, and the RHS read stays O(1).
+
+Terminology: "atomic" here means the class can serve as a single element of a larger
+monomial, not "the class is a leaf." A compound sum like `+{a,b}` becomes atomic-usable the
+moment something references its class as a child; that is the point of the flag.
 
 One subtlety: at merge time the children of these candidate nodes are mid-cascade, so
 their canonical multisets can be momentarily stale. We therefore treat the stored slot as
@@ -1131,7 +1220,7 @@ locally confluent, the loop terminates), and Newman's Lemma then closes it.
   Dickson's Lemma makes every such antichain finite. So only finitely many rules can
   persist, and each merge strictly coarsens the finite class partition. **This step is
   load-bearing and conditional on collapse actually being performed** (§6b): "the loop
-  keeps `R` inter-reduced" is not automatic — it is the Collapse/subsumption operation
+  keeps `R` inter-reduced" is not automatic; it is the Collapse/subsumption operation
   doing it. An implementation that skips collapse has no antichain, and Dickson bounds
   nothing observable; it diverges in practice (§6b gives the trace). The termination
   conjecture is a conjecture *about the algorithm with collapse*, not about (A)+(B) alone.
