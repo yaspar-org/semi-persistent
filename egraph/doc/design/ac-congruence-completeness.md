@@ -966,6 +966,26 @@ knowledge, so the comparison is done by the `EGraph::merge` wrapper (which sees 
 classes and the node store) and the result is written into the survivor's slot;
 `MergeInfo` carries the absorbed class's `ac_min` out for that.
 
+**The rule RHS is not always `ac_min`: an `atomic` flag rounds out the slot.** A class's
+normal-form representative is the size-1 monomial `{classid}` (the class used as a single
+atom) **whenever the class is referenced as a child of some node** (because then `+{classid}`
+is a real term smaller than any of its sums). This is load-bearing: the rule `+{a,b} → {c}`
+in §4b/§5b exists precisely because `c` is a child of other nodes; without the `{c}` RHS
+those critical pairs never fire. A single stored node id cannot encode `{classid}` (no node
+in the class has that monomial), and "becomes referenced as a child" flips on `add_use`, not
+on merge, so neither `ac_min` nor merge-only maintenance captures it alone. We therefore
+store a third field in the slot, `atomic: bool`, and the rule RHS is:
+
+```
+rhs(class) = if atomic(class) { {classid} } else { monomial_of(ac_min(class)) }
+```
+
+`atomic` is set when the class gains a non-AC node and on every `add_use` (any parent
+reference makes `{classid}` a real term; this matches the old `child_set`), OR-combined on
+merge (`survivor.atomic |= absorbed.atomic`), and rolls back with the slot. So the slot is
+`{ use_list, ac_min, atomic }`; `atomic` rides the same `Tagged`/token machinery, and the
+RHS read stays O(1).
+
 One subtlety: at merge time the children of these candidate nodes are mid-cascade, so
 their canonical multisets can be momentarily stale. We therefore treat the stored slot as
 a *candidate hint*: completion confirms it on read, where it re-`find`s the children and
