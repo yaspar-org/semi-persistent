@@ -1,17 +1,100 @@
 # AC Congruence Completeness — Implementation Plan
 
-Status: **draft for review.** Nothing in this plan has been implemented yet. It
-turns the design spec into a concrete, code-grounded implementation strategy for
-this branch (`feature/ac-congruence-completeness`).
+Status: **partially implemented, gated off by default.** The completion algorithm
+(A inter-reduction + B superposition + collapse + the reduced-basis machinery) is
+implemented and passes its worked-example tests under both saturation strategies, but
+is **disabled by default** (`set_ac_complete`, opt-in) pending nested same-op
+**flattening** (`WF_flat`), which is the gate to turning it on. See §0 for the exact
+current state and next steps. This branch is `feature/ac-congruence-completeness`.
 
 - **What/why** (problem, fix, proof sketch): [AC Congruence Completeness](../design/ac-congruence-completeness.md).
 - **Status & verification staging** (the canonical summary): [A3 Future Work](../design/A3-future-work.md#ac-congruence-completeness-via-critical-pairs).
 - **Task breakdown** (the checklist this plan feeds): [tasks](ac-congruence-completeness-tasks.md).
 
-This plan does **not** restate the theory. It records (1) where the new code
-lands, (2) the one architectural decision that the spec leaves open against the
-real code, (3) the net-new primitives, and (4) the commit sequencing and test
-strategy. Read the spec §6–§9 first.
+This plan records (0) current state and next steps, (1) where the new code lands,
+(2) the architectural decisions, (3) the net-new primitives, and (4) the commit
+sequencing and test strategy. Read the design doc §0–§9 first.
+
+---
+
+## 0. Current state and next steps  ← START HERE
+
+### What is implemented and landed (all on this branch, full suite green)
+
+The completion pass exists in `egraph/src/egraph.rs::ac_complete_round`, called from
+`rebuild()` when `ac_complete` is enabled. The supporting machinery:
+
+- **Multiset primitives** (`ac_multiset.rs`): `multiset_disjoint/subset/subtract/union/lcm`,
+  `monomial_cmp` (degree-lex), `normalize_ms`, plus destination-passing `_into` forms
+  (no hot-loop allocation). [T1, S2]
+- **AC-op enumeration** (`registry.rs`): `is_ac` / `ac_ops`. [T2]
+- **(A) inter-reduction**: substitute a contained known sub-sum, materialize, merge. [T4]
+- **(B) superposition**: lcm of two overlapping rules, both reducts normalized to normal
+  form before merge. [T5]
+- **Convergence machinery** (the §6b divergence fix): orientation by `monomial_cmp`,
+  **minimal-monomial RHS** (never class-as-atom), **normalize-before-materialize**, and
+  **collapse** of reducible rules via a *distinct* `FLAG_AC_COLLAPSED` (NOT `FLAG_SUBSUMED`:
+  a collapsed node stays matchable, only leaves completion's active set; design §6b). [T5b]
+- **Per-class slot** (`classes.rs` `ClassData{use_list, ac_min, atomic}`): the rule RHS is
+  read O(1) from this slot (`{classid}` if `atomic`, else `ac_min`'s monomial), maintained
+  on merge (`fold_ac_class`), rolled back for free via the existing `SparseSetToken`. The
+  **read-time orientation guard** (`monomial_cmp(M, rhs) == Greater`) makes the best-effort
+  merge-time `ac_min` safe (design §9b axis-2a). [S1, S3a]
+- **Partner search via use-lists**: (B) finds partners through `iter_uses` (the
+  `by_contains` use-list), not an O(rules²) all-pairs scan; partner→rule lookup is a binary
+  search of the node-id-sorted `rules`. [S3b]
+- **Safety backstop**: `rebuild` aborts completion (debug_assert) if it adds >50k nodes,
+  so a divergence bug fails fast instead of OOMing.
+
+Worked-example tests, all under **both** naive and semi-naive (the egg harness runs both),
+all green: `ac_complete_containment` (§4a), `ac_complete_superposition` (§4b),
+`ac_complete_cancel` (§5b). Unit tests: the `ac_multiset` primitives, `ac_ops`, the
+`AcPartnerSnapshot`, `ac_collapsed_leaves_completion_set_but_stays_matchable` (flag
+separation), `ac_min_tracks_least_monomial_and_rolls_back` (slot maintenance + rollback).
+
+### The gate: completion is OFF by default
+
+`EGraph::ac_complete` defaults `false`; `rebuild` runs only ordinary atom-congruence unless
+opted in via `set_ac_complete(true)` (egg directive `;; AC_COMPLETE: on`). The blocker is
+**nested same-op flattening** (`WF_flat`, design §6b "Hard prerequisite"): completion can
+materialize `+f(+f(…), …)` nodes (a Kapur reduct keeps `class(+A)` as an element), and the
+matcher assumes flat AC terms (decomposing a nested node hits an unbound plan variable and
+panics). `ac_complete_nested_match.egg` **pins this**: completion ON + no flattening must
+panic; it flips to `EXPECT: ok` once flattening lands. So completion cannot be enabled by
+default until flattening is implemented.
+
+### Next steps, in priority order
+
+1. **Flattening (`WF_flat`), the gate.** Implement nested same-op flattening on the build
+   side (`egraph.rs::add` AC arm: when a child's class carries a same-op AC node, splice its
+   children into the parent before sort/coalesce) and the pattern side
+   (`sortcheck.rs`/`compile.rs` flatten passes). This is the [ac-flattening TODO], promoted
+   from "canonical-form nicety" to a hard completion prerequisite. **Acceptance:**
+   `(check (= (Add (Add a b) c) (Add a b c)))` holds; `ac_complete_nested_match` flips to
+   `EXPECT: ok` and the rule fires; then `set_ac_complete(true)` can become the default.
+   This is its own sizeable workstream (touches the hot `add`/canonization path and many
+   tests); do it on its own and re-run the full differential suite.
+
+2. **S3b-worklist (deferred completion-driver rewrite).** Replace the batch
+   round-to-fixpoint in `rebuild` with a completion worklist interleaved with the congruence
+   worklist: a node enters when materialized or its class changes; draining it runs its two
+   chores (§5c) for that node only. This removes the remaining per-round full `node_count()`
+   scans that rebuild `rules`/`targets`. **Risk:** it changes the driver and can reintroduce
+   divergence/non-termination; the batch round is currently correct and documented as a
+   correctness-equivalent stand-in (design §9a). Keep the §4a/§4b/§5b differential tests as
+   the oracle and the 50k backstop on. Lower priority than (1): it is performance, not a gate.
+
+3. **Verification (Verus soundness, then Lean completeness).** Per §7 staging: (a) the Verus
+   soundness invariant on `rebuild` (every rule/merge ⊆ ACCC(S)), extended to cover (A)/(B);
+   (b) the Lean abstract completeness theorem (Newman + Dickson + critical-pair lemma).
+   Independent of (1)/(2); can start once the algorithm shape is final.
+
+4. **Multi-AC-op support (later).** Single-op only today (one `ac_min`/`atomic` slot per
+   class). Multi-op is the same algorithm per-op; the storage upgrade is the pool of
+   `nb_ac_op`-wide rows behind the same accessor (design §9b axis-1 option 3). Not needed
+   until a multi-AC-symbol e-graph is required.
+
+[ac-flattening TODO]: ../design/09-pattern-matching.md
 
 ---
 
@@ -45,9 +128,12 @@ Kapur's two missing completion steps (FSCD 2021) to our AC handling:
 - Kapur's *unique reduced canonical presentation* across AC symbols (canonical
   signatures). We need the monomial order to orient collapse, but not the full
   machinery for a canonical normal-form presentation — deriving equalities is enough.
-- AC **flattening** of nested same-op terms (e.g. `+(a, +(b,c))` → `+{a,b,c}`).
-  This is a known separate gap ([ac-flattening TODO]) and is *not* part of this
-  fix. **Caveat below in §6** — it interacts with correctness of the partner search.
+- AC **flattening** of nested same-op terms (e.g. `+(a, +(b,c))` → `+{a,b,c}`) is a
+  separate workstream ([ac-flattening TODO]), but it turned out to be a **hard
+  prerequisite**, not an optional aside: without it completion crashes the matcher on
+  the nested nodes it materializes (see §0 step 1 and §6). It is the gate that keeps
+  completion off by default. So: out of scope for the *completion* code, but required
+  before completion can be enabled.
 - Saturation-loop termination. We only claim each single completion pass over the
   current finite AC-node set terminates (spec §10, Dickson). Productive user rules
   can still diverge; that is the rule set's concern.
@@ -56,7 +142,12 @@ Kapur's two missing completion steps (FSCD 2021) to our AC handling:
 
 ---
 
-## 2. The architectural decision the spec leaves open  ⚠️ NEEDS SIGN-OFF
+## 2. The architectural decision the spec left open  ✅ DECIDED: Option A, implemented
+
+**Resolved.** Completion is owned by `rebuild()` (Option A below); this is how
+`ac_complete_round` is implemented. The rest of this section records why, for the
+record. The partner search ended up driven by the class **use-lists** (`iter_uses`)
+rather than the matcher's `IndexStore`, which §0/S3b describe.
 
 The spec §9 writes the pass as living "in `rebuild()`… for x in M.distinct() { for
 partner in index.by_contains[x] ∩ index.by_op[f] }", and §9's "Index maintenance"
@@ -371,9 +462,12 @@ confluence metatheory in Verus.
 
 ---
 
-## 8. Commit sequencing
+## 8. Commit sequencing (historical — the original T-series staging)
 
-Each step builds and tests green before the next. Maps to [tasks](ac-congruence-completeness-tasks.md).
+Steps 1–6 below are **done** (commits in git log, T1/T2/T4/T5 + T5b for the convergence
+fix). Step 7 (Verus) and step 8 (docs, ongoing) plus the S-series refactor (S1 slot, S2
+DPS primitives, S3a/S3b) are the actual implementation history; the live "what's left" is
+§0, not this list. Kept for traceability. Each step built and tested green before the next.
 
 1. **Multiset primitives + tests** — `multiset_disjoint/subtract/union/lcm` (and `⊆`)
    on canonical `&[(G, Multiplicity)]`, with unit tests. Pure, no e-graph state. (T1)
@@ -410,10 +504,16 @@ primitives get their own `#[cfg(test)] mod`. The differential AC tests in
 
 ---
 
-## 10. Open questions for review
+## 10. Resolved questions (kept for the record)
 
-1. **Option A vs B** (§2) — confirm A.
-2. **Flattening** (§6) — land flattening first, or ship with the scoped completeness
-   claim? Recommend: ship scoped, flatten as a separate follow-up, state the bound.
-3. **Snapshot cost** (§5) — accept per-round full snapshot rebuild for v1? Recommend yes.
-4. Anything to add to the worked-example test set beyond §4a/§4b/§5b?
+These were the open questions; all are now decided. Current open work is in §0.
+
+1. **Option A vs B** (§2): **Option A** — completion owned by `rebuild`. Implemented.
+2. **Flattening** (§6): not a "scoped claim" choice — flattening is a **hard prerequisite**.
+   Completion is implemented but **gated off** until flattening lands (§0 step 1). The
+   matcher crashes on the nested nodes completion materializes without it.
+3. **Snapshot cost** (§5): moot — the partner search uses the class **use-lists**
+   (`iter_uses`), not a rebuilt `IndexStore` snapshot at all (§0 / S3b).
+4. **Worked-example test set**: §4a/§4b/§5b cover the three cases; `ac_complete_nested_match`
+   pins the flattening blocker. Add more once flattening lands and completion is on by default
+   (then the full `saturate.rs` differential suite applies with completion enabled).
