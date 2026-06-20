@@ -6340,6 +6340,36 @@ pub proof fn lemma_chain_keys_drop_last<L: NodeLayout>(arena: Seq<L::Node>, s: S
     }
 }
 
+/// The descent bridge: for an Inner tree `t`, the chain offset to child `cp`'s
+/// region equals the model keys of the first `cp` children:
+/// `chain_offset(tree_leaf_ids(t), leaf_id_offset(kids, cp)) ==
+/// forest_keys(kids.subrange(0, cp)).len()`. Combines lemma_chain_offset_prefix
+/// (offset == chain_keys prefix length), lemma_forest_leaf_ids_prefix (those
+/// leaf ids ARE the sub-forest's), and B2 on the sub-forest kids[0..cp]
+/// (chain_keys of its leaves == forest_keys). The accumulator law seek_leaf needs.
+pub proof fn lemma_chain_offset_child<L: NodeLayout>(arena: Seq<L::Node>, t: Tree, cp: int)
+    requires
+        t is Inner,
+        binds::<L>(arena, t),
+        0 <= cp <= t->Inner_kids.len(),
+    ensures
+        chain_offset::<L>(arena, crate::bplus_tree::tree_leaf_ids(t),
+            crate::bplus_tree::leaf_id_offset(t->Inner_kids, cp) as int)
+            == crate::bplus_tree::forest_keys(t->Inner_kids.subrange(0, cp)).len(),
+{
+    let kids = t->Inner_kids;
+    let lids = crate::bplus_tree::tree_leaf_ids(t);
+    let off = crate::bplus_tree::leaf_id_offset(kids, cp) as int;
+    assert(lids == crate::bplus_tree::forest_leaf_ids(kids));
+    crate::bplus_tree::lemma_leaf_id_offset_bound(kids, cp);   // off <= |lids|
+    lemma_chain_offset_prefix::<L>(arena, lids, off);          // offset == chain_keys(lids[0..off]).len
+    crate::bplus_tree::lemma_forest_leaf_ids_prefix(kids, cp); // lids[0..off] == forest_leaf_ids(kids[0..cp])
+    // B2 on the sub-forest: chain_keys(forest_leaf_ids(kids[0..cp])) == forest_keys(kids[0..cp]).
+    assert(forest_binds_l::<L>(arena, kids));                  // binds(t) Inner arm
+    lemma_forest_binds_subrange::<L>(arena, kids, 0, cp);      // sub-forest binds
+    lemma_chain_keys_eq_model_forest::<L>(arena, kids.subrange(0, cp));
+}
+
 
 /// Every in-order leaf of a `wf` MULTI-leaf tree is non-empty: when
 /// `tree_leaf_ids(tree@).len() >= 2`, the tree is an Inner node, so every leaf is
