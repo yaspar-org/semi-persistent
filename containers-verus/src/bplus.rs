@@ -98,6 +98,87 @@ pub open spec fn nil_link<L: NodeLayout>() -> nat {
     (<L::ArenaIdx as IndexLike>::max_nat() - 1) as nat
 }
 
+/// The seek target index: the number of model keys strictly below `t`. For a
+/// strictly-sorted model this is the position of the first key `>= t` (leapfrog's
+/// `seek` semantics: land on the least element not below the target). Defined as
+/// a count so it is monotone and total even when `t` is absent.
+pub open spec fn seek_target_idx(model: Seq<nat>, t: nat) -> int
+    decreases model.len()
+{
+    if model.len() == 0 {
+        0
+    } else if model[0] < t {
+        1 + seek_target_idx(model.drop_first(), t)
+    } else {
+        // strictly-sorted ⟹ once a key is >= t, all later keys are too.
+        0
+    }
+}
+
+/// For a strictly-sorted model, `seek_target_idx(model, t)` is exactly the split
+/// point: `model[i] < t` for `i < idx` and `t <= model[i]` for `idx <= i`. The
+/// characterization `seek` and `seek_leaf` are specified against.
+pub proof fn lemma_seek_target_idx_split(model: Seq<nat>, t: nat)
+    requires crate::bplus_tree::strictly_sorted(model),
+    ensures
+        ({
+            let idx = seek_target_idx(model, t);
+            &&& 0 <= idx <= model.len()
+            &&& (forall|i: int| 0 <= i < idx ==> #[trigger] model[i] < t)
+            &&& (forall|i: int| idx <= i < model.len() ==> t <= #[trigger] model[i])
+        }),
+    decreases model.len(),
+{
+    if model.len() == 0 {
+    } else if model[0] < t {
+        let df = model.drop_first();
+        assert(crate::bplus_tree::strictly_sorted(df)) by {
+            assert forall|i: int, j: int| 0 <= i < j < df.len() implies #[trigger] df[i] < #[trigger] df[j] by {
+                assert(df[i] == model[i + 1] && df[j] == model[j + 1]);
+            }
+        }
+        lemma_seek_target_idx_split(df, t);
+        let idx = seek_target_idx(model, t);
+        assert(idx == 1 + seek_target_idx(df, t));
+        assert forall|i: int| 0 <= i < idx implies #[trigger] model[i] < t by {
+            if i == 0 {} else { assert(df[i - 1] == model[i]); }
+        }
+        assert forall|i: int| idx <= i < model.len() implies t <= #[trigger] model[i] by {
+            assert(df[i - 1] == model[i]);
+        }
+    } else {
+        // model[0] >= t; strictly-sorted ⟹ model[i] >= model[0] >= t for all i.
+        assert forall|i: int| 0 <= i < model.len() implies t <= #[trigger] model[i] by {
+            if i > 0 { assert(model[0] < model[i]); }
+        }
+    }
+}
+
+/// A split point of a strictly-sorted model is unique: if `r` satisfies the same
+/// "left `< t`, right `>= t`" characterization as `seek_target_idx`, then `r ==
+/// seek_target_idx(model, t)`. Lets seek/seek_leaf prove they reach the target
+/// index by exhibiting ANY split point (e.g. chain_offset(m) + leaf_find_ge).
+pub proof fn lemma_seek_target_idx_unique(model: Seq<nat>, t: nat, r: int)
+    requires
+        crate::bplus_tree::strictly_sorted(model),
+        0 <= r <= model.len(),
+        forall|i: int| 0 <= i < r ==> #[trigger] model[i] < t,
+        forall|i: int| r <= i < model.len() ==> t <= #[trigger] model[i],
+    ensures r == seek_target_idx(model, t),
+{
+    lemma_seek_target_idx_split(model, t);
+    let idx = seek_target_idx(model, t);
+    // both r and idx split the sorted seq; if r < idx then model[r] < t (idx side)
+    // AND t <= model[r] (r side at r, since r < idx <= len) — contradiction; sym.
+    if r < idx {
+        assert(model[r] < t);       // idx's left side at r (r < idx)
+        assert(t <= model[r]);      // r's right side at r (r <= r < len)
+    } else if idx < r {
+        assert(model[idx] < t);     // r's left side at idx (idx < r)
+        assert(t <= model[idx]);    // idx's right side at idx
+    }
+}
+
 /// Every model value is a genuine `K`-image: `< K::id_bound()`. The refinement
 /// the `K -> K::Index` storage coercion drops (the stored `Index` word type is
 /// wider than the id's valid range), re-asserted at the model. Insert preserves
