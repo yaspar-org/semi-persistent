@@ -72,14 +72,16 @@ pub fn multiset_subset<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> bool {
     true
 }
 
-/// Multiset difference `a − b`: per-class multiplicity subtraction, clamped at
-/// zero, with zero results dropped. Classes in `b` but not `a` are ignored.
+/// Multiset difference `a − b` into `out` (cleared first): per-class multiplicity
+/// subtraction, clamped at zero, with zero results dropped. Classes in `b` but not
+/// `a` are ignored. `out` must not alias `a` or `b`.
 ///
-/// Used to compute the residual `M − A` when substituting a known sub-sum.
-pub fn multiset_subtract<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+/// Destination-passing form for the completion hot loop (design §9a). Computes the
+/// residual `M − A` when substituting a known sub-sum.
+pub fn multiset_subtract_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b: &[Pair<G>]) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
-    let mut out = Vec::with_capacity(a.len());
+    out.clear();
     let (mut i, mut j) = (0, 0);
     while i < a.len() {
         if j < b.len() && b[j].0 < a[i].0 {
@@ -99,14 +101,21 @@ pub fn multiset_subtract<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pai
             i += 1;
         }
     }
+}
+
+/// Allocating wrapper over [`multiset_subtract_into`].
+pub fn multiset_subtract<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::with_capacity(a.len());
+    multiset_subtract_into(&mut out, a, b);
     out
 }
 
-/// Multiset union (sum) `a ⊎ b`: multiplicities of shared classes add.
-pub fn multiset_union<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+/// Multiset union (sum) `a ⊎ b` into `out` (cleared first): multiplicities of shared
+/// classes add. `out` must not alias `a` or `b`.
+pub fn multiset_union_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b: &[Pair<G>]) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
-    let mut out = Vec::with_capacity(a.len() + b.len());
+    out.clear();
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
         match a[i].0.cmp(&b[j].0) {
@@ -127,16 +136,22 @@ pub fn multiset_union<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G
     }
     out.extend_from_slice(&a[i..]);
     out.extend_from_slice(&b[j..]);
+}
+
+/// Allocating wrapper over [`multiset_union_into`].
+pub fn multiset_union<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    multiset_union_into(&mut out, a, b);
     out
 }
 
-/// Multiset lcm (least common multiple) `(a ⊎ b) − (a ∩ b)`: per-class **maximum**
-/// multiplicity. This is the superposition multiset `AB` (spec §6 fix (B)) — the
-/// smallest multiset containing both `a` and `b`.
-pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+/// Multiset lcm (least common multiple) `(a ⊎ b) − (a ∩ b)` into `out` (cleared first):
+/// per-class **maximum** multiplicity, the superposition multiset `AB` (spec §6 fix (B)),
+/// the smallest multiset containing both `a` and `b`. `out` must not alias `a` or `b`.
+pub fn multiset_lcm_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b: &[Pair<G>]) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
-    let mut out = Vec::with_capacity(a.len() + b.len());
+    out.clear();
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
         match a[i].0.cmp(&b[j].0) {
@@ -157,6 +172,12 @@ pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>>
     }
     out.extend_from_slice(&a[i..]);
     out.extend_from_slice(&b[j..]);
+}
+
+/// Allocating wrapper over [`multiset_lcm_into`].
+pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    multiset_lcm_into(&mut out, a, b);
     out
 }
 
@@ -190,21 +211,32 @@ pub struct NfRule<G> {
 /// Normalize a monomial to a fixpoint by AC rewriting (Kapur Def. 3): while some rule
 /// `+A → +B` has `A ⊆ ms`, replace `A` by `B` (`ms := (ms − A) ⊎ B`). Every rule is
 /// oriented `A ≫ B` ([`monomial_cmp`]), so each step strictly lowers `ms` in the
-/// degree-lex order (compatibility) and the loop terminates; the result is irreducible.
+/// degree-lex order (compatibility) and the loop terminates; the irreducible result is
+/// left in `out`.
 ///
-/// `rules` must already be filtered to the relevant AC op, and each must satisfy
-/// `monomial_cmp(lhs, rhs) == Greater` (the caller builds them that way). This is the
-/// "normalize the reduct before materializing" step whose omission diverges (§6b).
-pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
-    let mut cur = ms.to_vec();
-    // Defensive iteration cap: each rewrite strictly lowers cur in the well-founded
+/// Destination-passing: `out` holds the result (seeded from `ms`), `scratch` is a
+/// caller-owned ping-pong buffer; neither may alias `ms`. No per-rewrite allocation
+/// (design §9a). `rules` must already be filtered to the relevant AC op, and each must
+/// satisfy `monomial_cmp(lhs, rhs) == Greater` (the caller builds them that way). This is
+/// the "normalize the reduct before materializing" step whose omission diverges (§6b).
+pub fn normalize_ms_into<G: Copy + Ord>(
+    out: &mut Vec<Pair<G>>,
+    scratch: &mut Vec<Pair<G>>,
+    ms: &[Pair<G>],
+    rules: &[NfRule<G>],
+) {
+    out.clear();
+    out.extend_from_slice(ms);
+    // Defensive iteration cap: each rewrite strictly lowers `out` in the well-founded
     // degree-lex order, but guard against a mis-oriented rule slipping in.
-    let mut guard = 4 * (multiset_size(&cur) as usize + 1);
+    let mut guard = 4 * (multiset_size(out) as usize + 1);
     'outer: loop {
         for rule in rules {
             debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, &cur) {
-                cur = multiset_union(&multiset_subtract(&cur, &rule.lhs), &rule.rhs);
+            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
+                multiset_subtract_into(scratch, out, &rule.lhs);
+                multiset_union_into(out, scratch, &rule.rhs);
                 guard = guard.saturating_sub(1);
                 if guard == 0 {
                     break 'outer;
@@ -214,7 +246,14 @@ pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<P
         }
         break;
     }
-    cur
+}
+
+/// Allocating wrapper over [`normalize_ms_into`].
+pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::new();
+    let mut scratch = Vec::new();
+    normalize_ms_into(&mut out, &mut scratch, ms, rules);
+    out
 }
 
 #[cfg(test)]
@@ -354,5 +393,34 @@ mod tests {
         let ab = multiset_lcm(&a, &b);
         let residual = multiset_subtract(&ab, &a);
         assert_eq!(multiset_union(&residual, &a), ab);
+    }
+
+    #[test]
+    fn into_variants_match_allocating_and_reuse_buffer() {
+        let a = ms(&[(1, 1), (2, 2), (4, 1)]);
+        let b = ms(&[(2, 1), (4, 1), (5, 1)]);
+        // A pre-dirtied buffer must be cleared, and each _into matches its wrapper.
+        let mut buf = ms(&[(99, 7)]);
+        multiset_subtract_into(&mut buf, &a, &b);
+        assert_eq!(buf, multiset_subtract(&a, &b));
+        multiset_union_into(&mut buf, &a, &b);
+        assert_eq!(buf, multiset_union(&a, &b));
+        multiset_lcm_into(&mut buf, &a, &b);
+        assert_eq!(buf, multiset_lcm(&a, &b));
+    }
+
+    #[test]
+    fn normalize_ms_into_matches_and_reuses() {
+        // Rules: {1,2}→{3} and {3,4}→{5}, so {1,2,4} → {3,4} → {5}.
+        let rules = vec![
+            NfRule { lhs: ms(&[(1, 1), (2, 1)]), rhs: ms(&[(3, 1)]) },
+            NfRule { lhs: ms(&[(3, 1), (4, 1)]), rhs: ms(&[(5, 1)]) },
+        ];
+        let input = ms(&[(1, 1), (2, 1), (4, 1)]);
+        let mut out = ms(&[(99, 3)]); // pre-dirtied
+        let mut scratch = ms(&[(88, 2)]); // pre-dirtied
+        normalize_ms_into(&mut out, &mut scratch, &input, &rules);
+        assert_eq!(out, ms(&[(5, 1)]));
+        assert_eq!(out, normalize_ms(&input, &rules));
     }
 }
