@@ -837,6 +837,9 @@ where
                 });
             }
         }
+        // Built in ascending node-id order, so `rules` is sorted by `node`. The (B)
+        // partner search binary-searches it by node id; keep that invariant true.
+        debug_assert!(rules.windows(2).all(|w| w[0].node < w[1].node));
 
         // Expand a multiset to a flat child list; `add` re-sorts and re-coalesces.
         let materialize = |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)]| -> Cfg::G {
@@ -914,18 +917,51 @@ where
             ));
         }
 
-        // (B) Superposition critical pairs over pairs of *rules* sharing ≥1 element but
-        // neither containing the other (overlap). Both reducts are normalized before merge.
+        // (B) Superposition critical pairs over pairs of *rules* sharing ≥1 child class,
+        // neither containing the other (overlap). Partners are found via the use-lists
+        // (`iter_uses`), not an O(rules²) all-pairs scan: a partner of rule `+M` must
+        // share a child with `M`, so it appears in some `iter_uses(x)` for `x ∈ M`. `rules`
+        // is built in node-id order, so it is sorted by `node`; look a partner's rule up by
+        // binary search (no map, no per-round allocation). Each unordered pair is processed
+        // once (`ti.node < partner.node`). Both reducts are normalized before merge.
+        let mut partner_buf: Vec<Cfg::G> = Vec::new();
         for ti in 0..rules.len() {
-            for pi in (ti + 1)..rules.len() {
-                if rules[ti].op != rules[pi].op {
+            let op_u = rules[ti].op;
+            let op = Cfg::O::from_usize(op_u);
+            let m_node = rules[ti].node;
+
+            // Gather candidate partner nodes from the use-lists of M's distinct children.
+            partner_buf.clear();
+            for &(x, _) in &rules[ti].lhs {
+                if let Some(x_repr) = self.classes.repr_id(self.classes.find_const(x)) {
+                    for p in self.classes.iter_uses(x_repr) {
+                        partner_buf.push(p);
+                    }
+                }
+            }
+            partner_buf.sort_unstable();
+            partner_buf.dedup();
+
+            for k in 0..partner_buf.len() {
+                let p_node = partner_buf[k];
+                // Process each unordered pair once; skip self.
+                if p_node <= m_node {
                     continue;
                 }
-                let op = Cfg::O::from_usize(rules[ti].op);
+                if self.node_flags(p_node) & inactive != 0 || self.node_op(p_node) != op {
+                    continue;
+                }
+                // The partner must itself be a rule: binary-search the sorted `rules`.
+                let Ok(pi) = rules.binary_search_by(|r| r.node.cmp(&p_node)) else {
+                    continue;
+                };
                 let m = &rules[ti].lhs;
                 let a = &rules[pi].lhs;
-                if multiset_disjoint(a, m) || multiset_subset(a, m) || multiset_subset(m, a) {
-                    continue; // disjoint => trivial; containment handled by (A′) normalize
+                // Shared by construction; skip the non-overlap / containment cases
+                // (containment is handled by the (A′) normalize pass).
+                debug_assert!(!multiset_disjoint(a, m));
+                if multiset_subset(a, m) || multiset_subset(m, a) {
+                    continue;
                 }
                 let ab = multiset_lcm(m, a);
                 let r1 = crate::ac_multiset::multiset_union(
