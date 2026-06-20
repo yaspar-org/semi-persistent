@@ -1007,6 +1007,60 @@ fixpoint is the single shared worklist emptying, not an outer round counter. Fai
 `by_contains` snapshot were a correctness-equivalent but allocating stand-in for this;
 the incremental form is the intended one.
 
+## 9b. Design alternatives (recorded so we do not re-derive them)
+
+Two **orthogonal** axes came up while designing the `ac_min` storage. They are
+independent: pick one option from each. This subsection records all of them, with why,
+so the choice is not re-litigated later.
+
+### Axis 1: how the per-(class, op) minimum monomial is stored
+
+The rule RHS is a class's `≫_f`-least monomial, read O(1)-often by completion. The
+minimum is per *(class, op)* because a class can hold monomials of several AC symbols
+(`a+b = a*b`).
+
+| Option | Storage | Reads | Multi-op? | Verdict |
+|---|---|---|---|---|
+| **1. Single-op slot** | one extra `DenseId` widened into the e-class `SparseSet` value (`{use_list, ac_min}`) | O(1) | no (one slot holds one op's min) | **Ship now.** Covers every test and all of §0/§5c. |
+| **2. Multi-op, use-list walk** | none (recompute) | O(class size) per read | yes, for free (filter the walk by op) | Rejected. Correct, zero storage, but turns each RHS/normalize read into a class scan, reintroducing the per-query cost §9a exists to remove. |
+| **3. Multi-op, pool** | `ac_min` is an offset into a flat `pool` of `nb_ac_op`-wide rows; merge does an element-wise min of two rows | O(1) | yes | **Later.** The vectorization of option 1; one structure, backtracked whole, no per-class heap alloc. Slots behind the same `min_mono(op, class)` accessor, so callers do not change. Add when a multi-AC-symbol e-graph is actually needed. |
+
+Multi-op is **not** algorithmically harder than single-op (Kapur's multi-symbol
+algorithm is the single-symbol loop run independently per op, sharing only constants; the
+union-find dissolves his one cross-symbol "shared constant with two normal forms" case,
+that being just one e-class holding a `+`-node and a `*`-node with the same `find`). So the
+axis is purely *storage*: 1 and 3 differ only in whether the slot holds one op's min or a
+row of per-op minima; 2 trades all storage for a scan. Distributivity (`*` over `+`) is a
+user rewrite rule (Kapur §6, Gröbner), **not** AC-CC, and is out of scope for all three.
+
+### Axis 2: how minimal the stored RHS is guaranteed to be
+
+`monomial_cmp` depends on `find()` of a node's children, which are mid-flight during a
+merge cascade, so an O(1)-on-merge `ac_min` can be momentarily **non-minimal**. What that
+does, precisely (a rule is `+M → R` with `R = ac_min`):
+
+- A non-minimal `R` is **not** a soundness, termination, or blowup risk. Termination rests
+  on the **LHS** antichain (collapse keeps no LHS ⊆ another), which does not involve `R`;
+  and a non-minimal `R` is still a monomial over **existing** constants, so it cannot grow
+  the constant set (the actual divergence we hit was *class-as-atom*, injecting a fresh
+  constant, which is a different thing). A non-minimal basis is *larger than ideal* (more
+  rules, longer reducts, more inert collapsed nodes), but it **converges**.
+- The one genuine hazard is **mis-orientation**: if the stored `R` is *bigger* than `M`
+  (`M ≺ R`), the rule points the growing way and normalization loops. This is prevented
+  by a **mandatory O(1) read-time orientation guard**: emit `+M → R` only if `M ≫ R`
+  (else `M` is itself the smaller one: it is the normal form, not a rule). The guard runs
+  at the read site, where finds are settled, so it is exact regardless of slot staleness.
+
+| Option | Guarantee | Cost | Verdict |
+|---|---|---|---|
+| **(a) Best-effort + orientation guard** | RHS may be non-minimal, but every rule is correctly oriented (`M ≫ R`) | O(1) merge update; O(1) guard per read | **Ship now.** Termination-safe; at worst a slightly larger basis. |
+| **(b) Exact minimum** | RHS is always the true class minimum (fully reduced basis) | must refresh `ac_min` at **recanonicalization** too, not just merge: merging a class changes the canonical multiset of nodes that had it as a *child* (reached via use-list), one of which may become its own class's new min. Hooks `recanonize_node`. | **Later, if measured.** A reduced-basis *quality* optimization, not a correctness need. |
+
+The orientation guard in (a) is **mandatory, not optional**: it is what makes a stale
+hint safe. (b) only tightens the basis; it does not fix a blowup, because (a) does not have
+one. We ship **1 + (a)**; 3 and (b) are the later performance/quality refinements, each
+behind a stable accessor so adopting them does not churn callers.
+
 ## 10. Why we conjecture the fix restores completeness
 
 Everything below is a conjecture about the proposed algorithm of §6–9, not an
