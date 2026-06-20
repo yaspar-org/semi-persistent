@@ -2270,15 +2270,63 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         }
     }
 
-    /// `find_ge` over a leaf node's keys: first index `i` with `keys[i] >= word`.
-    #[verifier::external_body]
-    fn leaf_find_ge(&self, node: &L::Node, word: L::Word) -> usize {
+    /// `find_ge` over a leaf node's keys: first index `r` with `keys[r] >= word`.
+    /// Binary search over the sorted key view; returns the split point: everything
+    /// left of `r` is `< word`, everything from `r` on is `>= word`. `r <= count`.
+    fn leaf_find_ge(&self, node: &L::Node, word: L::Word) -> (r: usize)
+        requires
+            L::node_wf(*node),
+            L::is_leaf_spec(*node),
+            // the leaf's keys are strictly sorted (its tree_wf leaf arm) — what
+            // lets the binary search extend keys[mid] >= word to all of keys[mid..].
+            crate::bplus_tree::strictly_sorted(
+                Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat())),
+        ensures
+            r <= L::count_spec(*node),
+            forall|i: int| 0 <= i < r ==> (#[trigger] L::keys_view(*node)[i]).as_nat() < word.as_nat(),
+            forall|i: int| r <= i < L::count_spec(*node) ==> word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat(),
+    {
         let n = L::count(node);
         let mut lo: usize = 0;
         let mut hi: usize = n;
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if L::key(node, mid).lt(word) { lo = mid + 1; } else { hi = mid; }
+        let ghost ks = Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat());
+        proof { L::lemma_keys_view_len(*node); }
+        while lo < hi
+            invariant
+                lo <= hi <= n,
+                L::node_wf(*node),
+                n as nat == L::count_spec(*node),
+                L::keys_view(*node).len() == n as nat,
+                ks == Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat()),
+                ks.len() == n as nat,
+                crate::bplus_tree::strictly_sorted(ks),
+                forall|i: int| 0 <= i < n ==> ks[i] == (#[trigger] L::keys_view(*node)[i]).as_nat(),
+                // everything left of lo is < word; everything from hi on is >= word.
+                forall|i: int| 0 <= i < lo ==> (#[trigger] L::keys_view(*node)[i]).as_nat() < word.as_nat(),
+                forall|i: int| hi <= i < n ==> word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat(),
+            decreases hi - lo,
+        {
+            let mid = lo + (hi - lo) / 2;  // lo <= mid < hi <= n, so mid < count.
+            assert(mid < n);
+            assert((mid as nat) < L::count_spec(*node));
+            let kmid = L::key(node, mid);
+            let lt = kmid.lt(word);
+            proof {
+                <L::Word as IndexLike>::lemma_order_is_as_nat(kmid, word);
+                assert(kmid == L::keys_view(*node)[mid as int]);
+            }
+            if lt {
+                lo = mid + 1;
+            } else {
+                // keys[mid] >= word, and sorted ⟹ keys[i] >= keys[mid] >= word for i >= mid.
+                proof {
+                    assert forall|i: int| mid <= i < n implies
+                        word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat() by {
+                        if mid < i { assert(ks[mid as int] < ks[i]); }  // strictly_sorted
+                    }
+                }
+                hi = mid;
+            }
         }
         lo
     }
