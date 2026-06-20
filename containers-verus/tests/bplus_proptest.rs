@@ -743,3 +743,67 @@ fn oracle_seek_arbitrary_targets() {
     }
     println!("oracle_seek_arbitrary_targets: OK");
 }
+
+/// Fast-path stress: a SINGLE cursor seeking a long sequence of arbitrary targets
+/// WITHOUT re-`new`-ing between seeks — so each `seek` starts from the position
+/// the previous one left (the `self.node != NIL` fast-path branch in production's
+/// seek, and the "already positioned" case for the verified seek). Each result is
+/// checked against the sorted oracle (least key >= target), and a step() after a
+/// landed seek must yield the next key in order. This is the path the
+/// always-fresh-cursor tests above do not directly exercise.
+#[test]
+fn seek_from_arbitrary_positions() {
+    for &count in &[50usize, 500, 3000] {
+        for seed in 0..4u64 {
+            let keys = arbitrary_keys(count, seed ^ 0x5EEc);
+            let mut oracle: HashSet<u32> = HashSet::new();
+            let mut t = Tree::new();
+            for &x in &keys {
+                t.insert_general(key(x));
+                oracle.insert(x);
+            }
+            let mut sorted: Vec<u32> = oracle.iter().copied().collect();
+            sorted.sort_unstable();
+
+            // reuse ONE cursor across all targets — interleaving forward, backward,
+            // and repeated seeks so the cursor enters seek from every kind of state.
+            let mut c = BPlusCursor::new(&t);
+            let targets = arbitrary_keys(800, seed ^ 0xC0FFEE);
+            for (i, &target) in targets.iter().enumerate() {
+                c.seek(key(target));
+                let want = sorted.iter().copied().find(|&v| v >= target);
+                match c.key() {
+                    Some(k) => {
+                        let v = k.index() as u32;
+                        assert_eq!(
+                            Some(v), want,
+                            "count={count} seed={seed} step {i}: seek({target}) from a \
+                             prior position landed on {v}, oracle wants {want:?}"
+                        );
+                        // step() after a landed seek yields the next sorted key (or None).
+                        let next_want = sorted.iter().copied().find(|&w| w > v);
+                        c.step();
+                        match c.key() {
+                            Some(k2) => assert_eq!(
+                                Some(k2.index() as u32), next_want,
+                                "count={count} seed={seed} step {i}: step after seek({target}) \
+                                 -> {}, want {next_want:?}", k2.index()
+                            ),
+                            None => assert_eq!(
+                                next_want, None,
+                                "count={count} seed={seed} step {i}: step after seek({target}) \
+                                 exhausted but oracle has a larger key {next_want:?}"
+                            ),
+                        }
+                    }
+                    None => assert_eq!(
+                        want, None,
+                        "count={count} seed={seed} step {i}: seek({target}) from a prior \
+                         position exhausted but oracle has a >= element {want:?}"
+                    ),
+                }
+            }
+        }
+    }
+    println!("seek_from_arbitrary_positions: OK");
+}
