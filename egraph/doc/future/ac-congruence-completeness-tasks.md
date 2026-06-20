@@ -1,21 +1,24 @@
 # AC Congruence Completeness — Task Breakdown
 
-Status: **draft for review.** Companion checklist to the
-[implementation plan](ac-congruence-completeness-plan.md); theory in the
-[design spec](../design/ac-congruence-completeness.md); status summary in
+> **STATUS (live record is [plan §0](ac-congruence-completeness-plan.md#0-current-state-and-next-steps)).**
+> T1–T5b are **done** (algorithm + convergence machinery), plus the S-series refactor
+> (S1 per-class slot, S2 DPS primitives, S3a slot-driven RHS, S3b use-list partners).
+> Completion is implemented but **gated off** pending **flattening** (`WF_flat`), the gate
+> to enabling it. Remaining: flattening (the gate), the S3b worklist-driver rewrite
+> (deferred, performance), T7 Verus soundness, L1 Lean completeness. The checkboxes below
+> are the original plan; defer to plan §0 for current truth.
+
+Companion checklist to the [implementation plan](ac-congruence-completeness-plan.md);
+theory in the [design spec](../design/ac-congruence-completeness.md); status summary in
 [A3](../design/A3-future-work.md#ac-congruence-completeness-via-critical-pairs).
 
-Each task is one reviewable commit (or a tight cluster), builds and tests green
-before the next. **Blocked on the two review decisions in plan §2 (Option A) and §6
-(flattening).** Do not start T4+ until those are signed off.
-
-Legend: ☐ not started · ⊘ blocked on review · → depends on.
+Legend: ☑ done · ☐ not started · ⊘ blocked · → depends on.
 
 ---
 
 ## Foundations (no e-graph state — safe to start once Option A is confirmed)
 
-### T1 — Multiset algebra primitives  ☐
+### T1 — Multiset algebra primitives  ☑
 Add pure helpers over canonical AC child slices `&[(G, Multiplicity)]` (sorted by
 `G`, multiplicities summed — the form `ACCanon::canonize` produces, `src/canon.rs:87`):
 - `multiset_disjoint(a, b) -> bool`
@@ -28,7 +31,7 @@ Add pure helpers over canonical AC child slices `&[(G, Multiplicity)]` (sorted b
 `subtract` then `union` round-trips; multiplicity > 1 cases. Pure unit tests, own module.
 **Acceptance:** `cargo test` green; no e-graph dependency.
 
-### T2 — AC-op iterator helper  → none  ☐
+### T2 — AC-op iterator helper  → none  ☑
 Add a helper yielding registered op ids with `OpKind::AC{..}` (`src/registry.rs:29-63`;
 registry exposes only `len()`/`info(id)` at `:131,256` today — no `is_ac`, no iter).
 **Tests:** a fixture registering AC + ACI + A + Normal ops returns exactly the AC ids.
@@ -38,7 +41,7 @@ registry exposes only `len()`/`info(id)` at `:131,256` today — no `is_ac`, no 
 
 ## Search infrastructure
 
-### T3 — AC-node partner snapshot  → T2  ☐
+### T3 — AC-node partner snapshot  → T2  ☑ (built; superseded by use-list search in S3b)
 Build a per-round snapshot: `by_contains_ac` (child class repr → AC nodes of op `f`
 containing it) and `by_op_ac`, restricted to AC ops, skipping `FLAG_SUBSUMED`.
 Mirror the variadic `by_contains` slice of `IndexStore::build_from`
@@ -52,7 +55,7 @@ disjoint class.
 
 ## The completion steps (⊘ blocked on plan §2 Option-A sign-off)
 
-### T4 — (A) inter-reduction in `rebuild`  → T1, T3  ⊘
+### T4 — (A) inter-reduction in `rebuild`  → T1, T3  ☑
 Wire the completion round into `rebuild()` per Option A (plan §2, §4): after the
 existing worklist closure drains, build the snapshot (T3), and for each AC node
 `+M=d` and partner `+A=a` with `A ⊆ M`, materialize `+((M−A) ⊎ {a})` via the
@@ -63,7 +66,7 @@ existing worklist closure drains, build the snapshot (T3), and for each AC node
 **Acceptance:** green; the §4a equality is derived; no spurious merges in existing
 `ac_congruence`/`ac_multiplicity_no_false_collision` tests.
 
-### T5 — (B) superposition / critical pairs  → T4  ⊘  ⚠️ NEEDS collapse+ordering (T5b)
+### T5 — (B) superposition / critical pairs  → T4  ☑ (with T5b)
 Add the overlap branch: for partners that overlap but neither contains the other,
 build `AB = lcm(M, A)`, **normalize** both reducts `(AB−M)⊎{rm}` and `(AB−A)⊎{ra}` to
 normal form (where `rm`/`ra` are the partners' **minimal-monomial** RHSs, NOT bare
@@ -76,7 +79,7 @@ existing AC differential tests (`src/saturate.rs:1373-1908`) still pass.
 **NOTE:** the naive form of this (merge both raw reducts, no collapse/normalize)
 **diverges** (~5x nodes/round) — see T5b and design §6b. T5 is not complete without T5b.
 
-### T5b — Collapse + orientation to make (B) converge  → T5  ⊘
+### T5b — Collapse + orientation to make (B) converge  → T5  ☑
 The three load-bearing corrections from design §6b, without which (B) diverges:
 1. **Collapse:** on `A ⊊ M`, after the (A) merge, mark `+M` `FLAG_AC_COLLAPSED`
    (`EGraph::set_ac_collapsed`) so it leaves the active set → active LHSs stay a Dickson
@@ -95,7 +98,7 @@ hand-checkable example from design §6b (`{a,b,c}→s, {a,b}→t` ⇒ canonical 
 **Acceptance:** all completion egg tests green under both strategies; no `>50k`-growth
 backstop tripped; `|active|` does not grow unboundedly on any test input.
 
-### T6 — Fixpoint, eval-strategy, rollback, and proof-path hardening  → T5  ⊘
+### T6 — Fixpoint, eval-strategy, rollback, and proof-path hardening  → T5  ◐ (fixpoint+rollback+differential done; PROOFS-path hardening pending)
 Harden the round loop and prove the evaluation-strategy interaction (plan §2b):
 
 - **Joint fixpoint (R2):** multi-round convergence (a merge in round k creates a node
