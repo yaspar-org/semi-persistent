@@ -943,16 +943,28 @@ neither `FLAG_AC_COLLAPSED` nor `FLAG_SUBSUMED`; a rule's left side is read on d
 (`by_contains[x]`) is a filtered walk of child class `x`'s **use-list**, the same
 `classes.uses()` arena that ordinary congruence already maintains, not a rebuilt index.
 
-**Per-class minimum monomial lives in the e-class sparse set.** The rule right-hand side
-is the class's `≫_f`-least monomial (§9), and completion needs it per class, maintained
-across merges, and rolled back on `restore`. `EClasses` already stores per-class data in
-a `SparseSet` keyed by the class's `repr_id` (the use-list id sits there). Add one more
-per-class slot, a single node id (`DenseId`), holding that class's current minimum-monomial
-node. It costs one id per class, allocates with the class in `add_singleton`, is dropped
+**Per-class minimum monomial lives in the e-class sparse set, maintained O(1) on merge
+(not recomputed).** The rule right-hand side is the class's `≫_f`-least monomial (§9), and
+completion reads it constantly: once per rule's RHS and once per `normalize_ac` step. It
+must therefore be O(1) to read. Recomputing it on demand (walk the class's use-list,
+filter to AC monomials, take the min) is correct and needs no storage, but it turns every
+read into an O(class-size) scan, exactly the per-query work this section exists to remove.
+So we **store** it and maintain it on merge.
+
+`EClasses` already stores per-class data in a `SparseSet` keyed by the class's `repr_id`:
+today the value is the use-list id. We **widen that value** to a small `Copy` struct
+`{ use_list, ac_min }` (two `DenseId`s) rather than adding a second sparse set, so the two
+per-class facts share one slot and cannot desync. The struct derives `Tagged` by
+delegating the tag to its first field (the precedent is `ListNode` in `containers/list.rs`,
+`Repr = (L::Repr, T::Repr)`), so `InlineStore` works unchanged at both id widths, with no
+bit-packing constraint. `ac_min` seeds to the node itself in `add_singleton`, is dropped
 with the absorbed class in `splice_classes`, and rides the existing `SparseSetToken` in
-`EClassesToken`, so **`mark`/`restore` roll it back for free**. On merge, the survivor's
-minimum becomes the `monomial_cmp`-smaller of the two classes' minima: O(1) per merge, no
-search.
+`EClassesToken`, so **`mark`/`restore` roll it back for free**, with no change to
+`EGraphToken` or `EGraph::mark`/`restore`. On merge, the survivor's `ac_min` becomes the
+`monomial_cmp`-smaller of the two classes' minima: O(1), no search. `EClasses` has no AC
+knowledge, so the comparison is done by the `EGraph::merge` wrapper (which sees both the
+classes and the node store) and the result is written into the survivor's slot;
+`MergeInfo` carries the absorbed class's `ac_min` out for that.
 
 One subtlety: at merge time the children of these candidate nodes are mid-cascade, so
 their canonical multisets can be momentarily stale. We therefore treat the stored slot as
@@ -960,6 +972,21 @@ a *candidate hint*: completion confirms it on read, where it re-`find`s the chil
 canonicalizes anyway (it does this for every rule LHS regardless). This keeps the merge
 path O(1) and places the only exactness requirement at the read site, which already pays
 for canonicalization.
+
+**Scope: one AC symbol now; multiple via a pool later.** A single `ac_min` slot assumes one
+AC op per e-graph, because the minimum monomial is per-(class, *op*): a class may hold both
+a `+`-monomial and a `*`-monomial (assert `a+b = a*b`), and a `+`-rule's normal form must be
+a `+`-monomial. This is no harder *algorithmically*: Kapur's multi-symbol algorithm is just
+the single-symbol loop run independently per op, sharing only constants, and the e-graph's
+union-find already dissolves his one cross-symbol case (a constant with two normal forms is
+simply one e-class holding a `+`-node and a `*`-node, both with the same `find` as their RHS;
+no fresh constant needed). The only thing single-op gives up is *storage generality*: one
+slot holds one op's minimum. The vectorized form keeps `ac_min` as an offset into a flat
+`pool` of `nb_ac_op`-wide rows (one structure, backtracked whole; merge does an element-wise
+min of two rows), recovering per-(class, op) minima without a per-class heap allocation. It
+slots in behind the same `min_mono(op, class)` accessor, so callers do not change. We ship
+the single-op slot first (it covers every current test and all of §0/§5c) and add the pool
+when a multi-AC-symbol e-graph is actually needed.
 
 **Reusable buffers, destination-passing, like the rest of `rebuild`.** `rebuild` already
 threads scratch `Vec`s (`g_buf`, `ac_buf`, `collisions`, `touched`) by `&mut` into
