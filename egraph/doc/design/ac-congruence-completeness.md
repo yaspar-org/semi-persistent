@@ -893,16 +893,16 @@ for parent in active.by_contains-supersets(A1) {              // f(M) -> d with 
 // as a partner and re-open the divergence (§6b). Then probe/insert the normal form.
 ```
 
-Index maintenance and round structure. The pass is a semi-naïve worklist fixpoint
-(the same shape as the rest of rebuild). Each round runs against a frozen snapshot
-of `by_contains`, buffers the new nodes and merges, then refreshes the index and
-iterates; a node created in round `k` is dirty and processed in round `k+1`. This
-snapshotting loses no critical pair: a pair one partner of which did not yet exist
-is caught the round after both exist and the index includes them, and the loop exits
-only when a whole round adds nothing (every pair over the final node set has been
-considered against the final index). The only requirement is fairness (no pair
-starved), which round-based processing gives for free; incremental index maintenance
-is a performance option, not a correctness requirement.
+Index maintenance and round structure. The pass is a worklist fixpoint (the same shape
+as the rest of rebuild). The pseudocode above is written as a batch round against a
+frozen `by_contains` snapshot, which is the simplest correctness model: a round buffers
+new nodes and merges, refreshes the index, and iterates, so a node created in round `k`
+is processed in `k+1`; this loses no critical pair, because a pair one partner of which
+did not yet exist is caught the round after both exist, and the loop exits only when a
+whole round adds nothing. The only requirement is fairness (no pair starved). §9a
+describes the intended *incremental* realization (a completion worklist interleaved with
+the congruence worklist, no per-round rebuild of any index or rule store); the batch round
+is a correctness-equivalent, allocating stand-in for it.
 
 A correction to an earlier draft of this section, which claimed "we can drop Kapur's
 monomial ordering because the union-find is our canonical layer." That is **wrong**,
@@ -924,6 +924,61 @@ Two distinct roles:
 So we still drop the *machinery* Kapur needs for a unique reduced canonical
 presentation across AC symbols (we do not need canonical signatures to derive
 equalities), but we cannot drop the monomial order itself: it is what orients collapse.
+
+## 9a. Data structures and the incremental architecture
+
+§9's pseudocode reads as a batch round for clarity, but the engine constraint is that
+this runs inside `rebuild`, a hot loop, so two rules govern the real implementation: no
+heap allocation per round, and no parallel rule store. Both follow from the principle
+already stated in §7 (*the AC nodes are the rule set*) and from the existing `rebuild`
+scratch discipline.
+
+**The rule set is the nodes; there is no separate store.** A first cut violated this: it
+scanned every node each round to rebuild `HashMap`s of monomials, atomicity, and a
+`Vec<Rule>` of owned left/right multisets. That is the "store the equalities" mistake of
+§0 in miniature: recomputing the whole basis every round instead of maintaining it.
+The faithful form keeps nothing of the kind. The active rules *are* the AC nodes carrying
+neither `FLAG_AC_COLLAPSED` nor `FLAG_SUBSUMED`; a rule's left side is read on demand as
+`+{find each child}`, its right side from the per-class minimum (below). Partner-finding
+(`by_contains[x]`) is a filtered walk of child class `x`'s **use-list**, the same
+`classes.uses()` arena that ordinary congruence already maintains, not a rebuilt index.
+
+**Per-class minimum monomial lives in the e-class sparse set.** The rule right-hand side
+is the class's `≫_f`-least monomial (§9), and completion needs it per class, maintained
+across merges, and rolled back on `restore`. `EClasses` already stores per-class data in
+a `SparseSet` keyed by the class's `repr_id` (the use-list id sits there). Add one more
+per-class slot, a single node id (`DenseId`), holding that class's current minimum-monomial
+node. It costs one id per class, allocates with the class in `add_singleton`, is dropped
+with the absorbed class in `splice_classes`, and rides the existing `SparseSetToken` in
+`EClassesToken`, so **`mark`/`restore` roll it back for free**. On merge, the survivor's
+minimum becomes the `monomial_cmp`-smaller of the two classes' minima: O(1) per merge, no
+search.
+
+One subtlety: at merge time the children of these candidate nodes are mid-cascade, so
+their canonical multisets can be momentarily stale. We therefore treat the stored slot as
+a *candidate hint*: completion confirms it on read, where it re-`find`s the children and
+canonicalizes anyway (it does this for every rule LHS regardless). This keeps the merge
+path O(1) and places the only exactness requirement at the read site, which already pays
+for canonicalization.
+
+**Reusable buffers, destination-passing, like the rest of `rebuild`.** `rebuild` already
+threads scratch `Vec`s (`g_buf`, `ac_buf`, `collisions`, `touched`) by `&mut` into
+`recanonize_node` rather than allocating per call. Completion follows the same rule: the
+multiset primitives have destination-passing forms (`multiset_subtract_into`,
+`_union_into`, `_lcm_into`, `normalize_ms_into`) that `clear()` and refill caller-owned
+buffers, and the working multisets, the child-expansion buffer for materialize, and the
+partner-id scratch are fields on the e-graph, cleared and reused. No function on the hot
+path returns an owned `Vec`; a small fixed set of ping-pong buffers avoids read/write
+aliasing. So a completion round allocates nothing that grows with the work.
+
+**Worklist, not nested rounds.** The batch "loop the whole round to a fixpoint" becomes a
+completion worklist interleaved with the congruence worklist `rebuild` already drains: a
+node enters it when materialized or when its class changes, and draining one node runs its
+two chores (§5c) for that node only, pushing the resulting new nodes and merges back. The
+fixpoint is the single shared worklist emptying, not an outer round counter. Fairness
+(no pair starved) is automatic, as before. The earlier batch round and its frozen
+`by_contains` snapshot were a correctness-equivalent but allocating stand-in for this;
+the incremental form is the intended one.
 
 ## 10. Why we conjecture the fix restores completeness
 
