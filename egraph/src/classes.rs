@@ -87,31 +87,37 @@ impl<T: DenseId> Tagged for EClassEntry<T> {
 ///
 /// - `use_list` — the class's use-list id (parents referencing this class).
 /// - `ac_min` — the class's current AC minimum-monomial node: the member node
-///   whose monomial is `≫_f`-least, used as the right-hand side of completion
-///   rules (see `doc/design/ac-congruence-completeness.md` §9a). Maintained
-///   O(1) on merge by `EGraph` (which has the node access `monomial_cmp` needs);
-///   `EClasses` only stores and shuttles it. Seeded to the class's own node.
+///   whose monomial is `≫_f`-least (see `doc/design/ac-congruence-completeness.md`
+///   §9a). Maintained O(1) on merge by `EGraph` (which has the node access
+///   `monomial_cmp` needs); `EClasses` only stores and shuttles it.
+/// - `atomic` — whether the class is referenced as a child of some node, making
+///   the size-1 monomial `{classid}` a real term and the class's normal-form
+///   representative (§9a). Set on `add_use` and on gaining a non-AC node,
+///   OR-combined on merge. The completion rule RHS is `{classid}` if `atomic`,
+///   else `ac_min`'s monomial.
 ///
-/// Two `DenseId`s sharing one slot, so they cannot desync and roll back together.
+/// One slot for all three facts, so they cannot desync and roll back together.
 #[derive(Clone, Copy)]
 pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
     pub ac_min: T,
+    pub atomic: bool,
 }
 
 // `Tagged` by delegating the tag to the first field (`use_list`), the same idiom
 // as `ListNode` in `containers/list.rs`. No bit-packing: `Repr` is a tuple of the
-// two component reprs, so it works at any id width.
+// component reprs (and `bool`, which is `Copy`), so it works at any id width.
 impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
-    type Repr = (L::Repr, T::Repr);
+    type Repr = (L::Repr, T::Repr, bool);
 
     fn into_repr(self) -> Self::Repr {
-        (self.use_list.into_repr(), self.ac_min.into_repr())
+        (self.use_list.into_repr(), self.ac_min.into_repr(), self.atomic)
     }
     fn from_repr(r: &Self::Repr) -> Self {
         Self {
             use_list: L::from_repr(&r.0),
             ac_min: T::from_repr(&r.1),
+            atomic: r.2,
         }
     }
     fn tag(r: &Self::Repr) -> bool {
@@ -130,6 +136,7 @@ impl<L: DenseId, T: DenseId> Default for ClassData<L, T> {
         Self {
             use_list: L::default(),
             ac_min: T::default(),
+            atomic: false,
         }
     }
 }
@@ -145,6 +152,8 @@ pub struct MergeInfo<T, L> {
     /// The absorbed class's AC minimum-monomial node, so the caller can fold it
     /// into the survivor's `ac_min` (`EGraph` does the `monomial_cmp`, §9a).
     pub absorbed_ac_min: T,
+    /// The absorbed class's `atomic` flag, OR-combined into the survivor's (§9a).
+    pub absorbed_atomic: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -201,10 +210,11 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         self.uf.make_set(id);
         let list_id = self.uses.new_list();
         // Seed ac_min to the node itself: a singleton class's only member is its
-        // own minimum monomial (design §9a).
+        // own minimum monomial. Not yet referenced as a child, so not atomic (§9a).
         let repr_id = self.reprs.add(ClassData {
             use_list: list_id,
             ac_min: id,
+            atomic: false,
         });
         self.entries.push(EClassEntry::new(id, repr_id));
         repr_id
@@ -212,10 +222,16 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
     // -- Use-list management ------------------------------------------------
 
-    /// Record that `parent_node` uses the class at `child_repr` as a child.
+    /// Record that `parent_node` uses the class at `child_repr` as a child. Any such
+    /// reference makes the size-1 monomial `{child_repr}` a real term, so the class
+    /// becomes `atomic` (its completion rule RHS, §9a).
     pub fn add_use(&mut self, child_repr: T::Index, parent_node: T) {
-        let list_id = self.reprs.get(child_repr).use_list;
-        self.uses.append(list_id, parent_node);
+        let mut data = self.reprs.get(child_repr);
+        self.uses.append(data.use_list, parent_node);
+        if !data.atomic {
+            data.atomic = true;
+            self.reprs.set(child_repr, data);
+        }
     }
 
     /// Get the use-list id for a representative (for saving before merge).
@@ -223,9 +239,16 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         self.reprs.get(repr_id).use_list
     }
 
-    /// The class's current AC minimum-monomial node (the completion rule RHS, §9a).
+    /// The class's current AC minimum-monomial node (the completion rule RHS when the
+    /// class is not `atomic`, §9a).
     pub fn ac_min(&self, repr_id: T::Index) -> T {
         self.reprs.get(repr_id).ac_min
+    }
+
+    /// Whether the class is referenced as a child of some node, making `{classid}` its
+    /// normal-form representative (§9a).
+    pub fn ac_atomic(&self, repr_id: T::Index) -> bool {
+        self.reprs.get(repr_id).atomic
     }
 
     /// Overwrite the class's AC minimum-monomial node. Called by `EGraph` after a
@@ -234,6 +257,15 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         let mut data = self.reprs.get(repr_id);
         data.ac_min = node;
         self.reprs.set(repr_id, data);
+    }
+
+    /// Mark the class `atomic` (it has a non-AC node, so `{classid}` is its RHS, §9a).
+    pub fn set_ac_atomic(&mut self, repr_id: T::Index) {
+        let mut data = self.reprs.get(repr_id);
+        if !data.atomic {
+            data.atomic = true;
+            self.reprs.set(repr_id, data);
+        }
     }
 
     /// Iterate the use-list of a representative (parent nodes).
@@ -281,6 +313,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             absorbed,
             absorbed_uses: absorbed_data.use_list,
             absorbed_ac_min: absorbed_data.ac_min,
+            absorbed_atomic: absorbed_data.atomic,
         })
     }
 
@@ -299,6 +332,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             absorbed,
             absorbed_uses: absorbed_data.use_list,
             absorbed_ac_min: absorbed_data.ac_min,
+            absorbed_atomic: absorbed_data.atomic,
         })
     }
 
