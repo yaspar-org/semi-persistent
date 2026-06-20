@@ -458,6 +458,114 @@ pub proof fn lemma_concat_sorted(a: Seq<nat>, b: Seq<nat>)
 /// keys in ascending order without duplicates. The cursor's soundness rests on
 /// it. Induction over `t`: a leaf is sorted by `tree_wf`'s leaf arm; an internal
 /// node's `forest_keys(kids)` is sorted because each child is sorted (IH) and the
+/// Seek-index decomposition over a descent step. For a wf Inner node, if `cp` is
+/// the `find_gt(seps, t)` position (`seps[j] <= t` for `j < cp`, `t < seps[j]`
+/// for `cp <= j`), then the global seek index splits at child `cp`:
+///   seek_target_idx(forest_keys(kids), t)
+///     == forest_keys(kids[0..cp]).len() + seek_target_idx(tree_keys(kids[cp]), t)
+/// Because every key in kids[0..cp] is `< t` (bounded above by seps[cp-1] <= t)
+/// and every key in kids[cp+1..] is `>= t` (bounded below by seps[cp] > t), the
+/// only child straddling `t` is `cp`. Pure ghost; the engine of seek_leaf.
+pub proof fn lemma_seek_idx_descent(t: Tree, h: nat, cap: nat, key_cap: nat, cp: int, tgt: nat)
+    requires
+        t is Inner,
+        tree_wf(t, h, cap, key_cap, true),
+        cap >= 1,
+        0 <= cp < t->Inner_kids.len(),
+        cp <= t->Inner_seps.len(),
+        forall|j: int| 0 <= j < cp ==> #[trigger] t->Inner_seps[j] <= tgt,
+        forall|j: int| cp <= j < t->Inner_seps.len() ==> tgt < #[trigger] t->Inner_seps[j],
+    ensures
+        crate::bplus::seek_target_idx(tree_keys(t), tgt)
+            == forest_keys(t->Inner_kids.subrange(0, cp)).len() as int
+                + crate::bplus::seek_target_idx(tree_keys(t->Inner_kids[cp]), tgt),
+{
+    let kids = t->Inner_kids;
+    let seps = t->Inner_seps;
+    let lk = kids.subrange(0, cp);
+    let rk = kids.subrange(cp + 1, kids.len() as int);
+    // forest_keys(kids) == forest_keys(lk) + tree_keys(kids[cp]) + forest_keys(rk).
+    lemma_forest_keys_split(kids, cp);
+    lemma_forest_keys_split(kids.subrange(cp, kids.len() as int), 1);
+    assert(kids.subrange(cp, kids.len() as int).subrange(0, 1) =~= seq![kids[cp]]);
+    assert(kids.subrange(cp, kids.len() as int).subrange(1, kids.subrange(cp, kids.len() as int).len() as int) =~= rk);
+    lemma_forest_keys_cons(seq![kids[cp]]);
+    assert(seq![kids[cp]].drop_first() =~= Seq::<Tree>::empty());
+    assert(forest_keys(seq![kids[cp]]) == tree_keys(kids[cp]));
+    assert(tree_keys(t) == forest_keys(lk) + tree_keys(kids[cp]) + forest_keys(rk));
+    // left part all < tgt: keys in lk[j] == kids[j] (j < cp) are < seps[j] <= tgt.
+    assert forall|i: int| 0 <= i < forest_keys(lk).len() implies #[trigger] forest_keys(lk)[i] < tgt by {
+        lemma_forest_keys_membership(lk, forest_keys(lk)[i]);
+        let m = choose|m: int| 0 <= m < lk.len() && tree_keys(lk[m]).contains(forest_keys(lk)[i]);
+        assert(lk[m] == kids[m]);
+        assert(keys_all_lt(kids[m], seps[m]));           // tree_wf cross-node (m < cp <= seps.len)
+        lemma_keys_all_lt_set(kids[m], seps[m]);
+        assert(seps[m] <= tgt);                          // descent: m < cp
+    }
+    // right part all >= tgt: keys in rk[j] == kids[cp+1+j] are >= seps[cp] > tgt.
+    assert forall|i: int| 0 <= i < forest_keys(rk).len() implies tgt <= #[trigger] forest_keys(rk)[i] by {
+        lemma_forest_keys_membership(rk, forest_keys(rk)[i]);
+        let m = choose|m: int| 0 <= m < rk.len() && tree_keys(rk[m]).contains(forest_keys(rk)[i]);
+        assert(rk[m] == kids[cp + 1 + m]);
+        assert(keys_all_ge(kids[cp + 1 + m], seps[cp + m]));   // tree_wf: kids[i] >= seps[i-1]
+        lemma_keys_all_ge_set(kids[cp + 1 + m], seps[cp + m]);
+        assert(seps[cp] <= seps[cp + m]) by {
+            assert(strictly_sorted(seps));   // tree_wf Inner arm
+            if m > 0 { assert(seps[cp] < seps[cp + m]); }
+        }
+        assert(tgt < seps[cp]);                          // descent: cp <= cp < seps.len (cp valid sep)
+    }
+    // now apply the additive split lemma over the three pieces.
+    lemma_seek_idx_concat3(forest_keys(lk), tree_keys(kids[cp]), forest_keys(rk), tgt);
+}
+
+/// `seek_target_idx` over a concatenation `lo ++ mid ++ hi` where every key in
+/// `lo` is `< t` and every key in `hi` is `>= t`: it equals `|lo| +
+/// seek_target_idx(mid, t)`. The additive law the descent decomposition needs.
+pub proof fn lemma_seek_idx_concat3(lo: Seq<nat>, mid: Seq<nat>, hi: Seq<nat>, t: nat)
+    requires
+        forall|i: int| 0 <= i < lo.len() ==> #[trigger] lo[i] < t,
+        forall|i: int| 0 <= i < hi.len() ==> t <= #[trigger] hi[i],
+    ensures
+        crate::bplus::seek_target_idx(lo + mid + hi, t)
+            == lo.len() as int + crate::bplus::seek_target_idx(mid, t),
+    decreases lo.len(),
+{
+    if lo.len() == 0 {
+        assert(lo + mid + hi =~= mid + hi);
+        lemma_seek_idx_suffix_ge(mid, hi, t);
+    } else {
+        // peel lo[0] < t: seek_target_idx((lo+mid+hi)) == 1 + seek_target_idx(tail).
+        let lo2 = lo.drop_first();
+        assert((lo + mid + hi)[0] == lo[0]);
+        assert((lo + mid + hi).drop_first() =~= lo2 + mid + hi);
+        assert(lo[0] < t);
+        lemma_seek_idx_concat3(lo2, mid, hi, t);
+    }
+}
+
+/// `seek_target_idx(mid ++ hi, t) == seek_target_idx(mid, t)` when every key in
+/// `hi` is `>= t` (the suffix contributes nothing below `t`). Base case of the
+/// concat law; induction on `mid`.
+pub proof fn lemma_seek_idx_suffix_ge(mid: Seq<nat>, hi: Seq<nat>, t: nat)
+    requires forall|i: int| 0 <= i < hi.len() ==> t <= #[trigger] hi[i],
+    ensures crate::bplus::seek_target_idx(mid + hi, t) == crate::bplus::seek_target_idx(mid, t),
+    decreases mid.len(),
+{
+    if mid.len() == 0 {
+        assert(mid + hi =~= hi);
+        // seek_target_idx(hi, t) == 0: hi[0] >= t (if nonempty).
+        if hi.len() > 0 { assert(t <= hi[0]); }
+    } else {
+        let mid2 = mid.drop_first();
+        assert((mid + hi)[0] == mid[0]);
+        assert((mid + hi).drop_first() =~= mid2 + hi);
+        if mid[0] < t {
+            lemma_seek_idx_suffix_ge(mid2, hi, t);
+        }
+    }
+}
+
 /// cross-node ordering (`keys_all_lt`/`keys_all_ge` around the separators) places
 /// every child's keys strictly below the next child's.
 pub proof fn lemma_tree_wf_sorted(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
