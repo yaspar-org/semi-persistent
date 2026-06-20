@@ -246,6 +246,85 @@ pub proof fn lemma_leaf_id_offset_last(kids: Seq<Tree>, cp: int)
     }
 }
 
+/// `leaf_id_offset(kids, cp) <= forest_leaf_ids(kids).len()` for `cp <=
+/// kids.len()`: the first `cp` children's leaves are a prefix of the whole. The
+/// in-range bound for `chain_offset_prefix` at `k == leaf_id_offset(kids, cp)`.
+pub proof fn lemma_leaf_id_offset_bound(kids: Seq<Tree>, cp: int)
+    requires 0 <= cp <= kids.len(),
+    ensures leaf_id_offset(kids, cp) <= forest_leaf_ids(kids).len(),
+    decreases cp,
+{
+    if cp == 0 {
+    } else {
+        // offset(cp) == offset(cp-1) + |kids[cp-1]'s leaves| (succ lemma); the slice
+        // lemma at cp-1 gives offset(cp-1) + |kids[cp-1]'s leaves| <= |forest|.
+        lemma_leaf_id_offset_succ(kids, cp - 1);    // offset(cp) == offset(cp-1) + tlids(kids[cp-1])
+        lemma_forest_leaf_ids_slice(kids, cp - 1);  // off(cp-1)+|kids[cp-1]| <= |forest|
+    }
+}
+
+/// `forest_leaf_ids(kids).subrange(0, leaf_id_offset(kids, cp)) ==
+/// forest_leaf_ids(kids.subrange(0, cp))`: the leaf ids of the first `cp`
+/// children are exactly the prefix of the forest's leaf ids up to child `cp`'s
+/// offset. Induction peeling the head child.
+pub proof fn lemma_forest_leaf_ids_prefix(kids: Seq<Tree>, cp: int)
+    requires 0 <= cp <= kids.len(),
+    ensures
+        forest_leaf_ids(kids).subrange(0, leaf_id_offset(kids, cp) as int)
+            == forest_leaf_ids(kids.subrange(0, cp)),
+    decreases kids.len(),
+{
+    let fl = forest_leaf_ids(kids);
+    if cp == 0 {
+        assert(leaf_id_offset(kids, 0) == 0);
+        assert(fl.subrange(0, 0) =~= Seq::<nat>::empty());
+        assert(kids.subrange(0, 0) =~= Seq::<Tree>::empty());
+        assert(forest_leaf_ids(kids.subrange(0, 0)) =~= Seq::<nat>::empty());
+    } else {
+        // peel the HEAD child kids[0]; recurse on df at cp-1 (df shorter ⟹ decreases).
+        let df = kids.drop_first();
+        let head = tree_leaf_ids(kids[0]);
+        lemma_forest_leaf_ids_cons(kids);                 // fl == head ++ forest_leaf_ids(df)
+        lemma_leaf_id_offset_succ_head(kids, cp);         // offset(kids,cp) == |head| + offset(df,cp-1)
+        lemma_leaf_id_offset_bound(df, cp - 1);
+        lemma_forest_leaf_ids_prefix(df, cp - 1);         // IH on df (shorter)
+        // kids.subrange(0,cp) == [kids[0]] ++ df.subrange(0,cp-1); its leaf ids cons.
+        assert(kids.subrange(0, cp).drop_first() =~= df.subrange(0, cp - 1));
+        assert(kids.subrange(0, cp)[0] == kids[0]);
+        lemma_forest_leaf_ids_cons(kids.subrange(0, cp));
+        let off = leaf_id_offset(kids, cp) as int;
+        let off_df = leaf_id_offset(df, cp - 1) as int;
+        // fl[0..|head|+off_df] == head ++ forest_leaf_ids(df)[0..off_df] (head is a prefix).
+        assert(fl.subrange(0, off) =~= head + forest_leaf_ids(df).subrange(0, off_df));
+    }
+}
+
+/// `leaf_id_offset(kids, cp) == |tree_leaf_ids(kids[0])| + leaf_id_offset(
+/// kids.drop_first(), cp-1)` for `1 <= cp <= kids.len()` — the HEAD-peel of the
+/// offset (the `<= kids.len()` companion of the strict `lemma_leaf_id_offset_cons`,
+/// which needs `cp < kids.len()`). Induction via the offset's succ recursion.
+pub proof fn lemma_leaf_id_offset_succ_head(kids: Seq<Tree>, cp: int)
+    requires 1 <= cp <= kids.len(),
+    ensures
+        leaf_id_offset(kids, cp)
+            == tree_leaf_ids(kids[0]).len() + leaf_id_offset(kids.drop_first(), cp - 1),
+    decreases cp,
+{
+    let df = kids.drop_first();
+    if cp == 1 {
+        // offset(kids,1) == offset(kids,0) + |kids[0]| == |kids[0]| + offset(df,0).
+        lemma_leaf_id_offset_succ(kids, 0);
+        assert(leaf_id_offset(df, 0) == 0);
+    } else {
+        // offset(kids,cp) == offset(kids,cp-1) + |kids[cp-1]| (succ), and IH on cp-1;
+        // df[cp-2] == kids[cp-1], offset(df,cp-1) == offset(df,cp-2) + |df[cp-2]|.
+        lemma_leaf_id_offset_succ(kids, cp - 1);
+        lemma_leaf_id_offset_succ_head(kids, cp - 1);
+        lemma_leaf_id_offset_succ(df, cp - 2);
+        assert(df[cp - 2] == kids[cp - 1]);
+    }
+}
+
 /// Updating child `m` to a subtree with the same in-order leaf ids preserves the
 /// forest's in-order leaf ids. (Absorb keeps the child's leaf sequence — the
 /// leaf base case adds keys not leaves; the internal absorb's recursion preserves
