@@ -425,16 +425,20 @@ where
         }
     }
 
-    /// After a merge, fold the absorbed class's `ac_min` into the survivor's, keeping
-    /// the `monomial_cmp`-least node (the completion rule RHS, §9a). O(1) plus the two
-    /// monomial reads, into reusable buffers. Done here, not in `EClasses`, because the
-    /// comparison needs node (AC-children) access. Best-effort under merge-cascade
-    /// staleness; completion's read-time orientation guard makes that safe (§9b).
-    fn fold_ac_min(&mut self, survivor: Cfg::G, absorbed_ac_min: Cfg::G) {
+    /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
+    /// keep the `monomial_cmp`-least `ac_min` node, and OR-in the `atomic` flag (the
+    /// completion rule RHS, §9a). O(1) plus the two monomial reads, into reusable
+    /// buffers. Done here, not in `EClasses`, because the comparison needs node
+    /// (AC-children) access. Best-effort under merge-cascade staleness; completion's
+    /// read-time orientation guard makes that safe (§9b).
+    fn fold_ac_class(&mut self, survivor: Cfg::G, absorbed_ac_min: Cfg::G, absorbed_atomic: bool) {
         let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
             Some(r) => r,
             None => return,
         };
+        if absorbed_atomic {
+            self.classes.set_ac_atomic(surv_repr);
+        }
         let surv_min = self.classes.ac_min(surv_repr);
         if surv_min == absorbed_ac_min {
             return;
@@ -467,7 +471,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge(a, b)?;
-        self.fold_ac_min(m.survivor, m.absorbed_ac_min);
+        self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -493,7 +497,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge_justified(a, b, just)?;
-        self.fold_ac_min(m.survivor, m.absorbed_ac_min);
+        self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -705,7 +709,7 @@ where
                     self.classes.merge(a, b)
                 };
                 if let Some(m) = m {
-                    self.fold_ac_min(m.survivor, m.absorbed_ac_min);
+                    self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
@@ -885,7 +889,7 @@ where
             };
             match m {
                 Some(m) => {
-                    eg.fold_ac_min(m.survivor, m.absorbed_ac_min);
+                    eg.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
                     eg.worklist.push((m.absorbed_uses, m.survivor));
                     true
                 }
@@ -1049,8 +1053,16 @@ where
 
     fn register_if_fresh(&mut self, result: Added<Cfg::G>) -> Cfg::G {
         if result.is_fresh() {
-            self.classes.add_singleton(result.id());
-            self.touched.push(result.id());
+            let id = result.id();
+            let repr = self.classes.add_singleton(id);
+            // A fresh non-AC node makes its class `atomic`: the class has a member that
+            // is not an AC monomial, so the size-1 monomial `{class}` is its normal-form
+            // representative (the completion rule RHS, §9a). AC nodes are not atomic by
+            // themselves; they become atomic only when referenced as a child (`add_use`).
+            if !matches!(self.node_ref(id), NodeRef::AC(_)) {
+                self.classes.set_ac_atomic(repr);
+            }
+            self.touched.push(id);
         }
         result.id()
     }
@@ -1081,7 +1093,7 @@ where
     }
 
     /// The AC minimum-monomial node stored for `id`'s class (the completion rule RHS,
-    /// §9a). Maintained on merge by `fold_ac_min`. Returns `None` if `id` has no class.
+    /// §9a). Maintained on merge by `fold_ac_class`. Returns `None` if `id` has no class.
     /// Consumed by the incremental completion pass (S3); currently read by tests only.
     #[allow(dead_code)]
     pub(crate) fn class_ac_min(&self, id: Cfg::G) -> Option<Cfg::G> {
