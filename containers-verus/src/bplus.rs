@@ -2653,16 +2653,28 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
         <L::ArenaIdx as IndexLike>::max()
     }
 
-    /// A fresh cursor (positioned nowhere; call `seek` / `seek_first`).
-    #[verifier::external_body]
+    /// A fresh cursor over a `wf` tree, positioned at the EXHAUSTED end (`node ==
+    /// NIL`, `idx == |model|`). `cursor_wf` holds immediately, so `seek` /
+    /// `seek_first` can be called right away. (Production says "positioned
+    /// nowhere"; modeling it as the well-formed exhausted state is what lets the
+    /// fast path in `seek` trust `node != NIL` ⟹ positioned.)
     pub fn new(tree: &'a BPlusTreeSet<K, L, S, TRACK>) -> (c: Self)
-        ensures c.tree == tree,
+        requires tree.wf(),
+        ensures c.tree == tree, c.cursor_wf(), c.idx() == c.model().len(),
     {
-        BPlusCursor {
-            tree, node: Self::nil(), pos: 0,
-            gidx: Ghost(0), gleaf: Ghost(0),
+        let nilv = Self::nil();   // nilv.as_nat() == nil_link
+        let c = BPlusCursor {
+            tree, node: nilv, pos: 0,
+            gidx: Ghost(crate::bplus_tree::tree_keys(tree.tree@).len() as int),
+            gleaf: Ghost(0),
             _k: core::marker::PhantomData,
+        };
+        proof {
+            // exhausted arm of cursor_wf: node == nil_link, gidx == |model|.
+            assert(c.node.as_nat() == nil_link::<L>());
+            assert(c.gidx@ == c.model().len());
         }
+        c
     }
 
     /// The cursor's model index (`gidx`), as a convenience for specs.
@@ -2689,49 +2701,62 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
             })
     }
 
-    /// Position at the first key `>= target`. Production's fast path: if already
-    /// positioned and `target` falls in the current leaf, just `find_ge` there;
-    /// else try the next leaf via `link`; else fall back to a root descent.
-    #[verifier::external_body]
-    pub fn seek(&mut self, target: K) {
-        let nil = Self::nil();
-        let word: L::Word = target.to_index();
-
-        if self.node.as_usize() != nil.as_usize() {
-            let cur = self.tree.nodes.get(self.node);
-            let n = L::count(&cur);
-            if n > 0 {
-                let last = L::key(&cur, n - 1);
-                if word.le(last) {
-                    // target is within the current leaf.
-                    self.pos = self.tree.leaf_find_ge(&cur, word);
-                    return;
-                }
-                let link = L::link(&cur);
-                if link.as_usize() != nil.as_usize() {
-                    let nxt = self.tree.nodes.get(link);
-                    let nn = L::count(&nxt);
-                    if nn > 0 && word.le(L::key(&nxt, nn - 1)) {
-                        // target is in the immediately-next leaf (the fast path).
-                        self.pos = self.tree.leaf_find_ge(&nxt, word);
-                        self.node = link;
-                        return;
-                    }
-                }
-            }
+    /// Position at the first model key `>= target` (leapfrog `seek`): establishes
+    /// `cursor_wf` with `idx() == seek_target_idx(model, target)`. Verified via the
+    /// root-descent `seek_leaf`, which returns the chain leaf `gm` and within-leaf
+    /// position whose global index is `seek_target_idx`; if the position is past
+    /// that leaf's keys (`pos == |leaf gm|`, target falls between leaves), advance
+    /// over the end via `link` to leaf `gm+1` (or NIL), exactly as `step` does.
+    ///
+    /// (Production additionally has an O(1)-amortized fast path that checks the
+    /// current / immediately-next leaf before descending; that is a performance
+    /// optimization, omitted from the verified version, which always descends. The
+    /// observable result is identical; the fast path is exercised by the property
+    /// tests on the production-shaped exec.)
+    pub fn seek(&mut self, target: K)
+        requires old(self).cursor_wf(),
+        ensures
+            self.cursor_wf(),
+            self.tree == old(self).tree,
+            self.idx() == seek_target_idx(self.model(), target.id_nat()),
+    {
+        let word: L::Word = target.to_index();    // word.as_nat() == target.id_nat()
+        let ghost lids = crate::bplus_tree::tree_leaf_ids(self.tree.tree@);
+        let ghost ti = seek_target_idx(self.model(), target.id_nat());
+        let (leaf, pos, gm) = self.tree.seek_leaf(word);
+        // seek_leaf: leaf == lids[gm@], pos <= |leaf gm@|, chain_offset(gm@)+pos == ti.
+        proof {
+            // leaf == lids[gm@] is a real leaf id, so it is in arena range (for get).
+            lemma_cursor_node_wf_at::<K, L, S, TRACK>(self.tree, gm@);
+            assert(leaf.as_nat() == lids[gm@]);
+            assert(leaf.as_nat() < self.tree.arena().len());
         }
-
-        // fallback: full root descent.
-        let (leaf, pos, _gm) = self.tree.seek_leaf(word);
         let node = self.tree.nodes.get(leaf);
-        if pos < L::count(&node) {
+        let cnt = L::count(&node);
+        proof {
+            assert(node == self.tree.arena()[leaf.as_nat() as int]);  // get ensures
+            L::lemma_keys_view_len(node);
+        }
+        if pos < cnt {
+            // target falls within leaf gm@ at pos: position there, idx == ti.
             self.node = leaf;
             self.pos = pos;
+            proof {
+                self.gleaf@ = gm@;
+                self.gidx@ = ti;
+                seek_finish_in_leaf::<K, L, S, TRACK>(self, old(self), gm@, pos, target.id_nat());
+            }
         } else {
-            // ran off the end of this leaf — advance to the next via link.
+            // pos == |leaf gm@|: target is past leaf gm@'s keys. Advance over the
+            // end via link to leaf gm@+1 (or NIL), at pos 0 — idx still ti.
             let link = L::link(&node);
-            self.node = link; // link is the next leaf or NIL
+            self.node = link;
             self.pos = 0;
+            proof {
+                self.gidx@ = ti;
+                self.gleaf@ = gm@ + 1;   // the next chain leaf (ignored when exhausted)
+                seek_finish_over_end::<K, L, S, TRACK>(self, old(self), node, gm@, target.id_nat());
+            }
         }
     }
 
@@ -6983,6 +7008,134 @@ pub proof fn lemma_cursor_node_wf<K, L, S, const TRACK: bool>(c: &BPlusCursor<K,
     lemma_chain_leaf_binds::<L>(arena, c.tree.tree@,
         crate::bplus_tree::tree_height(c.tree.tree@), true, m);
     L::lemma_keys_view_len(arena[c.node.as_nat() as int]);
+}
+
+/// Leaf-at-chain-index `gm` facts for `seek`: from `t.wf()` and a valid chain
+/// index, `arena[lids[gm]]` is a wf leaf in range with `count == |leaf gm|`. The
+/// `gm`-parameterized analogue of `lemma_cursor_node_wf` (which reads `c.gleaf`).
+pub proof fn lemma_cursor_node_wf_at<K, L, S, const TRACK: bool>(
+    t: &BPlusTreeSet<K, L, S, TRACK>, gm: int,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        t.wf(),
+        0 <= gm < crate::bplus_tree::tree_leaf_ids(t.tree@).len(),
+    ensures
+        (crate::bplus_tree::tree_leaf_ids(t.tree@)[gm] as int) < t.arena().len(),
+        L::node_wf(t.arena()[crate::bplus_tree::tree_leaf_ids(t.tree@)[gm] as int]),
+        L::is_leaf_spec(t.arena()[crate::bplus_tree::tree_leaf_ids(t.tree@)[gm] as int]),
+        L::count_spec(t.arena()[crate::bplus_tree::tree_leaf_ids(t.tree@)[gm] as int])
+            == leaf_word_keys::<L>(t.arena(), crate::bplus_tree::tree_leaf_ids(t.tree@)[gm]).len(),
+{
+    let arena = t.arena();
+    let lids = crate::bplus_tree::tree_leaf_ids(t.tree@);
+    lemma_chain_leaf_binds::<L>(arena, t.tree@,
+        crate::bplus_tree::tree_height(t.tree@), true, gm);
+    L::lemma_keys_view_len(arena[lids[gm] as int]);
+}
+
+/// `seek`'s in-leaf finish: after `seek_leaf` returns `(lids[gm], pos, gm)` with
+/// `pos < |leaf gm|` and `chain_offset(gm) + pos == ti == seek_target_idx`, and
+/// the cursor set to `(node := lids[gm], pos, gleaf := gm, gidx := ti)`,
+/// `cursor_wf` holds and `idx == ti`. The positioned arm, with the node != NIL
+/// fact from the real-id bound.
+pub proof fn seek_finish_in_leaf<K, L, S, const TRACK: bool>(
+    c: &BPlusCursor<K, L, S, TRACK>, oldc: &BPlusCursor<K, L, S, TRACK>, gm: int, pos: usize, tgt: nat,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        oldc.cursor_wf(),
+        c.tree == oldc.tree,
+        0 <= gm < crate::bplus_tree::tree_leaf_ids(c.tree.tree@).len(),
+        c.node.as_nat() == crate::bplus_tree::tree_leaf_ids(c.tree.tree@)[gm],
+        c.gleaf@ == gm,
+        c.pos == pos,
+        pos < leaf_word_keys::<L>(c.tree.arena(), crate::bplus_tree::tree_leaf_ids(c.tree.tree@)[gm]).len(),
+        c.gidx@ == seek_target_idx(c.model(), tgt),
+        chain_offset::<L>(c.tree.arena(), crate::bplus_tree::tree_leaf_ids(c.tree.tree@), gm) + pos
+            == seek_target_idx(c.model(), tgt),
+    ensures
+        c.cursor_wf(),
+        c.idx() == seek_target_idx(c.model(), tgt),
+{
+    let arena = c.tree.arena();
+    let lids = crate::bplus_tree::tree_leaf_ids(c.tree.tree@);
+    // node != nil_link: lids[gm] is a real leaf id (< arena.len() < max_nat).
+    lemma_cursor_node_wf_at::<K, L, S, TRACK>(c.tree, gm);
+    assert(c.node.as_nat() < arena.len());
+    assert(c.node.as_nat() != nil_link::<L>());     // wf arena bound
+    // gidx in range: ti == chain_offset(gm)+pos < chain_offset(gm)+|leaf gm| ==
+    // a valid chain_keys index <= |model|; and >= 0.
+    lemma_chain_keys_slice::<L>(arena, lids, gm);
+    lemma_chain_keys_eq_model::<L>(arena, c.tree.tree@);
+    assert(0 <= c.gidx@ < c.model().len());
+}
+
+/// `seek`'s over-the-end finish: `seek_leaf` returned `pos == |leaf gm|` (target
+/// past leaf gm's keys), so we set `node := link(arena[lids[gm]])`, `pos := 0`.
+/// By `leaf_links_ok`, `link == lids[gm+1]` (then positioned at gm+1, since
+/// chain_offset(gm)+|leaf gm| == chain_offset(gm+1)) or NIL (exhausted, ti ==
+/// |model|). Either way `cursor_wf` holds with `idx == ti`. Mirrors `step`'s
+/// link-follow.
+pub proof fn seek_finish_over_end<K, L, S, const TRACK: bool>(
+    c: &BPlusCursor<K, L, S, TRACK>, oldc: &BPlusCursor<K, L, S, TRACK>, node: L::Node, gm: int, tgt: nat,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+    requires
+        oldc.cursor_wf(),
+        c.tree == oldc.tree,
+        0 <= gm < crate::bplus_tree::tree_leaf_ids(c.tree.tree@).len(),
+        node == c.tree.arena()[crate::bplus_tree::tree_leaf_ids(c.tree.tree@)[gm] as int],
+        c.node.as_nat() == L::link_view(node),
+        c.pos == 0,
+        c.gidx@ == seek_target_idx(c.model(), tgt),
+        // when the link goes to a real next leaf, the caller set gleaf := gm+1.
+        c.node.as_nat() != nil_link::<L>() ==> c.gleaf@ == gm + 1,
+        // seek_leaf gave pos == |leaf gm| with chain_offset(gm)+|leaf gm| == ti.
+        chain_offset::<L>(c.tree.arena(), crate::bplus_tree::tree_leaf_ids(c.tree.tree@), gm)
+            + leaf_word_keys::<L>(c.tree.arena(), crate::bplus_tree::tree_leaf_ids(c.tree.tree@)[gm]).len()
+            == seek_target_idx(c.model(), tgt),
+    ensures
+        c.cursor_wf(),
+        c.idx() == seek_target_idx(c.model(), tgt),
+{
+    let arena = c.tree.arena();
+    let lids = crate::bplus_tree::tree_leaf_ids(c.tree.tree@);
+    // chain_offset(gm+1) == chain_offset(gm) + |leaf gm| == ti  (offset def).
+    assert(chain_offset::<L>(arena, lids, gm + 1)
+        == chain_offset::<L>(arena, lids, gm) + leaf_word_keys::<L>(arena, lids[gm]).len());
+    assert(c.gidx@ == chain_offset::<L>(arena, lids, gm + 1));
+    // leaf_links_ok: link(arena[lids[gm]]) == lids[gm+1] (m+1<len) | nil_link (last).
+    assert(leaf_links_ok::<L>(arena, c.tree.tree@));
+    lemma_cursor_node_wf_at::<K, L, S, TRACK>(c.tree, gm);
+    assert(L::link_view(arena[lids[gm] as int])
+        == (if gm + 1 < lids.len() { lids[gm + 1] } else { nil_link::<L>() }));
+    if gm + 1 < lids.len() {
+        // positioned at leaf gm+1, pos 0. node == lids[gm+1] (real id), non-empty.
+        assert(c.node.as_nat() == lids[gm + 1]);
+        assert(lids.len() >= 2);
+        lemma_cursor_next_leaf_nonempty::<K, L, S, TRACK>(c.tree, gm + 1);
+        assert(c.node.as_nat() != nil_link::<L>());
+        assert(c.gleaf@ == gm + 1);   // caller set it
+        lemma_chain_keys_slice::<L>(arena, lids, gm + 1);
+        lemma_chain_keys_eq_model::<L>(arena, c.tree.tree@);
+        assert(0 <= c.gidx@ < c.model().len());
+    } else {
+        // exhausted: node == nil_link, ti == chain_offset(len) == |model|.
+        assert(c.node.as_nat() == nil_link::<L>());
+        lemma_chain_offset_full::<L>(arena, lids);
+        lemma_chain_keys_eq_model::<L>(arena, c.tree.tree@);
+        assert(c.gidx@ == c.model().len());
+    }
 }
 
 /// A positioned cursor reads the model: `keys_view(arena[node])[pos].as_nat() ==
