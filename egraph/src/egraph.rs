@@ -425,6 +425,29 @@ where
         }
     }
 
+    /// Fill `buf` with the completion rule right-hand side for the class of `node`: the
+    /// size-1 monomial `{find(node)}` if the class is `atomic` (referenced as a child),
+    /// else the monomial of the class's stored `ac_min` (§9a). Reads the per-class slot;
+    /// O(1) plus the `ac_min` monomial read. Returns `false` if `node` has no class.
+    fn class_rhs_into(
+        &self,
+        node: Cfg::G,
+        buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    ) -> bool {
+        use crate::multiplicity::Multiplicity;
+        let cls = self.classes.find_const(node);
+        let Some(repr) = self.classes.repr_id(cls) else {
+            return false;
+        };
+        if self.classes.ac_atomic(repr) {
+            buf.clear();
+            buf.push((cls, Multiplicity(1)));
+        } else {
+            self.node_monomial_into(self.classes.ac_min(repr), buf);
+        }
+        true
+    }
+
     /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
     /// keep the `monomial_cmp`-least `ac_min` node, and OR-in the `atomic` flag (the
     /// completion rule RHS, §9a). O(1) plus the two monomial reads, into reusable
@@ -772,73 +795,17 @@ where
 
         use crate::ac_multiset::monomial_cmp;
         use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
-        use std::collections::{HashMap, HashSet};
 
         // Completion's active set excludes nodes that are user-subsumed (not matchable)
         // OR AC-collapsed (reducible by a smaller rule). Either way they are not rules.
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
 
-        // Scan all live nodes once to classify each e-class and gather its f-monomials.
-        // - `child_set`: classes used as a child of some node (so referenced as an atom).
-        // - `atomic`: classes with a non-AC node (leaf/plain/lit/ACI) — also atomic.
-        // - `monos[class]`: the AC f-monomials of that class, as (op, multiset, node).
-        let mut child_set: HashSet<Cfg::G> = HashSet::new();
-        let mut atomic: HashSet<Cfg::G> = HashSet::new();
-        let mut monos: HashMap<Cfg::G, Vec<(usize, Vec<(Cfg::G, Multiplicity)>, Cfg::G)>> =
-            HashMap::new();
-        let mut kids: Vec<Cfg::G> = Vec::new();
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
-            if self.node_flags(gid) & inactive != 0 {
-                continue;
-            }
-            let cls = self.classes.find_const(gid);
-            kids.clear();
-            self.for_each_child(gid, |ch, _| kids.push(ch));
-            for &ch in &kids {
-                child_set.insert(self.classes.find_const(ch));
-            }
-            let op = self.node_op(gid);
-            if self.ops.is_ac(op) {
-                monos
-                    .entry(cls)
-                    .or_default()
-                    .push((op.to_usize(), multiset_of(self, gid), gid));
-            } else {
-                atomic.insert(cls);
-            }
-        }
-
-        // The class's **minimal monomial** — its normal-form representative (design §6b).
-        // A class is atomic (singleton `{κ}` is the normal form) iff it is referenced as
-        // a child, has a non-AC node, or is a monomial of a *different* op (so it cannot
-        // be expanded within op `f`). Otherwise — a pure f-sum, like a class created only
-        // by a critical-pair merge — its normal form is the degree-lex-least f-monomial.
-        // Substituting `{κ}` for a pure-sum class is the class-as-atom bug that diverges.
-        let min_mono = |op_u: usize, cls: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
-            let is_atomic = atomic.contains(&cls)
-                || child_set.contains(&cls)
-                || monos
-                    .get(&cls)
-                    .is_some_and(|v| v.iter().any(|(o, _, _)| *o != op_u));
-            if is_atomic {
-                return vec![(cls, Multiplicity(1))];
-            }
-            monos
-                .get(&cls)
-                .expect("non-atomic class has at least one f-monomial")
-                .iter()
-                .filter(|(o, _, _)| *o == op_u)
-                .map(|(_, m, _)| m.clone())
-                .min_by(|a, b| monomial_cmp(a, b))
-                .expect("non-atomic class has an f-monomial of its op")
-        };
-
-        // Rules drive completion: every non-subsumed f-monomial that is *not* its class's
-        // minimal monomial, oriented `lhs ≫ rhs` (rhs = the class's minimal monomial, a
-        // monomial over existing constants — never a bare class id). A monomial that *is*
-        // the minimal representative is the normal form: no rule, never a superposition
-        // source. `class` is the rule's e-class; `node` lets us collapse (subsume) it.
+        // Each active AC node is a candidate rule `+M → rhs(class)`, where the RHS comes
+        // from the per-class slot (`class_rhs_into`: `{class}` if atomic, else the stored
+        // `ac_min` monomial, §9a) — not recomputed per round. The orientation guard keeps
+        // only nodes whose own monomial `M` is strictly `≫_f`-greater than that RHS: those
+        // are the genuine rules (a node equal to its class's normal form is no rule, and a
+        // mis-oriented `M ≺ rhs` is dropped, §9b axis-2a). `node` lets us collapse it.
         struct Rule<G> {
             op: usize,
             lhs: Vec<(G, Multiplicity)>,
@@ -846,18 +813,28 @@ where
             node: G,
         }
         let mut rules: Vec<Rule<Cfg::G>> = Vec::new();
-        for (&cls, list) in &monos {
-            for (op_u, mset, node) in list {
-                let rhs = min_mono(*op_u, cls);
-                if mset != &rhs {
-                    debug_assert!(monomial_cmp(mset, &rhs) == std::cmp::Ordering::Greater);
-                    rules.push(Rule {
-                        op: *op_u,
-                        lhs: mset.clone(),
-                        rhs,
-                        node: *node,
-                    });
-                }
+        let mut rhs_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        for i in 0..self.node_count() {
+            let gid = Cfg::G::from_usize(i);
+            if self.node_flags(gid) & inactive != 0 {
+                continue;
+            }
+            let op = self.node_op(gid);
+            if !self.ops.is_ac(op) {
+                continue;
+            }
+            let lhs = multiset_of(self, gid);
+            if !self.class_rhs_into(gid, &mut rhs_buf) {
+                continue;
+            }
+            // Read-time orientation guard (§9b): only `M ≫ rhs` is a rule.
+            if monomial_cmp(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
+                rules.push(Rule {
+                    op: op.to_usize(),
+                    lhs,
+                    rhs: rhs_buf.clone(),
+                    node: gid,
+                });
             }
         }
 
@@ -919,16 +896,22 @@ where
         // rule (its own LHS reducible) is collapsed/subsumed after the merge (design §6b).
         let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)> =
             Vec::new();
-        for (&cls, list) in &monos {
-            for (op_u, mset, node) in list {
-                targets.push((
-                    Cfg::O::from_usize(*op_u),
-                    mset.clone(),
-                    cls,
-                    *node,
-                    rules.iter().any(|r| r.node == *node),
-                ));
+        for i in 0..self.node_count() {
+            let gid = Cfg::G::from_usize(i);
+            if self.node_flags(gid) & inactive != 0 {
+                continue;
             }
+            let op = self.node_op(gid);
+            if !self.ops.is_ac(op) {
+                continue;
+            }
+            targets.push((
+                op,
+                multiset_of(self, gid),
+                self.classes.find_const(gid),
+                gid,
+                rules.iter().any(|r| r.node == gid),
+            ));
         }
 
         // (B) Superposition critical pairs over pairs of *rules* sharing ≥1 element but
