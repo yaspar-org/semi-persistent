@@ -55,6 +55,11 @@ pub struct EGraph<
     /// [`set_ac_complete`](Self::set_ac_complete) once flattening is in place; the
     /// completion tests enable it for the flat scenarios they exercise.
     ac_complete: bool,
+    /// Reusable scratch for comparing two nodes' AC monomials (`monomial_cmp` on the
+    /// per-class `ac_min`, §9a). Two buffers to hold both sides without aliasing;
+    /// cleared and refilled per comparison, never grown per merge.
+    cmp_buf_a: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    cmp_buf_b: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -95,6 +100,8 @@ where
             ac_buf: Vec::new(),
             touched: Vec::new(),
             ac_complete: false,
+            cmp_buf_a: Vec::new(),
+            cmp_buf_b: Vec::new(),
         }
     }
 
@@ -385,6 +392,65 @@ where
         self.register_if_fresh(result)
     }
 
+    /// Fill `buf` with `node`'s monomial for `monomial_cmp`: its canonical AC child
+    /// multiset if it is an AC node, else the singleton `{node}` (a non-AC node is a
+    /// size-1 monomial, §9b). Children are `find`-canonicalized and coalesced.
+    fn node_monomial_into(
+        &self,
+        node: Cfg::G,
+        buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    ) {
+        use crate::multiplicity::Multiplicity;
+        buf.clear();
+        if matches!(self.node_ref(node), NodeRef::AC(_)) {
+            // ac_children, find-canonicalized + coalesced (same form as ACCanon).
+            let mut raw = Vec::new();
+            self.ac_children(node, &mut raw);
+            let mut m: Vec<(Cfg::G, Multiplicity)> = raw
+                .into_iter()
+                .map(|(g, mult)| (self.classes.find_const(g), Multiplicity(mult.into())))
+                .collect();
+            m.sort_by_key(|p| p.0);
+            for (g, mult) in m {
+                if let Some(last) = buf.last_mut()
+                    && last.0 == g
+                {
+                    last.1 = Multiplicity(last.1.0 + mult.0);
+                } else {
+                    buf.push((g, mult));
+                }
+            }
+        } else {
+            buf.push((self.classes.find_const(node), Multiplicity(1)));
+        }
+    }
+
+    /// After a merge, fold the absorbed class's `ac_min` into the survivor's, keeping
+    /// the `monomial_cmp`-least node (the completion rule RHS, §9a). O(1) plus the two
+    /// monomial reads, into reusable buffers. Done here, not in `EClasses`, because the
+    /// comparison needs node (AC-children) access. Best-effort under merge-cascade
+    /// staleness; completion's read-time orientation guard makes that safe (§9b).
+    fn fold_ac_min(&mut self, survivor: Cfg::G, absorbed_ac_min: Cfg::G) {
+        let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
+            Some(r) => r,
+            None => return,
+        };
+        let surv_min = self.classes.ac_min(surv_repr);
+        if surv_min == absorbed_ac_min {
+            return;
+        }
+        // Compare the two candidate minima; keep the smaller in degree-lex order.
+        let mut a = std::mem::take(&mut self.cmp_buf_a);
+        let mut b = std::mem::take(&mut self.cmp_buf_b);
+        self.node_monomial_into(surv_min, &mut a);
+        self.node_monomial_into(absorbed_ac_min, &mut b);
+        if crate::ac_multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+            self.classes.set_ac_min(surv_repr, absorbed_ac_min);
+        }
+        self.cmp_buf_a = a;
+        self.cmp_buf_b = b;
+    }
+
     pub fn merge(&mut self, a: Cfg::G, b: Cfg::G) -> Option<(Cfg::G, Cfg::G)> {
         debug_assert_eq!(
             self.node_sort(a),
@@ -401,6 +467,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge(a, b)?;
+        self.fold_ac_min(m.survivor, m.absorbed_ac_min);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -426,6 +493,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge_justified(a, b, just)?;
+        self.fold_ac_min(m.survivor, m.absorbed_ac_min);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -637,6 +705,7 @@ where
                     self.classes.merge(a, b)
                 };
                 if let Some(m) = m {
+                    self.fold_ac_min(m.survivor, m.absorbed_ac_min);
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
@@ -816,6 +885,7 @@ where
             };
             match m {
                 Some(m) => {
+                    eg.fold_ac_min(m.survivor, m.absorbed_ac_min);
                     eg.worklist.push((m.absorbed_uses, m.survivor));
                     true
                 }
@@ -1008,6 +1078,15 @@ where
 
     pub fn class_repr(&self, id: Cfg::G) -> Cfg::G {
         self.classes.find_const(id)
+    }
+
+    /// The AC minimum-monomial node stored for `id`'s class (the completion rule RHS,
+    /// §9a). Maintained on merge by `fold_ac_min`. Returns `None` if `id` has no class.
+    /// Consumed by the incremental completion pass (S3); currently read by tests only.
+    #[allow(dead_code)]
+    pub(crate) fn class_ac_min(&self, id: Cfg::G) -> Option<Cfg::G> {
+        let repr = self.classes.repr_id(self.classes.find_const(id))?;
+        Some(self.classes.ac_min(repr))
     }
 
     pub fn node_ref(&self, id: Cfg::G) -> NodeRef<Cfg::Ids> {
@@ -1349,6 +1428,47 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         assert_eq!(eg.add(th.eq, &[x, y]), eg.add(th.eq, &[y, x]));
+    }
+
+    // S1: the per-class ac_min slot tracks the degree-lex-least monomial across
+    // merges (a constant is a size-1 monomial, so it wins over any sum) and rolls
+    // back with the e-graph token. See design §9a.
+    #[test]
+    fn ac_min_tracks_least_monomial_and_rolls_back() {
+        let (ref mut eg, th) = eg::<true, false>();
+        let x = eg.add(th.x, &[]);
+        let y = eg.add(th.y, &[]);
+        let z = eg.add(th.z, &[]);
+        let c = eg.add(th.w, &[]); // a leaf constant, to merge a sum into
+        let s_xy = eg.add(th.plus, &[x, y]); // +{x,y}, size 2
+        let s_xyz = eg.add(th.plus, &[x, y, z]); // +{x,y,z}, size 3
+
+        // Each fresh class's ac_min is its own node.
+        assert_eq!(eg.class_ac_min(s_xy), Some(s_xy));
+        assert_eq!(eg.class_ac_min(c), Some(c));
+
+        // Merge the two sums: the smaller monomial (+{x,y}, size 2) wins over +{x,y,z}.
+        eg.merge(s_xy, s_xyz);
+        let repr_min = eg.class_ac_min(s_xy).unwrap();
+        assert_eq!(eg.class_repr(repr_min), eg.class_repr(s_xy));
+        assert_eq!(repr_min, s_xy, "ac_min should pick the smaller sum");
+
+        // Snapshot, then merge the leaf constant c in: a size-1 monomial beats both sums.
+        let token = eg.mark(ShrinkPolicy::Never);
+        eg.merge(c, s_xy);
+        assert_eq!(
+            eg.class_ac_min(c),
+            Some(c),
+            "a constant (size-1 monomial) is the least, so ac_min becomes c"
+        );
+
+        // Restore: the post-token merge is undone, and ac_min reverts to the sum.
+        eg.restore(token);
+        assert_eq!(
+            eg.class_ac_min(s_xy),
+            Some(s_xy),
+            "ac_min must roll back with the e-graph token"
+        );
     }
 
     #[test]
