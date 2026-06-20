@@ -2435,10 +2435,165 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
         }
     }
 
-    /// Position at the smallest key in the set.
-    #[verifier::external_body]
-    pub fn seek_first(&mut self) {
-        self.seek(K::from_usize(0));
+    /// Position at the smallest key in the set (model index 0), or exhausted if
+    /// the set is empty. Descends child 0 from the root to the leftmost leaf
+    /// (`tree_leaf_ids[0]`), then sits at position 0 — establishing `cursor_wf`
+    /// with `gidx == 0` (or `gidx == |model| == 0` for the empty tree). The
+    /// enumeration entry point: `seek_first` then `step`* reads the sorted set.
+    pub fn seek_first(&mut self)
+        requires old(self).tree.wf(),
+        ensures
+            self.cursor_wf(),
+            self.tree == old(self).tree,
+            self.idx() == 0,
+    {
+        let mut idx = self.tree.root;
+        let ghost cur = self.tree.tree@;
+        let mut done = false;
+        proof {
+            // initial invariant from wf: root id, binds, tree_wf (root form), and
+            // cur == tree@ so the leftmost-leaf equality is reflexive.
+            L::lemma_arena_capacity();
+            assert(idx.as_nat() == crate::bplus_tree::tree_root_id(cur));  // wf root-id
+            crate::bplus_tree::lemma_tree_leaf_ids_nonempty(cur,
+                crate::bplus_tree::tree_height(cur), L::leaf_cap_spec(), L::key_cap_spec(), true);
+        }
+        // Descent: walk child 0 to the leftmost leaf. The invariant carries that
+        // `cur` is wf, binds at `idx`, its leftmost leaf is the whole tree's, and
+        // (when `done`) `cur` is the Leaf we stopped at.
+        while !done
+            invariant
+                self.tree.wf(),
+                idx.as_nat() == crate::bplus_tree::tree_root_id(cur),
+                binds::<L>(self.tree.arena(), cur),
+                crate::bplus_tree::tree_wf(cur, crate::bplus_tree::tree_height(cur),
+                    L::leaf_cap_spec(), L::key_cap_spec(), true),
+                crate::bplus_tree::tree_leaf_ids(cur).len() >= 1,
+                crate::bplus_tree::tree_leaf_ids(cur)[0]
+                    == crate::bplus_tree::tree_leaf_ids(self.tree.tree@)[0],
+                done ==> cur is Leaf,
+            // lexicographic: descending a child cuts tree_height(cur); setting
+            // `done` (without descending) cuts the second component to 0.
+            decreases crate::bplus_tree::tree_height(cur), (if done { 0int } else { 1int }),
+        {
+            let node = self.tree.nodes.get(idx);
+            proof { assert(self.tree.arena()[idx.as_nat() as int] == node); }
+            if L::is_leaf(&node) {
+                // is_leaf(arena[idx]) + binds(cur) at idx ⟹ cur is Leaf (the binds
+                // Inner arm would force !is_leaf). Record it in the `done` invariant.
+                proof {
+                    match cur {
+                        Tree::Leaf { .. } => {}
+                        Tree::Inner { .. } => {
+                            assert(!L::is_leaf_spec(self.tree.arena()[idx.as_nat() as int]));  // binds Inner arm
+                            assert(false);
+                        }
+                    }
+                }
+                done = true;
+                continue;
+            }
+            // internal: descend child 0. lemma_inner_first_leaf pins the leftmost
+            // leaf to child 0's; lemma_inner_child_subtree_wf gives the child wf.
+            let ghost h = crate::bplus_tree::tree_height(cur);
+            proof {
+                L::lemma_arena_capacity();
+                // node is internal and binds cur ⟹ cur is Inner (binds Inner arm).
+                assert(!L::is_leaf_spec(self.tree.arena()[idx.as_nat() as int]));
+                match cur {
+                    Tree::Leaf { .. } => { assert(false); }   // binds would force is_leaf
+                    Tree::Inner { .. } => {}
+                }
+                assert(cur == (Tree::Inner { id: crate::bplus_tree::tree_root_id(cur),
+                    seps: cur->Inner_seps, kids: cur->Inner_kids }));
+                crate::bplus_tree::lemma_inner_first_leaf(cur, h, L::leaf_cap_spec(), L::key_cap_spec());
+                lemma_inner_facts::<L>(self.tree.arena(),
+                    crate::bplus_tree::tree_root_id(cur), cur->Inner_seps, cur->Inner_kids, h);
+                // child 0 binds (forest binds projection) + is wf at h-1 (forest_wf
+                // cons), relaxed to root form for the loop. Leftmost leaf carried by
+                // lemma_inner_first_leaf. (No links/disjoint needed — seek_first
+                // only reads binds + tree_wf + the leftmost-leaf id.)
+                lemma_inner_binds_child::<L>(self.tree.arena(),
+                    crate::bplus_tree::tree_root_id(cur), cur->Inner_seps, cur->Inner_kids, 0);
+                crate::bplus_tree::lemma_forest_wf_cons(cur->Inner_kids, (h - 1) as nat,
+                    L::leaf_cap_spec(), L::key_cap_spec());
+                crate::bplus_tree::lemma_tree_wf_height(cur->Inner_kids[0], (h - 1) as nat,
+                    L::leaf_cap_spec(), L::key_cap_spec(), false);
+                crate::bplus_tree::lemma_tree_wf_relax_root(cur->Inner_kids[0], (h - 1) as nat,
+                    L::leaf_cap_spec(), L::key_cap_spec());
+            }
+            let cp0: usize = 0;
+            idx = L::child(&node, cp0);
+            proof { cur = cur->Inner_kids[0]; }
+        }
+        // at the leftmost leaf `idx` (== tree_leaf_ids(tree@)[0]).
+        let node = self.tree.nodes.get(idx);
+        let cnt = L::count(&node);
+        let ghost lids = crate::bplus_tree::tree_leaf_ids(self.tree.tree@);
+        let nil = Self::nil();
+        proof {
+            // cur is the leaf; binds gives its arena node; leaf is tree_leaf_ids[0].
+            match cur {
+                Tree::Leaf { id, keys } => {
+                    assert(idx.as_nat() == id);
+                    assert(crate::bplus_tree::tree_leaf_ids(cur) =~= seq![id]);
+                    assert(lids[0] == id);                          // loop inv: cur's leftmost == tree's
+                    assert(node == self.tree.arena()[id as int]);   // get ensures + idx==id
+                    lemma_binds_leaf_facts::<L>(self.tree.arena(), id, keys,
+                        crate::bplus_tree::tree_height(cur));
+                    L::lemma_keys_view_len(self.tree.arena()[id as int]);
+                    // cnt == count(node) == count_spec(arena[id]) == |keys_view| ==
+                    // |leaf_word_keys(arena, id)| == |leaf_word_keys(arena, lids[0])|.
+                    assert(cnt as nat == L::count_spec(self.tree.arena()[id as int]));
+                    assert(cnt == leaf_word_keys::<L>(self.tree.arena(), lids[0]).len());
+                }
+                Tree::Inner { .. } => { assert(false); }  // loop exits only at a leaf
+            }
+        }
+        if cnt > 0 {
+            // non-empty leftmost leaf: position (leaf, 0) at model index 0.
+            self.node = idx;
+            self.pos = 0;
+            proof {
+                self.gleaf@ = 0;
+                self.gidx@ = 0;
+                // node == lids[0]; pos 0 < cnt; chain_offset(0)+0 == 0; node != nil.
+                assert(self.node.as_nat() == lids[0]);
+                lemma_chain_leaf_binds::<L>(self.tree.arena(), self.tree.tree@,
+                    crate::bplus_tree::tree_height(self.tree.tree@), true, 0);
+                assert(self.node.as_nat() < self.tree.arena().len());
+                assert(self.node.as_nat() != nil_link::<L>());  // wf arena bound
+                assert(self.gidx@ == chain_offset::<L>(self.tree.arena(), lids, 0) + self.pos);
+                // gidx 0 <= |model|; model nonempty since leaf 0 has a key.
+                lemma_chain_keys_slice::<L>(self.tree.arena(), lids, 0);
+                lemma_chain_keys_eq_model::<L>(self.tree.arena(), self.tree.tree@);
+                assert(0 <= self.gidx@ < self.model().len());
+            }
+        } else {
+            // empty leftmost leaf ⟹ empty model; exhausted. (If lids.len() >= 2 the
+            // tree is Inner and EVERY leaf is non-root hence non-empty — so leaf 0
+            // empty forces lids.len() == 1, i.e. a single root leaf, model empty.)
+            self.node = nil;
+            self.pos = 0;
+            proof {
+                self.gidx@ = 0;
+                assert(cnt == leaf_word_keys::<L>(self.tree.arena(), lids[0]).len());  // == 0
+                if lids.len() >= 2 {
+                    lemma_cursor_next_leaf_nonempty::<K, L, S, TRACK>(self.tree, 0);  // leaf 0 >= 1: contra
+                    assert(false);
+                }
+                assert(lids.len() == 1);
+                // chain_offset(lids, 1) == chain_offset(lids,0) + |leaf 0| == 0 + cnt == 0
+                // (offset def at m==1); and chain_offset(lids, len) == chain_keys.len.
+                assert(chain_offset::<L>(self.tree.arena(), lids, 1)
+                    == chain_offset::<L>(self.tree.arena(), lids, 0)
+                        + leaf_word_keys::<L>(self.tree.arena(), lids[0]).len());
+                lemma_chain_offset_full::<L>(self.tree.arena(), lids);  // chain_offset(1) == chain_keys.len
+                lemma_chain_keys_eq_model::<L>(self.tree.arena(), self.tree.tree@);  // chain_keys == model
+                assert(self.model().len() == 0);
+                assert(self.node.as_nat() == nil_link::<L>());
+            }
+        }
     }
 
     /// The current key, or `None` if exhausted. Under `cursor_wf`, returns

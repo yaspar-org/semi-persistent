@@ -1353,6 +1353,30 @@ pub proof fn lemma_forest_leaf_ids_cons(kids: Seq<Tree>)
 {
 }
 
+/// The leftmost in-order leaf of an Inner node is the leftmost leaf of child 0:
+/// `tree_leaf_ids(Inner{kids})[0] == tree_leaf_ids(kids[0])[0]` (child 0 must be
+/// non-empty, which `tree_wf`/`forest_wf` guarantee). The fact `seek_first`'s
+/// child-0 descent rests on, and a non-emptiness carry for the chain.
+pub proof fn lemma_inner_first_leaf(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires
+        t is Inner,
+        tree_wf(t, h, cap, key_cap, true),
+        cap >= 1,
+    ensures
+        tree_leaf_ids(t).len() >= 1,
+        tree_leaf_ids(t)[0] == tree_leaf_ids(t->Inner_kids[0])[0],
+        tree_leaf_ids(t->Inner_kids[0]).len() >= 1,
+{
+    let kids = t->Inner_kids;
+    // child 0 wf at h-1 (forest_wf cons) ⟹ its leaf-id seq is non-empty.
+    lemma_forest_wf_cons(kids, (h - 1) as nat, cap, key_cap);
+    lemma_tree_leaf_ids_nonempty(kids[0], (h - 1) as nat, cap, key_cap, false);
+    lemma_forest_leaf_ids_cons(kids);
+    // forest_leaf_ids(kids) == tree_leaf_ids(kids[0]) ++ ...; head is kids[0]'s head.
+    assert(tree_leaf_ids(t) == forest_leaf_ids(kids));
+    assert(forest_leaf_ids(kids)[0] == tree_leaf_ids(kids[0])[0]);
+}
+
 /// Every in-order leaf id is in the tree's footprint: `tree_leaf_ids(t)[p] ∈
 /// tree_ids(t)`. So a frame agreeing on `tree_ids(t)` agrees on every leaf-link
 /// slot — the basis of the leaf-link frame lemma.
