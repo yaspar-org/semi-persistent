@@ -6290,6 +6290,57 @@ pub proof fn lemma_chain_offset_full<L: NodeLayout>(arena: Seq<L::Node>, lids: S
     }
 }
 
+/// `chain_offset(lids, k) == chain_keys(lids.subrange(0, k)).len()` for any
+/// prefix `k`: the offset counts exactly the model keys of the first `k` leaves.
+/// Generalizes `lemma_chain_offset_full` (k == len); induction on `k`.
+pub proof fn lemma_chain_offset_prefix<L: NodeLayout>(arena: Seq<L::Node>, lids: Seq<nat>, k: int)
+    requires 0 <= k <= lids.len(),
+    ensures chain_offset::<L>(arena, lids, k) == chain_keys::<L>(arena, lids.subrange(0, k)).len(),
+    decreases k,
+{
+    if k == 0 {
+        assert(lids.subrange(0, 0) =~= Seq::<nat>::empty());
+        assert(chain_keys::<L>(arena, lids.subrange(0, 0)) =~= Seq::<nat>::empty());
+    } else {
+        // chain_offset(k) == chain_offset(k-1) + |leaf (k-1)|  (offset def);
+        // chain_keys(lids[0..k]) == chain_keys(lids[0..k-1]) ++ leaf_word_keys(lids[k-1]).
+        lemma_chain_offset_prefix::<L>(arena, lids, k - 1);
+        let pk = lids.subrange(0, k);
+        let pk1 = lids.subrange(0, k - 1);
+        assert(pk1 == pk.drop_last());
+        assert(pk[k - 1] == lids[k - 1]);
+        lemma_chain_keys_drop_last::<L>(arena, pk);
+        assert(chain_offset::<L>(arena, lids, k)
+            == chain_offset::<L>(arena, lids, k - 1) + leaf_word_keys::<L>(arena, lids[k - 1]).len());
+    }
+}
+
+/// `chain_keys(s) == chain_keys(s.drop_last()) ++ leaf_word_keys(s.last())`: the
+/// chain reading peels its LAST leaf (the dual of the cons def, peeling head).
+pub proof fn lemma_chain_keys_drop_last<L: NodeLayout>(arena: Seq<L::Node>, s: Seq<nat>)
+    requires s.len() >= 1,
+    ensures chain_keys::<L>(arena, s)
+        == chain_keys::<L>(arena, s.drop_last()) + leaf_word_keys::<L>(arena, s[s.len() - 1]),
+    decreases s.len(),
+{
+    if s.len() == 1 {
+        assert(s.drop_last() =~= Seq::<nat>::empty());
+        assert(s.drop_first() =~= Seq::<nat>::empty());
+        assert(chain_keys::<L>(arena, s) == leaf_word_keys::<L>(arena, s[0]) + chain_keys::<L>(arena, s.drop_first()));
+    } else {
+        let df = s.drop_first();
+        // chain_keys(s) == leaf(s[0]) ++ chain_keys(df); recurse on df.
+        lemma_chain_keys_drop_last::<L>(arena, df);
+        assert(df.drop_last() =~= s.drop_last().drop_first());
+        assert(df[df.len() - 1] == s[s.len() - 1]);
+        assert(s.drop_last()[0] == s[0]);
+        // chain_keys(s.drop_last()) == leaf(s[0]) ++ chain_keys(s.drop_last().drop_first()).
+        assert(chain_keys::<L>(arena, s.drop_last())
+            == leaf_word_keys::<L>(arena, s.drop_last()[0]) + chain_keys::<L>(arena, s.drop_last().drop_first()));
+    }
+}
+
+
 /// Every in-order leaf of a `wf` MULTI-leaf tree is non-empty: when
 /// `tree_leaf_ids(tree@).len() >= 2`, the tree is an Inner node, so every leaf is
 /// non-root and `tree_wf` forces `>= ceil(cap/2) >= 1` keys. (Bridges to
