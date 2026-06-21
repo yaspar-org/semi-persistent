@@ -719,13 +719,13 @@ macro_rules! gen_layout_u32 {
                     assert(combined.len() == $leaf_cap + 1);
                     assert(Self::keys_view(left) =~= combined.subrange(0, mid as int)) by {
                         assert forall|t: int| 0 <= t < mid implies
-                            Self::keys_view(left)[t] == combined.subrange(0, mid as int)[t] by {
+                            #[trigger] Self::keys_view(left)[t] == combined.subrange(0, mid as int)[t] by {
                             assert(left.data[t] == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }));
                         }
                     }
                     assert(Self::keys_view(right) =~= combined.subrange(mid as int, combined.len() as int)) by {
                         assert forall|t: int| 0 <= t < rc implies
-                            Self::keys_view(right)[t] == combined.subrange(mid as int, combined.len() as int)[t] by {
+                            #[trigger] Self::keys_view(right)[t] == combined.subrange(mid as int, combined.len() as int)[t] by {
                             assert(right.data[t] == (if mid + t < pos { n.data[mid + t] } else if mid + t == pos { w } else { n.data[mid + t - 1] }));
                         }
                     }
@@ -842,7 +842,7 @@ macro_rules! gen_layout_u32 {
                         else if i > cp { assert(cseps[i] == Self::keys_view(*n)[i - 1]); }
                     }
                     assert forall|t: int| 0 <= t < imid implies
-                        Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
+                        #[trigger] Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
                         assert(Self::keys_view(left)[t] == left.data[t]);
                     }
                     assert(Self::keys_view(left) =~= cseps.subrange(0, imid as int));
@@ -1100,13 +1100,13 @@ macro_rules! gen_layout_u64 {
                     assert(combined.len() == $leaf_cap + 1);
                     assert(Self::keys_view(left) =~= combined.subrange(0, mid as int)) by {
                         assert forall|t: int| 0 <= t < mid implies
-                            Self::keys_view(left)[t] == combined.subrange(0, mid as int)[t] by {
+                            #[trigger] Self::keys_view(left)[t] == combined.subrange(0, mid as int)[t] by {
                             assert(left.data[t] == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }));
                         }
                     }
                     assert(Self::keys_view(right) =~= combined.subrange(mid as int, combined.len() as int)) by {
                         assert forall|t: int| 0 <= t < rc implies
-                            Self::keys_view(right)[t] == combined.subrange(mid as int, combined.len() as int)[t] by {
+                            #[trigger] Self::keys_view(right)[t] == combined.subrange(mid as int, combined.len() as int)[t] by {
                             assert(right.data[t] == (if mid + t < pos { n.data[mid + t] } else if mid + t == pos { w } else { n.data[mid + t - 1] }));
                         }
                     }
@@ -1254,7 +1254,7 @@ macro_rules! gen_layout_u64 {
                         else if i > cp { assert(cseps[i] == Self::keys_view(*n)[i - 1]); }
                     }
                     assert forall|t: int| 0 <= t < imid implies
-                        Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
+                        #[trigger] Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
                         assert(Self::keys_view(left)[t] == left.data[t]);
                     }
                     assert(Self::keys_view(left) =~= cseps.subrange(0, imid as int));
@@ -1312,7 +1312,7 @@ macro_rules! gen_layout_u64 {
                     // per-index: keys_view(left)[t] == left.data[t] == formula(t)
                     //          == cseps[t] == cseps.subrange(0, imid)[t].
                     assert forall|t: int| 0 <= t < imid implies
-                        Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
+                        #[trigger] Self::keys_view(left)[t] == cseps.subrange(0, imid as int)[t] by {
                         assert(Self::keys_view(left)[t] == left.data[t]);
                     }
                     assert(Self::keys_view(left) =~= cseps.subrange(0, imid as int));
