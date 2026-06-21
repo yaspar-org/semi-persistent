@@ -46,7 +46,10 @@ fn read_list(a: &Arena, l: usize) -> Vec<u32> {
     // Guard against a corrupt cycle: never walk more than the arena size.
     let mut budget = a.nodes.len() + 1;
     while cur.some {
-        assert!(budget > 0, "list {l} walk exceeded arena size — cycle/corruption");
+        assert!(
+            budget > 0,
+            "list {l} walk exceeded arena size — cycle/corruption"
+        );
         budget -= 1;
         let node = a.nodes.get(cur.idx);
         out.push(node.payload);
@@ -82,12 +85,20 @@ fn list_arena_prepend_append_match_oracle() {
             }
             // is_empty agrees, and a random list reads back exactly.
             let probe = rng.below(oracle.len());
-            assert_eq!(a.is_empty(probe), oracle[probe].is_empty(), "seed={seed}: is_empty({probe})");
-            assert_eq!(read_list(&a, probe), oracle[probe], "seed={seed}: list {probe} contents");
+            assert_eq!(
+                a.is_empty(probe),
+                oracle[probe].is_empty(),
+                "seed={seed}: is_empty({probe})"
+            );
+            assert_eq!(
+                read_list(&a, probe),
+                oracle[probe],
+                "seed={seed}: list {probe} contents"
+            );
         }
         // full sweep.
-        for l in 0..oracle.len() {
-            assert_eq!(read_list(&a, l), oracle[l], "seed={seed}: final list {l}");
+        for (l, expected) in oracle.iter().enumerate() {
+            assert_eq!(read_list(&a, l), *expected, "seed={seed}: final list {l}");
         }
         println!("list_arena prepend/append seed={seed}: OK ({nlists} lists)");
     }
@@ -106,11 +117,11 @@ fn list_arena_splice_match_oracle() {
             oracle.push(Vec::new());
         }
         // seed each list with a few values.
-        for l in 0..nlists {
+        for (l, olist) in oracle.iter_mut().enumerate() {
             for _ in 0..rng.below(6) {
                 let v = rng.next() as u32;
                 a.append(l, v);
-                oracle[l].push(v);
+                olist.push(v);
             }
         }
 
@@ -133,8 +144,12 @@ fn list_arena_splice_match_oracle() {
                 oracle[l].push(v);
             }
 
-            for l in 0..nlists {
-                assert_eq!(read_list(&a, l), oracle[l], "seed={seed}: list {l} after splice");
+            for (l, expected) in oracle.iter().enumerate() {
+                assert_eq!(
+                    read_list(&a, l),
+                    *expected,
+                    "seed={seed}: list {l} after splice"
+                );
             }
         }
         println!("list_arena splice seed={seed}: OK");
@@ -178,13 +193,21 @@ fn list_arena_mark_restore() {
                 }
             }
             let l = rng.below(nlists);
-            assert_eq!(read_list(&a, l), oracle[l], "seed={seed}: list {l} after op");
+            assert_eq!(
+                read_list(&a, l),
+                oracle[l],
+                "seed={seed}: list {l} after op"
+            );
         }
         // unwind fully.
         while let Some((tok, snap)) = frames.pop() {
             a.restore(tok, Ghost::assume_new());
-            for l in 0..nlists {
-                assert_eq!(read_list(&a, l), snap[l], "seed={seed}: list {l} after restore");
+            for (l, expected) in snap.iter().enumerate() {
+                assert_eq!(
+                    read_list(&a, l),
+                    *expected,
+                    "seed={seed}: list {l} after restore"
+                );
             }
         }
         println!("list_arena_mark_restore seed={seed}: OK");
@@ -207,7 +230,10 @@ fn read_ring(c: &Ring, start: usize) -> Vec<u32> {
     let mut cur = start;
     let mut budget = c.len() + 1;
     loop {
-        assert!(budget > 0, "ring walk from {start} exceeded node count — corruption");
+        assert!(
+            budget > 0,
+            "ring walk from {start} exceeded node count — corruption"
+        );
         budget -= 1;
         // payload of node `cur`.
         out.push(payload_of(c, cur));
@@ -255,7 +281,11 @@ fn circular_list_singleton_and_splice() {
             if make_new {
                 let p = rng.next() as u32;
                 let id = c.add_singleton(p);
-                assert_eq!(id, node_payload.len(), "seed={seed}: add_singleton id mismatch");
+                assert_eq!(
+                    id,
+                    node_payload.len(),
+                    "seed={seed}: add_singleton id mismatch"
+                );
                 node_payload.push(p);
                 ring_of.push(rings.len());
                 rings.push(vec![id]);
@@ -304,8 +334,10 @@ fn circular_list_singleton_and_splice() {
             if !node_payload.is_empty() {
                 let nd = rng.below(node_payload.len());
                 let walked = read_ring(&c, nd);
-                let oracle_ring: Vec<u32> =
-                    rings[ring_of[nd]].iter().map(|&x| node_payload[x]).collect();
+                let oracle_ring: Vec<u32> = rings[ring_of[nd]]
+                    .iter()
+                    .map(|&x| node_payload[x])
+                    .collect();
                 // walked starts at nd; rotate oracle so it also starts at nd.
                 let start_pos = rings[ring_of[nd]].iter().position(|&x| x == nd).unwrap();
                 let oracle_nodes = &rings[ring_of[nd]];
@@ -319,7 +351,10 @@ fn circular_list_singleton_and_splice() {
                 assert!(eq_up_to_rotation(&walked, &oracle_ring));
             }
         }
-        println!("circular_list seed={seed}: OK ({} nodes)", node_payload.len());
+        println!(
+            "circular_list seed={seed}: OK ({} nodes)",
+            node_payload.len()
+        );
     }
 }
 
@@ -340,7 +375,10 @@ fn circular_list_mark_restore() {
             match rng.below(7) {
                 0 => {
                     let token = c.mark(ShrinkPolicy::Never);
-                    frames.push((token, (node_payload.clone(), rings.clone(), ring_of.clone())));
+                    frames.push((
+                        token,
+                        (node_payload.clone(), rings.clone(), ring_of.clone()),
+                    ));
                 }
                 1 if !frames.is_empty() => {
                     let (tok, (np, rg, ro)) = frames.pop().unwrap();

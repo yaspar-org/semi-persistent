@@ -81,7 +81,11 @@ fn vec_ops_match_oracle() {
             );
             assert_eq!(v.is_empty(), oracle.is_empty());
         }
-        assert_eq!(read_back(&v), oracle, "seed={seed}: final contents mismatch");
+        assert_eq!(
+            read_back(&v),
+            oracle,
+            "seed={seed}: final contents mismatch"
+        );
     }
     println!("vec_ops_match_oracle: OK");
 }
