@@ -419,7 +419,7 @@ pub proof fn lemma_forest_id_in_some_child(kids: Seq<Tree>, id: nat)
         let df = kids.drop_first();
         assert(forest_ids(df).contains(id));
         lemma_forest_id_in_some_child(df, id);
-        let m = choose|m: int| 0 <= m < df.len() && tree_ids(df[m]).contains(id);
+        let m = choose|m: int| 0 <= m < df.len() && (#[trigger] tree_ids(df[m])).contains(id);
         assert(df[m] == kids[m + 1]);
         assert(tree_ids(kids[m + 1]).contains(id));  // witness m + 1
     }
@@ -575,7 +575,7 @@ pub proof fn lemma_seek_idx_descent(t: Tree, h: nat, cap: nat, key_cap: nat, cp:
     // left part all < tgt: keys in lk[j] == kids[j] (j < cp) are < seps[j] <= tgt.
     assert forall|i: int| 0 <= i < forest_keys(lk).len() implies #[trigger] forest_keys(lk)[i] < tgt by {
         lemma_forest_keys_membership(lk, forest_keys(lk)[i]);
-        let m = choose|m: int| 0 <= m < lk.len() && tree_keys(lk[m]).contains(forest_keys(lk)[i]);
+        let m = choose|m: int| 0 <= m < lk.len() && (#[trigger] tree_keys(lk[m])).contains(forest_keys(lk)[i]);
         assert(lk[m] == kids[m]);
         assert(keys_all_lt(kids[m], seps[m]));           // tree_wf cross-node (m < cp <= seps.len)
         lemma_keys_all_lt_set(kids[m], seps[m]);
@@ -584,7 +584,7 @@ pub proof fn lemma_seek_idx_descent(t: Tree, h: nat, cap: nat, key_cap: nat, cp:
     // right part all >= tgt: keys in rk[j] == kids[cp+1+j] are >= seps[cp] > tgt.
     assert forall|i: int| 0 <= i < forest_keys(rk).len() implies tgt <= #[trigger] forest_keys(rk)[i] by {
         lemma_forest_keys_membership(rk, forest_keys(rk)[i]);
-        let m = choose|m: int| 0 <= m < rk.len() && tree_keys(rk[m]).contains(forest_keys(rk)[i]);
+        let m = choose|m: int| 0 <= m < rk.len() && (#[trigger] tree_keys(rk[m])).contains(forest_keys(rk)[i]);
         assert(rk[m] == kids[cp + 1 + m]);
         assert(keys_all_ge(kids[cp + 1 + m], seps[cp + m]));   // tree_wf: kids[i] >= seps[i-1]
         lemma_keys_all_ge_set(kids[cp + 1 + m], seps[cp + m]);
@@ -716,7 +716,7 @@ pub proof fn lemma_forest_keys_sorted(kids: Seq<Tree>, seps: Seq<nat>, h: nat, c
             let tk = forest_keys(df)[j];
             assert(forest_keys(df).to_set().contains(tk));
             lemma_forest_keys_membership(df, tk);
-            let m = choose|m: int| 0 <= m < df.len() && tree_keys(df[m]).contains(tk);
+            let m = choose|m: int| 0 <= m < df.len() && (#[trigger] tree_keys(df[m])).contains(tk);
             assert(df[m] == kids[m + 1]);
             assert(keys_all_ge(kids[m + 1], seps[m]));
             lemma_keys_all_ge_set(kids[m + 1], seps[m]);
@@ -836,7 +836,7 @@ pub proof fn lemma_sorted_insert(keys: Seq<nat>, k: nat, pos: int)
     }
     // set equality: r's elements are keys' elements plus k.
     assert(r.to_set() =~= keys.to_set().insert(k)) by {
-        assert forall|x: nat| r.to_set().contains(x) <==> keys.to_set().insert(k).contains(x) by {
+        assert forall|x: nat| #![trigger r.to_set().contains(x)] r.to_set().contains(x) <==> keys.to_set().insert(k).contains(x) by {
             // forward: every r element is k or a keys element (by index region).
             if r.to_set().contains(x) {
                 let m = choose|m: int| 0 <= m < r.len() && r[m] == x;
@@ -959,12 +959,12 @@ pub proof fn lemma_forest_keys_membership(kids: Seq<Tree>, k: nat)
             if tree_keys(kids[0]).contains(k) {
                 assert(tree_keys(kids[0]).contains(k));  // witness m == 0
             } else {
-                let m2 = choose|m2: int| 0 <= m2 < df.len() && tree_keys(df[m2]).contains(k);
+                let m2 = choose|m2: int| 0 <= m2 < df.len() && (#[trigger] tree_keys(df[m2])).contains(k);
                 assert(tree_keys(kids[m2 + 1]).contains(k));  // witness m == m2 + 1
             }
         }
-        if exists|m: int| 0 <= m < kids.len() && tree_keys(kids[m]).contains(k) {
-            let m = choose|m: int| 0 <= m < kids.len() && tree_keys(kids[m]).contains(k);
+        if exists|m: int| 0 <= m < kids.len() && (#[trigger] tree_keys(kids[m])).contains(k) {
+            let m = choose|m: int| 0 <= m < kids.len() && (#[trigger] tree_keys(kids[m])).contains(k);
             if m == 0 {
             } else {
                 assert(df[m - 1] == kids[m]);
@@ -1084,7 +1084,7 @@ pub proof fn lemma_forest_disjoint_update(kids: Seq<Tree>, m: int, nc: Tree, bou
         tree_disjoint(nc),
         // old ids retained, new ids fresh (>= bound).
         tree_ids(kids[m]).subset_of(tree_ids(nc)),
-        (forall|id: nat| tree_ids(nc).contains(id)
+        (forall|id: nat| #![trigger tree_ids(nc).contains(id)] tree_ids(nc).contains(id)
             ==> tree_ids(kids[m]).contains(id) || id >= bound),
         // bound is above every old forest id (so siblings are all < bound).
         (forall|id: nat| #[trigger] forest_ids(kids).contains(id) ==> id < bound),
@@ -1143,7 +1143,7 @@ pub proof fn lemma_forest_disjoint_update(kids: Seq<Tree>, m: int, nc: Tree, bou
     // kids[m]. Establish nc disjoint from each sibling.
     assert forall|i: int| 0 <= i < kids.len() && i != m implies
         (#[trigger] tree_ids(kids[i])).disjoint(tree_ids(nc)) by {
-        assert forall|id: nat| tree_ids(kids[i]).contains(id) && tree_ids(nc).contains(id)
+        assert forall|id: nat| tree_ids(kids[i]).contains(id) && #[trigger] tree_ids(nc).contains(id)
             implies false by {
             // id in sibling i ⟹ id in forest_ids(kids) ⟹ id < bound.
             lemma_forest_id_in_forest(kids, i, id);
@@ -1425,7 +1425,7 @@ pub proof fn lemma_descent_step(
     lemma_forest_keys_membership(kids, k);
     if tree_contains(t, k) {
         // k in forest ⟹ k in some kids[m]; show m == cp via cross-node ordering.
-        let m = choose|m: int| 0 <= m < kids.len() && tree_keys(kids[m]).contains(k);
+        let m = choose|m: int| 0 <= m < kids.len() && (#[trigger] tree_keys(kids[m])).contains(k);
         if m < cp {
             // keys_all_lt(kids[m], seps[m]): k < seps[m] <= k, contradiction.
             let j = choose|j: int| 0 <= j < tree_keys(kids[m]).len() && tree_keys(kids[m])[j] == k;
@@ -1908,7 +1908,7 @@ pub proof fn lemma_internal_split_tree_wf(
     assert forall|k: nat| tree_keys(lt).to_set().contains(k) implies k < cseps[imid] by {
         assert(forest_keys(lkids).contains(k));  // tree_keys(lt)==forest_keys(lkids)
         lemma_forest_keys_membership(lkids, k);
-        let m = choose|m: int| 0 <= m < lkids.len() && tree_keys(lkids[m]).contains(k);
+        let m = choose|m: int| 0 <= m < lkids.len() && (#[trigger] tree_keys(lkids[m])).contains(k);
         assert(lkids[m] == ckids[m]);
         assert(keys_all_lt(ckids[m], cseps[m]));  // requires at i == m (m <= imid < cseps.len())
         lemma_keys_all_lt_set(ckids[m], cseps[m]);
@@ -1920,7 +1920,7 @@ pub proof fn lemma_internal_split_tree_wf(
     assert forall|k: nat| tree_keys(rt).to_set().contains(k) implies cseps[imid] <= k by {
         assert(forest_keys(rkids).contains(k));  // tree_keys(rt)==forest_keys(rkids)
         lemma_forest_keys_membership(rkids, k);
-        let m = choose|m: int| 0 <= m < rkids.len() && tree_keys(rkids[m]).contains(k);
+        let m = choose|m: int| 0 <= m < rkids.len() && (#[trigger] tree_keys(rkids[m])).contains(k);
         assert(rkids[m] == ckids[imid + 1 + m]);
         assert(keys_all_ge(ckids[imid + 1 + m], cseps[imid + m]));  // requires at j == imid+1+m
         lemma_keys_all_ge_set(ckids[imid + 1 + m], cseps[imid + m]);
@@ -2329,7 +2329,7 @@ proof fn lemma_seq_concat_to_set(a: Seq<nat>, b: Seq<nat>)
     ensures (a + b).to_set() == a.to_set().union(b.to_set()),
 {
     assert((a + b).to_set() =~= a.to_set().union(b.to_set())) by {
-        assert forall|k: nat| (a + b).to_set().contains(k) <==> a.to_set().union(b.to_set()).contains(k) by {
+        assert forall|k: nat| #![trigger (a + b).to_set().contains(k)] (a + b).to_set().contains(k) <==> a.to_set().union(b.to_set()).contains(k) by {
             if (a + b).to_set().contains(k) {
                 let idx = choose|idx: int| 0 <= idx < (a + b).len() && (a + b)[idx] == k;
                 if idx < a.len() { assert(a[idx] == k); } else { assert(b[idx - a.len()] == k); }
@@ -2373,10 +2373,10 @@ pub proof fn lemma_child_split_absorb_ids(
         tree_ids(ncl).disjoint(tree_ids(ncr)),
         // the old child's ids are retained across the two halves (a split
         // distributes them, never drops one): gkids[cp] ⊆ ncl ∪ ncr.
-        (forall|id: nat| tree_ids(gkids[cp]).contains(id)
+        (forall|id: nat| #![trigger tree_ids(ncl).contains(id)] #![trigger tree_ids(ncr).contains(id)] tree_ids(gkids[cp]).contains(id)
             ==> tree_ids(ncl).contains(id) || tree_ids(ncr).contains(id)),
-        (forall|id: nat| tree_ids(ncl).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
-        (forall|id: nat| tree_ids(ncr).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        (forall|id: nat| #![trigger tree_ids(ncl).contains(id)] tree_ids(ncl).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        (forall|id: nat| #![trigger tree_ids(ncr).contains(id)] tree_ids(ncr).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
         // leftmost leaf of ncl == leftmost leaf of the old child (split adds right).
         tree_leaf_ids(ncl).len() >= 1,
         tree_leaf_ids(gkids[cp]).len() >= 1,
@@ -2389,7 +2389,7 @@ pub proof fn lemma_child_split_absorb_ids(
             let nt = Tree::Inner { id: gid, seps: nseps, kids: nkids };
             &&& tree_disjoint(nt)
             &&& tree_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids }).subset_of(tree_ids(nt))
-            &&& (forall|id: nat| tree_ids(nt).contains(id)
+            &&& (forall|id: nat| #![trigger tree_ids(nt).contains(id)] tree_ids(nt).contains(id)
                     ==> tree_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids }).contains(id) || id >= bound)
             &&& tree_leaf_ids(nt).len() >= 1
             &&& tree_leaf_ids(nt)[0] == tree_leaf_ids(Tree::Inner { id: gid, seps: gseps, kids: gkids })[0]
@@ -2408,7 +2408,7 @@ pub proof fn lemma_child_split_absorb_ids(
     // --- forest_ids(nkids) ⊇ forest_ids(gkids), and new ids fresh. ---
     assert forall|id: nat| #[trigger] forest_ids(gkids).contains(id) implies forest_ids(nkids).contains(id) by {
         lemma_forest_id_in_some_child(gkids, id);
-        let m = choose|m: int| 0 <= m < gkids.len() && tree_ids(gkids[m]).contains(id);
+        let m = choose|m: int| 0 <= m < gkids.len() && (#[trigger] tree_ids(gkids[m])).contains(id);
         if m < cp { lemma_forest_id_in_forest(nkids, m, id); }
         else if m == cp {
             // old child id lands in ncl (slot cp) or ncr (slot cp+1).
@@ -2420,7 +2420,7 @@ pub proof fn lemma_child_split_absorb_ids(
     assert forall|id: nat| #[trigger] forest_ids(nkids).contains(id)
         implies forest_ids(gkids).contains(id) || id >= bound by {
         lemma_forest_id_in_some_child(nkids, id);
-        let m = choose|m: int| 0 <= m < nkids.len() && tree_ids(nkids[m]).contains(id);
+        let m = choose|m: int| 0 <= m < nkids.len() && (#[trigger] tree_ids(nkids[m])).contains(id);
         if m < cp { lemma_forest_id_in_forest(gkids, m, id); }
         else if m == cp { if tree_ids(gkids[cp]).contains(id) { lemma_forest_id_in_forest(gkids, cp, id); } }
         else if m == cp + 1 { if tree_ids(gkids[cp]).contains(id) { lemma_forest_id_in_forest(gkids, cp, id); } }
@@ -2496,8 +2496,8 @@ pub proof fn lemma_child_split_pair_disjoint(
             (#[trigger] tree_ids(gkids[a])).disjoint(#[trigger] tree_ids(gkids[b]))),
         (forall|id: nat| #[trigger] forest_ids(gkids).contains(id) ==> id < bound),
         tree_ids(ncl).disjoint(tree_ids(ncr)),
-        (forall|id: nat| tree_ids(ncl).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
-        (forall|id: nat| tree_ids(ncr).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        (forall|id: nat| #![trigger tree_ids(ncl).contains(id)] tree_ids(ncl).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
+        (forall|id: nat| #![trigger tree_ids(ncr).contains(id)] tree_ids(ncr).contains(id) ==> tree_ids(gkids[cp]).contains(id) || id >= bound),
     ensures
         ({
             let nkids = gkids.update(cp, ncl).insert(cp + 1, ncr);
@@ -2624,7 +2624,7 @@ pub proof fn lemma_parent_split_half_ids(
     assert(!forest_ids(hkids).contains(hid)) by {
         if forest_ids(hkids).contains(hid) {
             lemma_forest_id_in_some_child(hkids, hid);
-            let m = choose|m: int| 0 <= m < hkids.len() && tree_ids(hkids[m]).contains(hid);
+            let m = choose|m: int| 0 <= m < hkids.len() && (#[trigger] tree_ids(hkids[m])).contains(hid);
             lemma_forest_id_in_forest(ckids, off + m, hid);  // hkids[m] == ckids[off+m]
         }
     }
@@ -2728,8 +2728,8 @@ pub proof fn lemma_parent_split_disjoint(
         if forest_ids(rkids).contains(id) {
             lemma_forest_id_in_some_child(lkids, id);
             lemma_forest_id_in_some_child(rkids, id);
-            let i = choose|i: int| 0 <= i < lkids.len() && tree_ids(lkids[i]).contains(id);
-            let j = choose|j: int| 0 <= j < rkids.len() && tree_ids(rkids[j]).contains(id);
+            let i = choose|i: int| 0 <= i < lkids.len() && (#[trigger] tree_ids(lkids[i])).contains(id);
+            let j = choose|j: int| 0 <= j < rkids.len() && (#[trigger] tree_ids(rkids[j])).contains(id);
             assert(ckids[i] == lkids[i]);                      // lkids == ckids[0..m]
             assert(ckids[lkids.len() + j] == rkids[j]);        // rkids == ckids[m..]
             assert(tree_ids(ckids[i]).contains(id));
