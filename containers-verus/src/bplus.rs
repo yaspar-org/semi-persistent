@@ -843,7 +843,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         let ghost old_kview = L::keys_view(leaf);
         proof {
             L::lemma_keys_view_len(leaf);  // old_kview.len() == count == n == gkeys.len()
-            assert forall|j: int| 0 <= j < gkeys.len() implies old_kview[j].as_nat() == gkeys[j] by {
+            assert forall|j: int| 0 <= j < gkeys.len() implies old_kview[j].as_nat() == #[trigger] gkeys[j] by {
                 lemma_leaf_binds_key::<K, L, S, TRACK>(self, j);
                 assert(L::keys_view(self.arena()[root_id])[j] == old_kview[j]);
             }
