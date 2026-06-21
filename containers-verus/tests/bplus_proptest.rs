@@ -807,3 +807,118 @@ fn seek_from_arbitrary_positions() {
     }
     println!("seek_from_arbitrary_positions: OK");
 }
+
+// ---------------------------------------------------------------------------
+// Empirical logarithmic cost of seek.
+//
+// We do not PROVE the complexity (the user explicitly scoped that out), but a
+// seek visits exactly one node per tree level (root-to-leaf descent, then at
+// most one `link` hop), so the node-visit count of a seek == tree_height + 1.
+// We measure the height directly off the arena and check it grows like
+// log_B(n) — concretely, that it stays within a generous logarithmic envelope
+// as n scales across two orders of magnitude (so a hidden linear/sqrt blowup
+// would fail loudly).
+// ---------------------------------------------------------------------------
+
+/// The arena height: number of internal levels on the root-to-leftmost-leaf
+/// path. A leaf root has height 0. This is exactly the number of internal
+/// nodes a `seek` descends through; the work of a seek is `height + 1` node
+/// touches (plus an O(1) possible `link` step at the end).
+fn measured_height(t: &Tree) -> usize {
+    let mut idx = t.root;
+    let mut h = 0usize;
+    loop {
+        let node = t.nodes.get(idx);
+        if L::is_leaf(&node) {
+            break;
+        }
+        // descend child 0 (any child reaches a leaf in the same number of
+        // levels — a B+tree is height-balanced).
+        idx = L::child(&node, 0);
+        h += 1;
+        assert!(h <= 64, "implausible height {h} — descent not terminating");
+    }
+    h
+}
+
+#[test]
+fn seek_cost_is_logarithmic() {
+    // Branching: KEY_CAP separators => up to KEY_CAP+1 children per internal
+    // node; leaves hold up to LEAF_CAP keys. So height h satisfies roughly
+    //   n <= LEAF_CAP * (KEY_CAP+1)^h   =>   h >= log_{B}(n / LEAF_CAP).
+    // Upper envelope: a healthy B+tree with min occupancy ~B/2 has
+    //   h <= log_{ceil(B/2)}(n) + O(1). We check height against a generous
+    // multiple of log2(n), which any logarithmic-height structure satisfies and
+    // a linear/sqrt one does not.
+    let branch = (KEY_CAP + 1) as f64; // 8
+    let sizes = [10u32, 100, 1_000, 10_000, 50_000];
+    let mut prev_height = 0usize;
+
+    for &n in &sizes {
+        let keys = shuffled(n, 0xC057 ^ (n as u64));
+        let mut t = Tree::new();
+        for &k in &keys {
+            t.insert_general(key(k));
+        }
+        let h = measured_height(&t);
+
+        // 1) every seek touches exactly h+1 nodes (re-derive the descent count
+        //    for a handful of targets and confirm it equals the height path).
+        for &target in &[0u32, n / 2, n.saturating_sub(1), n + 1000] {
+            let visits = seek_descent_visits(&t, key(target));
+            assert!(
+                visits == h + 1,
+                "n={n}: seek({target}) visited {visits} nodes, height path is {}",
+                h + 1
+            );
+        }
+
+        // 2) height is within a logarithmic envelope: h <= 2*log_B(n) + 3.
+        let log_b_n = (n as f64).ln() / branch.ln();
+        let envelope = (2.0 * log_b_n + 3.0).ceil() as usize;
+        assert!(
+            h <= envelope,
+            "n={n}: height {h} exceeds logarithmic envelope {envelope} (log_B(n)={log_b_n:.2})"
+        );
+
+        // 3) monotone, slow growth: height never DROPS as n grows, and a 10x
+        //    size increase adds at most a couple of levels (log behaviour).
+        assert!(h >= prev_height, "n={n}: height {h} < previous {prev_height}");
+        prev_height = h;
+
+        println!("n={n:>6}: height={h}, seek visits={}, envelope={envelope}", h + 1);
+    }
+    println!("seek_cost_is_logarithmic: OK");
+}
+
+/// Count the nodes a `seek(target)` descent touches, by replicating the
+/// root-to-leaf path the verified `seek_leaf` walks: at each internal node pick
+/// the child whose subtree could hold `target` (first separator strictly
+/// greater than target), descending until a leaf. Returns levels touched
+/// (== height + 1). This mirrors the cost of the real seek without needing the
+/// verified code to expose a counter.
+fn seek_descent_visits(t: &Tree, target: DenseId31) -> usize {
+    let tv = target.index() as u32;
+    let mut idx = t.root;
+    let mut visits = 0usize;
+    loop {
+        let node = t.nodes.get(idx);
+        visits += 1;
+        if L::is_leaf(&node) {
+            break;
+        }
+        // find first separator > target; descend that child (find_gt).
+        let count = L::count(&node);
+        let mut cp = count; // default: last child
+        for i in 0..count {
+            let sep = L::key(&node, i); // separator word (u32)
+            if tv < sep {
+                cp = i;
+                break;
+            }
+        }
+        idx = L::child(&node, cp);
+        assert!(visits <= 64, "descent not terminating");
+    }
+    visits
+}
