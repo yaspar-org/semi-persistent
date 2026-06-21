@@ -2351,6 +2351,29 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         }
     }
 
+    // OVERFLOW-SAFETY of the seek path (audit, 2026-06):
+    //
+    // Verus's exec verification includes a built-in no-arithmetic-overflow check
+    // on every `+`/`-`/`*` over machine integers, so the fact that `leaf_find_ge`,
+    // `find_child`, `seek_leaf`, `seek` and `step` all verify already MEANS no
+    // operation in the seek path can overflow. Concretely:
+    //   - Binary-search midpoint is `lo + (hi - lo) / 2` (here and in `find_child`,
+    //     bplus.rs:2451; also bplus_search.rs:83/120) — the canonical overflow-safe
+    //     form. The naive `(lo + hi) / 2` (which overflows once `lo + hi` exceeds
+    //     `usize::MAX`) appears NOWHERE in the crate. `lo <= hi <= count <= cap`,
+    //     so even the operands are tiny.
+    //   - Within-leaf / next-leaf advance (`pos + 1`, `step`'s `self.pos + 1`) is
+    //     bounded by leaf capacity; the model-index bumps (`gidx + 1`, `gm + 1`,
+    //     `acc + forest_keys(..)`) are GHOST `int` (unbounded — overflow is not even
+    //     a category there).
+    //   - Pivot/key values are never arithmetic operands: separators and keys are
+    //     read with `L::key(node, mid)` and only COMPARED (`kmid.le(word)`), never
+    //     added/subtracted. The single value cast on the path is `key()`'s
+    //     `K::from_usize(w.as_usize())`, proven to round-trip exactly because
+    //     `model_bounded` keeps every stored word `< K::id_bound()`.
+    // So the seek path is overflow-safe both structurally (bounds) and by machine
+    // proof (Verus's overflow check on the verifying exec bodies).
+
     /// `find_ge` over a leaf node's keys: first index `r` with `keys[r] >= word`.
     /// Binary search over the sorted key view; returns the split point: everything
     /// left of `r` is `< word`, everything from `r` on is `>= word`. `r <= count`.
