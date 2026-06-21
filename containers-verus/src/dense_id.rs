@@ -99,6 +99,20 @@ impl DenseId31 {
     }
 }
 
+/// `Default` is id 0 (its MSB is clear, so it satisfies the type invariant).
+/// Needed wherever a `DenseId31` is the index type of a semi-persistent
+/// container: `restore` fills reclaimed slots with `Idx::default()` before
+/// overwriting them from the captures, so the index type must be `Default` —
+/// production's `define_id31!` ids are `Default` for the same reason. (The
+/// filler value is never observed; it is always overwritten on the live path.)
+impl core::default::Default for DenseId31 {
+    fn default() -> (r: DenseId31)
+        ensures r@ == 0nat,
+    {
+        DenseId31 { raw: 0 }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IndexLike: `as_nat` is the identity on the clean value, so injectivity is
 // immediate; the `[0, 2^31)` bound comes from the type invariant, read in the
@@ -311,6 +325,17 @@ impl DenseId63 {
         ensures r@ == n as nat,
     {
         DenseId63 { raw: n }
+    }
+}
+
+/// `Default` is id 0 (bit 63 clear, so the type invariant holds). Same rationale
+/// as `DenseId31`: required for use as a semi-persistent container's index type
+/// (`restore` fills with `Idx::default()`), mirroring production's `define_id63!`.
+impl core::default::Default for DenseId63 {
+    fn default() -> (r: DenseId63)
+        ensures r@ == 0nat,
+    {
+        DenseId63 { raw: 0 }
     }
 }
 
