@@ -183,7 +183,10 @@ fn sparse_set_ops_match_oracle() {
             } else {
                 // get + contains a random live id
                 let id_u = ids[rng.below(ids.len())];
-                assert!(s.contains(DenseId31::new(id_u)), "seed={seed}: id {id_u} not contained");
+                assert!(
+                    s.contains(DenseId31::new(id_u)),
+                    "seed={seed}: id {id_u} not contained"
+                );
                 assert_eq!(
                     s.get(DenseId31::new(id_u)),
                     live[&id_u],
@@ -240,11 +243,22 @@ fn sparse_set_mark_restore() {
                     ids.push(id_u);
                 }
             }
-            assert_eq!(s.len().index(), live.len(), "seed={seed}: len mismatch after op");
+            assert_eq!(
+                s.len().index(),
+                live.len(),
+                "seed={seed}: len mismatch after op"
+            );
             // every live id present with the oracle value.
             for (&id_u, &v) in live.iter() {
-                assert!(s.contains(DenseId31::new(id_u)), "seed={seed}: lost id {id_u}");
-                assert_eq!(s.get(DenseId31::new(id_u)), v, "seed={seed}: id {id_u} value drift");
+                assert!(
+                    s.contains(DenseId31::new(id_u)),
+                    "seed={seed}: lost id {id_u}"
+                );
+                assert_eq!(
+                    s.get(DenseId31::new(id_u)),
+                    v,
+                    "seed={seed}: id {id_u} value drift"
+                );
             }
         }
         println!("sparse_set_mark_restore seed={seed}: OK");

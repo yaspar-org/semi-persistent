@@ -1338,7 +1338,7 @@ macro_rules! gen_layout_u64 {
 
 // -- the six production layouts (bit-exact with `impl_layout!`) --
 
-gen_layout_u32!(Layout64U32,  Node64U32,  NodeRepr64U32,  14, 14, 7);
+gen_layout_u32!(Layout64U32, Node64U32, NodeRepr64U32, 14, 14, 7);
 gen_layout_u32!(Layout128U32, Node128U32, NodeRepr128U32, 30, 30, 14);
 gen_layout_u32!(Layout256U32, Node256U32, NodeRepr256U32, 62, 62, 30);
 

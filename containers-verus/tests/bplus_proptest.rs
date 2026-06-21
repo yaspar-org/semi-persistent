@@ -38,7 +38,9 @@ fn shuffled(n: u32, seed: u64) -> Vec<u32> {
     let mut i = v.len();
     while i > 1 {
         i -= 1;
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let j = (s >> 33) as usize % (i + 1);
         v.swap(i, j);
     }
@@ -73,14 +75,28 @@ fn check_node(
 
     // capacity: count <= cap; non-root nodes >= min occupancy.
     if is_leaf {
-        assert!(count <= LEAF_CAP, "leaf {idx} overfull: {count} > {LEAF_CAP}");
+        assert!(
+            count <= LEAF_CAP,
+            "leaf {idx} overfull: {count} > {LEAF_CAP}"
+        );
         if !is_root {
-            assert!(count >= LEAF_CAP / 2, "leaf {idx} underfull: {count} < {}", LEAF_CAP / 2);
+            assert!(
+                count >= LEAF_CAP / 2,
+                "leaf {idx} underfull: {count} < {}",
+                LEAF_CAP / 2
+            );
         }
     } else {
-        assert!(count <= KEY_CAP, "internal {idx} overfull: {count} > {KEY_CAP}");
+        assert!(
+            count <= KEY_CAP,
+            "internal {idx} overfull: {count} > {KEY_CAP}"
+        );
         if !is_root {
-            assert!(count >= KEY_CAP / 2, "internal {idx} underfull: {count} < {}", KEY_CAP / 2);
+            assert!(
+                count >= KEY_CAP / 2,
+                "internal {idx} underfull: {count} < {}",
+                KEY_CAP / 2
+            );
         }
         assert!(count >= 1, "internal {idx} has no separators");
     }
@@ -133,7 +149,10 @@ fn check_node(
             assert!(
                 seps[i - 1] == ckeys[0],
                 "separator-min mismatch under node {idx}: sep[{}]={} != min(child {})={}",
-                i - 1, seps[i - 1], i, ckeys[0]
+                i - 1,
+                seps[i - 1],
+                i,
+                ckeys[0]
             );
         }
         if i == 0 {
@@ -153,7 +172,10 @@ fn walk_leaf_chain(t: &Tree, start: u32, expected_leaves: usize, verbose: bool) 
     let mut steps = 0;
     while cur != NIL {
         steps += 1;
-        assert!(steps <= expected_leaves + 1, "leaf chain too long / cyclic at {cur}");
+        assert!(
+            steps <= expected_leaves + 1,
+            "leaf chain too long / cyclic at {cur}"
+        );
         let node = t.nodes.get(cur);
         assert!(L::is_leaf(&node), "leaf chain hit non-leaf node {cur}");
         let count = L::count(&node);
@@ -162,7 +184,14 @@ fn walk_leaf_chain(t: &Tree, start: u32, expected_leaves: usize, verbose: bool) 
         }
         let next = L::link(&node);
         if verbose {
-            println!("  chain: leaf[{cur}] -> {}", if next == NIL { "NIL".to_string() } else { next.to_string() });
+            println!(
+                "  chain: leaf[{cur}] -> {}",
+                if next == NIL {
+                    "NIL".to_string()
+                } else {
+                    next.to_string()
+                }
+            );
         }
         cur = next;
     }
@@ -234,7 +263,8 @@ fn min_key_preservation_trace() {
                     Some(m) => m.min(x),
                 };
                 assert_eq!(
-                    new_min, Some(want),
+                    new_min,
+                    Some(want),
                     "min-key invariant broken: old_min={old_min:?} key={x} -> new_min={new_min:?}, want {want}"
                 );
                 // classify: did the min move down (key was a new min) or hold?
@@ -252,7 +282,10 @@ fn min_key_preservation_trace() {
         "min_key_preservation_trace: OK ({preserved} inserts preserved the min [key >= min], \
          {moved_down} lowered it [key < min]; new_min == min(old_min, key) held every time)"
     );
-    assert!(preserved > 0 && moved_down > 0, "expected both preserve and lower cases");
+    assert!(
+        preserved > 0 && moved_down > 0,
+        "expected both preserve and lower cases"
+    );
 }
 
 fn key(n: u32) -> DenseId31 {
@@ -306,7 +339,7 @@ fn reachable_leaf_ids(t: &Tree, idx: u32) -> BTreeSet<u32> {
 /// assert the recursion's `ensures` footprint clause: old ids are retained, and
 /// every newly-appearing id is a freshly-allocated (>= old arena length) slot.
 struct InsertObservation {
-    grew: bool,        // did the footprint gain at least one id?
+    grew: bool, // did the footprint gain at least one id?
     height_changed: bool,
 }
 
@@ -321,9 +354,11 @@ fn first_leaf_id(t: &Tree, idx: u32) -> u32 {
 }
 
 /// Run one insert and check the footprint contract around it:
-///  - retention: `ids_before ⊆ ids_after` (no live node ever drops out);
-///  - freshness: every id in `ids_after \ ids_before` is `>= arena_len_before`
-///    (growth only ever appends fresh tail slots — the F1 clause).
+///
+/// - retention: `ids_before ⊆ ids_after` (no live node ever drops out);
+/// - freshness: every id in `ids_after \ ids_before` is `>= arena_len_before`
+///   (growth only ever appends fresh tail slots — the F1 clause).
+///
 /// Returns the observation so a test can confirm the EXACT-equality form
 /// (`ids_after == ids_before`) is genuinely violated by real inserts — i.e. the
 /// spec bug is real, not hypothetical.
@@ -427,7 +462,11 @@ fn footprint_contract_holds() {
             }
             // sanity: wf + model still agree.
             let model = check_wf_and_model(&t, false);
-            assert_eq!(model.len(), oracle.len(), "count={count} seed={seed}: model size");
+            assert_eq!(
+                model.len(),
+                oracle.len(),
+                "count={count} seed={seed}: model size"
+            );
         }
     }
     println!(
@@ -466,14 +505,20 @@ fn insert_random_then_cursor_in_order() {
 
             for (step, &x) in order.iter().enumerate() {
                 let added = t.insert_general(key(x));
-                assert!(added, "N={n} seed={seed}: insert {x} (step {step}) reported not-added");
+                assert!(
+                    added,
+                    "N={n} seed={seed}: insert {x} (step {step}) reported not-added"
+                );
                 // re-insert is a no-op (root is still a leaf since N <= LEAF_CAP).
                 let again = t.insert_general(key(x));
                 assert!(!again, "N={n} seed={seed}: re-insert {x} reported added");
 
                 // every key inserted so far must be present.
                 for &y in order.iter().take(step + 1) {
-                    assert!(t.contains(key(y)), "N={n} seed={seed}: {y} missing after inserting {x}");
+                    assert!(
+                        t.contains(key(y)),
+                        "N={n} seed={seed}: {y} missing after inserting {x}"
+                    );
                 }
                 // wf + cursor order holds at every step.
                 let model = check_wf_and_model(&t, verbose);
@@ -545,7 +590,11 @@ fn random_fill_then_split() {
         }
         let model = check_wf_and_model(&t, false);
         let want: Vec<u32> = (0..n).collect();
-        assert_eq!(model, want, "seed={seed} order={:?}: model != 0..{n}", order);
+        assert_eq!(
+            model, want,
+            "seed={seed} order={:?}: model != 0..{n}",
+            order
+        );
         // every key present, absent key absent.
         for x in 0..n {
             assert!(t.contains(key(x)), "seed={seed}: {x} missing");
@@ -568,7 +617,10 @@ fn reports_multilevel_shape() {
         let (_keys, height, _l, _r) = check_node(&t, t.root, true, None, None, false);
         let model = check_wf_and_model(&t, false);
         assert_eq!(model, (0..n).collect::<Vec<_>>());
-        println!("N={n}: height={height}, arena nodes={}", t.nodes.len().as_usize());
+        println!(
+            "N={n}: height={height}, arena nodes={}",
+            t.nodes.len().as_usize()
+        );
     }
     println!("reports_multilevel_shape: OK");
 }
@@ -595,7 +647,11 @@ fn cursor_enumerates_in_order() {
                 got.push(k.index() as u32);
                 c.step();
             }
-            assert_eq!(got, (0..n).collect::<Vec<_>>(), "N={n} seed={seed}: cursor order wrong");
+            assert_eq!(
+                got,
+                (0..n).collect::<Vec<_>>(),
+                "N={n} seed={seed}: cursor order wrong"
+            );
         }
     }
     println!("cursor_enumerates_in_order: OK");
@@ -648,10 +704,14 @@ use std::collections::HashSet;
 
 /// LCG stream of arbitrary 31-bit keys (DenseId31 requires n < 2^31).
 fn arbitrary_keys(count: usize, seed: u64) -> Vec<u32> {
-    let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0xD1B5);
+    let mut s = seed
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(0xD1B5);
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         out.push(((s >> 33) as u32) & 0x7FFF_FFFF); // 31-bit
     }
     out
@@ -690,14 +750,19 @@ fn oracle_arbitrary_values_vs_sorted_hashset() {
                 c.step();
             }
             assert_eq!(
-                got, want,
+                got,
+                want,
                 "count={count} seed={seed}: cursor traversal != sorted oracle\n  got.len={} want.len={}",
-                got.len(), want.len()
+                got.len(),
+                want.len()
             );
 
             // 2) contains() agrees with the oracle on present + absent probes.
             for &x in want.iter().take(64) {
-                assert!(t.contains(key(x)), "count={count} seed={seed}: {x} present in oracle, missing in tree");
+                assert!(
+                    t.contains(key(x)),
+                    "count={count} seed={seed}: {x} present in oracle, missing in tree"
+                );
             }
             for probe in arbitrary_keys(64, seed ^ 0xABCD) {
                 assert_eq!(
@@ -708,9 +773,16 @@ fn oracle_arbitrary_values_vs_sorted_hashset() {
             }
 
             // 3) len() == |oracle|, and the runtime wf invariants hold.
-            assert_eq!(t.len(), oracle.len(), "count={count} seed={seed}: len != oracle size");
+            assert_eq!(
+                t.len(),
+                oracle.len(),
+                "count={count} seed={seed}: len != oracle size"
+            );
             let model = check_wf_and_model(&t, false);
-            assert_eq!(model, want, "count={count} seed={seed}: wf-model != sorted oracle");
+            assert_eq!(
+                model, want,
+                "count={count} seed={seed}: wf-model != sorted oracle"
+            );
         }
     }
     println!("oracle_arbitrary_values_vs_sorted_hashset: OK");
@@ -738,7 +810,10 @@ fn oracle_seek_arbitrary_targets() {
         let want = sorted.iter().copied().find(|&v| v >= target);
         match c.key() {
             Some(k) => assert_eq!(Some(k.index() as u32), want, "seek({target}) mismatch"),
-            None => assert_eq!(want, None, "seek({target}) exhausted but oracle has a >= element"),
+            None => assert_eq!(
+                want, None,
+                "seek({target}) exhausted but oracle has a >= element"
+            ),
         }
     }
     println!("oracle_seek_arbitrary_targets: OK");
@@ -755,7 +830,7 @@ fn oracle_seek_arbitrary_targets() {
 fn seek_from_arbitrary_positions() {
     for &count in &[50usize, 500, 3000] {
         for seed in 0..4u64 {
-            let keys = arbitrary_keys(count, seed ^ 0x5EEc);
+            let keys = arbitrary_keys(count, seed ^ 0x5EEC);
             let mut oracle: HashSet<u32> = HashSet::new();
             let mut t = Tree::new();
             for &x in &keys {
@@ -776,7 +851,8 @@ fn seek_from_arbitrary_positions() {
                     Some(k) => {
                         let v = k.index() as u32;
                         assert_eq!(
-                            Some(v), want,
+                            Some(v),
+                            want,
                             "count={count} seed={seed} step {i}: seek({target}) from a \
                              prior position landed on {v}, oracle wants {want:?}"
                         );
@@ -785,9 +861,11 @@ fn seek_from_arbitrary_positions() {
                         c.step();
                         match c.key() {
                             Some(k2) => assert_eq!(
-                                Some(k2.index() as u32), next_want,
+                                Some(k2.index() as u32),
+                                next_want,
                                 "count={count} seed={seed} step {i}: step after seek({target}) \
-                                 -> {}, want {next_want:?}", k2.index()
+                                 -> {}, want {next_want:?}",
+                                k2.index()
                             ),
                             None => assert_eq!(
                                 next_want, None,
@@ -883,10 +961,16 @@ fn seek_cost_is_logarithmic() {
 
         // 3) monotone, slow growth: height never DROPS as n grows, and a 10x
         //    size increase adds at most a couple of levels (log behaviour).
-        assert!(h >= prev_height, "n={n}: height {h} < previous {prev_height}");
+        assert!(
+            h >= prev_height,
+            "n={n}: height {h} < previous {prev_height}"
+        );
         prev_height = h;
 
-        println!("n={n:>6}: height={h}, seek visits={}, envelope={envelope}", h + 1);
+        println!(
+            "n={n:>6}: height={h}, seek visits={}, envelope={envelope}",
+            h + 1
+        );
     }
     println!("seek_cost_is_logarithmic: OK");
 }
