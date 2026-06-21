@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use semi_persistent_containers_verus::dense_id::DenseId31;
 use semi_persistent_containers_verus::inline_store::InlineStore;
 use semi_persistent_containers_verus::map::SpMap;
 use semi_persistent_containers_verus::parallel_store::ParallelStore;
@@ -126,19 +127,23 @@ fn map_mark_restore() {
 // from live id -> value. SparseSet has public fields and no constructor, so we
 // build it from three empty verified Vecs (its actual representation).
 //
-// Idx = u32 (which is IndexLike + Tagged + Default — DenseId31 is not Default,
-// which SparseSet::restore requires; DenseId31's own MSB-capture behaviour is
-// verified separately in dense_id.rs). The id IS the u32, so no `.index()` hop.
-// The sparse/indices columns use InlineStore<u32,u32> per the struct's types.
+// Idx = DenseId31 — the real production-shaped id type (IndexLike + Tagged, the
+// MSB stolen as the capture bit), now also Default (id 0) so it can be a
+// semi-persistent container's index type (restore fills with Idx::default()).
+// The dense column stores u32 payloads in a ParallelStore; the sparse/indices
+// columns store DenseId31 ids in an InlineStore<DenseId31, DenseId31> (one type
+// both indexes AND is stored, with the tag packed into the stolen bit) — the
+// witness proved in dense_id.rs. Ids are wrapped via DenseId31::new and read
+// back via .index().
 // --------------------------------------------------------------------------
 
-type Set = SparseSet<u32, u32, ParallelStore<u32, u32>, false>;
+type Set = SparseSet<u32, DenseId31, ParallelStore<u32, DenseId31>, false>;
 
 fn empty_set() -> Set {
     SparseSet {
-        dense: SpVec::<u32, u32, ParallelStore<u32, u32>, false>::new(),
-        sparse: SpVec::<u32, u32, InlineStore<u32, u32>, false>::new(),
-        indices: SpVec::<u32, u32, InlineStore<u32, u32>, false>::new(),
+        dense: SpVec::<u32, DenseId31, ParallelStore<u32, DenseId31>, false>::new(),
+        sparse: SpVec::<DenseId31, DenseId31, InlineStore<DenseId31, DenseId31>, false>::new(),
+        indices: SpVec::<DenseId31, DenseId31, InlineStore<DenseId31, DenseId31>, false>::new(),
     }
 }
 
@@ -156,7 +161,7 @@ fn sparse_set_ops_match_oracle() {
             if pick < 5 || ids.is_empty() {
                 // add
                 let val = rng.next() as u32;
-                let id_u = s.add(val);
+                let id_u = s.add(val).index() as u32;
                 assert!(
                     !live.contains_key(&id_u),
                     "seed={seed}: add returned a live id {id_u}"
@@ -167,35 +172,35 @@ fn sparse_set_ops_match_oracle() {
                 // remove a random live id
                 let k = rng.below(ids.len());
                 let id_u = ids.swap_remove(k);
-                s.remove(id_u);
+                s.remove(DenseId31::new(id_u));
                 live.remove(&id_u);
             } else if pick < 8 {
                 // set (overwrite) a random live id
                 let id_u = ids[rng.below(ids.len())];
                 let val = rng.next() as u32;
-                s.set(id_u, val);
+                s.set(DenseId31::new(id_u), val);
                 live.insert(id_u, val);
             } else {
                 // get + contains a random live id
                 let id_u = ids[rng.below(ids.len())];
-                assert!(s.contains(id_u), "seed={seed}: id {id_u} not contained");
+                assert!(s.contains(DenseId31::new(id_u)), "seed={seed}: id {id_u} not contained");
                 assert_eq!(
-                    s.get(id_u),
+                    s.get(DenseId31::new(id_u)),
                     live[&id_u],
                     "seed={seed}: get({id_u}) value mismatch"
                 );
             }
 
             // invariants vs oracle: size, and a probe of a never-allocated id.
-            assert_eq!(s.len() as usize, live.len(), "seed={seed}: len mismatch");
+            assert_eq!(s.len().index(), live.len(), "seed={seed}: len mismatch");
             assert_eq!(s.is_empty(), live.is_empty());
-            let big = 1_000_000 + (rng.below(1000) as u32);
+            let big = DenseId31::new(1_000_000 + (rng.below(1000) as u32));
             assert!(!s.contains(big), "seed={seed}: contains a never-added id");
         }
         // full sweep: every live id contained with the right value.
         for (&id_u, &v) in live.iter() {
-            assert!(s.contains(id_u));
-            assert_eq!(s.get(id_u), v);
+            assert!(s.contains(DenseId31::new(id_u)));
+            assert_eq!(s.get(DenseId31::new(id_u)), v);
         }
         println!("sparse_set seed={seed}: OK ({} live)", live.len());
     }
@@ -225,21 +230,21 @@ fn sparse_set_mark_restore() {
                 2 if !ids.is_empty() => {
                     let k = rng.below(ids.len());
                     let id_u = ids.swap_remove(k);
-                    s.remove(id_u);
+                    s.remove(DenseId31::new(id_u));
                     live.remove(&id_u);
                 }
                 _ => {
                     let val = rng.next() as u32;
-                    let id_u = s.add(val);
+                    let id_u = s.add(val).index() as u32;
                     live.insert(id_u, val);
                     ids.push(id_u);
                 }
             }
-            assert_eq!(s.len() as usize, live.len(), "seed={seed}: len mismatch after op");
+            assert_eq!(s.len().index(), live.len(), "seed={seed}: len mismatch after op");
             // every live id present with the oracle value.
             for (&id_u, &v) in live.iter() {
-                assert!(s.contains(id_u), "seed={seed}: lost id {id_u}");
-                assert_eq!(s.get(id_u), v, "seed={seed}: id {id_u} value drift");
+                assert!(s.contains(DenseId31::new(id_u)), "seed={seed}: lost id {id_u}");
+                assert_eq!(s.get(DenseId31::new(id_u)), v, "seed={seed}: id {id_u} value drift");
             }
         }
         println!("sparse_set_mark_restore seed={seed}: OK");
