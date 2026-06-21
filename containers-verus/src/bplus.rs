@@ -3088,6 +3088,124 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
             }
         }
     }
+
+    // =====================================================================
+    // TOP-LEVEL SOUNDNESS THEOREMS for the seek/traversal cursor.
+    //
+    // These name the two end-to-end guarantees the whole B+tree exists to
+    // provide, each a composition of the already-proven cursor contracts
+    // (`seek_first`/`seek`/`step`/`key`) with the structural B-lemmas
+    // (B1 sortedness, B2 chain==model, the `seek_target_idx` split). They add
+    // no new axioms; they exist so the guarantee is stated once, explicitly,
+    // rather than left implicit in the scattered `ensures`.
+    // =====================================================================
+
+    /// TRAVERSAL SOUNDNESS (in-order, no skips, no duplicates).
+    ///
+    /// For any `cursor_wf` cursor sitting at model index `n == idx()` with
+    /// `n < |model|`, `key()` returns exactly `model[n]` and `step()` moves to
+    /// `n + 1`. Chained from `seek_first` (which lands at `idx == 0`), this is
+    /// the statement that the `key(); step()` loop enumerates
+    /// `model[0], model[1], ...` — every key of the set, in strictly ascending
+    /// order (the model is `strictly_sorted` by B1, so "ascending" also means
+    /// "no duplicates"), terminating exactly when `idx == |model|`.
+    ///
+    /// This is a SPEC-level restatement: it asserts the relationship between
+    /// `idx()`, `key()`'s result, and `model` that the exec `key`/`step`
+    /// `ensures` already establish, plus the B1 fact that `model` is sorted, so
+    /// successive reads strictly increase. No new proof obligation beyond
+    /// pulling B1 into scope.
+    pub proof fn theorem_traversal_in_order(self)
+        requires self.cursor_wf(),
+        ensures
+            // the model the cursor enumerates is strictly sorted: ascending and
+            // duplicate-free. (B1: `tree_wf ==> strictly_sorted(tree_keys)`.)
+            crate::bplus_tree::strictly_sorted(self.model()),
+            // the cursor index is always a valid position into the model or the
+            // exhausted end — never out of range, so a traversal never skips off
+            // the end or addresses a phantom key.
+            0 <= self.idx() <= self.model().len(),
+            // ASCENDING + NO SKIPS: every key the traversal reads at position i+1
+            // is strictly greater than the one at i, and consecutive positions
+            // differ by exactly one index — so `key(); step()` visits model[0],
+            // model[1], ... with no gaps and no repeats. (Stated as the strict
+            // monotonicity of the model under the +1 step, which IS what `step`'s
+            // `idx == old.idx + 1` ensures composed with `key == model[idx]`.)
+            forall|i: int, j: int|
+                0 <= i < j < self.model().len() ==> #[trigger] self.model()[i] < #[trigger] self.model()[j],
+    {
+        // B1: the tree is wf (cursor_wf conjunct), so its key sequence is sorted.
+        crate::bplus_tree::lemma_tree_wf_sorted(
+            self.tree.tree@,
+            crate::bplus_tree::tree_height(self.tree.tree@),
+            L::leaf_cap_spec(),
+            L::key_cap_spec(),
+            true,
+        );
+        // strictly_sorted unfolds to exactly the ascending forall; 0 <= idx <=
+        // |model| is a direct cursor_wf conjunct.
+    }
+
+    /// SEEK NEVER SKIPS A PRESENT KEY.
+    ///
+    /// The crux property: after `seek(target)`, if `target` is in the set the
+    /// cursor lands EXACTLY on it (never steps past it). Formally, for a `wf`
+    /// tree whose model contains `t == target.id_nat()`, the seek landing index
+    /// `r == seek_target_idx(model, t)` satisfies `r < |model|` and
+    /// `model[r] == t`. Combined with `seek`'s `ensures` (`idx() == r`) and
+    /// `key`'s `ensures` (`idx() < |model| ==> key() == Some(model[idx])`), this
+    /// gives: `target` present ==> after `seek(target)`, `key() == Some(target)`.
+    ///
+    /// For a target NOT in the set, `seek_target_idx` is still the first index
+    /// with `model[r] >= t` (by `lemma_seek_target_idx_split`), i.e. seek stops
+    /// on the least key `> target` (or exhausts) — it never overshoots a key it
+    /// should have stopped before. So no present key is ever skipped.
+    pub proof fn theorem_seek_never_skips(tree: &BPlusTreeSet<K, L, S, TRACK>, target: K)
+        requires
+            tree.wf(),
+            tree.model().contains(target.id_nat()),
+        ensures
+            ({
+                let r = seek_target_idx(tree.model(), target.id_nat());
+                &&& 0 <= r < tree.model().len()
+                &&& tree.model()[r] == target.id_nat()
+            }),
+    {
+        let model = tree.model();
+        let t = target.id_nat();
+        // B1: model is strictly sorted, so seek_target_idx is the exact split.
+        crate::bplus_tree::lemma_tree_wf_sorted(
+            tree.tree@,
+            crate::bplus_tree::tree_height(tree.tree@),
+            L::leaf_cap_spec(),
+            L::key_cap_spec(),
+            true,
+        );
+        lemma_seek_target_idx_split(model, t);
+        let r = seek_target_idx(model, t);
+        // `t` is in the model: pick the witness position `w` with model[w] == t.
+        let w = choose|w: int| 0 <= w < model.len() && model[w] == t;
+        assert(model.contains(t));
+        assert(0 <= w < model.len() && model[w] == t);
+        // The split puts every i < r strictly below t and every i >= r at/above
+        // t. The witness w has model[w] == t, so w cannot be < r (that side is
+        // strictly < t). Hence r <= w < |model|, so r is a real index. And at r:
+        // model[r] >= t (right side) while, were model[r] > t, strict sortedness
+        // would force model[w] > t for the unique w too — but model[w] == t. So
+        // r is itself a position holding t.
+        assert(r <= w) by {
+            if w < r {
+                assert(model[w] < t);   // left side of the split
+            }
+        }
+        assert(r < model.len());
+        // model[r] >= t (right side). And model[r] <= t: r <= w and strict sort
+        // gives model[r] <= model[w] == t (equal iff r == w).
+        assert(t <= model[r]);          // split right side at r
+        assert(model[r] <= t) by {
+            if r < w { assert(model[r] < model[w]); }  // strictly_sorted
+        }
+    }
 }
 
 /// Grow a fresh root over the two halves of a ROOT split (the M4b new-root move,
