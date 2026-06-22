@@ -11,11 +11,11 @@ proved with **no `admit`s or `assume`s**. Run `./verify-all.sh` from the
 `containers-verus/` package root for the current per-module tally.
 
 These documents are organized in two layers. The **reference** layer
-(chapters 01–02) is the durable description of the data-structure layout,
-invariants, and proved theorems. The **method** layer (chapters 03–08) records the
-proof techniques, the ladder of progressively-stronger theorems we proved, and
-the design alternatives we weighed — the "how we got here", kept because the
-same patterns recur as more containers are verified.
+(chapters 01–02, 09–10) is the durable description of the data-structure layout,
+invariants, proved theorems, and the trust boundary. The **method** layer
+(chapters 03–08) records the proof techniques, the ladder of progressively-stronger
+theorems we proved, and the design alternatives we weighed — the "how we got
+here", kept because the same patterns recur as more containers are verified.
 
 ## Reference
 
@@ -72,6 +72,14 @@ same patterns recur as more containers are verified.
    non-aliasing as proved predicates; the frame/anti-frame (bi-abduction) shape
    of the operation proofs. Companion to [Ch 1 §10](01-verification-design.md).
 
+10. **[The Trust Boundary — What Is `external_body`, and Why](10-trust-boundary.md)**
+   The complete enumeration of what the crate takes on trust. No `admit`s/`assume`s;
+   the only trusted code is 6 `external_body` items in two groups — Group A
+   (`ContainerId`: an opaque identity + a process-global atomic, trusted *by
+   design*) and Group B (three byte-accounting diagnostics, trusted *by omission*
+   and provable). Also: the 10 integer-cast `external_body` we *eliminated*, and
+   why "wraps a cast" ≠ "must be trusted".
+
 ## Future work
 
 - **[Feature-Parity Audit and Verification Plan](future/parity-audit-and-plan.md)**
@@ -83,6 +91,12 @@ same patterns recur as more containers are verified.
   recursive/balanced `wf` invariant, and how an insert-with-split proof
   decomposes under the dynamic-frames discipline. Proof not yet attempted;
   insert-only (production has no `remove`). B+tree status today: milestone 1 of 7.
+- **[Verify the Byte-Accounting Diagnostics (Group B)](future/verify-byte-accounting.md)**
+  The plan to remove the crate's last *spec-free* `external_body`: give
+  `tracking_bytes` / `total_bytes` / `heap_bytes` a ghost byte model and a verified
+  `ensures` (model `size_of` via `vstd`, saturate to handle `usize` overflow).
+  Low-to-moderate effort; afterward every remaining trusted item is `ContainerId`,
+  trusted by design. Companion to [Design Ch. 10](10-trust-boundary.md).
 
 ## Relationship to the production design docs
 
