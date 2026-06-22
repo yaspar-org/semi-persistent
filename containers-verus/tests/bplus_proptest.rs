@@ -15,14 +15,19 @@
 //! proof lands. There is no cursor yet (M5), so the "cursor in order" check is
 //! done by hand-walking the `link` chain over the arena.
 
+use vstd::prelude::Ghost;
+
 use semi_persistent_containers_verus::bplus::BPlusTreeSet;
 use semi_persistent_containers_verus::bplus_layout::{Layout64U32, NodeLayout};
 use semi_persistent_containers_verus::bplus_search::BinarySearch;
 use semi_persistent_containers_verus::dense_id::DenseId31;
 use semi_persistent_containers_verus::index_like::IndexLike;
+use semi_persistent_containers_verus::vec::ShrinkPolicy;
 
 type L = Layout64U32; // leaf_cap = 14, key_cap = 7, u32 words/arena
 type Tree = BPlusTreeSet<DenseId31, L, BinarySearch, false>;
+// Tracked instantiation, for the mark/restore (semi-persistence) rollback test.
+type TrackedTree = BPlusTreeSet<DenseId31, L, BinarySearch, true>;
 
 const LEAF_CAP: usize = 14;
 const KEY_CAP: usize = 7;
@@ -1005,4 +1010,75 @@ fn seek_descent_visits(t: &Tree, target: DenseId31) -> usize {
         assert!(visits <= 64, "descent not terminating");
     }
     visits
+}
+
+// ---------------------------------------------------------------------------
+// Semi-persistence: tree-level mark/restore rollback (TRACK=true).
+//
+// mark() snapshots the tree; we then insert past the mark and restore() back,
+// confirming the restored tree enumerates exactly the marked snapshot (via the
+// cursor, ascending) — the verified rollback theorem exercised at runtime. The
+// Ghost(snap_tree) restore argument is erased under cargo (Ghost::assume_new()).
+// ---------------------------------------------------------------------------
+
+fn sorted_keys_tracked(t: &TrackedTree) -> Vec<u32> {
+    let mut c = semi_persistent_containers_verus::bplus::BPlusCursor::new(t);
+    c.seek_first();
+    let mut out = Vec::new();
+    while let Some(k) = c.key() {
+        out.push(k.index() as u32);
+        c.step();
+    }
+    out
+}
+
+#[test]
+fn tree_mark_restore_rollback() {
+    for seed in 0..8u64 {
+        let mut t = TrackedTree::new();
+        let mut oracle: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let keys = arbitrary_keys(400, seed ^ 0xBEEF);
+        // seed an initial tree.
+        for &x in &keys[..200] {
+            t.insert_general(key(x));
+            oracle.insert(x);
+        }
+
+        // mark, snapshot the oracle.
+        let token = t.mark(ShrinkPolicy::Never);
+        let mut snap: Vec<u32> = oracle.iter().copied().collect();
+        snap.sort_unstable();
+
+        // mutate past the mark.
+        for &x in &keys[200..] {
+            t.insert_general(key(x));
+        }
+
+        // restore: the ghost tree arg is erased, so assume_new().
+        t.restore(token, Ghost::assume_new());
+
+        // the restored tree enumerates exactly the marked snapshot, in order.
+        let got = sorted_keys_tracked(&t);
+        assert_eq!(
+            got, snap,
+            "seed={seed}: restore did not reproduce the marked tree"
+        );
+
+        // and it is still usable: a fresh insert after restore works.
+        let extra = 9_000_000 + seed as u32;
+        t.insert_general(key(extra));
+        let mut want = snap.clone();
+        want.push(extra);
+        want.sort_unstable();
+        want.dedup();
+        assert_eq!(
+            sorted_keys_tracked(&t),
+            want,
+            "seed={seed}: tree broken after restore+insert"
+        );
+        println!(
+            "tree_mark_restore_rollback seed={seed}: OK ({} keys at mark)",
+            snap.len()
+        );
+    }
 }

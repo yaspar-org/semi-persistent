@@ -576,6 +576,15 @@ macro_rules! gen_layout_u32 {
             fn clone(&self) -> (r: Self) ensures r == *self { *self }
         }
 
+        // `Default` (an empty leaf): the filler the semi-persistent arena Vec uses
+        // for reclaimed slots during `restore` (always overwritten on the live
+        // path). Needed for `BPlusTreeSet::restore` (`where L::Node: Default`).
+        impl core::default::Default for $node {
+            fn default() -> $node {
+                $node { is_leaf: true, count: 0, data: [0; $data_len], link: 0 }
+            }
+        }
+
         #[derive(Copy)]
         pub struct $repr {
             pub flags: u8,
@@ -943,6 +952,14 @@ macro_rules! gen_layout_u64 {
 
         impl Clone for $node {
             fn clone(&self) -> (r: Self) ensures r == *self { *self }
+        }
+
+        // `Default` (an empty leaf): filler for reclaimed arena slots during
+        // `restore`. See the u32 macro's note.
+        impl core::default::Default for $node {
+            fn default() -> $node {
+                $node { is_leaf: true, count: 0, data: [0; $data_len], link: 0 }
+            }
         }
 
         #[derive(Copy)]
