@@ -20,11 +20,12 @@ proved with **no `admit`s or `assume`s**. Run `./verify-all.sh` from the
 > guarantee.
 
 These documents are organized in two layers. The **reference** layer
-(chapters 01–02, 09–10) is the durable description of the data-structure layout,
-invariants, proved theorems, and the trust boundary. The **method** layer
-(chapters 03–08) records the proof techniques, the ladder of progressively-stronger
-theorems we proved, and the design alternatives we weighed — the "how we got
-here", kept because the same patterns recur as more containers are verified.
+(chapters 01–02, 09–11) is the durable description of the data-structure layout,
+invariants, proved theorems, the trust boundary, and the proof-performance
+playbook. The **method** layer (chapters 03–08) records the proof techniques, the
+ladder of progressively-stronger theorems we proved, and the design alternatives
+we weighed — the "how we got here", kept because the same patterns recur as more
+containers are verified.
 
 ## Reference
 
@@ -88,6 +89,14 @@ here", kept because the same patterns recur as more containers are verified.
    design*) and Group B (three byte-accounting diagnostics, trusted *by omission*
    and provable). Also: the 10 integer-cast `external_body` we *eliminated*, and
    why "wraps a cast" ≠ "must be trusted".
+
+11. **[Proof-Performance Playbook](11-proof-performance-playbook.md)**
+   Diagnosing slow / hanging / flaky proofs: a low-CPU hang is a matching loop
+   (not slow search); isolate-then-bisect to the one bad function; the four
+   failure modes behind "not satisfied" (nonlinear arith / fuel / over-broad
+   hypothesis / over budget); over-broad `requires` as the usual blowup; large
+   `rlimit` as debt; explicit triggers; the silent `rlimit`-attribute override.
+   Maintenance reference for extending the proofs.
 
 ## Future work
 
