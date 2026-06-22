@@ -159,6 +159,23 @@ pub trait DenseId: Sized + Copy {
     /// (`as_usize() < id_bound`) the `from_usize` round-trip needs.
     proof fn lemma_id_nat_bounded(tracked self)
         ensures self.id_nat() < Self::id_bound();
+
+    /// (M6) How the value count relates to the storage word's range. A
+    /// bit-stealing id (Id31/Id63) keeps one bit for the tag, so it has exactly
+    /// HALF the word's values: `id_bound * 2 == Index::max_nat()`. A full-range id
+    /// (DenseUsize) uses the whole word: `id_bound == Index::max_nat()`. The
+    /// disjunction lets every `DenseId` honestly report which it is; the B+tree
+    /// (only ever keyed by a bit-stealing id) consumes the `* 2` arm to bound the
+    /// arena. `is_bit_stealing()` selects the arm so generic tree code can branch.
+    spec fn is_bit_stealing() -> bool;
+
+    proof fn lemma_id_bound_word_relation()
+        ensures
+            if Self::is_bit_stealing() {
+                Self::id_bound() * 2 == <Self::Index as crate::index_like::IndexLike>::max_nat()
+            } else {
+                Self::id_bound() == <Self::Index as crate::index_like::IndexLike>::max_nat()
+            };
 }
 
 /// A concrete `DenseId` over `usize` (the dense index is the value itself).
@@ -198,6 +215,12 @@ impl DenseId for DenseUsize {
 
     proof fn lemma_id_nat_bounded(tracked self) {
         // id_nat == raw as nat <= usize::MAX < usize::MAX + 1 == id_bound.
+    }
+
+    open spec fn is_bit_stealing() -> bool { false }   // full-range id
+
+    proof fn lemma_id_bound_word_relation() {
+        // id_bound == usize::MAX + 1 == <usize as IndexLike>::max_nat() (the `== ` arm).
     }
 }
 

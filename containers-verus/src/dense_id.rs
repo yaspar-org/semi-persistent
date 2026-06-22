@@ -207,6 +207,13 @@ impl DenseId for DenseId31 {
     proof fn lemma_id_nat_bounded(tracked self) {
         use_type_invariant(&self);  // raw < 2^31 == DENSE31_BOUND == id_bound
     }
+
+    open spec fn is_bit_stealing() -> bool { true }   // MSB stolen for the tag
+
+    proof fn lemma_id_bound_word_relation() {
+        // id_bound == 2^31 == DENSE31_BOUND; Index == u32, max_nat == 2^32.
+        // 2^31 * 2 == 2^32 (the bit-stealing arm).
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -478,6 +485,13 @@ impl DenseId for DenseId63 {
 
     proof fn lemma_id_nat_bounded(tracked self) {
         use_type_invariant(&self);  // raw < 2^63 == DENSE63_BOUND == id_bound
+    }
+
+    open spec fn is_bit_stealing() -> bool { true }   // MSB (bit 63) stolen for the tag
+
+    proof fn lemma_id_bound_word_relation() {
+        // id_bound == 2^63 == DENSE63_BOUND; Index == u64, max_nat == 2^64.
+        // 2^63 * 2 == 2^64 (the bit-stealing arm).
     }
 }
 
