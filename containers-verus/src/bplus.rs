@@ -419,6 +419,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         &&& crate::bplus_tree::tree_disjoint(self.tree@)
         &&& self.nkeys as nat == self.model().len()
         &&& model_bounded::<K>(self.model())
+        // No dead arena slots: every allocated node is live in the tree. Holds
+        // for this insert-only impl (split does in-place `set` + exactly one
+        // `push`; root-growth pushes exactly the new root). This is what lets the
+        // M6 node-count bound (lemma_node_count_bound) translate into a bound on
+        // `arena.len()`, hence prove the arena never overflows (M6).
+        &&& self.arena().len() == crate::bplus_tree::node_count(self.tree@)
         // arena never fills the index space: every real id (`< arena.len()`) is
         // therefore `< max_nat - 1 == nil_link`, i.e. distinct from the NIL leaf
         // sentinel. Each mutator's push already needs this headroom; making it a
@@ -978,8 +984,16 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             crate::bplus_tree::lemma_tree_wf_sorted(self.tree@, h, L::leaf_cap_spec(), L::key_cap_spec(), true);
             assert(crate::bplus_tree::strictly_sorted(old_model));
         }
+        let ghost cur_call = self.tree@;
         let (added, split, nl, nr) =
             self.insert_rec(root, key, kw, self.tree, Ghost(h), Ghost(nil_link::<L>()), Ghost(true));
+        // (M6) recursion delta against insert_general's own old(self): nothing
+        // mutated self between entry and the call, so the recursion's old-state
+        // arena/tree == old(self)'s here.
+        let ghost arena_after_rec = self.arena();
+        proof {
+            assert(cur_call == old(self).tree@);
+        }
         match split {
             None => {
                 // absorb at the root: insert_rec re-established subtree_wf at is_root.
@@ -1014,6 +1028,13 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     // bounded (old wf), key.id_nat() < id_bound.
                     key.lemma_id_nat_bounded();
                     lemma_model_bounded_set::<K>(self.model(), old_model, key.id_nat());
+
+                    // (M6) arena.len() == node_count(tree@): old wf gave
+                    // old.arena.len() == node_count(cur@); the recursion's None delta
+                    // gives self.arena.len() + node_count(cur@) == old.len() + node_count(nl@);
+                    // tree@ == nl@.
+                    assert(self.tree@ == nl@);
+                    assert(self.arena().len() == crate::bplus_tree::node_count(self.tree@));
                 }
                 added
             }
@@ -1022,6 +1043,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let new_root = L::new_internal2(sep, root, rid);
                 let new_root_idx = self.nodes.len();
                 let ghost arena_pre = self.arena();
+                proof {
+                    // nothing touched self.nodes between the recursion and here
+                    // (new_internal2 is pure, len() is a read), so the arena the M6
+                    // delta speaks of (arena_after_rec) is still current.
+                    assert(arena_pre == arena_after_rec);
+                }
                 self.nodes.push(new_root);
                 self.root = new_root_idx;
                 let ghost new_tree = Tree::Inner {
@@ -1067,6 +1094,40 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     // model_bounded: same as the None arm (set == old ∪ {key}).
                     key.lemma_id_nat_bounded();
                     lemma_model_bounded_set::<K>(self.model(), old_model, key.id_nat());
+
+                    // (M6) arena.len() == node_count(tree@): root split. old wf gave
+                    // old.len() == node_count(cur@); recursion's Some delta gives
+                    // arena_pre.len() + node_count(cur@) == old.len() + nc(nl) + nc(nr),
+                    // so arena_pre.len() == nc(nl)+nc(nr). The new root push (+1) and
+                    // new_tree == Inner{_, [sep], [nl, nr]} (node_count 1 + nc(nl) + nc(nr)).
+                    assert(self.arena() =~= arena_pre.push(new_root));
+                    assert(self.tree@ == new_tree);
+                    assert(self.tree@->Inner_kids =~= seq![nl@, nr@]);
+                    // node_count(Inner) == 1 + forest_node_count(kids); unfold the 2 kids.
+                    assert(crate::bplus_tree::node_count(self.tree@)
+                        == 1 + crate::bplus_tree::forest_node_count(seq![nl@, nr@]));
+                    assert(seq![nl@, nr@][0] == nl@);
+                    assert(seq![nl@, nr@].len() == 2);
+                    assert(seq![nl@, nr@].drop_first() =~= seq![nr@]);
+                    assert(seq![nr@][0] == nr@);
+                    assert(seq![nr@].drop_first() =~= Seq::<Tree>::empty());
+                    assert(crate::bplus_tree::forest_node_count(Seq::<Tree>::empty()) == 0);
+                    assert(crate::bplus_tree::forest_node_count(seq![nr@])
+                        == crate::bplus_tree::node_count(nr@));
+                    assert(crate::bplus_tree::forest_node_count(seq![nl@, nr@])
+                        == crate::bplus_tree::node_count(nl@) + crate::bplus_tree::node_count(nr@));
+                    // chain: old wf => old.len() == node_count(old.tree@). recursion's
+                    // Some delta (at the call boundary): arena_after_rec.len() +
+                    // node_count(cur_call) == old.len() + nc(nl)+nc(nr), and cur_call
+                    // == old.tree@, so arena_after_rec.len() == nc(nl)+nc(nr).
+                    assert(old(self).arena().len() == crate::bplus_tree::node_count(old(self).tree@));
+                    assert(cur_call == old(self).tree@);
+                    assert(arena_after_rec.len()
+                        == crate::bplus_tree::node_count(nl@) + crate::bplus_tree::node_count(nr@));
+                    // new_internal2 / len() did not mutate the arena: arena_pre == arena_after_rec.
+                    assert(arena_pre == arena_after_rec);
+                    assert(self.arena().len() == arena_pre.len() + 1);
+                    assert(self.arena().len() == crate::bplus_tree::node_count(self.tree@));
                 }
                 added
             }
@@ -1317,6 +1378,22 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             lemma_model_bounded_insert::<K>(gkeys, pos as int, key.id_nat());
             assert(self.model() == combined_nat);
             assert(model_bounded::<K>(self.model()));
+
+            // node_count == arena.len(): old single-leaf root (node_count 1,
+            // arena.len 1) became Inner{new_root, [lt, rt]} (node_count 3) after
+            // push(right) + set(root,left) + push(new_root) (arena.len 1+2 == 3).
+            assert(crate::bplus_tree::node_count(rt) == 1);   // Leaf
+            assert(crate::bplus_tree::node_count(lt) == 1);   // Leaf
+            // forest_node_count([lt, rt]) unfolds: nc(lt) + (nc(rt) + fnc([])).
+            assert(kids[0] == lt);
+            assert(kids.drop_first() =~= seq![rt]);
+            assert(seq![rt][0] == rt);
+            assert(seq![rt].drop_first() =~= Seq::<Tree>::empty());
+            assert(crate::bplus_tree::forest_node_count(Seq::<Tree>::empty()) == 0);
+            assert(crate::bplus_tree::forest_node_count(seq![rt]) == 1);
+            assert(crate::bplus_tree::forest_node_count(kids) == 2);
+            assert(crate::bplus_tree::node_count(self.tree@) == 3);   // 1 + 2
+            assert(self.arena().len() == 3);                          // old 1 + 2 pushes
         }
         true
     }
@@ -1500,6 +1577,22 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|i: int| 0 <= i < old(self).arena().len()
                 && !crate::bplus_tree::tree_ids(cur@).contains(i as nat)
                 ==> #[trigger] self.arena()[i] == old(self).arena()[i],
+            // (M6) ARENA/NODE-COUNT DELTA: the arena grows by exactly the increase
+            // in total node count. For a leaf both cur and the result(s) are leaves
+            // (node_count 1 each), so None is +0 and a split is +1 == 1+1-1.
+            ({
+                let (added, split, nl, nr) = res;
+                match split {
+                    Option::None =>
+                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                            == old(self).arena().len() + crate::bplus_tree::node_count(nl@),
+                    Option::Some(_) =>
+                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                            == old(self).arena().len()
+                                + crate::bplus_tree::node_count(nl@)
+                                + crate::bplus_tree::node_count(nr@),
+                }
+            }),
             ({
                 let (added, split, nl, nr) = res;
                 match split {
@@ -1902,6 +1995,24 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|i: int| 0 <= i < old(self).arena().len()
                 && !crate::bplus_tree::tree_ids(cur@).contains(i as nat)
                 ==> #[trigger] self.arena()[i] == old(self).arena()[i],
+            // (M6) ARENA/NODE-COUNT DELTA: arena growth == total node-count increase.
+            // None: new subtree nl replaces cur (delta == nc(nl) - nc(cur)); Some: cur
+            // becomes the two halves nl+nr (delta == nc(nl)+nc(nr) - nc(cur)). This is
+            // what makes `arena.len() == node_count(tree@)` a standing wf invariant,
+            // hence M6 (arena never overflows).
+            ({
+                let (added, split, nl, nr) = res;
+                match split {
+                    Option::None =>
+                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                            == old(self).arena().len() + crate::bplus_tree::node_count(nl@),
+                    Option::Some(_) =>
+                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                            == old(self).arena().len()
+                                + crate::bplus_tree::node_count(nl@)
+                                + crate::bplus_tree::node_count(nr@),
+                }
+            }),
             ({
                 let (added, split, nl, nr) = res;
                 match split {
@@ -2171,6 +2282,21 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     assert(crate::bplus_tree::tree_contains(cur@, key.id_nat())
                         == crate::bplus_tree::tree_contains(gc, key.id_nat()));
                     assert(added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat()));
+
+                    // (M6) delta: child cp absorbed (gc -> ncl), siblings frame.
+                    // recursion gave: arena2.len() + nc(gc) == arena1.len() + nc(ncl).
+                    // nt == Inner{gid, gseps, gkids.update(cp, ncl)}, cur == Inner{..gkids}.
+                    // node_count(Inner) == 1 + forest_node_count(kids); the update
+                    // lemma shifts the forest count by exactly nc(ncl) - nc(gc).
+                    crate::bplus_tree::lemma_forest_node_count_update(gkids, cp as int, ncl@);
+                    assert(gc == gkids[cp as int]);
+                    assert(nkids == gkids.update(cp as int, ncl@));
+                    assert(crate::bplus_tree::node_count(nt)
+                        == 1 + crate::bplus_tree::forest_node_count(nkids));
+                    assert(crate::bplus_tree::node_count(cur@)
+                        == 1 + crate::bplus_tree::forest_node_count(gkids));
+                    assert(self.arena().len() + crate::bplus_tree::node_count(cur@)
+                        == old(self).arena().len() + crate::bplus_tree::node_count(nt));
                 }
                 (added, None, Ghost(nt), cur)
             }
@@ -2269,6 +2395,23 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         assert(crate::bplus_tree::tree_contains(cur@, key.id_nat())
                             == crate::bplus_tree::tree_contains(gc, key.id_nat()));
                         assert(added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat()));
+
+                        // (M6) delta: child cp split (gc -> ncl + ncr), absorbed into
+                        // this parent with room (set in place, no parent-level push).
+                        // recursion (Some): arena_rec.len() + nc(gc) == arena1.len()
+                        //   + nc(ncl) + nc(ncr); the parent set keeps arena len.
+                        // nkids == gkids.update(cp, ncl).insert(cp+1, ncr): update
+                        // shifts by nc(ncl)-nc(gc), insert adds nc(ncr).
+                        crate::bplus_tree::lemma_forest_node_count_update(gkids, cp as int, ncl@);
+                        crate::bplus_tree::lemma_forest_node_count_insert(
+                            gkids.update(cp as int, ncl@), cp as int + 1, ncr@);
+                        assert(gc == gkids[cp as int]);
+                        assert(crate::bplus_tree::node_count(nt)
+                            == 1 + crate::bplus_tree::forest_node_count(nkids));
+                        assert(crate::bplus_tree::node_count(cur@)
+                            == 1 + crate::bplus_tree::forest_node_count(gkids));
+                        assert(self.arena().len() + crate::bplus_tree::node_count(cur@)
+                            == old(self).arena().len() + crate::bplus_tree::node_count(nt));
                     }
                     (added, None, Ghost(nt), cur)
                 } else {
@@ -2344,6 +2487,31 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         assert(crate::bplus_tree::tree_contains(cur@, key.id_nat())
                             == crate::bplus_tree::tree_contains(gc, key.id_nat()));
                         assert(added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat()));
+
+                        // (M6) delta: child cp split (gc -> ncl+ncr) AND this parent
+                        // then split (cur -> lt + rt). arena: set(gid,pl) in place +
+                        // push(pr) == +1 over arena_rec; child's Some delta gives
+                        // arena_rec.len() + nc(gc) == old.len() + nc(ncl) + nc(ncr).
+                        // node counts: ckids == gkids.update(cp,ncl).insert(cp+1,ncr);
+                        // lt+rt partition ckids at imid+1 (+2 roots).
+                        crate::bplus_tree::lemma_forest_node_count_update(gkids, cp as int, ncl@);
+                        crate::bplus_tree::lemma_forest_node_count_insert(
+                            gkids.update(cp as int, ncl@), cp as int + 1, ncr@);
+                        crate::bplus_tree::lemma_forest_node_count_split(ckids, imid as int + 1);
+                        assert(ckids.subrange(0, imid as int + 1) == lt->Inner_kids);
+                        assert(ckids.subrange(imid as int + 1, ckids.len() as int) == rt->Inner_kids);
+                        assert(crate::bplus_tree::node_count(lt)
+                            == 1 + crate::bplus_tree::forest_node_count(lt->Inner_kids));
+                        assert(crate::bplus_tree::node_count(rt)
+                            == 1 + crate::bplus_tree::forest_node_count(rt->Inner_kids));
+                        assert(crate::bplus_tree::node_count(cur@)
+                            == 1 + crate::bplus_tree::forest_node_count(gkids));
+                        assert(gc == gkids[cp as int]);
+                        assert(self.arena().len() == arena_rec.len() + 1);
+                        assert(self.arena().len() + crate::bplus_tree::node_count(cur@)
+                            == old(self).arena().len()
+                                + crate::bplus_tree::node_count(lt)
+                                + crate::bplus_tree::node_count(rt));
                     }
                     (added, Some((promoted, new_int)), Ghost(lt), Ghost(rt))
                 }
