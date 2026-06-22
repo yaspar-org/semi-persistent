@@ -39,11 +39,32 @@
     clippy::derivable_impls,        // hand-written Default documents the niche/empty encoding
     clippy::len_without_is_empty,   // `CaptureBits::len` mirrors a DiffStore length obligation; emptiness is read via `len`
     clippy::doc_lazy_continuation,        // doc-list wrapping in the design-heavy module comments
-    clippy::doc_overindented_list_items   // same: design-doc-style comment formatting
+    clippy::doc_overindented_list_items,  // same: design-doc-style comment formatting
+    // `global size_of usize == 8;` is verus syntax; clippy sees the macro expansion as braces.
+    unused_braces,
+    // `($leaf_cap + 1) / 2` is verified exec arithmetic that must match `split_mid_spec()`'s
+    // same expression; vstd (2026-04-12) has no `div_ceil` spec, so a `.div_ceil(2)` rewrite
+    // would jeopardise the `split_mid` ensures for a pure style change.
+    clippy::manual_div_ceil,
+    // insert_rec / insert_rec_leaf take 8 args including GHOST proof parameters (is_root, the
+    // split sub-models); bundling them into a struct would obscure the proof and break
+    // production-signature parity.
+    clippy::too_many_arguments,
+    // the `SpVec<Node, ArenaIdx, InlineStore<..>, TRACK>` field type and the insert-recursion
+    // return tuple `(bool, Option<(Word, ArenaIdx)>, Ghost<Tree>, Ghost<Tree>)` are intrinsic to
+    // the generic design; a `type` alias would just relocate the complexity.
+    clippy::type_complexity,
+    // `let ret_pos;` in `seek_leaf` is assigned at the leaf-break inside a verified
+    // `while !done` loop carrying an invariant; clippy's "initialise at declaration" does not
+    // fit the loop control flow.
+    clippy::needless_late_init
 )]
 
 pub mod append_only_vec;
 pub mod bplus;
+pub mod bplus_layout;
+pub mod bplus_search;
+pub mod bplus_tree;
 pub mod capture_bits;
 pub mod circular_list;
 pub mod container_id;

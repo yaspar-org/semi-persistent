@@ -115,21 +115,67 @@ impl<T: Tagged + core::default::Default> Opt<T> {
 /// `IndexLike` (ghost `as_nat` + injective + bounded) plus exec `as_usize` /
 /// `from_usize`.
 pub trait DenseId: Sized + Copy {
+    /// Natural storage word for this id (production's `DenseId::Index`: u8, u16,
+    /// u32, or u64). This is the `Word` a `NodeLayout` stores keys as, and is
+    /// what makes the B+tree generic over the 31-bit (`u32`) and 63-bit (`u64`)
+    /// id families.
+    type Index: crate::index_like::IndexLike;
+
     /// Ghost projection to a natural number (the dense index).
     spec fn id_nat(self) -> nat;
+
+    /// One past the largest representable dense index (`2^31` for a 31-bit id,
+    /// `usize::MAX + 1` for `DenseUsize`). `from_usize` round-trips exactly the
+    /// indices below this bound; `id_nat` is always within it.
+    spec fn id_bound() -> nat;
+
+    /// Exec: serialize the id to its storage word (production's
+    /// `Into<Self::Index>`, used as `key_to_word(k) = k.into()`). The word's
+    /// dense index equals the id's, so ordering on words agrees with ordering
+    /// on ids; this is what lets the B+tree store and compare `Index` words
+    /// while reasoning about the abstract `id_nat` model.
+    fn to_index(self) -> (w: Self::Index)
+        ensures w.as_nat() == self.id_nat();
 
     /// Exec: project to `usize`.
     fn as_usize(self) -> (r: usize)
         ensures r as nat == self.id_nat();
 
-    /// Exec: construct from a `usize`. Inverse of `as_usize` (round-trips).
+    /// Exec: construct from a `usize`. Round-trips with `as_usize` for any
+    /// representable index (`n < id_bound()`); out-of-range `n` has no
+    /// guarantee (a bounded id may mask). `DenseUsize`'s bound is `usize::MAX +
+    /// 1`, so it round-trips unconditionally.
     fn from_usize(n: usize) -> (r: Self)
-        ensures r.id_nat() == n as nat;
+        ensures (n as nat) < Self::id_bound() ==> r.id_nat() == n as nat;
 
     /// Injectivity: distinct ids project to distinct nats.
     proof fn lemma_id_injective(a: Self, b: Self)
         requires a.id_nat() == b.id_nat(),
         ensures a == b;
+
+    /// `id_nat` is always within `id_bound` (the doc invariant on `id_bound`).
+    /// What makes `from_usize(self.as_usize())` round-trip: the cursor's `key()`
+    /// reads a stored word back into a `K`, and this is the precondition
+    /// (`as_usize() < id_bound`) the `from_usize` round-trip needs.
+    proof fn lemma_id_nat_bounded(tracked self)
+        ensures self.id_nat() < Self::id_bound();
+
+    /// (M6) How the value count relates to the storage word's range. A
+    /// bit-stealing id (Id31/Id63) keeps one bit for the tag, so it has exactly
+    /// HALF the word's values: `id_bound * 2 == Index::max_nat()`. A full-range id
+    /// (DenseUsize) uses the whole word: `id_bound == Index::max_nat()`. The
+    /// disjunction lets every `DenseId` honestly report which it is; the B+tree
+    /// (only ever keyed by a bit-stealing id) consumes the `* 2` arm to bound the
+    /// arena. `is_bit_stealing()` selects the arm so generic tree code can branch.
+    spec fn is_bit_stealing() -> bool;
+
+    proof fn lemma_id_bound_word_relation()
+        ensures
+            if Self::is_bit_stealing() {
+                Self::id_bound() * 2 == <Self::Index as crate::index_like::IndexLike>::max_nat()
+            } else {
+                Self::id_bound() == <Self::Index as crate::index_like::IndexLike>::max_nat()
+            };
 }
 
 /// A concrete `DenseId` over `usize` (the dense index is the value itself).
@@ -141,8 +187,18 @@ pub struct DenseUsize {
 }
 
 impl DenseId for DenseUsize {
+    type Index = usize;
+
     open spec fn id_nat(self) -> nat {
         self.raw as nat
+    }
+
+    open spec fn id_bound() -> nat {
+        usize::MAX as nat + 1
+    }
+
+    fn to_index(self) -> (w: usize) {
+        self.raw
     }
 
     fn as_usize(self) -> (r: usize) {
@@ -155,6 +211,16 @@ impl DenseId for DenseUsize {
 
     proof fn lemma_id_injective(a: Self, b: Self) {
         // id_nat is `raw as nat`, injective on usize.
+    }
+
+    proof fn lemma_id_nat_bounded(tracked self) {
+        // id_nat == raw as nat <= usize::MAX < usize::MAX + 1 == id_bound.
+    }
+
+    open spec fn is_bit_stealing() -> bool { false }   // full-range id
+
+    proof fn lemma_id_bound_word_relation() {
+        // id_bound == usize::MAX + 1 == <usize as IndexLike>::max_nat() (the `== ` arm).
     }
 }
 
