@@ -43,6 +43,7 @@ use vstd::prelude::*;
 use crate::diff_store::DiffStore;
 use crate::index_like::IndexLike;
 use crate::inline_store::InlineStore;
+use crate::opt::DenseId;
 use crate::tagged::Tagged;
 
 verus! {
@@ -98,6 +99,20 @@ impl DenseId31 {
     }
 }
 
+/// `Default` is id 0 (its MSB is clear, so it satisfies the type invariant).
+/// Needed wherever a `DenseId31` is the index type of a semi-persistent
+/// container: `restore` fills reclaimed slots with `Idx::default()` before
+/// overwriting them from the captures, so the index type must be `Default` —
+/// production's `define_id31!` ids are `Default` for the same reason. (The
+/// filler value is never observed; it is always overwritten on the live path.)
+impl core::default::Default for DenseId31 {
+    fn default() -> (r: DenseId31)
+        ensures r@ == 0nat,
+    {
+        DenseId31 { raw: 0 }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IndexLike: `as_nat` is the identity on the clean value, so injectivity is
 // immediate; the `[0, 2^31)` bound comes from the type invariant, read in the
@@ -123,6 +138,7 @@ impl IndexLike for DenseId31 {
     proof fn lemma_max_as_nat() {}  // max_spec().as_nat() == 0x7fff_ffff == 2^31 - 1
 
     proof fn lemma_max_nat_positive() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
     fn min() -> Self { DenseId31 { raw: 0 } }
 
@@ -144,6 +160,60 @@ impl IndexLike for DenseId31 {
     fn lt(self, other: Self) -> bool { self.raw < other.raw }
 
     fn le(self, other: Self) -> bool { self.raw <= other.raw }
+}
+
+// ---------------------------------------------------------------------------
+// DenseId: the 31-bit id family (production's `define_id31!`). `Index = u32`:
+// the storage word is the raw clean value, whose `as_nat` is the identity, so
+// it equals `id_nat`. This is the instance that makes a B+tree over `DenseId31`
+// store/compare `u32` words while reasoning about the dense `id_nat` model.
+// ---------------------------------------------------------------------------
+
+impl DenseId for DenseId31 {
+    type Index = u32;
+
+    open spec fn id_nat(self) -> nat {
+        self@
+    }
+
+    open spec fn id_bound() -> nat {
+        DENSE31_BOUND as nat  // 2^31
+    }
+
+    fn to_index(self) -> (w: u32) {
+        proof { use_type_invariant(&self); }  // raw < 2^31, so as_nat(raw) == raw == self@
+        self.raw
+    }
+
+    fn as_usize(self) -> (r: usize) {
+        proof { use_type_invariant(&self); }
+        self.raw as usize
+    }
+
+    fn from_usize(n: usize) -> (r: Self) {
+        // Mask the stolen bit off so the type invariant (`raw < 2^31`) holds for
+        // any `n`. For an in-range `n < 2^31` the mask is a no-op, so the view
+        // round-trips; out-of-range `n` is wrapped and carries no guarantee.
+        assert(((n as u32) & 0x7fff_ffffu32) < 0x8000_0000u32) by (bit_vector);
+        assert(forall|x: u32| #![auto] x < 0x8000_0000u32 ==> (x & 0x7fff_ffffu32) == x)
+            by (bit_vector);
+        DenseId31 { raw: (n as u32) & 0x7fff_ffffu32 }
+    }
+
+    proof fn lemma_id_injective(a: Self, b: Self) {
+        // id_nat is the View, which is `raw`; equal views force equal raws.
+    }
+
+    proof fn lemma_id_nat_bounded(tracked self) {
+        use_type_invariant(&self);  // raw < 2^31 == DENSE31_BOUND == id_bound
+    }
+
+    open spec fn is_bit_stealing() -> bool { true }   // MSB stolen for the tag
+
+    proof fn lemma_id_bound_word_relation() {
+        // id_bound == 2^31 == DENSE31_BOUND; Index == u32, max_nat == 2^32.
+        // 2^31 * 2 == 2^32 (the bit-stealing arm).
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +289,220 @@ impl Tagged for DenseId31 {
                 && ((x & 0x7fff_ffffu32) & 0x8000_0000u32) == 0) by (bit_vector);
         *r = *r & 0x7fff_ffffu32;
     }
+}
+
+// ===========================================================================
+// DenseId63: the 64-bit analogue (production's `define_id63!`). Same MSB-steal
+// encoding one width up: a clean id is a `u64` with bit 63 clear, naming a
+// value in `[0, 2^63)`; the stored repr is `u64` with bit 63 carrying the tag.
+// This is the second width instance, and proves the `DenseId`/`NodeLayout`
+// design is genuinely generic over the 31-bit (u32) and 63-bit (u64) families.
+// ===========================================================================
+
+/// The 63-bit value mask (everything but the stolen MSB).
+pub spec const VAL_MASK64: u64 = 0x7fff_ffff_ffff_ffff;
+/// The stolen tag bit (bit 63).
+pub spec const TAG_BIT64: u64 = 0x8000_0000_0000_0000;
+/// One past the largest clean 63-bit id (`2^63`).
+pub spec const DENSE63_BOUND: u64 = 0x8000_0000_0000_0000;
+
+/// A clean dense id over `u64`: bit 63 always clear, so it names a value in
+/// `[0, 2^63)`. The stolen MSB is available to `Tagged` consumers.
+#[derive(Copy, Clone)]
+pub struct DenseId63 {
+    raw: u64,
+}
+
+impl View for DenseId63 {
+    type V = nat;
+
+    closed spec fn view(&self) -> nat {
+        self.raw as nat
+    }
+}
+
+impl DenseId63 {
+    #[verifier::type_invariant]
+    spec fn inv(self) -> bool {
+        self.raw < DENSE63_BOUND
+    }
+
+    pub fn new(n: u64) -> (r: DenseId63)
+        requires n < DENSE63_BOUND,
+        ensures r@ == n as nat,
+    {
+        DenseId63 { raw: n }
+    }
+}
+
+/// `Default` is id 0 (bit 63 clear, so the type invariant holds). Same rationale
+/// as `DenseId31`: required for use as a semi-persistent container's index type
+/// (`restore` fills with `Idx::default()`), mirroring production's `define_id63!`.
+impl core::default::Default for DenseId63 {
+    fn default() -> (r: DenseId63)
+        ensures r@ == 0nat,
+    {
+        DenseId63 { raw: 0 }
+    }
+}
+
+impl IndexLike for DenseId63 {
+    open spec fn as_nat(self) -> nat { self@ }
+    open spec fn max_nat() -> nat { DENSE63_BOUND as nat }
+    closed spec fn min_spec() -> Self { DenseId63 { raw: 0 } }
+    closed spec fn max_spec() -> Self { DenseId63 { raw: 0x7fff_ffff_ffff_ffff } }
+
+    proof fn lemma_as_nat_bounded(tracked self) {
+        use_type_invariant(self);  // raw < 2^63 == max_nat()
+    }
+
+    proof fn lemma_as_nat_injective(a: Self, b: Self) {
+        // as_nat is the identity on raw.
+    }
+
+    proof fn lemma_min_as_nat() {}
+
+    proof fn lemma_max_as_nat() {}
+
+    proof fn lemma_max_nat_positive() {}
+    proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+
+    fn min() -> Self { DenseId63 { raw: 0 } }
+
+    fn max() -> Self { DenseId63 { raw: 0x7fff_ffff_ffff_ffff } }
+
+    fn as_usize(self) -> (r: usize) {
+        // raw is u32: widening to usize is the identity on any >= 32-bit host,
+        // and id_nat() == raw as nat, so the cast meets `r as nat == id_nat()`.
+        self.raw as usize
+    }
+
+    fn try_from_usize(n: usize) -> (r: Option<Self>) {
+        if (n as u64) < 0x8000_0000_0000_0000u64 {
+            Some(DenseId63 { raw: n as u64 })
+        } else {
+            None
+        }
+    }
+
+    fn lt(self, other: Self) -> bool { self.raw < other.raw }
+
+    fn le(self, other: Self) -> bool { self.raw <= other.raw }
+}
+
+impl Tagged for DenseId63 {
+    type Repr = u64;
+
+    closed spec fn value_of(r: u64) -> DenseId63 {
+        DenseId63 { raw: (r & VAL_MASK64) }
+    }
+
+    open spec fn tag_of(r: u64) -> bool {
+        (r & TAG_BIT64) != 0
+    }
+
+    open spec fn repr_wf(_r: u64) -> bool {
+        true
+    }
+
+    proof fn lemma_repr_extensional(r1: u64, r2: u64) {
+        lemma_value_of_view64(r1);
+        lemma_value_of_view64(r2);
+        assert((r1 & VAL_MASK64) == (r2 & VAL_MASK64));
+        assert(((r1 & TAG_BIT64) != 0) == ((r2 & TAG_BIT64) != 0));
+        assert(
+            (r1 & 0x7fff_ffff_ffff_ffffu64) == (r2 & 0x7fff_ffff_ffff_ffffu64)
+                && (((r1 & 0x8000_0000_0000_0000u64) != 0) == ((r2 & 0x8000_0000_0000_0000u64) != 0))
+                ==> r1 == r2
+        ) by (bit_vector);
+    }
+
+    fn into_repr(self) -> (r: u64) {
+        proof { use_type_invariant(&self); }  // raw < 2^63
+        let x = self.raw;
+        assert(x < 0x8000_0000_0000_0000u64 ==> (x & 0x7fff_ffff_ffff_ffffu64) == x
+            && (x & 0x8000_0000_0000_0000u64) == 0) by (bit_vector);
+        proof { lemma_value_of_view64(self.raw); }
+        self.raw
+    }
+
+    fn from_repr(r: &u64) -> (v: DenseId63) {
+        assert(((*r) & 0x7fff_ffff_ffff_ffffu64) < 0x8000_0000_0000_0000u64) by (bit_vector);
+        proof { lemma_value_of_view64(*r); }
+        DenseId63 { raw: *r & 0x7fff_ffff_ffff_ffffu64 }
+    }
+
+    fn tag(r: &u64) -> (b: bool) {
+        (*r & 0x8000_0000_0000_0000u64) != 0
+    }
+
+    fn set_tag(r: &mut u64) {
+        assert(forall|x: u64|
+            #![auto]
+            ((x | 0x8000_0000_0000_0000u64) & 0x7fff_ffff_ffff_ffffu64) == (x & 0x7fff_ffff_ffff_ffffu64)
+                && ((x | 0x8000_0000_0000_0000u64) & 0x8000_0000_0000_0000u64) != 0) by (bit_vector);
+        *r = *r | 0x8000_0000_0000_0000u64;
+    }
+
+    fn clear_tag(r: &mut u64) {
+        assert(forall|x: u64|
+            #![auto]
+            ((x & 0x7fff_ffff_ffff_ffffu64) & 0x7fff_ffff_ffff_ffffu64) == (x & 0x7fff_ffff_ffff_ffffu64)
+                && ((x & 0x7fff_ffff_ffff_ffffu64) & 0x8000_0000_0000_0000u64) == 0) by (bit_vector);
+        *r = *r & 0x7fff_ffff_ffff_ffffu64;
+    }
+}
+
+impl DenseId for DenseId63 {
+    type Index = u64;
+
+    open spec fn id_nat(self) -> nat {
+        self@
+    }
+
+    open spec fn id_bound() -> nat {
+        DENSE63_BOUND as nat  // 2^63
+    }
+
+    fn to_index(self) -> (w: u64) {
+        proof { use_type_invariant(&self); }
+        self.raw
+    }
+
+    fn as_usize(self) -> (r: usize) {
+        // raw is u64: on a 64-bit host usize == u64 width, so the cast is the
+        // identity on values (usize::MAX == u64::MAX). id_nat() == raw as nat.
+        proof { crate::index_like::lemma_u64_usize_64bit(); }
+        self.raw as usize
+    }
+
+    fn from_usize(n: usize) -> (r: Self) {
+        assert(((n as u64) & 0x7fff_ffff_ffff_ffffu64) < 0x8000_0000_0000_0000u64) by (bit_vector);
+        assert(forall|x: u64| #![auto] x < 0x8000_0000_0000_0000u64
+            ==> (x & 0x7fff_ffff_ffff_ffffu64) == x) by (bit_vector);
+        DenseId63 { raw: (n as u64) & 0x7fff_ffff_ffff_ffffu64 }
+    }
+
+    proof fn lemma_id_injective(a: Self, b: Self) {
+    }
+
+    proof fn lemma_id_nat_bounded(tracked self) {
+        use_type_invariant(&self);  // raw < 2^63 == DENSE63_BOUND == id_bound
+    }
+
+    open spec fn is_bit_stealing() -> bool { true }   // MSB (bit 63) stolen for the tag
+
+    proof fn lemma_id_bound_word_relation() {
+        // id_bound == 2^63 == DENSE63_BOUND; Index == u64, max_nat == 2^64.
+        // 2^63 * 2 == 2^64 (the bit-stealing arm).
+    }
+}
+
+/// `DenseId63`'s `value_of`-to-view bridge (the 64-bit analogue of
+/// [`lemma_value_of_view`]).
+pub proof fn lemma_value_of_view64(r: u64)
+    ensures <DenseId63 as Tagged>::value_of(r)@ == (r & VAL_MASK64) as nat,
+{
 }
 
 /// Bridges the opaque `value_of` constructor to its view: the dense index of
