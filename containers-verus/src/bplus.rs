@@ -40,14 +40,18 @@ use crate::index_like::IndexLike;
 use crate::inline_store::InlineStore;
 use crate::opt::DenseId;
 use crate::tagged::Tagged;
-use crate::vec::{Vec as SpVec, VecToken};
+use crate::vec::{ShrinkPolicy, Vec as SpVec, VecToken};
 
 verus! {
 
-/// Token for mark/restore (delegates to the inner vector's token).
+/// Token for mark/restore. Delegates to the inner arena Vec's token, and
+/// additionally snapshots the two exec header fields that live OUTSIDE the Vec
+/// (`root`, `nkeys`) so `restore` can roll them back along with the arena.
 #[derive(Copy, Clone)]
 pub struct BPlusToken {
     pub nodes: VecToken,
+    pub root: usize,
+    pub nkeys: usize,
 }
 
 /// The arena binding: the executable arena `arena` realizes the ghost tree `t`.
@@ -404,32 +408,33 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     ///
     /// (Disjointness of subtree id-sets — the dynamic-frames separation — is a
     /// conjunct added at M3 when multi-node trees first arise; vacuous here.)
-    pub open spec fn wf(&self) -> bool {
-        &&& self.nodes.wf()
-        &&& crate::bplus_tree::tree_root_id(self.tree@) == self.root.as_nat()
-        &&& binds::<L>(self.arena(), self.tree@)
+    /// The structural half of `wf`, factored as a free-standing predicate over an
+    /// EXPLICIT `(arena, root_nat, tree, nkeys)` rather than `self`. Everything in
+    /// `wf` except the inner Vec's own `nodes.wf()`. Lets `restore` state its
+    /// snapshot precondition (the snapshot arena + the ghost tree live at the mark
+    /// form a valid B+tree) and re-establish `self.wf()` after rolling the arena
+    /// back, without duplicating the eight clauses.
+    pub open spec fn tree_state_wf(arena: Seq<L::Node>, root_nat: nat, tree: Tree, nkeys: nat) -> bool {
+        &&& crate::bplus_tree::tree_root_id(tree) == root_nat
+        &&& binds::<L>(arena, tree)
         &&& crate::bplus_tree::tree_wf(
-                self.tree@,
-                crate::bplus_tree::tree_height(self.tree@),
+                tree,
+                crate::bplus_tree::tree_height(tree),
                 L::leaf_cap_spec(),
                 L::key_cap_spec(),
                 true,
             )
-        &&& leaf_links_ok::<L>(self.arena(), self.tree@)
-        &&& crate::bplus_tree::tree_disjoint(self.tree@)
-        &&& self.nkeys as nat == self.model().len()
-        &&& model_bounded::<K>(self.model())
-        // No dead arena slots: every allocated node is live in the tree. Holds
-        // for this insert-only impl (split does in-place `set` + exactly one
-        // `push`; root-growth pushes exactly the new root). This is what lets the
-        // M6 node-count bound (lemma_node_count_bound) translate into a bound on
-        // `arena.len()`, hence prove the arena never overflows (M6).
-        &&& self.arena().len() == crate::bplus_tree::node_count(self.tree@)
-        // arena never fills the index space: every real id (`< arena.len()`) is
-        // therefore `< max_nat - 1 == nil_link`, i.e. distinct from the NIL leaf
-        // sentinel. Each mutator's push already needs this headroom; making it a
-        // standing invariant lets the cursor tell a real next-leaf id from NIL.
-        &&& self.arena().len() < <L::ArenaIdx as IndexLike>::max_nat()
+        &&& leaf_links_ok::<L>(arena, tree)
+        &&& crate::bplus_tree::tree_disjoint(tree)
+        &&& nkeys == crate::bplus_tree::tree_keys(tree).len()
+        &&& model_bounded::<K>(crate::bplus_tree::tree_keys(tree))
+        &&& arena.len() == crate::bplus_tree::node_count(tree)
+        &&& arena.len() < <L::ArenaIdx as IndexLike>::max_nat()
+    }
+
+    pub open spec fn wf(&self) -> bool {
+        &&& self.nodes.wf()
+        &&& Self::tree_state_wf(self.arena(), self.root.as_nat(), self.tree@, self.nkeys as nat)
     }
 
     /// (M6) THE ARENA NEVER OVERFLOWS. From `wf` alone (plus the static fact that
@@ -1467,6 +1472,84 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         }
         true
     }
+
+    /// Semi-persistence: snapshot the whole tree (`mark`) so a later `restore`
+    /// rolls it back. Delegates to the arena Vec's `mark`, plus records the two
+    /// exec header fields (`root`, `nkeys`) that live outside the Vec. The view
+    /// (`model`/`tree@`) is unchanged; the inner Vec pushes a frame capturing the
+    /// current arena. Mirrors `SparseSet::mark`. Requires `TRACK` for the inner
+    /// Vec to actually retain the snapshot.
+    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: BPlusToken)
+        requires
+            old(self).wf(),
+            old(self).arena().len() < <L::ArenaIdx as IndexLike>::max_nat(),
+        ensures
+            self.wf(),
+            self.tree@ == old(self).tree@,
+            self.model() == old(self).model(),
+            self.root == old(self).root,
+            self.nkeys == old(self).nkeys,
+            // the snapshot just pushed is the current arena; restore can return here.
+            token.nodes.frame_idx == old(self).nodes.frames@.len(),
+            self.nodes.snapshots_view()
+                == old(self).nodes.snapshots_view().push(old(self).arena()),
+            token.root == self.root.as_nat(),
+            token.nkeys == self.nkeys,
+        {
+            let nodes_token = self.nodes.mark(shrink);
+            BPlusToken {
+                nodes: nodes_token,
+                root: self.root.as_usize(),
+                nkeys: self.nkeys,
+            }
+        }
+
+    /// Roll the whole tree back to the state captured by `token`. The arena Vec
+    /// rolls back to its frame snapshot; `root`/`nkeys` come from the token; and
+    /// the ghost model `tree@` is supplied as `snap_tree` (the ghost tree that was
+    /// live at the mark — erased at runtime, like `ListArena::restore`'s
+    /// `snap_model`). The caller proves `snap_tree` is a valid B+tree over the
+    /// snapshot arena (`tree_state_wf`), exactly the structural half of `wf`; this
+    /// method re-establishes the full `self.wf()`.
+    pub fn restore(&mut self, token: BPlusToken, Ghost(snap_tree): Ghost<Tree>)
+        where L::Node: core::default::Default
+        requires
+            old(self).wf(),
+            old(self).nodes.is_token_valid_spec(token.nodes),
+            token.nodes.frame_idx < old(self).nodes.frames@.len(),
+            old(self).nodes.frames@.len() < u32::MAX,
+            old(self).nodes.forks.origins@.len() + 1 <= u32::MAX,
+            // the snapshot arena + the ghost tree live at the mark form a valid
+            // B+tree, with the token's recorded header fields. (The structural
+            // half of `wf`; the Vec supplies its own `nodes.wf()` after restore.)
+            Self::tree_state_wf(
+                old(self).nodes.snapshots_view()[token.nodes.frame_idx as int],
+                token.root as nat, snap_tree, token.nkeys as nat),
+            // the recorded root index round-trips through ArenaIdx.
+            token.root < <L::ArenaIdx as IndexLike>::max_nat(),
+        ensures
+            self.wf(),
+            self.tree@ == snap_tree,
+            self.arena() == old(self).nodes.snapshots_view()[token.nodes.frame_idx as int],
+            self.model() == crate::bplus_tree::tree_keys(snap_tree),
+        {
+            self.nodes.restore(token.nodes);
+            // recover root from the token (ArenaIdx from the stored usize).
+            let new_root = match <L::ArenaIdx as IndexLike>::try_from_usize(token.root) {
+                Some(r) => r,
+                None => { proof { assert(false); } return; },
+            };
+            self.root = new_root;
+            self.nkeys = token.nkeys;
+            self.tree = Ghost(snap_tree);
+            proof {
+                // nodes.restore put the arena at the snapshot; tree_state_wf over
+                // that snapshot (precondition) + nodes.wf() (restore ensures) == wf.
+                assert(self.arena()
+                    == old(self).nodes.snapshots_view()[token.nodes.frame_idx as int]);
+                assert(self.root.as_nat() == token.root as nat);   // try_from_usize roundtrip
+            }
+        }
 
     /// Reconstruct `binds` for the post-split height-1 tree. The two leaves bind
     /// (each subrange word projects to its ghost key), and the new root's two
