@@ -93,13 +93,19 @@ here", kept because the same patterns recur as more containers are verified.
 
 - **[Feature-Parity Audit and Verification Plan](future/parity-audit-and-plan.md)**
   A skeptical, method-by-method accounting of what this crate verifies vs. the
-  production crate — every gap, every weaker/diverging spec, and the recommended
-  PR scope statement. Start here to understand exactly what is and isn't covered.
+  production crate — every weaker/diverging spec and the recommended PR scope
+  statement. Start here to understand exactly what is and isn't covered. (The
+  whole container family, B+tree included, is now verified; the remaining
+  not-at-parity items are the absent utility modules — `bitset`/`sorted_cursor`/
+  the `define_id!` macro family/`IdFactory` — and documented divergences.)
 - **[B+Tree Set — Design and a Bi-Abductive Proof Plan](future/bplus-tree-design.md)**
-  Scoping for the one container not yet verified: the data structure, the
-  recursive/balanced `wf` invariant, and how an insert-with-split proof
-  decomposes under the dynamic-frames discipline. Proof not yet attempted;
-  insert-only (production has no `remove`). B+tree status today: milestone 1 of 7.
+  The design record for the B+tree, now **fully verified**: the recursive/balanced
+  `wf` invariant, and how the insert-with-split proof decomposes under the
+  dynamic-frames discipline. Originally written as a forward plan; the milestone
+  ladder it lays out (M1–M7) has been completed — insert with split + new-root
+  growth (total, with full model transition), sound in-order traversal + `seek`,
+  arena-never-overflows, and `mark`/`restore`. Insert-only (production has no
+  `remove`).
 - **[Verify the Byte-Accounting Diagnostics (Group B)](future/verify-byte-accounting.md)**
   The plan to remove the crate's last *spec-free* `external_body`: give
   `tracking_bytes` / `total_bytes` / `heap_bytes` a ghost byte model and a verified

@@ -11,19 +11,24 @@ still in progress.*
 
 ## 0. One-paragraph verdict
 
-The verus crate **verifies the full semi-persistent core and the flat-arena
-container family at production parity for their essential operations, with
-specs that are generally *stronger* than production** (production's invariants
-are implicit; ours are declarative and machine-checked). What is **not** at
-parity: the **B+tree** (scaffold only — milestone 1 of 7), three **production
-modules with no verus counterpart** (`bitset`, the `define_id!` id-macro family,
+The verus crate **verifies the full semi-persistent core AND the entire
+container family — flat-arena containers and the B+tree — at production parity
+for their essential operations, with specs that are generally *stronger* than
+production** (production's invariants are implicit; ours are declarative and
+machine-checked). The B+tree, scoped here originally as future work, is now
+**fully verified** (insert with split + new-root growth, total with full model
+transition; sound in-order traversal + `seek`; arena-never-overflows;
+`mark`/`restore` — §4). What is **not** at parity: three **production modules
+with no verus counterpart** (`bitset`, the `define_id!` id-macro family,
 `sorted_cursor`), the `IdFactory` allocator, and a handful of **convenience
 methods** (`iter`/`get_mut`/`len`-aliases) omitted from otherwise-verified
 containers. Several **deliberate divergences** (`T: Copy + Default` vs
 `T: Clone`; `ParallelStore`/`NodeRef` modeling choices; `usize` vs the full
-`DenseId` family) are documented, not accidental. The PR should be framed as
-*"the verified semi-persistent vector and flat container family,"* explicitly
-excluding the B+tree and the id-macro/bitset/cursor utilities.
+`DenseId` family — though the B+tree *does* use the real `DenseId31`/`DenseId63`
+bit-stealing ids) are documented, not accidental. The PR can be framed as *"the
+verified semi-persistent container family — vector, flat-arena containers, and
+the insert-only B+tree set,"* explicitly excluding only the
+id-macro/bitset/cursor utility modules.
 
 ## 1. Module-level coverage
 
@@ -38,7 +43,7 @@ excluding the B+tree and the id-macro/bitset/cursor utilities.
 | `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolTagged` + a real bit-stealer) |
 | `dense_id.rs` | `dense_id`, `index_like` | **Partial** — `DenseId31` + `IndexLike` trait verified; **`IdFactory` absent** |
 | `id.rs` (`define_id7/15/31/63!`) | — | **ABSENT** — no macro; `DenseId31` is one hand-written instance |
-| `bplus.rs` | `bplus` | **Scaffold only** — milestone 1 of 7 (see §4) |
+| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified** — insert (split + new root, total), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
 | `bitset.rs` | *(internal use covered by `capture_bits`)* | **ABSENT as a public type** (see §3) |
 | `sorted_cursor.rs` | — | **ABSENT** — no `SortedCursor` trait / cursor iteration |
 
@@ -149,37 +154,42 @@ These are **honest gaps** the PR must not imply are covered:
 5. **`Default`/`Clone`/`Debug`/`Hash` derives and the broader trait surface** of
    the production id types — out of scope.
 
-## 4. The B+tree: precise status and plan
+## 4. The B+tree: precise status
 
-**Status: scaffold only — milestone 1 of 7.** What is verified today (`bplus.rs`,
-~190 lines vs production's ~1040): the module, a node struct over the verified
-arena, a *milestone-1* `wf` (root is an in-range leaf; per-node count ≤ cap and
-keys sorted), an abstract `model()`, and `new`/`is_empty`/`len` — i.e. the
-**empty / single-leaf tree** is proved well-formed with `model == []`. There are
-**no internal nodes, no `insert`, no splitting** yet. This is ~5% of the
-container and the *flat* 5%; the B+tree's defining theorem (insert-with-split
-preserving sortedness + balance) is entirely unproved.
+**Status: FULLY VERIFIED** (`bplus` 127, `bplus_tree` 109, `bplus_layout` 311,
+`bplus_search` 5 facts; 0 `external_body`, 0 `admit`/`assume`). What was
+originally scoped here as a 7-milestone forward plan has been completed; the
+section below records the ladder as built. Generic
+`BPlusTreeSet<K: DenseId, L: NodeLayout, S: SearchKind, const TRACK>` over the
+real bit-stealing ids (`DenseId31`/`DenseId63`) and all six packed node layouts.
 
-The full plan is in [bplus-tree-design.md](bplus-tree-design.md); the milestone
-ladder (each leaves the module green):
-
-| M | Deliverable | Difficulty |
+| M | Deliverable | Status |
 |---|---|---|
-| 1 ✓ | model + `wf` + `new`/`is_empty`/`len` (empty tree) | done |
-| 2 | `contains` — descend-and-search reaches the unique leaf; `contains ⟺ ∈ model` | moderate |
-| 3 | `insert`, **no-split** case (leaf has room) — one-node footprint, rest framed | SparseSet-scale |
-| 4 | **leaf split**, parent has room — two-leaf split + leaf-link splice + separator insert | hard |
-| 5 | **full split propagation + new root** — induction up the path stack | hardest |
-| 6 | `mark`/`restore` — compose from the inner `Vec` | mechanical |
-| 7 | `from_sorted` bulk-build + ordered-cursor iteration theorem | moderate |
+| 1 | model + `wf` + `new`/`is_empty`/`len` | ✓ |
+| 2 | `contains` — root-to-leaf descent; `contains ⟺ ∈ model` | ✓ |
+| 3 | `insert`, no-split case (leaf has room) | ✓ |
+| 4 | leaf split + leaf-link splice + separator insert | ✓ |
+| 5 | full split propagation + new-root growth — `insert_general` carries its full model transition (`model' set == model ∪ {key}`, `added == !contains`), recursion proven with zero `external_body` | ✓ |
+| 6 | `mark`/`restore` — compose from the inner `Vec`, re-establishing the full tree `wf` on rollback | ✓ |
+| 7 | sound in-order traversal + `seek` (the cursor; see below) | ✓ |
 
-Reality check: M1 (done) validated the invariant *shape*, but **M2–M3 will force
-`wf` to be reshaped, not just extended** — the milestone-1 `wf` cannot express
-cross-node ordering without the recursive ghost tree, so the "monotone
-additions" hope from the M1 commit message is optimistic for clause 5. Deletion
-stays out of scope (production is insert-only). Expect M4–M5 to dominate the
-effort; this is a multi-session undertaking comparable to the original `Vec`
-proof.
+Beyond the original ladder, two further results landed:
+
+- **In-order soundness theorems** (named, verified): `seek_first` then
+  `step`*/`key` enumerates the strictly-sorted model — every key, ascending, no
+  gaps or duplicates; and `seek(target)` lands exactly on `target` when present
+  (never skips a key in the set), else on the least key `> target`. The
+  binary-search/descent arithmetic is overflow-audited (overflow-safe midpoints,
+  Verus-checked).
+- **Arena never overflows (M6-equivalent):** from `wf` alone (plus the static
+  fact that the key type steals a bit) the live node count is provably below the
+  arena index ceiling, so `insert`/`insert_general`/`mark` are **total** — no
+  caller-supplied capacity precondition. (Complexity is not proven but is
+  empirically logarithmic; a per-seek node-visit ≈ `log_B(n)` test backs it.)
+
+`wf` itself was reshaped to a recursive ghost `Tree` with a flat arena↔tree
+`binds` bridge (the M1 single-leaf `wf` could not express cross-node ordering,
+as anticipated). Deletion stays out of scope — production is insert-only.
 
 ## 5. Deliberate divergences (documented, not gaps)
 

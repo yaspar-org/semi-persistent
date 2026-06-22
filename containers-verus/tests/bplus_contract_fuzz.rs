@@ -1,18 +1,20 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Direct postcondition fuzzer for the trusted `NodeLayout` primitives.
+//! Direct postcondition fuzzer for the `NodeLayout` primitives.
 //!
-//! The B+tree's `external_body` primitives (the u64 layouts' `child`,
-//! `new_internal2`, `set_internal_child` — trusted for the `u64 as usize` index
-//! cast — plus, defensively, every OTHER layout primitive) carry precise Verus
-//! `ensures`. Under plain `cargo test` those `ensures` are ERASED, so a wrong
-//! body would go unnoticed. This harness re-derives each primitive's spec view
-//! in plain Rust from the node's PUBLIC fields and asserts, on random nodes /
-//! positions / values, that the exec result equals what the `ensures` claims.
+//! The `NodeLayout` primitives (`child`/`keys_view`/`new_internal2`/
+//! `set_internal_child`/the leaf+internal split/insert mutators, across all six
+//! layouts) are now fully VERIFIED — including the u64 layouts' `u64 as usize`
+//! index cast, which was once `external_body` and is now proven against the
+//! `global size_of usize == 8` pin. Their Verus `ensures` are machine-checked.
 //!
-//! This is the runtime stand-in for the machine check we don't get on the
-//! trusted bodies: if `child`'s cast were ever value-changing, or a `copy_within`
-//! shift were off-by-one, these fire — independent of the tree algorithm above.
+//! This harness is kept as defense-in-depth: under plain `cargo test` the
+//! `ensures` are ERASED, so it re-derives each primitive's spec view in plain
+//! Rust from the node's PUBLIC fields and asserts, on random nodes / positions /
+//! values, that the exec result matches. It guards against a regression that
+//! could slip a wrong body past a future proof refactor (if `child`'s cast were
+//! ever value-changing, or a `copy_within` shift off-by-one, these fire) —
+//! independent of the tree algorithm above.
 //!
 //! Coverage: all SIX layouts (3 u32 + 3 u64) via the `fuzz_layout!` macro, so
 //! the u64 cast path and the u32 no-cast path are both exercised. We treat the

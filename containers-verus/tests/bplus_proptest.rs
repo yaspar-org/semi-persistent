@@ -3,17 +3,19 @@
 //! Property-based runtime tests for the verified `BPlusTreeSet`.
 //!
 //! These run the *executable* tree (Verus `requires`/`ensures` are erased under
-//! plain `cargo test`) and check, at runtime, that the structural conjectures we
+//! plain `cargo test`) and check, at runtime, that the structural invariants we
 //! prove statically actually hold — by re-deriving the wf invariants over the
 //! arena and walking the leaf-link chain. Instrumented with prints (run with
 //! `cargo test -- --nocapture`).
 //!
-//! SCOPE (2026-06, test-first phase): we drive the GENERAL multi-level insert,
-//! `insert_general` (M4c) — descent + split propagation + new-root growth. Its
-//! exec path is complete; its `wf` proof is in progress (so it is currently
-//! `external_body`), and these tests are the harness validating it before the
-//! proof lands. There is no cursor yet (M5), so the "cursor in order" check is
-//! done by hand-walking the `link` chain over the arena.
+//! The tree is FULLY VERIFIED (no `external_body` in `bplus`/`bplus_tree`): the
+//! general multi-level `insert_general` (descent + split propagation + new-root
+//! growth) carries its full model transition and is total; the cursor's
+//! `seek_first`/`step`/`key`/`seek` are proven sound (in-order, no skips). These
+//! runtime tests are a belt-and-suspenders oracle check of the executable code
+//! against a plain-`std` sorted set — they exercise the compiled path and confirm
+//! the proved properties observably hold, including the cursor enumeration and
+//! `mark`/`restore` rollback.
 
 use vstd::prelude::Ghost;
 

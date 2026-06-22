@@ -41,14 +41,37 @@ Layer 1: diff_store.rs                   -- Capture-protocol contract (trait)
 Layer 2: parallel_store.rs / inline_store.rs -- Two impls of DiffStore
 Layer 3: frame.rs / container_id.rs / fork_history.rs -- Frame stack, identity, branches
 Layer 4: vec.rs                          -- Vec<T,I,S,TRACK> proved over the trait specs
+Layer 5: append_only_vec / map / sparse_set / list / circular_list  -- containers over the verified Vec/arena
+         bplus (+ bplus_tree / bplus_layout / bplus_search)         -- BPlusTreeSet over its own InlineStore arena
+         dense_id / opt / capture_bits                              -- supporting value types
 ```
 
-Other containers (`AppendOnlyVec`, `Map`, `SparseSet`, `BPlusTreeSet`, `ListArena`)
-follow the same pattern and are added incrementally.
+All of the Layer-5 containers follow the same diff-store / dynamic-frames pattern
+and are verified (see "Verification status" below).
 
 ## Verification status
 
-Skeleton only — no proofs landed yet. See `doc/proof-status.md` (forthcoming) for the running tally.
+**935 facts verified across 21 modules, 0 errors, 0 `admit`s/`assume`s**
+(run `./verify-all.sh` from the package root for the live per-module tally).
+The whole container family is verified:
+
+- **`Vec`** (the semi-persistent core): the headline reconstruction theorem at
+  arbitrary mark-nesting depth, over both `DiffStore` backends
+  (`ParallelStore` / `InlineStore`), plus branch-cut safety and faithful `pop`.
+- **`AppendOnlyVec`, `Map` (`SpMap`), `SparseSet`, `ListArena`, `CircularList`** —
+  each verified for its core API, including `mark`/`restore`.
+- **`BPlusTreeSet`** — fully verified, not a scaffold: `insert` (with split
+  propagation and new-root growth) is *total* and carries its full model
+  transition; sound in-order traversal and `seek` (the cursor enumerates the
+  sorted set, never skipping a present key); the arena provably never overflows
+  (so `insert` needs no caller capacity precondition); and `mark`/`restore`.
+  Insert-only — production has no `remove`.
+
+Trusted boundary: 6 `#[verifier::external_body]` items, all enumerated in
+[`doc/design/10-trust-boundary.md`](doc/design/10-trust-boundary.md). Runtime
+property tests (80 across 6 files) exercise the executable code against plain-`std`
+oracles. The skeptical, method-by-method coverage accounting vs. the production
+crate is [`doc/future/parity-audit-and-plan.md`](doc/future/parity-audit-and-plan.md).
 
 ## Prerequisites
 
