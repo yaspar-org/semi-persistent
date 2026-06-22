@@ -495,6 +495,73 @@ pub proof fn lemma_forest_max_height_cons(kids: Seq<Tree>)
 // See [[bplus-m6-arena-capacity-plan]]. Both bounds are tree+forest pairs.
 // ===========================================================================
 
+/// Updating one child shifts the forest node-count by exactly that child's delta:
+/// `forest_node_count(kids.update(m, x)) + node_count(kids[m]) == forest_node_count(kids) + node_count(x)`.
+/// (Stated additively to stay in `nat`.) The compositional step the insert
+/// recursion's M6 delta needs at an absorb (None): one child `gkids[cp]` becomes
+/// `ncl`, the rest frame.
+pub proof fn lemma_forest_node_count_update(kids: Seq<Tree>, m: int, x: Tree)
+    requires 0 <= m < kids.len(),
+    ensures
+        forest_node_count(kids.update(m, x)) + node_count(kids[m])
+            == forest_node_count(kids) + node_count(x),
+    decreases kids,
+{
+    if m == 0 {
+        assert(kids.update(0, x).drop_first() =~= kids.drop_first());
+    } else {
+        lemma_forest_node_count_update(kids.drop_first(), m - 1, x);
+        assert(kids.update(m, x).drop_first() =~= kids.drop_first().update(m - 1, x));
+        assert(kids.update(m, x)[0] == kids[0]);
+    }
+}
+
+/// Inserting a child at index `m` adds exactly that child's node-count:
+/// `forest_node_count(kids.insert(m, x)) == forest_node_count(kids) + node_count(x)`.
+/// The compositional step at a SPLIT (Some): child `cp` is replaced by two
+/// (update to ncl, then insert ncr at cp+1).
+pub proof fn lemma_forest_node_count_insert(kids: Seq<Tree>, m: int, x: Tree)
+    requires 0 <= m <= kids.len(),
+    ensures
+        forest_node_count(kids.insert(m, x))
+            == forest_node_count(kids) + node_count(x),
+    decreases kids,
+{
+    if m == 0 {
+        assert(kids.insert(0, x).drop_first() =~= kids);
+        assert(kids.insert(0, x)[0] == x);
+    } else {
+        lemma_forest_node_count_insert(kids.drop_first(), m - 1, x);
+        assert(kids.insert(m, x).drop_first() =~= kids.drop_first().insert(m - 1, x));
+        assert(kids.insert(m, x)[0] == kids[0]);
+    }
+}
+
+/// `forest_node_count` splits over a subrange cut: `fnc(s) == fnc(s[0..k]) +
+/// fnc(s[k..])`. The compositional step when a parent node ITSELF splits (the
+/// combined children `ckids` are partitioned into the left/right halves).
+pub proof fn lemma_forest_node_count_split(s: Seq<Tree>, k: int)
+    requires 0 <= k <= s.len(),
+    ensures forest_node_count(s)
+        == forest_node_count(s.subrange(0, k)) + forest_node_count(s.subrange(k, s.len() as int)),
+    decreases s.len(),
+{
+    if s.len() == 0 {
+        assert(s.subrange(0, k) =~= s);
+        assert(s.subrange(k, s.len() as int) =~= s);
+    } else if k == 0 {
+        assert(s.subrange(0, 0) =~= Seq::<Tree>::empty());
+        assert(s.subrange(0, s.len() as int) =~= s);
+    } else {
+        // peel the head: s == [s0] + df; both halves' heads align with df's.
+        let df = s.drop_first();
+        lemma_forest_node_count_split(df, k - 1);
+        assert(s.subrange(0, k).drop_first() =~= df.subrange(0, k - 1));
+        assert(s.subrange(0, k)[0] == s[0]);
+        assert(s.subrange(k, s.len() as int) =~= df.subrange(k - 1, df.len() as int));
+    }
+}
+
 /// (A) every internal node having >= 2 children makes leaves the majority:
 /// `node_count(t) + 1 <= 2 * leaf_count(t)`. Holds for a NON-ROOT-wf tree (root
 /// is handled by the combiner, since the root's children are non-root).
