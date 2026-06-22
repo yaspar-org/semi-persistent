@@ -726,15 +726,22 @@ pub proof fn lemma_ring_src_injective(
 }
 
 /// covers clause of post.wf() after splice.
+///
+/// Requires only `pre.model_covers()`, NOT the full `pre.wf()`: the body uses
+/// nothing else, and dragging `pre.wf()` in pulls `model_disjoint`'s quad-nested
+/// `forall|c1,p1,c2,p2| m[c1][p1]==m[c2][p2]` into scope, where it e-matches
+/// combinatorially against every nested-sequence access here and makes the proof
+/// blow up (rlimit 800 + spinoff, and even then z3-seed-flaky). The caller has
+/// full `pre.wf()`, which implies `model_covers()`, so this is strictly weaker.
 #[verifier::spinoff_prover]
-#[verifier::rlimit(800)]
+#[verifier::rlimit(50)]
 pub proof fn lemma_splice_covers<T, const TRACK: bool>(
     pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
     cs: int, ca: int, ps: int, pa: int,
 )
     where T: Sized + Copy + core::default::Default
     requires
-        pre.wf(), post.n_spec() == pre.n_spec(),
+        pre.model_covers(), post.n_spec() == pre.n_spec(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(), cs != ca,
         0 <= ps < pre.model@[cs].len(), 0 <= pa < pre.model@[ca].len(),
         post.model@.len() == pre.model@.len(),
