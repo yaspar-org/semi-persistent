@@ -442,6 +442,31 @@ pub trait NodeLayout: Sized {
             1 <= Self::key_cap_spec(),
             Self::leaf_cap_spec() < <Self::ArenaIdx as IndexLike>::max_nat();
 
+    /// (M6) Capacity headroom relating this layout's arena-index width to the
+    /// id type's value count `id_bound`. For every production layout the arena
+    /// index is exactly one bit wider than the value range (Id31 in a u32 arena:
+    /// `2*2^31 == 2^32`; Id63 in a usize arena: `2*2^63 == 2^64`), and the leaf
+    /// occupancy floor `(leaf_cap+1)/2` is `>= 7`. Together these bound the live
+    /// node count (`<= max_nat/7 + 1`) strictly below the arena ceiling — so the
+    /// arena can never overflow (the closed type-level half of M6). `id_bound` is
+    /// passed by the caller (`K::id_bound()`), since `K` is welded to this layout
+    /// by `L: NodeLayout<Word = K::Index>`.
+    proof fn lemma_capacity_headroom(id_bound: nat)
+        requires id_bound == <Self::ArenaIdx as IndexLike>::max_nat() / 2,
+        ensures
+            2 * id_bound == <Self::ArenaIdx as IndexLike>::max_nat(),
+            (Self::leaf_cap_spec() + 1) / 2 >= 7,
+            Self::key_cap_spec() >= 2,
+            <Self::ArenaIdx as IndexLike>::max_nat() >= 16;
+
+    /// (M6) the storage word and the arena index have the SAME range: for every
+    /// layout `Word` and `ArenaIdx` are equal-width (u32/u32, or u64/usize both
+    /// 64-bit). With `Word == K::Index`, this chains the id's
+    /// `id_bound == Index::max_nat/2` to `id_bound == ArenaIdx::max_nat/2` — the
+    /// precondition of `lemma_capacity_headroom`.
+    proof fn lemma_word_arena_same_width()
+        ensures <Self::Word as IndexLike>::max_nat() == <Self::ArenaIdx as IndexLike>::max_nat();
+
     /// `node_wf` characterization, exposed so generic code can establish it
     /// from the counts it controls (`node_wf` itself is layout-private): a leaf
     /// is `node_wf` iff `count <= leaf_cap`; an internal node iff
@@ -893,6 +918,8 @@ macro_rules! gen_layout_u32 {
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
+            proof fn lemma_capacity_headroom(id_bound: nat) {}
+            proof fn lemma_word_arena_same_width() {}
             proof fn lemma_node_wf_iff(n: $node) {}
             proof fn lemma_keys_view_len(n: $node) {}
             proof fn lemma_split_mid() {}
@@ -1327,6 +1354,8 @@ macro_rules! gen_layout_u64 {
             proof fn lemma_node_wf_count(n: $node) {}
             proof fn lemma_geometry() {}
             proof fn lemma_arena_capacity() {}
+            proof fn lemma_capacity_headroom(id_bound: nat) {}
+            proof fn lemma_word_arena_same_width() {}
             proof fn lemma_node_wf_iff(n: $node) {}
             proof fn lemma_keys_view_len(n: $node) {}
             proof fn lemma_split_mid() {}

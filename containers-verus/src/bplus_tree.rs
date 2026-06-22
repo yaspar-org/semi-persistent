@@ -655,6 +655,49 @@ pub proof fn lemma_forest_leaf_occupancy(kids: Seq<Tree>, h: nat, cap: nat, key_
     }
 }
 
+/// Every tree has at least one node (the root). `node_count(t) >= 1`.
+pub proof fn lemma_node_count_pos(t: Tree)
+    ensures node_count(t) >= 1,
+{
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { .. } => {}
+    }
+}
+
+/// `tree_height(t) <= node_count(t)`: a root-to-leaf path visits `height + 1`
+/// distinct nodes, all part of the tree, so even `height < node_count`. (Proven
+/// as `<=`, which is all the M6 wiring needs: `height <= arena.len()`.) Needs the
+/// forest fact that some child's node_count dominates the max child height.
+pub proof fn lemma_height_le_node_count(t: Tree)
+    ensures tree_height(t) <= node_count(t),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { .. } => {}   // 0 <= 1
+        Tree::Inner { kids, .. } => {
+            // tree_height == 1 + forest_max_height(kids); node_count == 1 + fnc(kids).
+            // suffices: forest_max_height(kids) <= forest_node_count(kids).
+            lemma_forest_max_height_le_node_count(kids);
+        }
+    }
+}
+
+/// `forest_max_height(kids) <= forest_node_count(kids)`: the tallest child's
+/// height is dominated by the sum of all children's node counts (each child
+/// contributes height <= its own node_count, and node counts are >= 1).
+pub proof fn lemma_forest_max_height_le_node_count(kids: Seq<Tree>)
+    ensures forest_max_height(kids) <= forest_node_count(kids),
+    decreases kids,
+{
+    if kids.len() == 0 {
+    } else {
+        lemma_height_le_node_count(kids[0]);                  // h(k0) <= nc(k0)
+        lemma_forest_max_height_le_node_count(kids.drop_first());
+        // forest_max_height(kids) == max(h(k0), fmh(df)); both <= nc(k0) + fnc(df).
+    }
+}
+
 /// (A ∘ B) the node-count bound for a ROOT-wf tree: `L_min * (node_count(t) - 1)
 /// <= 2 * tree_keys(t).len()`, where `L_min == (cap + 1) / 2`. The root itself may
 /// underflow (the `-1` accounts for it), but ALL its descendants are non-root, so

@@ -432,6 +432,66 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         &&& self.arena().len() < <L::ArenaIdx as IndexLike>::max_nat()
     }
 
+    /// (M6) THE ARENA NEVER OVERFLOWS. From `wf` alone (plus the static fact that
+    /// the key type steals a bit, true for every tree key), the live arena has
+    /// enough headroom for another full insert: `arena.len() + tree_height + 3 <
+    /// ArenaIdx::max_nat()` — exactly `insert_general`'s capacity precondition.
+    ///
+    /// Proof chain (see [[bplus-m6-arena-capacity-plan]]): wf gives
+    /// `arena.len() == node_count` and `model_bounded`; a set has `nkeys <=
+    /// id_bound` (`lemma_sorted_bounded_len`); the structural bound gives
+    /// `L_min*(node_count-1) <= 2*nkeys <= 2*id_bound == max_nat`; with `L_min >= 7`
+    /// and `height <= node_count`, `arena.len() + height + 3 <= 2*node_count + 3
+    /// <= 2*(max_nat/7 + 1) + 3 < max_nat`.
+    pub proof fn lemma_arena_never_overflows(&self)
+        requires self.wf(), K::is_bit_stealing(),
+        ensures
+            self.arena().len() + crate::bplus_tree::tree_height(self.tree@) + 3
+                < <L::ArenaIdx as IndexLike>::max_nat(),
+    {
+        let mx = <L::ArenaIdx as IndexLike>::max_nat();
+        let lmin = (L::leaf_cap_spec() + 1) / 2;
+        let nc = crate::bplus_tree::node_count(self.tree@);
+        let nkeys = self.model().len();
+        let idb = K::id_bound();
+
+        // id_bound == max_nat/2: id steals a bit (id_bound*2 == Index::max_nat),
+        // and Word == K::Index has the same range as ArenaIdx.
+        K::lemma_id_bound_word_relation();                 // idb*2 == K::Index::max_nat
+        L::lemma_word_arena_same_width();                  // Word::max_nat == ArenaIdx::max_nat
+        assert(<L::Word as IndexLike>::max_nat() == <K::Index as IndexLike>::max_nat());
+        assert(idb * 2 == mx);
+        assert(idb == mx / 2) by (nonlinear_arith) requires idb * 2 == mx;
+        L::lemma_capacity_headroom(idb);                   // lmin >= 7, mx >= 16, 2*idb==mx
+
+        // nkeys <= id_bound (strictly-sorted bounded model = a set in [0, id_bound)).
+        crate::bplus_tree::lemma_tree_wf_sorted(self.tree@,
+            crate::bplus_tree::tree_height(self.tree@), L::leaf_cap_spec(), L::key_cap_spec(), true);
+        crate::bplus_tree::lemma_sorted_bounded_len(self.model(), idb);
+        assert(nkeys <= idb);
+
+        // structural: lmin*(nc-1) <= 2*nkeys <= 2*idb == mx.
+        crate::bplus_tree::lemma_node_count_bound(self.tree@,
+            crate::bplus_tree::tree_height(self.tree@), L::leaf_cap_spec(), L::key_cap_spec());
+        assert(lmin * (nc - 1) <= 2 * nkeys);
+        assert(2 * nkeys <= 2 * idb) by (nonlinear_arith) requires nkeys <= idb;
+        assert(lmin * (nc - 1) <= mx);
+
+        // lmin >= 7 ⟹ 7*(nc-1) <= lmin*(nc-1) <= mx, so nc-1 <= mx/7, nc <= mx/7 + 1.
+        assert(7 * (nc - 1) <= lmin * (nc - 1)) by (nonlinear_arith) requires lmin >= 7, nc >= 1;
+        crate::bplus_tree::lemma_node_count_pos(self.tree@);   // nc >= 1
+        assert(7 * (nc - 1) <= mx);
+        assert(nc - 1 <= mx / 7) by (nonlinear_arith) requires 7 * (nc - 1) <= mx;
+
+        // arena.len() == nc (wf), height <= nc.
+        crate::bplus_tree::lemma_height_le_node_count(self.tree@);
+        assert(self.arena().len() == nc);
+        // 2*nc + 3 <= 2*(mx/7 + 1) + 3 == 2*mx/7 + 5 < mx  (since mx >= 16).
+        assert(self.arena().len() + crate::bplus_tree::tree_height(self.tree@) + 3 <= 2 * nc + 3);
+        assert(2 * nc + 3 < mx) by (nonlinear_arith)
+            requires nc - 1 <= mx / 7, mx >= 16, nc >= 1;
+    }
+
     /// Subtree well-formedness, the recursion's local invariant: `arena` realizes
     /// the ghost subtree `t` as a structurally valid B+tree of height `h` (non-
     /// root), with its last leaf linking to `succ` and its ids disjoint. The
@@ -738,13 +798,18 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             old(self).wf(),
             L::is_leaf_spec(old(self).arena()[old(self).root.as_nat() as int]),
             old(self).nkeys < usize::MAX,
-            // room in the arena for the (at most two) nodes a split allocates.
-            old(self).arena().len() + 2 < <L::ArenaIdx as IndexLike>::max_nat(),
+            // Arena capacity is discharged internally (M6): the root is a leaf, so
+            // tree_height == 0 and lemma_arena_never_overflows gives arena.len()+3 <
+            // max_nat, hence the +2 this path needs. Only the static bit-stealing
+            // fact is required of the caller.
+            K::is_bit_stealing(),
         ensures
             self.wf(),
             added == !old(self).model().contains(key.id_nat()),
             self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
+        // (M6) recover the arena-capacity fact from wf (root leaf ⟹ height 0).
+        proof { self.lemma_arena_never_overflows(); }
         let ghost root_id = self.root.as_nat() as int;
         let ghost gkeys = crate::bplus_tree::tree_keys(self.tree@);
         proof { lemma_leaf_facts::<K, L, S, TRACK>(self); }
@@ -962,15 +1027,20 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         requires
             old(self).wf(),
             old(self).nkeys < usize::MAX,
-            // arena headroom for the whole descent path + the new root a root split
-            // allocates (one node per level, plus the root). `tree_height + 3`.
-            old(self).arena().len() + crate::bplus_tree::tree_height(old(self).tree@) + 3
-                < <L::ArenaIdx as IndexLike>::max_nat(),
+            // The arena-capacity precondition is no longer a CALLER obligation: it
+            // is discharged internally from `wf` by `lemma_arena_never_overflows`
+            // (M6). The only added requirement is the STATIC fact that the key type
+            // steals a bit (`K::is_bit_stealing()`) — true for every B+tree key
+            // (Id31/Id63); it is what gives the arena one bit of headroom over the
+            // value count. So `insert_general` is now TOTAL for any reachable state.
+            K::is_bit_stealing(),
         ensures
             self.wf(),
             added == !old(self).model().contains(key.id_nat()),
             self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
+        // (M6) recover the arena-capacity fact the descent/splits need, from wf.
+        proof { self.lemma_arena_never_overflows(); }
         let kw: L::Word = key.to_index();
         let root = self.root;
         let ghost h = crate::bplus_tree::tree_height(self.tree@);
