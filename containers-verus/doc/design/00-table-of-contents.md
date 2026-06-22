@@ -10,6 +10,15 @@ headline correctness theorem
 proved with **no `admit`s or `assume`s**. Run `./verify-all.sh` from the
 `containers-verus/` package root for the current per-module tally.
 
+> **What is trusted.** "No `admit`s/`assume`s" means no fact is injected into a
+> proof — it does **not** mean nothing is trusted. The crate's entire trust
+> boundary is 6 small `#[verifier::external_body]` items (a process-global
+> atomic, an opaque identity type, and three spec-free byte-accounting
+> diagnostics), none hiding any algorithmic logic. They are enumerated and
+> justified one by one in **[Chapter 10 — The Trust Boundary](10-trust-boundary.md)**.
+> Read that chapter to know exactly what the verification does and does not
+> guarantee.
+
 These documents are organized in two layers. The **reference** layer
 (chapters 01–02, 09–10) is the durable description of the data-structure layout,
 invariants, proved theorems, and the trust boundary. The **method** layer

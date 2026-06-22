@@ -38,6 +38,16 @@ aliasing, separation, and shape are proved as explicit predicates over those ids
 carries no `admit`s or `assume`s; run `./verify-all.sh` from the package root
 for the current per-module tally.
 
+What *is* taken on trust is a small, explicit boundary — 6
+`#[verifier::external_body]` items, all either modeling something genuinely
+external (a process-global atomic, an opaque identity) or spec-free byte
+diagnostics, none hiding any algorithmic logic. They are enumerated and
+justified one by one in
+[Chapter 10 — The Trust Boundary](10-trust-boundary.md). "No `admit`s/`assume`s"
+means no fact is injected mid-proof; it does *not* mean nothing is trusted, and
+Chapter 10 is the honest accounting of exactly what is. Read it alongside this
+claim.
+
 ## 1. Introduction
 
 This document has two halves, and it is worth stating the arc before the
@@ -886,7 +896,9 @@ in full.
 ## 11. What is verified
 
 Everything below is proved with no `admit`s or `assume`s, at arbitrary
-mark-nesting depth. Run `./verify-all.sh` for the live per-module count.
+mark-nesting depth. Run `./verify-all.sh` for the live per-module count. For the
+dual — what is *not* proved but taken on trust (the 6 `external_body` boundary
+items) — see [Chapter 10](10-trust-boundary.md).
 
 **The four core theorems of §0** — reconstruction, diff-log faithfulness
 (coverage + uniqueness), the runtime↔ghost capture bridge, and token validity

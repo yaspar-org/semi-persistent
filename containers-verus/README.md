@@ -22,6 +22,17 @@ For every container `C<T, ..., const TRACK: bool>`:
    `requires is_valid(t)`, so tokens for cut subtrees are statically rejected.
    An exec method `is_token_valid(&self, t) -> bool` mirrors the predicate.
 
+## What is trusted
+
+The proofs carry **no `admit`s or `assume`s** — but that means no fact is
+injected into a proof, *not* that nothing is trusted. The entire trust boundary
+is a small, explicit set of `#[verifier::external_body]` items modeling things
+the logic cannot describe: a process-global atomic id counter, an opaque
+identity type, and a few spec-free byte-accounting diagnostics. None hides any
+algorithmic logic. Every one is enumerated and justified in
+[`doc/design/10-trust-boundary.md`](doc/design/10-trust-boundary.md) — read it to
+know exactly what the verification does and does not guarantee.
+
 ## Architecture
 
 ```
