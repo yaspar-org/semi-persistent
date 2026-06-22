@@ -1481,8 +1481,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     /// Vec to actually retain the snapshot.
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: BPlusToken)
         requires
+            // `wf` already implies arena.len() < max_nat (its last clause), so no
+            // separate capacity obligation: mark is total on any wf tree.
             old(self).wf(),
-            old(self).arena().len() < <L::ArenaIdx as IndexLike>::max_nat(),
         ensures
             self.wf(),
             self.tree@ == old(self).tree@,
