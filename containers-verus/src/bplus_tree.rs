@@ -68,6 +68,49 @@ pub open spec fn forest_keys(kids: Seq<Tree>) -> Seq<nat>
     }
 }
 
+/// Total number of nodes in the tree (leaves + internal). The arena-capacity
+/// measure for M6: `arena.len() == node_count(tree@)` for an insert-only tree
+/// (no orphaned slots), and `node_count` is bounded by `c * tree_keys.len()` via
+/// min-occupancy.
+pub open spec fn node_count(t: Tree) -> nat
+    decreases t
+{
+    match t {
+        Tree::Leaf { .. } => 1,
+        Tree::Inner { kids, .. } => 1 + forest_node_count(kids),
+    }
+}
+
+pub open spec fn forest_node_count(kids: Seq<Tree>) -> nat
+    decreases kids
+{
+    if kids.len() == 0 {
+        0
+    } else {
+        node_count(kids[0]) + forest_node_count(kids.drop_first())
+    }
+}
+
+/// Number of leaf nodes in the tree (where all values live).
+pub open spec fn leaf_count(t: Tree) -> nat
+    decreases t
+{
+    match t {
+        Tree::Leaf { .. } => 1,
+        Tree::Inner { kids, .. } => forest_leaf_count(kids),
+    }
+}
+
+pub open spec fn forest_leaf_count(kids: Seq<Tree>) -> nat
+    decreases kids
+{
+    if kids.len() == 0 {
+        0
+    } else {
+        leaf_count(kids[0]) + forest_leaf_count(kids.drop_first())
+    }
+}
+
 /// The set of arena ids occupied by the tree (its dynamic-frames region).
 pub open spec fn tree_ids(t: Tree) -> Set<nat>
     decreases t
@@ -442,6 +485,147 @@ pub proof fn lemma_forest_max_height_cons(kids: Seq<Tree>)
 // from `bplus` so this module need not know the geometry.
 // ===========================================================================
 
+// ===========================================================================
+// M6 structural node-count bound. The chain (for a NON-ROOT-wf tree, where every
+// internal node has >= 2 children and every leaf has >= L_min == (cap+1)/2 keys):
+//   (A)  node_count(t) + 1 <= 2 * leaf_count(t)          -- min branching >= 2
+//   (B)  L_min * leaf_count(t) <= tree_keys(t).len()     -- min leaf occupancy
+// compose to  L_min * (node_count - 1) < 2 * keys, so a full arena (node_count
+// ~= 2^N) forces keys > L_min/2 * (2^N - 1) >> id_bound == 2^(N-1) -- impossible.
+// See [[bplus-m6-arena-capacity-plan]]. Both bounds are tree+forest pairs.
+// ===========================================================================
+
+/// (A) every internal node having >= 2 children makes leaves the majority:
+/// `node_count(t) + 1 <= 2 * leaf_count(t)`. Holds for a NON-ROOT-wf tree (root
+/// is handled by the combiner, since the root's children are non-root).
+pub proof fn lemma_node_count_le_2leaf(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires tree_wf(t, h, cap, key_cap, false), key_cap >= 2,
+    ensures node_count(t) + 1 <= 2 * leaf_count(t),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { .. } => {}  // 1 + 1 == 2 * 1.
+        Tree::Inner { seps, kids, .. } => {
+            // non-root inner: seps.len() >= key_cap/2 >= 1 (key_cap >= 2), so
+            // kids.len() == seps.len() + 1 >= 2 — the >= 2 branching that makes
+            // leaves the majority.
+            assert(seps.len() >= key_cap / 2);
+            assert(key_cap / 2 >= 1);
+            assert(kids.len() >= 2);
+            lemma_forest_node_count_le_2leaf(kids, (h - 1) as nat, cap, key_cap);
+            // node_count = 1 + FNC; forest gives FNC + kids.len() <= 2*FLC, and
+            // leaf_count == FLC. node_count + 1 == FNC + 2 <= 2*FLC - kids.len() + 2
+            // <= 2*FLC since kids.len() >= 2.
+        }
+    }
+}
+
+/// Forest companion: `forest_node_count(kids) + kids.len() <= 2 * forest_leaf_count(kids)`.
+/// (Each child contributes `nc_i + 1 <= 2*lc_i`; summing over `kids.len()` children
+/// gives `FNC + kids.len() <= 2*FLC`.)
+pub proof fn lemma_forest_node_count_le_2leaf(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat)
+    requires forest_wf(kids, h, cap, key_cap), key_cap >= 2,
+    ensures forest_node_count(kids) + kids.len() <= 2 * forest_leaf_count(kids),
+    decreases kids,
+{
+    if kids.len() == 0 {
+    } else {
+        lemma_node_count_le_2leaf(kids[0], h, cap, key_cap);   // nc0 + 1 <= 2*lc0
+        lemma_forest_node_count_le_2leaf(kids.drop_first(), h, cap, key_cap);
+        // FNC == nc0 + FNC', FLC == lc0 + FLC', kids.len() == 1 + |df|.
+        // (nc0 + 1) + (FNC' + |df|) <= 2*lc0 + 2*FLC'.
+    }
+}
+
+/// (B) min leaf occupancy: `L_min * leaf_count(t) <= tree_keys(t).len()` for a
+/// NON-ROOT-wf tree, where `L_min == (cap + 1) / 2`. Every non-root leaf holds
+/// `>= L_min` keys, and internal nodes just sum their children.
+pub proof fn lemma_leaf_occupancy(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires tree_wf(t, h, cap, key_cap, false),
+    ensures ((cap + 1) / 2) * leaf_count(t) <= tree_keys(t).len(),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { keys, .. } => {
+            // non-root leaf: keys.len() >= (cap+1)/2 == L_min, leaf_count == 1.
+            assert(((cap + 1) / 2) * 1 == (cap + 1) / 2) by (nonlinear_arith);
+        }
+        Tree::Inner { kids, .. } => {
+            lemma_forest_leaf_occupancy(kids, (h - 1) as nat, cap, key_cap);
+            // tree_keys == forest_keys(kids), leaf_count == forest_leaf_count(kids).
+        }
+    }
+}
+
+/// Forest companion of (B): `L_min * forest_leaf_count(kids) <= forest_keys(kids).len()`.
+pub proof fn lemma_forest_leaf_occupancy(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat)
+    requires forest_wf(kids, h, cap, key_cap),
+    ensures ((cap + 1) / 2) * forest_leaf_count(kids) <= forest_keys(kids).len(),
+    decreases kids,
+{
+    if kids.len() == 0 {
+        // forest_leaf_count == 0, forest_keys.len() == 0: need lmin * 0 == 0.
+        assert(((cap + 1) / 2) * 0 == 0) by (nonlinear_arith);
+    } else {
+        let df = kids.drop_first();
+        lemma_leaf_occupancy(kids[0], h, cap, key_cap);        // lmin*lc0 <= keys0
+        lemma_forest_leaf_occupancy(df, h, cap, key_cap);      // lmin*flc <= keysF
+        let lmin = (cap + 1) / 2;
+        let lc0 = leaf_count(kids[0]);
+        let flc = forest_leaf_count(df);
+        let keys0 = tree_keys(kids[0]).len();
+        let keysf = forest_keys(df).len();
+        // the two lemma postconditions, named:
+        assert(lmin * lc0 <= keys0);
+        assert(lmin * flc <= keysf);
+        // structure: forest_keys(kids) == tree_keys(kids[0]) + forest_keys(df),
+        // forest_leaf_count(kids) == lc0 + flc.
+        assert(forest_keys(kids).len() == keys0 + keysf);
+        assert(forest_leaf_count(kids) == lc0 + flc);
+        // distribute L_min over the leaf-count sum (nonlinear), then add the
+        // two inequalities: lmin*(lc0+flc) == lmin*lc0 + lmin*flc <= keys0 + keysf.
+        assert(lmin * (lc0 + flc) == lmin * lc0 + lmin * flc) by (nonlinear_arith);
+    }
+}
+
+/// (A ∘ B) the node-count bound for a ROOT-wf tree: `L_min * (node_count(t) - 1)
+/// <= 2 * tree_keys(t).len()`, where `L_min == (cap + 1) / 2`. The root itself may
+/// underflow (the `-1` accounts for it), but ALL its descendants are non-root, so
+/// bounds (A) and (B) apply to the child forest. Combined with `nkeys <= id_bound`,
+/// this is what shows a full arena is unreachable. `key_cap >= 2` holds for every
+/// real layout (min key_cap is 6).
+pub proof fn lemma_node_count_bound(t: Tree, h: nat, cap: nat, key_cap: nat)
+    requires tree_wf(t, h, cap, key_cap, true), key_cap >= 2,
+    ensures ((cap + 1) / 2) * (node_count(t) - 1) <= 2 * tree_keys(t).len(),
+    decreases t,
+{
+    let lmin = (cap + 1) / 2;
+    match t {
+        Tree::Leaf { .. } => {
+            // node_count == 1, so lmin * 0 == 0 <= 2 * keys.
+            assert(lmin * (node_count(t) - 1) == lmin * 0) ;
+            assert(lmin * 0 == 0) by (nonlinear_arith);
+        }
+        Tree::Inner { kids, .. } => {
+            // children are non-root (forest_wf passes is_root=false), so A and B apply.
+            lemma_forest_node_count_le_2leaf(kids, (h - 1) as nat, cap, key_cap);  // FNC + |kids| <= 2*FLC
+            lemma_forest_leaf_occupancy(kids, (h - 1) as nat, cap, key_cap);       // lmin*FLC <= keysF
+            let fnc = forest_node_count(kids);
+            let flc = forest_leaf_count(kids);
+            let keysf = forest_keys(kids).len();
+            // node_count(t) - 1 == fnc; tree_keys(t) == forest_keys(kids).
+            assert(node_count(t) - 1 == fnc);
+            assert(tree_keys(t).len() == keysf);
+            assert(fnc <= 2 * flc);                         // A, dropping |kids| >= 0
+            assert(lmin * flc <= keysf);                    // B
+            // lmin*fnc <= lmin*(2*flc) == 2*(lmin*flc) <= 2*keysf.
+            assert(lmin * fnc <= lmin * (2 * flc)) by (nonlinear_arith)
+                requires fnc <= 2 * flc;
+            assert(lmin * (2 * flc) == 2 * (lmin * flc)) by (nonlinear_arith);
+        }
+    }
+}
+
 /// A `nat` sequence is strictly increasing.
 pub open spec fn strictly_sorted(s: Seq<nat>) -> bool {
     forall|i: int, j: int| 0 <= i < j < s.len() ==> (#[trigger] s[i]) < (#[trigger] s[j])
@@ -463,6 +647,57 @@ pub proof fn lemma_strictly_sorted_len_eq_set(s: Seq<nat>)
         }
     }
     s.unique_seq_to_set();
+}
+
+/// A strictly-increasing `nat` sequence dominates its index: `s[i] >= i`. (Each
+/// step strictly increases over `nat`, so it rises by at least one per position.)
+pub proof fn lemma_strictly_sorted_dominates_index(s: Seq<nat>)
+    requires strictly_sorted(s),
+    ensures forall|i: int| 0 <= i < s.len() ==> #[trigger] s[i] >= i,
+    decreases s.len(),
+{
+    if s.len() == 0 {
+    } else {
+        let init = s.drop_last();
+        assert(strictly_sorted(init)) by {
+            assert forall|i: int, j: int| 0 <= i < j < init.len() implies
+                #[trigger] init[i] < #[trigger] init[j] by {
+                assert(init[i] == s[i] && init[j] == s[j]);
+            }
+        }
+        lemma_strictly_sorted_dominates_index(init);
+        // IH: forall k < init.len(), init[k] >= k, and init[k] == s[k].
+        assert forall|i: int| 0 <= i < s.len() implies #[trigger] s[i] >= i by {
+            if i < s.len() - 1 {
+                assert(init[i] == s[i]);                 // IH on the prefix gives s[i] >= i
+            } else if i > 0 {
+                // i == len-1: s[i-1] == init[i-1] >= i-1 (IH), and s[i] > s[i-1].
+                assert(init[i - 1] == s[i - 1]);         // bridge IH to s
+                assert(s[i - 1] >= i - 1);               // IH at i-1 < init.len()
+                assert(s[i - 1] < s[i]);                 // strictly_sorted at (i-1, i)
+            }
+        }
+    }
+}
+
+/// A strictly-sorted `nat` sequence whose every element is `< bound` has length
+/// `<= bound`. (It injects order-preservingly into `{0, .., bound)`; the last
+/// element is both `>= len-1` and `< bound`.) The set-cardinality fact behind
+/// M6's "a full arena would need more distinct keys than exist": with all model
+/// keys `< K::id_bound()`, `model.len() <= K::id_bound()`.
+pub proof fn lemma_sorted_bounded_len(s: Seq<nat>, bound: nat)
+    requires
+        strictly_sorted(s),
+        forall|i: int| 0 <= i < s.len() ==> #[trigger] s[i] < bound,
+    ensures s.len() <= bound,
+{
+    if s.len() > 0 {
+        lemma_strictly_sorted_dominates_index(s);
+        let last = s.len() - 1;
+        assert(s[last] >= last);     // dominates index
+        assert(s[last] < bound);     // hypothesis at the last index
+        // last < bound, so s.len() == last + 1 <= bound.
+    }
 }
 
 /// Every key in the tree is `< bound` (used to state the cross-node ordering:
