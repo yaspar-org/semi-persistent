@@ -7591,4 +7591,104 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
     }
 }
 
+// ===== LAYER 4: mark / restore (semi-persistence) =====
+
+
+/// Token for mark/restore. Delegates to the inner arena Vec's token, and
+/// additionally snapshots the two exec header fields that live OUTSIDE the Vec
+/// (`root`, `nkeys`) so `restore` can roll them back along with the arena.
+#[derive(Copy, Clone)]
+pub struct BPlusToken {
+    pub nodes: VecToken,
+    pub root: usize,
+    pub nkeys: usize,
+}
+
+impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+{
+
+    /// Semi-persistence: snapshot the whole tree (`mark`) so a later `restore`
+    /// rolls it back. Delegates to the arena Vec's `mark`, plus records the two
+    /// exec header fields (`root`, `nkeys`) that live outside the Vec. The view
+    /// (`model`/`tree@`) is unchanged; the inner Vec pushes a frame capturing the
+    /// current arena. Mirrors `SparseSet::mark`. Requires `TRACK` for the inner
+    /// Vec to actually retain the snapshot.
+    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: BPlusToken)
+        requires
+            // `wf` already implies arena.len() < max_nat (its last clause), so no
+            // separate capacity obligation: mark is total on any wf tree.
+            old(self).wf(),
+        ensures
+            self.wf(),
+            self.tree@ == old(self).tree@,
+            self.model() == old(self).model(),
+            self.root == old(self).root,
+            self.nkeys == old(self).nkeys,
+            // the snapshot just pushed is the current arena; restore can return here.
+            token.nodes.frame_idx == old(self).nodes.frames@.len(),
+            self.nodes.snapshots_view()
+                == old(self).nodes.snapshots_view().push(old(self).arena()),
+            token.root == self.root.as_nat(),
+            token.nkeys == self.nkeys,
+        {
+            let nodes_token = self.nodes.mark(shrink);
+            BPlusToken {
+                nodes: nodes_token,
+                root: self.root.as_usize(),
+                nkeys: self.nkeys,
+            }
+        }
+
+    /// Roll the whole tree back to the state captured by `token`. The arena Vec
+    /// rolls back to its frame snapshot; `root`/`nkeys` come from the token; and
+    /// the ghost model `tree@` is supplied as `snap_tree` (the ghost tree that was
+    /// live at the mark — erased at runtime, like `ListArena::restore`'s
+    /// `snap_model`). The caller proves `snap_tree` is a valid B+tree over the
+    /// snapshot arena (`tree_state_wf`), exactly the structural half of `wf`; this
+    /// method re-establishes the full `self.wf()`.
+    pub fn restore(&mut self, token: BPlusToken, Ghost(snap_tree): Ghost<Tree>)
+        where L::Node: core::default::Default
+        requires
+            old(self).wf(),
+            old(self).nodes.is_token_valid_spec(token.nodes),
+            token.nodes.frame_idx < old(self).nodes.frames@.len(),
+            old(self).nodes.frames@.len() < u32::MAX,
+            old(self).nodes.forks.origins@.len() + 1 <= u32::MAX,
+            // the snapshot arena + the ghost tree live at the mark form a valid
+            // B+tree, with the token's recorded header fields. (The structural
+            // half of `wf`; the Vec supplies its own `nodes.wf()` after restore.)
+            Self::tree_state_wf(
+                old(self).nodes.snapshots_view()[token.nodes.frame_idx as int],
+                token.root as nat, snap_tree, token.nkeys as nat),
+            // the recorded root index round-trips through ArenaIdx.
+            token.root < <L::ArenaIdx as IndexLike>::max_nat(),
+        ensures
+            self.wf(),
+            self.tree@ == snap_tree,
+            self.arena() == old(self).nodes.snapshots_view()[token.nodes.frame_idx as int],
+            self.model() == crate::bplus_tree::tree_keys(snap_tree),
+        {
+            self.nodes.restore(token.nodes);
+            // recover root from the token (ArenaIdx from the stored usize).
+            let new_root = match <L::ArenaIdx as IndexLike>::try_from_usize(token.root) {
+                Some(r) => r,
+                None => { proof { assert(false); } return; },
+            };
+            self.root = new_root;
+            self.nkeys = token.nkeys;
+            self.tree = Ghost(snap_tree);
+            proof {
+                // nodes.restore put the arena at the snapshot; tree_state_wf over
+                // that snapshot (precondition) + nodes.wf() (restore ensures) == wf.
+                assert(self.arena()
+                    == old(self).nodes.snapshots_view()[token.nodes.frame_idx as int]);
+                assert(self.root.as_nat() == token.root as nat);   // try_from_usize roundtrip
+            }
+        }
+}
+
 } // verus!
