@@ -21,6 +21,20 @@ use vstd::prelude::*;
 
 verus! {
 
+// `usize::MAX == u64::MAX` on a 64-bit host. Discharges the `u64 <-> usize`
+// casts in the `u64` impl (both are the identity on values when the widths
+// match). Relies on the crate-wide `global size_of usize == 8` pin (declared
+// once, in bplus_layout.rs; verified against the build `--target`). The whole
+// `u64`/`usize` index machinery is already `#[cfg(target_pointer_width = "64")]`,
+// so this adds no assumption beyond the existing gate.
+/// Mirrors `bplus_layout::lemma_usize_is_u64_wide`.
+pub proof fn lemma_u64_usize_64bit()
+    ensures usize::MAX as nat == u64::MAX as nat,
+{
+    vstd::layout::unsigned_int_max_values();
+    assert(usize::BITS == 64);
+}
+
 /// Bijection between an exec index type and `nat`.
 pub trait IndexLike: Sized + Copy {
     // -- ghost projections ---------------------------------------------------
@@ -153,10 +167,8 @@ impl IndexLike for u8 {
     fn min() -> Self { 0u8 }
     fn max() -> Self { u8::MAX }
 
-    #[verifier::external_body]
     fn as_usize(self) -> usize { self as usize }
 
-    #[verifier::external_body]
     fn try_from_usize(n: usize) -> Option<Self> {
         if n <= u8::MAX as usize { Some(n as u8) } else { None }
     }
@@ -186,11 +198,9 @@ impl IndexLike for u16 {
     fn min() -> Self { 0u16 }
     fn max() -> Self { u16::MAX }
 
-    #[verifier::external_body]
-    fn as_usize(self) -> usize { self as usize }
+        fn as_usize(self) -> usize { self as usize }
 
-    #[verifier::external_body]
-    fn try_from_usize(n: usize) -> Option<Self> {
+        fn try_from_usize(n: usize) -> Option<Self> {
         if n <= u16::MAX as usize { Some(n as u16) } else { None }
     }
 
@@ -219,11 +229,9 @@ impl IndexLike for u32 {
     fn min() -> Self { 0u32 }
     fn max() -> Self { u32::MAX }
 
-    #[verifier::external_body]
-    fn as_usize(self) -> usize { self as usize }
+        fn as_usize(self) -> usize { self as usize }
 
-    #[verifier::external_body]
-    fn try_from_usize(n: usize) -> Option<Self> {
+        fn try_from_usize(n: usize) -> Option<Self> {
         if (n as u64) <= u32::MAX as u64 { Some(n as u32) } else { None }
     }
 
@@ -256,11 +264,19 @@ impl IndexLike for u64 {
     fn min() -> Self { 0u64 }
     fn max() -> Self { u64::MAX }
 
-    #[verifier::external_body]
-    fn as_usize(self) -> usize { self as usize }
+    // 64-bit host (this impl is `#[cfg(target_pointer_width = "64")]`): `usize`
+    // and `u64` are the same width, so both casts are the identity on values.
+    // The `global size_of usize == 8` fact (below) discharges them — no longer
+    // external_body. `lemma_u64_usize_64bit` packages `usize::MAX == u64::MAX`.
+    fn as_usize(self) -> usize {
+        proof { lemma_u64_usize_64bit(); }
+        self as usize
+    }
 
-    #[verifier::external_body]
-    fn try_from_usize(n: usize) -> Option<Self> { Some(n as u64) }
+    fn try_from_usize(n: usize) -> Option<Self> {
+        proof { lemma_u64_usize_64bit(); }
+        Some(n as u64)
+    }
 
     fn lt(self, other: Self) -> bool { self < other }
     fn le(self, other: Self) -> bool { self <= other }

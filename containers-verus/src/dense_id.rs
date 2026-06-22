@@ -371,8 +371,9 @@ impl IndexLike for DenseId63 {
 
     fn max() -> Self { DenseId63 { raw: 0x7fff_ffff_ffff_ffff } }
 
-    #[verifier::external_body]
     fn as_usize(self) -> (r: usize) {
+        // raw is u32: widening to usize is the identity on any >= 32-bit host,
+        // and id_nat() == raw as nat, so the cast meets `r as nat == id_nat()`.
         self.raw as usize
     }
 
@@ -468,8 +469,10 @@ impl DenseId for DenseId63 {
         self.raw
     }
 
-    #[verifier::external_body]
     fn as_usize(self) -> (r: usize) {
+        // raw is u64: on a 64-bit host usize == u64 width, so the cast is the
+        // identity on values (usize::MAX == u64::MAX). id_nat() == raw as nat.
+        proof { crate::index_like::lemma_u64_usize_64bit(); }
         self.raw as usize
     }
 
