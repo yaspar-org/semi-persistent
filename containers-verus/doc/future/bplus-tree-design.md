@@ -1,12 +1,23 @@
-# B+Tree Set — Design and a Bi-Abductive Proof Plan (future work)
+# B+Tree Set — Design and a Bi-Abductive Proof Plan
 
-*Scoping document for verifying `BPlusTreeSet`, the largest container in the
+> **STATUS — COMPLETED.** This began as a forward scoping document ("proof not
+> yet attempted"); the proof has since been **fully carried out**. `BPlusTreeSet`
+> is verified end to end: `insert` with split propagation and new-root growth
+> (total, with its full model transition), sound in-order traversal and `seek`,
+> the arena provably never overflows, and `mark`/`restore`. Zero `external_body`
+> in `bplus`/`bplus_tree`; insert-only (production has no `remove`). See the
+> completed milestone ladder in
+> [parity-audit §4](parity-audit-and-plan.md#4-the-btree-precise-status). The
+> material below is kept as the design record — the data structure, the `wf`
+> invariant, and the bi-abductive decomposition that the proof followed; it
+> reads as the plan it was, and the plan held.
+
+*Design record for verifying `BPlusTreeSet`, the largest container in the
 production crate ([`containers/src/bplus.rs`](../../../containers/src/bplus.rs),
-~1040 lines). The proof is **not yet attempted**; this records the data
-structure, the well-formedness invariant, and how an `insert` proof decomposes
-under the [bi-abductive / dynamic-frames](../design/09-arena-aliasing-dynamic-frames.md)
-discipline the other arena containers already use, so the eventual effort starts
-from a settled spec rather than a blank page.*
+~1040 lines). Records the data structure, the well-formedness invariant, and how
+the `insert` proof decomposes under the
+[bi-abductive / dynamic-frames](../design/09-arena-aliasing-dynamic-frames.md)
+discipline the other arena containers use.*
 
 [Design Table of Contents](../design/00-table-of-contents.md)
 
