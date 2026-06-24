@@ -1116,6 +1116,26 @@ where
         self.frames.len()
     }
 
+    /// How many more `restore`s this container can accept before the
+    /// fork-history branch counter saturates `u32`.
+    ///
+    /// Each `restore` appends one (never-reclaimed) fork-history origin, so the
+    /// lifetime restore count is `forks.origins.len()`, capped at `u32::MAX`.
+    /// This returns the remaining headroom (saturating at 0); while it is `> 0`,
+    /// `restore`'s `origins.len() + 1 <= u32::MAX` precondition holds.
+    /// (`u32::MAX ~ 4.29e9`, so this is not a practical concern, but the query
+    /// lets a caller check.)
+    pub fn restores_remaining(&self) -> (r: usize)
+        requires self.wf(),
+        ensures
+            self.forks.origins@.len() < u32::MAX ==>
+                r as nat == (u32::MAX - self.forks.origins@.len()) as nat,
+            self.forks.origins@.len() >= u32::MAX ==> r == 0,
+    {
+        let used = self.forks.origins.len();
+        (u32::MAX as usize).saturating_sub(used)
+    }
+
     /// A read-only view over the current contents (parity with production).
     pub fn view_handle(&self) -> (v: VecView<'_, T, I, S, TRACK>)
         ensures v.vec == self,
@@ -1169,6 +1189,21 @@ where
         let ghost old_view = self.view();
         let ghost old_self = *self;
         let old_len = self.store.len();
+        // Runtime guard (overflow): a verified caller proves
+        // `view().len() + 1 < I::max_nat()`; an unverified one is trapped here
+        // before the index type would silently wrap. `old_len < I::max()` is
+        // `old_len.as_nat() < max_nat() - 1`, i.e. exactly `len + 1 < max_nat`,
+        // with no `usize` arithmetic that could itself overflow.
+        let max_idx = I::max();
+        let guard_ok = old_len.lt(max_idx);
+        proof {
+            I::lemma_max_as_nat();
+            I::lemma_order_is_as_nat(old_len, max_idx);
+        }
+        crate::guard::check_precondition(
+            guard_ok,
+            "Vec::push: length would overflow the index type",
+        );
         self.store.push(value);
 
         // Pop-into-marked-region bookkeeping: if we are pushing back into a slot that
@@ -2211,6 +2246,21 @@ where
             self.frames@.len() == token.frame_idx as nat,
             self.snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx as int),
     {
+        // Runtime guards (overflow): a verified caller proves the two u32
+        // bounds below; an unverified one is trapped here before `fork`'s
+        // `as u32` cast on the fork-history counters would silently wrap. The
+        // fork-history origin list grows by one per restore and is never
+        // reclaimed, so `origins.len()` is the lifetime restore count: this is
+        // the ~4.29e9-restores ceiling. `frames.len()` is the live nesting depth.
+        crate::guard::check_precondition(
+            self.frames.len() < u32::MAX as usize,
+            "Vec::restore: frame-stack depth would overflow u32",
+        );
+        crate::guard::check_precondition(
+            self.forks.origins.len() < u32::MAX as usize,
+            "Vec::restore: fork history exhausted (too many restores)",
+        );
+
         let target_index = token.frame_idx;
         let target_frame = self.frames[target_index];
         let saved_len = target_frame.saved_len;

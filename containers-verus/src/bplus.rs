@@ -491,6 +491,19 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         self.nkeys
     }
 
+    /// How many more `restore`s this tree can accept before the arena's
+    /// fork-history branch counter saturates `u32` (saturating at 0). Delegates
+    /// to the inner arena `Vec`, whose fork history governs token validity.
+    pub fn restores_remaining(&self) -> (r: usize)
+        requires self.wf(),
+        ensures
+            self.nodes.forks.origins@.len() < u32::MAX ==>
+                r as nat == (u32::MAX - self.nodes.forks.origins@.len()) as nat,
+            self.nodes.forks.origins@.len() >= u32::MAX ==> r == 0,
+    {
+        self.nodes.restores_remaining()
+    }
+
     /// Membership. Decides `key ∈ model`, by a root-to-leaf descent.
     ///
     /// At each internal node the descent follows child `cp = find_gt(seps,
@@ -3894,7 +3907,15 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             added == !old(self).model().contains(key.id_nat()),
             self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
-        // (M6) recover the arena-capacity fact from wf (root leaf ⟹ height 0).
+        // Runtime guard (overflow): a verified caller proves `nkeys < usize::MAX`;
+        // an unverified one is trapped before the `nkeys + 1` count would wrap.
+        // (The arena cannot overflow — that is discharged internally — so this
+        // key count is the only client-facing capacity bound on insert.)
+        crate::guard::check_precondition(
+            self.nkeys < usize::MAX,
+            "BPlusTreeSet::insert: key count would overflow usize",
+        );
+        // recover the arena-capacity fact from wf (root leaf ⟹ height 0).
         proof { self.lemma_arena_never_overflows(); }
         let ghost root_id = self.root.as_nat() as int;
         let ghost gkeys = crate::bplus_tree::tree_keys(self.tree@);
@@ -4125,7 +4146,15 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             added == !old(self).model().contains(key.id_nat()),
             self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
-        // (M6) recover the arena-capacity fact the descent/splits need, from wf.
+        // Runtime guard (overflow): a verified caller proves `nkeys < usize::MAX`;
+        // an unverified one is trapped before the `nkeys + 1` count would wrap.
+        // (The arena cannot overflow — discharged internally — so this key count
+        // is the only client-facing capacity bound on insert.)
+        crate::guard::check_precondition(
+            self.nkeys < usize::MAX,
+            "BPlusTreeSet::insert_general: key count would overflow usize",
+        );
+        // recover the arena-capacity fact the descent/splits need, from wf.
         proof { self.lemma_arena_never_overflows(); }
         let kw: L::Word = key.to_index();
         let root = self.root;
@@ -7672,6 +7701,16 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             self.arena() == old(self).nodes.snapshots_view()[token.nodes.frame_idx as int],
             self.model() == crate::bplus_tree::tree_keys(snap_tree),
         {
+            // Runtime guard: a verified caller proves the recorded root index
+            // round-trips through ArenaIdx (`token.root < ArenaIdx::max_nat()`);
+            // an unverified one is trapped HERE, before `self.nodes.restore`
+            // mutates the arena, so a bad token cannot leave the tree
+            // half-restored. (The fork-history / depth u32 bounds are guarded
+            // transitively by the inner `nodes.restore`.)
+            crate::guard::check_precondition(
+                <L::ArenaIdx as IndexLike>::try_from_usize(token.root).is_some(),
+                "BPlusTreeSet::restore: recorded root index out of range",
+            );
             self.nodes.restore(token.nodes);
             // recover root from the token (ArenaIdx from the stored usize).
             let new_root = match <L::ArenaIdx as IndexLike>::try_from_usize(token.root) {
