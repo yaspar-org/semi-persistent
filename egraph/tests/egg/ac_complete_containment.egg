@@ -1,0 +1,42 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; AC congruence completeness, §4a containment (inter-reduction).
+;;
+;; Assert  +(a,b) = c  and  +(a,b,d) = e.
+;; Since {a,b} ⊆ {a,b,d}, AC entails  e = +(c,d):
+;;     +(a,b,d) = +((a,b),d) = +(c,d)   using +(a,b)=c.
+;; Recanonization alone misses this (it substitutes atoms, not sub-sums).
+;; Completion's inter-reduction step must derive it.
+
+(sort E)
+(function Add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function e () E)
+
+;; The two known AC equalities.
+(let s_ab  (Add (a) (b)))
+(let s_abd (Add (a) (b) (d)))
+(union s_ab (c))
+(union s_abd (e))
+
+;; Build the target reduct so we can name it for the check.
+(let s_cd (Add (c) (d)))
+
+;; No rewrite rules — this is pure congruence closure. (run) drives rebuild.
+(run 5)
+
+;; The entailed equality:  e = +(c,d).
+(check (= (e) s_cd))
+
+;; Sanity: the original equalities still hold.
+(check (= s_ab (c)))
+(check (= s_abd (e)))
+
+;; Negative control: completion must not collapse unrelated classes.
+;; +(a,d) is not entailed equal to e here.
+(let s_ad (Add (a) (d)))
+(check (!= (e) s_ad))

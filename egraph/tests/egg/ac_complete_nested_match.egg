@@ -1,0 +1,24 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; The two-same-op-atoms rule (f (add x ..r1) (add y ..r2)) under AC completion. This used
+;; to panic (the leapfrog_join target-clear bug, see ac_two_same_op_atoms); completion
+;; surfaced it by creating more add nodes. With the matcher fix it runs to completion and
+;; the rule fires: x binds a summand of the first add, producing g(x).
+
+(sort E)
+(function f (E E) E)
+(function g (E) E)
+(function add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+
+(rewrite (f (add x ..r1) (add y ..r2)) (g x))
+
+(let t (f (add (a) (b)) (add (b) (c))))
+
+(run 10)
+
+;; The rule fired (x bound to a summand of the first add): g(a) exists.
+(check (= (g (a)) (g (a))))
