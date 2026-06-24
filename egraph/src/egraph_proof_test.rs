@@ -755,6 +755,212 @@ mod stress_proof_test {
         );
     }
 
+    /// Investigation harness (F5): rebuild the same stress structure with AC completion
+    /// ON, so the basis-invariant dump (`AC_BASIS_DUMP=1`) and the divergence trace
+    /// (`AC_COMPLETE_TRACE=1`) fire per completion round. Ignored by default because
+    /// completion is known to diverge on these graphs; this exists to witness *why*.
+    /// Run: `AC_BASIS_DUMP=1 AC_COMPLETE_TRACE=1 cargo test investigate_completion -- --ignored --nocapture`
+    fn build_stress_ac_complete(seed: u64, n_leaves: usize, n_layers: usize, n_merges: usize) {
+        let mut eg = EGraph31::<NiraLitVal, false, true>::new();
+        eg.set_ac_complete(true);
+        // Investigation harness: always run the reduced-basis invariant checks so the
+        // per-round and final `ac_basis_dump`s fire regardless of the env var.
+        eg.set_basis_checks(true);
+        let int = eg.intern_sort("Int");
+        let ops = Ops {
+            f: eg.register_op1("f", int, int),
+            g: eg.register_op2("g", int, int, int),
+            eq: eg.register_c("eq", [int, int], int),
+            sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
+            add: eg.register_ac("add", int, int),
+            and: eg.register_aci("and", int, int),
+        };
+
+        let mut rng = seed;
+        let mut next = || -> usize {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 33) as usize
+        };
+
+        let mut prev_layer: Vec<ENodeId> = Vec::new();
+        for i in 0..n_leaves {
+            let op = eg.register_op0(&format!("c{i}"), int);
+            prev_layer.push(eg.add(op, &[]));
+        }
+
+        for _layer in 0..n_layers {
+            let n = prev_layer.len();
+            let mut new_layer: Vec<ENodeId> = Vec::new();
+            let ops_list: &[(
+                &dyn Fn(&mut EGraph31<NiraLitVal, false, true>, ENodeId, ENodeId) -> ENodeId,
+                usize,
+            )] = &[
+                (
+                    &|eg: &mut EGraph31<NiraLitVal, false, true>, a, _| eg.add(ops.f, &[a]),
+                    1,
+                ),
+                (&|eg, a, b| eg.add(ops.g, &[a, b]), 2),
+                (&|eg, a, b| eg.add(ops.eq, &[a, b]), 2),
+                (&|eg, a, b| eg.add(ops.sub, &[a, b]), 2),
+                (&|eg, a, b| eg.add(ops.add, &[a, b]), 2),
+                (&|eg, a, b| eg.add(ops.and, &[a, b]), 2),
+            ];
+            for &(builder, _arity) in ops_list {
+                for _ in 0..(n / 3).max(2) {
+                    let a = prev_layer[next() % n];
+                    let b = prev_layer[next() % n];
+                    new_layer.push(builder(&mut eg, a, b));
+                }
+            }
+            prev_layer = new_layer;
+        }
+
+        for i in 0..n_merges {
+            let a_idx = next() % n_leaves;
+            let b_idx = next() % n_leaves;
+            if a_idx == b_idx {
+                continue;
+            }
+            let a = ENodeId::new(a_idx as u32);
+            let b = ENodeId::new(b_idx as u32);
+            let axiom_id = crate::id::AxiomId::new(i as u16);
+            eg.merge_justified(a, b, Justification::Axiom { axiom_id });
+        }
+        eprintln!("[investigate] seed={seed} starting rebuild with completion ON");
+        eg.rebuild();
+        eg.ac_basis_dump("final");
+        eprintln!(
+            "[investigate] seed={seed} final node_count={}",
+            eg.node_count()
+        );
+    }
+
+    /// Like `build_stress_ac_complete` but with no basis dump; returns the final node count.
+    /// On divergence the `rebuild` backstop's `debug_assert` panics, which the sweep catches.
+    fn build_stress_ac_complete_quiet(
+        seed: u64,
+        n_leaves: usize,
+        n_layers: usize,
+        n_merges: usize,
+    ) -> usize {
+        let mut eg = EGraph31::<NiraLitVal, false, true>::new();
+        eg.set_ac_complete(true);
+        let int = eg.intern_sort("Int");
+        let ops = Ops {
+            f: eg.register_op1("f", int, int),
+            g: eg.register_op2("g", int, int, int),
+            eq: eg.register_c("eq", [int, int], int),
+            sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
+            add: eg.register_ac("add", int, int),
+            and: eg.register_aci("and", int, int),
+        };
+        let mut rng = seed;
+        let mut next = || -> usize {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 33) as usize
+        };
+        let mut prev_layer: Vec<ENodeId> = Vec::new();
+        for i in 0..n_leaves {
+            let op = eg.register_op0(&format!("c{i}"), int);
+            prev_layer.push(eg.add(op, &[]));
+        }
+        for _layer in 0..n_layers {
+            let n = prev_layer.len();
+            let mut new_layer: Vec<ENodeId> = Vec::new();
+            let ops_list: &[&dyn Fn(
+                &mut EGraph31<NiraLitVal, false, true>,
+                ENodeId,
+                ENodeId,
+            ) -> ENodeId] = &[
+                &|eg, a, _| eg.add(ops.f, &[a]),
+                &|eg, a, b| eg.add(ops.g, &[a, b]),
+                &|eg, a, b| eg.add(ops.eq, &[a, b]),
+                &|eg, a, b| eg.add(ops.sub, &[a, b]),
+                &|eg, a, b| eg.add(ops.add, &[a, b]),
+                &|eg, a, b| eg.add(ops.and, &[a, b]),
+            ];
+            for builder in ops_list {
+                for _ in 0..(n / 3).max(2) {
+                    let a = prev_layer[next() % n];
+                    let b = prev_layer[next() % n];
+                    new_layer.push(builder(&mut eg, a, b));
+                }
+            }
+            prev_layer = new_layer;
+        }
+        for i in 0..n_merges {
+            let a_idx = next() % n_leaves;
+            let b_idx = next() % n_leaves;
+            if a_idx == b_idx {
+                continue;
+            }
+            let a = ENodeId::new(a_idx as u32);
+            let b = ENodeId::new(b_idx as u32);
+            let axiom_id = crate::id::AxiomId::new(i as u16);
+            eg.merge_justified(a, b, Justification::Axiom { axiom_id });
+        }
+        eg.rebuild();
+        eg.node_count()
+    }
+
+    #[test]
+    #[ignore = "completion diverges on this graph; investigation harness only"]
+    fn investigate_completion() {
+        build_stress_ac_complete(42, 30, 4, 20);
+    }
+
+    /// Sweep a grid of stress configs with AC completion ON and report which converge and
+    /// which hit the divergence backstop (the `debug_assert` in `rebuild`, caught per config).
+    /// Maps the boundary of "what still blows up". Basis checks off here (we only want the
+    /// converge/diverge verdict, not the per-round dump).
+    /// Run: `cargo test investigate_completion_sweep -- --ignored --nocapture`
+    #[test]
+    #[ignore = "investigation sweep: maps the converge/diverge boundary; slow"]
+    fn investigate_completion_sweep() {
+        // (seed, leaves, layers, merges)
+        let grid: &[(u64, usize, usize, usize)] = &[
+            (1, 6, 2, 4),
+            (2, 8, 2, 6),
+            (7, 12, 2, 5),
+            (3, 12, 3, 8),
+            (4, 16, 3, 10),
+            (5, 20, 3, 12),
+            (8, 24, 3, 14),
+            (6, 30, 4, 20),
+            (123, 30, 4, 20),
+            (999, 40, 3, 30),
+        ];
+        // NOTE: seed 42 at (30, 4, 20) is the one known *diverging* input; it is witnessed
+        // separately by `investigate_completion` (it churns slowly to the 50k-node backstop,
+        // so including it here would make the sweep hang for minutes). Divergence is
+        // input-specific, not size-specific: same-size configs above converge in well under a
+        // second. See the spec §3.3 / plan §0.5.
+        for &(seed, leaves, layers, merges) in grid {
+            let res = std::panic::catch_unwind(|| {
+                build_stress_ac_complete_quiet(seed, leaves, layers, merges)
+            });
+            match res {
+                Ok(nodes) => eprintln!(
+                    "[sweep] seed={seed} leaves={leaves} layers={layers} merges={merges}: CONVERGED, {nodes} nodes"
+                ),
+                Err(_) => eprintln!(
+                    "[sweep] seed={seed} leaves={leaves} layers={layers} merges={merges}: DIVERGED (hit backstop)"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "investigation harness: a small CONVERGING graph, to check the basis is fully
+                Kapur-reduced at the true fixpoint (kapur_lhs_reducible=0 in the final dump)"]
+    fn investigate_completion_small() {
+        build_stress_ac_complete(7, 12, 2, 5);
+    }
+
     #[test]
     fn stress_small() {
         for seed in 0..20 {

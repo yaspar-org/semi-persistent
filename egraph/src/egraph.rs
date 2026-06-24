@@ -48,6 +48,29 @@ pub struct EGraph<
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
     touched: Vec<Cfg::G>,
+    /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
+    /// inter-reduction). **Default off**: completion can materialize nested same-op
+    /// nodes, which the matcher cannot handle until AC flattening lands (`WF_flat`,
+    /// see `doc/design/ac-congruence-completeness.md` §6b). Opt in with
+    /// [`set_ac_complete`](Self::set_ac_complete) once flattening is in place; the
+    /// completion tests enable it for the flat scenarios they exercise.
+    ac_complete: bool,
+    /// Whether `rebuild` runs the AC reduced-basis invariant checks (`ac_basis_dump`:
+    /// `ac_min` minimality, the Kapur-reduced antichain, etc., see `ac_invariants.rs`).
+    /// **Default off** and only consulted when `ac_complete` is on: the ground-truth checks
+    /// brute-force per-class minima and multi-step normalization (superlinear), so they are
+    /// diagnostic/test-only, never on the production hot path. Seeded from the `AC_BASIS_DUMP`
+    /// env var at construction (so existing diagnostic runs keep working) and overridable via
+    /// [`set_basis_checks`](Self::set_basis_checks).
+    basis_checks: bool,
+    /// Reusable scratch for comparing two nodes' AC monomials (`monomial_cmp` on the
+    /// per-class `ac_min`, §9a). Two buffers to hold both sides without aliasing;
+    /// cleared and refilled per comparison, never grown per merge.
+    cmp_buf_a: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    cmp_buf_b: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
+    /// design §6c). Worklist of children still to expand; never grown per add.
+    flatten_buf: Vec<Cfg::G>,
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -87,7 +110,27 @@ where
             g_buf: Vec::new(),
             ac_buf: Vec::new(),
             touched: Vec::new(),
+            ac_complete: false,
+            basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
+            cmp_buf_a: Vec::new(),
+            cmp_buf_b: Vec::new(),
+            flatten_buf: Vec::new(),
         }
+    }
+
+    /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
+    /// Off until nested same-op flattening lands — see `ac_complete` field docs.
+    pub fn set_ac_complete(&mut self, enabled: bool) {
+        self.ac_complete = enabled;
+    }
+
+    /// Enable or disable the AC reduced-basis invariant checks in `rebuild` (default off,
+    /// seeded from the `AC_BASIS_DUMP` env var). When on (and `ac_complete` is on), each
+    /// completion round prints `ac_basis_dump`, which runs the ground-truth checkers
+    /// (`ac_min` minimality, Kapur-reducedness). These are superlinear brute-force checks,
+    /// so leave this off outside diagnosis and tests. See `ac_invariants.rs`.
+    pub fn set_basis_checks(&mut self, enabled: bool) {
+        self.basis_checks = enabled;
     }
 
     /// Create an e-graph with built-in sorts and reserved op names from a `LitModel`.
@@ -321,6 +364,14 @@ where
         self.g_buf
             .extend(children.iter().map(|&c| self.classes.find(c)));
 
+        // Flatten nested same-op AC children (associativity, `WF_flat`, design §6c): splice
+        // any child whose class is a pure same-op sum, keyed on the class's canonical
+        // summand form (atomic-aware), so `+(+(a,b), c)` becomes `+(a,b,c)`. An atomic child
+        // (e.g. `c` used as `neg`'s child in §5b) is kept as a summand.
+        if matches!(self.ops.info(op).kind, OpKind::AC { .. }) {
+            self.flatten_ac_children(op);
+        }
+
         let result = match self.ops.info(op).kind {
             OpKind::AC { .. } => {
                 self.g_buf.sort_by_key(|id| id.to_usize());
@@ -371,6 +422,92 @@ where
         self.register_if_fresh(result)
     }
 
+    /// Fill `buf` with `node`'s monomial for `monomial_cmp`: its canonical AC child
+    /// multiset if it is an AC node, else the singleton `{node}` (a non-AC node is a
+    /// size-1 monomial, §9b). Children are `find`-canonicalized and coalesced.
+    fn node_monomial_into(
+        &self,
+        node: Cfg::G,
+        buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    ) {
+        use crate::multiplicity::Multiplicity;
+        buf.clear();
+        if matches!(self.node_ref(node), NodeRef::AC(_)) {
+            // ac_children, find-canonicalized + coalesced (same form as ACCanon).
+            let mut raw = Vec::new();
+            self.ac_children(node, &mut raw);
+            let mut m: Vec<(Cfg::G, Multiplicity)> = raw
+                .into_iter()
+                .map(|(g, mult)| (self.classes.find_const(g), Multiplicity(mult.into())))
+                .collect();
+            m.sort_by_key(|p| p.0);
+            for (g, mult) in m {
+                if let Some(last) = buf.last_mut()
+                    && last.0 == g
+                {
+                    last.1 = Multiplicity(last.1.0 + mult.0);
+                } else {
+                    buf.push((g, mult));
+                }
+            }
+        } else {
+            buf.push((self.classes.find_const(node), Multiplicity(1)));
+        }
+    }
+
+    /// Fill `buf` with the completion rule right-hand side for the class of `node`: the
+    /// size-1 monomial `{find(node)}` if the class is `atomic` (referenced as a child),
+    /// else the monomial of the class's stored `ac_min` (§9a). Reads the per-class slot;
+    /// O(1) plus the `ac_min` monomial read. Returns `false` if `node` has no class.
+    fn class_rhs_into(
+        &self,
+        node: Cfg::G,
+        buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    ) -> bool {
+        use crate::multiplicity::Multiplicity;
+        let cls = self.classes.find_const(node);
+        let Some(repr) = self.classes.repr_id(cls) else {
+            return false;
+        };
+        if self.classes.ac_atomic(repr) {
+            buf.clear();
+            buf.push((cls, Multiplicity(1)));
+        } else {
+            self.node_monomial_into(self.classes.ac_min(repr), buf);
+        }
+        true
+    }
+
+    /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
+    /// keep the `monomial_cmp`-least `ac_min` node, and OR-in the `atomic` flag (the
+    /// completion rule RHS, §9a). O(1) plus the two monomial reads, into reusable
+    /// buffers. Done here, not in `EClasses`, because the comparison needs node
+    /// (AC-children) access. Best-effort under merge-cascade staleness; completion's
+    /// read-time orientation guard makes that safe (§9b).
+    fn fold_ac_class(&mut self, survivor: Cfg::G, absorbed_ac_min: Cfg::G, absorbed_atomic: bool) {
+        let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
+            Some(r) => r,
+            None => return,
+        };
+        if absorbed_atomic {
+            self.classes.set_ac_atomic(surv_repr);
+        }
+        let surv_min = self.classes.ac_min(surv_repr);
+        if surv_min == absorbed_ac_min {
+            return;
+        }
+        // Compare the two candidate minima; keep the smaller in degree-lex order.
+        let mut a = std::mem::take(&mut self.cmp_buf_a);
+        let mut b = std::mem::take(&mut self.cmp_buf_b);
+        self.node_monomial_into(surv_min, &mut a);
+        self.node_monomial_into(absorbed_ac_min, &mut b);
+        if crate::ac_multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+            self.classes.set_ac_min(surv_repr, absorbed_ac_min);
+        }
+        self.cmp_buf_a = a;
+        self.cmp_buf_b = b;
+    }
+
     pub fn merge(&mut self, a: Cfg::G, b: Cfg::G) -> Option<(Cfg::G, Cfg::G)> {
         debug_assert_eq!(
             self.node_sort(a),
@@ -387,6 +524,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge(a, b)?;
+        self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -412,6 +550,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge_justified(a, b, just)?;
+        self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -529,7 +668,109 @@ where
     // Rebuild — worklist-based congruence closure
     // -----------------------------------------------------------------------
 
+    /// Rebuild to a congruence-closed, AC-congruence-closed fixpoint.
+    ///
+    /// Two interleaved closures run to a joint fixpoint (see
+    /// `doc/future/ac-congruence-completeness-plan.md` §2, Option A):
+    /// - [`rebuild_congruence`](Self::rebuild_congruence): ordinary worklist-driven
+    ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
+    /// - [`ac_complete_round`](Self::ac_complete_round): AC completion (substitutes
+    ///   equal *sub-sums*), which canonization alone misses.
+    ///
+    /// A completion round may push new merges onto the worklist; we drain them with
+    /// another congruence pass, then complete again, until a whole completion round
+    /// adds nothing. The fixpoint is the AC congruence closure of the asserted
+    /// equalities.
     pub fn rebuild(&mut self) {
+        // Ordinary atom-level congruence closure always runs. AC completion runs only
+        // when opted in (default off until nested same-op flattening lands — §6b).
+        if !self.ac_complete {
+            self.rebuild_congruence();
+            return;
+        }
+        // Completion supports exactly one AC symbol. The per-class slot stores a single
+        // `ac_min`/`atomic` (one op's minimal monomial), so a class holding monomials of two
+        // different AC ops (e.g. `a+b = a*b`) would conflate their minima and the rule RHS
+        // would be wrong. Reject more than one registered AC op rather than compute a wrong
+        // closure. The check is here, at the point of use, not in `set_ac_complete`: the
+        // interpreter enables completion before sortcheck registers the ops, so an
+        // enable-time count would see zero. Multi-op support is a per-op `ac_min` pool
+        // (design §9b axis-1 option 3); until then this is a hard precondition.
+        assert!(
+            self.ops.ac_op_count() <= 1,
+            "AC completion supports a single AC symbol, but {} are registered; \
+             multi-AC-symbol completion needs the per-op ac_min pool (design §9b axis-1)",
+            self.ops.ac_op_count()
+        );
+        let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
+        // Safety backstop against a diverging completion (minting unbounded
+        // critical-pair nodes). A convergent completion adds few nodes; if the AC
+        // node count balloons past this many beyond where it started, we stop
+        // rather than OOM. This is NOT the termination argument — it is a guard
+        // rail while the proper inter-reduction is being put in place.
+        const MAX_COMPLETION_NODE_GROWTH: usize = 50_000;
+        let start_nodes = self.node_count();
+        let basis_dump = self.basis_checks;
+        let mut round = 0usize;
+        // Watermark into the `touched` log: rules whose `(op, monomial)` changed since the
+        // previous round are exactly the nodes touched (created or recanonicalized) in the
+        // slice `touched[prev_mark..mark]`. Superposition (B) is incremental over this delta
+        // (S3b): round 0 is a full pass (base case), each later round superposes only pairs
+        // with ≥1 endpoint in the delta. Old×old pairs were closed earlier and stay closed.
+        let mut prev_mark = 0usize;
+        // Incremental rounds run until one finds nothing; then a single *full* confirmation
+        // round certifies convergence (S3b completeness net). The node-touch delta misses a
+        // pair only if a rule's RHS shifted without its node being recanonicalized (its own
+        // class merged, not a child's); a full round closes any such pair. Convergence is
+        // declared only when a *full* round is unchanged, so the net is sound. Full rounds
+        // run only at would-be-convergence, where every pair is trivial and cheap.
+        let mut full = true; // round 0 is full (base case)
+        loop {
+            self.rebuild_congruence();
+            if basis_dump {
+                self.ac_basis_dump(&format!("round {round} pre"));
+            }
+            let before = self.node_count();
+            let mark = self.touched.len();
+            let was_full = full;
+            let changed = self.ac_complete_round(full, prev_mark, mark);
+            prev_mark = mark;
+            if trace {
+                eprintln!(
+                    "[ac-complete] round {round}{}: nodes {before} -> {} (+{}), changed={changed}",
+                    if was_full { " (full)" } else { "" },
+                    self.node_count(),
+                    self.node_count() - before
+                );
+            }
+            round += 1;
+            if !changed {
+                // Incremental round found nothing: confirm with a full round before exiting.
+                // A full round that also finds nothing is true convergence.
+                if was_full {
+                    return;
+                }
+                full = true;
+                continue;
+            }
+            // Made progress: stay incremental for the next round.
+            full = false;
+            if self.node_count() - start_nodes > MAX_COMPLETION_NODE_GROWTH {
+                self.rebuild_congruence();
+                debug_assert!(
+                    false,
+                    "ac completion diverged: added >{MAX_COMPLETION_NODE_GROWTH} nodes \
+                     without converging (set AC_COMPLETE_TRACE=1 to inspect growth)"
+                );
+                return;
+            }
+        }
+    }
+
+    /// Ordinary worklist-driven congruence closure: drain the merge worklist,
+    /// recanonicalizing the parents of each absorbed class and merging the
+    /// resulting hash-cons collisions, to a fixpoint.
+    fn rebuild_congruence(&mut self) {
         while let Some((absorbed_uses, survivor)) = self.worklist.pop() {
             self.collisions.clear();
             for parent in self.classes.uses().iter(absorbed_uses) {
@@ -564,10 +805,400 @@ where
                     self.classes.merge(a, b)
                 };
                 if let Some(m) = m {
+                    self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
         }
+    }
+
+    /// One AC congruence-completion round (Kapur FSCD 2021 Algorithm 1, the steps our
+    /// rebuild otherwise omits). Returns `true` if it scheduled any new merge.
+    ///
+    /// Reading each non-subsumed AC node `+M = d` as a ground rule `+M → d`, over a
+    /// frozen snapshot of the active AC nodes
+    /// ([`crate::ac_complete::AcPartnerSnapshot`]), for each pair of partners (same op,
+    /// sharing ≥1 child class):
+    ///
+    /// - **(A) inter-reduction + Collapse** — if `A ⊊ M`, the sub-sum `+A` equals `a`,
+    ///   so the residual `(M − A) ⊎ {a}`, **normalized to a fixpoint**, equals `d`:
+    ///   merge, then **mark `+M` subsumed** so it leaves the active set. The collapse
+    ///   is what keeps the active rule LHSs a Dickson antichain — without it completion
+    ///   diverges (design doc §6b).
+    /// - **(B) superposition** — if `A` and `M` overlap but neither contains the other,
+    ///   build the lcm `AB`, **normalize both reducts** `(AB−M)⊎{d}` and `(AB−A)⊎{a}`
+    ///   to normal form, and merge if they still differ (design doc §4b, §6 (B)).
+    ///
+    /// Disjoint partners are skipped (trivial critical pair). The crucial corrections
+    /// over a naïve materialize-and-merge (design §6b): every reduct is reduced to
+    /// **normal form before** being materialized (a raw reduct can be a superset of an
+    /// existing rule's LHS, hence itself reducible, and would persist as a runaway
+    /// superposition source), and reducible source rules are **collapsed** (subsumed).
+    ///
+    /// "Subsumed" is the non-deletable form of Kapur/Conchon's rule retirement: the
+    /// node and the equality it established stay in the DAG (sound, restorable), but the
+    /// snapshot/index builders skip it, so it is no longer a partner or a match target.
+    /// One AC completion round. Superposition (B) is incremental (S3b): when `full` is
+    /// false, only critical pairs with ≥1 endpoint among the *delta rules* (nodes touched
+    /// in `self.touched[delta_lo..delta_hi]`, i.e. created or recanonicalized since the
+    /// previous round) are generated; old×old pairs were closed in an earlier round and
+    /// stay closed under monotone merges. `full` (round 0) generates every pair. The (A′)
+    /// collapse/normalize pass and the antichain `reducible` check stay full scans: a small
+    /// new rule must still be able to collapse a large old one.
+    fn ac_complete_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
+        use crate::ac_multiset::{
+            NfRule, multiset_disjoint, multiset_lcm, multiset_subset, normalize_ms,
+        };
+        use crate::multiplicity::Multiplicity;
+
+        // Delta rule-node set for incremental (B): sorted, dedup'd node ids touched since
+        // the previous round. `touched` may contain duplicates; sort+dedup once, then test
+        // a rule's membership by binary search (mirrors the `rules` binary-search idiom).
+        let delta: Vec<Cfg::G> = if full {
+            Vec::new()
+        } else {
+            let mut d: Vec<Cfg::G> = self.touched[delta_lo..delta_hi].to_vec();
+            d.sort_unstable();
+            d.dedup();
+            d
+        };
+        let in_delta = |n: Cfg::G| -> bool { full || delta.binary_search(&n).is_ok() };
+
+        // Canonical child multiset of an AC node as sorted, coalesced (class-repr, mult).
+        let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
+            let mut raw = Vec::new();
+            eg.ac_children(id, &mut raw);
+            let mut m: Vec<(Cfg::G, Multiplicity)> = raw
+                .into_iter()
+                .map(|(g, mult)| (eg.classes.find_const(g), Multiplicity(mult.into())))
+                .collect();
+            m.sort_by_key(|p| p.0);
+            let mut out: Vec<(Cfg::G, Multiplicity)> = Vec::with_capacity(m.len());
+            for (g, mult) in m {
+                if let Some(last) = out.last_mut()
+                    && last.0 == g
+                {
+                    last.1 = Multiplicity(last.1.0 + mult.0);
+                } else {
+                    out.push((g, mult));
+                }
+            }
+            out
+        };
+
+        use crate::ac_multiset::monomial_cmp;
+        use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
+
+        // Completion's active set excludes nodes that are user-subsumed (not matchable)
+        // OR AC-collapsed (reducible by a smaller rule). Either way they are not rules.
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
+
+        // Each active AC node is a candidate rule `+M → rhs(class)`, where the RHS comes
+        // from the per-class slot (`class_rhs_into`: `{class}` if atomic, else the stored
+        // `ac_min` monomial, §9a) — not recomputed per round. The orientation guard keeps
+        // only nodes whose own monomial `M` is strictly `≫_f`-greater than that RHS: those
+        // are the genuine rules (a node equal to its class's normal form is no rule, and a
+        // mis-oriented `M ≺ rhs` is dropped, §9b axis-2a). `node` lets us collapse it.
+        struct Rule<G> {
+            op: usize,
+            lhs: Vec<(G, Multiplicity)>,
+            rhs: Vec<(G, Multiplicity)>,
+            node: G,
+        }
+        let mut rules: Vec<Rule<Cfg::G>> = Vec::new();
+        let mut rhs_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        for i in 0..self.node_count() {
+            let gid = Cfg::G::from_usize(i);
+            if self.node_flags(gid) & inactive != 0 {
+                continue;
+            }
+            let op = self.node_op(gid);
+            if !self.ops.is_ac(op) {
+                continue;
+            }
+            let lhs = multiset_of(self, gid);
+            if !self.class_rhs_into(gid, &mut rhs_buf) {
+                continue;
+            }
+            // Read-time orientation guard (§9b): only `M ≫ rhs` is a rule.
+            if monomial_cmp(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
+                rules.push(Rule {
+                    op: op.to_usize(),
+                    lhs,
+                    rhs: rhs_buf.clone(),
+                    node: gid,
+                });
+            }
+        }
+        // Built in ascending node-id order, so `rules` is sorted by `node`. The (B)
+        // partner search binary-searches it by node id; keep that invariant true.
+        debug_assert!(rules.windows(2).all(|w| w[0].node < w[1].node));
+
+        // Dedup the reducer/superposition set by (op, LHS). Congruent AC nodes can
+        // recanonicalize to the same monomial after a child merge without being hash-consed
+        // into one node, so the same rule `+M → r` appears as several nodes. Kapur step 2
+        // discards a duplicate equation and keeps one; here we keep the lowest-node-id copy
+        // as the canonical rule and drop the rest from `rules`. This is what makes the active
+        // set Kapur-*reduced* (no LHS reducible by another's), not merely a strict-containment
+        // antichain: identical-LHS copies were the whole measured gap between `reducible_pairs`
+        // and the ground-truth `kapur_lhs_reducible` (ac_invariants). The dropped copies are
+        // NOT lost: they remain in `targets`, so (A′) still collapses each (its monomial
+        // reduces to the shared RHS via the kept rule) and still merges any differing-RHS copy
+        // (the implied equality fires through `targets`, not `rules`). Without the dedup, every
+        // copy reduces every other copy, so they mutually collapse and the rule vanishes
+        // entirely (the §6b "merge before mark" / self-reduction hazard, at the set level).
+        // O(rules) with one hash per rule; in line with the batch round's existing per-rule
+        // clones (the DPS rewrite is S3b).
+        {
+            let mut seen: std::collections::HashSet<(usize, Vec<(Cfg::G, Multiplicity)>)> =
+                std::collections::HashSet::with_capacity(rules.len());
+            rules.retain(|r| seen.insert((r.op, r.lhs.clone())));
+        }
+
+        // Reducibility flag per rule: a rule whose LHS strictly contains another rule's LHS
+        // (same op) is reducible by it, so collapse will retire it. Kapur superposes only
+        // over the inter-reduced *antichain*, never over a reducible rule (FSCD'21 Algo 1:
+        // collapse before superpose). The batch round collapses these only on the *next*
+        // round, so excluding them as (B) sources/partners here is what keeps the active
+        // set an antichain within the round and stops the critical-pair blowup (plan §0.4).
+        // O(rules²) over the small active set; acceptable while the worklist rewrite (S3b)
+        // is pending.
+        let reducible: Vec<bool> = (0..rules.len())
+            .map(|i| {
+                rules.iter().enumerate().any(|(j, rj)| {
+                    j != i
+                        && rj.op == rules[i].op
+                        && rj.lhs != rules[i].lhs
+                        && multiset_subset(&rj.lhs, &rules[i].lhs)
+                })
+            })
+            .collect();
+
+        // Expand a multiset to a flat child list; `add` re-sorts and re-coalesces.
+        let materialize = |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)]| -> Cfg::G {
+            let mut children: Vec<Cfg::G> = Vec::new();
+            for (g, mult) in ms {
+                for _ in 0..mult.0 {
+                    children.push(*g);
+                }
+            }
+            eg.add(op, &children)
+        };
+        let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G| -> bool {
+            if eg.classes.find_const(x) == eg.classes.find_const(y) {
+                return false;
+            }
+            let m = if PROOFS {
+                eg.classes.merge_justified(
+                    x,
+                    y,
+                    Justification::Congruence {
+                        node_a: x,
+                        node_b: y,
+                    },
+                )
+            } else {
+                eg.classes.merge(x, y)
+            };
+            match m {
+                Some(m) => {
+                    eg.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
+                    eg.worklist.push((m.absorbed_uses, m.survivor));
+                    true
+                }
+                None => false,
+            }
+        };
+
+        // Collect work over pairs of rules (same op), then apply (so the rule set we
+        // normalize against does not shift mid-scan). Superposition (B) and collapse (A)
+        // both range over *rules*: Kapur superposes/inter-reduces rule left sides, and a
+        // class's minimal monomial (a normal form) is never a rule, so it cannot be a
+        // source or a collapse target. The search ranges over the `rules` Vec directly
+        // (already the small active set), via an all-pairs loop.
+        //   targets — (A): collapse a node's class into its residual's normal form.
+        //   crit    — (B): merge the normal forms of the two lcm reducts.
+        let mut crit: Vec<(
+            Cfg::O,
+            Vec<(Cfg::G, Multiplicity)>,
+            Vec<(Cfg::G, Multiplicity)>,
+        )> = Vec::new();
+
+        // (A′) Normalize every active monomial node against the rules and merge its
+        // normal form back in (Kapur Algo 2 step 2, "normalize Sf"). This subsumes plain
+        // inter-reduction (A): a node +{a,b,neg(c)} with rule +{a,b}→{c} reduces to
+        // +{c,neg(c)}, which is *materialized* so the ordinary matcher reaches it
+        // (design §5b). `(op, monomial, class, node, is_rule)`: a node that was itself a
+        // rule (its own LHS reducible) is collapsed/subsumed after the merge (design §6b).
+        let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)> =
+            Vec::new();
+        for i in 0..self.node_count() {
+            let gid = Cfg::G::from_usize(i);
+            if self.node_flags(gid) & inactive != 0 {
+                continue;
+            }
+            let op = self.node_op(gid);
+            if !self.ops.is_ac(op) {
+                continue;
+            }
+            targets.push((
+                op,
+                multiset_of(self, gid),
+                self.classes.find_const(gid),
+                gid,
+                rules.iter().any(|r| r.node == gid),
+            ));
+        }
+
+        // (B) Superposition critical pairs over pairs of *rules* sharing ≥1 child class,
+        // neither containing the other (overlap). Partners are found via the use-lists
+        // (`iter_uses`), not an O(rules²) all-pairs scan: a partner of rule `+M` must
+        // share a child with `M`, so it appears in some `iter_uses(x)` for `x ∈ M`. `rules`
+        // is built in node-id order, so it is sorted by `node`; look a partner's rule up by
+        // binary search (no map, no per-round allocation). Each unordered pair is processed
+        // once (`ti.node < partner.node`). Both reducts are normalized before merge.
+        let mut partner_buf: Vec<Cfg::G> = Vec::new();
+        for ti in 0..rules.len() {
+            // A reducible rule is not a member of the antichain: collapse will retire it,
+            // so it must not seed critical pairs (plan §0.4).
+            if reducible[ti] {
+                continue;
+            }
+            let op_u = rules[ti].op;
+            let op = Cfg::O::from_usize(op_u);
+            let m_node = rules[ti].node;
+
+            // Gather candidate partner nodes from the use-lists of M's distinct children.
+            partner_buf.clear();
+            for &(x, _) in &rules[ti].lhs {
+                if let Some(x_repr) = self.classes.repr_id(self.classes.find_const(x)) {
+                    for p in self.classes.iter_uses(x_repr) {
+                        partner_buf.push(p);
+                    }
+                }
+            }
+            partner_buf.sort_unstable();
+            partner_buf.dedup();
+
+            for k in 0..partner_buf.len() {
+                let p_node = partner_buf[k];
+                // Process each unordered pair once; skip self.
+                if p_node <= m_node {
+                    continue;
+                }
+                if self.node_flags(p_node) & inactive != 0 || self.node_op(p_node) != op {
+                    continue;
+                }
+                // The partner must itself be a rule: binary-search the sorted `rules`.
+                let Ok(pi) = rules.binary_search_by(|r| r.node.cmp(&p_node)) else {
+                    continue;
+                };
+                // ...and a member of the antichain (a reducible partner will be collapsed).
+                if reducible[pi] {
+                    continue;
+                }
+                // Incremental (B): an unordered pair is a *new* critical pair only if at
+                // least one of its rules changed since the previous round (S3b). When
+                // neither endpoint is in the delta the pair was closed in an earlier round
+                // and stays closed; skip it. `full` (round 0) makes `in_delta` always true.
+                if !in_delta(m_node) && !in_delta(p_node) {
+                    continue;
+                }
+                let m = &rules[ti].lhs;
+                let a = &rules[pi].lhs;
+                // Shared by construction; skip the non-overlap / containment cases
+                // (containment is handled by the (A′) normalize pass).
+                debug_assert!(!multiset_disjoint(a, m));
+                if multiset_subset(a, m) || multiset_subset(m, a) {
+                    continue;
+                }
+                let ab = multiset_lcm(m, a);
+                let r1 = crate::ac_multiset::multiset_union(
+                    &crate::ac_multiset::multiset_subtract(&ab, m),
+                    &rules[ti].rhs,
+                );
+                let r2 = crate::ac_multiset::multiset_union(
+                    &crate::ac_multiset::multiset_subtract(&ab, a),
+                    &rules[pi].rhs,
+                );
+                crit.push((op, r1, r2));
+            }
+        }
+
+        // Critical-pair reducts are normalized to multisets (each step strictly lowers the
+        // multiset in degree-lex order against the rule set, so it terminates), then only a
+        // genuinely-divergent pair is materialized — this is what stops the runaway
+        // (design §6b). See the (B) close loop below.
+
+        if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
+            eprintln!(
+                "[ac-complete]   active(rules)={} targets(A′)={} crit(B)={}",
+                rules.len(),
+                targets.len(),
+                crit.len()
+            );
+        }
+
+        let mut changed = false;
+        // (A′) normalize each monomial; materialize+merge its normal form; collapse rules.
+        // A node is normalized by all OTHER rules, never by its own node-rule (a rule's
+        // LHS is in normal form w.r.t. itself; reducing it by itself would subsume the
+        // rule before it can superpose — the §4b regression). So a node is collapsed only
+        // when a *different*, strictly-contained rule reduces it (genuine inter-reduction).
+        for (op, mset, class, node, _is_rule) in targets {
+            let normal = {
+                let nf_rules: Vec<NfRule<Cfg::G>> = rules
+                    .iter()
+                    .filter(|r| r.op == op.to_usize() && r.node != node)
+                    .map(|r| NfRule {
+                        lhs: r.lhs.clone(),
+                        rhs: r.rhs.clone(),
+                    })
+                    .collect();
+                normalize_ms(&mset, &nf_rules)
+            };
+            if normal != mset {
+                let c_prime = materialize(self, op, &normal);
+                changed |= do_merge(self, c_prime, class);
+                // Collapse: the node was reducible by another rule (proper containment),
+                // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
+                // NOT subsume — the node stays matchable and a legal child; only
+                // completion's active set excludes it. Merge first, mark second.
+                self.set_ac_collapsed(node);
+            }
+        }
+        // (B) close each critical pair by merging the normal forms of its two reducts.
+        // Normalize BOTH reducts to multisets first; if they coincide the pair is already
+        // joinable (a trivial critical pair) — skip it, minting no node and no merge.
+        // Materializing trivial pairs was a second blowup source: each spurious node became
+        // a fresh rule that fed the next round (plan §0.4). Only genuinely-divergent pairs
+        // are materialized and merged.
+        let mut trivial = 0usize;
+        let mut nontrivial = 0usize;
+        for (op, r1, r2) in crit {
+            let nf_rules: Vec<NfRule<Cfg::G>> = rules
+                .iter()
+                .filter(|r| r.op == op.to_usize())
+                .map(|r| NfRule {
+                    lhs: r.lhs.clone(),
+                    rhs: r.rhs.clone(),
+                })
+                .collect();
+            let n1 = normalize_ms(&r1, &nf_rules);
+            let n2 = normalize_ms(&r2, &nf_rules);
+            if n1 == n2 {
+                trivial += 1;
+                continue;
+            }
+            nontrivial += 1;
+            let c1 = materialize(self, op, &n1);
+            let c2 = materialize(self, op, &n2);
+            changed |= do_merge(self, c1, c2);
+        }
+        if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
+            eprintln!("[ac-complete]   crit(B) trivial={trivial} nontrivial={nontrivial}");
+        }
+        changed
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> EGraphToken {
@@ -598,8 +1229,16 @@ where
 
     fn register_if_fresh(&mut self, result: Added<Cfg::G>) -> Cfg::G {
         if result.is_fresh() {
-            self.classes.add_singleton(result.id());
-            self.touched.push(result.id());
+            let id = result.id();
+            let repr = self.classes.add_singleton(id);
+            // A fresh non-AC node makes its class `atomic`: the class has a member that
+            // is not an AC monomial, so the size-1 monomial `{class}` is its normal-form
+            // representative (the completion rule RHS, §9a). AC nodes are not atomic by
+            // themselves; they become atomic only when referenced as a child (`add_use`).
+            if !matches!(self.node_ref(id), NodeRef::AC(_)) {
+                self.classes.set_ac_atomic(repr);
+            }
+            self.touched.push(id);
         }
         result.id()
     }
@@ -627,6 +1266,23 @@ where
 
     pub fn class_repr(&self, id: Cfg::G) -> Cfg::G {
         self.classes.find_const(id)
+    }
+
+    /// The AC minimum-monomial node stored for `id`'s class (the completion rule RHS,
+    /// §9a). Maintained on merge by `fold_ac_class`. Returns `None` if `id` has no class.
+    /// Consumed by the incremental completion pass (S3); currently read by tests only.
+    #[allow(dead_code)]
+    pub(crate) fn class_ac_min(&self, id: Cfg::G) -> Option<Cfg::G> {
+        let repr = self.classes.repr_id(self.classes.find_const(id))?;
+        Some(self.classes.ac_min(repr))
+    }
+
+    /// Whether `id`'s class is `atomic` (referenced as a child / has a non-AC node, so
+    /// `{class}` is its canonical summand form, §9a). `None` if `id` has no class.
+    #[allow(dead_code)]
+    pub(crate) fn class_ac_atomic(&self, id: Cfg::G) -> Option<bool> {
+        let repr = self.classes.repr_id(self.classes.find_const(id))?;
+        Some(self.classes.ac_atomic(repr))
     }
 
     pub fn node_ref(&self, id: Cfg::G) -> NodeRef<Cfg::Ids> {
@@ -667,12 +1323,13 @@ where
         }
     }
 
-    pub fn subsume(&mut self, id: Cfg::G) {
-        use crate::node_types::FLAG_SUBSUMED;
+    /// Set one of the per-node control flags ([`FLAG_SUBSUMED`](crate::node_types::FLAG_SUBSUMED),
+    /// [`FLAG_AC_COLLAPSED`](crate::node_types::FLAG_AC_COLLAPSED)) on `id`'s node.
+    fn set_node_flag(&mut self, id: Cfg::G, flag: u8) {
         macro_rules! flag {
             ($store:expr, $l:expr) => {{
                 let mut n = $store.get($l);
-                n.flags |= FLAG_SUBSUMED;
+                n.flags |= flag;
                 $store.set($l, n);
             }};
         }
@@ -688,6 +1345,24 @@ where
             NodeRef::ACI(l) => flag!(self.nodes.aci, l),
             NodeRef::Lit(l) => flag!(self.nodes.lit, l),
         }
+    }
+
+    /// User-level subsumption: exclude `id` from future pattern matching (the matcher's
+    /// indices skip `FLAG_SUBSUMED`). Distinct from AC-collapse — see `FLAG_AC_COLLAPSED`.
+    pub fn subsume(&mut self, id: Cfg::G) {
+        self.set_node_flag(id, crate::node_types::FLAG_SUBSUMED);
+    }
+
+    /// AC-completion collapse: retire `id` from the active AC rule set (its child
+    /// multiset is reducible by a smaller AC rule, so it is no longer a superposition or
+    /// inter-reduction source). The node stays **matchable** and a legal child; only
+    /// completion's active set excludes it (design §6b). Distinct from `subsume`.
+    pub(crate) fn set_ac_collapsed(&mut self, id: Cfg::G) {
+        debug_assert!(
+            matches!(self.node_ref(id), NodeRef::AC(_)),
+            "set_ac_collapsed on a non-AC node"
+        );
+        self.set_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
     }
 
     /// If `id` is a literal node, return its interned value. Otherwise `None`.
@@ -841,6 +1516,70 @@ where
         }
     }
 
+    /// Flatten nested same-op AC children of `op` in `self.g_buf`, to a fixpoint
+    /// (`WF_flat`, design §6c). Each element is examined by its class's *canonical summand
+    /// form* (`summand_form`, §9a), NOT by its union-find representative (that depends on
+    /// merge order and is non-canonical — the F1 bug, §0.1):
+    ///
+    /// - if the child's class is **non-`atomic`** (a pure `op`-sum), splice in that class's
+    ///   `ac_min` children (each by multiplicity), recursively;
+    /// - otherwise (the class is `atomic`: referenced as a child, or has a non-AC node) the
+    ///   single atom `{class}` is its canonical summand form, so keep the child as a summand.
+    ///
+    /// `g_buf` already holds `find`'d ids. Preserves §5b: `+{a,b}` used as `neg`'s child is
+    /// `atomic`, so it is kept, not flattened. Bounded: a spliced class's `ac_min` is a
+    /// strictly smaller monomial over the existing constants, so the worklist drains.
+    fn flatten_ac_children(&mut self, op: Cfg::O) {
+        // Move the buffers out to satisfy the borrow checker while reading `self`.
+        let mut work = std::mem::take(&mut self.flatten_buf);
+        let mut out = std::mem::take(&mut self.g_buf);
+        // Seed the worklist with the current children (reverse, so popping preserves
+        // a stable order — order doesn't matter for AC but keeps traces readable).
+        work.clear();
+        work.extend(out.iter().rev().copied());
+        out.clear();
+
+        // Safety cap on emitted children. Each splice replaces a child by a strictly
+        // smaller monomial, so a well-formed graph drains well under this bound; the cap
+        // only guards a degenerate cyclic class, which we must not loop on.
+        let cap = 1 + 64 * self.node_count();
+        let mut ac_kids: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        while let Some(g) = work.pop() {
+            let cls = self.classes.find_const(g);
+            // A child is a pure `op`-sum to splice iff its class is non-atomic AND its
+            // canonical summand (`ac_min`) is an AC node of this same `op`. Both reads are
+            // representative-independent (per-class slot), never `find`-keyed.
+            let mut spliced = false;
+            if out.len() <= cap
+                && let Some(repr) = self.classes.repr_id(cls)
+                && !self.classes.ac_atomic(repr)
+            {
+                let min_node = self.classes.ac_min(repr);
+                if self.node_op(min_node) == op && matches!(self.node_ref(min_node), NodeRef::AC(_))
+                {
+                    self.ac_children(min_node, &mut ac_kids);
+                    for (cg, m) in ac_kids.iter() {
+                        let times: u32 = (*m).into();
+                        for _ in 0..times {
+                            work.push(*cg);
+                        }
+                    }
+                    spliced = true;
+                }
+            }
+            if !spliced {
+                out.push(g);
+            }
+        }
+        debug_assert!(
+            out.len() <= cap,
+            "flatten_ac_children exceeded cap (degenerate cyclic AC class?)"
+        );
+
+        self.g_buf = out;
+        self.flatten_buf = work;
+    }
+
     /// Read ACI children (ids only, no multiplicities) into `buf`.
     pub fn aci_children(&self, id: Cfg::G, buf: &mut Vec<Cfg::G>) {
         buf.clear();
@@ -949,6 +1688,47 @@ mod tests {
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
         assert_eq!(eg.add(th.eq, &[x, y]), eg.add(th.eq, &[y, x]));
+    }
+
+    // S1: the per-class ac_min slot tracks the degree-lex-least monomial across
+    // merges (a constant is a size-1 monomial, so it wins over any sum) and rolls
+    // back with the e-graph token. See design §9a.
+    #[test]
+    fn ac_min_tracks_least_monomial_and_rolls_back() {
+        let (ref mut eg, th) = eg::<true, false>();
+        let x = eg.add(th.x, &[]);
+        let y = eg.add(th.y, &[]);
+        let z = eg.add(th.z, &[]);
+        let c = eg.add(th.w, &[]); // a leaf constant, to merge a sum into
+        let s_xy = eg.add(th.plus, &[x, y]); // +{x,y}, size 2
+        let s_xyz = eg.add(th.plus, &[x, y, z]); // +{x,y,z}, size 3
+
+        // Each fresh class's ac_min is its own node.
+        assert_eq!(eg.class_ac_min(s_xy), Some(s_xy));
+        assert_eq!(eg.class_ac_min(c), Some(c));
+
+        // Merge the two sums: the smaller monomial (+{x,y}, size 2) wins over +{x,y,z}.
+        eg.merge(s_xy, s_xyz);
+        let repr_min = eg.class_ac_min(s_xy).unwrap();
+        assert_eq!(eg.class_repr(repr_min), eg.class_repr(s_xy));
+        assert_eq!(repr_min, s_xy, "ac_min should pick the smaller sum");
+
+        // Snapshot, then merge the leaf constant c in: a size-1 monomial beats both sums.
+        let token = eg.mark(ShrinkPolicy::Never);
+        eg.merge(c, s_xy);
+        assert_eq!(
+            eg.class_ac_min(c),
+            Some(c),
+            "a constant (size-1 monomial) is the least, so ac_min becomes c"
+        );
+
+        // Restore: the post-token merge is undone, and ac_min reverts to the sum.
+        eg.restore(token);
+        assert_eq!(
+            eg.class_ac_min(s_xy),
+            Some(s_xy),
+            "ac_min must roll back with the e-graph token"
+        );
     }
 
     #[test]
@@ -1412,6 +2192,29 @@ mod tests {
         let int = eg.intern_sort("Int");
         // "+" is a builtin op from NiraModel, registering again should panic
         eg.register_op2("+", int, int, int);
+    }
+
+    // AC completion supports a single AC symbol; rebuild rejects more than one.
+    #[test]
+    #[should_panic(expected = "single AC symbol")]
+    fn ac_complete_rejects_two_ac_symbols() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let _plus = eg.register_ac("plus", int, int);
+        let _times = eg.register_ac("times", int, int);
+        eg.set_ac_complete(true);
+        eg.rebuild(); // two AC ops registered => precondition fails
+    }
+
+    // One AC op (plus ACI, which is a distinct kind) is fine.
+    #[test]
+    fn ac_complete_allows_one_ac_symbol() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let _plus = eg.register_ac("plus", int, int);
+        let _and = eg.register_aci("and", int, int); // ACI is not counted as AC
+        eg.set_ac_complete(true);
+        eg.rebuild(); // exactly one OpKind::AC => allowed
     }
 }
 
