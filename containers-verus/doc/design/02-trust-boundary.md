@@ -4,8 +4,8 @@
 verifier takes on trust is a small set of functions marked
 `#[verifier::external_body]` (their bodies are hidden; only their signatures /
 `ensures` are believed). This chapter enumerates exactly what remains trusted
-and, for each, why it is trusted rather than proved. There are **6 such items**,
-in two groups.*
+and, for each, why it is trusted rather than proved. There are **7 such items**,
+in three groups.*
 
 [Design Table of Contents](00-table-of-contents.md)
 
@@ -36,6 +36,11 @@ The two groups differ in kind, and the distinction is the point of this chapter:
   simply has not had a contract written yet. It is provable; the
   [byte-accounting feature request](../future/verify-byte-accounting.md) scopes
   the work. These are temporary.
+- **Group C is one trusted runtime-trap primitive** (`check_precondition`). It
+  carries a `requires` (so it is load-bearing in the proof, not spec-free) and
+  is external only because its body uses the panic-formatting machinery the
+  logic does not model: the same reason `vstd`'s own `runtime_assert` is
+  external. Permanent, and minimal.
 
 ## 1. Group A: `ContainerId` (trusted by design)
 
@@ -158,6 +163,33 @@ overflow). Until then they are guarded by the runtime smoke test
 `byte_counters_are_consistent` (total ≥ tracking, monotone, no panic) in the same
 fuzz file.
 
+## 2.5. Group C: the runtime-guard primitive (`check_precondition`)
+
+```rust
+#[verifier::external_body]
+pub fn check_precondition(cond: bool, msg: &str)
+    requires cond,
+{
+    if !cond { panic!("containers-verus: precondition violated: {}", msg); }
+}
+```
+
+This one item (`guard.rs`) carries a `requires cond` and is **load-bearing**:
+public methods whose preconditions a non-Verus caller could violate by silent
+integer wrap (e.g. `restore` past the `u32` fork-history limit, `push`/`add`
+past the index type, `insert` past `usize`) call it at entry. A *verified*
+caller discharges `cond` from the method's own `requires`, so the branch is
+provably dead for them and behavior is unchanged; an *unverified* caller who
+violates the precondition gets a descriptive panic instead of corruption.
+
+**Why not proved:** the body's `panic!` uses the format machinery Verus does not
+model (`core::panicking::panic_fmt` has no spec). This is exactly why `vstd`'s
+own `runtime_assert` is `external_body` too. The `requires cond` *is* checked at
+every call site, so the trusted part is only "the body panics when `!cond`",
+which is a one-line `if`. Nothing algorithmic hides here. (See
+[Ch. 3 §5](03-fork-history.md) for the `u32` fork-history limit these guards
+protect, and the `restores_remaining()` query that reports the headroom.)
+
 ## 3. What used to be here: the casts (now eliminated)
 
 For contrast: the `IndexLike::as_usize` / `try_from_usize` casts on the primitive
@@ -190,12 +222,14 @@ real boundary.
 | `Vec::tracking_bytes` | B | `size_of` + no `ensures` | **yes: see feature request** |
 | `Vec::total_bytes` | B | `size_of` + no `ensures` | **yes** |
 | `ForkHistory::heap_bytes` | B | `size_of` + no `ensures` | **yes** |
+| `guard::check_precondition` | C | body `panic!` uses unmodeled format machinery (`requires cond` is checked) | no (same reason as `vstd::runtime_assert`) |
 
 **Bottom line.** 3 trusted-by-design (`ContainerId`, permanent, runtime-fuzzed),
-3 trusted-by-omission (byte counters, provable, [feature request filed](../future/verify-byte-accounting.md)).
-No `assume`/`admit` anywhere. No algorithmic logic is hidden behind any
-`external_body`; every container's actual behavior is verified down to these
-boundary leaves.
+3 trusted-by-omission (byte counters, provable, [feature request filed](../future/verify-byte-accounting.md)),
+and 1 runtime-trap primitive (`check_precondition`, load-bearing, body is a
+one-line panic). No `assume`/`admit` anywhere. No algorithmic logic is hidden
+behind any `external_body`; every container's actual behavior is verified down
+to these boundary leaves.
 
 ---
 [← Table of Contents](00-table-of-contents.md)

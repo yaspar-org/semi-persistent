@@ -180,7 +180,7 @@ here.
 > set of convenience methods (`iter`/`get_mut`/key-count `len`) are omitted from
 > otherwise-verified containers.
 
-Per-module verified counts are in `verify-all.sh` output; the tally is 935
+Per-module verified counts are in `verify-all.sh` output; the tally is 938
 verified, 0 errors, 0 `admit`s/`assume`s across 21 modules.
 
 ---

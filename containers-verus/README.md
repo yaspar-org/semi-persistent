@@ -28,10 +28,19 @@ The proofs carry **no `admit`s or `assume`s**; but that means no fact is
 injected into a proof, *not* that nothing is trusted. The entire trust boundary
 is a small, explicit set of `#[verifier::external_body]` items modeling things
 the logic cannot describe: a process-global atomic id counter, an opaque
-identity type, and a few spec-free byte-accounting diagnostics. None hides any
-algorithmic logic. Every one is enumerated and justified in
+identity type, a few spec-free byte-accounting diagnostics, and one runtime-trap
+primitive. None hides any algorithmic logic. Every one is enumerated and
+justified in
 [`doc/design/02-trust-boundary.md`](doc/design/02-trust-boundary.md), read it to
 know exactly what the verification does and does not guarantee.
+
+**Usable from unverified Rust.** A Verus-checked caller proves each public
+method's preconditions; an ordinary Rust caller does not, and the erased
+`requires` would offer no protection against, for example, restoring past the
+`u32` fork-history limit or pushing past the index type, which would silently
+wrap. The overflow/capacity preconditions are therefore also enforced at
+runtime: such a call panics with a descriptive message instead of corrupting the
+container. The fork-history headroom is queryable via `restores_remaining()`.
 
 ## Architecture
 
@@ -51,7 +60,7 @@ and are verified (see "Verification status" below).
 
 ## Verification status
 
-**935 facts verified across 21 modules, 0 errors, 0 `admit`s/`assume`s**
+**938 facts verified across 21 modules, 0 errors, 0 `admit`s/`assume`s**
 (run `./verify-all.sh` from the package root for the live per-module tally).
 The whole container family is verified:
 
@@ -67,9 +76,9 @@ The whole container family is verified:
   (so `insert` needs no caller capacity precondition); and `mark`/`restore`.
   Insert-only; production has no `remove`.
 
-Trusted boundary: 6 `#[verifier::external_body]` items, all enumerated in
+Trusted boundary: 7 `#[verifier::external_body]` items, all enumerated in
 [`doc/design/02-trust-boundary.md`](doc/design/02-trust-boundary.md). Runtime
-property tests (80 across 6 files) exercise the executable code against plain-`std`
+property tests (82 across 6 files) exercise the executable code against plain-`std`
 oracles. The skeptical, method-by-method coverage accounting vs. the production
 crate is [`doc/future/parity-audit-and-plan.md`](doc/future/parity-audit-and-plan.md).
 
