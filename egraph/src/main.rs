@@ -28,23 +28,32 @@ struct Cli {
     #[arg(long, default_value = "bignum", value_delimiter = ',')]
     types: Vec<String>,
 
-    /// Saturation strategy: "naive" or "semi-naive"
-    #[arg(long, default_value = "naive", value_parser = parse_strategy)]
-    strategy: semi_persistent_egraph::saturate::SaturationStrategy,
+    /// Use semi-naive saturation (delta-driven rounds). Mutually exclusive with
+    /// --use-naive; the default is naive.
+    #[arg(long, default_value_t = false, conflicts_with = "use_naive")]
+    use_semi_naive: bool,
+
+    /// Use naive saturation (full re-match each round). This is the default; the flag is
+    /// accepted for symmetry. Mutually exclusive with --use-semi-naive.
+    #[arg(long, default_value_t = false)]
+    use_naive: bool,
+
+    /// Derive all AC congruence consequences (superposition + inter-reduction) during
+    /// rebuild. Off by default: when off, leapfrog matching still enumerates sub-multisets
+    /// of AC nodes, but rebuild does not complete the AC rule set. See AC completion docs.
+    #[arg(long, default_value_t = false)]
+    derive_ac_eqs: bool,
+
+    /// Check AC reduced-basis invariants (ac_min minimality, Kapur-reducedness) each
+    /// completion round and print the report. Diagnostic only: superlinear brute-force
+    /// checks; needs --derive-ac-eqs to have an effect. Off by default.
+    #[arg(long, default_value_t = false)]
+    check_ac_basis: bool,
 
     /// Count and report total e-matching steps (match-work instrumentation).
     /// Off by default; enabling it has negligible cost and needs no rebuild.
     #[arg(long, default_value_t = false)]
     count_match_steps: bool,
-}
-
-fn parse_strategy(s: &str) -> Result<semi_persistent_egraph::saturate::SaturationStrategy, String> {
-    use semi_persistent_egraph::saturate::SaturationStrategy;
-    match s {
-        "naive" => Ok(SaturationStrategy::Naive),
-        "semi-naive" | "semi" => Ok(SaturationStrategy::SemiNaive),
-        _ => Err(format!("expected 'naive' or 'semi-naive', got '{s}'")),
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +78,16 @@ fn parse_id_bits(s: &str) -> Result<u8, String> {
 }
 
 fn main() {
+    use semi_persistent_egraph::saturate::SaturationStrategy;
     let cli = Cli::parse();
+
+    // Default is naive; --use-semi-naive opts in. The two flags conflict (enforced by
+    // clap), so at most one is set.
+    let strategy = if cli.use_semi_naive {
+        SaturationStrategy::SemiNaive
+    } else {
+        SaturationStrategy::Naive
+    };
 
     let src = match std::fs::read_to_string(&cli.file) {
         Ok(s) => s,
@@ -110,19 +128,25 @@ fn main() {
                 LitValChoice::Machine => run::<$Cfg, MachineLit, MachineModel, $proofs>(
                     &surface_cmds,
                     MachineModel,
-                    cli.strategy,
+                    strategy,
+                    cli.derive_ac_eqs,
+                    cli.check_ac_basis,
                     cli.count_match_steps,
                 ),
                 LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
                     &surface_cmds,
                     BignumModel,
-                    cli.strategy,
+                    strategy,
+                    cli.derive_ac_eqs,
+                    cli.check_ac_basis,
                     cli.count_match_steps,
                 ),
                 LitValChoice::All => run::<$Cfg, AllLit, AllModel, $proofs>(
                     &surface_cmds,
                     AllModel,
-                    cli.strategy,
+                    strategy,
+                    cli.derive_ac_eqs,
+                    cli.check_ac_basis,
                     cli.count_match_steps,
                 ),
             }
@@ -142,6 +166,8 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     surface_cmds: &[semi_persistent_egraph::surface_ast::SurfaceCommand],
     model: M,
     strategy: semi_persistent_egraph::saturate::SaturationStrategy,
+    ac_complete: bool,
+    basis_checks: bool,
     count_match_steps: bool,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
@@ -156,6 +182,8 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     let mut interp =
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
     interp.set_strategy(strategy);
+    interp.set_ac_complete(ac_complete);
+    interp.set_basis_checks(basis_checks);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds.to_vec(),

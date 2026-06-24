@@ -18,8 +18,22 @@ use crate::containers::DenseId;
 use crate::containers::Tagged;
 
 /// Per-node control flags stored in the `flags` field.
+///
+/// `FLAG_SUBSUMED` and `FLAG_AC_COLLAPSED` are deliberately distinct concepts (see
+/// `doc/design/ac-congruence-completeness.md` §6b):
+/// - `FLAG_SUBSUMED` — user-level `(subsume …)`: "do not *match* this node." The
+///   matcher's indices skip it.
+/// - `FLAG_AC_COLLAPSED` — AC completion's inter-reduction: "do not use this node as a
+///   completion *rule*" (its child multiset is reducible by a smaller AC rule, so every
+///   superposition off it is redundant). The node stays fully **matchable** — its
+///   reduced form is in the same class — and stays a legal child of other nodes; only
+///   AC completion's active rule set excludes it.
+///
+/// A node may carry either, both, or neither. Completion's active set is the AC nodes
+/// with *neither* flag; the matcher's visible set is the nodes without `FLAG_SUBSUMED`.
 pub const FLAG_SUBSUMED: u8 = 1 << 0;
 pub const FLAG_CONSTRUCTOR: u8 = 1 << 1;
+pub const FLAG_AC_COLLAPSED: u8 = 1 << 2;
 
 // ---------------------------------------------------------------------------
 // FixedArityNode<G, O, K>
