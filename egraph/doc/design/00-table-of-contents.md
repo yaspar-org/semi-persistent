@@ -8,10 +8,9 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 - **[Overview: Why A Semi-Persistent Egraph?](A0-overview.md)**
   Intellectual lineage (egg, egglog, semi-persistence, AC
-  canonization, director strings). Core capabilities: O(1)
-  snapshots, native A/C/AC/ACI, leapfrog triejoin, proof
-  extraction, variables and binders via director bitmatrices.
-  Architecture and key design decisions.
+  canonization). Core capabilities: O(1) snapshots, native
+  A/C/AC/ACI, leapfrog triejoin, proof extraction. Variables and
+  binders are future work. Architecture and key design decisions.
 
 - **[Language Guide](A1-language-guide.md)**
   Surface syntax, sorts, operators, algebraic attributes, rewrite
@@ -22,10 +21,11 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   how builtins are lifted into the e-graph, deferred interning,
   soundness guarantees.
 
-- **[Future Work and Recently Completed Features](A3-future-work.md)**
-  Implemented: globals in patterns. Planned: AC congruence completeness
-  via critical pairs, variables and binders (parameterized edge labels),
-  cost-based extraction via partial weighted Max-SAT, stratified negation.
+- **[Future Work](A3-future-work.md)**
+  Planned features as standalone designs: variables and binders; cost-based extraction
+  via partial weighted Max-SAT; stratified negation. Plus the remaining work on AC
+  completion (enable-by-default scoping, multiple AC symbols, verification); the
+  implemented algorithm itself is in the AC chapter and Ch 14.
 
 - **[AC Congruence Completeness](ac-congruence-completeness.md)**
   Part I explains why flattening AC nodes into canonical multisets erases the 
@@ -35,6 +35,14 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   inter-reduction and lcm-superposition critical pairs — and shows it can reuse
   our existing `DecomposeAC`/`by_contains` machinery, with a correctness/termination
   argument and a proof sketch. Status and verification plan live in Future Work.
+
+- **[AC Completion: `ac_min`, the matcher bug, and a code-compliance review](ac-completion-spec.md)**
+  A focused companion to the above (does not restate it). Defines `ac_min`, the leximin AC
+  representative of a class, with its exact properties and how it yields the tightest
+  closure; traces the `(f (add x ..r1) (add x ..r2))` matcher bug over concrete nodes
+  (cause and fix); and checks the code clause-by-clause against the algorithm, explaining
+  the observed per-round growth as the genuine basis size on a dense, deeply-merged graph
+  (not a bug, and not an artifact of approximate `ac_min`).
 
 ## Part I: E-Graph Core
 
@@ -103,7 +111,7 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     comprehensions. `apply_action`: union, insert, subsume.
     Primitive op evaluation via `LitModel`.
 
-## Part IV: Literal Model and Soundness
+## Part IV: Literal Model
 
 13. **[Extensible Literal Model](13-literal-model.md)**
     `LitModel` trait: `sorts`, `ops`, `parse`, `is_truthy`.
@@ -111,12 +119,14 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     `intern`/`try_lookup`. Deferred interning: sortcheck never mutates.
     LHS matching is read-only. RHS application interns on demand.
 
-14. **[Soundness of Primitive Operations](14-soundness.md)**
-    Why literal ops must be congruence-compatible. The `@`-prefixed
-    auto-lift ops. Sort architecture: concrete vs user sorts.
-    No implicit bridging.
+## Part V: Soundness, Completeness, Proof Extraction, Term Extraction
 
-## Part V: Proofs and Extraction
+14. **[Soundness and Completeness](14-soundness.md)**
+    The two correctness properties over both sources of derived equalities,
+    literal evaluation and congruence closure, and across operator kinds
+    (plain, C, A, AC, ACI). Soundness: no false equality is asserted.
+    Completeness: every entailed equality between materialized terms is decided,
+    requiring the AC completion pass for AC/ACI. What is proved, argued, assumed.
 
 15. **[Proof Logging](15-proof-logging.md)**
     Copy-on-first-re-canonization via history bit. `Justification`
