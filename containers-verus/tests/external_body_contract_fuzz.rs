@@ -167,3 +167,63 @@ fn byte_counters_are_consistent() {
         );
     }
 }
+
+// --------------------------------------------------------------------------
+// Runtime precondition guards (src/guard.rs).
+//
+// The public methods carry `requires` that a Verus-checked caller proves. An
+// UNVERIFIED caller has no such obligation, and a violated overflow/capacity
+// precondition would otherwise silently wrap (`as u32`/`as I` truncation) and
+// corrupt the container. `check_precondition` turns that into a clean panic.
+// These tests exercise the guards at a REACHABLE boundary (a `u8` index type,
+// `max_nat == 256`) and the headroom query a caller uses to avoid them.
+// --------------------------------------------------------------------------
+
+// `push` traps when the length would overflow the index type, instead of
+// wrapping. `u8` indices saturate at 255 live elements (max_nat == 256, and the
+// precondition is `len + 1 < max_nat`, so the 255th push — taking len 254->255 —
+// is the last legal one; pushing at len 255 must panic).
+#[test]
+fn push_overflow_traps_for_small_index() {
+    type V = SpVec<u32, u8, ParallelStore<u32, u8>, false>;
+    let mut v = V::new();
+    // 255 pushes are fine: lengths 0..=254 each satisfy `len + 1 < 256`.
+    for i in 0..255u32 {
+        v.push(i);
+    }
+    // The 256th push (at len 255) would make len 256 == max_nat: must panic, not
+    // wrap to a 0-length / corrupt index.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        v.push(999);
+    }));
+    assert!(
+        result.is_err(),
+        "Vec::push must trap at the index-type limit, not silently wrap"
+    );
+}
+
+// `restores_remaining()` reports the fork-history headroom and drops by exactly
+// one per `restore` (each restore appends one never-reclaimed fork origin).
+#[test]
+fn restores_remaining_tracks_fork_history() {
+    type V = SpVec<u32, u32, ParallelStore<u32, u32>, true>;
+    let mut v = V::new();
+    v.push(1);
+    v.push(2);
+
+    // Fresh container: no restores taken yet, so full u32 headroom.
+    let start = v.restores_remaining();
+    assert_eq!(start, u32::MAX as usize);
+
+    // Each restore consumes exactly one unit of headroom.
+    for k in 1..=5usize {
+        let t = v.mark(ShrinkPolicy::Never);
+        v.push(100 + k as u32);
+        v.restore(t);
+        assert_eq!(
+            v.restores_remaining(),
+            start - k,
+            "restores_remaining must drop by one per restore (after {k})"
+        );
+    }
+}

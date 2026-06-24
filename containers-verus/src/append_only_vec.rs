@@ -144,6 +144,20 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         self.frames.len()
     }
 
+    /// How many more `restore`s this container can accept before the
+    /// fork-history branch counter saturates `u32` (saturating at 0). While
+    /// `> 0`, `restore`'s `origins.len() + 1 <= u32::MAX` precondition holds.
+    pub fn restores_remaining(&self) -> (r: usize)
+        requires self.wf(),
+        ensures
+            self.forks.origins@.len() < u32::MAX ==>
+                r as nat == (u32::MAX - self.forks.origins@.len()) as nat,
+            self.forks.origins@.len() >= u32::MAX ==> r == 0,
+    {
+        let used = self.forks.origins.len();
+        (u32::MAX as usize).saturating_sub(used)
+    }
+
     /// Mark: save the current length, returning a token. The new frame records
     /// `data.len()` (>= every prior frame, since data only grew), keeping
     /// `frames` monotone.
@@ -237,6 +251,20 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             self.frames@.len() == token.frame_idx as nat,
             self.snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx as int),
     {
+        // Runtime guards (overflow): a verified caller proves the two u32
+        // bounds; an unverified one is trapped before `fork`'s `as u32` cast on
+        // the fork-history counters would silently wrap. `origins.len()` is the
+        // lifetime restore count (never reclaimed); `frames.len()` the live
+        // nesting depth.
+        crate::guard::check_precondition(
+            self.frames.len() < u32::MAX as usize,
+            "AppendOnlyVec::restore: frame-stack depth would overflow u32",
+        );
+        crate::guard::check_precondition(
+            self.forks.origins.len() < u32::MAX as usize,
+            "AppendOnlyVec::restore: fork history exhausted (too many restores)",
+        );
+
         let target = token.frame_idx;
         let saved_len = self.frames[target];
 
