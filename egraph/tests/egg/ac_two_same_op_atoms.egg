@@ -1,0 +1,26 @@
+;; EXPECT: ok
+;; Regression test: a rule with TWO same-op AC atoms + rest-vars (completion OFF).
+;; This used to panic in the matcher: leapfrog_join unconditionally cleared the join
+;; target, but the bound-node re-join (ByRepr ∩ ByOp) targets a variable already bound by
+;; an upstream ExtractChild, so clearing it left a later atom's node var unbound on the
+;; next sibling iteration (decompose continuation re-entered the second add's join with
+;; the var cleared). Fixed by save/restore of the target's prior binding in leapfrog_join.
+
+(sort E)
+(function f (E E) E)
+(function g (E) E)
+(function add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+
+(rewrite (f (add x ..r1) (add y ..r2)) (g x))
+
+;; Several overlapping add-sums under f, the shape that drives the variadic re-join.
+(let t1 (f (add (a) (b)) (add (b) (c))))
+(let t2 (f (add (a) (c)) (add (a) (b))))
+
+(run 10)
+
+;; If matching survives, g(a) exists (x binds a summand of the first add).
+(check (= (g (a)) (g (a))))

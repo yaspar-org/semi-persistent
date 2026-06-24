@@ -137,6 +137,15 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
     pub fn clear(&mut self, v: VarId) {
         self.nodes[v.idx()] = None;
     }
+    /// Read the raw binding (bound value or `None`). For save/restore of a slot that may
+    /// already be bound (the bound-node re-join in `leapfrog_join`).
+    pub fn get_opt(&self, v: VarId) -> Option<Cfg::G> {
+        self.nodes[v.idx()]
+    }
+    /// Restore a raw binding saved by `get_opt`.
+    pub fn set_opt(&mut self, v: VarId, val: Option<Cfg::G>) {
+        self.nodes[v.idx()] = val;
+    }
     /// Resolve a PatVar: local from env, global from GlobalCtx.
     pub fn resolve_pv<S: Copy>(
         &self,
@@ -1045,14 +1054,21 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     C: SortedCursor<Key = Cfg::G>,
     ACCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    // `target` may already be bound: the bound-node re-join (`ByRepr ∩ ByOp`, emitted by
+    // `emit_variadic_join`/`try_schedule_bound` when a variadic atom's node was bound by an
+    // upstream `ExtractChild`) has `target` already set, and an enclosing step relies on
+    // that binding. Save it and restore on exit, so this join's per-key `set`/`clear` does
+    // not destroy a binding a sibling iteration of an upstream join still needs. (Plain
+    // unbound joins have `prev == None`, so this reduces to the old set/clear.)
+    let prev = env.get_opt(target);
     let mut join = LeapfrogJoin::new(cursors);
     while join.is_valid() {
         let id = join.key();
         env.set(target, id);
         run_step(plan, step_idx + 1, eg, index, globals, env, results);
-        env.clear(target);
         join.next();
     }
+    env.set_opt(target, prev);
 }
 
 // ---------------------------------------------------------------------------
