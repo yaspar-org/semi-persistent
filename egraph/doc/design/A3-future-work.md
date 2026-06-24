@@ -1,65 +1,56 @@
-# Future Work and Recently Completed Features
+# Future Work
 
 [← Developer Guide](A2-developer-guide.md) · [Table of Contents](00-table-of-contents.md) · [Ch 1: Node Storage →](01-node-storage.md)
 
 
-This chapter covers planned features that are designed but not yet
-implemented, plus one recently completed feature whose design
-document predates the implementation. Full design documents are in
-`doc/future/`.
+This chapter covers features that are designed but not yet implemented. Full design
+documents are in `doc/future/`. Implemented features are described in the main design
+flow; AC congruence completeness, for example, is its own chapter
+([AC Congruence Completeness](ac-congruence-completeness.md), with the engine-level
+companion [AC Completion spec](ac-completion-spec.md)) and is covered by
+[Ch 14: Soundness and Completeness](14-soundness.md). What remains for AC completion is
+listed below.
 
-## Planned
+## AC Completion: remaining work
 
-### AC Congruence Completeness via Critical Pairs
+The algorithm is implemented (see the chapters above); three pieces remain.
 
-The problem and the fix are fully analyzed in
-[AC Congruence Completeness](ac-congruence-completeness.md). This entry records
-**where we stand and what remains.**
+**Enable by default (scoping).** Completion is off by default pending a termination
+guard. On a sweep of stress graphs it converges on all but one pathological instance,
+whose AC equation set has a genuinely large canonical basis (the growth is
+input-specific, not size-specific; AC spec §3.3). Enabling it generally wants one of: a
+per-`rebuild` growth guard that disables completion and falls back to plain congruence,
+on-demand completion scoped to the sub-graph a query needs, or a degree bound on
+materialized monomials. All three trade completeness for termination, and the fallback
+is sound (it derives fewer equalities, never wrong ones; see Ch 14 on the trustworthy
+polarity).
 
-**Where we stand.** AC handling is **sound** and **complete for matching against
-explicit nodes** (flattened multisets; candidate narrowing over the four indices
-+ leapfrog; `DecomposeAC` recursive multiset split with multiplicity tracking and
-`rest`-variables). It is **not AC-congruence-complete**: `rebuild` only
-re-canonicalizes AC nodes (substitutes equal *atoms*), so sub-sum equalities are
-missed — e.g. `+(a,b)=c` and `+(b,d)=e` (sharing `b`) entail `+(c,d)=+(a,e)`,
-which we never derive. Our rebuild is Kapur's ground AC-CC (FSCD 2021) **minus**
-its completion steps: we have Algo-1 steps 1–2 (union-find + node
-re-canonicalization), we lack steps 3–4 (superposition + inter-reduction).
+**Multiple AC symbols.** Completion stores one `ac_min`/`atomic` per class, so it
+supports one AC operator; `rebuild` rejects a configuration with more than one
+registered `OpKind::AC` when completion is on (`ac_op_count`). Lifting this is a storage
+change: a per-op `ac_min` slice (a pool indexed by AC op) instead of a single slot. The
+algorithm already runs per-op; only the slot widens (AC chapter §9a multi-op note). ACI
+operators get no completion at all today (the round gates on `OpKind::AC`), so ACI
+congruence is sound but incomplete; adding it needs the idempotence critical pair
+(Kapur §4) plus the same per-op storage.
 
-**What remains — implementation.** Add to `rebuild()`, per AC op, to fixpoint:
-1. **Inter-reduction** (substitute a contained known sum `+A=a` into `+M`, i.e.
-   replace the sub-multiset `A` with the class `a`) — reuses `DecomposeAC` + `rest`
-   to compute the residual, `by_contains` to find the super-multiset candidates.
-2. **lcm superposition** (overlapping `+A=a`, `+B=b` → materialize `+AB`, reduce
-   both ways, merge) — reuses `⋃ by_contains` for overlap candidates.
-   *Not* sub-multiset containment (a strict, incomplete special case).
-Termination: Dickson's Lemma (Kapur Thm 6). Cost: quadratic in #AC-equations
-(Conchon et al. §7.3). We can skip Kapur's monomial ordering — the union-find is
-our canonical layer.
-
-**What remains — verification.** The two halves have different proof character
+**Verification.** The two halves have different proof character
 (see [the design doc §12](ac-congruence-completeness.md) for the sketch), so:
 
 - Soundness → Verus, on the real Rust `rebuild`. It is an invariant-preservation
-  proof (every rule/merge stays `⊆ ACCC(S)`), which suits Verus's imperative
+  proof (every rule and merge stays `⊆ ACCC(S)`), which suits Verus's imperative
   reasoning and reuses this workspace's `vstd::multiset` + union-find modeling. It
-  certifies the *shipping* code never asserts a false AC equality. Provable today
-  on the current recanonize-only rebuild; extend the invariant when the
-  substitution steps land.
+  certifies the shipping code never asserts a false AC equality.
 - Completeness → Lean (or Coq), on the abstract model. It requires Newman's Lemma,
-  a Dickson well-quasi-order, and the critical-pair lemma — abstract-rewriting
+  a Dickson well-quasi-order, and the critical-pair lemma, abstract-rewriting
   metatheory that Verus's trigger-based quantifier automation handles poorly. Lean
   `mathlib` has the well-founded recursion / `Multiset` / order theory; Coq has
   direct precedent (Contejean's RTA 2004 certified AC matching in Coq; CoLoR
   formalizes termination / Dickson).
 - Why split: all-Verus would push the confluence metatheory into a tool poorly
-  suited to it; all-Lean would prove soundness about an *idealized* model, not the
+  suited to it; all-Lean would prove soundness about an idealized model, not the
   real Rust, losing the main benefit. The split proves soundness on the running
   code and completeness in a tool that supports the metatheory.
-
-Staging: (1) Verus soundness invariant on today's rebuild; (2) extend it as
-inter-reduction/superposition land; (3) Lean abstract completeness theorem,
-parameterized to transfer to the implementation by refinement.
 
 ### Variables and Binders via Parameterized Edge Labels
 
@@ -73,12 +64,15 @@ context-dependent and destroys sharing.
 The solution is to parameterize the e-graph over an edge label type
 that encodes binding information on edges rather than in variables.
 The design introduces a `PortAlgebra` trait that abstracts over the
-edge representation, with three concrete instantiations:
+edge representation. Three binder-aware instantiations are under
+consideration (plus the trivial Classic default); the choice between
+them is open.
 
 | Variant | Edge label | UF witness | Use case |
 |---------|-----------|------------|----------|
 | Classic | `()` | `()` | No binders (default) |
 | Director | partial-injection matrix | contraction matrix | Positional ports, compact encoding |
+| Thinning | subset/order-preserving injection | thinning composition | Minimal scope tracking, cheap weakening |
 | Slotted | slot renaming map | slot renaming | Named slots, symmetry tracking |
 
 #### Classic (default)
@@ -93,6 +87,18 @@ edge carries a partial injection from child ports to parent ports,
 encoded as a matrix of bits. A single shared `Var` e-class with arity
 1 represents all variable occurrences; which variable a `Var` node
 represents is determined entirely by the parent edge's annotation.
+
+#### Thinnings
+
+Based on the co-de-Bruijn / thinning representation (a thinning is an
+order-preserving injection from a subterm's used variables into the
+ambient scope; McBride 2018, "Everybody's Got To Be Somewhere"). Each
+edge carries the thinning that embeds the child's used-variable set into
+the parent's scope, so a subterm records exactly the variables it uses
+and weakening is a thinning composition. This makes scope minimal by
+construction (no unused binders are carried) and sharing maximal (two
+occurrences that use the same variables share regardless of ambient
+scope), at the cost of computing thinning composites on merge.
 
 #### Slotted
 

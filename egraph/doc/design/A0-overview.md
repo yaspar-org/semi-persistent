@@ -36,14 +36,10 @@ coherent execution engine:
   rules.
 - Relational e-matching via leapfrog triejoin, as introduced by
   egglog, provides worst-case-optimal pattern matching.
-- Parameterized edge labels for variables and binders. The e-graph
-  is parameterized over a `PortAlgebra` trait that abstracts the edge
-  representation. Two binder-aware instantiations are supported:
-  directors (positional ports with partial-injection matrices,
-  inspired by Sinot, Fernández, and Mackie 2005) and slotted
-  e-graphs (named slots with renaming maps, Schneider et al. PLDI
-  2025). The default instantiation carries no labels (classic
-  e-graph, no binder support).
+- Variables and binders are future work (no binder support today). The
+  planned approach parameterizes the e-graph over an edge-label algebra,
+  with several candidate representations under consideration; see
+  [Future Work](A3-future-work.md).
 
 The contribution of The project is making all these mechanisms coexist in
 a single engine. Semi-persistence is the unifying mechanism: the
@@ -152,14 +148,12 @@ match, apply) runs rules to fixpoint.
 
 ### Variables and binders (planned)
 
-Director bitmatrices attached to e-graph edges encode variable routing
-without making variables context-dependent. All variable occurrences
-share a single anonymous `Var` e-class; binding context is carried
-by the parent edge's bitmatrix annotation. The bitmatrix is packed
-into a u64 inline with the child e-class id (covering arities up to
-7 × 9), with a spill path for larger arities. This encoding avoids
-the cascading index shifts of de Bruijn representations and the
-permutation group complexity of slotted e-graphs.
+Binders are not supported today. The planned approach attaches a binding
+annotation to each parent-to-child edge rather than to variables, so that
+all occurrences of a variable can share one e-class and structural sharing
+survives. The edge-label representation is parameterized; the candidate
+encodings and the trade-offs between them are in
+[Future Work](A3-future-work.md) and `doc/future/alpha-equivalence.md`.
 
 ## Architecture
 
@@ -263,12 +257,6 @@ The chapters that follow describe each layer in detail:
 - Conchon, S., Iguernlala, M., and Mebsout, A. "Canonized Rewriting
   and Ground AC Completion Modulo Shostak Theories." 2012.
   https://arxiv.org/abs/1207.3262
-
-- Sinot, F.-R., Fernández, M., and Mackie, I. "Lambda-Calculus with
-  Director Strings." APAL, 2005.
-
-- Kennaway, R. and Sleep, R. "Director Strings as Combinators."
-  ACM TOPLAS, 1988.
 
 - Schneider, R., Rossel, M., Shaikhha, A., Goens, A., and Steuwer,
   M. "Slotted E-Graphs: First-Class Support for (Bound) Variables
