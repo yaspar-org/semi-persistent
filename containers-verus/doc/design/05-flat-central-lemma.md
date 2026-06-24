@@ -1,29 +1,28 @@
-# Flat / target-clamped central lemma — design (de-risking the rewrite)
+# The flat / target-clamped central lemma
 
-Goal: replace the **layered** `lemma_snap_eq_overlay` (reconstruct each
-`snapshots[k]` on `[0, saved_k)` by overlaying stratum k onto `snapshots[k+1]`)
-with a **flat** statement that reconstructs only the *target* snapshot, clamped
-to the target's `saved_len`. This is what lets us drop `saved_len`
-monotonicity: the layered version, with non-monotone saved_lens, needs
-overlay to write *past the end* of an intermediate `snapshots[k+1]` (a
-snapshot-level regrow) — the flat version never reconstructs intermediates, so
-that problem disappears.
-
-This doc is the proof sketch to settle *before* coding.
+The reconstruction proof uses a **flat** central lemma: it reconstructs only the
+*target* snapshot, clamped to the target's `saved_len`, directly from the whole
+replayed diff range. This is what lets `wf` drop `saved_len` monotonicity. The
+alternative, a **layered** lemma (reconstruct each `snapshots[k]` on
+`[0, saved_k)` by overlaying stratum k onto `snapshots[k+1]`), needs overlay to
+write *past the end* of an intermediate `snapshots[k+1]` when saved_lens are
+non-monotone (a snapshot-level regrow); the flat lemma never reconstructs
+intermediates, so that problem does not arise. This chapter is the per-cell
+argument behind it.
 
 ---
 
-## 0. Worked scenario (non-monotone saved_lens) — validates the recipe
+## 0. Worked scenario (non-monotone saved_lens)
 
 The recipe: **set length to `saved_target` (chop if longer, grow+pad with
-default if shorter), then replay `[diff_start_target, n)` backward — overwrite
+default if shorter), then replay `[diff_start_target, n)` backward: overwrite
 in-range, drop `idx ≥ saved_target`.** Traced on a non-monotone stack:
 
 ```
  push A,B,C,D ; mark→f0 (saved0=4, ds0=0)            snap0=[A,B,C,D]
  set(1,X)            log (B,1)                         view=[A,X,C,D]
- pop j=3             log (D,3); pop                     view=[A,X,C]
- pop j=2             log (C,2); pop                     view=[A,X]
+ pop j=3             log (D,3); pop                    view=[A,X,C]
+ pop j=2             log (C,2); pop                    view=[A,X]
  mark→f1 (saved1=2, ds1=3)   ← saved1(2) < saved0(4), NON-MONOTONE   snap1=[A,X]
  set(0,Y)            log (A,0)                          view=[Y,X]
  push Z                                                 view=[Y,X,Z]
@@ -41,7 +40,7 @@ in-range, drop `idx ≥ saved_target`.** Traced on a non-monotone stack:
 
 **Restore to f1** (saved1=2): chop view→`[Y,X]`; replay `[3,4)` backward:
 `(A,0)` overwrite → `[A,X]` == snap1 ✓. (Stratum-0 entries at pos0–2 are
-*outside* `[ds1,n)=[3,4)` — never applied; correct, since f1's value at col 0
+*outside* `[ds1,n)=[3,4)`, never applied; correct, since f1's value at col 0
 is A regardless.)
 
 **Restore to f0** (saved0=4): grow+pad view→`[Y,X,Z,d]`; replay `[0,4)`
@@ -53,7 +52,7 @@ backward:
  (B,1) idx1<4 overwrite → [A,B,C,D]   == snap0 ✓
 ```
 The padded default `d` (col 3) and transient `Z` (col 2) are both overwritten
-by stratum-0 diffs — **coverage** held. No snapshot-level regrow: we never
+by stratum-0 diffs; **coverage** held. No snapshot-level regrow: we never
 built snap1 to get snap0; we flatly replayed both strata onto the padded base,
 clamped to saved0. Lowest-position-in-range wins per cell.
 
@@ -68,10 +67,10 @@ range* wins" is exactly `lemma_overlay_lowest` (§3).
 ## 1. Why the layered lemma forces snapshot-level regrow (the thing we avoid)
 
 Layered induction reconstructs `snapshots[k]` by `overlay(snapshots[k+1],
-stratum_k)`. If `saved_k > saved_{k+1}` (legal once monotonicity is dropped —
+stratum_k)`. If `saved_k > saved_{k+1}` (legal once monotonicity is dropped,
 `mark` after a deep pop), then `snapshots[k]` has cells `[saved_{k+1},
 saved_k)` that lie *beyond* `snapshots[k+1]`. The overlay would have to *grow*
-`snapshots[k+1]` to write them — a push/regrow at the snapshot level, needing a
+`snapshots[k+1]` to write them, a push/regrow at the snapshot level, needing a
 3-way `overlay` and new lemmas. We want to avoid that.
 
 ## 2. The flat statement
@@ -94,15 +93,15 @@ lemma_snap_eq_overlay_flat(target):
 
 Key: `overlay` here is the **existing overwrite-only** one. Because
 `base.len() == saved_target` and every entry with `idx >= saved_target` is
-skipped (`idx >= prev.len()` since `prev.len() == saved_target` throughout —
+skipped (`idx >= prev.len()` since `prev.len() == saved_target` throughout,
 overwrite-only overlay preserves length), out-of-range entries vanish exactly
 as production's `restore_entry` drops them. No regrow branch.
 
 Actually the clean base to feed it is **`snapshots[target]` itself padded
-isn't needed** — see §4: we feed the *resized view* and show it equals
+isn't needed**; see §4: we feed the *resized view* and show it equals
 `snapshots[target]` cell-by-cell via the two cases.
 
-## 3. The winning entry: "lowest-position-wins" (NEW lemma needed)
+## 3. The winning entry: "lowest-position-wins"
 
 Across `[diff_start_target, n)` the same index `j` may appear in multiple
 strata (target's, target+1's, ...). Uniqueness holds only *within* a stratum,
@@ -127,16 +126,15 @@ Proof: induction on `hi - lo`. At the outermost step `lo`:
 - if `diffs[lo].1 != j` then `p > lo`; by IH `overlay(lo+1,hi)[j] ==
   diffs[p].0`, and the lo update (different index) doesn't disturb j. ✓
 
-This is strictly more general than `lemma_overlay_captured` and *replaces* it
-for the flat proof. (The old uniqueness-based one can stay for any remaining
-single-stratum callers, or be retired.)
+This is strictly more general than `lemma_overlay_captured` (which requires
+global uniqueness in the range) and is what the flat proof uses.
 
 ## 4. Connecting lowest-position-wins to `snapshots[target]`
 
 Claim: for `j < saved_target`, the lowest-position entry in
 `[diff_start_target, n)` hitting `j` (if any) holds `snapshots[target][j]`;
 if no entry hits `j`, then `view[j] == snapshots[target][j]` (uncaptured at the
-target level — base holds it).
+target level, base holds it).
 
 This is exactly the **target frame's own `frame_inv_range`**, lifted to the
 whole range:
@@ -155,8 +153,8 @@ whole range:
   `snapshots[target][j]`; and if none hits, `view[j] == snapshots[target][j]`.
 
 So the flat lemma's core is a **downward induction that establishes a single
-per-cell fact** — "lowest hitter in `[diff_start_target,n)` holds
-`snap_target[j]`, or none hits and `view[j] == snap_target[j]`" — rather than
+per-cell fact**, "lowest hitter in `[diff_start_target,n)` holds
+`snap_target[j]`, or none hits and `view[j] == snap_target[j]`", rather than
 reconstructing each intermediate snapshot as a full sequence. The induction
 carries a *scalar* per-cell equality, never a "this snapshot equals that
 sequence on its whole domain" obligation, so non-monotone saved_lens never
@@ -187,46 +185,22 @@ to the next frame and shrinks `[diff_start, n)` to `[diff_start_{k+1}, n)`).
 And separately, `lemma_overlay_lowest` (§3) connects `target_cell` to the
 actual `overlay` result on the resized base. Two clean pieces.
 
-## 5. What this buys / costs
+## 5. What this buys
 
 - **Drops `saved_len` monotonicity** cleanly: nowhere does the flat proof need
   `saved_k <= saved_{k+1}`. Coverage (uncaptured ⟹ `j < layer_above.len()`)
   does all the work and is already in `frame_cell_inv`.
-- **Keeps overwrite-only `overlay`**: no regrow branch, no `saved_len` param.
-- **New lemma**: `lemma_overlay_lowest` (§3) — ~25 lines, standalone.
-- **Reworked lemma**: the central one becomes the `target_cell` downward
-  induction (§4). Comparable size to the current layered one, arguably simpler
-  (scalar per-cell, not sequence-per-frame).
-- Restore (§3 of [03-pop](03-pop.md)) then: `resize_default(saved_target)` →
-  base of length `saved_target` agreeing with `snap_target` on uncaptured cells
-  → `lemma_overlay_lowest` + flat lemma → `view == snap_target`.
-
-## 6. Risk assessment
-
-- `lemma_overlay_lowest`: low risk, mirrors the existing
-  `lemma_overlay_captured` structure with a "lowest" side condition instead of
-  global uniqueness.
-- `target_cell` downward induction: medium risk — it's a reformulation, but the
-  per-cell scalar carry is *simpler* than the current sequence-level induction,
-  and every step is a direct `frame_inv_range` case application (we already have
-  `lemma_frame_inv_arm_at`). The trigger discipline (named `frame_cell_inv`) is
-  already in place.
-- Net: this is the right shape. Lower risk than a 3-way regrow `overlay`
-  (which would need 5 lemmas reproved) and it's what makes monotonicity-drop
-  clean.
-
-## 7. Decision
-
-If this sketch looks right, the build order is:
-1. `lemma_overlay_lowest` (standalone, verify).
-2. `target_cell` spec helper + flat central lemma (verify, still on the old
-   monotone wf — it doesn't *use* monotonicity, so it coexists).
-3. Switch `restore` to use the flat lemma (still monotone wf).
-4. THEN drop monotonicity + top-fullness from `wf_for_snap`; only the flat
-   lemma and coverage remain, so the drop is clean.
-5. `pop` into the marked region + `push` mark_captured.
-
-Each step green before the next.
+- **Keeps overwrite-only `overlay`**: no regrow branch, no `saved_len` param,
+  no 3-way regrow overlay (which would need five lemmas reproved).
+- The two pieces are `lemma_overlay_lowest` (§3, standalone) and the
+  `target_cell` downward induction (§4). The per-cell scalar carry is simpler
+  than a sequence-level induction: every step is a direct `frame_inv_range`
+  case application (via `lemma_frame_inv_arm_at`), under the named
+  `frame_cell_inv` trigger.
+- `restore` (see [04-pop](04-pop.md) §3) then composes them:
+  `resize_default(saved_target)` gives a base of length `saved_target` agreeing
+  with `snap_target` on uncaptured cells, and `lemma_overlay_lowest` + the flat
+  lemma give `view == snap_target`.
 
 ---
 [← Table of Contents](00-table-of-contents.md)
