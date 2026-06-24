@@ -220,3 +220,6 @@ egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
+
+// ── Matcher regression: two same-op AC atoms + rest-vars (completion off) ──
+egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");
