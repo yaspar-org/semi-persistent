@@ -120,6 +120,18 @@ where
         self.strategy = strategy;
     }
 
+    /// Enable/disable the AC congruence-completion pass (default off; see
+    /// `EGraph::set_ac_complete`).
+    pub fn set_ac_complete(&mut self, enabled: bool) {
+        self.eg.set_ac_complete(enabled);
+    }
+
+    /// Enable/disable the runtime reduced-basis invariant checks (default off; see
+    /// `EGraph::set_basis_checks`). Diagnostic only: superlinear brute-force checks.
+    pub fn set_basis_checks(&mut self, enabled: bool) {
+        self.eg.set_basis_checks(enabled);
+    }
+
     fn alloc_axiom_id(&mut self, lhs: Cfg::G, rhs: Cfg::G) -> crate::id::AxiomId {
         let name = format!("axiom_{}", self.eg.axioms().len());
         self.eg.register_axiom(&name, lhs, rhs)

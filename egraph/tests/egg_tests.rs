@@ -2,54 +2,89 @@
 // SPDX-License-Identifier: Apache-2.0
 //! File-based integration tests for the interpreter.
 //!
-//! Each `.egg` file in `tests/egg/` is run through the interpreter.
-//! The first line may contain a directive comment:
-//!   ;; EXPECT: ok              — program should succeed
-//!   ;; EXPECT: check-failed    — a (check ...) should fail
-//!   ;; EXPECT: parse-error     — parsing should fail
-//!   ;; EXPECT: error           — any runtime error
-//!   ;; EXPECT: panic           — should panic (overflow etc.)
-//!   ;; TYPES: machine          — type group (default: bignum)
+//! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
+//! carry directive comments. The three feature directives mirror the CLI verbs (use / derive
+//! / check), so a test file is self-contained, no env var needed:
+//!   ;; EXPECT: ok|check-failed|parse-error|error|panic   outcome (default: ok)
+//!   ;; TYPES: machine                                     type group (default: bignum)
+//!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
+//!   ;; DERIVE_AC_EQS: on                                  derive all AC consequences (default off)
+//!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
+//!                                                         invariants post-run (default off)
 //!
-//! If no EXPECT directive, defaults to "ok".
+//! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome
+//! (the historical default cross-check). DERIVE_AC_EQS renames the old AC_COMPLETE directive.
+//! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
+//! AC rule set is fully reduced (`ac_min` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
+//! have anything to check.
 
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
 use semi_persistent_egraph::saturate::SaturationStrategy;
 
-/// Every `.egg` test runs under both saturation strategies; semi-naive must
-/// reach the same outcome (EXPECT directive) as naive.
-const STRATEGIES: [SaturationStrategy; 2] =
-    [SaturationStrategy::Naive, SaturationStrategy::SemiNaive];
+/// Directives parsed from a `.egg` file's first six lines.
+struct Directives {
+    expect: String,
+    types: String,
+    /// The eval strategies to run under (one each for naive/semi, both for `both`).
+    evals: Vec<SaturationStrategy>,
+    derive_ac_eqs: bool,
+    check_ac_basis: bool,
+}
 
-fn run_egg_file(path: &str, strategy: SaturationStrategy) -> (String, Vec<String>) {
-    let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
-
-    let mut expect = "ok".to_string();
-    let mut types = "bignum".to_string();
-    for line in src.lines().take(5) {
+fn parse_directives(src: &str) -> Directives {
+    let mut d = Directives {
+        expect: "ok".to_string(),
+        types: "bignum".to_string(),
+        evals: vec![SaturationStrategy::Naive, SaturationStrategy::SemiNaive],
+        derive_ac_eqs: false,
+        check_ac_basis: false,
+    };
+    for line in src.lines().take(6) {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix(";; EXPECT:") {
-            expect = rest.trim().to_string();
+            d.expect = rest.trim().to_string();
         }
         if let Some(rest) = line.strip_prefix(";; TYPES:") {
-            types = rest.trim().to_string();
+            d.types = rest.trim().to_string();
+        }
+        if let Some(rest) = line.strip_prefix(";; EVAL:") {
+            d.evals = match rest.trim() {
+                "naive" => vec![SaturationStrategy::Naive],
+                "semi" | "semi-naive" => vec![SaturationStrategy::SemiNaive],
+                "both" => vec![SaturationStrategy::Naive, SaturationStrategy::SemiNaive],
+                other => panic!("unknown EVAL directive: {other} (expected naive|semi|both)"),
+            };
+        }
+        if let Some(rest) = line.strip_prefix(";; DERIVE_AC_EQS:") {
+            d.derive_ac_eqs = rest.trim() == "on";
+        }
+        if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
+            d.check_ac_basis = rest.trim() == "on";
         }
     }
+    d
+}
 
-    let groups: Vec<TypeGroup> = types
+fn run_egg_file(path: &str, strategy: SaturationStrategy, d: &Directives) -> (String, Vec<String>) {
+    let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+
+    let groups: Vec<TypeGroup> = d
+        .types
         .split(',')
         .map(|s| TypeGroup::parse(s.trim()).unwrap_or_else(|| panic!("unknown type group: {s}")))
         .collect();
     let choice = choose_litval(&groups);
 
     let result = match choice {
-        LitValChoice::Machine => run_with::<MachineLit, MachineModel>(&src, MachineModel, strategy),
-        LitValChoice::Bignum => run_with::<BignumLit, BignumModel>(&src, BignumModel, strategy),
-        LitValChoice::All => run_with::<AllLit, AllModel>(&src, AllModel, strategy),
+        LitValChoice::Machine => {
+            run_with::<MachineLit, MachineModel>(&src, MachineModel, strategy, d)
+        }
+        LitValChoice::Bignum => run_with::<BignumLit, BignumModel>(&src, BignumModel, strategy, d),
+        LitValChoice::All => run_with::<AllLit, AllModel>(&src, AllModel, strategy, d),
     };
 
-    (expect, result)
+    (d.expect.clone(), result)
 }
 
 fn run_with<
@@ -59,6 +94,7 @@ fn run_with<
     src: &str,
     model: M,
     strategy: SaturationStrategy,
+    d: &Directives,
 ) -> Vec<String> {
     let surface_cmds = match semi_persistent_egraph::parser::parse_program_v2(src) {
         Ok(c) => c,
@@ -67,6 +103,8 @@ fn run_with<
     let mut interp =
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
+    interp.set_ac_complete(d.derive_ac_eqs);
+    interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
         surface_cmds,
@@ -78,14 +116,38 @@ fn run_with<
         Err(e) => return vec![format!("sort-error: {e}")],
     };
     match interp.run_checked(&checked) {
-        Ok(()) => vec![format!("ok: {} nodes", interp.eg.len())],
+        Ok(()) => {
+            // CHECK_AC_BASIS: after a clean run, assert the active AC rule set is fully
+            // reduced (every used ac_min is the true minimum; no rule LHS reducible by the
+            // others). This turns the diagnostic checkers into a real test assertion.
+            if d.check_ac_basis {
+                let report = interp.eg.ac_basis_report();
+                let (nonmin, _) = interp.eg.ac_min_used_nonminimal();
+                let (lhs_red, _rhs_red) = interp.eg.ac_not_kapur_reduced();
+                assert_eq!(
+                    nonmin,
+                    0,
+                    "CHECK_AC_BASIS: {nonmin} rules use a non-minimal ac_min (active_rules={})",
+                    report.rules.len()
+                );
+                assert_eq!(
+                    lhs_red,
+                    0,
+                    "CHECK_AC_BASIS: {lhs_red} rules have a Kapur-reducible LHS (active_rules={})",
+                    report.rules.len()
+                );
+            }
+            vec![format!("ok: {} nodes", interp.eg.len())]
+        }
         Err(e) => vec![format!("error: {e}")],
     }
 }
 
 fn check(path: &str) {
-    for strategy in STRATEGIES {
-        let (expect, results) = run_egg_file(path, strategy);
+    let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
+    let directives = parse_directives(&src);
+    for strategy in directives.evals.iter().copied() {
+        let (expect, results) = run_egg_file(path, strategy, &directives);
         let output = results.join("\n");
         match expect.as_str() {
             "ok" => assert!(
@@ -111,8 +173,11 @@ fn check(path: &str) {
 
 fn check_panic(path: &str) {
     let src = std::fs::read_to_string(path).unwrap();
-    for strategy in STRATEGIES {
+    let directives = parse_directives(&src);
+    for strategy in directives.evals.iter().copied() {
         let src = src.clone();
+        let ac_complete = directives.derive_ac_eqs;
+        let basis_checks = directives.check_ac_basis;
         let result = std::panic::catch_unwind(move || {
             let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
             let mut interp = Interpreter::<
@@ -123,6 +188,8 @@ fn check_panic(path: &str) {
                 false,
             >::new(MachineModel);
             interp.set_strategy(strategy);
+            interp.set_ac_complete(ac_complete);
+            interp.set_basis_checks(basis_checks);
             let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
             let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
                 surface_cmds,
@@ -221,5 +288,15 @@ egg_test!(ac_mult_exact, "ac_mult_exact.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 
-// ── Matcher regression: two same-op AC atoms + rest-vars (completion off) ──
+// ── AC build-side flattening (WF_flat) ──
+egg_test!(ac_flatten_build, "ac_flatten_build.egg");
+
+// ── AC congruence completeness (superposition + inter-reduction) ──
+egg_test!(ac_complete_containment, "ac_complete_containment.egg");
+egg_test!(ac_complete_superposition, "ac_complete_superposition.egg");
+egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
+// Regression for the leapfrog_join target-clear bug: a rule with two same-op AC atoms +
+// rest-vars (the bound-node ByRepr re-join cleared a target bound upstream). Completion off.
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");
+// Same scenario under AC completion (which surfaced the bug by creating more add nodes).
+egg_test!(ac_complete_nested_match, "ac_complete_nested_match.egg");
