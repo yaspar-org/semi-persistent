@@ -141,6 +141,16 @@ would buy nothing for the SMT solver. A `u32` branch-id overflow at 4 G forks is
 bounded in `fork`'s precondition (`origins.len() + 1 <= u32::MAX`) rather than
 ghosted away, mirroring the `saved_len` treatment elsewhere.
 
+`origins` grows by one entry per `restore` and is never reclaimed, so
+`origins.len()` is the *lifetime* restore count and this `u32` ceiling is the
+binding mark/restore limit (~4.29e9, versus `depth`/`frame_index`, which fall
+back on restore and so only cap concurrent nesting). A verified caller proves
+the bound; for an unverified one, `restore` carries a runtime guard
+(`check_precondition`, [Ch. 2 §2.5](02-trust-boundary.md)) that traps rather
+than letting the `as u32` cast silently wrap. The headroom is queryable at
+runtime: `restores_remaining()` returns `u32::MAX - origins.len()` (saturating),
+so a caller can check before it runs out.
+
 **`depth` and `frame_index` stay separate, with no equating wf clause.** They
 are numerically equal at `mark` time but feed different axes of the contract:
 `frame_index` is the frame-stack slot the reconstruction mechanism rolls back
