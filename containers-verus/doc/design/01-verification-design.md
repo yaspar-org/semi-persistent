@@ -58,7 +58,7 @@ separation, and shape are proved as predicates over those ids
 
 The whole development carries no `admit`s or `assume`s; run `./verify-all.sh` for
 the per-module tally. ("No `admit`s/`assume`s" does not mean nothing is trusted:
-the trust boundary is 6 `external_body` items, enumerated and justified in
+the trust boundary is 7 `external_body` items, enumerated and justified in
 [Chapter 2](02-trust-boundary.md). Read it to know exactly what is guaranteed.)
 
 The rest of this document is the machinery: the layered architecture (§2), the
@@ -629,7 +629,7 @@ the B+tree, the one recursive case, is [Chapter 10](10-bplus-tree.md).
 
 Everything below is proved with no `admit`s or `assume`s, at arbitrary
 mark-nesting depth. Run `./verify-all.sh` for the live per-module count. For the
-dual, what is taken on trust (the 6 `external_body` items), see
+dual, what is taken on trust (the 7 `external_body` items), see
 [Chapter 2](02-trust-boundary.md).
 
 **The vector.** Reconstruction, diff-log faithfulness (coverage + uniqueness), the

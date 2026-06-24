@@ -118,7 +118,8 @@ Casts (`x as usize`, `n as u32`) are often *provable*, not inherently
 second declaration errors with "can only be set once per crate" (it lives in
 `bplus_layout.rs`; `index_like.rs` reuses it). Pair such casts with a
 `#[cfg(target_pointer_width = "64")]` gate so the host assumption is explicit. This
-is how the crate took its trust surface from 16 `external_body` items down to 6;
+is how the crate took its cast-related trust surface from 16 `external_body`
+items down to 6 (a later runtime-guard primitive brings the current total to 7);
 see [Trust Boundary §3](02-trust-boundary.md).
 
 ## 8. Process & commit hygiene that paid off
