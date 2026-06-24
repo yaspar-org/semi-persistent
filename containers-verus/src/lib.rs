@@ -72,6 +72,7 @@ pub mod dense_id;
 pub mod diff_store;
 pub mod fork_history;
 pub mod frame;
+pub mod guard;
 pub mod index_like;
 pub mod inline_store;
 pub mod list;
