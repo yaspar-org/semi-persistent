@@ -6,7 +6,7 @@ publish = false
 autobins = false
 
 [dependencies]
-vstd = "=0.0.0-2026-04-12-0118"
+vstd = "=0.0.0-2026-06-14-0213"
 
 [package.metadata.verus]
 verify = true
