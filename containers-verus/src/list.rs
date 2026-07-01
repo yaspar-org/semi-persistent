@@ -96,16 +96,21 @@ impl<T: core::default::Default> core::default::Default for ListNode<T> {
     }
 }
 
-/// Per-list header: head pointer and (when non-empty) tail node index.
+/// Per-list header: head pointer, (when non-empty) tail node index, and a cached
+/// element count. `len` mirrors the ghost model length (`wf`'s `cache_len` clause),
+/// so `ListArena::len` is O(1) and *verified* to return the true list length, not
+/// merely trusted. Maintained on `prepend`/`append` (+1) and `splice` (dst gains
+/// src's count, src resets to 0).
 #[derive(Copy, Clone)]
 pub struct ListHead {
     pub head: NodeRef,
     pub tail: usize,
+    pub len: usize,
 }
 
 impl core::default::Default for ListHead {
-    fn default() -> (r: ListHead) ensures r.head.is_null() {
-        ListHead { head: NodeRef { some: false, idx: 0 }, tail: 0 }
+    fn default() -> (r: ListHead) ensures r.head.is_null(), r.len == 0 {
+        ListHead { head: NodeRef { some: false, idx: 0 }, tail: 0, len: 0 }
     }
 }
 
@@ -184,6 +189,15 @@ where T: Sized + Copy + core::default::Default {
                 })
     }
 
+    /// Cached-length consistency: each header's `len` equals its model list length.
+    /// This is what makes the O(1) `len()` accessor return the true length.
+    pub open spec fn cache_len(&self) -> bool {
+        let model = self.model@;
+        let heads = self.heads_view();
+        forall|l: int| 0 <= l < model.len()
+            ==> (#[trigger] heads[l]).len == (#[trigger] model[l]).len()
+    }
+
     pub open spec fn wf(&self) -> bool {
         &&& self.heads.wf()
         &&& self.nodes.wf()
@@ -191,6 +205,107 @@ where T: Sized + Copy + core::default::Default {
         &&& self.model_in_range()
         &&& self.model_disjoint()
         &&& self.cache_ok()
+        &&& self.cache_len()
+    }
+
+    /// Every list is at most as long as the node arena: its model index sequence has
+    /// no duplicates (from `model_disjoint`), and each index lies in `[0, nodes.len())`
+    /// (from `model_in_range`), so by pigeonhole `model[l].len() <= nodes.len()`. This
+    /// bounds the cached `len` and makes the `+1` in `prepend`/`append` overflow-free
+    /// (callers already require `nodes.len() + 1 < usize::MAX`).
+    pub proof fn lemma_len_bounded(&self, l: int)
+        requires self.wf(), 0 <= l < self.model_view().len(),
+        ensures self.model_view()[l].len() <= self.nodes_view().len(),
+    {
+        let s = self.model@[l];
+        let n = self.nodes_view().len();
+        // Work over the int-cast index sequence so the range set is `Set<int>`.
+        let si = s.map(|_i: int, x: usize| x as int);
+        assert(si.len() == s.len());
+        // 1. si has no duplicates: a repeat would violate model_disjoint (same list,
+        //    two positions, same index).
+        assert(si.no_duplicates()) by {
+            assert forall|p1: int, p2: int|
+                0 <= p1 < si.len() && 0 <= p2 < si.len() && p1 != p2
+                implies si[p1] != si[p2] by {
+                // model_disjoint at (l,p1),(l,p2): equal index ⇒ p1 == p2.
+                assert(si[p1] == s[p1] as int);
+                assert(si[p2] == s[p2] as int);
+            }
+        }
+        // 2. no-dup seq ⇒ len == to_set().len().
+        si.unique_seq_to_set();
+        // 3. to_set() ⊆ set_int_range(0, n): every element is in-range.
+        let range = vstd::set_lib::set_int_range(0, n as int);
+        assert(si.to_set().subset_of(range)) by {
+            assert forall|x: int| si.to_set().contains(x) implies range.contains(x) by {
+                // x is some si[p] == s[p] as int, which model_in_range bounds to [0, n).
+                let p = choose|p: int| 0 <= p < si.len() && si[p] == x;
+                assert(0 <= p < si.len() && si[p] == x);
+                assert(self.model@[l][p] < n);  // model_in_range
+            }
+        }
+        // 4. cardinality: |to_set()| <= |range| == n.
+        vstd::set_lib::lemma_int_range(0, n as int);
+        vstd::set_lib::lemma_len_subset(si.to_set(), range);
+    }
+
+    /// Two distinct lists' combined length is at most the arena size: their
+    /// concatenated index sequence has no duplicates (each is internally
+    /// duplicate-free and they share no index, both from `model_disjoint`) and
+    /// every index is in `[0, nodes.len())`. Bounds `splice`'s `dst.len + src.len`.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(400)]
+    pub proof fn lemma_concat_len_bounded(&self, a: int, b: int)
+        requires
+            self.wf(),
+            0 <= a < self.model_view().len(),
+            0 <= b < self.model_view().len(),
+            a != b,
+        ensures
+            self.model_view()[a].len() + self.model_view()[b].len()
+                <= self.nodes_view().len(),
+    {
+        let sa = self.model@[a];
+        let sb = self.model@[b];
+        let cat = sa + sb;
+        let n = self.nodes_view().len();
+        let ci = cat.map(|_i: int, x: usize| x as int);
+        assert(ci.len() == cat.len());
+        assert(cat.len() == sa.len() + sb.len());
+        // no duplicates in the concatenation: within-a, within-b (both from
+        // model_disjoint at a single list), and across a/b (disjoint lists).
+        assert(ci.no_duplicates()) by {
+            assert forall|p1: int, p2: int|
+                0 <= p1 < ci.len() && 0 <= p2 < ci.len() && p1 != p2
+                implies ci[p1] != ci[p2] by {
+                // map each position back to (list, pos) in a or b, then disjointness.
+                let l1 = if p1 < sa.len() { a } else { b };
+                let q1 = if p1 < sa.len() { p1 } else { p1 - sa.len() };
+                let l2 = if p2 < sa.len() { a } else { b };
+                let q2 = if p2 < sa.len() { p2 } else { p2 - sa.len() };
+                assert(cat[p1] == self.model@[l1][q1]);
+                assert(cat[p2] == self.model@[l2][q2]);
+                // model_disjoint: equal index ⇒ (l1,q1) == (l2,q2); but (p1)!=(p2)
+                // maps to distinct (l,q), so the indices differ.
+                assert(ci[p1] == cat[p1] as int);
+                assert(ci[p2] == cat[p2] as int);
+            }
+        }
+        ci.unique_seq_to_set();
+        let range = vstd::set_lib::set_int_range(0, n as int);
+        assert(ci.to_set().subset_of(range)) by {
+            assert forall|x: int| ci.to_set().contains(x) implies range.contains(x) by {
+                let p = choose|p: int| 0 <= p < ci.len() && ci[p] == x;
+                assert(0 <= p < ci.len() && ci[p] == x);
+                let lp = if p < sa.len() { a } else { b };
+                let qp = if p < sa.len() { p } else { p - sa.len() };
+                assert(cat[p] == self.model@[lp][qp]);
+                assert(self.model@[lp][qp] < n);  // model_in_range
+            }
+        }
+        vstd::set_lib::lemma_int_range(0, n as int);
+        vstd::set_lib::lemma_len_subset(ci.to_set(), range);
     }
 
     /// The abstract content of list `l`: payloads read off the model, in order.
@@ -261,6 +376,9 @@ where T: Sized + Copy + core::default::Default {
             forall|m: int| 0 <= m < self.model_view().len() && m != l as int
                 ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
     {
+        // Bound the old list length (<= arena size < usize::MAX) BEFORE mutating, so
+        // the `h.len + 1` below cannot overflow. Old cache_len ties h.len to it.
+        proof { self.lemma_len_bounded(l as int); }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
         let old_head = self.heads.get(l).head;
@@ -277,6 +395,9 @@ where T: Sized + Copy + core::default::Default {
         if was_empty {
             h.tail = slot;
         }
+        // h.len == old model[l].len() (old cache_len) <= old_nodes.len() < usize::MAX.
+        assert(h.len == old_model[l as int].len());
+        h.len = h.len + 1;
         self.heads.set(l, h);
 
         proof {
@@ -402,6 +523,17 @@ where T: Sized + Copy + core::default::Default {
                     }
                 }
             }
+
+            // --- cache_len: heads[l].len grew by 1 with model[l]; others unchanged.
+            assert forall|l2: int| 0 <= l2 < model.len() implies
+                (#[trigger] heads[l2]).len == (#[trigger] model[l2]).len() by {
+                if l2 == l as int {
+                    assert(model[l as int].len() == old_model[l as int].len() + 1);
+                } else {
+                    assert(heads[l2] == old(self).heads_view()[l2]);
+                    assert(model[l2] == old_model[l2]);
+                }
+            }
         }
     }
 
@@ -422,6 +554,8 @@ where T: Sized + Copy + core::default::Default {
             forall|m: int| 0 <= m < self.model_view().len() && m != l as int
                 ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
     {
+        // Bound the old list length before mutating so `h.len + 1` cannot overflow.
+        proof { self.lemma_len_bounded(l as int); }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
         let h0 = self.heads.get(l);
@@ -446,6 +580,9 @@ where T: Sized + Copy + core::default::Default {
             h.head = NodeRef::to(slot);
         }
         h.tail = slot;
+        // h.len == old model[l].len() (old cache_len) <= old_nodes.len() < usize::MAX.
+        assert(h.len == old_model[l as int].len());
+        h.len = h.len + 1;
         self.heads.set(l, h);
 
         proof {
@@ -574,7 +711,32 @@ where T: Sized + Copy + core::default::Default {
                     }
                 }
             }
+
+            // --- cache_len: heads[l].len grew by 1 with model[l]; others unchanged.
+            assert forall|l2: int| 0 <= l2 < model.len() implies
+                (#[trigger] heads[l2]).len == (#[trigger] model[l2]).len() by {
+                if l2 == l as int {
+                    assert(model[l as int].len() == old_model[l as int].len() + 1);
+                } else {
+                    assert(heads[l2] == old(self).heads_view()[l2]);
+                    assert(model[l2] == old_model[l2]);
+                }
+            }
         }
+    }
+
+    /// Number of elements in list `l`, O(1) from the cached header count. Verified
+    /// (via `wf`'s `cache_len`) to equal the abstract list length.
+    pub fn len(&self, l: usize) -> (n: usize)
+        requires self.wf(), (l as int) < self.model_view().len(),
+        ensures n as int == self.list_seq(l as int).len(),
+    {
+        proof {
+            // header len == model len (cache_len); list_seq len == model len (by def).
+            assert(self.heads_view()[l as int].len == self.model@[l as int].len());
+            assert(self.list_seq(l as int).len() == self.model@[l as int].len());
+        }
+        self.heads.get(l).len
     }
 
     /// Is list `l` empty?
@@ -619,12 +781,19 @@ where T: Sized + Copy + core::default::Default {
                 && m != dst as int && m != src as int
                 ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
     {
+        // Bound dst.len + src.len (disjoint lists) before mutating, so the sum below
+        // cannot overflow. Old cache_len ties each header len to its model length.
+        proof { self.lemma_concat_len_bounded(dst as int, src as int); }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
         let hd = self.heads.get(dst);
         let hs = self.heads.get(src);
         let dst_empty = hd.head.is_null_exec();
         let src_empty = hs.head.is_null_exec();
+        // hd.len == |old dst|, hs.len == |old src| (old cache_len); sum <= nodes.len().
+        assert(hd.len == old_model[dst as int].len());
+        assert(hs.len == old_model[src as int].len());
+        let new_dst_len = hd.len + hs.len;
 
         if !src_empty {
             if dst_empty {
@@ -632,6 +801,7 @@ where T: Sized + Copy + core::default::Default {
                 let mut h = self.heads.get(dst);
                 h.head = hs.head;
                 h.tail = hs.tail;
+                h.len = new_dst_len;
                 self.heads.set(dst, h);
             } else {
                 // link dst's tail node forward to src's head.
@@ -641,10 +811,11 @@ where T: Sized + Copy + core::default::Default {
                 self.nodes.set(dtail, tnode);
                 let mut h = self.heads.get(dst);
                 h.tail = hs.tail;
+                h.len = new_dst_len;
                 self.heads.set(dst, h);
             }
         }
-        // clear src.
+        // clear src (len resets to 0 via default).
         self.heads.set(src, ListHead::default());
 
         // model: dst := dst ++ src; src := [].
@@ -768,6 +939,25 @@ where T: Sized + Copy + core::default::Default {
                     }
                 }
             }
+
+            // --- cache_len: dst.len := |old dst| + |old src| == |new dst model|;
+            // src.len := 0 == |empty|; all other headers and model lengths unchanged.
+            assert forall|l2: int| 0 <= l2 < model.len() implies
+                (#[trigger] heads[l2]).len == (#[trigger] model[l2]).len() by {
+                if l2 == dst as int {
+                    assert(model[dst as int].len()
+                        == old_model[dst as int].len() + old_model[src as int].len());
+                    // heads[dst].len was set to hd.len + hs.len (both non-empty), or
+                    // left unchanged when src_empty (then hs.len == 0 and dst model
+                    // is unchanged) — either way equals the new model length.
+                } else if l2 == src as int {
+                    assert(model[src as int].len() == 0);
+                    assert(heads[src as int].len == 0);  // ListHead::default()
+                } else {
+                    assert(heads[l2] == old(self).heads_view()[l2]);
+                    assert(model[l2] == old_model[l2]);
+                }
+            }
         }
     }
 
@@ -854,6 +1044,8 @@ pub open spec fn arena_model_wf<T>(
                 if p == model[l].len() - 1 { nx.is_null() }
                 else { !nx.is_null() && nx.target() == model[l][p + 1] }
             })
+    &&& (forall|l: int| 0 <= l < model.len()
+            ==> (#[trigger] heads[l]).len == (#[trigger] model[l]).len())
 }
 
 /// Source position of `model[lx][px]` after `splice(dst, src)` (model =
