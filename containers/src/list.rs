@@ -72,12 +72,19 @@ impl<T: Tagged, N: DenseId> Tagged for ListNode<T, N> {
     }
 }
 
-/// Head/tail pointers. Head is `Opt<N>` (tag = None). Tail is raw `N`
-/// (tag = VecI capture). Tail is only read when head is Some.
+/// Head/tail pointers plus a cached element count. Head is `Opt<N>` (tag = None).
+/// Tail is raw `N` (tag = VecI capture). Tail is only read when head is Some.
+///
+/// `len` is the number of nodes in the list, maintained incrementally on
+/// `prepend`/`append` (+1) and `splice` (dst gains src's count, src resets to 0),
+/// so `ListArena::len` is O(1) without traversing. It rolls back with the rest of
+/// the header: the whole `ListHead` is captured as one `Tagged` value on every
+/// `set`, so semi-persistent restore reverts `len` together with the pointers.
 #[derive(Clone, Copy)]
 struct ListHead<N: DenseId> {
     head_repr: <N as Tagged>::Repr,
     tail_repr: <N as Tagged>::Repr,
+    len: u32,
 }
 
 impl<N: DenseId> Default for ListHead<N> {
@@ -91,6 +98,7 @@ impl<N: DenseId> ListHead<N> {
         Self {
             head_repr: Opt::<N>::none().into_raw(),
             tail_repr: N::default().into_repr(),
+            len: 0,
         }
     }
 
@@ -104,16 +112,18 @@ impl<N: DenseId> ListHead<N> {
 }
 
 /// Tagged delegates to tail_repr (first in Repr tuple). VecI steals that bit.
+/// `len` rides along as a plain `Copy` field; it carries no tag.
 impl<N: DenseId> Tagged for ListHead<N> {
-    type Repr = (<N as Tagged>::Repr, <N as Tagged>::Repr);
+    type Repr = (<N as Tagged>::Repr, <N as Tagged>::Repr, u32);
 
     fn into_repr(self) -> Self::Repr {
-        (self.tail_repr, self.head_repr)
+        (self.tail_repr, self.head_repr, self.len)
     }
     fn from_repr(r: &Self::Repr) -> Self {
         Self {
             tail_repr: r.0,
             head_repr: r.1,
+            len: r.2,
         }
     }
     fn tag(r: &Self::Repr) -> bool {
@@ -173,6 +183,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         if was_empty {
             h.tail_repr = slot.into_repr();
         }
+        h.len += 1;
         self.heads.set(list.into(), h);
     }
 
@@ -190,6 +201,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
             self.nodes.set(old_tail.into(), tail_node);
         }
         h.tail_repr = slot.into_repr();
+        h.len += 1;
         self.heads.set(list.into(), h);
     }
 
@@ -212,6 +224,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
             self.nodes.set(dst_tail.into(), tail_node);
             dst_h.tail_repr = src_h.tail_repr;
         }
+        dst_h.len += src_h.len;
         self.heads.set(dst.into(), dst_h);
         // Clear src to empty
         self.heads.set(src.into(), ListHead::empty());
@@ -220,6 +233,11 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
     /// Is the list empty?
     pub fn is_empty(&self, list: L) -> bool {
         self.heads.get(list.into()).is_empty()
+    }
+
+    /// Number of elements in the list, O(1) (read from the cached header count).
+    pub fn len(&self, list: L) -> u32 {
+        self.heads.get(list.into()).len
     }
 
     /// Iterate payloads in list order.
@@ -365,6 +383,61 @@ mod tests {
         a.prepend(l2, TestNodeId::new(2));
         assert_eq!(collect(&a, l1), vec![1]);
         assert_eq!(collect(&a, l2), vec![2]);
+    }
+
+    #[test]
+    fn len_tracks_prepend_append_splice() {
+        let mut a = Arena::new();
+        let l = a.new_list();
+        assert_eq!(a.len(l), 0);
+        a.prepend(l, TestNodeId::new(1));
+        a.append(l, TestNodeId::new(2));
+        a.prepend(l, TestNodeId::new(3));
+        assert_eq!(a.len(l), 3);
+        // len matches the actual traversal count.
+        assert_eq!(a.len(l) as usize, a.iter(l).count());
+
+        let src = a.new_list();
+        a.append(src, TestNodeId::new(10));
+        a.append(src, TestNodeId::new(20));
+        assert_eq!(a.len(src), 2);
+        a.splice(l, src);
+        // dst gains src's count; src resets to 0.
+        assert_eq!(a.len(l), 5);
+        assert_eq!(a.len(src), 0);
+        assert_eq!(a.len(l) as usize, a.iter(l).count());
+    }
+
+    #[test]
+    fn len_rolls_back_on_restore() {
+        let mut a = ArenaT::new();
+        let l = a.new_list();
+        a.prepend(l, TestNodeId::new(1));
+        let token = a.mark(ShrinkPolicy::Never);
+        a.append(l, TestNodeId::new(2));
+        a.append(l, TestNodeId::new(3));
+        assert_eq!(a.len(l), 3);
+        a.restore(token);
+        // The cached count reverts with the header.
+        assert_eq!(a.len(l), 1);
+        assert_eq!(a.len(l) as usize, a.iter(l).count());
+    }
+
+    #[test]
+    fn len_rolls_back_on_splice_restore() {
+        let mut a = ArenaT::new();
+        let l1 = a.new_list();
+        let l2 = a.new_list();
+        a.prepend(l1, TestNodeId::new(1));
+        a.prepend(l2, TestNodeId::new(2));
+        let token = a.mark(ShrinkPolicy::Never);
+        a.splice(l1, l2);
+        assert_eq!(a.len(l1), 2);
+        assert_eq!(a.len(l2), 0);
+        a.restore(token);
+        // Both counts revert: l1 back to 1, l2 back to 1.
+        assert_eq!(a.len(l1), 1);
+        assert_eq!(a.len(l2), 1);
     }
 
     #[test]

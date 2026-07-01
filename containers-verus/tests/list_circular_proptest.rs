@@ -95,10 +95,17 @@ fn list_arena_prepend_append_match_oracle() {
                 oracle[probe],
                 "seed={seed}: list {probe} contents"
             );
+            // O(1) cached len agrees with the oracle length.
+            assert_eq!(
+                a.len(probe),
+                oracle[probe].len(),
+                "seed={seed}: len({probe})"
+            );
         }
         // full sweep.
         for (l, expected) in oracle.iter().enumerate() {
             assert_eq!(read_list(&a, l), *expected, "seed={seed}: final list {l}");
+            assert_eq!(a.len(l), expected.len(), "seed={seed}: final len {l}");
         }
         println!("list_arena prepend/append seed={seed}: OK ({nlists} lists)");
     }
@@ -149,6 +156,11 @@ fn list_arena_splice_match_oracle() {
                     read_list(&a, l),
                     *expected,
                     "seed={seed}: list {l} after splice"
+                );
+                assert_eq!(
+                    a.len(l),
+                    expected.len(),
+                    "seed={seed}: len {l} after splice"
                 );
             }
         }
