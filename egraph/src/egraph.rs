@@ -245,6 +245,10 @@ where
     pub fn register_set(&mut self, name: &str, arg: Cfg::S, ret: Cfg::S) -> Cfg::O {
         self.ops.register_set(name, arg, ret)
     }
+    /// Register an op from a fully-resolved `OpKind` (the property-tag resolver in `sortcheck`).
+    pub fn register_kind(&mut self, name: &str, ret: Cfg::S, kind: OpKind<Cfg::S>) -> Cfg::O {
+        self.ops.register_kind(name, ret, kind)
+    }
     pub fn register_lit(&mut self, name: &str, ret: Cfg::S) -> Cfg::O {
         self.ops.register_lit(name, ret)
     }

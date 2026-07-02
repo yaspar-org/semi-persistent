@@ -1,0 +1,4 @@
+;; EXPECT: sort-error
+;; :idempotent and :nilpotent are mutually exclusive.
+(sort E)
+(function bad (E) E :assoc :comm :idempotent :nilpotent)

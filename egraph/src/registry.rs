@@ -322,6 +322,14 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         self.insert(name, return_sort, OpKind::Lit)
     }
 
+    /// Register an op from a fully-resolved `OpKind`. Used by the property-tag resolver
+    /// (`sortcheck`), which builds the `MSet`/`Set` descriptor (clamp/identity/cancellative)
+    /// from the parsed tag set. The plain `register_mset`/`register_set` are the default-filled
+    /// special cases of this.
+    pub fn register_kind(&mut self, name: &str, return_sort: S, kind: OpKind<S>) -> O {
+        self.insert(name, return_sort, kind)
+    }
+
     pub fn info(&self, id: O) -> &OpInfo<S> {
         self.map.get(id.to_usize())
     }

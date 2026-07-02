@@ -5,7 +5,7 @@
 //! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
 //! carry directive comments. The three feature directives mirror the CLI verbs (use / derive
 //! / check), so a test file is self-contained, no env var needed:
-//!   ;; EXPECT: ok|check-failed|parse-error|error|panic   outcome (default: ok)
+//!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic   outcome (default: ok)
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
 //!   ;; DERIVE_AC_EQS: on                                  derive all AC consequences (default off)
@@ -166,6 +166,10 @@ fn check(path: &str) {
                 output.starts_with("error"),
                 "{path} [{strategy:?}]: expected error, got: {output}"
             ),
+            "sort-error" => assert!(
+                output.starts_with("sort-error"),
+                "{path} [{strategy:?}]: expected sort-error, got: {output}"
+            ),
             other => panic!("{path}: unknown EXPECT directive: {other}"),
         }
     }
@@ -300,3 +304,14 @@ egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");
 // Same scenario under AC completion (which surfaced the bug by creating more add nodes).
 egg_test!(ac_complete_nested_match, "ac_complete_nested_match.egg");
+// Composable property tags (multi-AC/ACI plan Facet A): `:assoc :comm` reproduces the
+// `:assoc-comm` alias behavior, and invalid tag combinations are rejected at registration.
+egg_test!(alg_tags_composable_ac, "alg_tags_composable_ac.egg");
+egg_test!(
+    alg_tags_reject_idem_nilpotent,
+    "alg_tags_reject_idem_nilpotent.egg"
+);
+egg_test!(
+    alg_tags_reject_idem_needs_ac,
+    "alg_tags_reject_idem_needs_ac.egg"
+);
