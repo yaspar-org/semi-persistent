@@ -63,9 +63,9 @@ pub struct NodeStore<
     pub plain1: FixedArityCache<G, O, I::L1, 1, TRACK, PROOFS>,
     pub plain2: FixedArityCache<G, O, I::L2, 2, TRACK, PROOFS>,
     pub plain3: FixedArityCache<G, O, I::L3, 3, TRACK, PROOFS>,
-    pub c: FixedArityCache<G, O, I::LC, 2, TRACK, PROOFS>,
+    pub spair: FixedArityCache<G, O, I::LSPair, 2, TRACK, PROOFS>,
     pub plain_n: VariableArityCache<G, O, G, I::LN, TRACK, PROOFS>,
-    pub a: VariableArityCache<G, O, G, I::LA, TRACK, PROOFS>,
+    pub seq: VariableArityCache<G, O, G, I::LSeq, TRACK, PROOFS>,
     pub mset: VariableArityCache<G, O, C, I::LMSet, TRACK, PROOFS>,
     pub set: VariableArityCache<G, O, G, I::LSet, TRACK, PROOFS>,
     pub lit: LitCache<G, O, V, I::LLit, TRACK>,
@@ -100,9 +100,9 @@ where
             plain1: FixedArityCache::new(),
             plain2: FixedArityCache::new(),
             plain3: FixedArityCache::new(),
-            c: FixedArityCache::new(),
+            spair: FixedArityCache::new(),
             plain_n: VariableArityCache::new(),
-            a: VariableArityCache::new(),
+            seq: VariableArityCache::new(),
             mset: VariableArityCache::new(),
             set: VariableArityCache::new(),
             lit: LitCache::new(),
@@ -215,13 +215,13 @@ where
 
     pub fn add_c(&mut self, op: O, children: [G; 2]) -> Added<G> {
         let fresh = self.routing.reserve();
-        match self.c.probe_or_insert(fresh, op, children) {
+        match self.spair.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
                 self.routing.unreserve();
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
-                self.routing.finalize(fresh, NodeRef::C(local_id));
+                self.routing.finalize(fresh, NodeRef::SPair(local_id));
                 Added::Fresh(fresh)
             }
         }
@@ -243,13 +243,13 @@ where
 
     pub fn add_a(&mut self, op: O, children: &[G]) -> Added<G> {
         let fresh = self.routing.reserve();
-        match self.a.probe_or_insert(fresh, op, children) {
+        match self.seq.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
                 self.routing.unreserve();
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
-                self.routing.finalize(fresh, NodeRef::A(local_id));
+                self.routing.finalize(fresh, NodeRef::Seq(local_id));
                 Added::Fresh(fresh)
             }
         }
@@ -330,8 +330,8 @@ where
             NodeRef::Plain3(l) => self
                 .plain3
                 .recanonize_node::<PlainCanon>(l, &find, collisions, touched),
-            NodeRef::C(l) => self
-                .c
+            NodeRef::SPair(l) => self
+                .spair
                 .recanonize_node::<CCanon>(l, &find, collisions, touched),
             NodeRef::PlainN(l) => self.plain_n.recanonize_node::<OrderedCanon>(
                 l,
@@ -341,7 +341,7 @@ where
                 touched,
                 MSetClamp::None,
             ),
-            NodeRef::A(l) => self.a.recanonize_node::<OrderedCanon>(
+            NodeRef::Seq(l) => self.seq.recanonize_node::<OrderedCanon>(
                 l,
                 &find,
                 g_buf,
@@ -408,8 +408,8 @@ where
                     false
                 }
             }
-            NodeRef::C(_) => {
-                if let Some(c) = self.c.original_children(id) {
+            NodeRef::SPair(_) => {
+                if let Some(c) = self.spair.original_children(id) {
                     g_out.extend_from_slice(&c);
                     true
                 } else {
@@ -417,7 +417,7 @@ where
                 }
             }
             NodeRef::PlainN(_) => self.plain_n.original_children(id, g_out),
-            NodeRef::A(_) => self.a.original_children(id, g_out),
+            NodeRef::Seq(_) => self.seq.original_children(id, g_out),
             NodeRef::MSet(_) => self.mset.original_children(id, mset_out),
             NodeRef::Set(_) => self.set.original_children(id, g_out),
         }
@@ -434,9 +434,9 @@ where
             plain1: self.plain1.mark(shrink),
             plain2: self.plain2.mark(shrink),
             plain3: self.plain3.mark(shrink),
-            c: self.c.mark(shrink),
+            spair: self.spair.mark(shrink),
             plain_n: self.plain_n.mark(shrink),
-            a: self.a.mark(shrink),
+            seq: self.seq.mark(shrink),
             mset: self.mset.mark(shrink),
             set: self.set.mark(shrink),
             lit: self.lit.mark(shrink),
@@ -449,9 +449,9 @@ where
         self.plain1.restore(token.plain1);
         self.plain2.restore(token.plain2);
         self.plain3.restore(token.plain3);
-        self.c.restore(token.c);
+        self.spair.restore(token.spair);
         self.plain_n.restore(token.plain_n);
-        self.a.restore(token.a);
+        self.seq.restore(token.seq);
         self.mset.restore(token.mset);
         self.set.restore(token.set);
         self.lit.restore(token.lit);
@@ -465,9 +465,9 @@ pub struct NodeStoreToken {
     plain1: CacheToken,
     plain2: CacheToken,
     plain3: CacheToken,
-    c: CacheToken,
+    spair: CacheToken,
     plain_n: PoolCacheToken,
-    a: PoolCacheToken,
+    seq: PoolCacheToken,
     mset: PoolCacheToken,
     set: PoolCacheToken,
     lit: CacheToken,
@@ -486,9 +486,9 @@ mod tests {
         type L1 = Plain1Id;
         type L2 = Plain2Id;
         type L3 = Plain3Id;
-        type LC = CNodeId;
+        type LSPair = SPairNodeId;
         type LN = PlainNId;
-        type LA = ANodeId;
+        type LSeq = SeqNodeId;
         type LMSet = MSetNodeId;
         type LSet = SetNodeId;
         type LLit = LitNodeId;

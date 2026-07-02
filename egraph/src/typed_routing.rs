@@ -14,9 +14,9 @@ pub trait NodeIds {
     type L1: DenseId;
     type L2: DenseId;
     type L3: DenseId;
-    type LC: DenseId;
+    type LSPair: DenseId;
     type LN: DenseId;
-    type LA: DenseId;
+    type LSeq: DenseId;
     type LMSet: DenseId;
     type LSet: DenseId;
     type LLit: DenseId;
@@ -28,9 +28,9 @@ pub enum NodeRef<I: NodeIds> {
     Plain1(I::L1),
     Plain2(I::L2),
     Plain3(I::L3),
-    C(I::LC),
+    SPair(I::LSPair),
     PlainN(I::LN),
-    A(I::LA),
+    Seq(I::LSeq),
     MSet(I::LMSet),
     Set(I::LSet),
     Lit(I::LLit),
@@ -51,9 +51,9 @@ impl<I: NodeIds> PartialEq for NodeRef<I> {
             (Self::Plain1(a), Self::Plain1(b)) => a == b,
             (Self::Plain2(a), Self::Plain2(b)) => a == b,
             (Self::Plain3(a), Self::Plain3(b)) => a == b,
-            (Self::C(a), Self::C(b)) => a == b,
+            (Self::SPair(a), Self::SPair(b)) => a == b,
             (Self::PlainN(a), Self::PlainN(b)) => a == b,
-            (Self::A(a), Self::A(b)) => a == b,
+            (Self::Seq(a), Self::Seq(b)) => a == b,
             (Self::MSet(a), Self::MSet(b)) => a == b,
             (Self::Set(a), Self::Set(b)) => a == b,
             (Self::Lit(a), Self::Lit(b)) => a == b,
@@ -70,9 +70,9 @@ impl<I: NodeIds> core::fmt::Debug for NodeRef<I> {
             Self::Plain1(id) => write!(f, "Plain1({:?})", id),
             Self::Plain2(id) => write!(f, "Plain2({:?})", id),
             Self::Plain3(id) => write!(f, "Plain3({:?})", id),
-            Self::C(id) => write!(f, "C({:?})", id),
+            Self::SPair(id) => write!(f, "SPair({:?})", id),
             Self::PlainN(id) => write!(f, "PlainN({:?})", id),
-            Self::A(id) => write!(f, "A({:?})", id),
+            Self::Seq(id) => write!(f, "Seq({:?})", id),
             Self::MSet(id) => write!(f, "MSet({:?})", id),
             Self::Set(id) => write!(f, "Set({:?})", id),
             Self::Lit(id) => write!(f, "Lit({:?})", id),
@@ -165,9 +165,9 @@ mod tests {
         type L1 = Plain1Id;
         type L2 = Plain2Id;
         type L3 = Plain3Id;
-        type LC = CNodeId;
+        type LSPair = SPairNodeId;
         type LN = PlainNId;
-        type LA = ANodeId;
+        type LSeq = SeqNodeId;
         type LMSet = MSetNodeId;
         type LSet = SetNodeId;
         type LLit = LitNodeId;
@@ -204,7 +204,7 @@ mod tests {
         let id0 = rt.reserve();
         rt.finalize(id0, NodeRef::Plain1(Plain1Id::new(0)));
         let id1 = rt.reserve();
-        rt.finalize(id1, NodeRef::C(CNodeId::new(0)));
+        rt.finalize(id1, NodeRef::SPair(SPairNodeId::new(0)));
         rt.truncate(1);
         assert_eq!(rt.len(), 1);
         assert_eq!(rt.get(id0), NodeRef::Plain1(Plain1Id::new(0)));

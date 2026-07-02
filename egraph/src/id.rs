@@ -44,9 +44,9 @@ pub enum ENodeKind {
     /// N-ary ordered (N > 3, children in pool).
     PlainN = 4,
     /// Commutative sorted pair (2 inline children).
-    C = 5,
+    SPair = 5,
     /// Associative flattened list (variadic, pool).
-    A = 6,
+    Seq = 6,
     /// Associative-commutative sorted multiset (variadic, pool). Multiset child
     /// representation `(G, mult)`; the AC algebra in Kapur's AC-CC terms. Stores plain AC
     /// (`Clamp::None`) AND nilpotent (`Clamp::Nilpotent`) ops — nilpotent keeps true

@@ -136,7 +136,7 @@ where
             if is_variadic > 3
                 || matches!(
                     eg.node_ref(gid),
-                    crate::typed_routing::NodeRef::A(_)
+                    crate::typed_routing::NodeRef::Seq(_)
                         | crate::typed_routing::NodeRef::MSet(_)
                         | crate::typed_routing::NodeRef::Set(_)
                         | crate::typed_routing::NodeRef::PlainN(_)

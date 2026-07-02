@@ -746,7 +746,7 @@ mod tests {
     use crate::id::{ENodeId, OpId};
     use crate::multiplicity::Multiplicity;
     use crate::nodes::{
-        CNodeId, LitNodeId, LitValId, MSetNodeId, Plain0Id, Plain2Id, PlainNId, SetNodeId,
+        LitNodeId, LitValId, MSetNodeId, Plain0Id, Plain2Id, PlainNId, SPairNodeId, SetNodeId,
     };
 
     #[test]
@@ -852,13 +852,13 @@ mod tests {
 
     #[test]
     fn recanonize_c_sorts_pair() {
-        let mut c = FixedArityCache::<ENodeId, OpId, CNodeId, 2, false>::new();
+        let mut c = FixedArityCache::<ENodeId, OpId, SPairNodeId, 2, false>::new();
         let op = OpId::new(0);
         c.probe_or_insert(id(10), op, [id(1), id(5)]); // sorted: [1, 5]
         let mut collisions = Vec::new();
         // find: 1 → 9, so children become [9, 5], CCanon sorts to [5, 9]
         c.recanonize_node::<CCanon>(
-            CNodeId::new(0),
+            SPairNodeId::new(0),
             |g| {
                 if g == id(1) { id(9) } else { g }
             },

@@ -807,7 +807,7 @@ where
                         | NodeRef::Plain2(_)
                         | NodeRef::Plain3(_)
                         | NodeRef::PlainN(_)
-                        | NodeRef::A(_)
+                        | NodeRef::Seq(_)
                 );
 
                 if is_ordered {
@@ -1660,9 +1660,9 @@ where
             NodeRef::Plain1(l) => self.nodes.plain1.get(l).op(),
             NodeRef::Plain2(l) => self.nodes.plain2.get(l).op(),
             NodeRef::Plain3(l) => self.nodes.plain3.get(l).op(),
-            NodeRef::C(l) => self.nodes.c.get(l).op(),
+            NodeRef::SPair(l) => self.nodes.spair.get(l).op(),
             NodeRef::PlainN(l) => self.nodes.plain_n.get(l).op(),
-            NodeRef::A(l) => self.nodes.a.get(l).op(),
+            NodeRef::Seq(l) => self.nodes.seq.get(l).op(),
             NodeRef::MSet(l) => self.nodes.mset.get(l).op(),
             NodeRef::Set(l) => self.nodes.set.get(l).op(),
             NodeRef::Lit(l) => self.nodes.lit.get(l).op(),
@@ -1703,9 +1703,9 @@ where
             NodeRef::Plain1(l) => self.nodes.plain1.get(l).flags,
             NodeRef::Plain2(l) => self.nodes.plain2.get(l).flags,
             NodeRef::Plain3(l) => self.nodes.plain3.get(l).flags,
-            NodeRef::C(l) => self.nodes.c.get(l).flags,
+            NodeRef::SPair(l) => self.nodes.spair.get(l).flags,
             NodeRef::PlainN(l) => self.nodes.plain_n.get(l).flags,
-            NodeRef::A(l) => self.nodes.a.get(l).flags,
+            NodeRef::Seq(l) => self.nodes.seq.get(l).flags,
             NodeRef::MSet(l) => self.nodes.mset.get(l).flags,
             NodeRef::Set(l) => self.nodes.set.get(l).flags,
             NodeRef::Lit(l) => self.nodes.lit.get(l).flags,
@@ -1727,9 +1727,9 @@ where
             NodeRef::Plain1(l) => flag!(self.nodes.plain1, l),
             NodeRef::Plain2(l) => flag!(self.nodes.plain2, l),
             NodeRef::Plain3(l) => flag!(self.nodes.plain3, l),
-            NodeRef::C(l) => flag!(self.nodes.c, l),
+            NodeRef::SPair(l) => flag!(self.nodes.spair, l),
             NodeRef::PlainN(l) => flag!(self.nodes.plain_n, l),
-            NodeRef::A(l) => flag!(self.nodes.a, l),
+            NodeRef::Seq(l) => flag!(self.nodes.seq, l),
             NodeRef::MSet(l) => flag!(self.nodes.mset, l),
             NodeRef::Set(l) => flag!(self.nodes.set, l),
             NodeRef::Lit(l) => flag!(self.nodes.lit, l),
@@ -1823,8 +1823,8 @@ where
                 }
                 3
             }
-            NodeRef::C(l) => {
-                for &c in &self.nodes.c.get(l).children {
+            NodeRef::SPair(l) => {
+                for &c in &self.nodes.spair.get(l).children {
                     f(c, 1);
                 }
                 2
@@ -1837,11 +1837,11 @@ where
                 }
                 e - s
             }
-            NodeRef::A(l) => {
-                let n = self.nodes.a.get(l);
+            NodeRef::Seq(l) => {
+                let n = self.nodes.seq.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    f(self.nodes.a.pool_get(i), 1);
+                    f(self.nodes.seq.pool_get(i), 1);
                 }
                 e - s
             }
@@ -1874,16 +1874,16 @@ where
             NodeRef::Plain1(l) => self.nodes.plain1.get(l).children[p],
             NodeRef::Plain2(l) => self.nodes.plain2.get(l).children[p],
             NodeRef::Plain3(l) => self.nodes.plain3.get(l).children[p],
-            NodeRef::C(l) => self.nodes.c.get(l).children[p],
+            NodeRef::SPair(l) => self.nodes.spair.get(l).children[p],
             NodeRef::PlainN(l) => {
                 let n = self.nodes.plain_n.get(l);
                 let (s, _) = n.span();
                 self.nodes.plain_n.pool_get(s + p)
             }
-            NodeRef::A(l) => {
-                let n = self.nodes.a.get(l);
+            NodeRef::Seq(l) => {
+                let n = self.nodes.seq.get(l);
                 let (s, _) = n.span();
-                self.nodes.a.pool_get(s + p)
+                self.nodes.seq.pool_get(s + p)
             }
             _ => panic!("child_at: not a plain/sequence node or pos out of range"),
         }
@@ -1997,11 +1997,11 @@ where
                     buf.push(self.nodes.plain_n.pool_get(i));
                 }
             }
-            NodeRef::A(l) => {
-                let n = self.nodes.a.get(l);
+            NodeRef::Seq(l) => {
+                let n = self.nodes.seq.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    buf.push(self.nodes.a.pool_get(i));
+                    buf.push(self.nodes.seq.pool_get(i));
                 }
             }
             _ => panic!("seq_children: not a sequence node"),

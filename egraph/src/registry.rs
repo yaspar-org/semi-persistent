@@ -115,8 +115,8 @@ impl<S: DenseId> OpInfo<S> {
                 3 => ENodeKind::Plain3,
                 _ => ENodeKind::PlainN,
             },
-            OpKind::Commutative { .. } => ENodeKind::C,
-            OpKind::A { .. } => ENodeKind::A,
+            OpKind::Commutative { .. } => ENodeKind::SPair,
+            OpKind::A { .. } => ENodeKind::Seq,
             OpKind::MSet { .. } => ENodeKind::MSet,
             OpKind::Set { .. } => ENodeKind::Set,
             OpKind::Lit => ENodeKind::Lit,
@@ -670,8 +670,8 @@ mod tests {
         assert_eq!(ops.info(lit).canon_class(), ENodeKind::Lit);
         assert_eq!(ops.info(not).canon_class(), ENodeKind::Plain1);
         assert_eq!(ops.info(ite).canon_class(), ENodeKind::Plain3);
-        assert_eq!(ops.info(eq).canon_class(), ENodeKind::C);
-        assert_eq!(ops.info(sub).canon_class(), ENodeKind::A);
+        assert_eq!(ops.info(eq).canon_class(), ENodeKind::SPair);
+        assert_eq!(ops.info(sub).canon_class(), ENodeKind::Seq);
         assert_eq!(ops.info(add).canon_class(), ENodeKind::MSet);
         assert_eq!(ops.info(and).canon_class(), ENodeKind::Set);
     }
