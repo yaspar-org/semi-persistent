@@ -323,6 +323,13 @@ egg_test!(
     alg_tags_reject_idem_needs_ac,
     "alg_tags_reject_idem_needs_ac.egg"
 );
+// Idempotent + inverse is rejected: an idempotent group is trivial, so `not` is not an
+// `and`-inverse (it is xor-with-true). See design doc "Inverse is a group inverse, not a
+// complement".
+egg_test!(
+    alg_tags_reject_idem_inverse,
+    "alg_tags_reject_idem_inverse.egg"
+);
 // Nilpotent (XOR) completion: mod-n cancellation, empty→unit, stored MSet (multi-AC/ACI plan,
 // property 2).
 egg_test!(nilpotent_xor, "nilpotent_xor.egg");

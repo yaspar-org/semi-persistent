@@ -497,6 +497,11 @@ nilpotent **share** the set partition (both have {0,1} normal-form counts) and d
 - `:idempotent` and `:nilpotent` are mutually exclusive (cannot clamp to 1 and reduce mod 2).
 - `:idempotent` / `:nilpotent` require `:assoc :comm` (the monomial machinery is AC-based).
 - `:nilpotent` requires `:identity` (it needs the unit to reduce to).
+- `:inverse` requires `:identity` (an inverse cancels *to* the unit).
+- `:idempotent` and `:inverse` are **mutually exclusive** — not merely unimplemented, but algebraically
+  incoherent. See "Inverse is a group inverse, not a complement" below: an idempotent group is trivial,
+  so an idempotent AC op has no non-trivial inverses. This rejects `and`/`or` + `:inverse` at the
+  resolver (the intended `not`/complement is a *different* structure — model it as `xor`).
 - `:identity e` must sort-check `e` to the op's return sort.
 
 ### The unit is a deferred ground term, not a node built at registration
@@ -527,6 +532,48 @@ Doing this now — parse `:identity <term>`, sort-check it, store the deferred `
 descriptor — is the point of building the grammar and resolver up front: it fixes the surface and
 the storage shape so adding nilpotent/identity completion later is materialize-and-clamp, not a
 grammar or descriptor migration. That is the technical debt this avoids.
+
+### Inverse is a group inverse, not a complement (why `not` is not an `and`-inverse)
+
+`:inverse` means a **group inverse**: a unary op `x⁻¹` with `x ∘ x⁻¹ = e`, where `e` is the
+operator's own **identity**. Under completion this lifts a summand's count to ℤ and cancels a
+summand against its inverse (`a + (−a) → 0`). Three points fix what this is and is not.
+
+**1. It only exists for the multiset (non-idempotent) operators.** The clean cases:
+
+| op  | identity `e` | inverse `x⁻¹` | `x ∘ x⁻¹` | signed count means | notes |
+|-----|--------------|---------------|-----------|--------------------|-------|
+| `+` | `0`          | `−x` (`neg`)  | `0` = `e` ✓ | integer coefficient | *the* group case; abelian group |
+| `*` | `1`          | `1/x` (`recip`) | `1` = `e` ✓ | exponent           | **partial** (`0` has no inverse); `*` also has annihilator `0` (treat opaque); distribution is cross-op (a ring), out of scope |
+
+So `a + a + neg(a)` reads as `{a: +2, a: −1} = {a: +1} = a`, and `a + neg(a)` reads as `{} = 0`.
+This is the same "store honest + unsigned, interpret at completion" shape as nilpotent (§ the
+2026-07-01 correction): the node `neg(a)` is a real child; completion *recognizes* it as `−a` and
+signs the count, the store never holds a negative multiplicity.
+
+**2. Idempotent + inverse is incoherent, so it is rejected — this is why `not` is not an
+`and`-inverse.** A tempting mistake is to read logical `not` as an `and`-inverse encoded by the sign
+of a multiplicity on the `and` (Set) representation. It is not, for two independent reasons:
+
+- *Wrong target.* An `and`-inverse would have to satisfy `x ∧ x⁻¹ = e_and = true`. But
+  `x ∧ ¬x = false`, and `false` is the **annihilator** (zero) of `and`, not its identity `true`. So
+  `¬x` does not cancel `x` to the unit; it is a complement, not an inverse.
+- *No group to sign.* In any group an idempotent element is the identity
+  (`x∘x = x ⟹ x = e`), so a genuinely idempotent operator has **no non-trivial inverses** at all.
+  `and`/`or` are idempotent (that is the whole Set representation, counts clamped to {0,1}), hence
+  carry no group structure to attach a signed multiplicity to. Boolean algebra under `and` is a
+  bounded semilattice, not a group.
+
+Therefore `:idempotent` + `:inverse` is rejected at the resolver (listed above), the same way
+idempotent and nilpotent are mutually exclusive.
+
+**3. Where logical negation actually lives: `xor`, already handled.** `not` *is* expressible in
+this framework, over the **additive** Boolean operator rather than the multiplicative one:
+`¬x = true ⊕ x`. In the Zhegalkin/GF(2) view `xor` is the additive group and `and` the
+multiplicative monoid. And `xor` is exactly **nilpotent order 2**, which means every element is its
+own additive inverse (`x ⊕ x = 0`) — so xor's "inverse" is already covered by the nilpotent clamp
+shipped in property 2, with no signing needed. Net: complementation is modeled as `xor` with the
+constant `true` (available today), never as an inverse on `and`.
 
 ### Scope and compatibility
 

@@ -428,6 +428,17 @@ multiplicity (or inverse-as-tagged-child) in the monomial + an inverse-aware fol
 group reduct/normalize. May split further. Cancellativity (`x∘z=y∘z ⟹ x=y`) is an adjacent
 equation-level inference (subtract a shared summand), not a per-term clamp.
 
+**Applies only to the multiset (non-idempotent) ops:** `+` with `−x` (the clean abelian group,
+signed count = integer coefficient) and `*` with `1/x` (partial — `0` has no inverse; `*`'s
+annihilator `0` stays opaque; distribution is cross-op/ring, out of scope). Follows the nilpotent
+shape: store `neg(a)` as an honest unsigned child, sign it at completion read time, never store a
+negative multiplicity. **`:idempotent` + `:inverse` is rejected at the resolver** — it is
+algebraically incoherent (an idempotent group is trivial; `and`'s complement `not` cancels to the
+*annihilator* `false`, not the identity `true`, so it is not an `and`-inverse). Logical negation is
+`xor`-with-`true`, and `xor` is nilpotent order 2 (every element its own inverse), so `not` is
+already covered by property 2 — nothing group-specific attaches to `and`. See the design doc
+"Inverse is a group inverse, not a complement" for the full argument.
+
 ### S3b — incremental completion driver (deferred, performance, not a gate).
 
 Today `rules` is rebuilt from scratch each `cc_round` (a fresh `Vec`, re-scanned from
