@@ -77,38 +77,33 @@ first and the rest follow on the same machinery.
 
 **Files:** `registry.rs` (descriptor + `OpKind` fields), `sortcheck.rs` (resolver + call).
 
-Descriptor (design §"Where the algebra lives"):
+Descriptor (design §"Where the algebra lives"; **as shipped** — the clamp was unified onto both
+variants by the 2026-07-01 correction, so it no longer lives only on `Set`):
 
 ```rust
-enum AcRepr  { MSet, Set }
-enum SetClamp { Idempotent, Nilpotent { order: u8 } }
-enum UnitRef { Lit(/* LitVal + sort */), Ctor(/* deferred CTerm */) }   // deferred, not built
-struct AcAlgebra {
-    repr: AcRepr,
-    clamp: Option<SetClamp>,            // Some(..) iff repr == Set
-    identity: Option<UnitRef>,          // MSet or Set
-    inverse: Option<O>,                 // group only; requires identity
-    cancellative: bool,
-}
+enum Clamp   { None, Idempotent, Nilpotent { order: u8 } }   // unified, on BOTH MSet and Set
+enum UnitRef { Lit { token }, Ctor { term } }                // deferred, built at registration
+// (a standalone AcAlgebra struct was not needed — the fields live directly on OpKind.)
 ```
 
-`OpKind` gains the fields on its AC-bearing variants (co-located, so representation and clamp
+`OpKind` carries the fields on its AC-bearing variants (co-located, so representation and clamp
 cannot desync — design rationale):
 
 ```rust
-MSet { arg_sort: S, identity: Option<UnitRef>, inverse: Option<O>, cancellative: bool },
-Set  { arg_sort: S, clamp: SetClamp, identity: Option<UnitRef>, cancellative: bool },
+MSet { arg_sort: S, clamp: Clamp, identity: Option<UnitRef>, cancellative: bool }, // None / Nilpotent
+Set  { arg_sort: S, clamp: Clamp, identity: Option<UnitRef>, cancellative: bool }, // Idempotent
 ```
 
-Resolver `fn resolve_algebra(tags: &[AlgTag], ret_sort, ...) -> Result<ResolvedKind, SortError>`:
+Resolver `register_op(tags, ...) -> Result<O, SortError>` (in `sortcheck.rs`):
 
-- `{Assoc, Comm}` alone → `MSet` (repr).
+- `{Assoc, Comm}` alone → `MSet { clamp: None }`.
 - `+ Idempotent` → `Set { clamp: Idempotent }`.
-- `+ Nilpotent(n)` → `Set { clamp: Nilpotent { order: n.unwrap_or(2) } }`.
+- `+ Nilpotent(n)` → `MSet { clamp: Nilpotent { order: n.unwrap_or(2) } }` — **MSet, not Set**
+  (keeps true multiplicities for the completion-time mod-n reduction; see property 2 above).
 - `Assoc` alone (no `Comm`) → existing `A` kind (direction from AssocLeft/Right); `Comm` alone
   (binary) → existing `C`. Neither idempotent nor identity applies to A/C — reject if present.
-- `Identity(term)` → sort-check `term` to `ret_sort`, store as deferred `UnitRef`. Attaches to
-  MSet or Set.
+- `Identity(term)` → sort-check `term` to `ret_sort`, build to a real node, store on the egraph's
+  `unit_node` map. Attaches to MSet or Set.
 - `Inverse(name)` → resolve op id; requires `Identity` present.
 
 **Validation (reject at registration):**
@@ -209,7 +204,8 @@ the empty monomial to the declared unit.
 **Tests:** `+(a, 0) → +(a)` i.e. `{a}`; `*(a, 1) → {a}`; `and(a, true) → {a}`; unit-only term
 `+(0) →` the unit/class; identity + idempotent compose; identity + nilpotent compose.
 
-**Acceptance:** declared-unit ops drop the unit in canonical form at completion time.
+**Acceptance:** declared-unit ops drop the unit in canonical form during canonization (build and
+recanonize), so the reduction holds with completion off.
 
 ### B4. Group (signed multiset)
 
@@ -352,6 +348,109 @@ Each numbered item is one green commit. A→B→C interleave so AC+ACI land firs
 Steps 1–4 deliver the originally-requested multiple AC + ACI. Steps 5–7 deliver the remaining
 Kapur 2023 semantic properties on the same machinery, and can stop/pause after any step (each is a
 self-contained, tested capability).
+
+## Remaining-work recap (what's left, in priority order)
+
+Everything below is *parsed, sort-checked, and stored* already (the resolver in `sortcheck.rs`
+builds the full `OpKind` descriptor; `:identity`/`:nilpotent`/`:cancellative`/`:inverse` all
+validate). Only the completion-time *normalization* for each property is unbuilt, so each is a
+localized addition to the round, not new surface or storage.
+
+### 1. Identity — the neutral element (`:identity e`). NEXT.
+
+`x ∘ e = x`: the unit `e` drops from every monomial (`a+0 → a`, `and(x, true) → x`). Applies to
+both MSet and Set. Lowest risk, self-contained, and a **prerequisite for nilpotent** (the emptied
+monomial must materialize to the unit).
+
+- **Deferred-unit build (`ensure_units_built`).** The unit is stored as a `UnitRef` (parsed term,
+  not built) so registration stays side-effect-free. Materialize it to a `Cfg::G` lazily, once,
+  before the first completion-enabled round; cache `op → unit node` on the egraph. Literal units
+  (`0`, `true`) go through `LitValParser` + `lit_op_for_sort` + `add_lit`; a constructed unit
+  (`(zero)`) through the term builder.
+- **Unit drop** in **canonization** (`add` and `recanonize_node`): when an op has an identity,
+  remove the unit class from the child multiset so the stored node is in normal form. Keys on the
+  resolved unit-node id, so it fires once the unit is materialized at registration. (Originally
+  planned as a completion-time monomial-read normalization; moved into canonization with the
+  nilpotent clamp — see property 2 and the design doc "Canonization, not completion" — so
+  `+(a, e) = a` holds with completion OFF.)
+- Tests: `+ with 0`, `* with 1`, `and with true`, `or with false`; identity composes with
+  idempotent; unit-only term reduces to the unit/class.
+
+### 2. Nilpotent — pairs cancel to the unit (`:nilpotent`, XOR). AFTER identity. ✅ DONE
+
+`x ∘ x = e` (order 2; general order-n = count mod n). Was flagged **highest-risk of the three**;
+the risk was the representation (below), which is now resolved.
+
+- Semantics (order 2): a summand's contribution is its **count mod 2** — even copies cancel to
+  the unit, odd copies leave one. `a⊕a = e`; `a⊕a⊕a = a`; `a⊕a⊕a⊕a = e`; `a⊕a⊕b = b`. Contrast
+  idempotent, where any positive count → 1 (`a∘a∘a∘a = a`, never the unit) — this is why
+  nilpotent needs `:identity` and idempotent does not. General order-n = count mod n (order 2 =
+  XOR/bvxor is the only case in SMT-LIB, but the code takes any order).
+- **Representation decision (2026-07-01): nilpotent is stored in the MSet partition, NOT Set.**
+  The blocker was that a nilpotent op resolving to `OpKind::Set` builds through `SetCanon`, whose
+  `dedup` is the *idempotent* clamp: it collapses `xor(a,a) → {a} = a` at build time (a false
+  equality), before completion runs, and again on `recanonize_node`. Parity (count mod n) cannot
+  be recovered once dedup throws the multiplicity away. Analysis (see the design doc's
+  "Representation analysis — all combinations" table): to compute count-mod-n you must *hold* the
+  count, and the only hash-consed place that holds counts is the MSet partition. So:
+  - **Storage partition and count clamp are independent axes.** The clamp is now a unified
+    `Clamp { None, Idempotent, Nilpotent { order } }` on BOTH `OpKind::MSet` and `OpKind::Set`
+    (replacing the Set-only `SetClamp`). Partition is derived: `Idempotent → Set`; `None` /
+    `Nilpotent → MSet`. The resolver enforces the pairing.
+  - The mod-n clamp is applied **inside canonization** (`MSetCanon::canonize` = `update_multiset`
+    then `clamp_multiset`), at build (`add`) AND on `recanonize_node`, so the stored node is
+    already reduced: `xor(a,a) = e` holds with completion OFF. The clamp mode is fetched from the
+    op registry before canonizing (`recanonize_node` takes `&ops`, like `add`). This also closes
+    the old unsoundness — nilpotent no longer dedups at build.
+  - Degenerate arity (empty ⇒ unit, size-1 mult-1 ⇒ that class) is a **canonization equality**,
+    emitted as a merge: build returns the existing class id; recanonize's `degeneracy_merge`
+    records a collision-style merge. It is congruence, NOT completion collapse. `normalize_nilpotent`
+    (multiset.rs) re-clamps after each rewrite step and the superposition reduct clamps mod n (so
+    completion's *derived* monomials stay reduced), but completion no longer applies the clamp or
+    the empty/size-1 handling to stored nodes — canonization already did. See the design doc
+    "Canonization, not completion".
+  - This also handles order n>2 uniformly (Set's {0,1} could not hold count 2), and the "clamp is
+    Set-only / XOR is a Set" claims in the design doc were corrected.
+- Tests: `nilpotent_xor.egg` (`a⊕a=e`, `a⊕a⊕a=a`, `a⊕a⊕a⊕a=e`, `a⊕a⊕b=b`, empty→unit, both even
+  cases coincide), `nilpotent_xor_superposition.egg` (shared-child superposition through the
+  unit), `nilpotent_no_dedup.egg` (`xor(a,a) ≠ a`, an `EXPECT: check-failed` soundness guard),
+  `canonize_clamp_no_cc.egg` (clamp/identity/degeneracy hold with completion OFF, both the build
+  and recanonize paths), plus `multiset.rs` unit tests for `clamp_nilpotent` / `normalize_nilpotent`
+  and `canon.rs` unit tests for the in-canonize clamp. CHECK_AC_BASIS where completion is on. The
+  rule-building skip was removed.
+
+### 3. Group — signed counts + inverse (`:inverse`, abelian group). LATER, largest.
+
+AC + identity + inverses: `x ∘ x⁻¹ = e`. Monomial counts lift to ℤ; a summand and its inverse
+cancel. Needs: (a) the deferred `inverse` op stored on `OpKind` — currently **not stored** because
+`OpKind<S>` lacks the op-id type; widen or store the inverse op *name* then resolve; (b) signed
+multiplicity (or inverse-as-tagged-child) in the monomial + an inverse-aware fold; (c) the round's
+group reduct/normalize. May split further. Cancellativity (`x∘z=y∘z ⟹ x=y`) is an adjacent
+equation-level inference (subtract a shared summand), not a per-term clamp.
+
+### S3b — incremental completion driver (deferred, performance, not a gate).
+
+Today `rules` is rebuilt from scratch each `cc_round` (a fresh `Vec`, re-scanned from
+`completion_node_ids`, sorted by node id, dropped at round end — so there is **no** cross-round
+structure to maintain, and the per-round sort is one-shot, off the hot path). S3b replaces the
+"rebuild-and-re-superpose the whole rule set every round" batch with a persistent worklist: a node
+enters when materialized or its class changes; draining it runs its chores for that node only.
+*That* rewrite is where a persistent, incrementally-maintained rule structure (or a
+`HashMap<node, index>` for the partner lookup) would earn its place — not the current round-local
+sort. **Risk:** changes the driver, can reintroduce divergence/non-termination; keep the §4a/§4b/§5b
+differential tests as the oracle and the 50k growth backstop on. Performance, not correctness.
+
+### On-by-default decision (blocked on scoping).
+
+Completion is **opt-in** (`set_cc`), and stays that way until a scoping mechanism lands, because it
+diverges on dense graphs — now reachable via ACI too (the `investigate_completion_sweep` caveat:
+its stress graph registers both `add` and `and`, so ACI completion enlarges/diverges those runs;
+the harness is `#[ignore]` and no CI-gated test enables completion on them). The decision recorded
+in [ac-completion-performance.md](ac-completion-performance.md): the lever for on-by-default is
+**scoping** — a growth guard / on-demand / degree bound so completion never pays `O(crit × rules)`
+on an exploding basis — not inner-loop tuning (measured dead ends) and not the S3b driver alone.
+Until a scoping guard exists, completion remains off by default; flipping it on is gated on that,
+not on finishing properties 1–3.
 
 ## Cross-cutting acceptance (every step)
 

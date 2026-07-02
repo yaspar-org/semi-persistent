@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The semi-persistent e-graph: add, merge, find, rebuild, mark, restore.
 
-use crate::canon::{MSetCanon, VarCanon};
+use crate::canon::{MSetCanon, MSetClamp, VarCanon};
 use crate::classes::EClasses;
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
@@ -36,6 +36,7 @@ pub struct EGraphToken {
     rules: RuleRegistryToken,
     axioms: AxiomRegistryToken,
     lits: LitValStoreToken,
+    unit_node: crate::containers::MapToken,
 }
 
 pub struct EGraph<
@@ -86,6 +87,13 @@ pub struct EGraph<
     /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
     /// design §6c). Worklist of children still to expand; never grown per add.
     flatten_buf: Vec<Cfg::G>,
+    /// Per-op identity (unit) element node, for completion ops declared with `:identity e`
+    /// (`x ∘ e = x`; the unit drops from monomials). Resolved to a real node at registration
+    /// (sortcheck has the model to parse the term and builds the node), keyed by op id. Stored
+    /// here rather than on `OpKind<S>` because a node id is `Cfg::G`, which `OpKind<S>` cannot
+    /// carry. Semi-persistent (its own token), so it rolls back with the op declarations that
+    /// created the units. Absent key = the op has no declared identity.
+    unit_node: crate::containers::Map<Cfg::O, Cfg::G, TRACK>,
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -130,6 +138,7 @@ where
             cmp_buf_a: Vec::new(),
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
+            unit_node: crate::containers::Map::new(),
         }
     }
 
@@ -259,6 +268,15 @@ where
     /// Register an op from a fully-resolved `OpKind` (the property-tag resolver in `sortcheck`).
     pub fn register_kind(&mut self, name: &str, ret: Cfg::S, kind: OpKind<Cfg::S>) -> Cfg::O {
         self.ops.register_kind(name, ret, kind)
+    }
+    /// Record `op`'s identity (unit) element node (`x ∘ e = x`; the unit drops from monomials).
+    /// Called by the resolver in `sortcheck` after it builds the `:identity` term to a node.
+    pub fn set_unit_node(&mut self, op: Cfg::O, unit: Cfg::G) {
+        self.unit_node.insert(op, unit);
+    }
+    /// The identity (unit) element node of `op`, or `None` if `op` has no declared identity.
+    pub fn unit_node(&self, op: Cfg::O) -> Option<Cfg::G> {
+        self.unit_node.get_by_key(&op).copied()
     }
     pub fn register_lit(&mut self, name: &str, ret: Cfg::S) -> Cfg::O {
         self.ops.register_lit(name, ret)
@@ -393,6 +411,15 @@ where
             self.flatten_ac_children(op);
         }
 
+        // Canonization must *establish* the op's algebraic normal form at build time (not defer
+        // it to completion): coalesce/dedup, drop the identity's unit class, apply the count clamp
+        // (nilpotent mod-n), and resolve a degenerate arity. Degeneracy is an equality, so the
+        // last step returns an *existing* class id instead of a fresh node:
+        //   - empty multiset  ⇒ the term IS the unit  (`xor(a,a) → {} = e`)
+        //   - single mult-1    ⇒ the term IS that child (`+(a, e) → {a} = a`, `and(a,a) → {a} = a`)
+        // These hold with completion off; completion only adds the cross-rule (superposition)
+        // consequences. `find_unit`/degeneracy read `unit_node`, resolved at registration.
+        let unit = self.unit_node(op);
         let result = match self.ops.info(op).kind {
             OpKind::MSet { .. } => {
                 self.g_buf.sort_by_key(|id| id.to_usize());
@@ -405,12 +432,71 @@ where
                     }
                     self.mset_buf.push(Cfg::mset_child_single(id));
                 }
-                self.nodes.add_mset(op, &self.mset_buf)
+                // Identity: drop the unit's class (`+(a, e) → {a}`).
+                if let Some(u) = unit {
+                    let uc = self.classes.find_const(u);
+                    self.mset_buf.retain(|c| Cfg::mset_child_id(c) != uc);
+                }
+                // Nilpotent clamp: reduce each multiplicity mod n, drop zeros (`xor(a,a) → {}`).
+                // Routed through the SINGLE source of the mod-n law, `MSetCanon::clamp_multiset`
+                // (also used by the recanonize path), so the two paths cannot drift. `Cfg::C` is
+                // concretely `(G, Multiplicity)` but opaque to generic code, so we convert the
+                // buffer through the config accessors around the shared call. Nilpotent-only, so
+                // the conversion never touches the common plain-AC / idempotent build.
+                if let crate::registry::Clamp::Nilpotent { order } = self.op_clamp_kind(op) {
+                    use crate::multiplicity::Multiplicity;
+                    let mut tuples: Vec<(Cfg::G, Multiplicity)> = self
+                        .mset_buf
+                        .iter()
+                        .map(|c| {
+                            (
+                                Cfg::mset_child_id(c),
+                                Multiplicity(Cfg::mset_child_mult(c).into()),
+                            )
+                        })
+                        .collect();
+                    MSetCanon::clamp_multiset(&mut tuples, MSetClamp::Nilpotent { order });
+                    self.mset_buf.clear();
+                    self.mset_buf.extend(
+                        tuples
+                            .iter()
+                            .map(|(g, m)| Cfg::mset_child_with_mult(*g, Cfg::M::from(m.0))),
+                    );
+                }
+                // Degenerate arity ⇒ an existing class, not a fresh node. An empty monomial is the
+                // unit; a single mult-1 summand is that summand's class. Empty *without* a declared
+                // unit (only reachable for a plain AC op built with no non-unit children) falls
+                // through to the (empty) node, the pre-canonization behavior.
+                match self.mset_buf.len() {
+                    0 => match unit {
+                        Some(u) => return u,
+                        None => self.nodes.add_mset(op, &self.mset_buf),
+                    },
+                    1 if Cfg::mset_child_mult(&self.mset_buf[0]).into() == 1 => {
+                        return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
+                    }
+                    _ => self.nodes.add_mset(op, &self.mset_buf),
+                }
             }
             OpKind::Set { .. } => {
                 self.g_buf.sort_by_key(|id| id.to_usize());
                 self.g_buf.dedup();
-                self.nodes.add_set(op, &self.g_buf)
+                // Identity: drop the unit's class (`and(a, unit) → {a}`).
+                if let Some(u) = unit {
+                    let uc = self.classes.find_const(u);
+                    self.g_buf.retain(|&g| g != uc);
+                }
+                // Degenerate arity ⇒ an existing class (idempotent has no nilpotent clamp, so a
+                // Set monomial only reaches {} via identity-drop, and size-1 via dedup/drop).
+                // Empty without a declared unit falls through (pre-canonization behavior).
+                match self.g_buf.len() {
+                    0 => match unit {
+                        Some(u) => return u,
+                        None => self.nodes.add_set(op, &self.g_buf),
+                    },
+                    1 => return self.classes.find(self.g_buf[0]),
+                    _ => self.nodes.add_set(op, &self.g_buf),
+                }
             }
             _ => self.nodes.add(op, &self.g_buf, &self.ops),
         };
@@ -441,6 +527,37 @@ where
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
         let result = self.nodes.add_lit(op, lit);
         self.register_if_fresh(result)
+    }
+
+    /// Build a *ground* checked term (a literal or a constructor applied to ground args) into a
+    /// node, returning its id. Mirrors the interpreter's `build_cterm` for the ground cases; it
+    /// has no access to globals, so a `CTerm::Global` is unreachable here (a unit is always
+    /// ground) and panics. Used by the property-tag resolver to materialize an op's `:identity`
+    /// unit at registration.
+    pub fn build_ground_cterm(
+        &mut self,
+        ct: &crate::sortcheck::CTerm<Cfg::O, Cfg::S, L>,
+    ) -> Cfg::G {
+        match ct {
+            crate::sortcheck::CTerm::Lit(val, sort) => {
+                let lit_op = self
+                    .ops
+                    .lit_op_for_sort(*sort)
+                    .expect("no lit op for identity's sort");
+                let vid = self.lits.intern(val.clone());
+                self.add_lit(lit_op, vid)
+            }
+            crate::sortcheck::CTerm::App { op, children, .. } => {
+                let child_ids: Vec<Cfg::G> = children
+                    .iter()
+                    .map(|c| self.build_ground_cterm(c))
+                    .collect();
+                self.add(*op, &child_ids)
+            }
+            crate::sortcheck::CTerm::Global(..) => {
+                panic!("identity unit must be a ground term, not a global reference")
+            }
+        }
     }
 
     /// Fill `buf` with `node`'s monomial for `monomial_cmp`: its canonical AC child
@@ -492,6 +609,12 @@ where
                 buf.push((self.classes.find_const(node), Multiplicity(1)));
             }
         }
+        // No clamp / unit-drop here: canonization (`add`, `recanonize_node`) already established
+        // the op's algebraic normal form (nilpotent mod-n, identity unit-drop) in the stored node,
+        // and `cc_round` only runs after `rebuild_congruence` recanonicalizes every node. So a
+        // stored MSet/Set node's children are already the canonical monomial; reading them back is
+        // enough. (This used to re-apply the clamp/drop, which was the symptom of the clamp living
+        // in completion rather than canonization — now fixed.)
     }
 
     /// The completion column of `node`'s op (its position in the registry `completion_ops`
@@ -500,20 +623,34 @@ where
         self.ops.completion_column(self.node_op(node))
     }
 
+    /// The op's registry count `Clamp` (`None` / `Idempotent` / `Nilpotent`). The build/canonize
+    /// path reads this directly (the algebraic normal form), where `op_clamp`'s `CompletionClamp`
+    /// projection is completion-shaped. `None` for a non-AC op.
+    fn op_clamp_kind(&self, op: Cfg::O) -> crate::registry::Clamp {
+        match self.ops.info(op).kind {
+            OpKind::MSet { clamp, .. } | OpKind::Set { clamp, .. } => clamp,
+            _ => crate::registry::Clamp::None,
+        }
+    }
+
     /// The normalization clamp for an op's completion monomials: unbounded (MSet), clamp-to-1
     /// (Set idempotent, ACI), or mod-n (Set nilpotent). Determines how reducts and normal forms
     /// are reduced (design "three independent axes").
     fn op_clamp(&self, op: Cfg::O) -> CompletionClamp {
+        use crate::registry::Clamp;
         match self.ops.info(op).kind {
-            OpKind::MSet { .. } => CompletionClamp::Multiset,
-            OpKind::Set {
-                clamp: crate::registry::SetClamp::Idempotent,
-                ..
-            } => CompletionClamp::Idempotent,
-            OpKind::Set {
-                clamp: crate::registry::SetClamp::Nilpotent { order },
+            // Nilpotent is stored MSet (keeps multiplicities); its clamp is read here.
+            OpKind::MSet {
+                clamp: Clamp::Nilpotent { order },
                 ..
             } => CompletionClamp::Nilpotent { order },
+            OpKind::MSet { .. } => CompletionClamp::Multiset,
+            OpKind::Set {
+                clamp: Clamp::Idempotent,
+                ..
+            } => CompletionClamp::Idempotent,
+            // A Set with any other clamp is never constructed (resolver invariant); treat as ACI.
+            OpKind::Set { .. } => CompletionClamp::Idempotent,
             _ => CompletionClamp::Multiset, // non-completion op; never reached in the round
         }
     }
@@ -846,6 +983,47 @@ where
         }
     }
 
+    /// If a (just-recanonized) MSet/Set node has a degenerate canonical arity, return the
+    /// equality `(node, target)` it now denotes: an empty monomial equals the op's unit, a
+    /// single mult-1 summand equals that summand's class. Returns `None` for a well-formed
+    /// (≥2, or size-1-with-mult>1) monomial or a non-AC node. This is canonization's
+    /// "AC-of-nothing/one" law read off the stored form; the caller merges the pair. Mirrors
+    /// the build-path (`add`) degeneracy resolution, for nodes that go degenerate via a child
+    /// merge rather than at build.
+    fn degeneracy_merge(&self, node: Cfg::G) -> Option<(Cfg::G, Cfg::G)> {
+        // Peek the node's canonical child span length (no child read, no alloc) and act only on a
+        // degenerate arity — the common ≥2 case returns immediately. Recanonize has already
+        // written the coalesced/clamped children, so the span length *is* the canonical child
+        // count. Only when arity is exactly 1 do we read that one child.
+        match self.node_ref(node) {
+            NodeRef::MSet(l) => {
+                let n = self.nodes.mset.get(l);
+                let (s, e) = n.span();
+                match e - s {
+                    0 => self.unit_node(self.node_op(node)).map(|u| (node, u)),
+                    1 => {
+                        let c = self.nodes.mset.pool_get(s);
+                        // Size-1 collapses to the child only at multiplicity 1 (`{a:2}` is not a
+                        // degenerate `a`; for a nilpotent op it would already have clamped to `{}`).
+                        (Cfg::mset_child_mult(&c).into() == 1)
+                            .then(|| (node, Cfg::mset_child_id(&c)))
+                    }
+                    _ => None,
+                }
+            }
+            NodeRef::Set(l) => {
+                let n = self.nodes.set.get(l);
+                let (s, e) = n.span();
+                match e - s {
+                    0 => self.unit_node(self.node_op(node)).map(|u| (node, u)),
+                    1 => Some((node, self.nodes.set.pool_get(s))),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
@@ -861,7 +1039,17 @@ where
                     &mut self.mset_buf,
                     &mut self.collisions,
                     &mut self.touched,
+                    &self.ops,
                 );
+                // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
+                // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
+                // then *equals* an existing class — empty ⇒ the unit, size-1 mult-1 ⇒ that child.
+                // Recanonize (representation) can't express that equality, so record it as a merge
+                // here (the congruence layer), alongside the hash-cons collisions. `and(a,b)` after
+                // `a=b` becomes `{a}` = `a`; `xor(a,b)` after `a=b` becomes `{}` = the unit.
+                if let Some(pair) = self.degeneracy_merge(parent) {
+                    self.collisions.push(pair);
+                }
             }
 
             let current_surv = self.classes.find_const(survivor);
@@ -967,12 +1155,6 @@ where
                 continue;
             }
             let op = self.node_op(gid);
-            // Nilpotent (Set) ops are not yet completed (step 6): their monomial arithmetic is
-            // symmetric difference, not the clamp-to-1 / multiset union this round implements.
-            // They canonicalize (dedup) but stay out of the rule set — sound-but-uncompleted.
-            if matches!(self.op_clamp(op), CompletionClamp::Nilpotent { .. }) {
-                continue;
-            }
             let lhs = multiset_of(self, gid);
             if !self.class_rhs_into(gid, &mut rhs_buf) {
                 continue;
@@ -1198,11 +1380,19 @@ where
                     &crate::multiset::multiset_subtract(&ab, a),
                     &rules[pi].rhs,
                 );
-                // Idempotent (Set/ACI) op: the union may have raised a count above 1; clamp the
-                // reducts back to sets so the superposition is over ACI monomials.
-                if self.op_clamp(op) == CompletionClamp::Idempotent {
-                    crate::multiset::clamp_idempotent(&mut r1);
-                    crate::multiset::clamp_idempotent(&mut r2);
+                // Clamp the reducts to the op's normal-form count domain before the pair is
+                // closed: idempotent → {0,1} (ACI union), nilpotent → mod-n (symmetric
+                // difference). Multiset (plain AC) keeps ℕ counts, no clamp.
+                match self.op_clamp(op) {
+                    CompletionClamp::Idempotent => {
+                        crate::multiset::clamp_idempotent(&mut r1);
+                        crate::multiset::clamp_idempotent(&mut r2);
+                    }
+                    CompletionClamp::Nilpotent { order } => {
+                        crate::multiset::clamp_nilpotent(&mut r1, order);
+                        crate::multiset::clamp_nilpotent(&mut r2, order);
+                    }
+                    CompletionClamp::Multiset => {}
                 }
                 crit.push((op, r1, r2));
             }
@@ -1240,13 +1430,23 @@ where
                         rhs: r.rhs.clone(),
                     })
                     .collect();
-                // Idempotent (Set/ACI) ops normalize over sets (clamp to 1); MSet over ℕ.
-                if self.op_clamp(op) == CompletionClamp::Idempotent {
-                    crate::multiset::normalize_set(&mset, &nf_rules)
-                } else {
-                    normalize_ms(&mset, &nf_rules)
+                // Normalize in the op's count domain: idempotent → set (clamp to 1); nilpotent →
+                // mod-n; plain AC (MSet) → ℕ.
+                match self.op_clamp(op) {
+                    CompletionClamp::Idempotent => crate::multiset::normalize_set(&mset, &nf_rules),
+                    CompletionClamp::Nilpotent { order } => {
+                        crate::multiset::normalize_nilpotent(&mset, &nf_rules, order)
+                    }
+                    CompletionClamp::Multiset => normalize_ms(&mset, &nf_rules),
                 }
             };
+            // If normalization by the other rules changed the monomial, materialize the normal
+            // form and merge. `materialize` calls `add`, which now resolves a degenerate result
+            // itself: an emptied monomial (`a ⊕ a → {}`, or `+(a,e)`-style cancellation) becomes
+            // the unit, and a single mult-1 summand (`a ⊕ a ⊕ b → {b}`) becomes that class — so
+            // this one branch covers the empty/size-1 cases too (a completion target always has
+            // `mset.len() ≥ 2`, canonization never stores a degenerate node, so any empty/size-1
+            // `normal` differs from `mset` and lands here).
             if normal != mset {
                 let c_prime = materialize(self, op, &normal);
                 changed |= do_merge(self, c_prime, class);
@@ -1301,14 +1501,20 @@ where
                 .iter()
                 .find(|(o, _)| *o == op.to_usize())
                 .map_or(&empty_nf, |(_, v)| v);
-            let idem = self.op_clamp(op) == CompletionClamp::Idempotent;
-            let (n1, n2) = if idem {
-                (
+            // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
+            // mod-n, plain AC → ℕ) before comparing/merging.
+            let (n1, n2) = match self.op_clamp(op) {
+                CompletionClamp::Idempotent => (
                     crate::multiset::normalize_set(&r1, nf_rules),
                     crate::multiset::normalize_set(&r2, nf_rules),
-                )
-            } else {
-                (normalize_ms(&r1, nf_rules), normalize_ms(&r2, nf_rules))
+                ),
+                CompletionClamp::Nilpotent { order } => (
+                    crate::multiset::normalize_nilpotent(&r1, nf_rules, order),
+                    crate::multiset::normalize_nilpotent(&r2, nf_rules, order),
+                ),
+                CompletionClamp::Multiset => {
+                    (normalize_ms(&r1, nf_rules), normalize_ms(&r2, nf_rules))
+                }
             };
             if n1 == n2 {
                 trivial += 1;
@@ -1316,6 +1522,9 @@ where
                 continue;
             }
             nontrivial += 1;
+            // `materialize` calls `add`, which resolves a degenerate reduct itself: an emptied
+            // reduct (nilpotent cancellation / identity drop) becomes the unit, a single mult-1
+            // summand becomes that class. So no empty/size-1 special-casing is needed here.
             let c1 = materialize(self, op, &n1);
             let c2 = materialize(self, op, &n2);
             changed |= do_merge(self, c1, c2);
@@ -1354,6 +1563,7 @@ where
             rules: self.rules.mark(shrink),
             axioms: self.axioms.mark(shrink),
             lits: self.lits.mark(shrink),
+            unit_node: self.unit_node.mark(shrink),
         }
     }
 
@@ -1365,6 +1575,7 @@ where
         self.rules.restore(token.rules);
         self.axioms.restore(token.axioms);
         self.lits.restore(token.lits);
+        self.unit_node.restore(token.unit_node);
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();
@@ -1537,8 +1748,8 @@ where
     /// completion's active set excludes it (design §6b). Distinct from `subsume`.
     pub(crate) fn set_cc_collapsed(&mut self, id: Cfg::G) {
         debug_assert!(
-            matches!(self.node_ref(id), NodeRef::MSet(_)),
-            "set_cc_collapsed on a non-AC node"
+            matches!(self.node_ref(id), NodeRef::MSet(_) | NodeRef::Set(_)),
+            "set_cc_collapsed on a non-completion node"
         );
         self.set_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
     }
@@ -1847,6 +2058,235 @@ mod tests {
             f4: eg.register_opn("f4", &[int, int, int, int], int),
         };
         (eg, th)
+    }
+
+    /// Randomized canonization coverage for the AC count-clamp / identity-drop / degenerate-arity
+    /// normal form, with completion OFF (these are canonization facts, not completion — see the
+    /// design doc "Canonization, not completion"). The oracle is an *independent* reference
+    /// normalizer (`ref_normal`), so `add` is checked against a from-scratch computation of what
+    /// the canonical class should be, over random inputs — the coverage the hand-written fixtures
+    /// lack. Exercises plain AC, nilpotent order 2 AND order 3, idempotent, and identity, and both
+    /// the build path (`add`) and the recanonize path (build distinct, then merge children).
+    mod canonize_prop {
+        use super::*;
+        use crate::registry::{Clamp, OpKind};
+        use proptest::prelude::*;
+        use std::collections::BTreeMap;
+
+        type Cfg31G = crate::id::ENodeId;
+
+        /// Which AC op a random term uses; each is a distinct registered op sharing one sort.
+        #[derive(Clone, Copy, Debug)]
+        enum Kind {
+            PlainAc,      // + : ℕ counts, no unit
+            Nilpotent2,   // xor : count mod 2, unit e
+            Nilpotent3,   // nz  : count mod 3, unit e
+            Idempotent,   // and : count → 1
+            IdentityPlus, // ip  : ℕ counts, unit e dropped
+        }
+
+        struct Env {
+            eg: EGraph31<NiraLitVal, false, false>,
+            atoms: Vec<Cfg31G>, // the 4 leaf classes usable as children
+            unit: Cfg31G,       // the declared unit `e`
+            plain: OpId,
+            nil2: OpId,
+            nil3: OpId,
+            idem: OpId,
+            ident: OpId,
+        }
+
+        fn op_of(env: &Env, k: Kind) -> OpId {
+            match k {
+                Kind::PlainAc => env.plain,
+                Kind::Nilpotent2 => env.nil2,
+                Kind::Nilpotent3 => env.nil3,
+                Kind::Idempotent => env.idem,
+                Kind::IdentityPlus => env.ident,
+            }
+        }
+
+        fn make_env() -> Env {
+            let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+            let s = eg.intern_sort("E");
+            let e_op = eg.register_op0("e", s);
+            let unit = eg.add(e_op, &[]);
+            // The descriptor's `identity: UnitRef` is only read by the sortcheck resolver; the
+            // egraph resolves the unit via `set_unit_node` (below), so pass `None` here. The clamp
+            // field is what canonization reads.
+            let mk = |eg: &mut EGraph31<NiraLitVal, false, false>, name: &str, clamp: Clamp| {
+                eg.register_kind(
+                    name,
+                    s,
+                    OpKind::MSet {
+                        arg_sort: s,
+                        clamp,
+                        identity: None,
+                        cancellative: false,
+                    },
+                )
+            };
+            let plain = mk(&mut eg, "plus", Clamp::None);
+            let nil2 = mk(&mut eg, "xr2", Clamp::Nilpotent { order: 2 });
+            let nil3 = mk(&mut eg, "xr3", Clamp::Nilpotent { order: 3 });
+            let idem = eg.register_kind(
+                "andop",
+                s,
+                OpKind::Set {
+                    arg_sort: s,
+                    clamp: Clamp::Idempotent,
+                    identity: None,
+                    cancellative: false,
+                },
+            );
+            let ident = mk(&mut eg, "ip", Clamp::None);
+            eg.set_unit_node(nil2, unit);
+            eg.set_unit_node(nil3, unit);
+            eg.set_unit_node(ident, unit);
+            let a = eg.register_op0("a", s);
+            let b = eg.register_op0("b", s);
+            let c = eg.register_op0("c", s);
+            let d = eg.register_op0("d", s);
+            let atoms = vec![
+                eg.add(a, &[]),
+                eg.add(b, &[]),
+                eg.add(c, &[]),
+                eg.add(d, &[]),
+            ];
+            Env {
+                eg,
+                atoms,
+                unit,
+                plain,
+                nil2,
+                nil3,
+                idem,
+                ident,
+            }
+        }
+
+        /// Independent reference: the canonical class a well-formed AC term over `children` (given
+        /// as current class ids) should land in, computed from scratch — the oracle. Mirrors the
+        /// *spec*: coalesce by class → drop unit (ops with an identity) → clamp counts → resolve
+        /// degeneracy (empty ⇒ unit, single mult-1 ⇒ that child, else a built node).
+        fn ref_normal(env: &mut Env, k: Kind, children: &[Cfg31G]) -> Cfg31G {
+            let has_unit = matches!(k, Kind::Nilpotent2 | Kind::Nilpotent3 | Kind::IdentityPlus);
+            let unit_cls = env.eg.find(env.unit);
+            let mut counts: BTreeMap<u32, u32> = BTreeMap::new();
+            for &g in children {
+                *counts.entry(env.eg.find(g).raw()).or_insert(0) += 1;
+            }
+            if has_unit {
+                counts.remove(&unit_cls.raw());
+            }
+            match k {
+                Kind::Idempotent => {
+                    for v in counts.values_mut() {
+                        *v = 1;
+                    }
+                }
+                Kind::Nilpotent2 => counts.retain(|_, v| {
+                    *v %= 2;
+                    *v != 0
+                }),
+                Kind::Nilpotent3 => counts.retain(|_, v| {
+                    *v %= 3;
+                    *v != 0
+                }),
+                Kind::PlainAc | Kind::IdentityPlus => {}
+            }
+            let total: u32 = counts.values().sum();
+            if total == 0 {
+                return env.eg.find(env.unit);
+            }
+            if counts.len() == 1 && *counts.values().next().unwrap() == 1 {
+                return env
+                    .eg
+                    .find(crate::id::ENodeId::new(*counts.keys().next().unwrap()));
+            }
+            let mut flat: Vec<Cfg31G> = Vec::new();
+            for (cls, cnt) in &counts {
+                for _ in 0..*cnt {
+                    flat.push(crate::id::ENodeId::new(*cls));
+                }
+            }
+            let op = op_of(env, k);
+            env.eg.add(op, &flat)
+        }
+
+        fn all_kinds() -> impl Strategy<Value = Kind> {
+            prop_oneof![
+                Just(Kind::PlainAc),
+                Just(Kind::Nilpotent2),
+                Just(Kind::Nilpotent3),
+                Just(Kind::Idempotent),
+                Just(Kind::IdentityPlus),
+            ]
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(400))]
+
+            /// `add` must agree with the independent reference normalizer, and be permutation-
+            /// invariant (AC). Child index 4 selects the unit, so unit-drop is exercised.
+            /// Completion is OFF: this is pure canonization.
+            #[test]
+            fn add_matches_reference(
+                k in all_kinds(),
+                idxs in proptest::collection::vec(0usize..5, 1..8),
+                perm_seed in any::<u64>(),
+            ) {
+                let mut env = make_env();
+                let pick = |i: usize, env: &Env| if i < 4 { env.atoms[i] } else { env.unit };
+                let children: Vec<Cfg31G> = idxs.iter().map(|&i| pick(i, &env)).collect();
+
+                let op = op_of(&env, k);
+                let built = env.eg.add(op, &children);
+                let expected = ref_normal(&mut env, k, &children);
+                prop_assert_eq!(
+                    env.eg.find(built),
+                    env.eg.find(expected),
+                    "add vs reference: kind={:?} idxs={:?}", k, idxs
+                );
+
+                let mut shuffled = children.clone();
+                let n = shuffled.len();
+                for i in 0..n {
+                    let j = ((perm_seed.wrapping_mul(6364136223846793005).wrapping_add(i as u64))
+                        as usize) % n;
+                    shuffled.swap(i, j);
+                }
+                let built2 = env.eg.add(op, &shuffled);
+                prop_assert_eq!(env.eg.find(built), env.eg.find(built2), "permutation invariance");
+            }
+
+            /// Recanonize path: build a node with distinct children, merge a pair of children,
+            /// rebuild (completion OFF → congruence + canonization only). The node's class must
+            /// match the reference recomputed with the merge applied.
+            #[test]
+            fn recanonize_matches_reference(
+                k in all_kinds(),
+                idxs in proptest::collection::vec(0usize..4, 2..6),
+                mi in 0usize..4,
+                mj in 0usize..4,
+            ) {
+                prop_assume!(mi != mj);
+                let mut env = make_env();
+                let children: Vec<Cfg31G> = idxs.iter().map(|&i| env.atoms[i]).collect();
+                let op = op_of(&env, k);
+                let node = env.eg.add(op, &children);
+
+                env.eg.merge(env.atoms[mi], env.atoms[mj]);
+                env.eg.rebuild();
+
+                let expected = ref_normal(&mut env, k, &children);
+                prop_assert_eq!(
+                    env.eg.find(node),
+                    env.eg.find(expected),
+                    "recanonize vs reference: kind={:?} idxs={:?} merge {}->{}", k, idxs, mi, mj
+                );
+            }
+        }
     }
 
     #[test]

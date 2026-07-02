@@ -312,6 +312,9 @@ egg_test!(ac_complete_multi_mset, "ac_complete_multi_mset.egg");
 // ACI (Set) completion: the §4b superposition under an idempotent op (step 5).
 egg_test!(aci_complete_superposition, "aci_complete_superposition.egg");
 egg_test!(aci_complete_multi, "aci_complete_multi.egg");
+// Identity (unit drop) on MSet and ACI ops (multi-AC/ACI plan, property 1).
+egg_test!(identity_mset, "identity_mset.egg");
+egg_test!(identity_aci, "identity_aci.egg");
 egg_test!(
     alg_tags_reject_idem_nilpotent,
     "alg_tags_reject_idem_nilpotent.egg"
@@ -320,3 +323,16 @@ egg_test!(
     alg_tags_reject_idem_needs_ac,
     "alg_tags_reject_idem_needs_ac.egg"
 );
+// Nilpotent (XOR) completion: mod-n cancellation, empty→unit, stored MSet (multi-AC/ACI plan,
+// property 2).
+egg_test!(nilpotent_xor, "nilpotent_xor.egg");
+egg_test!(
+    nilpotent_xor_superposition,
+    "nilpotent_xor_superposition.egg"
+);
+// Soundness: xor(a,a) is never a (the old Set-dedup bug). check is expected to fail.
+egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
+// Canonization establishes the clamp / identity-drop / degeneracy normal form with completion
+// OFF (build AND recanonize paths): xor(a,a)=e, and(a,a)=a, add(a,e)=a, etc. Guards the
+// architecture fix that moved these out of the completion pass and into canonization.
+egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");

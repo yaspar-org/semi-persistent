@@ -47,12 +47,29 @@ impl<G: DenseId + Ord> FixedCanon<G, 2> for CCanon {
 // Variable-arity canonization
 // ---------------------------------------------------------------------------
 
-/// Canonize variable-arity children via destination-passing.
-///
-/// Reads `end - start` elements from pool via `get`, applies `find` to the
-/// G component, canonizes (sort/dedup/merge), writes result into `buf`.
-/// `buf` must be cleared by caller before each call.
-/// Returns nothing — caller reads `buf.len()` for the new span length.
+/// The count clamp for a variadic op's canonical form (design "storage partition and clamp are
+/// independent axes"). Passed to [`VarCanon::canonize`] so the clamp is applied *inside*
+/// canonization (its output is always the canonical form), not fixed up afterward. Kept
+/// clamp-mode-only here so `canon.rs` needs no `registry` dependency: the caller maps the op's
+/// `Clamp` descriptor to this before canonizing. Only [`MSetCanon`] acts on a non-`None` value;
+/// the clamp-free canonizers ([`OrderedCanon`]) and the ones whose clamp is structural
+/// ([`SetCanon`]'s `dedup` = idempotent) ignore it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MSetClamp {
+    /// No count clamp beyond what the canonizer bakes in (plain AC; also the value passed to the
+    /// clamp-free / structurally-clamped canonizers).
+    None,
+    /// Nilpotent order `n`: counts reduce mod `n`, zeroed summands drop (`x∘x = e`).
+    Nilpotent { order: u8 },
+}
+
+/// `canonize` must *establish* the representation invariant: its output is, by definition, the
+/// canonical child form for the op — never a temporarily-wrong form fixed up by a later pass.
+/// Where an op's canonical form depends on an algebraic count clamp (nilpotent: counts mod n), the
+/// clamp is applied *inside* `canonize` via the `mode` argument, exactly as [`SetCanon`] bakes its
+/// idempotent clamp (`dedup`) into its own `canonize`. `mode` is a concrete parameter (not an
+/// associated type) so it adds no `where`-clause bound anywhere; canonizers that do not act on it
+/// take it and ignore it.
 pub trait VarCanon<G: DenseId, C> {
     fn canonize(
         buf: &mut Vec<C>,
@@ -60,10 +77,11 @@ pub trait VarCanon<G: DenseId, C> {
         end: usize,
         get: impl Fn(usize) -> C,
         find: impl Fn(G) -> G,
+        mode: MSetClamp,
     );
 }
 
-/// Ordered: apply find, preserve order. (PlainN, A)
+/// Ordered: apply find, preserve order. (PlainN, A). No clamp; `mode` ignored.
 pub struct OrderedCanon;
 
 impl<G: DenseId> VarCanon<G, G> for OrderedCanon {
@@ -74,6 +92,7 @@ impl<G: DenseId> VarCanon<G, G> for OrderedCanon {
         end: usize,
         get: impl Fn(usize) -> G,
         find: impl Fn(G) -> G,
+        _mode: MSetClamp,
     ) {
         for i in start..end {
             buf.push(find(get(i)));
@@ -81,11 +100,17 @@ impl<G: DenseId> VarCanon<G, G> for OrderedCanon {
     }
 }
 
-/// AC: apply find to G component, sort by G, merge duplicate G's by summing multiplicities.
+/// AC: apply find to G component, sort by G, merge duplicate G's by summing multiplicities, then
+/// apply the op's count clamp. The two named steps — [`update_multiset`](Self::update_multiset)
+/// (raw representation: find+sort+coalesce, ℕ counts) and [`clamp_multiset`](Self::clamp_multiset)
+/// (the algebraic clamp) — are sequenced by `canonize`, so its output is always the canonical form.
 pub struct MSetCanon;
 
-impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for MSetCanon {
-    fn canonize(
+impl MSetCanon {
+    /// Raw multiset maintenance: find each child, sort by class id, coalesce duplicates by summing
+    /// multiplicities. Produces a sorted, duplicate-free multiset with ℕ counts — the
+    /// representation, before any algebraic clamp.
+    pub fn update_multiset<G: DenseId + Ord>(
         buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
         start: usize,
         end: usize,
@@ -112,9 +137,43 @@ impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for M
             buf.truncate(w + 1);
         }
     }
+
+    /// Apply the op's count clamp to an already-`update_multiset`'d buffer, in place. `None` is a
+    /// no-op (plain AC). `Nilpotent { order: n }` reduces each count mod `n` and drops the summands
+    /// that vanish, so `xor(a,a)` (`{a:2}`) becomes `{}`. Preserves sort order (`retain`), so the
+    /// result stays canonical.
+    pub fn clamp_multiset<G: DenseId>(
+        buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
+        mode: MSetClamp,
+    ) {
+        use crate::multiplicity::Multiplicity;
+        if let MSetClamp::Nilpotent { order } = mode {
+            let n = order as u32;
+            for p in buf.iter_mut() {
+                p.1 = Multiplicity(p.1.0 % n);
+            }
+            buf.retain(|p| p.1.0 != 0);
+        }
+    }
 }
 
-/// ACI: apply find, sort, dedup.
+impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for MSetCanon {
+    fn canonize(
+        buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
+        start: usize,
+        end: usize,
+        get: impl Fn(usize) -> (G, crate::multiplicity::Multiplicity),
+        find: impl Fn(G) -> G,
+        mode: MSetClamp,
+    ) {
+        Self::update_multiset(buf, start, end, get, find);
+        Self::clamp_multiset(buf, mode);
+    }
+}
+
+/// ACI: apply find, sort, dedup. The `dedup` *is* the idempotent clamp, baked into canonize (no
+/// separate mode) — the precedent for keeping a clamp inside canonize rather than after it.
+/// `mode` is ignored (idempotence is structural here, not a count clamp).
 pub struct SetCanon;
 
 impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
@@ -124,6 +183,7 @@ impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
         end: usize,
         get: impl Fn(usize) -> G,
         find: impl Fn(G) -> G,
+        _mode: MSetClamp,
     ) {
         for i in start..end {
             buf.push(find(get(i)));
@@ -174,11 +234,47 @@ mod tests {
             (id(3), Multiplicity(1)),
         ];
         let mut buf = Vec::new();
-        MSetCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g);
+        MSetCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g, MSetClamp::None);
         assert_eq!(
             buf,
             vec![(id(1), Multiplicity(2)), (id(3), Multiplicity(2))]
         );
+    }
+
+    #[test]
+    fn mset_canon_nilpotent_clamps_mod_order() {
+        // xor(a,a) → {a:2} → {} at order 2; xor(a,a,a,b) → {a:3,b:1} → {a:1,b:1}.
+        let pool = [
+            (id(1), Multiplicity(1)),
+            (id(1), Multiplicity(1)),
+            (id(1), Multiplicity(1)),
+            (id(2), Multiplicity(1)),
+        ];
+        let mut buf = Vec::new();
+        MSetCanon::canonize(
+            &mut buf,
+            0,
+            4,
+            |i| pool[i],
+            |g| g,
+            MSetClamp::Nilpotent { order: 2 },
+        );
+        assert_eq!(
+            buf,
+            vec![(id(1), Multiplicity(1)), (id(2), Multiplicity(1))]
+        );
+        // A fully-even monomial empties to {}.
+        let even = [(id(1), Multiplicity(1)), (id(1), Multiplicity(1))];
+        let mut b2 = Vec::new();
+        MSetCanon::canonize(
+            &mut b2,
+            0,
+            2,
+            |i| even[i],
+            |g| g,
+            MSetClamp::Nilpotent { order: 2 },
+        );
+        assert!(b2.is_empty());
     }
 
     #[test]
@@ -198,6 +294,7 @@ mod tests {
             |g| {
                 if g.raw() <= 3 { id(1) } else { g }
             },
+            MSetClamp::None,
         );
         assert_eq!(
             buf,
@@ -209,7 +306,7 @@ mod tests {
     fn aci_canon_dedup() {
         let pool = [id(3), id(1), id(3), id(2), id(1)];
         let mut buf = Vec::new();
-        SetCanon::canonize(&mut buf, 0, 5, |i| pool[i], |g| g);
+        SetCanon::canonize(&mut buf, 0, 5, |i| pool[i], |g| g, MSetClamp::None);
         assert_eq!(buf, vec![id(1), id(2), id(3)]);
     }
 
@@ -226,6 +323,7 @@ mod tests {
             |g| {
                 if g.raw() <= 3 { id(1) } else { g }
             },
+            MSetClamp::None,
         );
         assert_eq!(buf, vec![id(1)]);
     }
