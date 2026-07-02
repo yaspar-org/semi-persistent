@@ -82,9 +82,9 @@ impl<G: DenseId> VarCanon<G, G> for OrderedCanon {
 }
 
 /// AC: apply find to G component, sort by G, merge duplicate G's by summing multiplicities.
-pub struct ACCanon;
+pub struct MSetCanon;
 
-impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for ACCanon {
+impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for MSetCanon {
     fn canonize(
         buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
         start: usize,
@@ -115,9 +115,9 @@ impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for A
 }
 
 /// ACI: apply find, sort, dedup.
-pub struct ACICanon;
+pub struct SetCanon;
 
-impl<G: DenseId + Ord> VarCanon<G, G> for ACICanon {
+impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
     fn canonize(
         buf: &mut Vec<G>,
         start: usize,
@@ -167,14 +167,14 @@ mod tests {
     }
 
     #[test]
-    fn ac_canon_merges() {
+    fn mset_canon_merges() {
         let pool = [
             (id(3), Multiplicity(1)),
             (id(1), Multiplicity(2)),
             (id(3), Multiplicity(1)),
         ];
         let mut buf = Vec::new();
-        ACCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g);
+        MSetCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g);
         assert_eq!(
             buf,
             vec![(id(1), Multiplicity(2)), (id(3), Multiplicity(2))]
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn ac_canon_find_and_merge() {
+    fn mset_canon_find_and_merge() {
         // find: 2→1, 3→1, 4→4
         let pool = [
             (id(2), Multiplicity(1)),
@@ -190,7 +190,7 @@ mod tests {
             (id(4), Multiplicity(1)),
         ];
         let mut buf = Vec::new();
-        ACCanon::canonize(
+        MSetCanon::canonize(
             &mut buf,
             0,
             3,
@@ -209,7 +209,7 @@ mod tests {
     fn aci_canon_dedup() {
         let pool = [id(3), id(1), id(3), id(2), id(1)];
         let mut buf = Vec::new();
-        ACICanon::canonize(&mut buf, 0, 5, |i| pool[i], |g| g);
+        SetCanon::canonize(&mut buf, 0, 5, |i| pool[i], |g| g);
         assert_eq!(buf, vec![id(1), id(2), id(3)]);
     }
 
@@ -218,7 +218,7 @@ mod tests {
         // find: 2→1, 3→1
         let pool = [id(1), id(2), id(3)];
         let mut buf = Vec::new();
-        ACICanon::canonize(
+        SetCanon::canonize(
             &mut buf,
             0,
             3,

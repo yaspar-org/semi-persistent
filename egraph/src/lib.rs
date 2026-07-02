@@ -8,13 +8,12 @@
 // use `crate::containers::Vec`, `crate::containers::Tagged`, etc.
 pub use semi_persistent_containers as containers;
 
-pub mod ac_complete;
 pub mod ac_invariants;
-pub mod ac_multiset;
 pub mod apply;
 pub mod ast;
 pub mod caches;
 pub mod canon;
+pub mod cc;
 pub mod classes;
 pub mod compile;
 pub mod config;
@@ -32,6 +31,7 @@ pub mod lit_model;
 pub mod literal;
 pub mod model;
 pub mod multiplicity;
+pub mod multiset;
 pub mod node_store;
 pub mod node_types;
 pub mod nodes;

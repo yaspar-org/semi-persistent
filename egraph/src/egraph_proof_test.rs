@@ -287,8 +287,8 @@ mod kind_proof_tests {
             g: eg.register_op2("g", int, int, int),
             eq: eg.register_c("eq", [int, int], int),
             sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
-            plus: eg.register_ac("plus", int, int),
-            and: eg.register_aci("and", int, int),
+            plus: eg.register_mset("plus", int, int),
+            and: eg.register_set("and", int, int),
         };
         (eg, th)
     }
@@ -635,8 +635,8 @@ mod stress_proof_test {
             g: eg.register_op2("g", int, int, int),
             eq: eg.register_c("eq", [int, int], int),
             sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
-            add: eg.register_ac("add", int, int),
-            and: eg.register_aci("and", int, int),
+            add: eg.register_mset("add", int, int),
+            and: eg.register_set("and", int, int),
         };
 
         // Simple LCG for deterministic pseudo-random
@@ -760,11 +760,11 @@ mod stress_proof_test {
     /// (`AC_COMPLETE_TRACE=1`) fire per completion round. Ignored by default because
     /// completion is known to diverge on these graphs; this exists to witness *why*.
     /// Run: `AC_BASIS_DUMP=1 AC_COMPLETE_TRACE=1 cargo test investigate_completion -- --ignored --nocapture`
-    fn build_stress_ac_complete(seed: u64, n_leaves: usize, n_layers: usize, n_merges: usize) {
+    fn build_stress_cc(seed: u64, n_leaves: usize, n_layers: usize, n_merges: usize) {
         let mut eg = EGraph31::<NiraLitVal, false, true>::new();
-        eg.set_ac_complete(true);
+        eg.set_cc(true);
         // Investigation harness: always run the reduced-basis invariant checks so the
-        // per-round and final `ac_basis_dump`s fire regardless of the env var.
+        // per-round and final `cc_basis_dump`s fire regardless of the env var.
         eg.set_basis_checks(true);
         let int = eg.intern_sort("Int");
         let ops = Ops {
@@ -772,8 +772,8 @@ mod stress_proof_test {
             g: eg.register_op2("g", int, int, int),
             eq: eg.register_c("eq", [int, int], int),
             sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
-            add: eg.register_ac("add", int, int),
-            and: eg.register_aci("and", int, int),
+            add: eg.register_mset("add", int, int),
+            and: eg.register_set("and", int, int),
         };
 
         let mut rng = seed;
@@ -830,14 +830,14 @@ mod stress_proof_test {
         }
         eprintln!("[investigate] seed={seed} starting rebuild with completion ON");
         eg.rebuild();
-        eg.ac_basis_dump("final");
+        eg.cc_basis_dump("final");
         eprintln!(
             "[investigate] seed={seed} final node_count={}",
             eg.node_count()
         );
     }
 
-    /// Like `build_stress_ac_complete` but with no basis dump; returns the final node count.
+    /// Like `build_stress_cc` but with no basis dump; returns the final node count.
     /// On divergence the `rebuild` backstop's `debug_assert` panics, which the sweep catches.
     fn build_stress_ac_complete_quiet(
         seed: u64,
@@ -846,15 +846,15 @@ mod stress_proof_test {
         n_merges: usize,
     ) -> usize {
         let mut eg = EGraph31::<NiraLitVal, false, true>::new();
-        eg.set_ac_complete(true);
+        eg.set_cc(true);
         let int = eg.intern_sort("Int");
         let ops = Ops {
             f: eg.register_op1("f", int, int),
             g: eg.register_op2("g", int, int, int),
             eq: eg.register_c("eq", [int, int], int),
             sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
-            add: eg.register_ac("add", int, int),
-            and: eg.register_aci("and", int, int),
+            add: eg.register_mset("add", int, int),
+            and: eg.register_set("and", int, int),
         };
         let mut rng = seed;
         let mut next = || -> usize {
@@ -910,7 +910,7 @@ mod stress_proof_test {
     #[test]
     #[ignore = "completion diverges on this graph; investigation harness only"]
     fn investigate_completion() {
-        build_stress_ac_complete(42, 30, 4, 20);
+        build_stress_cc(42, 30, 4, 20);
     }
 
     /// Sweep a grid of stress configs with AC completion ON and report which converge and
@@ -958,7 +958,7 @@ mod stress_proof_test {
     #[ignore = "investigation harness: a small CONVERGING graph, to check the basis is fully
                 Kapur-reduced at the true fixpoint (kapur_lhs_reducible=0 in the final dump)"]
     fn investigate_completion_small() {
-        build_stress_ac_complete(7, 12, 2, 5);
+        build_stress_cc(7, 12, 2, 5);
     }
 
     #[test]
@@ -1002,7 +1002,7 @@ mod aci_deep_proof_test {
         assert!(k <= n);
         let mut eg = EGraph31::<NiraLitVal, false, true>::new();
         let int = eg.intern_sort("Int");
-        let and = eg.register_aci("and", int, int);
+        let and = eg.register_set("and", int, int);
 
         // Shared children: s0..s(k-1)
         let mut shared = Vec::new();
@@ -1145,8 +1145,8 @@ mod bench_overhead {
         let f = eg.register_op1("f", int, int);
         let g = eg.register_op2("g", int, int, int);
         let eq = eg.register_c("eq", [int, int], int);
-        let add = eg.register_ac("add", int, int);
-        let and = eg.register_aci("and", int, int);
+        let add = eg.register_mset("add", int, int);
+        let and = eg.register_set("and", int, int);
 
         let mut rng: u64 = 12345;
         let mut next = || -> usize {

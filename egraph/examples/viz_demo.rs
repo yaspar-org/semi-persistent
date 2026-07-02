@@ -13,7 +13,7 @@ fn main() {
     let f = eg.register_op1("f", int, int);
     let g = eg.register_op2("g", int, int, int);
     let eq = eg.register_c("eq", [int, int], bool_);
-    let plus = eg.register_ac("plus", int, int);
+    let plus = eg.register_mset("plus", int, int);
 
     let ex = eg.add(x, &[]);
     let ey = eg.add(y, &[]);

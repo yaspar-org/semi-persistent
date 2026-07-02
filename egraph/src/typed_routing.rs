@@ -17,8 +17,8 @@ pub trait NodeIds {
     type LC: DenseId;
     type LN: DenseId;
     type LA: DenseId;
-    type LAC: DenseId;
-    type LACI: DenseId;
+    type LMSet: DenseId;
+    type LSet: DenseId;
     type LLit: DenseId;
 }
 
@@ -31,8 +31,8 @@ pub enum NodeRef<I: NodeIds> {
     C(I::LC),
     PlainN(I::LN),
     A(I::LA),
-    AC(I::LAC),
-    ACI(I::LACI),
+    MSet(I::LMSet),
+    Set(I::LSet),
     Lit(I::LLit),
 }
 
@@ -54,8 +54,8 @@ impl<I: NodeIds> PartialEq for NodeRef<I> {
             (Self::C(a), Self::C(b)) => a == b,
             (Self::PlainN(a), Self::PlainN(b)) => a == b,
             (Self::A(a), Self::A(b)) => a == b,
-            (Self::AC(a), Self::AC(b)) => a == b,
-            (Self::ACI(a), Self::ACI(b)) => a == b,
+            (Self::MSet(a), Self::MSet(b)) => a == b,
+            (Self::Set(a), Self::Set(b)) => a == b,
             (Self::Lit(a), Self::Lit(b)) => a == b,
             _ => false,
         }
@@ -73,8 +73,8 @@ impl<I: NodeIds> core::fmt::Debug for NodeRef<I> {
             Self::C(id) => write!(f, "C({:?})", id),
             Self::PlainN(id) => write!(f, "PlainN({:?})", id),
             Self::A(id) => write!(f, "A({:?})", id),
-            Self::AC(id) => write!(f, "AC({:?})", id),
-            Self::ACI(id) => write!(f, "ACI({:?})", id),
+            Self::MSet(id) => write!(f, "MSet({:?})", id),
+            Self::Set(id) => write!(f, "Set({:?})", id),
             Self::Lit(id) => write!(f, "Lit({:?})", id),
         }
     }
@@ -168,8 +168,8 @@ mod tests {
         type LC = CNodeId;
         type LN = PlainNId;
         type LA = ANodeId;
-        type LAC = ACNodeId;
-        type LACI = ACINodeId;
+        type LMSet = MSetNodeId;
+        type LSet = SetNodeId;
         type LLit = LitNodeId;
     }
 
@@ -181,9 +181,9 @@ mod tests {
         let id0 = rt.reserve();
         rt.finalize(id0, NodeRef::Plain0(Plain0Id::new(0)));
         let id1 = rt.reserve();
-        rt.finalize(id1, NodeRef::AC(ACNodeId::new(0)));
+        rt.finalize(id1, NodeRef::MSet(MSetNodeId::new(0)));
         assert_eq!(rt.get(id0), NodeRef::Plain0(Plain0Id::new(0)));
-        assert_eq!(rt.get(id1), NodeRef::AC(ACNodeId::new(0)));
+        assert_eq!(rt.get(id1), NodeRef::MSet(MSetNodeId::new(0)));
         assert_eq!(rt.len(), 2);
     }
 

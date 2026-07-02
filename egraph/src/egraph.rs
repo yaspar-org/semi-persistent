@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The semi-persistent e-graph: add, merge, find, rebuild, mark, restore.
 
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::classes::EClasses;
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
@@ -42,8 +42,12 @@ pub struct EGraph<
     nodes: NodeStore<Cfg::G, Cfg::O, Cfg::V, Cfg::C, Cfg::Ids, TRACK, PROOFS>,
     worklist: Vec<(Cfg::UL, Cfg::G)>,
     collisions: Vec<(Cfg::G, Cfg::G)>,
+    /// Reusable scratch for a node's child ids as bare `G` (the canonical-children buffer for
+    /// every representation except MSet). Paired with `mset_buf`, which holds the MSet variant.
     g_buf: Vec<Cfg::G>,
-    ac_buf: Vec<Cfg::C>,
+    /// Reusable scratch for MSet children, child type `C` = `(G, mult)` (the multiset
+    /// representation needs the multiplicity that bare `G` in `g_buf` cannot carry).
+    mset_buf: Vec<Cfg::C>,
     /// Semi-naive touched log: node ids created or recanonicalized since the
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
@@ -52,19 +56,19 @@ pub struct EGraph<
     /// inter-reduction). **Default off**: completion can materialize nested same-op
     /// nodes, which the matcher cannot handle until AC flattening lands (`WF_flat`,
     /// see `doc/design/ac-congruence-completeness.md` §6b). Opt in with
-    /// [`set_ac_complete`](Self::set_ac_complete) once flattening is in place; the
+    /// [`set_cc`](Self::set_cc) once flattening is in place; the
     /// completion tests enable it for the flat scenarios they exercise.
-    ac_complete: bool,
-    /// Whether `rebuild` runs the AC reduced-basis invariant checks (`ac_basis_dump`:
-    /// `ac_min` minimality, the Kapur-reduced antichain, etc., see `ac_invariants.rs`).
-    /// **Default off** and only consulted when `ac_complete` is on: the ground-truth checks
+    cc: bool,
+    /// Whether `rebuild` runs the AC reduced-basis invariant checks (`cc_basis_dump`:
+    /// `min_monomial` minimality, the Kapur-reduced antichain, etc., see `ac_invariants.rs`).
+    /// **Default off** and only consulted when `cc` is on: the ground-truth checks
     /// brute-force per-class minima and multi-step normalization (superlinear), so they are
     /// diagnostic/test-only, never on the production hot path. Seeded from the `AC_BASIS_DUMP`
     /// env var at construction (so existing diagnostic runs keep working) and overridable via
     /// [`set_basis_checks`](Self::set_basis_checks).
     basis_checks: bool,
     /// Reusable scratch for comparing two nodes' AC monomials (`monomial_cmp` on the
-    /// per-class `ac_min`, §9a). Two buffers to hold both sides without aliasing;
+    /// per-class `min_monomial`, §9a). Two buffers to hold both sides without aliasing;
     /// cleared and refilled per comparison, never grown per merge.
     cmp_buf_a: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
     cmp_buf_b: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
@@ -84,7 +88,7 @@ pub type EGraph63<L, const TRACK: bool = true, const PROOFS: bool = false> =
 impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool> Default
     for EGraph<Cfg, L, TRACK, PROOFS>
 where
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     fn default() -> Self {
         Self::new()
@@ -94,7 +98,7 @@ where
 impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
     EGraph<Cfg, L, TRACK, PROOFS>
 where
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub fn new() -> Self {
         Self {
@@ -108,9 +112,9 @@ where
             worklist: Vec::new(),
             collisions: Vec::new(),
             g_buf: Vec::new(),
-            ac_buf: Vec::new(),
+            mset_buf: Vec::new(),
             touched: Vec::new(),
-            ac_complete: false,
+            cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
             cmp_buf_b: Vec::new(),
@@ -119,15 +123,15 @@ where
     }
 
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
-    /// Off until nested same-op flattening lands — see `ac_complete` field docs.
-    pub fn set_ac_complete(&mut self, enabled: bool) {
-        self.ac_complete = enabled;
+    /// Off until nested same-op flattening lands — see `cc` field docs.
+    pub fn set_cc(&mut self, enabled: bool) {
+        self.cc = enabled;
     }
 
     /// Enable or disable the AC reduced-basis invariant checks in `rebuild` (default off,
-    /// seeded from the `AC_BASIS_DUMP` env var). When on (and `ac_complete` is on), each
-    /// completion round prints `ac_basis_dump`, which runs the ground-truth checkers
-    /// (`ac_min` minimality, Kapur-reducedness). These are superlinear brute-force checks,
+    /// seeded from the `AC_BASIS_DUMP` env var). When on (and `cc` is on), each
+    /// completion round prints `cc_basis_dump`, which runs the ground-truth checkers
+    /// (`min_monomial` minimality, Kapur-reducedness). These are superlinear brute-force checks,
     /// so leave this off outside diagnosis and tests. See `ac_invariants.rs`.
     pub fn set_basis_checks(&mut self, enabled: bool) {
         self.basis_checks = enabled;
@@ -235,11 +239,11 @@ where
     ) -> Cfg::O {
         self.ops.register_a(name, arg, ret, dir)
     }
-    pub fn register_ac(&mut self, name: &str, arg: Cfg::S, ret: Cfg::S) -> Cfg::O {
-        self.ops.register_ac(name, arg, ret)
+    pub fn register_mset(&mut self, name: &str, arg: Cfg::S, ret: Cfg::S) -> Cfg::O {
+        self.ops.register_mset(name, arg, ret)
     }
-    pub fn register_aci(&mut self, name: &str, arg: Cfg::S, ret: Cfg::S) -> Cfg::O {
-        self.ops.register_aci(name, arg, ret)
+    pub fn register_set(&mut self, name: &str, arg: Cfg::S, ret: Cfg::S) -> Cfg::O {
+        self.ops.register_set(name, arg, ret)
     }
     pub fn register_lit(&mut self, name: &str, ret: Cfg::S) -> Cfg::O {
         self.ops.register_lit(name, ret)
@@ -343,7 +347,9 @@ where
                         );
                     }
                 }
-                OpKind::A { arg_sort, .. } | OpKind::AC { arg_sort } | OpKind::ACI { arg_sort } => {
+                OpKind::A { arg_sort, .. }
+                | OpKind::MSet { arg_sort }
+                | OpKind::Set { arg_sort } => {
                     for (i, &c) in children.iter().enumerate() {
                         let got = self.node_sort(c);
                         debug_assert_eq!(
@@ -368,28 +374,28 @@ where
         // any child whose class is a pure same-op sum, keyed on the class's canonical
         // summand form (atomic-aware), so `+(+(a,b), c)` becomes `+(a,b,c)`. An atomic child
         // (e.g. `c` used as `neg`'s child in §5b) is kept as a summand.
-        if matches!(self.ops.info(op).kind, OpKind::AC { .. }) {
+        if matches!(self.ops.info(op).kind, OpKind::MSet { .. }) {
             self.flatten_ac_children(op);
         }
 
         let result = match self.ops.info(op).kind {
-            OpKind::AC { .. } => {
+            OpKind::MSet { .. } => {
                 self.g_buf.sort_by_key(|id| id.to_usize());
-                self.ac_buf.clear();
+                self.mset_buf.clear();
                 for &id in &self.g_buf {
-                    if let Some(last) = self.ac_buf.last_mut()
-                        && Cfg::ac_child_merge(last, id)
+                    if let Some(last) = self.mset_buf.last_mut()
+                        && Cfg::mset_child_merge(last, id)
                     {
                         continue;
                     }
-                    self.ac_buf.push(Cfg::ac_child_single(id));
+                    self.mset_buf.push(Cfg::mset_child_single(id));
                 }
-                self.nodes.add_ac(op, &self.ac_buf)
+                self.nodes.add_mset(op, &self.mset_buf)
             }
-            OpKind::ACI { .. } => {
+            OpKind::Set { .. } => {
                 self.g_buf.sort_by_key(|id| id.to_usize());
                 self.g_buf.dedup();
-                self.nodes.add_aci(op, &self.g_buf)
+                self.nodes.add_set(op, &self.g_buf)
             }
             _ => self.nodes.add(op, &self.g_buf, &self.ops),
         };
@@ -397,9 +403,9 @@ where
         let id = self.register_if_fresh(result);
         if result.is_fresh() {
             match self.ops.info(op).kind {
-                OpKind::AC { .. } => {
-                    for c in &self.ac_buf {
-                        let child = Cfg::ac_child_id(c);
+                OpKind::MSet { .. } => {
+                    for c in &self.mset_buf {
+                        let child = Cfg::mset_child_id(c);
                         if let Some(repr) = self.classes.repr_id(child) {
                             self.classes.add_use(repr, id);
                         }
@@ -432,10 +438,10 @@ where
     ) {
         use crate::multiplicity::Multiplicity;
         buf.clear();
-        if matches!(self.node_ref(node), NodeRef::AC(_)) {
-            // ac_children, find-canonicalized + coalesced (same form as ACCanon).
+        if matches!(self.node_ref(node), NodeRef::MSet(_)) {
+            // mset_children, find-canonicalized + coalesced (same form as MSetCanon).
             let mut raw = Vec::new();
-            self.ac_children(node, &mut raw);
+            self.mset_children(node, &mut raw);
             let mut m: Vec<(Cfg::G, Multiplicity)> = raw
                 .into_iter()
                 .map(|(g, mult)| (self.classes.find_const(g), Multiplicity(mult.into())))
@@ -457,8 +463,8 @@ where
 
     /// Fill `buf` with the completion rule right-hand side for the class of `node`: the
     /// size-1 monomial `{find(node)}` if the class is `atomic` (referenced as a child),
-    /// else the monomial of the class's stored `ac_min` (§9a). Reads the per-class slot;
-    /// O(1) plus the `ac_min` monomial read. Returns `false` if `node` has no class.
+    /// else the monomial of the class's stored `min_monomial` (§9a). Reads the per-class slot;
+    /// O(1) plus the `min_monomial` monomial read. Returns `false` if `node` has no class.
     fn class_rhs_into(
         &self,
         node: Cfg::G,
@@ -469,40 +475,46 @@ where
         let Some(repr) = self.classes.repr_id(cls) else {
             return false;
         };
-        if self.classes.ac_atomic(repr) {
+        if self.classes.atomic(repr) {
             buf.clear();
             buf.push((cls, Multiplicity(1)));
         } else {
-            self.node_monomial_into(self.classes.ac_min(repr), buf);
+            self.node_monomial_into(self.classes.min_monomial(repr), buf);
         }
         true
     }
 
     /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
-    /// keep the `monomial_cmp`-least `ac_min` node, and OR-in the `atomic` flag (the
+    /// keep the `monomial_cmp`-least `min_monomial` node, and OR-in the `atomic` flag (the
     /// completion rule RHS, §9a). O(1) plus the two monomial reads, into reusable
     /// buffers. Done here, not in `EClasses`, because the comparison needs node
     /// (AC-children) access. Best-effort under merge-cascade staleness; completion's
     /// read-time orientation guard makes that safe (§9b).
-    fn fold_ac_class(&mut self, survivor: Cfg::G, absorbed_ac_min: Cfg::G, absorbed_atomic: bool) {
+    fn fold_min_monomial(
+        &mut self,
+        survivor: Cfg::G,
+        absorbed_min_monomial: Cfg::G,
+        absorbed_atomic: bool,
+    ) {
         let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
             Some(r) => r,
             None => return,
         };
         if absorbed_atomic {
-            self.classes.set_ac_atomic(surv_repr);
+            self.classes.set_atomic(surv_repr);
         }
-        let surv_min = self.classes.ac_min(surv_repr);
-        if surv_min == absorbed_ac_min {
+        let surv_min = self.classes.min_monomial(surv_repr);
+        if surv_min == absorbed_min_monomial {
             return;
         }
         // Compare the two candidate minima; keep the smaller in degree-lex order.
         let mut a = std::mem::take(&mut self.cmp_buf_a);
         let mut b = std::mem::take(&mut self.cmp_buf_b);
         self.node_monomial_into(surv_min, &mut a);
-        self.node_monomial_into(absorbed_ac_min, &mut b);
-        if crate::ac_multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
-            self.classes.set_ac_min(surv_repr, absorbed_ac_min);
+        self.node_monomial_into(absorbed_min_monomial, &mut b);
+        if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+            self.classes
+                .set_min_monomial(surv_repr, absorbed_min_monomial);
         }
         self.cmp_buf_a = a;
         self.cmp_buf_b = b;
@@ -524,7 +536,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge(a, b)?;
-        self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
+        self.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -550,7 +562,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge_justified(a, b, just)?;
-        self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
+        self.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -657,7 +669,7 @@ where
         ac_scratch.clear();
         if self.nodes.original_children(id, out, ac_scratch) {
             for c in ac_scratch.iter() {
-                out.push(Cfg::ac_child_id(c));
+                out.push(Cfg::mset_child_id(c));
             }
             return;
         }
@@ -674,7 +686,7 @@ where
     /// `doc/future/ac-congruence-completeness-plan.md` §2, Option A):
     /// - [`rebuild_congruence`](Self::rebuild_congruence): ordinary worklist-driven
     ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
-    /// - [`ac_complete_round`](Self::ac_complete_round): AC completion (substitutes
+    /// - [`cc_round`](Self::cc_round): AC completion (substitutes
     ///   equal *sub-sums*), which canonization alone misses.
     ///
     /// A completion round may push new merges onto the worklist; we drain them with
@@ -684,23 +696,23 @@ where
     pub fn rebuild(&mut self) {
         // Ordinary atom-level congruence closure always runs. AC completion runs only
         // when opted in (default off until nested same-op flattening lands — §6b).
-        if !self.ac_complete {
+        if !self.cc {
             self.rebuild_congruence();
             return;
         }
         // Completion supports exactly one AC symbol. The per-class slot stores a single
-        // `ac_min`/`atomic` (one op's minimal monomial), so a class holding monomials of two
+        // `min_monomial`/`atomic` (one op's minimal monomial), so a class holding monomials of two
         // different AC ops (e.g. `a+b = a*b`) would conflate their minima and the rule RHS
         // would be wrong. Reject more than one registered AC op rather than compute a wrong
-        // closure. The check is here, at the point of use, not in `set_ac_complete`: the
+        // closure. The check is here, at the point of use, not in `set_cc`: the
         // interpreter enables completion before sortcheck registers the ops, so an
-        // enable-time count would see zero. Multi-op support is a per-op `ac_min` pool
+        // enable-time count would see zero. Multi-op support is a per-op `min_monomial` pool
         // (design §9b axis-1 option 3); until then this is a hard precondition.
         assert!(
-            self.ops.ac_op_count() <= 1,
+            self.ops.mset_op_count() <= 1,
             "AC completion supports a single AC symbol, but {} are registered; \
-             multi-AC-symbol completion needs the per-op ac_min pool (design §9b axis-1)",
-            self.ops.ac_op_count()
+             multi-AC-symbol completion needs the per-op min_monomial pool (design §9b axis-1)",
+            self.ops.mset_op_count()
         );
         let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
         // Safety backstop against a diverging completion (minting unbounded
@@ -728,12 +740,12 @@ where
         loop {
             self.rebuild_congruence();
             if basis_dump {
-                self.ac_basis_dump(&format!("round {round} pre"));
+                self.cc_basis_dump(&format!("round {round} pre"));
             }
             let before = self.node_count();
             let mark = self.touched.len();
             let was_full = full;
-            let changed = self.ac_complete_round(full, prev_mark, mark);
+            let changed = self.cc_round(full, prev_mark, mark);
             prev_mark = mark;
             if trace {
                 eprintln!(
@@ -779,7 +791,7 @@ where
                     parent,
                     find,
                     &mut self.g_buf,
-                    &mut self.ac_buf,
+                    &mut self.mset_buf,
                     &mut self.collisions,
                     &mut self.touched,
                 );
@@ -805,7 +817,7 @@ where
                     self.classes.merge(a, b)
                 };
                 if let Some(m) = m {
-                    self.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
+                    self.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
@@ -817,7 +829,7 @@ where
     ///
     /// Reading each non-subsumed AC node `+M = d` as a ground rule `+M → d`, over a
     /// frozen snapshot of the active AC nodes
-    /// ([`crate::ac_complete::AcPartnerSnapshot`]), for each pair of partners (same op,
+    /// ([`crate::cc::CcSnapshot`]), for each pair of partners (same op,
     /// sharing ≥1 child class):
     ///
     /// - **(A) inter-reduction + Collapse** — if `A ⊊ M`, the sub-sum `+A` equals `a`,
@@ -845,29 +857,16 @@ where
     /// stay closed under monotone merges. `full` (round 0) generates every pair. The (A′)
     /// collapse/normalize pass and the antichain `reducible` check stay full scans: a small
     /// new rule must still be able to collapse a large old one.
-    fn ac_complete_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
-        use crate::ac_multiset::{
+    fn cc_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
+        use crate::multiplicity::Multiplicity;
+        use crate::multiset::{
             NfRule, multiset_disjoint, multiset_lcm, multiset_subset, normalize_ms,
         };
-        use crate::multiplicity::Multiplicity;
-
-        // Delta rule-node set for incremental (B): sorted, dedup'd node ids touched since
-        // the previous round. `touched` may contain duplicates; sort+dedup once, then test
-        // a rule's membership by binary search (mirrors the `rules` binary-search idiom).
-        let delta: Vec<Cfg::G> = if full {
-            Vec::new()
-        } else {
-            let mut d: Vec<Cfg::G> = self.touched[delta_lo..delta_hi].to_vec();
-            d.sort_unstable();
-            d.dedup();
-            d
-        };
-        let in_delta = |n: Cfg::G| -> bool { full || delta.binary_search(&n).is_ok() };
 
         // Canonical child multiset of an AC node as sorted, coalesced (class-repr, mult).
         let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
             let mut raw = Vec::new();
-            eg.ac_children(id, &mut raw);
+            eg.mset_children(id, &mut raw);
             let mut m: Vec<(Cfg::G, Multiplicity)> = raw
                 .into_iter()
                 .map(|(g, mult)| (eg.classes.find_const(g), Multiplicity(mult.into())))
@@ -886,7 +885,7 @@ where
             out
         };
 
-        use crate::ac_multiset::monomial_cmp;
+        use crate::multiset::monomial_cmp;
         use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
 
         // Completion's active set excludes nodes that are user-subsumed (not matchable)
@@ -895,7 +894,7 @@ where
 
         // Each active AC node is a candidate rule `+M → rhs(class)`, where the RHS comes
         // from the per-class slot (`class_rhs_into`: `{class}` if atomic, else the stored
-        // `ac_min` monomial, §9a) — not recomputed per round. The orientation guard keeps
+        // `min_monomial` monomial, §9a) — not recomputed per round. The orientation guard keeps
         // only nodes whose own monomial `M` is strictly `≫_f`-greater than that RHS: those
         // are the genuine rules (a node equal to its class's normal form is no rule, and a
         // mis-oriented `M ≺ rhs` is dropped, §9b axis-2a). `node` lets us collapse it.
@@ -907,15 +906,13 @@ where
         }
         let mut rules: Vec<Rule<Cfg::G>> = Vec::new();
         let mut rhs_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        // Iterate the AC node partition directly (ascending global id), not all nodes: the
+        // `is_mset` filter is implicit and the non-AC majority is never visited.
+        for gid in self.completion_node_ids() {
             if self.node_flags(gid) & inactive != 0 {
                 continue;
             }
             let op = self.node_op(gid);
-            if !self.ops.is_ac(op) {
-                continue;
-            }
             let lhs = multiset_of(self, gid);
             if !self.class_rhs_into(gid, &mut rhs_buf) {
                 continue;
@@ -955,6 +952,19 @@ where
             rules.retain(|r| seen.insert((r.op, r.lhs.clone())));
         }
 
+        // Delta rule-node set for incremental (B): sorted, dedup'd node ids touched since
+        // the previous round. `touched` may contain duplicates; sort+dedup once, then test
+        // a rule's membership by binary search (mirrors the `rules` binary-search idiom).
+        let delta: Vec<Cfg::G> = if full {
+            Vec::new()
+        } else {
+            let mut d: Vec<Cfg::G> = self.touched[delta_lo..delta_hi].to_vec();
+            d.sort_unstable();
+            d.dedup();
+            d
+        };
+        let in_delta = |n: Cfg::G| -> bool { full || delta.binary_search(&n).is_ok() };
+
         // Reducibility flag per rule: a rule whose LHS strictly contains another rule's LHS
         // (same op) is reducible by it, so collapse will retire it. Kapur superposes only
         // over the inter-reduced *antichain*, never over a reducible rule (FSCD'21 Algo 1:
@@ -963,6 +973,8 @@ where
         // set an antichain within the round and stops the critical-pair blowup (plan §0.4).
         // O(rules²) over the small active set; acceptable while the worklist rewrite (S3b)
         // is pending.
+        let phase_time = std::env::var_os("AC_PHASE_TIME").is_some();
+        let t_reducible = std::time::Instant::now();
         let reducible: Vec<bool> = (0..rules.len())
             .map(|i| {
                 rules.iter().enumerate().any(|(j, rj)| {
@@ -973,6 +985,7 @@ where
                 })
             })
             .collect();
+        let dt_reducible = t_reducible.elapsed();
 
         // Expand a multiset to a flat child list; `add` re-sorts and re-coalesces.
         let materialize = |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)]| -> Cfg::G {
@@ -1002,7 +1015,7 @@ where
             };
             match m {
                 Some(m) => {
-                    eg.fold_ac_class(m.survivor, m.absorbed_ac_min, m.absorbed_atomic);
+                    eg.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
                     eg.worklist.push((m.absorbed_uses, m.survivor));
                     true
                 }
@@ -1030,17 +1043,15 @@ where
         // +{c,neg(c)}, which is *materialized* so the ordinary matcher reaches it
         // (design §5b). `(op, monomial, class, node, is_rule)`: a node that was itself a
         // rule (its own LHS reducible) is collapsed/subsumed after the merge (design §6b).
+        let t_gen = std::time::Instant::now();
         let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)> =
             Vec::new();
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        // AC partition only, same as the rules scan (no full-graph walk, no `is_mset` filter).
+        for gid in self.completion_node_ids() {
             if self.node_flags(gid) & inactive != 0 {
                 continue;
             }
             let op = self.node_op(gid);
-            if !self.ops.is_ac(op) {
-                continue;
-            }
             targets.push((
                 op,
                 multiset_of(self, gid),
@@ -1058,6 +1069,8 @@ where
         // binary search (no map, no per-round allocation). Each unordered pair is processed
         // once (`ti.node < partner.node`). Both reducts are normalized before merge.
         let mut partner_buf: Vec<Cfg::G> = Vec::new();
+        let mut delta_skipped = 0usize;
+        let delta_in_rules = rules.iter().filter(|r| in_delta(r.node)).count();
         for ti in 0..rules.len() {
             // A reducible rule is not a member of the antichain: collapse will retire it,
             // so it must not seed critical pairs (plan §0.4).
@@ -1102,6 +1115,7 @@ where
                 // neither endpoint is in the delta the pair was closed in an earlier round
                 // and stays closed; skip it. `full` (round 0) makes `in_delta` always true.
                 if !in_delta(m_node) && !in_delta(p_node) {
+                    delta_skipped += 1;
                     continue;
                 }
                 let m = &rules[ti].lhs;
@@ -1113,12 +1127,12 @@ where
                     continue;
                 }
                 let ab = multiset_lcm(m, a);
-                let r1 = crate::ac_multiset::multiset_union(
-                    &crate::ac_multiset::multiset_subtract(&ab, m),
+                let r1 = crate::multiset::multiset_union(
+                    &crate::multiset::multiset_subtract(&ab, m),
                     &rules[ti].rhs,
                 );
-                let r2 = crate::ac_multiset::multiset_union(
-                    &crate::ac_multiset::multiset_subtract(&ab, a),
+                let r2 = crate::multiset::multiset_union(
+                    &crate::multiset::multiset_subtract(&ab, a),
                     &rules[pi].rhs,
                 );
                 crit.push((op, r1, r2));
@@ -1139,7 +1153,9 @@ where
             );
         }
 
+        let dt_gen = t_gen.elapsed();
         let mut changed = false;
+        let t_aprime = std::time::Instant::now();
         // (A′) normalize each monomial; materialize+merge its normal form; collapse rules.
         // A node is normalized by all OTHER rules, never by its own node-rule (a rule's
         // LHS is in normal form w.r.t. itself; reducing it by itself would subsume the
@@ -1164,9 +1180,11 @@ where
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
                 // completion's active set excludes it. Merge first, mark second.
-                self.set_ac_collapsed(node);
+                self.set_cc_collapsed(node);
             }
         }
+        let dt_aprime = t_aprime.elapsed();
+        let t_bclose = std::time::Instant::now();
         // (B) close each critical pair by merging the normal forms of its two reducts.
         // Normalize BOTH reducts to multisets first; if they coincide the pair is already
         // joinable (a trivial critical pair) — skip it, minting no node and no merge.
@@ -1175,19 +1193,32 @@ where
         // are materialized and merged.
         let mut trivial = 0usize;
         let mut nontrivial = 0usize;
+        let mut trivial_after_nf = 0usize; // trivial pairs that needed full normalize to see it
+        // The per-op rule set used to normalize reducts is the same for every pair, so build
+        // it ONCE (outside the loop), not per pair. With a single AC symbol this is every
+        // rule; the `op` filter is kept for the eventual multi-op case. Was rebuilt per pair,
+        // which is crit(B) × rules multiset clones (the dominant `Bclose` cost, perf doc §2).
+        let nf_rules: Vec<NfRule<Cfg::G>> = rules
+            .iter()
+            .map(|r| NfRule {
+                lhs: r.lhs.clone(),
+                rhs: r.rhs.clone(),
+            })
+            .collect();
+        let crit_generated = crit.len();
         for (op, r1, r2) in crit {
-            let nf_rules: Vec<NfRule<Cfg::G>> = rules
-                .iter()
-                .filter(|r| r.op == op.to_usize())
-                .map(|r| NfRule {
-                    lhs: r.lhs.clone(),
-                    rhs: r.rhs.clone(),
-                })
-                .collect();
+            // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
+            // already coincide as multisets), so skip the two full normalizations entirely
+            // when r1 == r2 already.
+            if r1 == r2 {
+                trivial += 1;
+                continue;
+            }
             let n1 = normalize_ms(&r1, &nf_rules);
             let n2 = normalize_ms(&r2, &nf_rules);
             if n1 == n2 {
                 trivial += 1;
+                trivial_after_nf += 1;
                 continue;
             }
             nontrivial += 1;
@@ -1196,7 +1227,25 @@ where
             changed |= do_merge(self, c1, c2);
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
-            eprintln!("[ac-complete]   crit(B) trivial={trivial} nontrivial={nontrivial}");
+            eprintln!(
+                "[ac-complete]   crit(B) trivial={trivial} (raw-eq={}, after-nf={trivial_after_nf}) nontrivial={nontrivial}",
+                trivial - trivial_after_nf
+            );
+            eprintln!(
+                "[ac-complete]   full={full} rules={} delta_in_rules={delta_in_rules} delta_skipped_pairs={delta_skipped} crit_generated={crit_generated}",
+                rules.len(),
+            );
+        }
+        if phase_time {
+            let dt_bclose = t_bclose.elapsed();
+            eprintln!(
+                "[ac-phase] rules={} reducible={:.1}ms gen+targets={:.1}ms A'={:.1}ms Bclose={:.1}ms",
+                rules.len(),
+                dt_reducible.as_secs_f64() * 1e3,
+                dt_gen.as_secs_f64() * 1e3,
+                dt_aprime.as_secs_f64() * 1e3,
+                dt_bclose.as_secs_f64() * 1e3,
+            );
         }
         changed
     }
@@ -1235,8 +1284,8 @@ where
             // is not an AC monomial, so the size-1 monomial `{class}` is its normal-form
             // representative (the completion rule RHS, §9a). AC nodes are not atomic by
             // themselves; they become atomic only when referenced as a child (`add_use`).
-            if !matches!(self.node_ref(id), NodeRef::AC(_)) {
-                self.classes.set_ac_atomic(repr);
+            if !matches!(self.node_ref(id), NodeRef::MSet(_)) {
+                self.classes.set_atomic(repr);
             }
             self.touched.push(id);
         }
@@ -1269,20 +1318,20 @@ where
     }
 
     /// The AC minimum-monomial node stored for `id`'s class (the completion rule RHS,
-    /// §9a). Maintained on merge by `fold_ac_class`. Returns `None` if `id` has no class.
+    /// §9a). Maintained on merge by `fold_min_monomial`. Returns `None` if `id` has no class.
     /// Consumed by the incremental completion pass (S3); currently read by tests only.
     #[allow(dead_code)]
-    pub(crate) fn class_ac_min(&self, id: Cfg::G) -> Option<Cfg::G> {
+    pub(crate) fn class_min_monomial(&self, id: Cfg::G) -> Option<Cfg::G> {
         let repr = self.classes.repr_id(self.classes.find_const(id))?;
-        Some(self.classes.ac_min(repr))
+        Some(self.classes.min_monomial(repr))
     }
 
     /// Whether `id`'s class is `atomic` (referenced as a child / has a non-AC node, so
     /// `{class}` is its canonical summand form, §9a). `None` if `id` has no class.
     #[allow(dead_code)]
-    pub(crate) fn class_ac_atomic(&self, id: Cfg::G) -> Option<bool> {
+    pub(crate) fn class_atomic(&self, id: Cfg::G) -> Option<bool> {
         let repr = self.classes.repr_id(self.classes.find_const(id))?;
-        Some(self.classes.ac_atomic(repr))
+        Some(self.classes.atomic(repr))
     }
 
     pub fn node_ref(&self, id: Cfg::G) -> NodeRef<Cfg::Ids> {
@@ -1298,14 +1347,31 @@ where
             NodeRef::C(l) => self.nodes.c.get(l).op(),
             NodeRef::PlainN(l) => self.nodes.plain_n.get(l).op(),
             NodeRef::A(l) => self.nodes.a.get(l).op(),
-            NodeRef::AC(l) => self.nodes.ac.get(l).op(),
-            NodeRef::ACI(l) => self.nodes.aci.get(l).op(),
+            NodeRef::MSet(l) => self.nodes.mset.get(l).op(),
+            NodeRef::Set(l) => self.nodes.set.get(l).op(),
             NodeRef::Lit(l) => self.nodes.lit.get(l).op(),
         }
     }
 
     pub fn node_op_name(&self, id: Cfg::G) -> &str {
         &self.ops.info(self.node_op(id)).name
+    }
+
+    /// Global ids of every AC e-node, ascending (the AC partition is append-only, so local
+    /// id order is global-id order). The completion round iterates this instead of all
+    /// `node_count()` nodes: it visits only AC nodes, never the non-AC majority (leaves,
+    /// `Plain`/`Lit`/other-op nodes). On AC-dense stress graphs this is ~neutral, but on a
+    /// general e-graph (mostly non-AC structure) the AC nodes are a small fraction, so the
+    /// per-round scan drops from O(total nodes) to O(AC nodes). Includes collapsed/subsumed
+    /// AC nodes; the caller filters by flag.
+    fn completion_node_ids(&self) -> impl Iterator<Item = Cfg::G> + '_ {
+        use crate::containers::DenseId;
+        use crate::typed_routing::NodeIds;
+        let n = self.nodes.mset.len().to_usize();
+        (0..n).map(move |i| {
+            let l = <Cfg::Ids as NodeIds>::LMSet::from_usize(i);
+            self.nodes.mset.get(l).global_id()
+        })
     }
 
     pub fn node_flags(&self, id: Cfg::G) -> u8 {
@@ -1317,8 +1383,8 @@ where
             NodeRef::C(l) => self.nodes.c.get(l).flags,
             NodeRef::PlainN(l) => self.nodes.plain_n.get(l).flags,
             NodeRef::A(l) => self.nodes.a.get(l).flags,
-            NodeRef::AC(l) => self.nodes.ac.get(l).flags,
-            NodeRef::ACI(l) => self.nodes.aci.get(l).flags,
+            NodeRef::MSet(l) => self.nodes.mset.get(l).flags,
+            NodeRef::Set(l) => self.nodes.set.get(l).flags,
             NodeRef::Lit(l) => self.nodes.lit.get(l).flags,
         }
     }
@@ -1341,8 +1407,8 @@ where
             NodeRef::C(l) => flag!(self.nodes.c, l),
             NodeRef::PlainN(l) => flag!(self.nodes.plain_n, l),
             NodeRef::A(l) => flag!(self.nodes.a, l),
-            NodeRef::AC(l) => flag!(self.nodes.ac, l),
-            NodeRef::ACI(l) => flag!(self.nodes.aci, l),
+            NodeRef::MSet(l) => flag!(self.nodes.mset, l),
+            NodeRef::Set(l) => flag!(self.nodes.set, l),
             NodeRef::Lit(l) => flag!(self.nodes.lit, l),
         }
     }
@@ -1357,10 +1423,10 @@ where
     /// multiset is reducible by a smaller AC rule, so it is no longer a superposition or
     /// inter-reduction source). The node stays **matchable** and a legal child; only
     /// completion's active set excludes it (design §6b). Distinct from `subsume`.
-    pub(crate) fn set_ac_collapsed(&mut self, id: Cfg::G) {
+    pub(crate) fn set_cc_collapsed(&mut self, id: Cfg::G) {
         debug_assert!(
-            matches!(self.node_ref(id), NodeRef::AC(_)),
-            "set_ac_collapsed on a non-AC node"
+            matches!(self.node_ref(id), NodeRef::MSet(_)),
+            "set_cc_collapsed on a non-AC node"
         );
         self.set_node_flag(id, crate::node_types::FLAG_AC_COLLAPSED);
     }
@@ -1456,20 +1522,20 @@ where
                 }
                 e - s
             }
-            NodeRef::AC(l) => {
-                let n = self.nodes.ac.get(l);
+            NodeRef::MSet(l) => {
+                let n = self.nodes.mset.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    let c = self.nodes.ac.pool_get(i);
-                    f(Cfg::ac_child_id(&c), Cfg::ac_child_mult(&c).into());
+                    let c = self.nodes.mset.pool_get(i);
+                    f(Cfg::mset_child_id(&c), Cfg::mset_child_mult(&c).into());
                 }
                 e - s
             }
-            NodeRef::ACI(l) => {
-                let n = self.nodes.aci.get(l);
+            NodeRef::Set(l) => {
+                let n = self.nodes.set.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    f(self.nodes.aci.pool_get(i), 1);
+                    f(self.nodes.set.pool_get(i), 1);
                 }
                 e - s
             }
@@ -1501,18 +1567,18 @@ where
     }
 
     /// Read AC children as `(id, multiplicity)` pairs into `buf`.
-    pub fn ac_children(&self, id: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) {
+    pub fn mset_children(&self, id: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) {
         buf.clear();
         match self.node_ref(id) {
-            NodeRef::AC(l) => {
-                let n = self.nodes.ac.get(l);
+            NodeRef::MSet(l) => {
+                let n = self.nodes.mset.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    let c = self.nodes.ac.pool_get(i);
-                    buf.push((Cfg::ac_child_id(&c), Cfg::ac_child_mult(&c)));
+                    let c = self.nodes.mset.pool_get(i);
+                    buf.push((Cfg::mset_child_id(&c), Cfg::mset_child_mult(&c)));
                 }
             }
-            _ => panic!("ac_children: not an AC node"),
+            _ => panic!("mset_children: not an MSet node"),
         }
     }
 
@@ -1522,12 +1588,12 @@ where
     /// merge order and is non-canonical — the F1 bug, §0.1):
     ///
     /// - if the child's class is **non-`atomic`** (a pure `op`-sum), splice in that class's
-    ///   `ac_min` children (each by multiplicity), recursively;
+    ///   `min_monomial` children (each by multiplicity), recursively;
     /// - otherwise (the class is `atomic`: referenced as a child, or has a non-AC node) the
     ///   single atom `{class}` is its canonical summand form, so keep the child as a summand.
     ///
     /// `g_buf` already holds `find`'d ids. Preserves §5b: `+{a,b}` used as `neg`'s child is
-    /// `atomic`, so it is kept, not flattened. Bounded: a spliced class's `ac_min` is a
+    /// `atomic`, so it is kept, not flattened. Bounded: a spliced class's `min_monomial` is a
     /// strictly smaller monomial over the existing constants, so the worklist drains.
     fn flatten_ac_children(&mut self, op: Cfg::O) {
         // Move the buffers out to satisfy the borrow checker while reading `self`.
@@ -1543,22 +1609,23 @@ where
         // smaller monomial, so a well-formed graph drains well under this bound; the cap
         // only guards a degenerate cyclic class, which we must not loop on.
         let cap = 1 + 64 * self.node_count();
-        let mut ac_kids: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut mset_kids: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         while let Some(g) = work.pop() {
             let cls = self.classes.find_const(g);
             // A child is a pure `op`-sum to splice iff its class is non-atomic AND its
-            // canonical summand (`ac_min`) is an AC node of this same `op`. Both reads are
+            // canonical summand (`min_monomial`) is an AC node of this same `op`. Both reads are
             // representative-independent (per-class slot), never `find`-keyed.
             let mut spliced = false;
             if out.len() <= cap
                 && let Some(repr) = self.classes.repr_id(cls)
-                && !self.classes.ac_atomic(repr)
+                && !self.classes.atomic(repr)
             {
-                let min_node = self.classes.ac_min(repr);
-                if self.node_op(min_node) == op && matches!(self.node_ref(min_node), NodeRef::AC(_))
+                let min_node = self.classes.min_monomial(repr);
+                if self.node_op(min_node) == op
+                    && matches!(self.node_ref(min_node), NodeRef::MSet(_))
                 {
-                    self.ac_children(min_node, &mut ac_kids);
-                    for (cg, m) in ac_kids.iter() {
+                    self.mset_children(min_node, &mut mset_kids);
+                    for (cg, m) in mset_kids.iter() {
                         let times: u32 = (*m).into();
                         for _ in 0..times {
                             work.push(*cg);
@@ -1581,17 +1648,17 @@ where
     }
 
     /// Read ACI children (ids only, no multiplicities) into `buf`.
-    pub fn aci_children(&self, id: Cfg::G, buf: &mut Vec<Cfg::G>) {
+    pub fn set_children(&self, id: Cfg::G, buf: &mut Vec<Cfg::G>) {
         buf.clear();
         match self.node_ref(id) {
-            NodeRef::ACI(l) => {
-                let n = self.nodes.aci.get(l);
+            NodeRef::Set(l) => {
+                let n = self.nodes.set.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    buf.push(self.nodes.aci.pool_get(i));
+                    buf.push(self.nodes.set.pool_get(i));
                 }
             }
-            _ => panic!("aci_children: not an ACI node"),
+            _ => panic!("set_children: not a Set node"),
         }
     }
 
@@ -1661,8 +1728,8 @@ mod tests {
             g: eg.register_op2("g", int, int, int),
             h: eg.register_op3("h", int, int, int, int),
             eq: eg.register_c("eq", [int, int], int),
-            plus: eg.register_ac("plus", int, int),
-            and: eg.register_aci("and", int, int),
+            plus: eg.register_mset("plus", int, int),
+            and: eg.register_set("and", int, int),
             sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
             f4: eg.register_opn("f4", &[int, int, int, int], int),
         };
@@ -1690,11 +1757,11 @@ mod tests {
         assert_eq!(eg.add(th.eq, &[x, y]), eg.add(th.eq, &[y, x]));
     }
 
-    // S1: the per-class ac_min slot tracks the degree-lex-least monomial across
+    // S1: the per-class min_monomial slot tracks the degree-lex-least monomial across
     // merges (a constant is a size-1 monomial, so it wins over any sum) and rolls
     // back with the e-graph token. See design §9a.
     #[test]
-    fn ac_min_tracks_least_monomial_and_rolls_back() {
+    fn min_monomial_tracks_least_and_rolls_back() {
         let (ref mut eg, th) = eg::<true, false>();
         let x = eg.add(th.x, &[]);
         let y = eg.add(th.y, &[]);
@@ -1703,31 +1770,31 @@ mod tests {
         let s_xy = eg.add(th.plus, &[x, y]); // +{x,y}, size 2
         let s_xyz = eg.add(th.plus, &[x, y, z]); // +{x,y,z}, size 3
 
-        // Each fresh class's ac_min is its own node.
-        assert_eq!(eg.class_ac_min(s_xy), Some(s_xy));
-        assert_eq!(eg.class_ac_min(c), Some(c));
+        // Each fresh class's min_monomial is its own node.
+        assert_eq!(eg.class_min_monomial(s_xy), Some(s_xy));
+        assert_eq!(eg.class_min_monomial(c), Some(c));
 
         // Merge the two sums: the smaller monomial (+{x,y}, size 2) wins over +{x,y,z}.
         eg.merge(s_xy, s_xyz);
-        let repr_min = eg.class_ac_min(s_xy).unwrap();
+        let repr_min = eg.class_min_monomial(s_xy).unwrap();
         assert_eq!(eg.class_repr(repr_min), eg.class_repr(s_xy));
-        assert_eq!(repr_min, s_xy, "ac_min should pick the smaller sum");
+        assert_eq!(repr_min, s_xy, "min_monomial should pick the smaller sum");
 
         // Snapshot, then merge the leaf constant c in: a size-1 monomial beats both sums.
         let token = eg.mark(ShrinkPolicy::Never);
         eg.merge(c, s_xy);
         assert_eq!(
-            eg.class_ac_min(c),
+            eg.class_min_monomial(c),
             Some(c),
-            "a constant (size-1 monomial) is the least, so ac_min becomes c"
+            "a constant (size-1 monomial) is the least, so min_monomial becomes c"
         );
 
-        // Restore: the post-token merge is undone, and ac_min reverts to the sum.
+        // Restore: the post-token merge is undone, and min_monomial reverts to the sum.
         eg.restore(token);
         assert_eq!(
-            eg.class_ac_min(s_xy),
+            eg.class_min_monomial(s_xy),
             Some(s_xy),
-            "ac_min must roll back with the e-graph token"
+            "min_monomial must roll back with the e-graph token"
         );
     }
 
@@ -2197,31 +2264,31 @@ mod tests {
     // AC completion supports a single AC symbol; rebuild rejects more than one.
     #[test]
     #[should_panic(expected = "single AC symbol")]
-    fn ac_complete_rejects_two_ac_symbols() {
+    fn cc_rejects_two_mset_symbols() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
-        let _plus = eg.register_ac("plus", int, int);
-        let _times = eg.register_ac("times", int, int);
-        eg.set_ac_complete(true);
+        let _plus = eg.register_mset("plus", int, int);
+        let _times = eg.register_mset("times", int, int);
+        eg.set_cc(true);
         eg.rebuild(); // two AC ops registered => precondition fails
     }
 
     // One AC op (plus ACI, which is a distinct kind) is fine.
     #[test]
-    fn ac_complete_allows_one_ac_symbol() {
+    fn cc_allows_one_mset_symbol() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
-        let _plus = eg.register_ac("plus", int, int);
-        let _and = eg.register_aci("and", int, int); // ACI is not counted as AC
-        eg.set_ac_complete(true);
-        eg.rebuild(); // exactly one OpKind::AC => allowed
+        let _plus = eg.register_mset("plus", int, int);
+        let _and = eg.register_set("and", int, int); // ACI is not counted as AC
+        eg.set_cc(true);
+        eg.rebuild(); // exactly one OpKind::MSet => allowed
     }
 }
 
 /// Run all core e-graph tests with both 31-bit and 63-bit configs.
 #[cfg(test)]
 mod dual_config_tests {
-    use crate::canon::{ACCanon, VarCanon};
+    use crate::canon::{MSetCanon, VarCanon};
     use crate::config::EGraphConfig;
     use crate::containers::ShrinkPolicy;
     use crate::egraph::EGraph;
@@ -2246,7 +2313,7 @@ mod dual_config_tests {
     fn setup<Cfg: EGraphConfig, const T: bool, const P: bool>()
     -> (EGraph<Cfg, NiraLitVal, T, P>, Th<Cfg>)
     where
-        ACCanon: VarCanon<Cfg::G, Cfg::C>,
+        MSetCanon: VarCanon<Cfg::G, Cfg::C>,
     {
         let mut eg = EGraph::new();
         let int = eg.intern_sort("Int");
@@ -2258,8 +2325,8 @@ mod dual_config_tests {
             f: eg.register_op1("f", int, int),
             h: eg.register_op3("h", int, int, int, int),
             eq: eg.register_c("eq", [int, int], int),
-            plus: eg.register_ac("plus", int, int),
-            and: eg.register_aci("and", int, int),
+            plus: eg.register_mset("plus", int, int),
+            and: eg.register_set("and", int, int),
             sub: eg.register_a("sub", int, int, crate::registry::AssocDir::Left),
             f4: eg.register_opn("f4", &[int, int, int, int], int),
             lit_op: eg.register_lit("lit", int),
@@ -2271,7 +2338,7 @@ mod dual_config_tests {
         ($(fn $name:ident<$Cfg:ident>() $body:block)*) => {$(
             mod $name {
                 use super::*;
-                fn run<$Cfg: EGraphConfig>() where ACCanon: VarCanon<$Cfg::G, $Cfg::C> $body
+                fn run<$Cfg: EGraphConfig>() where MSetCanon: VarCanon<$Cfg::G, $Cfg::C> $body
                 #[test] fn bits31() { run::<crate::nodes::DefaultConfig>(); }
                 #[test] fn bits63() { run::<crate::nodes::Config64>(); }
             }

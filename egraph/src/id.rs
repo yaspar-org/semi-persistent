@@ -47,10 +47,13 @@ pub enum ENodeKind {
     C = 5,
     /// Associative flattened list (variadic, pool).
     A = 6,
-    /// Associative-commutative sorted multiset (variadic, pool).
-    AC = 7,
-    /// Associative-commutative-idempotent sorted set (variadic, pool).
-    ACI = 8,
+    /// Associative-commutative sorted multiset (variadic, pool). Multiset child
+    /// representation `(G, mult)`; the AC algebra in Kapur's AC-CC terms.
+    MSet = 7,
+    /// Associative-commutative-idempotent sorted set (variadic, pool). Set child
+    /// representation (bare `G`, {0,1} counts); shared by idempotent and (future)
+    /// nilpotent ops, distinguished by the op's `SetClamp`.
+    Set = 8,
     /// Literal leaf (no children, has value).
     Lit = 9,
 }

@@ -1047,7 +1047,7 @@ The touched log is append-only per round, cleared at round
 boundaries, and materialized into delta sorted-vecs at the start of
 each match phase. Mechanically it is a scratch `Vec<Cfg::G>` field on
 `EGraph`, exactly like the existing `collisions`, `g_buf`, and
-`ac_buf` fields — cleared at the start of a round and threaded by
+`mset_buf` fields — cleared at the start of a round and threaded by
 `&mut` into `recanonize_node`.
 
 ### Not To Be Confused With `has_history` (Proofs)

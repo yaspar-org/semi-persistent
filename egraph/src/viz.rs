@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! E-graph visualization: export to GraphViz DOT.
 
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
@@ -12,7 +12,7 @@ use std::fmt::Write;
 impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
     EGraph<Cfg, L, TRACK, PROOFS>
 where
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     /// Emit GraphViz DOT representation.
     pub fn to_dot(&self) -> String {

@@ -177,26 +177,26 @@ and whether or not it converges.
 
 ### 2.5 Completion is restricted to a single AC symbol
 
-Completion stores the rule right-hand side in a per-class slot holding one `ac_min`
+Completion stores the rule right-hand side in a per-class slot holding one `min_monomial`
 (the class's minimal monomial) and one `atomic` flag (§3.4 of the AC chapter §9a).
 That slot records the minimum for *one* AC operator. If a class held monomials of
 two different AC operators at once (for example after asserting `a+b = a*b`, where
 the class contains both a `+`-node and a `*`-node), the single slot could not hold
 both minima, and a `+`-rule could read the `*`-monomial as its RHS, which is wrong.
 
-To keep completion sound, `rebuild` asserts that at most one `OpKind::AC` operator
+To keep completion sound, `rebuild` asserts that at most one `OpKind::MSet` operator
 is registered before running the completion pass, and panics otherwise
-(`OpRegistry::ac_op_count`). The check is at the point of use, not at
-`set_ac_complete`, because the interpreter enables completion before sortcheck has
+(`OpRegistry::mset_op_count`). The check is at the point of use, not at
+`set_cc`, because the interpreter enables completion before sortcheck has
 registered the operators. ACI operators are a distinct kind and are not counted by
-this restriction; completion currently drives `OpKind::AC` only.
+this restriction; completion currently drives `OpKind::MSet` only.
 
 This is a precondition on the configuration, not a soundness hole: a program with
 two AC operators that wants completion is rejected outright rather than given a
 wrong closure. Lifting the restriction is a storage change (§3.4 of the AC chapter,
-and the multi-op note there): replace the single `ac_min` slot with a per-op slice
+and the multi-op note there): replace the single `min_monomial` slot with a per-op slice
 so each class tracks one minimal monomial per AC operator. The completion algorithm
-is unchanged; it already runs per-op (`ac_ops()`), and the union-find handles the
+is unchanged; it already runs per-op (`mset_ops()`), and the union-find handles the
 one cross-operator interaction (a constant equal to monomials in two operators is
 just one e-class holding both, with the same `find`). Only the slot widens.
 

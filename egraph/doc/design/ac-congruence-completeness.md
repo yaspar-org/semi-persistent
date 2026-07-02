@@ -4,7 +4,7 @@ This chapter is a self-contained account of how the engine decides equalities ov
 associative-commutative operators. It develops three ideas in order: (1) why
 recanonicalizing AC nodes as flattened multisets, on its own, misses real equalities
 (Part I); (2) that the cure is to read the e-graph as a set of rewrite rules and complete
-that rule set, tracking each class's minimal monomial `ac_min` as the rule right-hand side
+that rule set, tracking each class's minimal monomial `min_monomial` as the rule right-hand side
 (Part II, §5c–§9); and (3) that keeping the rule set a *reduced canonical basis*, by
 collapsing rules whose left side another rule already covers, is what makes the procedure
 both correct and terminating (§6b, §10). The recurring discipline is maintaining a small
@@ -80,6 +80,43 @@ The chapter uses a fixed vocabulary. Each concept has one word.
 - **antichain** / **reduced canonical basis**: a rule set in which no left side is a
   sub-multiset of another (an antichain under `⊆`), and which is minimal and confluent.
   Dickson's Lemma (§10) bounds every such antichain to a finite size.
+
+## 0a-bis. Naming convention: representation vs. completion vs. theory
+
+The code uses "AC" in three unrelated senses; conflating them in identifiers caused real
+confusion, so the names are split along three axes and "AC" is reserved for exactly one of
+them. When reading or extending the code, classify a name by which axis it belongs to.
+
+1. **Representation (`MSet` / `Set`).** How a variadic node stores its children. `MSet` =
+   multiset, children `(G, mult)` with counts in ℕ (`+`, `*`); `Set` = set, children bare `G`
+   with counts bounded to {0,1} (`and`, `or`, and later `xor`). This is the axis the storage
+   and routing layers care about, so the *representation* names appear there: `OpKind::MSet` /
+   `OpKind::Set`, `ENodeKind::MSet` / `Set`, `NodeRef::MSet` / `Set`, `nodes.mset` / `nodes.set`,
+   `MSetCanon` / `SetCanon`, `register_mset` / `register_set`, `is_mset`, `mset_ops`,
+   `mset_child_*`, `mset_buf`. A name carrying `mset`/`set` is about *layout*, never about the
+   algorithm. (Why not keep "AC"/"ACI"? "AC" named the multiset representation, but it also
+   names the algorithm and the theory below; and "ACI" baked the idempotent *clamp* into the
+   representation name, when in fact idempotent and nilpotent ops share one `Set` layout and
+   differ only by a clamp field. The representation axis is `{MSet, Set}`; the clamp is separate.
+   See `doc/future/multi-ac-aci-completion-plan.md`, "three independent axes".)
+
+2. **Completion procedure (`cc`).** The congruence-closure *completion* this chapter adds
+   (superposition + inter-reduction). It is not tied to one representation: it runs over MSet
+   today and Set later, so its names use `cc`, never `ac`: `cc` / `set_cc` (the enable flag),
+   `cc.rs` (the module), `cc_round`, `CcSnapshot`, `completion_node_ids`, `fold_min_monomial`,
+   `min_monomial` (the per-class normal-form representative the round reads as a rule RHS),
+   `cc_basis_dump` / `cc_basis_report` and the `cc_*` invariant diagnostics.
+
+3. **Theory name (`AC` / `AC-CC`).** "Associative-commutative congruence closure" is the
+   property being established and the literature's term (Kapur, §8, §11, References). It stays
+   "AC" in prose and in genuinely theory-level names (`ac_invariants.rs`, the "AC node",
+   "AC-CC", "AC congruence" wording). It also stays "AC" for the *matcher* (`ematch`'s
+   `ac_find_first` / `ac_scan` / `ac_advance`), which is AC *matching*, a distinct concern from
+   completion. A bare "AC" in code should mean the theory or the matcher; if it means a
+   representation or the completion procedure, it is misnamed.
+
+The one-line test: layout → `mset`/`set`; the completion procedure → `cc`; the property/theory
+or AC matching → `AC`.
 
 ## 0b. The e-graph state is a set of rewrite rules
 
@@ -474,7 +511,7 @@ where no rule contains another, and there
 simply cannot be many of those (Dickson's Lemma, §10).
 
 The rest of Part II is this mechanism stated precisely against the e-graph: §6 the two
-operations, §6b why Chore A (collapse) is load-bearing and how "retire a rule" is
+operations, §6b why Chore A (collapse) is required for termination and how "retire a rule" is
 realized without deleting a node, §7–9 the implementation, §10 why it terminates and
 is complete.
 
@@ -516,7 +553,7 @@ is trivial, per Kapur), which keeps the work bounded. For §4b, with `A={a,b}, a
 and `B={b,d}, b=e`, we get `AB={a,b,d}`, reducts `+{c,d}` and `+{a,e}`, and the
 merge yields the missing equality.
 
-## 6b. Collapse is load-bearing: (A) and (B) alone diverge
+## 6b. Collapse is required: (A) and (B) alone diverge
 
 (A) and (B) by themselves are *incomplete as an algorithm*. Run them without a third
 operation and the pass does not merely slow down; it **diverges**, minting larger and
@@ -618,7 +655,7 @@ node from the matcher would be a *separate, optional* choice (usually a no-op, s
 reduced form is in the same class), and forcing it via `FLAG_SUBSUMED` would wrongly
 couple completion to user-subsume semantics.
 
-**The load-bearing ordering: materialize+merge first, mark second, eager before
+**The critical ordering: materialize+merge first, mark second, eager before
 Chore B.** Two ways to get it wrong:
 
 - **Merge before mark.** Materialize the reduct `+{p,c}`, merge it into the class, and
@@ -694,7 +731,7 @@ superposition bounded, and locate the real explosion elsewhere.
 So "superpose only non-minimal monomials" is not an extra trick: a rule's left side
 *is* the non-minimal side, and the minimal monomial of a class is its normal form, has
 no rule on its left, and is therefore never a redex nor a superposition source. The two
-load-bearing choices are the ones above: **orient critical pairs between monomials over
+essential choices are the ones above: **orient critical pairs between monomials over
 the existing constants (minimal-monomial RHS, no fresh atom), and collapse.** Get those
 right and superposition is `O(|active|²)` per round over a finite antichain; get the RHS
 wrong (substitute the class id as an atom) and it diverges regardless of collapse.
@@ -789,10 +826,10 @@ maintains in the per-class slot (§9a) and reads via the rule-RHS function:
 
 ```
 summand_form(class) = if atomic(class) { {class} }            // a single atom
-                      else              { ac_min(class) }      // its minimal f-monomial
+                      else              { min_monomial(class) }      // its minimal f-monomial
 ```
 
-`atomic` and `ac_min` are merge-folded class properties (§9a), independent of which node
+`atomic` and `min_monomial` are merge-folded class properties (§9a), independent of which node
 is the representative. So flattening becomes: **when canonicalizing an `f`-node, replace
 each child `c` by `summand_form(c)`; if that is a multi-element monomial, splice it in
 (recursively); if it is the single atom `{c}`, keep `c` as a summand.** This is a function
@@ -822,7 +859,7 @@ Why this is the *right* predicate, and what it does to the worked examples:
   inner `+{a,b}` that is *not* referenced as a standalone atom anywhere) is non-`atomic`, so
   `summand_form` returns its monomial and it is spliced. The matcher never meets it.
 
-So `atomic` is the load-bearing distinction in *both* directions: it tells completion when
+So `atomic` is the decisive distinction in *both* directions: it tells completion when
 an RHS may be the bare class id (§9a), and it tells flattening when a child is a real atom
 to keep versus a pure sum to splice. There is no separate "exempt atomic from flattening"
 hack; flattening simply reads `summand_form`, which is `atomic`-aware by definition.
@@ -831,7 +868,7 @@ hack; flattening simply reads `summand_form`, which is `atomic`-aware by definit
 and ask what the class id `c` denotes *as one summand*. If `c` is non-atomic, then by
 definition `c` holds no non-AC node and is referenced by no node, so nothing in the graph
 grounds `c`-as-a-single-element; the only term `c` is equal to is its own sum
-`ac_min(c) = +{p, q}`. Associativity then gives `+{…, c, …} = +{…, p, q, …}`: spelling the
+`min_monomial(c) = +{p, q}`. Associativity then gives `+{…, c, …} = +{…, p, q, …}`: spelling the
 child as the class id and spelling it as the inlined summands `p, q` denote the *same* AC
 term. So splicing is meaning-preserving. It is also *forced*, not merely allowed: keeping
 `{c}` would assert that `c` is a standalone element, which no node witnesses, and feeding
@@ -844,7 +881,7 @@ encodes.
 
 **The inlined class does not disappear.** Flattening rewrites the *child list of the new
 node*, never the inlined class. When `add(+, [c, d])` splices `c`'s sum to build
-`+{p, q, d}`, the class of `c` (its node `+{p, q}`, its `ac_min`, its use-list, its
+`+{p, q, d}`, the class of `c` (its node `+{p, q}`, its `min_monomial`, its use-list, its
 membership) is left untouched: it stays in the union-find, stays hash-consed, stays found by
 `find`. Nodes are immutable and are never deleted (rollback depends on it; "retire" elsewhere
 means a flag, §6b, not removal). The only effect is that the new node never *holds* `c` as a
@@ -857,7 +894,7 @@ when it is non-atomic, i.e. a pure `+`-sum that contains no non-AC node and is r
 by no node (§9a). Flattening therefore needs to run only at the one place a non-atomic
 class can appear as a candidate child: `add`. Before the AC arm sorts and coalesces,
 `flatten_ac_children` replaces each child by its `summand_form` (`{c}` if atomic, else
-`ac_min(c)`) and splices the non-atomic ones, to a fixpoint.
+`min_monomial(c)`) and splices the non-atomic ones, to a fixpoint.
 
 Recanonicalization does **not** need a flattening pass. This is a lemma, not an omission.
 
@@ -889,7 +926,7 @@ A worked trace (watch `atomic([S])`):
 1. add a, b, d, p             leaves; each class atomic (contains a non-AC node)
 2. s := add(+, [a,b])         node S0 = +{a,b}, class [S].  add_use(a,S0), add_use(b,S0).
                               [S] contains only S0 and is nobody's child  ⇒  atomic([S]) = FALSE
-3. u := add(+, [s,d])         summand_form([S]) non-atomic ⇒ SPLICE ac_min {a,b};  d atomic ⇒ keep
+3. u := add(+, [s,d])         summand_form([S]) non-atomic ⇒ SPLICE min_monomial {a,b};  d atomic ⇒ keep
                               node U = +{a,b,d}.  U never stores [S]; [S] is not add_use'd here.
 ```
 
@@ -1049,7 +1086,7 @@ So rebuild *is* Kapur's General Congruence Closure (Algorithm 3): step 1 (consta
 the union-find, step 2 (normalize `Sf`) is `recanonize_node`, step 3 (critical pairs) is
 superposition (B), and step 4 is the two halves of inter-reduction, substituting the reduct
 (A) **and** retiring the now-reducible source rule (Collapse, §6b, realized by marking it
-`FLAG_AC_COLLAPSED`). Step 4 being *two* things is the load-bearing subtlety: the collapse
+`FLAG_AC_COLLAPSED`). Step 4 being *two* things is the essential subtlety: the collapse
 half is what makes the rule set a Dickson antichain and is what termination rests on (§6b,
 §10); substitution alone would diverge.
 
@@ -1158,20 +1195,20 @@ So we **store** it and maintain it on merge.
 
 `EClasses` already stores per-class data in a `SparseSet` keyed by the class's `repr_id`:
 today the value is the use-list id. We **widen that value** to a small `Copy` struct
-`{ use_list, ac_min }` (two `DenseId`s) rather than adding a second sparse set, so the two
+`{ use_list, min_monomial }` (two `DenseId`s) rather than adding a second sparse set, so the two
 per-class facts share one slot and cannot desync. The struct derives `Tagged` by
 delegating the tag to its first field (the precedent is `ListNode` in `containers/list.rs`,
 `Repr = (L::Repr, T::Repr)`), so `InlineStore` works unchanged at both id widths, with no
-bit-packing constraint. `ac_min` seeds to the node itself in `add_singleton`, is dropped
+bit-packing constraint. `min_monomial` seeds to the node itself in `add_singleton`, is dropped
 with the absorbed class in `splice_classes`, and rides the existing `SparseSetToken` in
 `EClassesToken`, so **`mark`/`restore` roll it back for free**, with no change to
-`EGraphToken` or `EGraph::mark`/`restore`. On merge, the survivor's `ac_min` becomes the
+`EGraphToken` or `EGraph::mark`/`restore`. On merge, the survivor's `min_monomial` becomes the
 `monomial_cmp`-smaller of the two classes' minima: O(1), no search. `EClasses` has no AC
 knowledge, so the comparison is done by the `EGraph::merge` wrapper (which sees both the
 classes and the node store) and the result is written into the survivor's slot;
-`MergeInfo` carries the absorbed class's `ac_min` out for that.
+`MergeInfo` carries the absorbed class's `min_monomial` out for that.
 
-**The rule RHS is not always `ac_min`: an `atomic` flag rounds out the slot.** The right
+**The rule RHS is not always `min_monomial`: an `atomic` flag rounds out the slot.** The right
 side of a rule `+M → R` is the class's normal-form representative, its `≫_f`-least
 *usable* monomial. The smallest candidate is the size-1 monomial `{classid}`, the class
 used as a single summand, smaller than any multi-element sum. But `{classid}` is a legal
@@ -1191,39 +1228,39 @@ situations:
 
 If neither holds, the class is a pure AC-sum that occurs as nobody's child (for example a
 class created only by a critical-pair merge): no node grounds `{c}`, so `c` is **not**
-atomic-usable, and its representative must be the smallest actual `+`-monomial, `ac_min`.
+atomic-usable, and its representative must be the smallest actual `+`-monomial, `min_monomial`.
 Writing `{c}` for such a class would name an element no node denotes, which is the
 class-as-atom divergence of §6b: it injects a fresh constant every round.
 
 Concretely. `+{a,b}` in class `c`: if `neg(c)` exists (so `c` is a child of `neg`), then
 `c` is atomic-usable and the rule is `+{a,b} → {c}`, which lets `c` substitute into other
 sums. If instead `c` arose only as a critical-pair reduct and nothing references it, it is
-not atomic-usable, and its rule RHS stays `ac_min`, the least `+`-monomial in the class.
+not atomic-usable, and its rule RHS stays `min_monomial`, the least `+`-monomial in the class.
 "Atomic-usable" is thus a property of how the class is *used*, not of what it contains: a
 compound sum becomes atomic-usable the moment something takes its class as a child.
 
-**Why this is load-bearing.** The rules `+{a,b} → {c}` in §4b and §5b exist precisely
+**Why this matters.** The rules `+{a,b} → {c}` in §4b and §5b exist precisely
 because `c` is atomic-usable there (`c` is a child of other nodes). The `{c}` right side is
 what lets those rules superpose (§4b) and inter-reduce (§5b). If `c`'s RHS were instead its
 own monomial `{a,b}`, the rule would be the trivial `+{a,b} → +{a,b}` and those critical
 pairs would never fire; completion would silently lose the equalities it exists to derive.
 
-**Why it needs a stored flag.** "Atomic-usable" cannot be recovered from `ac_min` (a single
+**Why it needs a stored flag.** "Atomic-usable" cannot be recovered from `min_monomial` (a single
 stored node id): no node in a pure-sum class has the monomial `{classid}`, so the slot has
 no way to encode the atom representative. And "becomes referenced as a child" flips on
 `add_use` (when a parent node is built over the class), an add-time event, not a merge, so
-merge-only maintenance of `ac_min` cannot observe it either. We therefore store a third
+merge-only maintenance of `min_monomial` cannot observe it either. We therefore store a third
 field in the slot, `atomic: bool`, and the rule RHS is:
 
 ```
 rhs(class) = if atomic(class) { {classid} }      // size-1 atom, atomic-usable
-             else             { monomial_of(ac_min(class)) }
+             else             { monomial_of(min_monomial(class)) }
 ```
 
 `atomic` is set when the class gains a non-AC node and on every `add_use` (any child
 reference grounds `{classid}`, matching the old `child_set` semantics), OR-combined on merge
 (`survivor.atomic |= absorbed.atomic`), and rolls back with the slot via the existing token.
-So the slot is `{ use_list, ac_min, atomic }`; `atomic` rides the same `Tagged`/token
+So the slot is `{ use_list, min_monomial, atomic }`; `atomic` rides the same `Tagged`/token
 machinery, and the RHS read stays O(1).
 
 One subtlety: at merge time the children of these candidate nodes are mid-cascade, so
@@ -1233,7 +1270,7 @@ canonicalizes anyway (it does this for every rule LHS regardless). This keeps th
 path O(1) and places the only exactness requirement at the read site, which already pays
 for canonicalization.
 
-**Scope: one AC symbol now; multiple via a pool later.** A single `ac_min` slot assumes one
+**Scope: one AC symbol now; multiple via a pool later.** A single `min_monomial` slot assumes one
 AC op per e-graph, because the minimum monomial is per-(class, *op*): a class may hold both
 a `+`-monomial and a `*`-monomial (assert `a+b = a*b`), and a `+`-rule's normal form must be
 a `+`-monomial. This is no harder *algorithmically*: Kapur's multi-symbol algorithm is just
@@ -1241,7 +1278,7 @@ the single-symbol loop run independently per op, sharing only constants, and the
 union-find already dissolves his one cross-symbol case (a constant with two normal forms is
 simply one e-class holding a `+`-node and a `*`-node, both with the same `find` as their RHS;
 no fresh constant needed). The only thing single-op gives up is *storage generality*: one
-slot holds one op's minimum. The vectorized form keeps `ac_min` as an offset into a flat
+slot holds one op's minimum. The vectorized form keeps `min_monomial` as an offset into a flat
 `pool` of `nb_ac_op`-wide rows (one structure, backtracked whole; merge does an element-wise
 min of two rows), recovering per-(class, op) minima without a per-class heap allocation. It
 slots in behind the same `min_mono(op, class)` accessor, so callers do not change. The engine
@@ -1249,7 +1286,7 @@ uses the single-op slot (one AC symbol per e-graph); the pool is the upgrade for
 multi-AC-symbol e-graph.
 
 **Reusable buffers, destination-passing, like the rest of `rebuild`.** `rebuild` already
-threads scratch `Vec`s (`g_buf`, `ac_buf`, `collisions`, `touched`) by `&mut` into
+threads scratch `Vec`s (`g_buf`, `mset_buf`, `collisions`, `touched`) by `&mut` into
 `recanonize_node` rather than allocating per call. Completion follows the same rule: the
 multiset primitives have destination-passing forms (`multiset_subtract_into`,
 `_union_into`, `_lcm_into`, `normalize_ms_into`) that `clear()` and refill caller-owned
@@ -1269,7 +1306,7 @@ the incremental form is the intended one.
 
 ## 9b. Design alternatives (recorded so we do not re-derive them)
 
-Two **orthogonal** axes came up while designing the `ac_min` storage. They are
+Two **orthogonal** axes came up while designing the `min_monomial` storage. They are
 independent: pick one option from each. This subsection records all of them, with why,
 so the choice is not re-litigated later.
 
@@ -1281,9 +1318,9 @@ minimum is per *(class, op)* because a class can hold monomials of several AC sy
 
 | Option | Storage | Reads | Multi-op? | Verdict |
 |---|---|---|---|---|
-| **1. Single-op slot** | one extra `DenseId` widened into the e-class `SparseSet` value (`{use_list, ac_min}`) | O(1) | no (one slot holds one op's min) | **Ship now.** Covers every test and all of §0/§5d. |
+| **1. Single-op slot** | one extra `DenseId` widened into the e-class `SparseSet` value (`{use_list, min_monomial}`) | O(1) | no (one slot holds one op's min) | **Ship now.** Covers every test and all of §0/§5d. |
 | **2. Multi-op, use-list walk** | none (recompute) | O(class size) per read | yes, for free (filter the walk by op) | Rejected. Correct, zero storage, but turns each RHS/normalize read into a class scan, reintroducing the per-query cost §9a exists to remove. |
-| **3. Multi-op, pool** | `ac_min` is an offset into a flat `pool` of `nb_ac_op`-wide rows; merge does an element-wise min of two rows | O(1) | yes | **Later.** The vectorization of option 1; one structure, backtracked whole, no per-class heap alloc. Slots behind the same `min_mono(op, class)` accessor, so callers do not change. Add when a multi-AC-symbol e-graph is actually needed. |
+| **3. Multi-op, pool** | `min_monomial` is an offset into a flat `pool` of `nb_ac_op`-wide rows; merge does an element-wise min of two rows | O(1) | yes | **Later.** The vectorization of option 1; one structure, backtracked whole, no per-class heap alloc. Slots behind the same `min_mono(op, class)` accessor, so callers do not change. Add when a multi-AC-symbol e-graph is actually needed. |
 
 Multi-op is **not** algorithmically harder than single-op (Kapur's multi-symbol
 algorithm is the single-symbol loop run independently per op, sharing only constants; the
@@ -1296,8 +1333,8 @@ user rewrite rule (Kapur §6, Gröbner), **not** AC-CC, and is out of scope for 
 ### Axis 2: how minimal the stored RHS is guaranteed to be
 
 `monomial_cmp` depends on `find()` of a node's children, which are mid-flight during a
-merge cascade, so an O(1)-on-merge `ac_min` can be momentarily **non-minimal**. What that
-does, precisely (a rule is `+M → R` with `R = ac_min`):
+merge cascade, so an O(1)-on-merge `min_monomial` can be momentarily **non-minimal**. What that
+does, precisely (a rule is `+M → R` with `R = min_monomial`):
 
 - A non-minimal `R` is **not** a soundness, termination, or blowup risk. Termination rests
   on the **LHS** antichain (collapse keeps no LHS ⊆ another), which does not involve `R`;
@@ -1314,12 +1351,12 @@ does, precisely (a rule is `+M → R` with `R = ac_min`):
 | Option | Guarantee | Cost | Verdict |
 |---|---|---|---|
 | **(a) Best-effort + orientation guard** | RHS may be non-minimal, but every rule is correctly oriented (`M ≫ R`) | O(1) merge update; O(1) guard per read | **Ship now.** Termination-safe; at worst a slightly larger basis. |
-| **(b) Exact minimum** | RHS is always the true class minimum (fully reduced basis) | refresh `ac_min` at **recanonicalization** too, not just merge: merging a class changes the canonical multiset of nodes that had it as a *child* (reached via use-list), one of which may become its own class's new min. | Unnecessary under the degree-first order: a child merge preserves a monomial's degree, so it cannot create a new degree-minimum, and (a) already holds the exact degree-minimum. |
+| **(b) Exact minimum** | RHS is always the true class minimum (fully reduced basis) | refresh `min_monomial` at **recanonicalization** too, not just merge: merging a class changes the canonical multiset of nodes that had it as a *child* (reached via use-list), one of which may become its own class's new min. | Unnecessary under the degree-first order: a child merge preserves a monomial's degree, so it cannot create a new degree-minimum, and (a) already holds the exact degree-minimum. |
 
 The orientation guard in (a) is **mandatory, not optional**: it is what makes the merge-time
 hint safe. The basis is reduced in the LHS (collapse keeps the antichain) and oriented in the
 RHS, which is what termination and the decision procedure need; the companion
-(`ac-completion-spec.md` §1, §3) records the runtime checks that confirm `ac_min` is the true
+(`ac-completion-spec.md` §1, §3) records the runtime checks that confirm `min_monomial` is the true
 minimum at the point of use.
 
 ## 10. Why the algorithm is complete
@@ -1369,7 +1406,7 @@ locally confluent, the loop terminates), and Newman's Lemma then closes it.
   rule left-sides are pairwise `⊆`-incomparable (an antichain in `ℕ^{|C|}`), and
   Dickson's Lemma makes every such antichain finite. So only finitely many rules can
   persist, and each merge strictly coarsens the finite class partition. **This step is
-  load-bearing and conditional on collapse actually being performed** (§6b): "the loop
+  essential and conditional on collapse actually being performed** (§6b): "the loop
   keeps `R` inter-reduced" is not automatic; it is the Collapse/subsumption operation
   doing it. An implementation that skips collapse has no antichain, and Dickson bounds
   nothing observable; it diverges in practice (§6b gives the trace). Termination holds

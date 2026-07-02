@@ -4,7 +4,7 @@
 
 use crate::EGraphConfig;
 use crate::apply::{PreparedRule, apply_rule};
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::index::IndexStore;
@@ -49,7 +49,7 @@ where
     S: DenseId,
     L: LitVal,
     M: LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let steps_base = crate::ematch::match_steps();
     for i in 0..limit {
@@ -161,7 +161,7 @@ fn variant_stats<O, S, V, Cfg>(
 where
     O: DenseId + Hash,
     Cfg: EGraphConfig<O = O>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let mut stats = IndexStats::from_index(full);
     for (j, atom) in rq.atoms.iter().enumerate() {
@@ -193,7 +193,7 @@ where
     S: DenseId,
     L: LitVal,
     M: LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     let mut matches = crate::ematch::run_query(&plan, eg, vindex, globals);
@@ -226,7 +226,7 @@ where
     S: DenseId,
     L: LitVal,
     M: LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let steps_base = crate::ematch::match_steps();
     for i in 0..limit {
@@ -300,7 +300,7 @@ where
     S: DenseId,
     L: LitVal,
     M: LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     use crate::ematch::run_query;
 
@@ -389,8 +389,8 @@ mod tests {
         eg.register_opn("ILit", &[ibig], e);
         eg.register_op2("IAdd", e, e, e);
         eg.register_op2("IMul", e, e, e);
-        eg.register_ac("add", e, e);
-        eg.register_aci("union", e, e);
+        eg.register_mset("add", e, e);
+        eg.register_set("union", e, e);
         eg.register_a("concat", e, e, crate::registry::AssocDir::Right);
         eg
     }
@@ -1457,9 +1457,9 @@ mod tests {
         eg.clear_touched();
 
         // One round of fresh nodes: a new add and new f's over old/new adds.
-        let add_ac = eg.add(oadd, &[a, c]); // NEW add
-        let _f_both_new = eg.add(of, &[add_ac, add_ac]); // both add atoms bind the new add
-        let _f_mixed = eg.add(of, &[add_ab, add_ac]); // old add, new add
+        let add_mset = eg.add(oadd, &[a, c]); // NEW add
+        let _f_both_new = eg.add(of, &[add_mset, add_mset]); // both add atoms bind the new add
+        let _f_mixed = eg.add(of, &[add_ab, add_mset]); // old add, new add
         eg.rebuild();
 
         let touched: Vec<crate::id::ENodeId> = eg.touched().to_vec();
@@ -1847,7 +1847,7 @@ mod tests {
             eg.register_op0("a", e);
             eg.register_op0("b", e);
             eg.register_op0("c", e);
-            eg.register_ac("add", e, e);
+            eg.register_mset("add", e, e);
             let mut rr = crate::registry::RuleRegistry::<false>::new();
             let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
             let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);

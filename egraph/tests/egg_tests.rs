@@ -15,7 +15,7 @@
 //! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome
 //! (the historical default cross-check). DERIVE_AC_EQS renames the old AC_COMPLETE directive.
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
-//! AC rule set is fully reduced (`ac_min` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
+//! AC rule set is fully reduced (`min_monomial` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
 //! have anything to check.
 
 use semi_persistent_egraph::interpret::Interpreter;
@@ -103,7 +103,7 @@ fn run_with<
     let mut interp =
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
-    interp.set_ac_complete(d.derive_ac_eqs);
+    interp.set_cc(d.derive_ac_eqs);
     interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
@@ -118,16 +118,16 @@ fn run_with<
     match interp.run_checked(&checked) {
         Ok(()) => {
             // CHECK_AC_BASIS: after a clean run, assert the active AC rule set is fully
-            // reduced (every used ac_min is the true minimum; no rule LHS reducible by the
+            // reduced (every used min_monomial is the true minimum; no rule LHS reducible by the
             // others). This turns the diagnostic checkers into a real test assertion.
             if d.check_ac_basis {
-                let report = interp.eg.ac_basis_report();
-                let (nonmin, _) = interp.eg.ac_min_used_nonminimal();
-                let (lhs_red, _rhs_red) = interp.eg.ac_not_kapur_reduced();
+                let report = interp.eg.cc_basis_report();
+                let (nonmin, _) = interp.eg.cc_min_used_nonminimal();
+                let (lhs_red, _rhs_red) = interp.eg.cc_not_kapur_reduced();
                 assert_eq!(
                     nonmin,
                     0,
-                    "CHECK_AC_BASIS: {nonmin} rules use a non-minimal ac_min (active_rules={})",
+                    "CHECK_AC_BASIS: {nonmin} rules use a non-minimal min_monomial (active_rules={})",
                     report.rules.len()
                 );
                 assert_eq!(
@@ -176,7 +176,7 @@ fn check_panic(path: &str) {
     let directives = parse_directives(&src);
     for strategy in directives.evals.iter().copied() {
         let src = src.clone();
-        let ac_complete = directives.derive_ac_eqs;
+        let cc = directives.derive_ac_eqs;
         let basis_checks = directives.check_ac_basis;
         let result = std::panic::catch_unwind(move || {
             let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
@@ -188,7 +188,7 @@ fn check_panic(path: &str) {
                 false,
             >::new(MachineModel);
             interp.set_strategy(strategy);
-            interp.set_ac_complete(ac_complete);
+            interp.set_cc(cc);
             interp.set_basis_checks(basis_checks);
             let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
             let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
