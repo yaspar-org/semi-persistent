@@ -348,8 +348,8 @@ where
                     }
                 }
                 OpKind::A { arg_sort, .. }
-                | OpKind::MSet { arg_sort }
-                | OpKind::Set { arg_sort } => {
+                | OpKind::MSet { arg_sort, .. }
+                | OpKind::Set { arg_sort, .. } => {
                     for (i, &c) in children.iter().enumerate() {
                         let got = self.node_sort(c);
                         debug_assert_eq!(

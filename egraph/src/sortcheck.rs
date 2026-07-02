@@ -210,9 +210,9 @@ fn child_sort_hint<S: DenseId + Copy>(kind: &OpKind<S>, pos: usize) -> Option<S>
     match kind {
         OpKind::Normal { arg_sorts } => arg_sorts.get(pos).copied(),
         OpKind::Commutative { arg_sorts } => arg_sorts.get(pos).copied(),
-        OpKind::A { arg_sort, .. } | OpKind::MSet { arg_sort } | OpKind::Set { arg_sort } => {
-            Some(*arg_sort)
-        }
+        OpKind::A { arg_sort, .. }
+        | OpKind::MSet { arg_sort, .. }
+        | OpKind::Set { arg_sort, .. } => Some(*arg_sort),
         OpKind::Lit => None,
     }
 }
