@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::ast::Span;
 use crate::ast::Term;
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
@@ -21,7 +21,7 @@ pub fn extract_best<Cfg, L, const T: bool, const P: bool>(
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let n = eg.len();
     let mut best_cost: HashMap<Cfg::G, usize> = HashMap::new();
@@ -73,7 +73,7 @@ fn reconstruct<Cfg, L, const T: bool, const P: bool>(
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let id = best_node[&repr];
     let name = eg.node_op_name(id).to_string();

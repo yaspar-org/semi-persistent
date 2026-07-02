@@ -210,7 +210,7 @@ fn child_sort_hint<S: DenseId + Copy>(kind: &OpKind<S>, pos: usize) -> Option<S>
     match kind {
         OpKind::Normal { arg_sorts } => arg_sorts.get(pos).copied(),
         OpKind::Commutative { arg_sorts } => arg_sorts.get(pos).copied(),
-        OpKind::A { arg_sort, .. } | OpKind::AC { arg_sort } | OpKind::ACI { arg_sort } => {
+        OpKind::A { arg_sort, .. } | OpKind::MSet { arg_sort } | OpKind::Set { arg_sort } => {
             Some(*arg_sort)
         }
         OpKind::Lit => None,
@@ -485,7 +485,7 @@ where
                     }
                 }
             }
-            OpKind::AC { .. } => {
+            OpKind::MSet { .. } => {
                 if prefix.is_some() {
                     return Err(format!(
                         "operator '{op}' is AC; prefix rest variable not allowed"
@@ -512,7 +512,7 @@ where
                     }
                 }
             }
-            OpKind::ACI { .. } => {
+            OpKind::Set { .. } => {
                 if prefix.is_some() {
                     return Err(format!(
                         "operator '{op}' is ACI; prefix rest variable not allowed"
@@ -576,7 +576,7 @@ where
     Cfg::O: Hash,
     L: LitVal,
     M: LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     let mut out = Vec::with_capacity(cmds.len());
     for cmd in cmds {
@@ -596,7 +596,7 @@ where
     Cfg::O: Hash,
     L: LitVal,
     M: LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
         SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals),
@@ -663,7 +663,7 @@ where
     Cfg::O: Hash,
     L: LitVal,
     M: LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     // Declarations: register into egraph, then wrap as Decl
     match &cmd {
@@ -725,7 +725,7 @@ where
     Cfg: crate::config::EGraphConfig,
     Cfg::O: Hash,
     L: LitVal,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
         Command::Sort(name) => {
@@ -783,7 +783,7 @@ where
     Cfg: crate::config::EGraphConfig,
     Cfg::O: Hash,
     L: LitVal,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     Ok(match attr {
         None => eg.register_opn(name, args, ret),
@@ -809,13 +809,13 @@ where
             if args.len() != 1 {
                 return Err(serr(":assoc-comm requires 1 arg", Span::Dummy));
             }
-            eg.register_ac(name, args[0], ret)
+            eg.register_mset(name, args[0], ret)
         }
         Some(AlgAttr::AssocCommIdem) => {
             if args.len() != 1 {
                 return Err(serr(":assoc-comm-idem requires 1 arg", Span::Dummy));
             }
-            eg.register_aci(name, args[0], ret)
+            eg.register_set(name, args[0], ret)
         }
     })
 }

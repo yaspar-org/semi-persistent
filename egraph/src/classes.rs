@@ -86,7 +86,7 @@ impl<T: DenseId> Tagged for EClassEntry<T> {
 /// Per-class data stored in the `reprs` sparse set, keyed by `repr_id`.
 ///
 /// - `use_list` — the class's use-list id (parents referencing this class).
-/// - `ac_min` — the class's current AC minimum-monomial node: the member node
+/// - `min_monomial` — the class's current AC minimum-monomial node: the member node
 ///   whose monomial is `≫_f`-least (see `doc/design/ac-congruence-completeness.md`
 ///   §9a). Maintained O(1) on merge by `EGraph` (which has the node access
 ///   `monomial_cmp` needs); `EClasses` only stores and shuttles it.
@@ -94,13 +94,13 @@ impl<T: DenseId> Tagged for EClassEntry<T> {
 ///   the size-1 monomial `{classid}` a real term and the class's normal-form
 ///   representative (§9a). Set on `add_use` and on gaining a non-AC node,
 ///   OR-combined on merge. The completion rule RHS is `{classid}` if `atomic`,
-///   else `ac_min`'s monomial.
+///   else `min_monomial`'s monomial.
 ///
 /// One slot for all three facts, so they cannot desync and roll back together.
 #[derive(Clone, Copy)]
 pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
-    pub ac_min: T,
+    pub min_monomial: T,
     pub atomic: bool,
 }
 
@@ -113,14 +113,14 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
     fn into_repr(self) -> Self::Repr {
         (
             self.use_list.into_repr(),
-            self.ac_min.into_repr(),
+            self.min_monomial.into_repr(),
             self.atomic,
         )
     }
     fn from_repr(r: &Self::Repr) -> Self {
         Self {
             use_list: L::from_repr(&r.0),
-            ac_min: T::from_repr(&r.1),
+            min_monomial: T::from_repr(&r.1),
             atomic: r.2,
         }
     }
@@ -139,7 +139,7 @@ impl<L: DenseId, T: DenseId> Default for ClassData<L, T> {
     fn default() -> Self {
         Self {
             use_list: L::default(),
-            ac_min: T::default(),
+            min_monomial: T::default(),
             atomic: false,
         }
     }
@@ -154,8 +154,8 @@ pub struct MergeInfo<T, L> {
     pub absorbed: T,
     pub absorbed_uses: L,
     /// The absorbed class's AC minimum-monomial node, so the caller can fold it
-    /// into the survivor's `ac_min` (`EGraph` does the `monomial_cmp`, §9a).
-    pub absorbed_ac_min: T,
+    /// into the survivor's `min_monomial` (`EGraph` does the `monomial_cmp`, §9a).
+    pub absorbed_min_monomial: T,
     /// The absorbed class's `atomic` flag, OR-combined into the survivor's (§9a).
     pub absorbed_atomic: bool,
 }
@@ -218,11 +218,11 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn add_singleton(&mut self, id: T) -> T::Index {
         self.uf.make_set(id);
         let list_id = self.uses.new_list();
-        // Seed ac_min to the node itself: a singleton class's only member is its
+        // Seed min_monomial to the node itself: a singleton class's only member is its
         // own minimum monomial. Not yet referenced as a child, so not atomic (§9a).
         let repr_id = self.reprs.add(ClassData {
             use_list: list_id,
-            ac_min: id,
+            min_monomial: id,
             atomic: false,
         });
         self.entries.push(EClassEntry::new(id, repr_id));
@@ -248,28 +248,35 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         self.reprs.get(repr_id).use_list
     }
 
+    /// Number of parents in a representative's use-list, O(1) (cached in the list header).
+    /// Used to choose the merge survivor by parent count (the larger list survives, so the
+    /// smaller absorbed set is what gets recanonicalized).
+    pub fn use_list_len(&self, repr_id: T::Index) -> u32 {
+        self.uses.len(self.reprs.get(repr_id).use_list)
+    }
+
     /// The class's current AC minimum-monomial node (the completion rule RHS when the
     /// class is not `atomic`, §9a).
-    pub fn ac_min(&self, repr_id: T::Index) -> T {
-        self.reprs.get(repr_id).ac_min
+    pub fn min_monomial(&self, repr_id: T::Index) -> T {
+        self.reprs.get(repr_id).min_monomial
     }
 
     /// Whether the class is referenced as a child of some node, making `{classid}` its
     /// normal-form representative (§9a).
-    pub fn ac_atomic(&self, repr_id: T::Index) -> bool {
+    pub fn atomic(&self, repr_id: T::Index) -> bool {
         self.reprs.get(repr_id).atomic
     }
 
     /// Overwrite the class's AC minimum-monomial node. Called by `EGraph` after a
     /// merge, once it has compared the two classes' minima with `monomial_cmp`.
-    pub fn set_ac_min(&mut self, repr_id: T::Index, node: T) {
+    pub fn set_min_monomial(&mut self, repr_id: T::Index, node: T) {
         let mut data = self.reprs.get(repr_id);
-        data.ac_min = node;
+        data.min_monomial = node;
         self.reprs.set(repr_id, data);
     }
 
     /// Mark the class `atomic` (it has a non-AC node, so `{classid}` is its RHS, §9a).
-    pub fn set_ac_atomic(&mut self, repr_id: T::Index) {
+    pub fn set_atomic(&mut self, repr_id: T::Index) {
         let mut data = self.reprs.get(repr_id);
         if !data.atomic {
             data.atomic = true;
@@ -321,7 +328,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             survivor,
             absorbed,
             absorbed_uses: absorbed_data.use_list,
-            absorbed_ac_min: absorbed_data.ac_min,
+            absorbed_min_monomial: absorbed_data.min_monomial,
             absorbed_atomic: absorbed_data.atomic,
         })
     }
@@ -340,7 +347,57 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             survivor,
             absorbed,
             absorbed_uses: absorbed_data.use_list,
-            absorbed_ac_min: absorbed_data.ac_min,
+            absorbed_min_monomial: absorbed_data.min_monomial,
+            absorbed_atomic: absorbed_data.atomic,
+        })
+    }
+
+    /// Whether `find(a)`'s class has at least as many parents as `find(b)`'s. The directed
+    /// merges below keep the larger-use-list class as survivor, so the smaller class is the
+    /// one absorbed and recanonicalized.
+    fn prefer_a_by_uses(&self, a: T, b: T) -> bool {
+        let ra = self.uf.find_const(a);
+        let rb = self.uf.find_const(b);
+        let len_a = self.repr_id(ra).map_or(0, |r| self.use_list_len(r));
+        let len_b = self.repr_id(rb).map_or(0, |r| self.use_list_len(r));
+        len_a >= len_b
+    }
+
+    /// Like [`merge`], but selects the survivor by parent-count (larger use-list survives)
+    /// instead of by union-find rank. Reduces post-merge recanonicalization work, at the cost
+    /// of union-by-rank's height optimality (see `UnionFind::union_directed`).
+    pub fn merge_directed(&mut self, a: T, b: T) -> Option<MergeInfo<T, L>> {
+        let prefer_a = self.prefer_a_by_uses(a, b);
+        let (survivor, absorbed) = self.uf.union_directed(a, b, prefer_a)?;
+        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_data = self.reprs.get(absorbed_repr);
+        self.splice_classes((survivor, absorbed));
+        Some(MergeInfo {
+            survivor,
+            absorbed,
+            absorbed_uses: absorbed_data.use_list,
+            absorbed_min_monomial: absorbed_data.min_monomial,
+            absorbed_atomic: absorbed_data.atomic,
+        })
+    }
+
+    /// Justified counterpart of [`merge_directed`].
+    pub fn merge_justified_directed(
+        &mut self,
+        a: T,
+        b: T,
+        just: Justification<T>,
+    ) -> Option<MergeInfo<T, L>> {
+        let prefer_a = self.prefer_a_by_uses(a, b);
+        let (survivor, absorbed) = self.uf.union_justified_directed(a, b, just, prefer_a)?;
+        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_data = self.reprs.get(absorbed_repr);
+        self.splice_classes((survivor, absorbed));
+        Some(MergeInfo {
+            survivor,
+            absorbed,
+            absorbed_uses: absorbed_data.use_list,
+            absorbed_min_monomial: absorbed_data.min_monomial,
             absorbed_atomic: absorbed_data.atomic,
         })
     }
@@ -569,5 +626,52 @@ mod tests {
         );
 
         eprintln!("\n✓ All checks passed");
+    }
+
+    #[test]
+    fn use_list_len_is_o1_and_matches_iteration() {
+        let mut ec = EC::new();
+        let x = ENodeId::new(0);
+        let p0 = ENodeId::new(1);
+        let p1 = ENodeId::new(2);
+        let p2 = ENodeId::new(3);
+        for &id in &[x, p0, p1, p2] {
+            ec.add_singleton(id);
+        }
+        let rx = ec.repr_id(x).unwrap();
+        assert_eq!(ec.use_list_len(rx), 0);
+        ec.add_use(rx, p0);
+        ec.add_use(rx, p1);
+        ec.add_use(rx, p2);
+        assert_eq!(ec.use_list_len(rx), 3);
+        assert_eq!(ec.use_list_len(rx) as usize, ec.iter_uses(rx).count());
+    }
+
+    #[test]
+    fn merge_directed_keeps_larger_use_list_as_survivor() {
+        // `big` has two parents, `small` has one; `merge_directed` must keep `big` as the
+        // survivor regardless of argument order, so the smaller class is the one absorbed.
+        let mut ec = EC::new();
+        let big = ENodeId::new(0);
+        let small = ENodeId::new(1);
+        let pb0 = ENodeId::new(2);
+        let pb1 = ENodeId::new(3);
+        let ps0 = ENodeId::new(4);
+        for &id in &[big, small, pb0, pb1, ps0] {
+            ec.add_singleton(id);
+        }
+        let rb = ec.repr_id(big).unwrap();
+        let rs = ec.repr_id(small).unwrap();
+        ec.add_use(rb, pb0);
+        ec.add_use(rb, pb1);
+        ec.add_use(rs, ps0);
+        assert_eq!(ec.use_list_len(rb), 2);
+        assert_eq!(ec.use_list_len(rs), 1);
+
+        // Pass the smaller class first to prove order-independence.
+        let m = ec.merge_directed(small, big).unwrap();
+        assert_eq!(m.survivor, big, "larger use-list should survive");
+        assert_eq!(m.absorbed, small);
+        assert_eq!(ec.find_const(small), big);
     }
 }

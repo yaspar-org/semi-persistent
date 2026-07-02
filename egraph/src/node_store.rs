@@ -5,7 +5,7 @@
 use std::hash::Hash;
 
 use crate::caches::*;
-use crate::canon::{ACCanon, ACICanon, CCanon, OrderedCanon, PlainCanon, VarCanon};
+use crate::canon::{CCanon, MSetCanon, OrderedCanon, PlainCanon, SetCanon, VarCanon};
 use crate::containers::DenseId;
 use crate::containers::ShrinkPolicy;
 use crate::containers::Tagged;
@@ -13,7 +13,7 @@ use crate::multiplicity::Multiplicity;
 use crate::registry::{OpKind, OpRegistry};
 use crate::typed_routing::{NodeIds, NodeRef, RoutingToken, TypedRouting};
 
-pub type ACChild<G> = (G, Multiplicity);
+pub type MSetChild<G> = (G, Multiplicity);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Added<G> {
@@ -49,8 +49,8 @@ pub struct NodeStore<
     pub c: FixedArityCache<G, O, I::LC, 2, TRACK, PROOFS>,
     pub plain_n: VariableArityCache<G, O, G, I::LN, TRACK, PROOFS>,
     pub a: VariableArityCache<G, O, G, I::LA, TRACK, PROOFS>,
-    pub ac: VariableArityCache<G, O, C, I::LAC, TRACK, PROOFS>,
-    pub aci: VariableArityCache<G, O, G, I::LACI, TRACK, PROOFS>,
+    pub mset: VariableArityCache<G, O, C, I::LMSet, TRACK, PROOFS>,
+    pub set: VariableArityCache<G, O, G, I::LSet, TRACK, PROOFS>,
     pub lit: LitCache<G, O, V, I::LLit, TRACK>,
 }
 
@@ -86,8 +86,8 @@ where
             c: FixedArityCache::new(),
             plain_n: VariableArityCache::new(),
             a: VariableArityCache::new(),
-            ac: VariableArityCache::new(),
-            aci: VariableArityCache::new(),
+            mset: VariableArityCache::new(),
+            set: VariableArityCache::new(),
             lit: LitCache::new(),
         }
     }
@@ -130,8 +130,8 @@ where
                 self.add_c(op, pair)
             }
             OpKind::A { .. } => self.add_a(op, children),
-            OpKind::AC { .. } => panic!("use add_ac with pre-canonicalized children"),
-            OpKind::ACI { .. } => panic!("use add_aci with pre-canonicalized children"),
+            OpKind::MSet { .. } => panic!("use add_mset with pre-canonicalized children"),
+            OpKind::Set { .. } => panic!("use add_set with pre-canonicalized children"),
             OpKind::Lit => panic!("use add_lit for literal operators"),
         }
     }
@@ -238,29 +238,29 @@ where
         }
     }
 
-    pub fn add_ac(&mut self, op: O, children: &[C]) -> Added<G> {
+    pub fn add_mset(&mut self, op: O, children: &[C]) -> Added<G> {
         let fresh = self.routing.reserve();
-        match self.ac.probe_or_insert(fresh, op, children) {
+        match self.mset.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
                 self.routing.unreserve();
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
-                self.routing.finalize(fresh, NodeRef::AC(local_id));
+                self.routing.finalize(fresh, NodeRef::MSet(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_aci(&mut self, op: O, children: &[G]) -> Added<G> {
+    pub fn add_set(&mut self, op: O, children: &[G]) -> Added<G> {
         let fresh = self.routing.reserve();
-        match self.aci.probe_or_insert(fresh, op, children) {
+        match self.set.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
                 self.routing.unreserve();
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
-                self.routing.finalize(fresh, NodeRef::ACI(local_id));
+                self.routing.finalize(fresh, NodeRef::Set(local_id));
                 Added::Fresh(fresh)
             }
         }
@@ -287,18 +287,18 @@ where
     /// Recanonize a single node's children after a union. Dispatches to the
     /// appropriate cache with the correct canonization strategy.
     /// `g_buf` — scratch for PlainN/A/ACI (child type G).
-    /// `ac_buf` — scratch for AC (child type C).
+    /// `mset_buf` — scratch for MSet children (child type `C` = `(G, mult)`).
     /// `collisions` — destination for collision pairs to push onto worklist.
     pub fn recanonize_node(
         &mut self,
         id: G,
         find: impl Fn(G) -> G,
         g_buf: &mut Vec<G>,
-        ac_buf: &mut Vec<C>,
+        mset_buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
     ) where
-        ACCanon: VarCanon<G, C>,
+        MSetCanon: VarCanon<G, C>,
     {
         match self.routing.get(id) {
             NodeRef::Plain0(_) => {}
@@ -320,12 +320,12 @@ where
             NodeRef::A(l) => self
                 .a
                 .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions, touched),
-            NodeRef::AC(l) => self
-                .ac
-                .recanonize_node::<ACCanon>(l, &find, ac_buf, collisions, touched),
-            NodeRef::ACI(l) => self
-                .aci
-                .recanonize_node::<ACICanon>(l, &find, g_buf, collisions, touched),
+            NodeRef::MSet(l) => self
+                .mset
+                .recanonize_node::<MSetCanon>(l, &find, mset_buf, collisions, touched),
+            NodeRef::Set(l) => self
+                .set
+                .recanonize_node::<SetCanon>(l, &find, g_buf, collisions, touched),
             NodeRef::Lit(_) => {}
         }
     }
@@ -335,11 +335,11 @@ where
     // -----------------------------------------------------------------------
 
     /// Retrieve original (pre-recanonize) children of a node.
-    /// Appends to `g_out` for all kinds except AC (which appends to `ac_out`).
+    /// Appends to `g_out` for all kinds except AC (which appends to `mset_out`).
     /// Returns true if history was found.
-    pub fn original_children(&self, id: G, g_out: &mut Vec<G>, ac_out: &mut Vec<C>) -> bool
+    pub fn original_children(&self, id: G, g_out: &mut Vec<G>, mset_out: &mut Vec<C>) -> bool
     where
-        ACCanon: VarCanon<G, C>,
+        MSetCanon: VarCanon<G, C>,
     {
         match self.routing.get(id) {
             NodeRef::Plain0(_) | NodeRef::Lit(_) => false,
@@ -377,8 +377,8 @@ where
             }
             NodeRef::PlainN(_) => self.plain_n.original_children(id, g_out),
             NodeRef::A(_) => self.a.original_children(id, g_out),
-            NodeRef::AC(_) => self.ac.original_children(id, ac_out),
-            NodeRef::ACI(_) => self.aci.original_children(id, g_out),
+            NodeRef::MSet(_) => self.mset.original_children(id, mset_out),
+            NodeRef::Set(_) => self.set.original_children(id, g_out),
         }
     }
 
@@ -396,8 +396,8 @@ where
             c: self.c.mark(shrink),
             plain_n: self.plain_n.mark(shrink),
             a: self.a.mark(shrink),
-            ac: self.ac.mark(shrink),
-            aci: self.aci.mark(shrink),
+            mset: self.mset.mark(shrink),
+            set: self.set.mark(shrink),
             lit: self.lit.mark(shrink),
         }
     }
@@ -411,8 +411,8 @@ where
         self.c.restore(token.c);
         self.plain_n.restore(token.plain_n);
         self.a.restore(token.a);
-        self.ac.restore(token.ac);
-        self.aci.restore(token.aci);
+        self.mset.restore(token.mset);
+        self.set.restore(token.set);
         self.lit.restore(token.lit);
     }
 }
@@ -427,8 +427,8 @@ pub struct NodeStoreToken {
     c: CacheToken,
     plain_n: PoolCacheToken,
     a: PoolCacheToken,
-    ac: PoolCacheToken,
-    aci: PoolCacheToken,
+    mset: PoolCacheToken,
+    set: PoolCacheToken,
     lit: CacheToken,
 }
 
@@ -448,12 +448,12 @@ mod tests {
         type LC = CNodeId;
         type LN = PlainNId;
         type LA = ANodeId;
-        type LAC = ACNodeId;
-        type LACI = ACINodeId;
+        type LMSet = MSetNodeId;
+        type LSet = SetNodeId;
         type LLit = LitNodeId;
     }
 
-    type NS = NodeStore<ENodeId, OpId, LitValId, ACChild<ENodeId>, TestIds, false>;
+    type NS = NodeStore<ENodeId, OpId, LitValId, MSetChild<ENodeId>, TestIds, false>;
 
     fn setup() -> (NS, OpRegistry<OpId, SortId, false>) {
         let mut sorts: SortRegistry<SortId, false> = SortRegistry::new();
@@ -467,8 +467,8 @@ mod tests {
         ops.register("ITE", &[bool_, int, int], int);
         ops.register_c("Eq", [int, int], bool_);
         ops.register_a("Sub", int, int, crate::registry::AssocDir::Left);
-        ops.register_ac("Add", int, int);
-        ops.register_aci("And", bool_, bool_);
+        ops.register_mset("Add", int, int);
+        ops.register_set("And", bool_, bool_);
         ops.register_lit("ILit", int);
 
         (NS::new(), ops)
@@ -528,13 +528,13 @@ mod tests {
 
         // simulate union(a, b) → find(b) = a
         let mut g_buf = Vec::new();
-        let mut ac_buf = Vec::new();
+        let mut mset_buf = Vec::new();
         let mut collisions = Vec::new();
         ns.recanonize_node(
             nb,
             |g| if g == b { a } else { g },
             &mut g_buf,
-            &mut ac_buf,
+            &mut mset_buf,
             &mut collisions,
             &mut Vec::new(),
         );
@@ -552,13 +552,13 @@ mod tests {
         let _na = ns.add(neg, &[a], &ops).id();
 
         let mut g_buf = Vec::new();
-        let mut ac_buf = Vec::new();
+        let mut mset_buf = Vec::new();
         let mut collisions = Vec::new();
         ns.recanonize_node(
             _na,
             |g| g,
             &mut g_buf,
-            &mut ac_buf,
+            &mut mset_buf,
             &mut collisions,
             &mut Vec::new(),
         );

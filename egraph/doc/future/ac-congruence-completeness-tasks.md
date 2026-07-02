@@ -20,7 +20,7 @@ Legend: ☑ done · ☐ not started · ⊘ blocked · → depends on.
 
 ### T1 — Multiset algebra primitives  ☑
 Add pure helpers over canonical AC child slices `&[(G, Multiplicity)]` (sorted by
-`G`, multiplicities summed — the form `ACCanon::canonize` produces, `src/canon.rs:87`):
+`G`, multiplicities summed — the form `MSetCanon::canonize` produces, `src/canon.rs:87`):
 - `multiset_disjoint(a, b) -> bool`
 - `multiset_subset(a, b) -> bool`  (is `a ⊆ b`, for the (A) branch)
 - `multiset_subtract(a, b)` → `a − b` (clamp at 0; assumes `b ⊆ a` for the substitution use)
@@ -32,8 +32,8 @@ Add pure helpers over canonical AC child slices `&[(G, Multiplicity)]` (sorted b
 **Acceptance:** `cargo test` green; no e-graph dependency.
 
 ### T2 — AC-op iterator helper  → none  ☑
-Add a helper yielding registered op ids with `OpKind::AC{..}` (`src/registry.rs:29-63`;
-registry exposes only `len()`/`info(id)` at `:131,256` today — no `is_ac`, no iter).
+Add a helper yielding registered op ids with `OpKind::MSet{..}` (`src/registry.rs:29-63`;
+registry exposes only `len()`/`info(id)` at `:131,256` today — no `is_mset`, no iter).
 **Tests:** a fixture registering AC + ACI + A + Normal ops returns exactly the AC ids.
 **Acceptance:** green; does not misclassify ACI as AC.
 
@@ -80,9 +80,9 @@ existing AC differential tests (`src/saturate.rs:1373-1908`) still pass.
 **diverges** (~5x nodes/round) — see T5b and design §6b. T5 is not complete without T5b.
 
 ### T5b — Collapse + orientation to make (B) converge  → T5  ☑
-The three load-bearing corrections from design §6b, without which (B) diverges:
+The three essential corrections from design §6b, without which (B) diverges:
 1. **Collapse:** on `A ⊊ M`, after the (A) merge, mark `+M` `FLAG_AC_COLLAPSED`
-   (`EGraph::set_ac_collapsed`) so it leaves the active set → active LHSs stay a Dickson
+   (`EGraph::set_cc_collapsed`) so it leaves the active set → active LHSs stay a Dickson
    antichain → termination. "Retire" = flag, never delete (nodes immutable + needed for
    rollback). Distinct from `FLAG_SUBSUMED`: a collapsed node stays matchable; only
    completion's active scan excludes it (design §6b).
@@ -116,7 +116,7 @@ Harden the round loop and prove the evaluation-strategy interaction (plan §2b):
   collapsed node leaves completion's active set but stays **matchable** (its reduced form
   is in the same class) and stays a legal child. Covered by the lib test
   `ac_collapsed_leaves_completion_set_but_stays_matchable`: collapsed node gone from
-  `AcPartnerSnapshot` but still in `IndexStore`; user `subsume` then hides it. Assert the
+  `CcSnapshot` but still in `IndexStore`; user `subsume` then hides it. Assert the
   collapsed node's *equality* still holds (class unchanged).
 - **Rollback:** semi-persistent restore interaction (`rebuild_after_restore`,
   `src/egraph.rs:1055`) — completion-created nodes restore correctly; `touched`

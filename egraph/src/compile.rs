@@ -328,8 +328,8 @@ mod tests {
         ops.register("a", &[], e);
         ops.register("b", &[], e);
         ops.register_a("concat", e, e, crate::registry::AssocDir::Right);
-        ops.register_ac("add", e, e);
-        ops.register_aci("union", e, e);
+        ops.register_mset("add", e, e);
+        ops.register_set("union", e, e);
         let ibig = sorts.intern("IBig");
         ops.register("ILit", &[ibig], e);
         (ops, sorts)

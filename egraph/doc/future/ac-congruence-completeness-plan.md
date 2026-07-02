@@ -3,7 +3,7 @@
 Status: **partially implemented, gated off by default.** The completion algorithm
 (A inter-reduction + B superposition + collapse + the reduced-basis machinery) is
 implemented and passes its worked-example tests under both saturation strategies, but
-is **disabled by default** (`set_ac_complete`, opt-in) pending nested same-op
+is **disabled by default** (`set_cc`, opt-in) pending nested same-op
 **flattening** (`WF_flat`), which is the gate to turning it on. See §0 for the exact
 current state and next steps. This branch is `feature/ac-congruence-completeness`.
 
@@ -21,13 +21,13 @@ sequencing and test strategy. Read the design doc §0–§9 first.
 
 ### What is implemented and landed (all on this branch, full suite green)
 
-The completion pass exists in `egraph/src/egraph.rs::ac_complete_round`, called from
-`rebuild()` when `ac_complete` is enabled. The supporting machinery:
+The completion pass exists in `egraph/src/egraph.rs::cc_round`, called from
+`rebuild()` when `cc` is enabled. The supporting machinery:
 
-- **Multiset primitives** (`ac_multiset.rs`): `multiset_disjoint/subset/subtract/union/lcm`,
+- **Multiset primitives** (`multiset.rs`): `multiset_disjoint/subset/subtract/union/lcm`,
   `monomial_cmp` (degree-lex), `normalize_ms`, plus destination-passing `_into` forms
   (no hot-loop allocation). [T1, S2]
-- **AC-op enumeration** (`registry.rs`): `is_ac` / `ac_ops`. [T2]
+- **AC-op enumeration** (`registry.rs`): `is_mset` / `mset_ops`. [T2]
 - **(A) inter-reduction**: substitute a contained known sub-sum, materialize, merge. [T4]
 - **(B) superposition**: lcm of two overlapping rules, both reducts normalized to normal
   form before merge. [T5]
@@ -35,11 +35,11 @@ The completion pass exists in `egraph/src/egraph.rs::ac_complete_round`, called 
   **minimal-monomial RHS** (never class-as-atom), **normalize-before-materialize**, and
   **collapse** of reducible rules via a *distinct* `FLAG_AC_COLLAPSED` (NOT `FLAG_SUBSUMED`:
   a collapsed node stays matchable, only leaves completion's active set; design §6b). [T5b]
-- **Per-class slot** (`classes.rs` `ClassData{use_list, ac_min, atomic}`): the rule RHS is
-  read O(1) from this slot (`{classid}` if `atomic`, else `ac_min`'s monomial), maintained
-  on merge (`fold_ac_class`), rolled back for free via the existing `SparseSetToken`. The
+- **Per-class slot** (`classes.rs` `ClassData{use_list, min_monomial, atomic}`): the rule RHS is
+  read O(1) from this slot (`{classid}` if `atomic`, else `min_monomial`'s monomial), maintained
+  on merge (`fold_min_monomial`), rolled back for free via the existing `SparseSetToken`. The
   **read-time orientation guard** (`monomial_cmp(M, rhs) == Greater`) makes the best-effort
-  merge-time `ac_min` safe (design §9b axis-2a). [S1, S3a]
+  merge-time `min_monomial` safe (design §9b axis-2a). [S1, S3a]
 - **Partner search via use-lists**: (B) finds partners through `iter_uses` (the
   `by_contains` use-list), not an O(rules²) all-pairs scan; partner→rule lookup is a binary
   search of the node-id-sorted `rules`. [S3b]
@@ -48,14 +48,14 @@ The completion pass exists in `egraph/src/egraph.rs::ac_complete_round`, called 
 
 Worked-example tests, all under **both** naive and semi-naive (the egg harness runs both),
 all green: `ac_complete_containment` (§4a), `ac_complete_superposition` (§4b),
-`ac_complete_cancel` (§5b). Unit tests: the `ac_multiset` primitives, `ac_ops`, the
-`AcPartnerSnapshot`, `ac_collapsed_leaves_completion_set_but_stays_matchable` (flag
+`ac_complete_cancel` (§5b). Unit tests: the `multiset` primitives, `mset_ops`, the
+`CcSnapshot`, `ac_collapsed_leaves_completion_set_but_stays_matchable` (flag
 separation), `ac_min_tracks_least_monomial_and_rolls_back` (slot maintenance + rollback).
 
 ### The gate: completion is OFF by default
 
-`EGraph::ac_complete` defaults `false`; `rebuild` runs only ordinary atom-congruence unless
-opted in via `set_ac_complete(true)` (egg directive `;; DERIVE_AC_EQS: on`). The gate has moved
+`EGraph::cc` defaults `false`; `rebuild` runs only ordinary atom-congruence unless
+opted in via `set_cc(true)` (egg directive `;; DERIVE_AC_EQS: on`). The gate has moved
 twice: (1) believed to be flattening, (2) found to be a matcher bug (§0.3, now **fixed**),
 (3) now a **convergence/performance blowup on large or deep graphs** (§0.4). Build-side
 flattening (F2) and the matcher fix are done; completion is **correct** with-it-on across the
@@ -69,23 +69,23 @@ code, not a doc abstraction. They are safe because completion is off by default 
 an unsupported case is either rejected outright or simply derives fewer equalities, never a
 wrong one (design §14: only "same e-class" is a trustworthy verdict).
 
-1. **Multiple AC symbols: rejected.** Completion stores one `ac_min`/`atomic` per class,
-   which holds one AC operator's minimal monomial. With two `OpKind::AC` operators a class
+1. **Multiple AC symbols: rejected.** Completion stores one `min_monomial`/`atomic` per class,
+   which holds one AC operator's minimal monomial. With two `OpKind::MSet` operators a class
    could hold monomials of both (e.g. `a+b = a*b`), and the single slot would conflate their
-   minima. `rebuild` enforces `OpRegistry::ac_op_count() <= 1` when completion is on and
+   minima. `rebuild` enforces `OpRegistry::mset_op_count() <= 1` when completion is on and
    panics otherwise (tests `ac_complete_rejects_two_ac_symbols`,
-   `ac_complete_allows_one_ac_symbol`). Lifting it is the per-op `ac_min` slice (a pool of
+   `ac_complete_allows_one_ac_symbol`). Lifting it is the per-op `min_monomial` slice (a pool of
    `nb_ac_op`-wide rows behind the same accessor, design §9b axis-1 option 3); the completion
    algorithm already runs per-op, only the slot widens. Until then, multi-AC is a hard
    precondition failure, not a silent miscompute.
 
-2. **ACI operators: no completion at all.** Completion's round gates on `OpRegistry::is_ac`,
-   which is `OpKind::AC` only and excludes ACI. So an ACI operator canonicalizes (set
+2. **ACI operators: no completion at all.** Completion's round gates on `OpRegistry::is_mset`,
+   which is `OpKind::MSet` only and excludes ACI. So an ACI operator canonicalizes (set
    semantics, dedup of duplicate children) but gets **no** superposition or inter-reduction:
    its congruence closure is incomplete exactly as un-completed AC is. Kapur FSCD 2021 §4
    gives the extra idempotence critical pair ACI needs (`f(M ∪ {a}) `vs` f(M)` for each
    `a ∈ M`); we do not generate it. **Consequence:** ACI is sound but AC-incomplete. The
-   `ac_op_count` guard does **not** cover ACI (it counts only `OpKind::AC`), so two ACI
+   `mset_op_count` guard does **not** cover ACI (it counts only `OpKind::MSet`), so two ACI
    operators are not rejected; they are simply each left un-completed, which is sound. Adding
    ACI completion is: drive the round over ACI ops too, add the idempotence critical pair,
    and (for multi-symbol) the same per-op slot. No ACI completion test exists yet
@@ -115,7 +115,7 @@ wrong one (design §14: only "same e-class" is a trustworthy verdict).
 
 1. ~~Recanonicalize-side flattening~~ **Not needed: flattening is complete at build alone.**
    Build-side flattening is done (`flatten_ac_children`, called from `add`, keyed on the class
-   `summand_form`: atomic ⇒ keep `{class}`, else splice `ac_min`; §0.2 resolution, design §6c).
+   `summand_form`: atomic ⇒ keep `{class}`, else splice `min_monomial`; §0.2 resolution, design §6c).
    There is **no** recanon-side flattening to implement, and earlier drafts of this plan were
    wrong to list one. The flatten predicate keys on `atomic`, and `atomic` is monotone and is
    set the moment a class is used as an AC child (`add_use`). So every class *stored* as a
@@ -138,7 +138,7 @@ wrong one (design §14: only "same e-class" is a trustworthy verdict).
    (b) the Lean abstract completeness theorem (Newman + Dickson + critical-pair lemma).
    Independent of (1)/(2); can start once the algorithm shape is final.
 
-4. **Multi-AC-op support (later).** Single-op only today (one `ac_min`/`atomic` slot per
+4. **Multi-AC-op support (later).** Single-op only today (one `min_monomial`/`atomic` slot per
    class). Multi-op is the same algorithm per-op; the storage upgrade is the pool of
    `nb_ac_op`-wide rows behind the same accessor (design §9b axis-1 option 3). Not needed
    until a multi-AC-symbol e-graph is required.
@@ -164,7 +164,7 @@ With flattening in `add`, the test still panics at the same `ematch.rs` `ByRepr`
 site. Reason: completion materializes flat nodes (its `materialize` goes through `add`), but
 the `WF_flat` invariant is re-broken at **recanonicalization after a merge**. When a merge
 makes some child's class representative an AC node, `rebuild_congruence` recanonicalizes the
-parent via `ACCanon::canonize`, which does `find` + sort + coalesce and **cannot flatten**:
+parent via `MSetCanon::canonize`, which does `find` + sort + coalesce and **cannot flatten**:
 it has only a `find: Fn(G)->G` closure (no node-structure access) and the variadic
 `recanonize_node` span can only shrink, never grow. So a node flat at creation becomes
 nested after a merge, and the matcher meets it. Flattening must therefore happen where
@@ -226,10 +226,10 @@ already maintain (§9a), not the representative.**
 
 ```
 summand_form(class) = if atomic(class) { {class} }        // a single atom, keep it
-                      else              { ac_min(class) }  // a pure sum, splice it
+                      else              { min_monomial(class) }  // a pure sum, splice it
 ```
 
-`atomic`/`ac_min` are merge-folded class properties, representative-independent. To
+`atomic`/`min_monomial` are merge-folded class properties, representative-independent. To
 canonicalize an `f`-node: replace each child `c` by `summand_form(c)`; splice the
 multi-element (non-`atomic`) ones recursively; keep the atomic ones as summands. This is a
 function of the e-graph state, so the result is genuinely canonical.
@@ -250,7 +250,7 @@ Consequences:
    not referenced as a standalone atom is non-`atomic`, so `summand_form` returns its
    monomial and it is spliced; the matcher never meets it.
 
-So `atomic` is load-bearing in *both* directions (completion RHS *and* flatten), and they
+So `atomic` is decisive in *both* directions (completion RHS *and* flatten), and they
 agree by construction. There is no "exempt atomic from flattening" hack; flattening just
 reads `summand_form`, which is atomic-aware. Conchon (AC(X)) is the precedent: §3 flattens in
 the canonizer, §4.1 Def 4.1 re-applies it after every rewrite. Our twist: a child is a
@@ -271,7 +271,7 @@ materialized and atomic).
    it (flattens), merge the canonical node in, mark the non-canonical original
    `FLAG_SUBSUMED`. Same materialize/merge/retire shape as completion's (A).
 4. `ac_complete_nested_match` flips to `EXPECT: ok`; `ac_complete_cancel` (§5b) stays green;
-   matcher never meets a nested node; `set_ac_complete(true)` can become the default.
+   matcher never meets a nested node; `set_cc(true)` can become the default.
 
 ### 0.3 The real gate is a matcher bug, not flattening (finding from F3 diagnosis)
 
@@ -319,7 +319,7 @@ moved to §0.4.
 
 ### 0.4 With the matcher fixed, completion is correct but diverges on large graphs
 
-Experiment (this session): forced `ac_complete` on by default and ran the full suite. Result:
+Experiment (this session): forced `cc` on by default and ran the full suite. Result:
 **446 tests pass, zero failures, zero panics** with completion globally on. So the algorithm
 is *correct* engine-wide, not just on the worked examples. **But** the two
 `egraph_proof_test::stress_proof_test` cases (`stress_medium`, `stress_large`) go from ~0.01s
@@ -346,7 +346,7 @@ overlap**.
 **Resolved (instrumented, this session): it is a collapse-timing bug, not an inherent
 basis.** The executable invariant checker (`ac_invariants.rs`, run via
 `AC_BASIS_DUMP=1 cargo test investigate_completion -- --ignored --nocapture`) reports, at
-the **start** of each round (after `rebuild_congruence`, before `ac_complete_round`),
+the **start** of each round (after `rebuild_congruence`, before `cc_round`),
 `reducible_rules` = active rules whose LHS strictly contains another active rule's LHS, and
 `antichain_core` = `active - reducible_rules`. Two facts settle the question:
 
@@ -413,7 +413,7 @@ growth-rate guard that disables completion for the current `rebuild` and logs it
 the blunt 50k-node backstop; (b) completion only on demand (a query/extract that needs AC
 congruence closure triggers it on the relevant sub-graph, not globally on every `rebuild`);
 (c) a degree bound on materialized monomials (refuse to mint rules above size *k*), trading
-completeness for termination. The instrumentation (`ac_basis_dump`) is the tool to evaluate
+completeness for termination. The instrumentation (`cc_basis_dump`) is the tool to evaluate
 any of these.
 
 [ac-flattening TODO]: ../design/09-pattern-matching.md
@@ -467,7 +467,7 @@ Kapur's two missing completion steps (FSCD 2021) to our AC handling:
 ## 2. The architectural decision the spec left open  ✅ DECIDED: Option A, implemented
 
 **Resolved.** Completion is owned by `rebuild()` (Option A below); this is how
-`ac_complete_round` is implemented. The rest of this section records why, for the
+`cc_round` is implemented. The rest of this section records why, for the
 record. The partner search ended up driven by the class **use-lists** (`iter_uses`)
 rather than the matcher's `IndexStore`, which §0/S3b describe.
 
@@ -505,7 +505,7 @@ fn rebuild():
     loop:
         run existing worklist closure (atom-level congruence)   # egraph.rs:532 body
         snapshot := build AC-only partner index over live AC nodes  # see §5
-        changed  := ac_complete_round(snapshot)   # (A)+(B): materialize nodes, push merges to worklist
+        changed  := cc_round(snapshot)   # (A)+(B): materialize nodes, push merges to worklist
         if not changed: break
         # new merges/nodes re-enter the worklist; loop re-closes atom congruence
 ```
@@ -635,10 +635,10 @@ Grounded in the code map. Reuse:
 |---|---|---|
 | Per-element child→node lookup | `by_contains` *concept* (keyed by child class repr) | `src/index.rs:74`, build at `:135-153` |
 | AC child multiset of a node | `ac_children(id, &mut Vec<(G, Multiplicity)>)` | `src/egraph.rs:829-842` |
-| Canonicalize a fresh multiset (find+sort+sum-mult) | `ACCanon::canonize` | `src/canon.rs:87-115` |
+| Canonicalize a fresh multiset (find+sort+sum-mult) | `MSetCanon::canonize` | `src/canon.rs:87-115` |
 | Insert/probe an AC node, get its class | the `add`/`add_ac` path | `src/egraph.rs:320-336`, `src/node_store.rs:241` |
 | Merge two classes, schedule rebuild | `EGraph::merge` / `merge_justified` | `src/egraph.rs:374-392` |
-| AC op identification | `match OpKind::AC { .. }` via `ops.info(op).kind` | `src/registry.rs:29-63`, `:256` |
+| AC op identification | `match OpKind::MSet { .. }` via `ops.info(op).kind` | `src/registry.rs:29-63`, `:256` |
 
 Net-new (none of these exist today — confirmed by the code map):
 
@@ -648,11 +648,11 @@ Net-new (none of these exist today — confirmed by the code map):
    `multiset_lcm`. Today the only subtract is inline multiplicity-mutation in the
    matcher (`src/ematch.rs:742,788`); it is **not** a reusable helper. Write these
    as standalone functions on the canonical pair-slice form, unit-tested in isolation.
-2. **An AC-op iterator / filter.** There is no `is_ac()` and no iterator over
+2. **An AC-op iterator / filter.** There is no `is_mset()` and no iterator over
    registered AC ops; `OpRegistry` exposes `len()`/`info(id)` only (`src/registry.rs:131,256`).
-   Add a small helper that yields op ids whose `info(op).kind` is `OpKind::AC{..}`.
+   Add a small helper that yields op ids whose `info(op).kind` is `OpKind::MSet{..}`.
 3. **The AC-node partner snapshot** (§5) and **the completion round** itself
-   (`ac_complete_round`), per Option A.
+   (`cc_round`), per Option A.
 
 The matcher's `DecomposeAC` is **not** reused for the search (it enumerates sub-sums
 transiently for user rules; spec §7 "the `rest` machinery is the arithmetic, not the
@@ -676,7 +676,7 @@ as a clean primitive rather than threading through `decompose_ac_elem`.
 Per spec §6b/§7/§9, rule-driven (every *non-subsumed* AC node `+A → a` is a rule):
 
 ```
-ac_complete_round(snapshot) -> changed:
+cc_round(snapshot) -> changed:
   changed = false
   for each AC op f:
     for each ACTIVE (non-subsumed) AC node  +M = d   of op f:
@@ -710,7 +710,7 @@ The two non-optional corrections over the naïve version (design §6b):
 
 Notes / invariants to preserve:
 - `probe_or_insert_ac` must **canonicalize then probe-or-insert** (find each child,
-  sort, sum multiplicities — `ACCanon::canonize`), so we never create a
+  sort, sum multiplicities — `MSetCanon::canonize`), so we never create a
   non-canonical duplicate. New nodes land on `touched`/worklist via the normal `add`
   path so the next atom-closure pass and the next round see them.
 - The materialized multiset for (B) can be **larger** than `M` — so it **cannot**

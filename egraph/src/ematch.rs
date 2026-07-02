@@ -6,7 +6,7 @@
 //! extracting children from matched nodes, and yielding binding environments.
 
 use crate::ast::{CmpOp, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, VarId};
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::egraph::EGraph;
 use crate::index::{IndexMode, IndexStore, SortedVec, SortedVecCursor, VariantIndex};
@@ -336,7 +336,7 @@ impl<'a, Cfg, L, S: Copy, const T: bool, const P: bool> Iterator
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     type Item = Match<Cfg>;
     fn next(&mut self) -> Option<Match<Cfg>> {
@@ -362,7 +362,7 @@ pub fn run_query<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let mut env = Match::new(&plan.shape);
     let mut results = Vec::new();
@@ -381,7 +381,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     bump_match_steps();
     if step_idx >= plan.steps.len() {
@@ -459,7 +459,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         } => {
             let node_id = env.get(*node);
             let mut residual = Vec::new();
-            eg.ac_children(node_id, &mut residual);
+            eg.mset_children(node_id, &mut residual);
             for entry in &mut residual {
                 entry.0 = eg.find_const(entry.0);
             }
@@ -479,7 +479,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         Step::DecomposeACI { node, elems, rest } => {
             let node_id = env.get(*node);
             let mut residual = Vec::new();
-            eg.aci_children(node_id, &mut residual);
+            eg.set_children(node_id, &mut residual);
             for entry in &mut residual {
                 *entry = eg.find_const(*entry);
             }
@@ -516,7 +516,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let nfixed = children.len();
     match (pre, suf) {
@@ -586,7 +586,7 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     for (i, &cv) in children.iter().enumerate() {
         let val = seq[offset + i];
@@ -681,7 +681,7 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     decompose_ac_elem(
         plan, step_idx, elems, 0, rest, residual, eg, index, globals, env, results,
@@ -703,7 +703,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let zero: Cfg::M = 0u32.into();
     if ei >= elems.len() {
@@ -711,7 +711,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let remaining: Vec<Cfg::C> = residual
                 .iter()
                 .filter(|&&(_, m)| m > zero)
-                .map(|&(g, m)| Cfg::ac_child_with_mult(g, m))
+                .map(|&(g, m)| Cfg::mset_child_with_mult(g, m))
                 .collect();
             env.push_mset(rv, &remaining);
             run_step(plan, step_idx + 1, eg, index, globals, env, results);
@@ -834,7 +834,7 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let mut used = crate::containers::bitset::BitSet::new(residual.len());
     decompose_aci_elem(
@@ -858,7 +858,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     if ei >= elems.len() {
         if let Some(rv) = rest {
@@ -955,7 +955,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     if lookups.is_empty() {
         // No constraints — preserve original behavior (no match emitted).
@@ -1013,7 +1013,7 @@ fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let sv: Option<&SortedVec<Cfg::G>> = match l {
         IndexLookup::ByOp { op } => store.by_op.get(op),
@@ -1052,7 +1052,7 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     Cfg: EGraphConfig,
     L: LitVal,
     C: SortedCursor<Key = Cfg::G>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     // `target` may already be bound: the bound-node re-join (`ByRepr ∩ ByOp`, emitted by
     // `emit_variadic_join`/`try_schedule_bound` when a variadic atom's node was bound by an
@@ -1086,7 +1086,7 @@ fn resolve_lookup<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, cons
     env: &Match<Cfg>,
 ) -> Option<&'a SortedVec<Cfg::G>>
 where
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match l {
         IndexLookup::ByOp { op } => index.full.by_op.get(op),
@@ -1156,7 +1156,7 @@ impl<'a, Cfg, L, S: Copy, const T: bool, const P: bool> MatchIterator<'a, Cfg, L
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub fn new(
         plan: &'a QueryPlan<Cfg::O>,
@@ -1316,7 +1316,7 @@ where
             } => {
                 let node_id = self.env.get(*node);
                 let mut residual = Vec::new();
-                self.eg.ac_children(node_id, &mut residual);
+                self.eg.mset_children(node_id, &mut residual);
                 for e in &mut residual {
                     e.0 = self.eg.find_const(e.0);
                 }
@@ -1327,7 +1327,7 @@ where
             Step::DecomposeACI { node, elems, rest } => {
                 let node_id = self.env.get(*node);
                 let mut residual = Vec::new();
-                self.eg.aci_children(node_id, &mut residual);
+                self.eg.set_children(node_id, &mut residual);
                 for e in &mut residual {
                     *e = self.eg.find_const(*e);
                 }
@@ -1458,7 +1458,7 @@ where
                 let rem: Vec<Cfg::C> = residual
                     .iter()
                     .filter(|&&(_, m)| m > zero)
-                    .map(|&(g, m)| Cfg::ac_child_with_mult(g, m))
+                    .map(|&(g, m)| Cfg::mset_child_with_mult(g, m))
                     .collect();
                 self.env.push_mset(rv, &rem);
                 self.cursor += 1;
@@ -1479,7 +1479,7 @@ where
                 let rem: Vec<Cfg::C> = residual
                     .iter()
                     .filter(|&&(_, m)| m > zero)
-                    .map(|&(g, m)| Cfg::ac_child_with_mult(g, m))
+                    .map(|&(g, m)| Cfg::mset_child_with_mult(g, m))
                     .collect();
                 self.env.push_mset(rv, &rem);
             } else {
@@ -1670,7 +1670,7 @@ where
                             let rem: Vec<Cfg::C> = residual
                                 .iter()
                                 .filter(|&&(_, m)| m > zero)
-                                .map(|&(g, m)| Cfg::ac_child_with_mult(g, m))
+                                .map(|&(g, m)| Cfg::mset_child_with_mult(g, m))
                                 .collect();
                             self.env.push_mset(rv, &rem);
                             self.cursor += 1;
@@ -2045,7 +2045,7 @@ pub fn run_query_iter<Cfg, L, const T: bool, const P: bool>(
 where
     Cfg: EGraphConfig,
     L: LitVal,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let empty: crate::resolve::GlobalCtx<(), Cfg::G> = crate::resolve::GlobalCtx::new();
     let mut it = MatchIterator::new(plan, eg, index, &empty);
@@ -2081,8 +2081,8 @@ mod tests {
         eg.register_op0("b", e);
         eg.register_op0("c", e);
         eg.register_a("concat", e, e, crate::registry::AssocDir::Right);
-        eg.register_ac("add", e, e);
-        eg.register_aci("union", e, e);
+        eg.register_mset("add", e, e);
+        eg.register_set("union", e, e);
         eg
     }
 
@@ -2604,8 +2604,8 @@ mod tests {
                 .map(|c| {
                     format!(
                         "{}:{}",
-                        eg.node_op_name(DefaultConfig::ac_child_id(c)),
-                        DefaultConfig::ac_child_mult(c)
+                        eg.node_op_name(DefaultConfig::mset_child_id(c)),
+                        DefaultConfig::mset_child_mult(c)
                     )
                 })
                 .collect();
@@ -3065,8 +3065,8 @@ mod tests {
                 .mset_slice(rest_id)
                 .iter()
                 .map(|c| {
-                    let g = DefaultConfig::ac_child_id(c);
-                    let k = DefaultConfig::ac_child_mult(c);
+                    let g = DefaultConfig::mset_child_id(c);
+                    let k = DefaultConfig::mset_child_mult(c);
                     format!("{}:{}", eg.node_op_name(g), k)
                 })
                 .collect();
@@ -3111,8 +3111,8 @@ mod tests {
                 .mset_slice(rest_id)
                 .iter()
                 .map(|c| {
-                    let g = DefaultConfig::ac_child_id(c);
-                    let k = DefaultConfig::ac_child_mult(c);
+                    let g = DefaultConfig::mset_child_id(c);
+                    let k = DefaultConfig::mset_child_mult(c);
                     format!("{}:{}", eg.node_op_name(g), k)
                 })
                 .collect();
@@ -3378,8 +3378,8 @@ mod tests {
         eg.register_op1("g", e, e);
         eg.register_op2("h", e, e, e);
         eg.register_a("concat", e, e, AssocDir::Right);
-        eg.register_ac("add", e, e);
-        eg.register_aci("union", e, e);
+        eg.register_mset("add", e, e);
+        eg.register_set("union", e, e);
 
         let mut leaves = Vec::new();
         for name in &leaf_names {
@@ -3565,7 +3565,7 @@ mod tests {
             // x + rest should recompose to {a, b, c}
             let mut ids: Vec<u32> = rest_slice
                 .iter()
-                .map(|c| eg.find_const(DefaultConfig::ac_child_id(c)).raw())
+                .map(|c| eg.find_const(DefaultConfig::mset_child_id(c)).raw())
                 .collect();
             ids.push(eg.find_const(set.get_node(xi, j)).raw());
             ids.sort();

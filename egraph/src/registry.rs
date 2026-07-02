@@ -16,7 +16,7 @@ pub struct SortRegistryToken(MapToken);
 #[derive(Clone, Copy, Debug)]
 pub struct OpRegistryToken(MapToken);
 
-/// Associativity direction for A/AC/ACI operators.
+/// Associativity direction for A/MSet/Set operators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssocDir {
     Left,
@@ -27,11 +27,27 @@ pub enum AssocDir {
 /// Signature and algebraic kind of a registered operator.
 #[derive(Clone, Debug)]
 pub enum OpKind<S: DenseId> {
-    Normal { arg_sorts: Vec<S> },
-    Commutative { arg_sorts: [S; 2] },
-    A { arg_sort: S, dir: AssocDir },
-    AC { arg_sort: S },
-    ACI { arg_sort: S },
+    Normal {
+        arg_sorts: Vec<S>,
+    },
+    Commutative {
+        arg_sorts: [S; 2],
+    },
+    A {
+        arg_sort: S,
+        dir: AssocDir,
+    },
+    /// Associative-commutative, multiset child representation (`(G, mult)`, ℕ counts).
+    /// (Clamp/identity fields are added with the property-tag resolver; see the multi-AC/ACI
+    /// completion plan.)
+    MSet {
+        arg_sort: S,
+    },
+    /// Associative-commutative with {0,1}-bounded counts, set child representation (bare `G`).
+    /// Today this is the idempotent case (ACI); nilpotent shares it later via a clamp field.
+    Set {
+        arg_sort: S,
+    },
     Lit,
 }
 
@@ -56,8 +72,8 @@ impl<S: DenseId> OpInfo<S> {
             },
             OpKind::Commutative { .. } => ENodeKind::C,
             OpKind::A { .. } => ENodeKind::A,
-            OpKind::AC { .. } => ENodeKind::AC,
-            OpKind::ACI { .. } => ENodeKind::ACI,
+            OpKind::MSet { .. } => ENodeKind::MSet,
+            OpKind::Set { .. } => ENodeKind::Set,
             OpKind::Lit => ENodeKind::Lit,
         }
     }
@@ -241,12 +257,12 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         self.insert(name, return_sort, OpKind::A { arg_sort, dir })
     }
 
-    pub fn register_ac(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::AC { arg_sort })
+    pub fn register_mset(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
+        self.insert(name, return_sort, OpKind::MSet { arg_sort })
     }
 
-    pub fn register_aci(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::ACI { arg_sort })
+    pub fn register_set(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
+        self.insert(name, return_sort, OpKind::Set { arg_sort })
     }
 
     pub fn register_lit(&mut self, name: &str, return_sort: S) -> O {
@@ -257,29 +273,29 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         self.map.get(id.to_usize())
     }
 
-    /// Is this op associative-commutative (`OpKind::AC`)? Note this is `false`
+    /// Is this op associative-commutative (`OpKind::MSet`)? Note this is `false`
     /// for ACI ops, which are a distinct kind.
-    pub fn is_ac(&self, id: O) -> bool {
-        matches!(self.map.get(id.to_usize()).kind, OpKind::AC { .. })
+    pub fn is_mset(&self, id: O) -> bool {
+        matches!(self.map.get(id.to_usize()).kind, OpKind::MSet { .. })
     }
 
     /// Iterator over the ids of all registered AC ops. Used by AC congruence
     /// completion to drive the per-AC-op critical-pair pass (see
     /// `doc/future/ac-congruence-completeness-plan.md`). Excludes ACI ops.
-    pub fn ac_ops(&self) -> impl Iterator<Item = O> + '_ {
+    pub fn mset_ops(&self) -> impl Iterator<Item = O> + '_ {
         self.map
             .iter()
             .enumerate()
-            .filter(|(_, (_, info))| matches!(info.kind, OpKind::AC { .. }))
+            .filter(|(_, (_, info))| matches!(info.kind, OpKind::MSet { .. }))
             .map(|(i, _)| O::from_usize(i))
     }
 
-    /// Number of registered `OpKind::AC` ops (excludes ACI). The completion pass
-    /// supports exactly one AC symbol: the per-class `ac_min`/`atomic` slot stores one
+    /// Number of registered `OpKind::MSet` ops (excludes ACI). The completion pass
+    /// supports exactly one AC symbol: the per-class `min_monomial`/`atomic` slot stores one
     /// op's minimal monomial, so two AC symbols sharing a class would conflate. `rebuild`
     /// checks this before running completion (see `EGraph::rebuild`).
-    pub fn ac_op_count(&self) -> usize {
-        self.ac_ops().count()
+    pub fn mset_op_count(&self) -> usize {
+        self.mset_ops().count()
     }
 
     pub fn id_by_name(&self, name: &str) -> Option<O> {
@@ -528,16 +544,16 @@ mod tests {
         let ite = ops.register("ITE", &[bool_sort, int_sort, int_sort], int_sort);
         let eq = ops.register_c("Eq", [int_sort, int_sort], bool_sort);
         let sub = ops.register_a("Sub", int_sort, int_sort, AssocDir::Left);
-        let add = ops.register_ac("Add", int_sort, int_sort);
-        let and = ops.register_aci("And", bool_sort, bool_sort);
+        let add = ops.register_mset("Add", int_sort, int_sort);
+        let and = ops.register_set("And", bool_sort, bool_sort);
 
         assert_eq!(ops.info(lit).canon_class(), ENodeKind::Lit);
         assert_eq!(ops.info(not).canon_class(), ENodeKind::Plain1);
         assert_eq!(ops.info(ite).canon_class(), ENodeKind::Plain3);
         assert_eq!(ops.info(eq).canon_class(), ENodeKind::C);
         assert_eq!(ops.info(sub).canon_class(), ENodeKind::A);
-        assert_eq!(ops.info(add).canon_class(), ENodeKind::AC);
-        assert_eq!(ops.info(and).canon_class(), ENodeKind::ACI);
+        assert_eq!(ops.info(add).canon_class(), ENodeKind::MSet);
+        assert_eq!(ops.info(and).canon_class(), ENodeKind::Set);
     }
 
     #[test]
@@ -560,7 +576,7 @@ mod tests {
     fn id_by_name() {
         let int_sort = SortId::new(1);
         let mut ops = OR::new();
-        let add = ops.register_ac("Add", int_sort, int_sort);
+        let add = ops.register_mset("Add", int_sort, int_sort);
         assert_eq!(ops.id_by_name("Add"), Some(add));
         assert_eq!(ops.id_by_name("nonexistent"), None);
     }
@@ -570,12 +586,12 @@ mod tests {
     fn duplicate_name_panics() {
         let int_sort = SortId::new(1);
         let mut ops = OR::new();
-        ops.register_ac("Add", int_sort, int_sort);
-        ops.register_ac("Add", int_sort, int_sort);
+        ops.register_mset("Add", int_sort, int_sort);
+        ops.register_mset("Add", int_sort, int_sort);
     }
 
     #[test]
-    fn ac_ops_lists_only_ac() {
+    fn mset_ops_lists_only_mset() {
         let mut sorts = SR::new();
         let bool_sort = sorts.intern("Bool");
         let int_sort = sorts.intern("Int");
@@ -584,28 +600,28 @@ mod tests {
         ops.register("Not", &[bool_sort], bool_sort); // Normal
         ops.register_c("Eq", [int_sort, int_sort], bool_sort); // Commutative
         ops.register_a("Sub", int_sort, int_sort, AssocDir::Left); // A
-        let add = ops.register_ac("Add", int_sort, int_sort); // AC
-        let mul = ops.register_ac("Mul", int_sort, int_sort); // AC
-        ops.register_aci("And", bool_sort, bool_sort); // ACI — must be excluded
+        let add = ops.register_mset("Add", int_sort, int_sort); // AC
+        let mul = ops.register_mset("Mul", int_sort, int_sort); // AC
+        ops.register_set("And", bool_sort, bool_sort); // ACI — must be excluded
 
-        // ac_ops yields exactly the two AC ids, and is_ac agrees per-op.
-        let mut ac: Vec<OpId> = ops.ac_ops().collect();
-        ac.sort();
-        assert_eq!(ac, vec![add, mul]);
+        // mset_ops yields exactly the two MSet ids, and is_mset agrees per-op.
+        let mut mset_ids: Vec<OpId> = ops.mset_ops().collect();
+        mset_ids.sort();
+        assert_eq!(mset_ids, vec![add, mul]);
 
-        assert!(ops.is_ac(add));
-        assert!(ops.is_ac(mul));
+        assert!(ops.is_mset(add));
+        assert!(ops.is_mset(mul));
         // ACI is a distinct kind — not AC.
-        assert!(!ops.is_ac(ops.id_by_name("And").unwrap()));
-        assert!(!ops.is_ac(ops.id_by_name("Sub").unwrap()));
-        assert!(!ops.is_ac(ops.id_by_name("Not").unwrap()));
+        assert!(!ops.is_mset(ops.id_by_name("And").unwrap()));
+        assert!(!ops.is_mset(ops.id_by_name("Sub").unwrap()));
+        assert!(!ops.is_mset(ops.id_by_name("Not").unwrap()));
     }
 
     #[test]
-    fn ac_ops_empty_when_none_registered() {
+    fn mset_ops_empty_when_none_registered() {
         let int_sort = SortId::new(1);
         let mut ops = OR::new();
         ops.register("F", &[int_sort], int_sort);
-        assert_eq!(ops.ac_ops().count(), 0);
+        assert_eq!(ops.mset_ops().count(), 0);
     }
 }

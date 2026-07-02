@@ -7,7 +7,7 @@
 //! and `doc/design/ac-congruence-completeness.md` §6–§7.
 //!
 //! All functions operate on the *canonical* AC child form produced by
-//! [`crate::canon::ACCanon`]: a slice `&[(G, Multiplicity)]` that is
+//! [`crate::canon::MSetCanon`]: a slice `&[(G, Multiplicity)]` that is
 //!
 //! - **sorted ascending by `G`**,
 //! - **duplicate-free in `G`** (multiplicities of equal `G` already summed), and

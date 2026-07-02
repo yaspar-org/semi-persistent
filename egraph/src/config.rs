@@ -27,15 +27,15 @@ pub trait EGraphConfig: 'static {
     /// Multiplicity type for AC nodes.
     type M: Copy + Clone + Eq + Ord + Hash + core::fmt::Debug + From<u32> + Into<u32>;
     /// Extract the global id from an AC child.
-    fn ac_child_id(c: &Self::C) -> Self::G;
+    fn mset_child_id(c: &Self::C) -> Self::G;
     /// Extract the multiplicity from an AC child.
-    fn ac_child_mult(c: &Self::C) -> Self::M;
+    fn mset_child_mult(c: &Self::C) -> Self::M;
     /// Create an AC child with multiplicity 1.
-    fn ac_child_single(g: Self::G) -> Self::C;
+    fn mset_child_single(g: Self::G) -> Self::C;
     /// Create an AC child with a given multiplicity.
-    fn ac_child_with_mult(g: Self::G, mult: Self::M) -> Self::C;
+    fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C;
     /// Increment the multiplicity of an AC child. Returns true if same group.
-    fn ac_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool;
+    fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool;
     /// Local id bundle.
     type Ids: NodeIds;
 }

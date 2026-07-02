@@ -41,7 +41,7 @@ If re-sorting produces a different content hash, the old cache entry
 is removed and a new one is inserted. If the new hash collides with
 an existing node, that's a congruence.
 
-## `ACCanon` — Multiset Canonization
+## `MSetCanon` — Multiset Canonization
 
 For AC operators: children are `(id, multiplicity)` pairs stored
 sorted by id. Canonization:
@@ -64,7 +64,7 @@ The canonization buffer is allocated once and reused across all nodes
 in a rebuild pass, with no per-node allocation. The caller reads the
 buffer length after canonization to determine the new span.
 
-## `ACICanon` — Set Canonization
+## `SetCanon` — Set Canonization
 
 For ACI operators: children are deduplicated ids, stored in sorted order.
 Canonization:

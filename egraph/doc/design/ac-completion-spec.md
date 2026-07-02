@@ -1,4 +1,4 @@
-# AC Completion: `ac_min`, the matcher bug, and a compliance review
+# AC Completion: `min_monomial`, the matcher bug, and a compliance review
 
 A focused companion to [ac-congruence-completeness.md](ac-congruence-completeness.md) (the
 full specification: e-graph as a rule set §0b, the fix §6, collapse §6b, per-class data §9a,
@@ -6,7 +6,7 @@ proof sketch §12). This does not restate it. It adds three things that document
 implicit, and fact-checks them against Kapur 2023 (the LMCS journal version of the FSCD'21
 algorithm; §, Def, Lemma, Thm numbers below are Kapur's):
 
-1. the `ac_min` invariants the engine must keep (§9a defines `ac_min`; this states the
+1. the `min_monomial` invariants the engine must keep (§9a defines `min_monomial`; this states the
    checkable properties and the one maintenance gap from Kapur's "reduced") (§1);
 2. the `(f (add x ..r1) (add y ..r2))` matcher bug, over concrete nodes (§2);
 3. a clause-by-clause check that the code matches Kapur's algorithm, with the observed
@@ -20,34 +20,34 @@ rewrites to the other under those constant rules.
 
 ---
 
-## 1. `ac_min`: the properties the engine must keep
+## 1. `min_monomial`: the properties the engine must keep
 
 The main doc §9a defines the per-class data: a class carries `find(c)` (the union-find tag,
-not necessarily an AC monomial) and `ac_min(c)` (the `≫_f`-least `+`-monomial of the class,
-the rule RHS), and the rule RHS is `{c}` if `atomic(c)` else `monomial_of(ac_min(c))`. This
-section does not re-derive that. It states the four invariants `ac_min` must satisfy *as
+not necessarily an AC monomial) and `min_monomial(c)` (the `≫_f`-least `+`-monomial of the class,
+the rule RHS), and the rule RHS is `{c}` if `atomic(c)` else `monomial_of(min_monomial(c))`. This
+section does not re-derive that. It states the four invariants `min_monomial` must satisfy *as
 checkable properties* (the ground-truth checkers of §3 verify them), and the one place
 maintenance is weaker than Kapur's "reduced".
 
 ### 1.1 Properties (`c` has a `+`-node; `mono(g)` is `g`'s canonical child multiset)
 
-- **(P1) Membership.** `ac_min(c)` is a real AC node `g` with `find(g)=find(c)`, never a
+- **(P1) Membership.** `min_monomial(c)` is a real AC node `g` with `find(g)=find(c)`, never a
   synthetic monomial.
 - **(P2) Leximin (quality).** At the fixpoint,
-  `mono(ac_min(c)) = min_{≫_f}{ mono(g) : g a +-node in c }`. Because rewriting strictly
+  `mono(min_monomial(c)) = min_{≫_f}{ mono(g) : g a +-node in c }`. Because rewriting strictly
   decreases `≫_f` and a canonical system gives every class member one shared normal form,
   that normal form is the `≫_f`-minimum, so this matches Kapur's canonical signature.
-- **(P3) Orientation safety.** For any `+`-node `+M` in `c`, `M ≫_f mono(ac_min(c))` or
-  equal, never `M ≺_f`. So `+M → r` with `r = ac_min` is always correctly oriented, which is
+- **(P3) Orientation safety.** For any `+`-node `+M` in `c`, `M ≫_f mono(min_monomial(c))` or
+  equal, never `M ≺_f`. So `+M → r` with `r = min_monomial` is always correctly oriented, which is
   why normalization terminates.
-- **(P4) Existing-constant closure.** `mono(ac_min(c))` is a multiset over existing class
+- **(P4) Existing-constant closure.** `mono(min_monomial(c))` is a multiset over existing class
   ids, never a fresh constant, so reading it as a RHS cannot grow the constant pool. Its
   violation (class-as-atom) is the one unbounded divergence (§6b).
 
 ### 1.2 Maintenance, and the gap from Kapur's "reduced"
 
-`ac_min` is updated O(1) on merge: the survivor's `ac_min` is the `monomial_cmp`-smaller of
-the two minima (`fold_ac_class`), no search, no allocation. This is **best-effort on (P2)
+`min_monomial` is updated O(1) on merge: the survivor's `min_monomial` is the `monomial_cmp`-smaller of
+the two minima (`fold_min_monomial`), no search, no allocation. This is **best-effort on (P2)
 only**: `monomial_cmp` reads `find` of children, which is mid-cascade during a merge, so the
 stored min can be a non-minimal but valid sum until a later merge refreshes it. (P1), (P3),
 (P4) always hold, so a stale min is never a soundness, orientation, or divergence risk; the
@@ -138,7 +138,7 @@ survives. Matcher-soundness fix, independent of completion. Committed `2501b32`.
 | dedup reducer/superposition set by (op, LHS) | step 2: "if equal, discard the equation" (keep one) | ✓ (duplicate *nodes* stay in `targets`, so their merges are not lost) |
 | incremental (B): superpose only delta rules | step 3 + fn 3: CPs of the new rule vs existing, "incrementally ... instead of all critical pairs" | ✓ |
 | termination backstop / antichain | Thm 3.4 (Dickson's Lemma on noncomparable LHSs) | ✓ |
-| `ac_min` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §1.2 gap** |
+| `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §1.2 gap** |
 
 ### 3.2 The two deviations from "fully reduced", checked against ground truth
 
@@ -170,16 +170,16 @@ reduced (`ac_min_used_nonminimal == 0`, `kapur_lhs_reducible == 0`), turning the
 into a test. `;; EVAL: both` runs the file under naive and semi-naive and asserts the same
 outcome (the historical cross-check, now an explicit default).
 
-**Deviation 1 (RHS minimality, §1.2): best-effort, measured a no-op here.** `ac_min` is
+**Deviation 1 (RHS minimality, §1.2): best-effort, measured a no-op here.** `min_monomial` is
 maintained on merge only, so the RHS is oriented but not guaranteed the global minimum.
-Measured: `ac_min_used_nonminimal = 0` at every round. Refreshing `ac_min` at
+Measured: `ac_min_used_nonminimal = 0` at every round. Refreshing `min_monomial` at
 recanonicalization (the natural fix) was implemented and lowered a stored min **zero times**,
 because `monomial_cmp` is degree-first and a *child* merge preserves degree (`+{a,b,c}` with
 `b~c` becomes `+{a,b:2}`, still degree 3). So recanonicalization can never lower a node's
 degree, hence never produce a new degree-minimum that merge-time folding missed; the
-degree-minimum is fixed entirely by class merges, which `fold_ac_class` already captures. The
+degree-minimum is fixed entirely by class merges, which `fold_min_monomial` already captures. The
 refresh was reverted (cost on the default `rebuild` path, zero benefit). Under a degree-first
-order, `ac_min`-on-merge already *is* the exact degree-minimum.
+order, `min_monomial`-on-merge already *is* the exact degree-minimum.
 
 **Deviation 2 (duplicate-LHS rules): found by the ground-truth checker, now fixed.** The
 weaker `reducible_pairs` proxy (direct strict containment) reported a clean antichain while
@@ -257,11 +257,11 @@ ac_min_used_nonminimal = 0   kapur_lhs_reducible = 0   kapur_rhs_reducible = 0
 ```
 
 So when collapse is allowed to run to a fixpoint, the active set is fully Kapur-reduced (both
-sides irreducible) and every used `ac_min` is the true minimum. The deviations of §3.2 are
+sides irreducible) and every used `min_monomial` is the true minimum. The deviations of §3.2 are
 the only ones, and both are accounted for: RHS minimality is a no-op under the degree-first
 order, and duplicate LHSs are now deduped.
 
-**Conclusion.** The code matches Kapur's algorithm on every load-bearing point. Both
+**Conclusion.** The code matches Kapur's algorithm on every essential point. Both
 deviations from "fully reduced" are now accounted for by ground-truth measurement: RHS
 minimality is best-effort but a no-op under the degree-first order (§3.2), and duplicate-LHS
 rules are deduped (§3.2). At a real fixpoint the basis is fully Kapur-reduced (§3.4). The
@@ -269,5 +269,5 @@ per-round growth on the diverging graph is therefore the genuine size of the red
 canonical basis on a dense, deeply-merged graph, not a collapse defect: the dedup fix did not
 change it, and the residual `kapur_lhs_reducible` is within-round churn that clears at a
 fixpoint. The open work is scoping *when* completion runs (growth guard, on-demand, or a
-degree bound; plan §0.5), not strengthening collapse or `ac_min` further. Completion stays
+degree bound; plan §0.5), not strengthening collapse or `min_monomial` further. Completion stays
 off by default until a scoping mechanism lands.

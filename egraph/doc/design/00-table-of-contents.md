@@ -36,13 +36,13 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   our existing `DecomposeAC`/`by_contains` machinery, with a correctness/termination
   argument and a proof sketch. Status and verification plan live in Future Work.
 
-- **[AC Completion: `ac_min`, the matcher bug, and a code-compliance review](ac-completion-spec.md)**
-  A focused companion to the above (does not restate it). Defines `ac_min`, the leximin AC
+- **[AC Completion: `min_monomial`, the matcher bug, and a code-compliance review](ac-completion-spec.md)**
+  A focused companion to the above (does not restate it). Defines `min_monomial`, the leximin AC
   representative of a class, with its exact properties and how it yields the tightest
   closure; traces the `(f (add x ..r1) (add x ..r2))` matcher bug over concrete nodes
   (cause and fix); and checks the code clause-by-clause against the algorithm, explaining
   the observed per-round growth as the genuine basis size on a dense, deeply-merged graph
-  (not a bug, and not an artifact of approximate `ac_min`).
+  (not a bug, and not an artifact of approximate `min_monomial`).
 
 ## Part I: E-Graph Core
 
@@ -63,8 +63,8 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 4. **[Canonization Algorithms](04-canonization.md)**
    `PlainCanon`, `CCanon` (sort pair), `OrderedCanon` (A sequences),
-   `ACCanon` (sorted multiset, merge multiplicities),
-   `ACICanon` (sorted set, deduplicate). The `VarCanon` trait.
+   `MSetCanon` (sorted multiset, merge multiplicities),
+   `SetCanon` (sorted set, deduplicate). The `VarCanon` trait.
 
 5. **[The E-Graph](05-egraph.md)**
    `EGraph<Cfg, L, TRACK, PROOFS>`. Rebuild algorithm: worklist-driven,

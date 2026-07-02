@@ -287,7 +287,7 @@ where
 // ---------------------------------------------------------------------------
 
 use crate::EGraphConfig;
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::egraph::EGraph;
 use crate::ematch::{Match, run_query};
 use crate::index::IndexStore;
@@ -304,7 +304,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match op {
         RhsOp::FetchNode(vid) => eg.find(m.get(*vid)),
@@ -358,7 +358,7 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match arg {
         RhsArg::One(inner) => out.push(eval(inner, m, eg, model, globals)),
@@ -366,8 +366,8 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
         RhsArg::SpliceSet(sid) => out.extend_from_slice(m.set_slice(*sid)),
         RhsArg::SpliceMset(mid) => {
             for c in m.mset_slice(*mid) {
-                let id = Cfg::ac_child_id(c);
-                let mult = Cfg::ac_child_mult(c);
+                let id = Cfg::mset_child_id(c);
+                let mult = Cfg::mset_child_mult(c);
                 let mult_u32: u32 = mult.into();
                 for _ in 0..mult_u32 {
                     out.push(id);
@@ -422,8 +422,8 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
         } => {
             let slice = m.mset_slice(*source).to_vec();
             for c in &slice {
-                let id = Cfg::ac_child_id(c);
-                let src_mult = Cfg::ac_child_mult(c);
+                let id = Cfg::mset_child_id(c);
+                let src_mult = Cfg::mset_child_mult(c);
                 m.set(*var, id);
                 m.set_mult(*mult_var, src_mult);
                 if let Some(f) = filter {
@@ -455,7 +455,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match eg.get_lit_val(id) {
         Some(val) => M::is_truthy(val),
@@ -474,7 +474,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match action {
         CompiledAction::Union(rule_id, a, b) => {
@@ -527,7 +527,7 @@ where
     S: crate::DenseId,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     let vindex = crate::index::VariantIndex::naive(index);
@@ -573,8 +573,8 @@ mod tests {
         ops.register("b", &[], e);
         ops.register("c", &[], e);
         ops.register_a("concat", e, e, AssocDir::Right);
-        ops.register_ac("add", e, e);
-        ops.register_aci("union", e, e);
+        ops.register_mset("add", e, e);
+        ops.register_set("union", e, e);
         ops.register("ILit", &[ibig], e);
         (
             ops,
@@ -777,9 +777,9 @@ mod tests {
         ops.register("a", &[], e);
         ops.register("b", &[], e);
         ops.register_a("concat", e, e, AssocDir::Right);
-        ops.register_ac("add", e, e);
-        ops.register_ac("mul", e, e);
-        ops.register_aci("union", e, e);
+        ops.register_mset("add", e, e);
+        ops.register_mset("mul", e, e);
+        ops.register_set("union", e, e);
         ops.register("ILit", &[ibig], e);
         let model = NiraModel;
 
@@ -1011,8 +1011,8 @@ mod tests {
         eg.register_op0("b", e);
         eg.register_op0("c", e);
         eg.register_a("concat", e, e, AssocDir::Right);
-        eg.register_ac("add", e, e);
-        eg.register_aci("union", e, e);
+        eg.register_mset("add", e, e);
+        eg.register_set("union", e, e);
         eg
     }
 

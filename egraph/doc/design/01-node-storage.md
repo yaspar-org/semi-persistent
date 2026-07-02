@@ -122,7 +122,7 @@ pub struct TypedRouting<G, I: NodeIds> {
 pub enum NodeRef<I: NodeIds> {
     Plain0(I::L0), Plain1(I::L1), Plain2(I::L2), Plain3(I::L3),
     C(I::LC),      PlainN(I::LN), A(I::LA),
-    AC(I::LAC),    ACI(I::LACI),  Lit(I::LLit),
+    AC(I::LMSet),    ACI(I::LSet),  Lit(I::LLit),
 }
 ```
 
@@ -203,17 +203,17 @@ pub trait EGraphConfig: 'static {
     type Ids: NodeIds;          // local id bundle for typed caches
 
     // Required methods for generic AC child manipulation:
-    fn ac_child_id(c: &Self::C) -> Self::G;
-    fn ac_child_mult(c: &Self::C) -> Self::M;
-    fn ac_child_single(g: Self::G) -> Self::C;
-    fn ac_child_with_mult(g: Self::G, mult: Self::M) -> Self::C;
-    fn ac_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool;
+    fn mset_child_id(c: &Self::C) -> Self::G;
+    fn mset_child_mult(c: &Self::C) -> Self::M;
+    fn mset_child_single(g: Self::G) -> Self::C;
+    fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C;
+    fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool;
 }
 ```
 
-The five `ac_child_*` methods allow the e-graph to manipulate AC
+The five `mset_child_*` methods allow the e-graph to manipulate MSet
 children generically without knowing the concrete `(G, Multiplicity)`
-layout. `ac_child_merge` increments the multiplicity of an existing
+layout. `mset_child_merge` increments the multiplicity of an existing
 child and returns `true` if the ids belong to the same group.
 
 `DefaultConfig` uses 31-bit ids for everything. `Config64` uses
