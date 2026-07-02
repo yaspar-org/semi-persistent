@@ -1,0 +1,4 @@
+;; EXPECT: sort-error
+;; :idempotent requires :assoc :comm.
+(sort E)
+(function bad (E) E :assoc :idempotent)

@@ -735,7 +735,7 @@ where
             name,
             arg_sorts,
             ret_sort,
-            attr,
+            tags,
         } => {
             let ret = eg
                 .sorts()
@@ -749,12 +749,12 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
-            register_op(eg, name, &args, ret, *attr)?;
+            register_op(eg, name, &args, ret, tags)?;
         }
         Command::Datatype { name, variants } => {
             eg.intern_sort(name);
             let sid = eg.sorts().id_by_name(name).unwrap();
-            for (ctor, arg_names, attr) in variants {
+            for (ctor, arg_names, tags) in variants {
                 let arg_ids: Vec<Cfg::S> = arg_names
                     .iter()
                     .map(|s| {
@@ -763,7 +763,7 @@ where
                             .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                     })
                     .collect::<Result<_, _>>()?;
-                let oid = register_op(eg, ctor, &arg_ids, sid, *attr)?;
+                let oid = register_op(eg, ctor, &arg_ids, sid, tags)?;
                 eg.ops_mut().set_constructor(oid);
             }
         }
@@ -772,12 +772,17 @@ where
     Ok(())
 }
 
+/// Resolve a composable algebra-tag set into a concrete op registration (multi-AC/ACI plan,
+/// Facet A). Validates the combination and builds the `OpKind` descriptor. The `:identity` unit
+/// term is stored deferred (`UnitRef`), not built here; `:inverse` is validated but its resolved
+/// op is not stored yet (deferred to the group facet). No completion behavior change: plain
+/// `:assoc :comm` reproduces today's AC, `+ :idempotent` today's ACI.
 fn register_op<Cfg, L, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     name: &str,
     args: &[Cfg::S],
     ret: Cfg::S,
-    attr: Option<AlgAttr>,
+    tags: &[AlgTag],
 ) -> Result<Cfg::O, SortError>
 where
     Cfg: crate::config::EGraphConfig,
@@ -785,37 +790,137 @@ where
     L: LitVal,
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
-    Ok(match attr {
-        None => eg.register_opn(name, args, ret),
-        Some(AlgAttr::Comm) => {
+    use crate::registry::{AssocDir, OpKind, SetClamp, UnitRef};
+
+    // No tags → plain op.
+    if tags.is_empty() {
+        return Ok(eg.register_opn(name, args, ret));
+    }
+
+    // Collect the tag set into flags. Duplicate/conflicting basic tags are folded; direction
+    // and value tags are captured. Order-independent.
+    let mut comm = false;
+    let mut assoc = false;
+    let mut dir: Option<AssocDir> = None; // set by assoc-left/right
+    let mut idempotent = false;
+    let mut nilpotent: Option<u8> = None;
+    let mut identity: Option<Term> = None;
+    let mut cancellative = false;
+    let mut inverse: Option<String> = None;
+    for tag in tags {
+        match tag {
+            AlgTag::Comm => comm = true,
+            AlgTag::Assoc => assoc = true,
+            AlgTag::AssocLeft => {
+                assoc = true;
+                dir = Some(AssocDir::Left);
+            }
+            AlgTag::AssocRight => {
+                assoc = true;
+                dir = Some(AssocDir::Right);
+            }
+            AlgTag::Idempotent => idempotent = true,
+            AlgTag::Nilpotent(order) => nilpotent = Some(order.unwrap_or(2)),
+            AlgTag::Identity(term) => identity = Some(term.clone()),
+            AlgTag::Cancellative => cancellative = true,
+            AlgTag::Inverse(n) => inverse = Some(n.clone()),
+        }
+    }
+
+    // --- Validation (reject at registration; design §"Validation at registration") ---
+    if idempotent && nilpotent.is_some() {
+        return Err(serr(
+            ":idempotent and :nilpotent are mutually exclusive",
+            Span::Dummy,
+        ));
+    }
+    if (idempotent || nilpotent.is_some()) && !(assoc && comm) {
+        return Err(serr(
+            ":idempotent/:nilpotent require :assoc :comm",
+            Span::Dummy,
+        ));
+    }
+    if nilpotent.is_some() && identity.is_none() {
+        return Err(serr(
+            ":nilpotent requires :identity (the emptied monomial must reduce to the unit)",
+            Span::Dummy,
+        ));
+    }
+    if inverse.is_some() && identity.is_none() {
+        return Err(serr(":inverse requires :identity", Span::Dummy));
+    }
+
+    // Build the deferred unit reference from the identity term, if any.
+    let unit_ref = match &identity {
+        None => None,
+        Some(Term::Lit(tok, _)) => Some(UnitRef::Lit { token: tok.clone() }),
+        Some(term @ Term::App { .. }) => Some(UnitRef::Ctor { term: term.clone() }),
+    };
+
+    // --- Dispatch on the (assoc, comm) shape ---
+    match (assoc, comm) {
+        // AC family: assoc + comm, variadic (1 declared arg sort).
+        (true, true) => {
+            if args.len() != 1 {
+                return Err(serr(
+                    ":assoc :comm operator takes one argument sort",
+                    Span::Dummy,
+                ));
+            }
+            // identity/inverse/cancellative apply to A/C? No — only to AC. Fine here.
+            let kind = if idempotent {
+                OpKind::Set {
+                    arg_sort: args[0],
+                    clamp: SetClamp::Idempotent,
+                    identity: unit_ref,
+                    cancellative,
+                }
+            } else if let Some(order) = nilpotent {
+                OpKind::Set {
+                    arg_sort: args[0],
+                    clamp: SetClamp::Nilpotent { order },
+                    identity: unit_ref,
+                    cancellative,
+                }
+            } else {
+                OpKind::MSet {
+                    arg_sort: args[0],
+                    identity: unit_ref,
+                    cancellative,
+                }
+            };
+            Ok(eg.register_kind(name, ret, kind))
+        }
+        // Associative-only (A): a sequence op; no comm/idempotent/nilpotent/identity semantics.
+        (true, false) => {
+            if idempotent || nilpotent.is_some() || identity.is_some() || inverse.is_some() {
+                return Err(serr(
+                    ":idempotent/:nilpotent/:identity/:inverse require :comm (an AC operator)",
+                    Span::Dummy,
+                ));
+            }
+            if args.len() != 1 {
+                return Err(serr(":assoc requires 1 argument sort", Span::Dummy));
+            }
+            Ok(eg.register_a(name, args[0], ret, dir.unwrap_or(AssocDir::Left)))
+        }
+        // Commutative-only (C): binary.
+        (false, true) => {
+            if idempotent || nilpotent.is_some() || identity.is_some() || inverse.is_some() {
+                return Err(serr(
+                    ":idempotent/:nilpotent/:identity/:inverse require :assoc (an AC operator)",
+                    Span::Dummy,
+                ));
+            }
             if args.len() != 2 {
-                return Err(serr(":comm requires 2 args", Span::Dummy));
+                return Err(serr(":comm requires 2 argument sorts", Span::Dummy));
             }
-            eg.register_c(name, [args[0], args[1]], ret)
+            Ok(eg.register_c(name, [args[0], args[1]], ret))
         }
-        Some(AlgAttr::Assoc | AlgAttr::AssocLeft) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc requires 1 arg", Span::Dummy));
-            }
-            eg.register_a(name, args[0], ret, crate::registry::AssocDir::Left)
-        }
-        Some(AlgAttr::AssocRight) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc-right requires 1 arg", Span::Dummy));
-            }
-            eg.register_a(name, args[0], ret, crate::registry::AssocDir::Right)
-        }
-        Some(AlgAttr::AssocComm) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc-comm requires 1 arg", Span::Dummy));
-            }
-            eg.register_mset(name, args[0], ret)
-        }
-        Some(AlgAttr::AssocCommIdem) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc-comm-idem requires 1 arg", Span::Dummy));
-            }
-            eg.register_set(name, args[0], ret)
-        }
-    })
+        // No structural tag but property tags present → error (idempotent-only etc. is meaningless).
+        (false, false) => Err(serr(
+            "algebra tags require :assoc and/or :comm",
+            Span::Dummy,
+        )),
+    }
 }
