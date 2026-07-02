@@ -10,8 +10,25 @@ use crate::containers::DenseId;
 use crate::containers::ShrinkPolicy;
 use crate::containers::Tagged;
 use crate::multiplicity::Multiplicity;
-use crate::registry::{OpKind, OpRegistry};
+use crate::registry::{Clamp, OpKind, OpRegistry};
 use crate::typed_routing::{NodeIds, NodeRef, RoutingToken, TypedRouting};
+
+/// Map an MSet op's descriptor `Clamp` to the canonizer's [`crate::canon::MSetClamp`]. An MSet op
+/// carries `Clamp::None` (plain AC) or `Clamp::Nilpotent` (`Idempotent` is the Set partition, and
+/// is never on an MSet op — treat defensively as no clamp). Keeps `canon.rs` free of a `registry`
+/// dependency: the store, which has the op registry, does the mapping.
+fn mset_clamp_of<O: DenseId, S: DenseId, const TRACK: bool>(
+    ops: &OpRegistry<O, S, TRACK>,
+    op: O,
+) -> crate::canon::MSetClamp {
+    match ops.info(op).kind {
+        OpKind::MSet {
+            clamp: Clamp::Nilpotent { order },
+            ..
+        } => crate::canon::MSetClamp::Nilpotent { order },
+        _ => crate::canon::MSetClamp::None,
+    }
+}
 
 pub type MSetChild<G> = (G, Multiplicity);
 
@@ -289,7 +306,7 @@ where
     /// `g_buf` — scratch for PlainN/A/ACI (child type G).
     /// `mset_buf` — scratch for MSet children (child type `C` = `(G, mult)`).
     /// `collisions` — destination for collision pairs to push onto worklist.
-    pub fn recanonize_node(
+    pub fn recanonize_node<S: crate::DenseId>(
         &mut self,
         id: G,
         find: impl Fn(G) -> G,
@@ -297,9 +314,11 @@ where
         mset_buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
+        ops: &OpRegistry<O, S, TRACK>,
     ) where
         MSetCanon: VarCanon<G, C>,
     {
+        use crate::canon::MSetClamp;
         match self.routing.get(id) {
             NodeRef::Plain0(_) => {}
             NodeRef::Plain1(l) => self
@@ -314,18 +333,40 @@ where
             NodeRef::C(l) => self
                 .c
                 .recanonize_node::<CCanon>(l, &find, collisions, touched),
-            NodeRef::PlainN(l) => self
-                .plain_n
-                .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions, touched),
-            NodeRef::A(l) => self
-                .a
-                .recanonize_node::<OrderedCanon>(l, &find, g_buf, collisions, touched),
-            NodeRef::MSet(l) => self
-                .mset
-                .recanonize_node::<MSetCanon>(l, &find, mset_buf, collisions, touched),
-            NodeRef::Set(l) => self
-                .set
-                .recanonize_node::<SetCanon>(l, &find, g_buf, collisions, touched),
+            NodeRef::PlainN(l) => self.plain_n.recanonize_node::<OrderedCanon>(
+                l,
+                &find,
+                g_buf,
+                collisions,
+                touched,
+                MSetClamp::None,
+            ),
+            NodeRef::A(l) => self.a.recanonize_node::<OrderedCanon>(
+                l,
+                &find,
+                g_buf,
+                collisions,
+                touched,
+                MSetClamp::None,
+            ),
+            NodeRef::MSet(l) => {
+                // Fetch the op's count clamp from the registry before canonizing this slice, so
+                // canonize establishes the full canonical form (find+sort+coalesce + mod-n clamp)
+                // in one step. The node's op is known here (we route on it), matching the `add`
+                // path that already takes `&ops`.
+                let op = self.mset.get(l).op();
+                let clamp = mset_clamp_of(ops, op);
+                self.mset
+                    .recanonize_node::<MSetCanon>(l, &find, mset_buf, collisions, touched, clamp)
+            }
+            NodeRef::Set(l) => self.set.recanonize_node::<SetCanon>(
+                l,
+                &find,
+                g_buf,
+                collisions,
+                touched,
+                MSetClamp::None,
+            ),
             NodeRef::Lit(_) => {}
         }
     }
@@ -537,6 +578,7 @@ mod tests {
             &mut mset_buf,
             &mut collisions,
             &mut Vec::new(),
+            &ops,
         );
         // neg(e1) became neg(e0) → collision with na
         assert_eq!(collisions, vec![(nb, na)]);
@@ -561,6 +603,7 @@ mod tests {
             &mut mset_buf,
             &mut collisions,
             &mut Vec::new(),
+            &ops,
         );
         assert!(collisions.is_empty());
     }

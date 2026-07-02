@@ -24,14 +24,22 @@ pub enum AssocDir {
     Both,
 }
 
-/// Why a `Set`-represented op's per-summand count is bounded to {0,1} (design "three
-/// independent axes"). This is a Set-only axis; `MSet` ops have no clamp (counts stay in ℕ).
+/// How an AC op's normal form bounds a summand's count (design "three independent axes", the
+/// 2026-07-01 correction). This is a *unified* axis carried on BOTH `MSet` and `Set` descriptors,
+/// independent of the storage partition: the partition is derived from the clamp (`Idempotent →
+/// Set`; `None` / `Nilpotent → MSet`). See `doc/future/multi-ac-aci-completion-plan.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SetClamp {
-    /// `x∘x = x`: duplicate summands collapse to one (dedup). `and`, `or`.
+pub enum Clamp {
+    /// No count bound: counts stay in ℕ. Plain AC (`+`, `*`). Stored as `MSet`.
+    None,
+    /// `x∘x = x`: duplicate summands collapse to one (dedup at build via `SetCanon`). `and`, `or`.
+    /// Stored as `Set` (bare children); dedup is the correct build/recanonize canonize rule.
     Idempotent,
-    /// `x∘x = e` (order 2), or count mod `order` in general: pairs cancel to the unit
-    /// (symmetric difference). `xor`, `bvxor`. Requires an `identity`.
+    /// `x∘x = e` (order 2), or count mod `order` in general: pairs cancel to the unit. `xor`,
+    /// `bvxor`. Requires an `identity`. Stored as `MSet` (NOT `Set`): computing count-mod-n needs
+    /// the true multiplicity, which the `Set` dedup canonize would destroy at build time; the
+    /// mod-n reduction happens at completion instead. The NF counts are {0,1} at order 2 but the
+    /// *storage* is MSet regardless of order.
     Nilpotent { order: u8 },
 }
 
@@ -66,17 +74,22 @@ pub enum OpKind<S: DenseId> {
         arg_sort: S,
         dir: AssocDir,
     },
-    /// Associative-commutative, multiset child representation (`(G, mult)`, ℕ counts).
+    /// Associative-commutative, multiset child representation (`(G, mult)`, ℕ counts). Holds
+    /// `clamp ∈ {None, Nilpotent}` — plain AC (`None`) or nilpotent (`Nilpotent`, which is stored
+    /// MSet to keep true multiplicities for the completion-time mod-n reduction). Never
+    /// `Idempotent` (that is the `Set` partition).
     MSet {
         arg_sort: S,
+        clamp: Clamp,
         identity: Option<UnitRef>,
         cancellative: bool,
     },
     /// Associative-commutative with {0,1}-bounded counts, set child representation (bare `G`).
-    /// `clamp` says why the counts are bounded (idempotent = dedup; nilpotent = mod-n cancel).
+    /// `clamp` is always `Idempotent` here (dedup is the build/recanonize canonize rule); the
+    /// field is kept for uniformity with `MSet` and the `op_clamp` read.
     Set {
         arg_sort: S,
-        clamp: SetClamp,
+        clamp: Clamp,
         identity: Option<UnitRef>,
         cancellative: bool,
     },
@@ -297,6 +310,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             return_sort,
             OpKind::MSet {
                 arg_sort,
+                clamp: Clamp::None,
                 identity: None,
                 cancellative: false,
             },
@@ -304,14 +318,14 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     }
 
     /// Register a plain ACI (idempotent set) op: no identity, not cancellative. This is the
-    /// `SetClamp::Idempotent` case; nilpotent sets come via the property-tag resolver.
+    /// `Clamp::Idempotent` case; nilpotent (MSet) comes via the property-tag resolver.
     pub fn register_set(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
         self.insert(
             name,
             return_sort,
             OpKind::Set {
                 arg_sort,
-                clamp: SetClamp::Idempotent,
+                clamp: Clamp::Idempotent,
                 identity: None,
                 cancellative: false,
             },

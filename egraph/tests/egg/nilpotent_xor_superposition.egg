@@ -1,0 +1,22 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Nilpotent (XOR) superposition (multi-AC/ACI plan, property 2). Two rules whose RHS is the unit
+;; (`a ⊕ b = e`, i.e. a = b) superpose on a shared child:
+;;   xor(a,b) = e,  xor(b,c) = e   ⟹   a = c
+;; lcm on the shared b is {a,b,c}; reducing by xor(a,b)→{} gives {c}, by xor(b,c)→{} gives {a},
+;; and each size-1 monomial degenerates to its element, so the pair merges c with a.
+(sort E)
+(function e () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+
+(let x_ab (xor (a) (b)))
+(let x_bc (xor (b) (c)))
+(union x_ab (e))
+(union x_bc (e))
+
+(run 5)
+(check (= (a) (c)))

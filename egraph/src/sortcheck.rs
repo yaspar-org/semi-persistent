@@ -670,7 +670,7 @@ where
         Command::Sort(_) | Command::Function { .. } | Command::Datatype { .. } => {
             // Use the interpreter's existing exec_function / intern_sort logic
             // by delegating to the egraph directly.
-            exec_decl(&cmd, eg)?;
+            exec_decl(&cmd, eg, model, globals)?;
             return Ok(CCommand::Decl(cmd));
         }
         _ => {}
@@ -716,15 +716,19 @@ where
     }
 }
 
-/// Register a declaration command into the egraph.
-fn exec_decl<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+/// Register a declaration command into the egraph. `model`/`globals` are needed to resolve a
+/// completion op's `:identity` unit term to a node at registration.
+fn exec_decl<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     cmd: &Command,
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
+    model: &M,
+    globals: &GlobalCtx<Cfg::S>,
 ) -> Result<(), SortError>
 where
     Cfg: crate::config::EGraphConfig,
     Cfg::O: Hash,
     L: LitVal,
+    M: LitModel<Value = L>,
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
@@ -749,7 +753,7 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
-            register_op(eg, name, &args, ret, tags)?;
+            register_op(eg, name, &args, ret, tags, model, globals)?;
         }
         Command::Datatype { name, variants } => {
             eg.intern_sort(name);
@@ -763,7 +767,7 @@ where
                             .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                     })
                     .collect::<Result<_, _>>()?;
-                let oid = register_op(eg, ctor, &arg_ids, sid, tags)?;
+                let oid = register_op(eg, ctor, &arg_ids, sid, tags, model, globals)?;
                 eg.ops_mut().set_constructor(oid);
             }
         }
@@ -773,24 +777,28 @@ where
 }
 
 /// Resolve a composable algebra-tag set into a concrete op registration (multi-AC/ACI plan,
-/// Facet A). Validates the combination and builds the `OpKind` descriptor. The `:identity` unit
-/// term is stored deferred (`UnitRef`), not built here; `:inverse` is validated but its resolved
-/// op is not stored yet (deferred to the group facet). No completion behavior change: plain
-/// `:assoc :comm` reproduces today's AC, `+ :idempotent` today's ACI.
-fn register_op<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+/// Facet A). Validates the combination and builds the `OpKind` descriptor. A declared
+/// `:identity e` is resolved to a real node here (sortcheck has the model) and stored in the
+/// egraph's per-op unit map; `:inverse` is validated but its resolved op is not stored yet
+/// (deferred to the group facet). Plain `:assoc :comm` reproduces AC, `+ :idempotent` reproduces
+/// ACI; the unit only affects completion once it is consumed (identity drop in the round).
+fn register_op<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     name: &str,
     args: &[Cfg::S],
     ret: Cfg::S,
     tags: &[AlgTag],
+    model: &M,
+    globals: &GlobalCtx<Cfg::S>,
 ) -> Result<Cfg::O, SortError>
 where
     Cfg: crate::config::EGraphConfig,
     Cfg::O: Hash,
     L: LitVal,
+    M: LitModel<Value = L>,
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
-    use crate::registry::{AssocDir, OpKind, SetClamp, UnitRef};
+    use crate::registry::{AssocDir, Clamp, OpKind, UnitRef};
 
     // No tags → plain op.
     if tags.is_empty() {
@@ -867,29 +875,46 @@ where
                     Span::Dummy,
                 ));
             }
-            // identity/inverse/cancellative apply to A/C? No — only to AC. Fine here.
+            // Partition is derived from the clamp (design "storage partition and clamp are
+            // independent"): idempotent → Set (dedup is the sound build canonize); plain AC and
+            // nilpotent → MSet (nilpotent keeps true multiplicities for the completion-time mod-n
+            // reduction — the Set dedup canonize would destroy them at build).
             let kind = if idempotent {
                 OpKind::Set {
                     arg_sort: args[0],
-                    clamp: SetClamp::Idempotent,
-                    identity: unit_ref,
-                    cancellative,
-                }
-            } else if let Some(order) = nilpotent {
-                OpKind::Set {
-                    arg_sort: args[0],
-                    clamp: SetClamp::Nilpotent { order },
+                    clamp: Clamp::Idempotent,
                     identity: unit_ref,
                     cancellative,
                 }
             } else {
                 OpKind::MSet {
                     arg_sort: args[0],
+                    clamp: match nilpotent {
+                        Some(order) => Clamp::Nilpotent { order },
+                        None => Clamp::None,
+                    },
                     identity: unit_ref,
                     cancellative,
                 }
             };
-            Ok(eg.register_kind(name, ret, kind))
+            let op = eg.register_kind(name, ret, kind);
+            // Resolve `:identity e` to a real node NOW (sortcheck has the model to parse the
+            // term; the node id is stored in the egraph's per-op unit map — `OpKind<S>` cannot
+            // carry a `Cfg::G`). The unit must sort-check to the op's return sort and be a
+            // ground term (a literal or a constructor over ground args), so its constructors
+            // must already be declared. Stored on the egraph, rolls back with the op decl.
+            if let Some(term) = &identity {
+                let ct = check_term(term, Some(ret), eg.ops(), eg.sorts(), model, globals)
+                    .map_err(|e| {
+                        serr(
+                            format!(":identity term does not sort-check: {e}"),
+                            Span::Dummy,
+                        )
+                    })?;
+                let unit = eg.build_ground_cterm(&ct);
+                eg.set_unit_node(op, unit);
+            }
+            Ok(op)
         }
         // Associative-only (A): a sequence op; no comm/idempotent/nilpotent/identity semantics.
         (true, false) => {

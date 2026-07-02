@@ -42,43 +42,96 @@ A monomial is a map from summand class to a count. Three *independent* facts gov
 canonicalizes; an early draft folded them into one "clamp" column, which was wrong. Keep them
 separate:
 
-1. **Count domain = the storage representation (MSet vs Set).** Either counts are unbounded in ℕ
-   (**MSet**, children stored as `(G, u32)`) or bounded to {0,1} (**Set**, children stored as bare
-   `G`). This is the only axis the *routing/storage* layer cares about.
-2. **Why a Set is a Set = the Set clamp (idempotent vs nilpotent).** A {0,1} bound arises two ways:
-   idempotency (`x∘x = x`, clamp count to 1, merge = union-clamp) or nilpotency (`x∘x = e`, count
-   mod 2, merge = symmetric difference). This axis exists **only for Set**; an MSet op by definition
-   has no count clamp (that is what keeps its counts in ℕ). So "do we need a clamp over MSet?" — no,
-   a count-clamped MSet *is* a Set.
+1. **Storage representation (MSet vs Set).** Either children are stored with an explicit count
+   (**MSet**, `(G, u32)`) or as bare `G` with the count implicit at 1 (**Set**). This is the only
+   axis the *routing/storage* layer cares about. A `Set` node is nothing but a space-optimized
+   `MSet` node whose canonize rule guarantees every count is {0,1}, so the count need not be stored.
+2. **Count clamp (none / idempotent / nilpotent).** How the normal form bounds a summand's count:
+   none (ℕ, plain AC), idempotent (clamp to 1, `x∘x = x`), or nilpotent order-n (count mod n,
+   `x∘x = e`; merge = symmetric difference at n=2). **This axis is NOT Set-only** — see the
+   correction below. It is an algebra property of the op, applied **inside canonization** (at build
+   and on recanonicalize), not at completion time — the clamp establishes the stored normal form,
+   so `xor(a,a) = e` holds with completion OFF (see "Canonization, not completion" below).
 3. **Identity = a dropped unit element, orthogonal to both, on either representation.** A
    distinguished element `e` whose multiplicity is forced to 0 (removed) wherever it appears.
    Applies to MSet (`+` with `0`, `*` with `1`) **and** Set (`and` with `true`, `or` with `false`).
-   It is *not* a count clamp and *not* Set-only; it is a separate optional field.
+   It is *not* a count clamp; it is a separate optional field. Nilpotency *requires* an identity
+   because the emptied monomial `{}` (`a⊕a`) must reduce to a real node, the unit.
 
-| op family    | count domain | Set clamp        | identity      | example                    |
-|--------------|--------------|------------------|---------------|----------------------------|
-| plain AC     | ℕ  (MSet)    | —                | optional      | `+`, `*`                   |
-| idempotent   | {0,1} (Set)  | Idempotent       | optional      | `and`, `or`: `a∘a → a`     |
-| nilpotent    | {0,1} (Set)  | Nilpotent (mod n)| **required**  | `xor`: `a⊕a → e`           |
-| group        | ℤ  (MSet±)   | — (signed)       | required + inv| abelian `(+,0,−)`          |
+### Correction (2026-07-01): storage partition and clamp are genuinely independent; nilpotent is MSet
 
-So XOR is a **Set**, not a multiset: symmetric difference maps two sets to a set directly and never
-materializes count 2. "Add then clamp mod 2" and "symmetric difference" compute the same thing, but
-the second stays in {0,1} at every step. The naïve expectation that XOR needs a multiset (to add
-then reduce mod 2) is wrong for exactly this reason. Nilpotency *requires* an identity because the
-emptied monomial `{}` (`a⊕a`) must canonicalize to a real node, the unit.
+An earlier version of this section claimed the clamp is "Set-only" and that **XOR is a Set**. That is
+**wrong**, and building on it would be unsound. The reason is the *canonize* step (run at build AND
+on `recanonize_node` after a child merge). The Set partition is hardwired to exactly one canonize
+rule — `sort; dedup` (`SetCanon`) — which is the *idempotent* clamp. An op may live in the Set
+partition only if `dedup` is its correct canonize rule. For nilpotent it is not: `xor(a, a)` must
+reduce toward the unit `e`, but `dedup` collapses `{a,a} → {a} = a`, a **false equality**, and it
+does so at build time, before completion runs. Dedup (presence) and parity (count mod 2) are
+different rules; a single partition cannot serve both.
+
+To compute `count mod n` you must first *hold* the count, and the only hash-consed place that holds
+counts is the **MSet partition**. So the canonize-time representation for nilpotent is forced to be
+MSet, even though the *values* in its normal form are {0,1} (n=2) and would "fit" a Set. The
+principle:
+
+> A `Set` node is a space-optimized `MSet` node: bare children, multiplicity implicit at 1. Storing
+> into it is sound only if the op's canonize rule (build **and** recanonize) yields {0,1} counts
+> from the current children slice alone. That holds for idempotent (`dedup`) and fails for nilpotent
+> (`parity` needs the run-lengths dedup just threw away).
+
+**Representation analysis — all combinations.** All ops here are AC (assoc + comm). *During-canon
+repr* = the multiplicity domain that must be faithfully maintained (through recanonize) to stay
+sound. *NF count domain* = the counts the normal form can contain. *Final storage* = the most
+compact partition that can hold that normal form.
+
+| algebra                         | canonize rule            | during-canon repr | NF counts   | final storage        |
+|---------------------------------|--------------------------|-------------------|-------------|----------------------|
+| AC (`+`, bag)                   | coalesce (sum counts)    | MSet (ℕ)          | ℕ (≥1)      | **MSet**             |
+| AC + identity (`+`,`0`)         | coalesce + drop unit     | MSet (ℕ)          | ℕ, may empty| **MSet**             |
+| AC + idempotent (`and`)         | dedup (presence)         | **Set** ({0,1})   | {0,1}       | **Set**              |
+| AC + idem + identity            | dedup + drop unit        | **Set**           | {0,1}, empty| **Set**              |
+| AC + nilpotent₂ + id (`xor`)    | parity (mod 2)           | **MSet** (needs run-length) | {0,1} | Set *in principle*, **MSet in practice** |
+| AC + nilpotentₙ + id (n>2)      | count mod n              | MSet ({0..n−1})   | {0..n−1}    | **MSet** (Set can't hold count 2) |
+| AC + identity + inverse (group) | signed coalesce (ℤ)      | signed MSet (ℤ)   | ℤ∖{0}       | signed MSet          |
+
+Reading the table: the `xor` row is the mismatch — during-canon must be MSet for soundness under
+recanonize, even though its NF values are {0,1}. Storing xor in the Set partition would need a
+clamp-aware canonizer plus empty-var-node→unit and size-1→element handling *inside the store /
+recanonize path* — hash-cons-core surgery for a constant-factor space win on xor-only nodes, and it
+helps only n=2 (n>2 must be MSet regardless). **Decision: all nilpotent (every order) is stored in
+the MSet partition.** The mod-n clamp is applied **inside `MSetCanon`** (`canonize` =
+`update_multiset` then `clamp_multiset`), so the stored node is already `{0,…,n−1}`-valued — the
+store never holds an unreduced count past a canonize. This also immediately closes the earlier
+unsoundness (nilpotent no longer routes through `dedup`).
+
+Consequently the clamp is a property of the op **regardless of partition**, and lives as a unified
+field on both descriptors: `Idempotent → Set`; `None` / `Nilpotent{order}` → `MSet`.
+
+### Canonization, not completion (the clamp/identity/degeneracy live in canonize)
+
+The count clamp (nilpotent mod-n), the identity unit-drop, and the degenerate-arity collapse
+(empty ⇒ the op's unit; single mult-1 summand ⇒ that summand's class) are the op's **canonical
+normal form**, on the same footing as flatten/sort/coalesce and the idempotent `dedup`. They are
+applied **inside canonization** — at build (`add`) and on `recanonize_node` — so they hold with AC
+completion OFF. `xor(a,a) = e`, `and(a,a) = a`, `+(a,e) = a` are canonization facts, established the
+moment the term is built (or when a child merge recanonicalizes it), never deferred to a completion
+round. Mechanically: the clamp is a step inside `MSetCanon::canonize`; the clamp mode is fetched
+from the op registry before canonizing (`recanonize_node` takes `&ops`, like `add`); and a
+degenerate result is an *equality*, so it is emitted as a **merge** (build returns the existing
+class id; recanonize records a collision-style merge) — congruence, not the completion-layer
+collapse (`FLAG_AC_COLLAPSED`, which is rule inter-reduction). Completion (`cc_round`) runs only
+after `rebuild_congruence`, so every node it reads is already canonical; it therefore does *only*
+superposition + inter-reduction, and needs no clamp/degeneracy handling of its own.
 
 The representation choice matters for memory: an MSet child is `(G, u32)` (the multiplicity is
 `u32`, see `multiplicity.rs` — *not* the 128-bit literal value, which is unrelated) versus a bare
-`G` for a Set child. At 31-bit `G` that is 8 bytes vs 4, a ~2x per-child overhead the Set ops
-should not pay. The completion *pool* is unaffected either way (it stores node ids); the node child
-storage picks MSet vs Set from the op (the existing `nodes.mset`/`nodes.set` partitions, renamed to
-representation names — see below).
+`G` for a Set child. At 31-bit `G` that is 8 bytes vs 4, a ~2x per-child overhead the idempotent
+(Set) ops should not pay. The completion *pool* is unaffected either way (it stores node ids); the
+node child storage picks MSet vs Set from the op (the existing `nodes.mset`/`nodes.set` partitions).
 
-**In scope to implement now:** plain AC = MSet with no identity, and idempotent = Set with no
-identity. Nilpotent, identity, and group are recorded so the descriptor has the right *shape* (the
-clamp is a Set-only axis, identity is a both-representations field); none of the three is built or
-promised here.
+**In scope to implement now:** plain AC = MSet with no clamp, idempotent = Set (clamp Idempotent),
+nilpotent = MSet with clamp Nilpotent, and identity on MSet or Set. Group (inverse/signed) is
+recorded so the descriptor has the right *shape* but is not built here.
 
 See the SMT-LIB operator survey at the end of this doc for which real operators land in each
 representation.
@@ -100,24 +153,28 @@ split rather than inventing a side table.
   ```rust
   enum OpKind<S> {
       // ... Normal, Commutative, A, Lit unchanged ...
-      MSet { arg_sort: S, identity: Option<UnitRef> },                   // ℕ counts; was AC
-      Set  { arg_sort: S, clamp: SetClamp, identity: Option<UnitRef> },  // {0,1} counts; was ACI
+      MSet { arg_sort: S, clamp: Clamp, identity: Option<UnitRef>, cancellative: bool }, // ℕ / mod-n
+      Set  { arg_sort: S, clamp: Clamp, identity: Option<UnitRef>, cancellative: bool }, // {0,1}
   }
-  enum SetClamp { Idempotent, Nilpotent { order: u8 } }   // Set-only: why counts are bounded
-  // identity is a separate, representation-independent field on BOTH variants.
+  enum Clamp { None, Idempotent, Nilpotent { order: u8 } }  // unified, on BOTH variants
+  // clamp and identity are representation-independent fields on both variants.
   ```
 
-  `Set { clamp, .. }` literally cannot exist without a clamp and `MSet` cannot carry one, so the
-  representation-vs-clamp consistency is a type invariant, not a cross-map rule. `OpInfo::canon_class`
-  projects `OpKind` down to the bare `ENodeKind` for routing (e.g. `MSet { .. } → ENodeKind::MSet`).
+  The clamp is a *unified* field on both variants (the 2026-07-01 correction above): partition is
+  derived from the resolved clamp — `Idempotent → Set`; `None` / `Nilpotent → MSet`. The resolver
+  is the single point that enforces the legal (clamp, partition) pairings; a `MSet { clamp:
+  Idempotent }` or `Set { clamp: Nilpotent }` is never constructed. `OpInfo::canon_class` projects
+  `OpKind` down to the bare `ENodeKind` for routing (`MSet { .. } → ENodeKind::MSet`, `Set { .. } →
+  ENodeKind::Set`), and completion reads the clamp via `op_clamp` regardless of partition.
 
 A separate `Map<OpId, AcAlgebra>` was considered and rejected: it adds a second lookup and a second
 source of truth that must stay in sync with the representation tag. `AcAlgebra` is a couple of enum
 bytes plus an `Option<UnitRef>`, immutable after registration, so co-locating it on `OpKind` (the
 existing per-op record, read by op id only where completion needs it) is strictly simpler.
 
-**In scope now:** `OpKind::MSet { identity: None }` (AC) and `OpKind::Set { clamp: Idempotent,
-identity: None }` (ACI). `SetClamp::Nilpotent`, non-`None` `identity`, and group are shape-only.
+**In scope now:** `OpKind::MSet { clamp: None }` (AC), `OpKind::Set { clamp: Idempotent }` (ACI),
+`OpKind::MSet { clamp: Nilpotent }` (XOR), and identity on either. Group (inverse/signed) is
+shape-only.
 
 ## Storage: one pool of node ids, fixed-width rows over a strongly-typed op array
 

@@ -1,0 +1,28 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Identity (unit drop) on an MSet op (multi-AC/ACI plan, property 1). The declared unit `zero`
+;; drops from monomials: +(a, zero) → {a} = a (size-1 monomial collapses to its element), and a
+;; superposition whose reduct contains the unit collapses through it.
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function add (E) E :assoc :comm :identity (zero))
+
+;; Direct unit drop: add(a, zero) = a.
+(let s_a0 (add (a) (zero)))
+
+;; Superposition through the unit: add(a,b)=zero, add(b,c)=d  ⟹  c = add(a,d)
+;; (lcm {a,b,c}: add(zero,c)={c} vs add(a,d)).
+(let s_ab (add (a) (b)))
+(let s_bc (add (b) (c)))
+(union s_ab (zero))
+(union s_bc (d))
+(let s_ad (add (a) (d)))
+
+(run 5)
+(check (= s_a0 (a)))
+(check (= (c) s_ad))
