@@ -16,6 +16,17 @@ use crate::registry::{
 use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
+/// How a completion op's monomial counts are bounded during normalization (design "three
+/// independent axes"): unbounded ℕ (MSet), clamped to {0,1} by dedup (Set idempotent = ACI),
+/// or reduced mod `order` (Set nilpotent, e.g. XOR at order 2). Selects the normalize/reduct
+/// reduction in `cc_round`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletionClamp {
+    Multiset,
+    Idempotent,
+    Nilpotent { order: u8 },
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct EGraphToken {
     classes: crate::classes::EClassesToken,
@@ -442,26 +453,44 @@ where
     ) {
         use crate::multiplicity::Multiplicity;
         buf.clear();
-        if matches!(self.node_ref(node), NodeRef::MSet(_)) {
-            // mset_children, find-canonicalized + coalesced (same form as MSetCanon).
-            let mut raw = Vec::new();
-            self.mset_children(node, &mut raw);
-            let mut m: Vec<(Cfg::G, Multiplicity)> = raw
-                .into_iter()
-                .map(|(g, mult)| (self.classes.find_const(g), Multiplicity(mult.into())))
-                .collect();
-            m.sort_by_key(|p| p.0);
-            for (g, mult) in m {
-                if let Some(last) = buf.last_mut()
-                    && last.0 == g
-                {
-                    last.1 = Multiplicity(last.1.0 + mult.0);
-                } else {
-                    buf.push((g, mult));
+        match self.node_ref(node) {
+            NodeRef::MSet(_) => {
+                // mset_children, find-canonicalized + coalesced (same form as MSetCanon).
+                let mut raw = Vec::new();
+                self.mset_children(node, &mut raw);
+                let mut m: Vec<(Cfg::G, Multiplicity)> = raw
+                    .into_iter()
+                    .map(|(g, mult)| (self.classes.find_const(g), Multiplicity(mult.into())))
+                    .collect();
+                m.sort_by_key(|p| p.0);
+                for (g, mult) in m {
+                    if let Some(last) = buf.last_mut()
+                        && last.0 == g
+                    {
+                        last.1 = Multiplicity(last.1.0 + mult.0);
+                    } else {
+                        buf.push((g, mult));
+                    }
                 }
             }
-        } else {
-            buf.push((self.classes.find_const(node), Multiplicity(1)));
+            NodeRef::Set(_) => {
+                // set_children, find-canonicalized + deduped (set semantics, all mult 1 —
+                // same form as SetCanon). This is the ACI monomial.
+                let mut raw = Vec::new();
+                self.set_children(node, &mut raw);
+                let mut m: Vec<Cfg::G> = raw
+                    .into_iter()
+                    .map(|g| self.classes.find_const(g))
+                    .collect();
+                m.sort();
+                m.dedup();
+                for g in m {
+                    buf.push((g, Multiplicity(1)));
+                }
+            }
+            _ => {
+                buf.push((self.classes.find_const(node), Multiplicity(1)));
+            }
         }
     }
 
@@ -469,6 +498,24 @@ where
     /// array), or `None` if `node`'s op is not a completion (MSet/Set) op.
     fn completion_column(&self, node: Cfg::G) -> Option<usize> {
         self.ops.completion_column(self.node_op(node))
+    }
+
+    /// The normalization clamp for an op's completion monomials: unbounded (MSet), clamp-to-1
+    /// (Set idempotent, ACI), or mod-n (Set nilpotent). Determines how reducts and normal forms
+    /// are reduced (design "three independent axes").
+    fn op_clamp(&self, op: Cfg::O) -> CompletionClamp {
+        match self.ops.info(op).kind {
+            OpKind::MSet { .. } => CompletionClamp::Multiset,
+            OpKind::Set {
+                clamp: crate::registry::SetClamp::Idempotent,
+                ..
+            } => CompletionClamp::Idempotent,
+            OpKind::Set {
+                clamp: crate::registry::SetClamp::Nilpotent { order },
+                ..
+            } => CompletionClamp::Nilpotent { order },
+            _ => CompletionClamp::Multiset, // non-completion op; never reached in the round
+        }
     }
 
     /// Fill `buf` with the completion rule right-hand side for the class of `node`: the
@@ -726,20 +773,14 @@ where
             self.rebuild_congruence();
             return;
         }
-        // Completion supports exactly one AC symbol. The per-class slot stores a single
-        // `min_monomial`/`atomic` (one op's minimal monomial), so a class holding monomials of two
-        // different AC ops (e.g. `a+b = a*b`) would conflate their minima and the rule RHS
-        // would be wrong. Reject more than one registered AC op rather than compute a wrong
-        // closure. The check is here, at the point of use, not in `set_cc`: the
-        // interpreter enables completion before sortcheck registers the ops, so an
-        // enable-time count would see zero. Multi-op support is a per-op `min_monomial` pool
-        // (design §9b axis-1 option 3); until then this is a hard precondition.
-        assert!(
-            self.ops.mset_op_count() <= 1,
-            "AC completion supports a single AC symbol, but {} are registered; \
-             multi-AC-symbol completion needs the per-op min_monomial pool (design §9b axis-1)",
-            self.ops.mset_op_count()
-        );
+        // Multiple MSet symbols are supported: the per-class min-monomial pool stores a
+        // separate least-monomial per completion op (step 3), and the round groups rules by op
+        // (superposition/normalization filter on `r.op`, RHS via the node's own op column). Two
+        // MSet ops therefore complete as independent rule sets sharing only the constant pool;
+        // a class holding monomials of both (`a+b = a*b`) keeps each in its own column, and
+        // union-find records the cross-op equality (Kapur's shared-constant case). Set (ACI)
+        // completion is not yet driven (step 5): Set ops canonicalize but the round only reads
+        // the MSet partition, so a registered Set op is sound-but-uncompleted, as before.
         let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
         // Safety backstop against a diverging completion (minting unbounded
         // critical-pair nodes). A convergent completion adds few nodes; if the AC
@@ -889,25 +930,12 @@ where
             NfRule, multiset_disjoint, multiset_lcm, multiset_subset, normalize_ms,
         };
 
-        // Canonical child multiset of an AC node as sorted, coalesced (class-repr, mult).
+        // Canonical monomial of a completion node as sorted (class-repr, mult): coalesced
+        // multiplicities for an MSet op, deduped set (all mult 1) for a Set (ACI) op.
+        // Delegates to `node_monomial_into`, which dispatches on the node's representation.
         let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
-            let mut raw = Vec::new();
-            eg.mset_children(id, &mut raw);
-            let mut m: Vec<(Cfg::G, Multiplicity)> = raw
-                .into_iter()
-                .map(|(g, mult)| (eg.classes.find_const(g), Multiplicity(mult.into())))
-                .collect();
-            m.sort_by_key(|p| p.0);
-            let mut out: Vec<(Cfg::G, Multiplicity)> = Vec::with_capacity(m.len());
-            for (g, mult) in m {
-                if let Some(last) = out.last_mut()
-                    && last.0 == g
-                {
-                    last.1 = Multiplicity(last.1.0 + mult.0);
-                } else {
-                    out.push((g, mult));
-                }
-            }
+            let mut out = Vec::new();
+            eg.node_monomial_into(id, &mut out);
             out
         };
 
@@ -939,6 +967,12 @@ where
                 continue;
             }
             let op = self.node_op(gid);
+            // Nilpotent (Set) ops are not yet completed (step 6): their monomial arithmetic is
+            // symmetric difference, not the clamp-to-1 / multiset union this round implements.
+            // They canonicalize (dedup) but stay out of the rule set — sound-but-uncompleted.
+            if matches!(self.op_clamp(op), CompletionClamp::Nilpotent { .. }) {
+                continue;
+            }
             let lhs = multiset_of(self, gid);
             if !self.class_rhs_into(gid, &mut rhs_buf) {
                 continue;
@@ -953,8 +987,11 @@ where
                 });
             }
         }
-        // Built in ascending node-id order, so `rules` is sorted by `node`. The (B)
-        // partner search binary-searches it by node id; keep that invariant true.
+        // The (B) partner search binary-searches `rules` by global node id, so it must be
+        // sorted by `node`. `completion_node_ids` yields the MSet partition then the Set
+        // partition, each internally id-sorted but interleaved in the global id space, so sort
+        // by `node` here (a cheap merge of two sorted runs). Distinct nodes ⇒ strictly sorted.
+        rules.sort_unstable_by_key(|r| r.node);
         debug_assert!(rules.windows(2).all(|w| w[0].node < w[1].node));
 
         // Dedup the reducer/superposition set by (op, LHS). Congruent AC nodes can
@@ -1153,14 +1190,20 @@ where
                     continue;
                 }
                 let ab = multiset_lcm(m, a);
-                let r1 = crate::multiset::multiset_union(
+                let mut r1 = crate::multiset::multiset_union(
                     &crate::multiset::multiset_subtract(&ab, m),
                     &rules[ti].rhs,
                 );
-                let r2 = crate::multiset::multiset_union(
+                let mut r2 = crate::multiset::multiset_union(
                     &crate::multiset::multiset_subtract(&ab, a),
                     &rules[pi].rhs,
                 );
+                // Idempotent (Set/ACI) op: the union may have raised a count above 1; clamp the
+                // reducts back to sets so the superposition is over ACI monomials.
+                if self.op_clamp(op) == CompletionClamp::Idempotent {
+                    crate::multiset::clamp_idempotent(&mut r1);
+                    crate::multiset::clamp_idempotent(&mut r2);
+                }
                 crit.push((op, r1, r2));
             }
         }
@@ -1197,7 +1240,12 @@ where
                         rhs: r.rhs.clone(),
                     })
                     .collect();
-                normalize_ms(&mset, &nf_rules)
+                // Idempotent (Set/ACI) ops normalize over sets (clamp to 1); MSet over ℕ.
+                if self.op_clamp(op) == CompletionClamp::Idempotent {
+                    crate::multiset::normalize_set(&mset, &nf_rules)
+                } else {
+                    normalize_ms(&mset, &nf_rules)
+                }
             };
             if normal != mset {
                 let c_prime = materialize(self, op, &normal);
@@ -1220,17 +1268,26 @@ where
         let mut trivial = 0usize;
         let mut nontrivial = 0usize;
         let mut trivial_after_nf = 0usize; // trivial pairs that needed full normalize to see it
-        // The per-op rule set used to normalize reducts is the same for every pair, so build
-        // it ONCE (outside the loop), not per pair. With a single AC symbol this is every
-        // rule; the `op` filter is kept for the eventual multi-op case. Was rebuilt per pair,
-        // which is crit(B) × rules multiset clones (the dominant `Bclose` cost, perf doc §2).
-        let nf_rules: Vec<NfRule<Cfg::G>> = rules
-            .iter()
-            .map(|r| NfRule {
+        // The rule set used to normalize a reduct is the same for every pair of a given op, so
+        // build the per-op rule sets ONCE (outside the loop), not per pair — the `Bclose` hoist
+        // (perf doc §2). A reduct of op X must normalize ONLY against op-X rules: a different
+        // op's LHS is a set of class ids that could spuriously match inside X's monomial. So
+        // group `nf_rules` by op. Keyed by op index; lookup is a small linear scan (few ops).
+        let mut nf_by_op: Vec<(usize, Vec<NfRule<Cfg::G>>)> = Vec::new();
+        for r in &rules {
+            let entry = match nf_by_op.iter_mut().find(|(o, _)| *o == r.op) {
+                Some(e) => &mut e.1,
+                None => {
+                    nf_by_op.push((r.op, Vec::new()));
+                    &mut nf_by_op.last_mut().unwrap().1
+                }
+            };
+            entry.push(NfRule {
                 lhs: r.lhs.clone(),
                 rhs: r.rhs.clone(),
-            })
-            .collect();
+            });
+        }
+        let empty_nf: Vec<NfRule<Cfg::G>> = Vec::new();
         let crit_generated = crit.len();
         for (op, r1, r2) in crit {
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
@@ -1240,8 +1297,19 @@ where
                 trivial += 1;
                 continue;
             }
-            let n1 = normalize_ms(&r1, &nf_rules);
-            let n2 = normalize_ms(&r2, &nf_rules);
+            let nf_rules = nf_by_op
+                .iter()
+                .find(|(o, _)| *o == op.to_usize())
+                .map_or(&empty_nf, |(_, v)| v);
+            let idem = self.op_clamp(op) == CompletionClamp::Idempotent;
+            let (n1, n2) = if idem {
+                (
+                    crate::multiset::normalize_set(&r1, nf_rules),
+                    crate::multiset::normalize_set(&r2, nf_rules),
+                )
+            } else {
+                (normalize_ms(&r1, nf_rules), normalize_ms(&r2, nf_rules))
+            };
             if n1 == n2 {
                 trivial += 1;
                 trivial_after_nf += 1;
@@ -1404,11 +1472,18 @@ where
     fn completion_node_ids(&self) -> impl Iterator<Item = Cfg::G> + '_ {
         use crate::containers::DenseId;
         use crate::typed_routing::NodeIds;
-        let n = self.nodes.mset.len().to_usize();
-        (0..n).map(move |i| {
+        // Both completion partitions: MSet (multiset, AC) and Set (idempotent/nilpotent, ACI).
+        let n_mset = self.nodes.mset.len().to_usize();
+        let n_set = self.nodes.set.len().to_usize();
+        let mset = (0..n_mset).map(move |i| {
             let l = <Cfg::Ids as NodeIds>::LMSet::from_usize(i);
             self.nodes.mset.get(l).global_id()
-        })
+        });
+        let set = (0..n_set).map(move |i| {
+            let l = <Cfg::Ids as NodeIds>::LSet::from_usize(i);
+            self.nodes.set.get(l).global_id()
+        });
+        mset.chain(set)
     }
 
     pub fn node_flags(&self, id: Cfg::G) -> u8 {
@@ -2313,27 +2388,28 @@ mod tests {
         eg.register_op2("+", int, int, int);
     }
 
-    // AC completion supports a single AC symbol; rebuild rejects more than one.
+    // Multiple MSet symbols are now supported (per-op min-monomial pool, step 4): rebuild with
+    // two AC ops registered no longer panics. (End-to-end independence is checked by the
+    // `ac_complete_multi_mset.egg` fixture.)
     #[test]
-    #[should_panic(expected = "single AC symbol")]
-    fn cc_rejects_two_mset_symbols() {
+    fn cc_allows_two_mset_symbols() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let _plus = eg.register_mset("plus", int, int);
         let _times = eg.register_mset("times", int, int);
         eg.set_cc(true);
-        eg.rebuild(); // two AC ops registered => precondition fails
+        eg.rebuild(); // two MSet ops => allowed, completes each independently
     }
 
-    // One AC op (plus ACI, which is a distinct kind) is fine.
+    // One MSet op plus a Set (ACI) op is fine.
     #[test]
     fn cc_allows_one_mset_symbol() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let _plus = eg.register_mset("plus", int, int);
-        let _and = eg.register_set("and", int, int); // ACI is not counted as AC
+        let _and = eg.register_set("and", int, int);
         eg.set_cc(true);
-        eg.rebuild(); // exactly one OpKind::MSet => allowed
+        eg.rebuild();
     }
 }
 

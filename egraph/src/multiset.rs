@@ -256,6 +256,59 @@ pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<P
     out
 }
 
+/// Clamp every multiplicity to 1 in place: the idempotent (set) normal form of a monomial
+/// (`x∘x = x`). A canonical multiset is already sorted+duplicate-free in `G`, so this only
+/// rewrites the counts, never the class set. Applied after each monomial operation for a Set
+/// (ACI) op, so its monomials stay {0,1}-valued (design "three independent axes": idempotent
+/// bounds counts to {0,1}).
+pub fn clamp_idempotent<G: Copy>(ms: &mut [Pair<G>]) {
+    for p in ms.iter_mut() {
+        p.1 = Multiplicity(1);
+    }
+}
+
+/// Idempotent (set) normalization: like [`normalize_ms`] but every intermediate and the final
+/// result is clamped to multiplicity 1, so the rewrite operates over sets. The union in a
+/// rewrite step (`(ms − A) ⊎ B`) can raise a count above 1 (e.g. a summand already present in
+/// both the residual and `B`); the clamp collapses it back, which is exactly the ACI
+/// idempotence join. Termination still holds: each step strictly lowers the *set* in degree-lex
+/// (the clamp only ever lowers counts), so the guard bound from the multiset case still applies.
+pub fn normalize_set_into<G: Copy + Ord>(
+    out: &mut Vec<Pair<G>>,
+    scratch: &mut Vec<Pair<G>>,
+    ms: &[Pair<G>],
+    rules: &[NfRule<G>],
+) {
+    out.clear();
+    out.extend_from_slice(ms);
+    clamp_idempotent(out);
+    let mut guard = 4 * (out.len() + 1);
+    'outer: loop {
+        for rule in rules {
+            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) != std::cmp::Ordering::Less);
+            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                multiset_subtract_into(scratch, out, &rule.lhs);
+                multiset_union_into(out, scratch, &rule.rhs);
+                clamp_idempotent(out);
+                guard = guard.saturating_sub(1);
+                if guard == 0 {
+                    break 'outer;
+                }
+                continue 'outer;
+            }
+        }
+        break;
+    }
+}
+
+/// Allocating wrapper over [`normalize_set_into`].
+pub fn normalize_set<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::new();
+    let mut scratch = Vec::new();
+    normalize_set_into(&mut out, &mut scratch, ms, rules);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -322,6 +322,16 @@ inverse-cancellation equality; cancellative derives `a=b` from `a+c=b+c`.
 
 ## Facet D — implementation sequencing (the commit order)
 
+**Status (feature/ac-multi-op):** steps 1–4 below **DONE**, plus ACI completion. Landed as six
+commits: OpKind widening (clamp/identity/cancellative); composable tags + resolver; registry
+`completion_ops` array; per-op min-monomial pool (`ClassData.min_row: Option<usize>` +
+`min_pool: VecP<Opt<T>>`); multiple-MSet completion (guard dropped); ACI (Set) completion
+(`normalize_set`/`clamp_idempotent`, round walks both partitions, `rules` sorted by node id).
+**Remaining: steps 5–7** below — identity (deferred `UnitRef` build + unit drop), nilpotent
+(symmetric-difference normalize), group. All three already parse/validate/store; only the
+completion normalization is unbuilt. Nilpotent Set ops are currently skipped in rule-building
+(sound-but-uncompleted). See memory `multi-ac-aci-implementation` for the sweep-baseline caveat.
+
 Each numbered item is one green commit. A→B→C interleave so AC+ACI land first, the rest follow.
 
 1. **A1+A2 surface+resolver, no behavior change.** Composable tags, `AcAlgebra`, resolver,
