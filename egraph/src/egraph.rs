@@ -465,10 +465,18 @@ where
         }
     }
 
+    /// The completion column of `node`'s op (its position in the registry `completion_ops`
+    /// array), or `None` if `node`'s op is not a completion (MSet/Set) op.
+    fn completion_column(&self, node: Cfg::G) -> Option<usize> {
+        self.ops.completion_column(self.node_op(node))
+    }
+
     /// Fill `buf` with the completion rule right-hand side for the class of `node`: the
-    /// size-1 monomial `{find(node)}` if the class is `atomic` (referenced as a child),
-    /// else the monomial of the class's stored `min_monomial` (§9a). Reads the per-class slot;
-    /// O(1) plus the `min_monomial` monomial read. Returns `false` if `node` has no class.
+    /// size-1 monomial `{find(node)}` if the class is `atomic` (referenced as a child), else
+    /// the monomial of the class's stored min-monomial for `node`'s op column (§9a). Reads the
+    /// per-class pool slot; O(1) plus the monomial read. Returns `false` if `node` has no class
+    /// (or, in the non-atomic case, no stored monomial for its op — a genuine rule always has
+    /// one, so this only guards the degenerate case).
     fn class_rhs_into(
         &self,
         node: Cfg::G,
@@ -482,22 +490,28 @@ where
         if self.classes.atomic(repr) {
             buf.clear();
             buf.push((cls, Multiplicity(1)));
-        } else {
-            self.node_monomial_into(self.classes.min_monomial(repr), buf);
+            return true;
         }
+        let Some(col) = self.completion_column(node) else {
+            return false;
+        };
+        let Some(min) = self.classes.min_monomial(repr, col) else {
+            return false;
+        };
+        self.node_monomial_into(min, buf);
         true
     }
 
-    /// After a merge, fold the absorbed class's per-class AC data into the survivor's:
-    /// keep the `monomial_cmp`-least `min_monomial` node, and OR-in the `atomic` flag (the
-    /// completion rule RHS, §9a). O(1) plus the two monomial reads, into reusable
-    /// buffers. Done here, not in `EClasses`, because the comparison needs node
-    /// (AC-children) access. Best-effort under merge-cascade staleness; completion's
-    /// read-time orientation guard makes that safe (§9b).
+    /// After a merge, fold the absorbed class's per-class AC data into the survivor's,
+    /// per completion column: keep the `monomial_cmp`-least min-monomial node for each op, and
+    /// OR-in the `atomic` flag (§9a). O(nb_completion) columns, each O(1) plus a monomial read,
+    /// into reusable buffers. Done here, not in `EClasses`, because the comparison needs node
+    /// (AC-children) access and the op→column map. Best-effort under merge-cascade staleness;
+    /// completion's read-time orientation guard makes that safe (§9b).
     fn fold_min_monomial(
         &mut self,
         survivor: Cfg::G,
-        absorbed_min_monomial: Cfg::G,
+        absorbed_min_row: Option<usize>,
         absorbed_atomic: bool,
     ) {
         let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
@@ -507,18 +521,26 @@ where
         if absorbed_atomic {
             self.classes.set_atomic(surv_repr);
         }
-        let surv_min = self.classes.min_monomial(surv_repr);
-        if surv_min == absorbed_min_monomial {
-            return;
-        }
-        // Compare the two candidate minima; keep the smaller in degree-lex order.
         let mut a = std::mem::take(&mut self.cmp_buf_a);
         let mut b = std::mem::take(&mut self.cmp_buf_b);
-        self.node_monomial_into(surv_min, &mut a);
-        self.node_monomial_into(absorbed_min_monomial, &mut b);
-        if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
-            self.classes
-                .set_min_monomial(surv_repr, absorbed_min_monomial);
+        for col in 0..self.classes.min_width() {
+            let Some(absorbed_min) = self.classes.min_monomial_at_row(absorbed_min_row, col) else {
+                continue; // absorbed class has no monomial for this op
+            };
+            match self.classes.min_monomial(surv_repr, col) {
+                None => {
+                    // survivor had no monomial for this op; take the absorbed one.
+                    self.classes.set_min_monomial(surv_repr, col, absorbed_min);
+                }
+                Some(surv_min) if surv_min != absorbed_min => {
+                    self.node_monomial_into(surv_min, &mut a);
+                    self.node_monomial_into(absorbed_min, &mut b);
+                    if crate::multiset::monomial_cmp(&b, &a) == std::cmp::Ordering::Less {
+                        self.classes.set_min_monomial(surv_repr, col, absorbed_min);
+                    }
+                }
+                Some(_) => {} // equal; nothing to do
+            }
         }
         self.cmp_buf_a = a;
         self.cmp_buf_b = b;
@@ -540,7 +562,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge(a, b)?;
-        self.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
+        self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -566,7 +588,7 @@ where
             self.sorts.name(self.node_sort(a))
         );
         let m = self.classes.merge_justified(a, b, just)?;
-        self.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
+        self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
     }
@@ -821,7 +843,7 @@ where
                     self.classes.merge(a, b)
                 };
                 if let Some(m) = m {
-                    self.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
+                    self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
                     self.worklist.push((m.absorbed_uses, m.survivor));
                 }
             }
@@ -1019,7 +1041,7 @@ where
             };
             match m {
                 Some(m) => {
-                    eg.fold_min_monomial(m.survivor, m.absorbed_min_monomial, m.absorbed_atomic);
+                    eg.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
                     eg.worklist.push((m.absorbed_uses, m.survivor));
                     true
                 }
@@ -1284,12 +1306,22 @@ where
         if result.is_fresh() {
             let id = result.id();
             let repr = self.classes.add_singleton(id);
-            // A fresh non-AC node makes its class `atomic`: the class has a member that
-            // is not an AC monomial, so the size-1 monomial `{class}` is its normal-form
-            // representative (the completion rule RHS, §9a). AC nodes are not atomic by
-            // themselves; they become atomic only when referenced as a child (`add_use`).
-            if !matches!(self.node_ref(id), NodeRef::MSet(_)) {
-                self.classes.set_atomic(repr);
+            // Seed the per-class min-monomial pool. A completion node (MSet or Set) is its
+            // class's only monomial for its own op, so seed that op's column to itself. A
+            // non-completion node instead makes its class `atomic`: the class has a member
+            // that is not a monomial, so the size-1 monomial `{class}` is its normal-form
+            // representative (the completion rule RHS, §9a). Completion nodes are not atomic
+            // by themselves; they become atomic only when referenced as a child (`add_use`).
+            match self.completion_column(id) {
+                Some(col) => {
+                    // Fix the pool row width to nb_completion on first completion-node seed.
+                    // Ops are declared before terms (declare-before-build), so the count is
+                    // stable here; `set_min_width` is idempotent when unchanged and rejects a
+                    // change once rows exist.
+                    self.classes.set_min_width(self.ops.completion_op_count());
+                    self.classes.set_min_monomial(repr, col, id);
+                }
+                None => self.classes.set_atomic(repr),
             }
             self.touched.push(id);
         }
@@ -1321,13 +1353,14 @@ where
         self.classes.find_const(id)
     }
 
-    /// The AC minimum-monomial node stored for `id`'s class (the completion rule RHS,
-    /// §9a). Maintained on merge by `fold_min_monomial`. Returns `None` if `id` has no class.
-    /// Consumed by the incremental completion pass (S3); currently read by tests only.
+    /// The minimum-monomial node stored for `id`'s class in `id`'s op column (the completion
+    /// rule RHS, §9a). Maintained on merge by `fold_min_monomial`. Returns `None` if `id` has
+    /// no class or its op has no stored monomial for that class. Read by tests only.
     #[allow(dead_code)]
     pub(crate) fn class_min_monomial(&self, id: Cfg::G) -> Option<Cfg::G> {
         let repr = self.classes.repr_id(self.classes.find_const(id))?;
-        Some(self.classes.min_monomial(repr))
+        let col = self.completion_column(id)?;
+        self.classes.min_monomial(repr, col)
     }
 
     /// Whether `id`'s class is `atomic` (referenced as a child / has a non-AC node, so
@@ -1613,30 +1646,31 @@ where
         // smaller monomial, so a well-formed graph drains well under this bound; the cap
         // only guards a degenerate cyclic class, which we must not loop on.
         let cap = 1 + 64 * self.node_count();
+        let op_col = self.ops.completion_column(op);
         let mut mset_kids: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         while let Some(g) = work.pop() {
             let cls = self.classes.find_const(g);
             // A child is a pure `op`-sum to splice iff its class is non-atomic AND its
-            // canonical summand (`min_monomial`) is an AC node of this same `op`. Both reads are
-            // representative-independent (per-class slot), never `find`-keyed.
+            // canonical summand for `op`'s column (`min_monomial`) is an AC node of this same
+            // `op`. Both reads are representative-independent (per-class pool), never
+            // `find`-keyed.
             let mut spliced = false;
             if out.len() <= cap
+                && let Some(col) = op_col
                 && let Some(repr) = self.classes.repr_id(cls)
                 && !self.classes.atomic(repr)
+                && let Some(min_node) = self.classes.min_monomial(repr, col)
+                && self.node_op(min_node) == op
+                && matches!(self.node_ref(min_node), NodeRef::MSet(_))
             {
-                let min_node = self.classes.min_monomial(repr);
-                if self.node_op(min_node) == op
-                    && matches!(self.node_ref(min_node), NodeRef::MSet(_))
-                {
-                    self.mset_children(min_node, &mut mset_kids);
-                    for (cg, m) in mset_kids.iter() {
-                        let times: u32 = (*m).into();
-                        for _ in 0..times {
-                            work.push(*cg);
-                        }
+                self.mset_children(min_node, &mut mset_kids);
+                for (cg, m) in mset_kids.iter() {
+                    let times: u32 = (*m).into();
+                    for _ in 0..times {
+                        work.push(*cg);
                     }
-                    spliced = true;
                 }
+                spliced = true;
             }
             if !spliced {
                 out.push(g);
@@ -1761,9 +1795,11 @@ mod tests {
         assert_eq!(eg.add(th.eq, &[x, y]), eg.add(th.eq, &[y, x]));
     }
 
-    // S1: the per-class min_monomial slot tracks the degree-lex-least monomial across
-    // merges (a constant is a size-1 monomial, so it wins over any sum) and rolls
-    // back with the e-graph token. See design §9a.
+    // S1: the per-class min-monomial pool column for the `plus` op tracks the degree-lex-least
+    // `plus`-monomial across merges, and rolls back with the e-graph token. A leaf constant is
+    // NOT a `plus`-monomial (it has no `plus` column); merging it in makes the class `atomic`
+    // rather than lowering the `plus` column. See design §9a and the pool design in
+    // `doc/future/multi-ac-aci-completion-plan.md`.
     #[test]
     fn min_monomial_tracks_least_and_rolls_back() {
         let (ref mut eg, th) = eg::<true, false>();
@@ -1774,9 +1810,10 @@ mod tests {
         let s_xy = eg.add(th.plus, &[x, y]); // +{x,y}, size 2
         let s_xyz = eg.add(th.plus, &[x, y, z]); // +{x,y,z}, size 3
 
-        // Each fresh class's min_monomial is its own node.
+        // A fresh `plus` node's class holds itself in the `plus` column; a non-completion
+        // constant has no completion column at all.
         assert_eq!(eg.class_min_monomial(s_xy), Some(s_xy));
-        assert_eq!(eg.class_min_monomial(c), Some(c));
+        assert_eq!(eg.class_min_monomial(c), None);
 
         // Merge the two sums: the smaller monomial (+{x,y}, size 2) wins over +{x,y,z}.
         eg.merge(s_xy, s_xyz);
@@ -1784,21 +1821,32 @@ mod tests {
         assert_eq!(eg.class_repr(repr_min), eg.class_repr(s_xy));
         assert_eq!(repr_min, s_xy, "min_monomial should pick the smaller sum");
 
-        // Snapshot, then merge the leaf constant c in: a size-1 monomial beats both sums.
+        // Snapshot, then merge the leaf constant c in: the class becomes `atomic` (a constant
+        // is its normal-form representative), while the `plus` column still holds the sum.
         let token = eg.mark(ShrinkPolicy::Never);
         eg.merge(c, s_xy);
         assert_eq!(
-            eg.class_min_monomial(c),
-            Some(c),
-            "a constant (size-1 monomial) is the least, so min_monomial becomes c"
+            eg.class_atomic(c),
+            Some(true),
+            "merging a constant in makes the class atomic"
+        );
+        assert_eq!(
+            eg.class_min_monomial(s_xy),
+            Some(s_xy),
+            "the plus column keeps the least sum after the constant merge"
         );
 
-        // Restore: the post-token merge is undone, and min_monomial reverts to the sum.
+        // Restore: the post-token merge is undone, atomicity reverts.
         eg.restore(token);
         assert_eq!(
             eg.class_min_monomial(s_xy),
             Some(s_xy),
             "min_monomial must roll back with the e-graph token"
+        );
+        assert_eq!(
+            eg.class_atomic(s_xy),
+            Some(false),
+            "atomicity must roll back with the e-graph token"
         );
     }
 
