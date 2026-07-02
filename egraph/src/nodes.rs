@@ -22,10 +22,10 @@ semi_persistent_containers::define_id31! {
     pub struct PlainNId / StoredPlainNId, "pN";
 }
 semi_persistent_containers::define_id31! {
-    pub struct CNodeId / StoredCNodeId, "c";
+    pub struct SPairNodeId / StoredSPairNodeId, "sp";
 }
 semi_persistent_containers::define_id31! {
-    pub struct ANodeId / StoredANodeId, "a";
+    pub struct SeqNodeId / StoredSeqNodeId, "sq";
 }
 semi_persistent_containers::define_id31! {
     pub struct MSetNodeId / StoredMSetNodeId, "mset";
@@ -44,9 +44,9 @@ impl crate::typed_routing::NodeIds for DefaultNodeIds {
     type L1 = Plain1Id;
     type L2 = Plain2Id;
     type L3 = Plain3Id;
-    type LC = CNodeId;
+    type LSPair = SPairNodeId;
     type LN = PlainNId;
-    type LA = ANodeId;
+    type LSeq = SeqNodeId;
     type LMSet = MSetNodeId;
     type LSet = SetNodeId;
     type LLit = LitNodeId;
@@ -107,8 +107,8 @@ semi_persistent_containers::define_id63! { pub struct Plain1Id64 / StoredPlain1I
 semi_persistent_containers::define_id63! { pub struct Plain2Id64 / StoredPlain2Id64, "p2_64"; }
 semi_persistent_containers::define_id63! { pub struct Plain3Id64 / StoredPlain3Id64, "p3_64"; }
 semi_persistent_containers::define_id63! { pub struct PlainNId64 / StoredPlainNId64, "pN_64"; }
-semi_persistent_containers::define_id63! { pub struct CNodeId64 / StoredCNodeId64, "c64"; }
-semi_persistent_containers::define_id63! { pub struct ANodeId64 / StoredANodeId64, "a64"; }
+semi_persistent_containers::define_id63! { pub struct SPairNodeId64 / StoredSPairNodeId64, "sp64"; }
+semi_persistent_containers::define_id63! { pub struct SeqNodeId64 / StoredSeqNodeId64, "sq64"; }
 semi_persistent_containers::define_id63! { pub struct MSetNodeId64 / StoredMSetNodeId64, "mset64"; }
 semi_persistent_containers::define_id63! { pub struct SetNodeId64 / StoredSetNodeId64, "set64"; }
 semi_persistent_containers::define_id63! { pub struct LitNodeId64 / StoredLitNodeId64, "lit64"; }
@@ -119,9 +119,9 @@ impl crate::typed_routing::NodeIds for NodeIds64 {
     type L1 = Plain1Id64;
     type L2 = Plain2Id64;
     type L3 = Plain3Id64;
-    type LC = CNodeId64;
+    type LSPair = SPairNodeId64;
     type LN = PlainNId64;
-    type LA = ANodeId64;
+    type LSeq = SeqNodeId64;
     type LMSet = MSetNodeId64;
     type LSet = SetNodeId64;
     type LLit = LitNodeId64;
