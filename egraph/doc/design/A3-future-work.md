@@ -25,12 +25,12 @@ materialized monomials. All three trade completeness for termination, and the fa
 is sound (it derives fewer equalities, never wrong ones; see Ch 14 on the trustworthy
 polarity).
 
-**Multiple AC symbols.** Completion stores one `ac_min`/`atomic` per class, so it
+**Multiple AC symbols.** Completion stores one `min_monomial`/`atomic` per class, so it
 supports one AC operator; `rebuild` rejects a configuration with more than one
-registered `OpKind::AC` when completion is on (`ac_op_count`). Lifting this is a storage
-change: a per-op `ac_min` slice (a pool indexed by AC op) instead of a single slot. The
+registered `OpKind::MSet` when completion is on (`mset_op_count`). Lifting this is a storage
+change: a per-op `min_monomial` slice (a pool indexed by AC op) instead of a single slot. The
 algorithm already runs per-op; only the slot widens (AC chapter §9a multi-op note). ACI
-operators get no completion at all today (the round gates on `OpKind::AC`), so ACI
+operators get no completion at all today (the round gates on `OpKind::MSet`), so ACI
 congruence is sound but incomplete; adding it needs the idempotence critical pair
 (Kapur §4) plus the same per-op storage.
 

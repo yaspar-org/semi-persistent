@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Transient sorted indices for leapfrog triejoin, bulk-rebuilt from e-graph state.
 
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
@@ -76,7 +76,7 @@ pub struct IndexStore<Cfg: EGraphConfig> {
 
 impl<Cfg: EGraphConfig> IndexStore<Cfg>
 where
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     /// Bulk-rebuild all indices from the current e-graph state.
     /// Call after `eg.rebuild()`.
@@ -136,9 +136,9 @@ where
             if is_variadic > 3
                 || matches!(
                     eg.node_ref(gid),
-                    crate::typed_routing::NodeRef::A(_)
-                        | crate::typed_routing::NodeRef::AC(_)
-                        | crate::typed_routing::NodeRef::ACI(_)
+                    crate::typed_routing::NodeRef::Seq(_)
+                        | crate::typed_routing::NodeRef::MSet(_)
+                        | crate::typed_routing::NodeRef::Set(_)
                         | crate::typed_routing::NodeRef::PlainN(_)
                 )
             {
@@ -406,7 +406,7 @@ mod tests {
     fn by_contains_variadic() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
-        let plus = eg.register_ac("plus", int, int);
+        let plus = eg.register_mset("plus", int, int);
         let x_op = eg.register_op0("x", int);
         let y_op = eg.register_op0("y", int);
         let z_op = eg.register_op0("z", int);

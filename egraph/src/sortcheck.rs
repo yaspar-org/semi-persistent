@@ -210,9 +210,9 @@ fn child_sort_hint<S: DenseId + Copy>(kind: &OpKind<S>, pos: usize) -> Option<S>
     match kind {
         OpKind::Normal { arg_sorts } => arg_sorts.get(pos).copied(),
         OpKind::Commutative { arg_sorts } => arg_sorts.get(pos).copied(),
-        OpKind::A { arg_sort, .. } | OpKind::AC { arg_sort } | OpKind::ACI { arg_sort } => {
-            Some(*arg_sort)
-        }
+        OpKind::A { arg_sort, .. }
+        | OpKind::MSet { arg_sort, .. }
+        | OpKind::Set { arg_sort, .. } => Some(*arg_sort),
         OpKind::Lit => None,
     }
 }
@@ -485,7 +485,7 @@ where
                     }
                 }
             }
-            OpKind::AC { .. } => {
+            OpKind::MSet { .. } => {
                 if prefix.is_some() {
                     return Err(format!(
                         "operator '{op}' is AC; prefix rest variable not allowed"
@@ -512,7 +512,7 @@ where
                     }
                 }
             }
-            OpKind::ACI { .. } => {
+            OpKind::Set { .. } => {
                 if prefix.is_some() {
                     return Err(format!(
                         "operator '{op}' is ACI; prefix rest variable not allowed"
@@ -576,7 +576,7 @@ where
     Cfg::O: Hash,
     L: LitVal,
     M: LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     let mut out = Vec::with_capacity(cmds.len());
     for cmd in cmds {
@@ -596,7 +596,7 @@ where
     Cfg::O: Hash,
     L: LitVal,
     M: LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
         SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals),
@@ -663,14 +663,14 @@ where
     Cfg::O: Hash,
     L: LitVal,
     M: LitModel<Value = L>,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     // Declarations: register into egraph, then wrap as Decl
     match &cmd {
         Command::Sort(_) | Command::Function { .. } | Command::Datatype { .. } => {
             // Use the interpreter's existing exec_function / intern_sort logic
             // by delegating to the egraph directly.
-            exec_decl(&cmd, eg)?;
+            exec_decl(&cmd, eg, model, globals)?;
             return Ok(CCommand::Decl(cmd));
         }
         _ => {}
@@ -716,16 +716,20 @@ where
     }
 }
 
-/// Register a declaration command into the egraph.
-fn exec_decl<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+/// Register a declaration command into the egraph. `model`/`globals` are needed to resolve a
+/// completion op's `:identity` unit term to a node at registration.
+fn exec_decl<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     cmd: &Command,
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
+    model: &M,
+    globals: &GlobalCtx<Cfg::S>,
 ) -> Result<(), SortError>
 where
     Cfg: crate::config::EGraphConfig,
     Cfg::O: Hash,
     L: LitVal,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    M: LitModel<Value = L>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
         Command::Sort(name) => {
@@ -735,7 +739,7 @@ where
             name,
             arg_sorts,
             ret_sort,
-            attr,
+            tags,
         } => {
             let ret = eg
                 .sorts()
@@ -749,12 +753,12 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
-            register_op(eg, name, &args, ret, *attr)?;
+            register_op(eg, name, &args, ret, tags, model, globals)?;
         }
         Command::Datatype { name, variants } => {
             eg.intern_sort(name);
             let sid = eg.sorts().id_by_name(name).unwrap();
-            for (ctor, arg_names, attr) in variants {
+            for (ctor, arg_names, tags) in variants {
                 let arg_ids: Vec<Cfg::S> = arg_names
                     .iter()
                     .map(|s| {
@@ -763,7 +767,7 @@ where
                             .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                     })
                     .collect::<Result<_, _>>()?;
-                let oid = register_op(eg, ctor, &arg_ids, sid, *attr)?;
+                let oid = register_op(eg, ctor, &arg_ids, sid, tags, model, globals)?;
                 eg.ops_mut().set_constructor(oid);
             }
         }
@@ -772,50 +776,187 @@ where
     Ok(())
 }
 
-fn register_op<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+/// Resolve a composable algebra-tag set into a concrete op registration (multi-AC/ACI plan,
+/// Facet A). Validates the combination and builds the `OpKind` descriptor. A declared
+/// `:identity e` is resolved to a real node here (sortcheck has the model) and stored in the
+/// egraph's per-op unit map; `:inverse` is validated but its resolved op is not stored yet
+/// (deferred to the group facet). Plain `:assoc :comm` reproduces AC, `+ :idempotent` reproduces
+/// ACI; the unit only affects completion once it is consumed (identity drop in the round).
+fn register_op<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     name: &str,
     args: &[Cfg::S],
     ret: Cfg::S,
-    attr: Option<AlgAttr>,
+    tags: &[AlgTag],
+    model: &M,
+    globals: &GlobalCtx<Cfg::S>,
 ) -> Result<Cfg::O, SortError>
 where
     Cfg: crate::config::EGraphConfig,
     Cfg::O: Hash,
     L: LitVal,
-    crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+    M: LitModel<Value = L>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
-    Ok(match attr {
-        None => eg.register_opn(name, args, ret),
-        Some(AlgAttr::Comm) => {
+    use crate::registry::{AssocDir, Clamp, OpKind, UnitRef};
+
+    // No tags → plain op.
+    if tags.is_empty() {
+        return Ok(eg.register_opn(name, args, ret));
+    }
+
+    // Collect the tag set into flags. Duplicate/conflicting basic tags are folded; direction
+    // and value tags are captured. Order-independent.
+    let mut comm = false;
+    let mut assoc = false;
+    let mut dir: Option<AssocDir> = None; // set by assoc-left/right
+    let mut idempotent = false;
+    let mut nilpotent: Option<u8> = None;
+    let mut identity: Option<Term> = None;
+    let mut cancellative = false;
+    let mut inverse: Option<String> = None;
+    for tag in tags {
+        match tag {
+            AlgTag::Comm => comm = true,
+            AlgTag::Assoc => assoc = true,
+            AlgTag::AssocLeft => {
+                assoc = true;
+                dir = Some(AssocDir::Left);
+            }
+            AlgTag::AssocRight => {
+                assoc = true;
+                dir = Some(AssocDir::Right);
+            }
+            AlgTag::Idempotent => idempotent = true,
+            AlgTag::Nilpotent(order) => nilpotent = Some(order.unwrap_or(2)),
+            AlgTag::Identity(term) => identity = Some(term.clone()),
+            AlgTag::Cancellative => cancellative = true,
+            AlgTag::Inverse(n) => inverse = Some(n.clone()),
+        }
+    }
+
+    // --- Validation (reject at registration; design §"Validation at registration") ---
+    if idempotent && nilpotent.is_some() {
+        return Err(serr(
+            ":idempotent and :nilpotent are mutually exclusive",
+            Span::Dummy,
+        ));
+    }
+    // Idempotent + inverse is algebraically incoherent, not merely unimplemented: an idempotent
+    // group is trivial (x∘x = x ⟹ x = e), so an idempotent op has no non-trivial inverses. (The
+    // intended `not`/complement cancels to the annihilator, not the identity — it is a `xor`, not
+    // an `and`-inverse. See the design doc "Inverse is a group inverse, not a complement".)
+    if idempotent && inverse.is_some() {
+        return Err(serr(
+            ":idempotent and :inverse are mutually exclusive (an idempotent op has no group inverse; \
+             logical negation is xor-with-true, not an and-inverse)",
+            Span::Dummy,
+        ));
+    }
+    if (idempotent || nilpotent.is_some()) && !(assoc && comm) {
+        return Err(serr(
+            ":idempotent/:nilpotent require :assoc :comm",
+            Span::Dummy,
+        ));
+    }
+    if nilpotent.is_some() && identity.is_none() {
+        return Err(serr(
+            ":nilpotent requires :identity (the emptied monomial must reduce to the unit)",
+            Span::Dummy,
+        ));
+    }
+    if inverse.is_some() && identity.is_none() {
+        return Err(serr(":inverse requires :identity", Span::Dummy));
+    }
+
+    // Build the deferred unit reference from the identity term, if any.
+    let unit_ref = match &identity {
+        None => None,
+        Some(Term::Lit(tok, _)) => Some(UnitRef::Lit { token: tok.clone() }),
+        Some(term @ Term::App { .. }) => Some(UnitRef::Ctor { term: term.clone() }),
+    };
+
+    // --- Dispatch on the (assoc, comm) shape ---
+    match (assoc, comm) {
+        // AC family: assoc + comm, variadic (1 declared arg sort).
+        (true, true) => {
+            if args.len() != 1 {
+                return Err(serr(
+                    ":assoc :comm operator takes one argument sort",
+                    Span::Dummy,
+                ));
+            }
+            // Partition is derived from the clamp (design "storage partition and clamp are
+            // independent"): idempotent → Set (dedup is the sound build canonize); plain AC and
+            // nilpotent → MSet (nilpotent keeps true multiplicities for the completion-time mod-n
+            // reduction — the Set dedup canonize would destroy them at build).
+            let kind = if idempotent {
+                OpKind::Set {
+                    arg_sort: args[0],
+                    clamp: Clamp::Idempotent,
+                    identity: unit_ref,
+                    cancellative,
+                }
+            } else {
+                OpKind::MSet {
+                    arg_sort: args[0],
+                    clamp: match nilpotent {
+                        Some(order) => Clamp::Nilpotent { order },
+                        None => Clamp::None,
+                    },
+                    identity: unit_ref,
+                    cancellative,
+                }
+            };
+            let op = eg.register_kind(name, ret, kind);
+            // Resolve `:identity e` to a real node NOW (sortcheck has the model to parse the
+            // term; the node id is stored in the egraph's per-op unit map — `OpKind<S>` cannot
+            // carry a `Cfg::G`). The unit must sort-check to the op's return sort and be a
+            // ground term (a literal or a constructor over ground args), so its constructors
+            // must already be declared. Stored on the egraph, rolls back with the op decl.
+            if let Some(term) = &identity {
+                let ct = check_term(term, Some(ret), eg.ops(), eg.sorts(), model, globals)
+                    .map_err(|e| {
+                        serr(
+                            format!(":identity term does not sort-check: {e}"),
+                            Span::Dummy,
+                        )
+                    })?;
+                let unit = eg.build_ground_cterm(&ct);
+                eg.set_unit_node(op, unit);
+            }
+            Ok(op)
+        }
+        // Associative-only (A): a sequence op; no comm/idempotent/nilpotent/identity semantics.
+        (true, false) => {
+            if idempotent || nilpotent.is_some() || identity.is_some() || inverse.is_some() {
+                return Err(serr(
+                    ":idempotent/:nilpotent/:identity/:inverse require :comm (an AC operator)",
+                    Span::Dummy,
+                ));
+            }
+            if args.len() != 1 {
+                return Err(serr(":assoc requires 1 argument sort", Span::Dummy));
+            }
+            Ok(eg.register_a(name, args[0], ret, dir.unwrap_or(AssocDir::Left)))
+        }
+        // Commutative-only (C): binary.
+        (false, true) => {
+            if idempotent || nilpotent.is_some() || identity.is_some() || inverse.is_some() {
+                return Err(serr(
+                    ":idempotent/:nilpotent/:identity/:inverse require :assoc (an AC operator)",
+                    Span::Dummy,
+                ));
+            }
             if args.len() != 2 {
-                return Err(serr(":comm requires 2 args", Span::Dummy));
+                return Err(serr(":comm requires 2 argument sorts", Span::Dummy));
             }
-            eg.register_c(name, [args[0], args[1]], ret)
+            Ok(eg.register_c(name, [args[0], args[1]], ret))
         }
-        Some(AlgAttr::Assoc | AlgAttr::AssocLeft) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc requires 1 arg", Span::Dummy));
-            }
-            eg.register_a(name, args[0], ret, crate::registry::AssocDir::Left)
-        }
-        Some(AlgAttr::AssocRight) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc-right requires 1 arg", Span::Dummy));
-            }
-            eg.register_a(name, args[0], ret, crate::registry::AssocDir::Right)
-        }
-        Some(AlgAttr::AssocComm) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc-comm requires 1 arg", Span::Dummy));
-            }
-            eg.register_ac(name, args[0], ret)
-        }
-        Some(AlgAttr::AssocCommIdem) => {
-            if args.len() != 1 {
-                return Err(serr(":assoc-comm-idem requires 1 arg", Span::Dummy));
-            }
-            eg.register_aci(name, args[0], ret)
-        }
-    })
+        // No structural tag but property tags present → error (idempotent-only etc. is meaningless).
+        (false, false) => Err(serr(
+            "algebra tags require :assoc and/or :comm",
+            Span::Dummy,
+        )),
+    }
 }

@@ -453,13 +453,14 @@ impl<
         buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
+        mode: crate::canon::MSetClamp,
     ) {
         let node = self.nodes.get(local_id);
         let (start, end) = node.span();
         let old_hash = self.hash_children(&node);
 
         buf.clear();
-        V::canonize(buf, start, end, |i| self.children.get(i), &find);
+        V::canonize(buf, start, end, |i| self.children.get(i), &find, mode);
 
         let new_len = buf.len();
 
@@ -741,11 +742,11 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canon::{ACCanon, ACICanon, CCanon, OrderedCanon, PlainCanon};
+    use crate::canon::{CCanon, MSetCanon, OrderedCanon, PlainCanon, SetCanon};
     use crate::id::{ENodeId, OpId};
     use crate::multiplicity::Multiplicity;
     use crate::nodes::{
-        ACINodeId, ACNodeId, CNodeId, LitNodeId, LitValId, Plain0Id, Plain2Id, PlainNId,
+        LitNodeId, LitValId, MSetNodeId, Plain0Id, Plain2Id, PlainNId, SPairNodeId, SetNodeId,
     };
 
     #[test]
@@ -851,13 +852,13 @@ mod tests {
 
     #[test]
     fn recanonize_c_sorts_pair() {
-        let mut c = FixedArityCache::<ENodeId, OpId, CNodeId, 2, false>::new();
+        let mut c = FixedArityCache::<ENodeId, OpId, SPairNodeId, 2, false>::new();
         let op = OpId::new(0);
         c.probe_or_insert(id(10), op, [id(1), id(5)]); // sorted: [1, 5]
         let mut collisions = Vec::new();
         // find: 1 → 9, so children become [9, 5], CCanon sorts to [5, 9]
         c.recanonize_node::<CCanon>(
-            CNodeId::new(0),
+            SPairNodeId::new(0),
             |g| {
                 if g == id(1) { id(9) } else { g }
             },
@@ -881,6 +882,7 @@ mod tests {
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
+            crate::canon::MSetClamp::None,
         );
         assert!(collisions.is_empty());
     }
@@ -901,27 +903,29 @@ mod tests {
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
+            crate::canon::MSetClamp::None,
         );
         assert_eq!(collisions, vec![(id(20), id(10))]);
     }
 
     #[test]
     fn recanonize_aci_shrinks() {
-        let mut c = VariableArityCache::<ENodeId, OpId, ENodeId, ACINodeId, false>::new();
+        let mut c = VariableArityCache::<ENodeId, OpId, ENodeId, SetNodeId, false>::new();
         let op = OpId::new(0);
         // {1, 2, 3} sorted
         c.probe_or_insert(id(10), op, &[id(1), id(2), id(3)]);
         let mut buf = Vec::new();
         let mut collisions = Vec::new();
         // find: 2 → 1, 3 → 3 → after ACI canon: {1, 3} (deduped, sorted)
-        c.recanonize_node::<ACICanon>(
-            ACINodeId::new(0),
+        c.recanonize_node::<SetCanon>(
+            SetNodeId::new(0),
             |g| {
                 if g == id(2) { id(1) } else { g }
             },
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
+            crate::canon::MSetClamp::None,
         );
         assert!(collisions.is_empty());
         assert!(c.probe(op, &[id(1), id(3)]).is_some());
@@ -931,10 +935,10 @@ mod tests {
 
     #[test]
     fn recanonize_ac_merges_mult() {
-        type ACChild = (ENodeId, Multiplicity);
-        let mut c = VariableArityCache::<ENodeId, OpId, ACChild, ACNodeId, false>::new();
+        type MSetChild = (ENodeId, Multiplicity);
+        let mut c = VariableArityCache::<ENodeId, OpId, MSetChild, MSetNodeId, false>::new();
         let op = OpId::new(0);
-        let elems: &[ACChild] = &[
+        let elems: &[MSetChild] = &[
             (id(1), Multiplicity(1)),
             (id(2), Multiplicity(1)),
             (id(3), Multiplicity(1)),
@@ -942,17 +946,18 @@ mod tests {
         c.probe_or_insert(id(10), op, elems);
         let mut buf = Vec::new();
         let mut collisions = Vec::new();
-        c.recanonize_node::<ACCanon>(
-            ACNodeId::new(0),
+        c.recanonize_node::<MSetCanon>(
+            MSetNodeId::new(0),
             |g| {
                 if g == id(2) { id(1) } else { g }
             },
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
+            crate::canon::MSetClamp::None,
         );
         assert!(collisions.is_empty());
-        let expected: &[ACChild] = &[(id(1), Multiplicity(2)), (id(3), Multiplicity(1))];
+        let expected: &[MSetChild] = &[(id(1), Multiplicity(2)), (id(3), Multiplicity(1))];
         assert!(c.probe(op, expected).is_some());
     }
 }

@@ -695,12 +695,12 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
             }
             cut_char(input, ')')?;
             let ret_sort = ident(input)?.to_owned();
-            let attr = parse_alg_attr(input);
+            let tags = parse_alg_tags(input, base)?;
             SurfaceCommand::Pass(Command::Function {
                 name,
                 arg_sorts,
                 ret_sort,
-                attr,
+                tags,
             })
         }
         "datatype" => {
@@ -721,9 +721,9 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
                     }
                     args.push(ident(input)?.to_owned());
                 }
-                let attr = parse_alg_attr(input);
+                let tags = parse_alg_tags(input, base)?;
                 cut_char(input, ')')?;
-                variants.push((ctor, args, attr));
+                variants.push((ctor, args, tags));
             }
             SurfaceCommand::Pass(Command::Datatype { name, variants })
         }
@@ -806,23 +806,67 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
     Ok(cmd)
 }
 
-fn parse_alg_attr(input: &mut &str) -> Option<AlgAttr> {
-    ws_inner(input);
-    let attrs = [
-        (":assoc-comm-idem", AlgAttr::AssocCommIdem),
-        (":assoc-comm", AlgAttr::AssocComm),
-        (":assoc-left", AlgAttr::AssocLeft),
-        (":assoc-right", AlgAttr::AssocRight),
-        (":assoc", AlgAttr::Assoc),
-        (":comm", AlgAttr::Comm),
-    ];
-    for (kw, attr) in attrs {
-        if input.starts_with(kw) {
-            *input = &input[kw.len()..];
-            return Some(attr);
+/// Parse zero or more composable algebra tags. Loops until no tag keyword matches, so tags
+/// combine freely (`:assoc :comm :idempotent`). Longer keywords are tried before their prefixes
+/// (`:assoc-comm-idem` before `:assoc-comm` before `:assoc`). The pre-combined `:assoc-comm` /
+/// `:assoc-comm-idem` are accepted as aliases that expand into the basic tags. Value-taking tags
+/// parse a following argument. `base` is the source-start pointer for `:identity`'s term spans.
+fn parse_alg_tags(input: &mut &str, base: usize) -> ModalResult<Vec<AlgTag>> {
+    let mut tags = Vec::new();
+    loop {
+        ws_inner(input);
+        // Alias expansion first (longest match), then basic tags.
+        if input.starts_with(":assoc-comm-idem") {
+            *input = &input[":assoc-comm-idem".len()..];
+            tags.push(AlgTag::Assoc);
+            tags.push(AlgTag::Comm);
+            tags.push(AlgTag::Idempotent);
+        } else if input.starts_with(":assoc-comm") {
+            *input = &input[":assoc-comm".len()..];
+            tags.push(AlgTag::Assoc);
+            tags.push(AlgTag::Comm);
+        } else if input.starts_with(":assoc-left") {
+            *input = &input[":assoc-left".len()..];
+            tags.push(AlgTag::AssocLeft);
+        } else if input.starts_with(":assoc-right") {
+            *input = &input[":assoc-right".len()..];
+            tags.push(AlgTag::AssocRight);
+        } else if input.starts_with(":assoc") {
+            *input = &input[":assoc".len()..];
+            tags.push(AlgTag::Assoc);
+        } else if input.starts_with(":comm") {
+            *input = &input[":comm".len()..];
+            tags.push(AlgTag::Comm);
+        } else if input.starts_with(":idempotent") {
+            *input = &input[":idempotent".len()..];
+            tags.push(AlgTag::Idempotent);
+        } else if input.starts_with(":nilpotent") {
+            *input = &input[":nilpotent".len()..];
+            // Optional integer order (default 2). Only consume a number if one follows.
+            ws_inner(input);
+            let order = if input.starts_with(|c: char| c.is_ascii_digit()) {
+                Some(number(input)? as u8)
+            } else {
+                None
+            };
+            tags.push(AlgTag::Nilpotent(order));
+        } else if input.starts_with(":identity") {
+            *input = &input[":identity".len()..];
+            // A ground term of the op's return sort (`:identity 0`, `:identity (zero)`).
+            let term = parse_term_inner(input, base)?;
+            tags.push(AlgTag::Identity(term));
+        } else if input.starts_with(":cancellative") {
+            *input = &input[":cancellative".len()..];
+            tags.push(AlgTag::Cancellative);
+        } else if input.starts_with(":inverse") {
+            *input = &input[":inverse".len()..];
+            let name = ident(input)?.to_owned();
+            tags.push(AlgTag::Inverse(name));
+        } else {
+            break;
         }
     }
-    None
+    Ok(tags)
 }
 
 fn ws_inner(input: &mut &str) {
@@ -872,4 +916,96 @@ pub fn parse_patterns(input: &str) -> Result<Vec<SurfacePattern>, ParseError> {
         pats.push(parse_pattern(&mut rest, base).map_err(|e| format!("{e}"))?);
     }
     Ok(pats)
+}
+
+#[cfg(test)]
+mod alg_tag_tests {
+    use super::*;
+
+    /// Parse a single `(function ...)` decl and return its tag set.
+    fn tags_of(src: &str) -> Vec<AlgTag> {
+        let cmds = parse_program_v2(src).expect("parse");
+        match &cmds[0] {
+            SurfaceCommand::Pass(Command::Function { tags, .. }) => tags.clone(),
+            other => panic!("expected function decl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_tags() {
+        assert_eq!(tags_of("(function f (E E) E)"), vec![]);
+    }
+
+    #[test]
+    fn basic_tags_compose() {
+        assert_eq!(
+            tags_of("(function add (E) E :assoc :comm)"),
+            vec![AlgTag::Assoc, AlgTag::Comm]
+        );
+        assert_eq!(
+            tags_of("(function and (E) E :assoc :comm :idempotent)"),
+            vec![AlgTag::Assoc, AlgTag::Comm, AlgTag::Idempotent]
+        );
+    }
+
+    #[test]
+    fn aliases_expand_to_basic_tags() {
+        assert_eq!(
+            tags_of("(function add (E) E :assoc-comm)"),
+            vec![AlgTag::Assoc, AlgTag::Comm]
+        );
+        assert_eq!(
+            tags_of("(function and (E) E :assoc-comm-idem)"),
+            vec![AlgTag::Assoc, AlgTag::Comm, AlgTag::Idempotent]
+        );
+    }
+
+    #[test]
+    fn assoc_direction() {
+        assert_eq!(
+            tags_of("(function sub (E) E :assoc-left)"),
+            vec![AlgTag::AssocLeft]
+        );
+        assert_eq!(
+            tags_of("(function sub (E) E :assoc-right)"),
+            vec![AlgTag::AssocRight]
+        );
+    }
+
+    #[test]
+    fn nilpotent_optional_order() {
+        assert_eq!(
+            tags_of("(function xor (E) E :assoc :comm :nilpotent)"),
+            vec![AlgTag::Assoc, AlgTag::Comm, AlgTag::Nilpotent(None)]
+        );
+        assert_eq!(
+            tags_of("(function x3 (E) E :assoc :comm :nilpotent 3)"),
+            vec![AlgTag::Assoc, AlgTag::Comm, AlgTag::Nilpotent(Some(3))]
+        );
+    }
+
+    #[test]
+    fn identity_literal_and_ctor() {
+        // literal unit
+        match &tags_of("(function add (E) E :assoc :comm :identity 0)")[2] {
+            AlgTag::Identity(Term::Lit(tok, _)) => assert_eq!(tok, "0"),
+            other => panic!("expected Identity(Lit), got {other:?}"),
+        }
+        // constructed unit
+        match &tags_of("(function add (E) E :assoc :comm :identity (zero))")[2] {
+            AlgTag::Identity(Term::App { op, .. }) => assert_eq!(op, "zero"),
+            other => panic!("expected Identity(App), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inverse_names_op() {
+        assert_eq!(
+            tags_of("(function add (E) E :assoc :comm :identity 0 :inverse neg)")
+                .into_iter()
+                .filter(|t| matches!(t, AlgTag::Inverse(_)))
+                .collect::<Vec<_>>(),
+            vec![AlgTag::Inverse("neg".to_string())]
+        );
+    }
 }

@@ -1,0 +1,29 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; ACI (Set) congruence completion (multi-AC/ACI plan, step 5). Same §4b superposition as
+;; the AC case, but under an idempotent :assoc-comm-idem op: the monomials are SETS (dedup),
+;; and the reduct normalization clamps counts to 1. or(a,b)=c, or(b,d)=e  ⟹  or(c,d)=or(a,e).
+(sort E)
+(function Or (E) E :assoc-comm-idem)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function e () E)
+
+(let s_ab (Or (a) (b)))
+(let s_bd (Or (b) (d)))
+(union s_ab (c))
+(union s_bd (e))
+
+(let s_cd (Or (c) (d)))
+(let s_ae (Or (a) (e)))
+
+(run 5)
+
+;; The entailed critical-pair equality.
+(check (= s_cd s_ae))
+;; Asserted equalities still hold.
+(check (= s_ab (c)))
+(check (= s_bd (e)))

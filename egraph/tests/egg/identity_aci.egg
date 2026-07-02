@@ -1,0 +1,12 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Identity on an idempotent (Set/ACI) op: join(a, unit) = a.
+(sort E)
+(function unit () E)
+(function a () E)
+(function b () E)
+(function join (E) E :assoc :comm :idempotent :identity (unit))
+(let s_au (join (a) (unit)))
+(run 3)
+(check (= s_au (a)))

@@ -22,16 +22,16 @@ semi_persistent_containers::define_id31! {
     pub struct PlainNId / StoredPlainNId, "pN";
 }
 semi_persistent_containers::define_id31! {
-    pub struct CNodeId / StoredCNodeId, "c";
+    pub struct SPairNodeId / StoredSPairNodeId, "sp";
 }
 semi_persistent_containers::define_id31! {
-    pub struct ANodeId / StoredANodeId, "a";
+    pub struct SeqNodeId / StoredSeqNodeId, "sq";
 }
 semi_persistent_containers::define_id31! {
-    pub struct ACNodeId / StoredACNodeId, "ac";
+    pub struct MSetNodeId / StoredMSetNodeId, "mset";
 }
 semi_persistent_containers::define_id31! {
-    pub struct ACINodeId / StoredACINodeId, "aci";
+    pub struct SetNodeId / StoredSetNodeId, "set";
 }
 semi_persistent_containers::define_id31! {
     pub struct LitNodeId / StoredLitNodeId, "lit";
@@ -44,11 +44,11 @@ impl crate::typed_routing::NodeIds for DefaultNodeIds {
     type L1 = Plain1Id;
     type L2 = Plain2Id;
     type L3 = Plain3Id;
-    type LC = CNodeId;
+    type LSPair = SPairNodeId;
     type LN = PlainNId;
-    type LA = ANodeId;
-    type LAC = ACNodeId;
-    type LACI = ACINodeId;
+    type LSeq = SeqNodeId;
+    type LMSet = MSetNodeId;
+    type LSet = SetNodeId;
     type LLit = LitNodeId;
 }
 
@@ -66,23 +66,23 @@ impl crate::config::EGraphConfig for DefaultConfig {
     type V = LitValId;
     type UL = crate::id::UseListId;
     type UN = crate::id::UseNodeId;
-    type C = crate::node_store::ACChild<crate::id::ENodeId>;
+    type C = crate::node_store::MSetChild<crate::id::ENodeId>;
     type M = crate::multiplicity::Multiplicity;
     type Ids = DefaultNodeIds;
 
-    fn ac_child_id(c: &Self::C) -> Self::G {
+    fn mset_child_id(c: &Self::C) -> Self::G {
         c.0
     }
-    fn ac_child_mult(c: &Self::C) -> Self::M {
+    fn mset_child_mult(c: &Self::C) -> Self::M {
         c.1
     }
-    fn ac_child_single(g: Self::G) -> Self::C {
+    fn mset_child_single(g: Self::G) -> Self::C {
         (g, crate::multiplicity::Multiplicity(1))
     }
-    fn ac_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
+    fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
         (g, mult)
     }
-    fn ac_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
+    fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
         if existing.0 == new_g {
             existing.1 = crate::multiplicity::Multiplicity(existing.1.0 + 1);
             true
@@ -107,10 +107,10 @@ semi_persistent_containers::define_id63! { pub struct Plain1Id64 / StoredPlain1I
 semi_persistent_containers::define_id63! { pub struct Plain2Id64 / StoredPlain2Id64, "p2_64"; }
 semi_persistent_containers::define_id63! { pub struct Plain3Id64 / StoredPlain3Id64, "p3_64"; }
 semi_persistent_containers::define_id63! { pub struct PlainNId64 / StoredPlainNId64, "pN_64"; }
-semi_persistent_containers::define_id63! { pub struct CNodeId64 / StoredCNodeId64, "c64"; }
-semi_persistent_containers::define_id63! { pub struct ANodeId64 / StoredANodeId64, "a64"; }
-semi_persistent_containers::define_id63! { pub struct ACNodeId64 / StoredACNodeId64, "ac64"; }
-semi_persistent_containers::define_id63! { pub struct ACINodeId64 / StoredACINodeId64, "aci64"; }
+semi_persistent_containers::define_id63! { pub struct SPairNodeId64 / StoredSPairNodeId64, "sp64"; }
+semi_persistent_containers::define_id63! { pub struct SeqNodeId64 / StoredSeqNodeId64, "sq64"; }
+semi_persistent_containers::define_id63! { pub struct MSetNodeId64 / StoredMSetNodeId64, "mset64"; }
+semi_persistent_containers::define_id63! { pub struct SetNodeId64 / StoredSetNodeId64, "set64"; }
 semi_persistent_containers::define_id63! { pub struct LitNodeId64 / StoredLitNodeId64, "lit64"; }
 
 pub struct NodeIds64;
@@ -119,11 +119,11 @@ impl crate::typed_routing::NodeIds for NodeIds64 {
     type L1 = Plain1Id64;
     type L2 = Plain2Id64;
     type L3 = Plain3Id64;
-    type LC = CNodeId64;
+    type LSPair = SPairNodeId64;
     type LN = PlainNId64;
-    type LA = ANodeId64;
-    type LAC = ACNodeId64;
-    type LACI = ACINodeId64;
+    type LSeq = SeqNodeId64;
+    type LMSet = MSetNodeId64;
+    type LSet = SetNodeId64;
     type LLit = LitNodeId64;
 }
 
@@ -136,23 +136,23 @@ impl crate::config::EGraphConfig for Config64 {
     type V = LitValId64;
     type UL = UseListId64;
     type UN = UseNodeId64;
-    type C = crate::node_store::ACChild<ENodeId64>;
+    type C = crate::node_store::MSetChild<ENodeId64>;
     type M = crate::multiplicity::Multiplicity;
     type Ids = NodeIds64;
 
-    fn ac_child_id(c: &Self::C) -> Self::G {
+    fn mset_child_id(c: &Self::C) -> Self::G {
         c.0
     }
-    fn ac_child_mult(c: &Self::C) -> Self::M {
+    fn mset_child_mult(c: &Self::C) -> Self::M {
         c.1
     }
-    fn ac_child_single(g: Self::G) -> Self::C {
+    fn mset_child_single(g: Self::G) -> Self::C {
         (g, crate::multiplicity::Multiplicity(1))
     }
-    fn ac_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
+    fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
         (g, mult)
     }
-    fn ac_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
+    fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
         if existing.0 == new_g {
             existing.1 = crate::multiplicity::Multiplicity(existing.1.0 + 1);
             true

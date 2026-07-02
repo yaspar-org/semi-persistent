@@ -5,7 +5,7 @@
 //! Parses and executes egglog programs against the e-graph.
 
 use crate::apply::PreparedRule;
-use crate::canon::{ACCanon, VarCanon};
+use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::ShrinkPolicy;
 use crate::egraph::{EGraph, EGraphToken};
@@ -71,13 +71,16 @@ pub struct Interpreter<
     marks: Vec<Mark<Cfg, Cfg::O>>,
     shrink_policy: ShrinkPolicy,
     strategy: crate::saturate::SaturationStrategy,
+    /// Outcome of the most recent `(run …)` command (iterations, saturated, match steps).
+    /// `None` until the first run. Exposed for diagnostics and benchmarking.
+    last_sat: Option<crate::saturate::SatResult>,
 }
 
 impl<Cfg: EGraphConfig, L: LitVal, M: LitModel<Value = L>, const TRACK: bool, const PROOFS: bool>
     Interpreter<Cfg, L, M, TRACK, PROOFS>
 where
     Cfg::O: std::hash::Hash,
-    ACCanon: VarCanon<Cfg::G, Cfg::C>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub fn new(model: M) -> Self {
         let eg = EGraph::from_model(&model);
@@ -89,6 +92,7 @@ where
             marks: Vec::new(),
             shrink_policy: ShrinkPolicy::Never,
             strategy: crate::saturate::SaturationStrategy::default(),
+            last_sat: None,
         }
     }
 
@@ -107,6 +111,7 @@ where
             marks: Vec::new(),
             shrink_policy: ShrinkPolicy::Never,
             strategy: crate::saturate::SaturationStrategy::default(),
+            last_sat: None,
         }
     }
 
@@ -120,10 +125,15 @@ where
         self.strategy = strategy;
     }
 
+    /// Outcome of the most recent `(run …)` command, or `None` if none has run.
+    pub fn last_sat(&self) -> Option<&crate::saturate::SatResult> {
+        self.last_sat.as_ref()
+    }
+
     /// Enable/disable the AC congruence-completion pass (default off; see
-    /// `EGraph::set_ac_complete`).
-    pub fn set_ac_complete(&mut self, enabled: bool) {
-        self.eg.set_ac_complete(enabled);
+    /// `EGraph::set_cc`).
+    pub fn set_cc(&mut self, enabled: bool) {
+        self.eg.set_cc(enabled);
     }
 
     /// Enable/disable the runtime reduced-basis invariant checks (default off; see
@@ -244,16 +254,17 @@ where
             }
             CCommand::Run(n) => {
                 let limit = *n as usize;
-                match self.strategy {
+                let result = match self.strategy {
                     crate::saturate::SaturationStrategy::Naive => {
                         self.eg
-                            .saturate(&self.rules, &self.model, limit, &self.globals);
+                            .saturate(&self.rules, &self.model, limit, &self.globals)
                     }
                     crate::saturate::SaturationStrategy::SemiNaive => {
                         self.eg
-                            .saturate_semi(&self.rules, &self.model, limit, &self.globals);
+                            .saturate_semi(&self.rules, &self.model, limit, &self.globals)
                     }
-                }
+                };
+                self.last_sat = Some(result);
             }
             CCommand::Push(shrink) => {
                 let policy = if *shrink {

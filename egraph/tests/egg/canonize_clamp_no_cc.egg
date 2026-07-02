@@ -1,0 +1,32 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; The count clamp, identity unit-drop, and degenerate-arity collapse are CANONIZATION facts, not
+;; completion facts: they must hold with AC completion OFF (they establish the op's stored normal
+;; form at build and on recanonize). This guards against regressing them back into the completion
+;; pass, where they used to live (the symptom was `xor(a,a)` staying `{a:2}` until CC ran).
+(sort E)
+(function e () E)
+(function a () E)
+(function b () E)
+(function xr (E) E :assoc :comm :nilpotent :identity (e))
+(function mt (E) E :assoc :comm :idempotent)
+(function pl (E) E :assoc :comm :identity (e))
+
+;; --- build-path canonization (the node is degenerate the moment it is built) ---
+(let x_aa   (xr (a) (a)))        ;; {a:2} → {} = e
+(let x_aaa  (xr (a) (a) (a)))    ;; {a:3} → {a:1} = a
+(let x_aab  (xr (a) (a) (b)))    ;; {a:2,b:1} → {b} = b
+(let mt_aa  (mt (a) (a)))        ;; {a} = a (idempotent dedup + size-1)
+(let pl_ae  (pl (a) (e)))        ;; identity drop → {a} = a
+(check (= x_aa (e)))
+(check (= x_aaa (a)))
+(check (= x_aab (b)))
+(check (= mt_aa (a)))
+(check (= pl_ae (a)))
+
+;; --- recanonize-path canonization (node built well-formed, a child merge makes it degenerate) ---
+(let x_ab  (xr (a) (b)))         ;; {a,b}; after a=b → {a:2} → {} = e
+(let mt_ab (mt (a) (b)))         ;; {a,b}; after a=b → {a} = a
+(union a b)
+(check (= x_ab (e)))
+(check (= mt_ab (a)))

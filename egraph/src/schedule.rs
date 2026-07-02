@@ -125,7 +125,7 @@ impl<O: Eq + Hash + Copy> IndexStats<O> {
     pub fn from_index<Cfg>(index: &crate::index::IndexStore<Cfg>) -> Self
     where
         Cfg: crate::config::EGraphConfig<O = O>,
-        crate::canon::ACCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+        crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
     {
         Self {
             op_card: index.by_op.iter().map(|(&op, v)| (op, v.len())).collect(),
@@ -637,8 +637,8 @@ mod tests {
         ops.register("g", &[e], e);
         ops.register("h", &[e, e], e);
         ops.register_a("concat", e, e, crate::registry::AssocDir::Right);
-        ops.register_ac("add", e, e);
-        ops.register_aci("union", e, e);
+        ops.register_mset("add", e, e);
+        ops.register_set("union", e, e);
         (ops, sorts, LitValStore::new())
     }
 

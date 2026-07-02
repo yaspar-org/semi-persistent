@@ -176,15 +176,49 @@ impl<T: DenseId, const TRACK: bool, const PROOFS: bool> UnionFind<T, TRACK, PROO
             !PROOFS,
             "union() called on a PROOFS=true UnionFind; use union_justified() instead"
         );
-        self.union_inner(a, b, None)
+        self.union_inner(a, b, None, None)
     }
 
     /// Union with justification. Only meaningful when PROOFS=true.
     pub fn union_justified(&mut self, a: T, b: T, just: Justification<T>) -> Option<(T, T)> {
-        self.union_inner(a, b, Some(just))
+        self.union_inner(a, b, Some(just), None)
     }
 
-    fn union_inner(&mut self, a: T, b: T, just: Option<Justification<T>>) -> Option<(T, T)> {
+    /// Union with an explicit survivor preference: `prefer_a == true` forces `find(a)`'s root
+    /// to be the survivor, `false` forces `find(b)`'s. This overrides the union-by-rank choice
+    /// so a caller can keep (say) the class with the larger parent use-list as the
+    /// representative, minimizing the recanonicalization work that follows a merge. Sound: the
+    /// classes and the proof forest are unaffected by which root is chosen; only the
+    /// representative id and tree shape change. The rank is still maintained as a valid height
+    /// upper bound (see `union_inner`), so `find` stays correct, but forcing against rank gives
+    /// up union-by-rank's height optimality (ranks can climb faster), so `find` may be slower;
+    /// path compression still applies.
+    pub fn union_directed(&mut self, a: T, b: T, prefer_a: bool) -> Option<(T, T)> {
+        assert!(
+            !PROOFS,
+            "union_directed() called on a PROOFS=true UnionFind; use union_justified_directed()"
+        );
+        self.union_inner(a, b, None, Some(prefer_a))
+    }
+
+    /// Justified counterpart of [`union_directed`].
+    pub fn union_justified_directed(
+        &mut self,
+        a: T,
+        b: T,
+        just: Justification<T>,
+        prefer_a: bool,
+    ) -> Option<(T, T)> {
+        self.union_inner(a, b, Some(just), Some(prefer_a))
+    }
+
+    fn union_inner(
+        &mut self,
+        a: T,
+        b: T,
+        just: Option<Justification<T>>,
+        prefer_a: Option<bool>,
+    ) -> Option<(T, T)> {
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {
@@ -192,10 +226,28 @@ impl<T: DenseId, const TRACK: bool, const PROOFS: bool> UnionFind<T, TRACK, PROO
         }
         let rank_a = self.rank.get(ra);
         let rank_b = self.rank.get(rb);
-        let (survivor, absorbed) = if rank_a >= rank_b { (ra, rb) } else { (rb, ra) };
+        let (survivor, absorbed) = match prefer_a {
+            // Default: union by rank (attach the shorter tree under the taller).
+            None => {
+                if rank_a >= rank_b {
+                    (ra, rb)
+                } else {
+                    (rb, ra)
+                }
+            }
+            // Forced survivor (e.g. larger use-list); may go against rank.
+            Some(true) => (ra, rb),
+            Some(false) => (rb, ra),
+        };
         self.parent_fast.set(absorbed, survivor);
-        if rank_a == rank_b {
-            self.rank.set(survivor, rank_a + 1);
+        // Keep `rank[survivor]` a valid upper bound on the merged tree's height. With
+        // union-by-rank this only fires on a tie (rank_survivor == rank_absorbed); with a
+        // forced survivor it also fires when the survivor was the shorter tree, so the
+        // absorbed subtree (height ≤ rank_absorbed) hanging under it needs rank_absorbed + 1.
+        let rank_surv = self.rank.get(survivor);
+        let rank_abs = self.rank.get(absorbed);
+        if rank_surv <= rank_abs {
+            self.rank.set(survivor, rank_abs + 1);
         }
         // Proof tree: link the original nodes, not representatives.
         // This keeps the full chain: a—b is recorded directly.
@@ -344,4 +396,83 @@ pub struct UnionFindToken {
     rank: VecToken,
     parent_proof: Option<VecToken>,
     justification: Option<VecToken>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::id::ENodeId;
+
+    type UF = UnionFind<ENodeId, false, false>;
+
+    fn uf(n: u32) -> UF {
+        let mut uf = UF::new();
+        for i in 0..n {
+            uf.make_set(ENodeId::new(i));
+        }
+        uf
+    }
+
+    #[test]
+    fn union_directed_forces_survivor() {
+        let mut uf = uf(2);
+        let a = ENodeId::new(0);
+        let b = ENodeId::new(1);
+        // prefer_a = true keeps a's root as the survivor.
+        let (survivor, absorbed) = uf.union_directed(a, b, true).unwrap();
+        assert_eq!(survivor, a);
+        assert_eq!(absorbed, b);
+        assert_eq!(uf.find(a), a);
+        assert_eq!(uf.find(b), a);
+    }
+
+    #[test]
+    fn union_directed_other_survivor() {
+        let mut uf = uf(2);
+        let a = ENodeId::new(0);
+        let b = ENodeId::new(1);
+        // prefer_a = false keeps b's root as the survivor.
+        let (survivor, absorbed) = uf.union_directed(a, b, false).unwrap();
+        assert_eq!(survivor, b);
+        assert_eq!(absorbed, a);
+        assert_eq!(uf.find(a), b);
+        assert_eq!(uf.find(b), b);
+    }
+
+    #[test]
+    fn union_directed_can_force_against_rank() {
+        // Build a taller tree rooted at `tall`, then a singleton `small`, and force `small`
+        // to survive even though it is the shorter tree. `find` must still resolve correctly
+        // (the rank stays a valid height upper bound, see `union_inner`).
+        let mut uf = uf(4);
+        let (n0, n1, n2, small) = (
+            ENodeId::new(0),
+            ENodeId::new(1),
+            ENodeId::new(2),
+            ENodeId::new(3),
+        );
+        // n0,n1 then merge in n2 to bump rank at n0's root.
+        uf.union(n0, n1);
+        uf.union(n0, n2);
+        let tall = uf.find(n0);
+        // Force the singleton `small` to be the survivor of (tall ∪ small).
+        let (survivor, absorbed) = uf.union_directed(tall, small, false).unwrap();
+        assert_eq!(survivor, small);
+        assert_eq!(absorbed, tall);
+        // Every original element now resolves to `small`.
+        for n in [n0, n1, n2, small] {
+            assert_eq!(uf.find(n), small);
+        }
+    }
+
+    #[test]
+    fn union_directed_idempotent_when_same_class() {
+        let mut uf = uf(2);
+        let a = ENodeId::new(0);
+        let b = ENodeId::new(1);
+        uf.union(a, b);
+        // Already merged: a directed union returns None regardless of preference.
+        assert!(uf.union_directed(a, b, true).is_none());
+        assert!(uf.union_directed(a, b, false).is_none());
+    }
 }

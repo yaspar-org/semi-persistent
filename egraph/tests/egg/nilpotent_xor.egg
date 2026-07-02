@@ -1,0 +1,29 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Nilpotent (XOR) completion (multi-AC/ACI plan, property 2). `:nilpotent` (order 2) with unit
+;; `e`: a summand's count reduces mod 2, so even copies cancel to the unit and odd copies leave
+;; one. xor is stored in the MSet partition (true multiplicities kept at build) and the mod-2
+;; reduction happens at completion — a Set (dedup) build would wrongly collapse xor(a,a) to a.
+(sort E)
+(function e () E)
+(function a () E)
+(function b () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+
+;; a ⊕ a = e            (two copies cancel to the unit; the emptied monomial → unit)
+(let x_aa (xor (a) (a)))
+;; a ⊕ a ⊕ a = a        (three copies: count 3 mod 2 = 1, leaves one a)
+(let x_aaa (xor (a) (a) (a)))
+;; a ⊕ a ⊕ a ⊕ a = e    (four copies: count 4 mod 2 = 0, cancels to the unit)
+(let x_aaaa (xor (a) (a) (a) (a)))
+;; a ⊕ a ⊕ b = b        (a pair cancels, b survives)
+(let x_aab (xor (a) (a) (b)))
+
+(run 5)
+(check (= x_aa (e)))
+(check (= x_aaa (a)))
+(check (= x_aaaa (e)))
+(check (= x_aab (b)))
+;; and the two even cases coincide
+(check (= x_aa x_aaaa))

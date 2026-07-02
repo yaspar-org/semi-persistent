@@ -5,7 +5,7 @@
 //! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
 //! carry directive comments. The three feature directives mirror the CLI verbs (use / derive
 //! / check), so a test file is self-contained, no env var needed:
-//!   ;; EXPECT: ok|check-failed|parse-error|error|panic   outcome (default: ok)
+//!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic   outcome (default: ok)
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
 //!   ;; DERIVE_AC_EQS: on                                  derive all AC consequences (default off)
@@ -15,7 +15,7 @@
 //! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome
 //! (the historical default cross-check). DERIVE_AC_EQS renames the old AC_COMPLETE directive.
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
-//! AC rule set is fully reduced (`ac_min` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
+//! AC rule set is fully reduced (`min_monomial` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
 //! have anything to check.
 
 use semi_persistent_egraph::interpret::Interpreter;
@@ -103,7 +103,7 @@ fn run_with<
     let mut interp =
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
-    interp.set_ac_complete(d.derive_ac_eqs);
+    interp.set_cc(d.derive_ac_eqs);
     interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
@@ -118,16 +118,16 @@ fn run_with<
     match interp.run_checked(&checked) {
         Ok(()) => {
             // CHECK_AC_BASIS: after a clean run, assert the active AC rule set is fully
-            // reduced (every used ac_min is the true minimum; no rule LHS reducible by the
+            // reduced (every used min_monomial is the true minimum; no rule LHS reducible by the
             // others). This turns the diagnostic checkers into a real test assertion.
             if d.check_ac_basis {
-                let report = interp.eg.ac_basis_report();
-                let (nonmin, _) = interp.eg.ac_min_used_nonminimal();
-                let (lhs_red, _rhs_red) = interp.eg.ac_not_kapur_reduced();
+                let report = interp.eg.cc_basis_report();
+                let (nonmin, _) = interp.eg.cc_min_used_nonminimal();
+                let (lhs_red, _rhs_red) = interp.eg.cc_not_kapur_reduced();
                 assert_eq!(
                     nonmin,
                     0,
-                    "CHECK_AC_BASIS: {nonmin} rules use a non-minimal ac_min (active_rules={})",
+                    "CHECK_AC_BASIS: {nonmin} rules use a non-minimal min_monomial (active_rules={})",
                     report.rules.len()
                 );
                 assert_eq!(
@@ -166,6 +166,10 @@ fn check(path: &str) {
                 output.starts_with("error"),
                 "{path} [{strategy:?}]: expected error, got: {output}"
             ),
+            "sort-error" => assert!(
+                output.starts_with("sort-error"),
+                "{path} [{strategy:?}]: expected sort-error, got: {output}"
+            ),
             other => panic!("{path}: unknown EXPECT directive: {other}"),
         }
     }
@@ -176,7 +180,7 @@ fn check_panic(path: &str) {
     let directives = parse_directives(&src);
     for strategy in directives.evals.iter().copied() {
         let src = src.clone();
-        let ac_complete = directives.derive_ac_eqs;
+        let cc = directives.derive_ac_eqs;
         let basis_checks = directives.check_ac_basis;
         let result = std::panic::catch_unwind(move || {
             let surface_cmds = semi_persistent_egraph::parser::parse_program_v2(&src).unwrap();
@@ -188,7 +192,7 @@ fn check_panic(path: &str) {
                 false,
             >::new(MachineModel);
             interp.set_strategy(strategy);
-            interp.set_ac_complete(ac_complete);
+            interp.set_cc(cc);
             interp.set_basis_checks(basis_checks);
             let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
             let checked = semi_persistent_egraph::sortcheck::sortcheck_program(
@@ -300,3 +304,42 @@ egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");
 // Same scenario under AC completion (which surfaced the bug by creating more add nodes).
 egg_test!(ac_complete_nested_match, "ac_complete_nested_match.egg");
+// Composable property tags (multi-AC/ACI plan Facet A): `:assoc :comm` reproduces the
+// `:assoc-comm` alias behavior, and invalid tag combinations are rejected at registration.
+egg_test!(alg_tags_composable_ac, "alg_tags_composable_ac.egg");
+// Multiple AC (MSet) symbols complete independently (multi-AC/ACI plan, step 4).
+egg_test!(ac_complete_multi_mset, "ac_complete_multi_mset.egg");
+// ACI (Set) completion: the §4b superposition under an idempotent op (step 5).
+egg_test!(aci_complete_superposition, "aci_complete_superposition.egg");
+egg_test!(aci_complete_multi, "aci_complete_multi.egg");
+// Identity (unit drop) on MSet and ACI ops (multi-AC/ACI plan, property 1).
+egg_test!(identity_mset, "identity_mset.egg");
+egg_test!(identity_aci, "identity_aci.egg");
+egg_test!(
+    alg_tags_reject_idem_nilpotent,
+    "alg_tags_reject_idem_nilpotent.egg"
+);
+egg_test!(
+    alg_tags_reject_idem_needs_ac,
+    "alg_tags_reject_idem_needs_ac.egg"
+);
+// Idempotent + inverse is rejected: an idempotent group is trivial, so `not` is not an
+// `and`-inverse (it is xor-with-true). See design doc "Inverse is a group inverse, not a
+// complement".
+egg_test!(
+    alg_tags_reject_idem_inverse,
+    "alg_tags_reject_idem_inverse.egg"
+);
+// Nilpotent (XOR) completion: mod-n cancellation, empty→unit, stored MSet (multi-AC/ACI plan,
+// property 2).
+egg_test!(nilpotent_xor, "nilpotent_xor.egg");
+egg_test!(
+    nilpotent_xor_superposition,
+    "nilpotent_xor_superposition.egg"
+);
+// Soundness: xor(a,a) is never a (the old Set-dedup bug). check is expected to fail.
+egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
+// Canonization establishes the clamp / identity-drop / degeneracy normal form with completion
+// OFF (build AND recanonize paths): xor(a,a)=e, and(a,a)=a, add(a,e)=a, etc. Guards the
+// architecture fix that moved these out of the completion pass and into canonization.
+egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");

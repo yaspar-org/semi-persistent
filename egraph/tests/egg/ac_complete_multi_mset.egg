@@ -1,0 +1,41 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Multiple MSet (AC) symbols complete INDEPENDENTLY (multi-AC/ACI plan, step 4).
+;; The §4b superposition fires separately under Add and under Mul, each using its own
+;; per-class min-monomial pool column, with no cross-op contamination.
+(sort E)
+(function Add (E) E :assoc-comm)
+(function Mul (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function e () E)
+(function p () E)
+(function q () E)
+
+;; Superposition under Add: +(a,b)=c, +(b,d)=e  ⟹  +(c,d) = +(a,e).
+(let s_ab (Add (a) (b)))
+(let s_bd (Add (b) (d)))
+(union s_ab (c))
+(union s_bd (e))
+(let s_cd (Add (c) (d)))
+(let s_ae (Add (a) (e)))
+
+;; Superposition under Mul: *(a,b)=p, *(b,d)=q  ⟹  *(p,d) = *(a,q).
+(let m_ab (Mul (a) (b)))
+(let m_bd (Mul (b) (d)))
+(union m_ab (p))
+(union m_bd (q))
+(let m_pd (Mul (p) (d)))
+(let m_aq (Mul (a) (q)))
+
+(run 8)
+
+;; Each op derives its own critical-pair equality.
+(check (= s_cd s_ae))
+(check (= m_pd m_aq))
+
+;; No cross-op contamination: the Add sum and the Mul product of the same pair differ.
+(check (!= s_ab m_ab))

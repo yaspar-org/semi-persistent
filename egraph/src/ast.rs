@@ -265,15 +265,28 @@ pub enum MultExpr {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Algebraic property attribute on a function/variant declaration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AlgAttr {
+/// A single composable algebraic-property tag on a function declaration. Tags combine freely
+/// at the surface (`:assoc :comm :idempotent`); the sortcheck resolver maps a tag *set* to a
+/// concrete `OpKind` and validates the combination (see `doc/future/multi-ac-aci-tasks.md`
+/// Facet A). The old pre-combined `:assoc-comm` / `:assoc-comm-idem` are accepted as aliases
+/// that the parser expands into these basic tags.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AlgTag {
     Comm,
     Assoc,
     AssocLeft,
     AssocRight,
-    AssocComm,
-    AssocCommIdem,
+    /// `x∘x = x` (idempotent, set representation, dedup).
+    Idempotent,
+    /// `x∘x = e` (nilpotent); optional order `n` (default 2). Requires `Identity`.
+    Nilpotent(Option<u8>),
+    /// Identity/unit element `e` (`x∘e = x`), given as a ground surface term (`:identity 0`,
+    /// `:identity (zero)`). Parsed here, sort-checked and stored deferred at registration.
+    Identity(Term),
+    /// Cancellativity (`x∘z = y∘z ⟹ x = y`); an equation-level inference, no element.
+    Cancellative,
+    /// Group inverse: names the unary inverse op (`:inverse neg`). Requires `Identity`.
+    Inverse(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -283,11 +296,11 @@ pub enum Command {
         name: String,
         arg_sorts: Vec<String>,
         ret_sort: String,
-        attr: Option<AlgAttr>,
+        tags: Vec<AlgTag>,
     },
     Datatype {
         name: String,
-        variants: Vec<(String, Vec<String>, Option<AlgAttr>)>,
+        variants: Vec<(String, Vec<String>, Vec<AlgTag>)>,
     },
     Rewrite {
         lhs: Pattern,

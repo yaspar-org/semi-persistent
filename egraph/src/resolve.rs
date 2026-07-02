@@ -1087,9 +1087,9 @@ fn check_arity(op: &str, expected: usize, got: usize, span: Span) -> R<()> {
 
 fn variadic_sort<S: DenseId + Copy>(kind: &OpKind<S>, op: &str, span: Span) -> R<S> {
     match kind {
-        OpKind::A { arg_sort, .. } | OpKind::AC { arg_sort } | OpKind::ACI { arg_sort } => {
-            Ok(*arg_sort)
-        }
+        OpKind::A { arg_sort, .. }
+        | OpKind::MSet { arg_sort, .. }
+        | OpKind::Set { arg_sort, .. } => Ok(*arg_sort),
         _ => Err(err(format!("operator '{op}' is not variadic"), span)),
     }
 }
@@ -1117,7 +1117,7 @@ fn check_a_mode<S: DenseId>(kind: &OpKind<S>, op: &str, span: Span) -> R<()> {
 
 fn check_ac_mode<S: DenseId>(kind: &OpKind<S>, op: &str, span: Span) -> R<()> {
     match kind {
-        OpKind::AC { .. } => Ok(()),
+        OpKind::MSet { .. } => Ok(()),
         _ => Err(err(
             format!("operator '{op}' is not AC; {{}} with multiplicities not allowed"),
             span,
@@ -1127,7 +1127,7 @@ fn check_ac_mode<S: DenseId>(kind: &OpKind<S>, op: &str, span: Span) -> R<()> {
 
 fn check_aci_mode<S: DenseId>(kind: &OpKind<S>, op: &str, span: Span) -> R<()> {
     match kind {
-        OpKind::ACI { .. } => Ok(()),
+        OpKind::Set { .. } => Ok(()),
         _ => Err(err(
             format!("operator '{op}' is not ACI; {{}} set syntax not allowed"),
             span,
@@ -1565,7 +1565,9 @@ fn arg_sorts_for_rhs<S: DenseId + Copy>(
             Ok(arg_sorts.clone())
         }
         OpKind::Commutative { arg_sorts } => Ok(arg_sorts.to_vec()),
-        OpKind::A { arg_sort, .. } | OpKind::AC { arg_sort } | OpKind::ACI { arg_sort } => {
+        OpKind::A { arg_sort, .. }
+        | OpKind::MSet { arg_sort, .. }
+        | OpKind::Set { arg_sort, .. } => {
             // All children get the same sort
             Ok(vec![*arg_sort; nchildren])
         }
@@ -1808,8 +1810,8 @@ mod tests {
         ops.register("p", &[b], b); // for sort-mismatch tests
         ops.register_c("eq", [e, e], e);
         ops.register_a("concat", e, e, AssocDir::Right);
-        ops.register_ac("add", e, e);
-        ops.register_aci("union", e, e);
+        ops.register_mset("add", e, e);
+        ops.register_set("union", e, e);
         ops.register("ILit", &[ibig], e);
 
         (ops, sorts)

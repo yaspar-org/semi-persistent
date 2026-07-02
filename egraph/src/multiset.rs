@@ -7,7 +7,7 @@
 //! and `doc/design/ac-congruence-completeness.md` §6–§7.
 //!
 //! All functions operate on the *canonical* AC child form produced by
-//! [`crate::canon::ACCanon`]: a slice `&[(G, Multiplicity)]` that is
+//! [`crate::canon::MSetCanon`]: a slice `&[(G, Multiplicity)]` that is
 //!
 //! - **sorted ascending by `G`**,
 //! - **duplicate-free in `G`** (multiplicities of equal `G` already summed), and
@@ -256,6 +256,122 @@ pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<P
     out
 }
 
+/// Clamp every multiplicity to 1 in place: the idempotent (set) normal form of a monomial
+/// (`x∘x = x`). A canonical multiset is already sorted+duplicate-free in `G`, so this only
+/// rewrites the counts, never the class set. Applied after each monomial operation for a Set
+/// (ACI) op, so its monomials stay {0,1}-valued (design "three independent axes": idempotent
+/// bounds counts to {0,1}).
+pub fn clamp_idempotent<G: Copy>(ms: &mut [Pair<G>]) {
+    for p in ms.iter_mut() {
+        p.1 = Multiplicity(1);
+    }
+}
+
+/// Idempotent (set) normalization: like [`normalize_ms`] but every intermediate and the final
+/// result is clamped to multiplicity 1, so the rewrite operates over sets. The union in a
+/// rewrite step (`(ms − A) ⊎ B`) can raise a count above 1 (e.g. a summand already present in
+/// both the residual and `B`); the clamp collapses it back, which is exactly the ACI
+/// idempotence join. Termination still holds: each step strictly lowers the *set* in degree-lex
+/// (the clamp only ever lowers counts), so the guard bound from the multiset case still applies.
+pub fn normalize_set_into<G: Copy + Ord>(
+    out: &mut Vec<Pair<G>>,
+    scratch: &mut Vec<Pair<G>>,
+    ms: &[Pair<G>],
+    rules: &[NfRule<G>],
+) {
+    out.clear();
+    out.extend_from_slice(ms);
+    clamp_idempotent(out);
+    let mut guard = 4 * (out.len() + 1);
+    'outer: loop {
+        for rule in rules {
+            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) != std::cmp::Ordering::Less);
+            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                multiset_subtract_into(scratch, out, &rule.lhs);
+                multiset_union_into(out, scratch, &rule.rhs);
+                clamp_idempotent(out);
+                guard = guard.saturating_sub(1);
+                if guard == 0 {
+                    break 'outer;
+                }
+                continue 'outer;
+            }
+        }
+        break;
+    }
+}
+
+/// Allocating wrapper over [`normalize_set_into`].
+pub fn normalize_set<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::new();
+    let mut scratch = Vec::new();
+    normalize_set_into(&mut out, &mut scratch, ms, rules);
+    out
+}
+
+/// Reduce every multiplicity modulo `order` in place and drop the summands that vanish: the
+/// nilpotent normal form of a monomial (`x∘x = e` at order 2; count mod `order` in general).
+/// `order ≥ 2`. A canonical multiset is sorted+coalesced in `G`, so this only rewrites counts
+/// and removes zeroed entries; the surviving order is unchanged. Applied after each monomial
+/// operation for a nilpotent op, so its monomials stay {0,…,order−1}-valued and an emptied
+/// monomial becomes `{}` (which the caller maps to the unit). `retain` preserves order, so the
+/// result stays canonical.
+pub fn clamp_nilpotent<G: Copy>(ms: &mut Vec<Pair<G>>, order: u8) {
+    let n = order as u32;
+    for p in ms.iter_mut() {
+        p.1 = Multiplicity(p.1.0 % n);
+    }
+    ms.retain(|p| p.1.0 != 0);
+}
+
+/// Nilpotent normalization: like [`normalize_ms`] but every intermediate and the final result is
+/// reduced modulo `order` ([`clamp_nilpotent`]), so the rewrite operates over the nilpotent group
+/// `(ℤ/order)`-multiset. The union in a rewrite step can raise a count to or past `order` (a
+/// summand present in both the residual and `B`); the mod-`order` clamp cancels it, which is
+/// exactly the symmetric-difference join at order 2. Termination: each step's underlying multiset
+/// rewrite strictly lowers the monomial in degree-lex, and the clamp only ever lowers counts, so
+/// the guard bound from the multiset case still applies.
+pub fn normalize_nilpotent_into<G: Copy + Ord>(
+    out: &mut Vec<Pair<G>>,
+    scratch: &mut Vec<Pair<G>>,
+    ms: &[Pair<G>],
+    rules: &[NfRule<G>],
+    order: u8,
+) {
+    out.clear();
+    out.extend_from_slice(ms);
+    clamp_nilpotent(out, order);
+    let mut guard = 4 * (multiset_size(out) as usize + 1);
+    'outer: loop {
+        for rule in rules {
+            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) != std::cmp::Ordering::Less);
+            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                multiset_subtract_into(scratch, out, &rule.lhs);
+                multiset_union_into(out, scratch, &rule.rhs);
+                clamp_nilpotent(out, order);
+                guard = guard.saturating_sub(1);
+                if guard == 0 {
+                    break 'outer;
+                }
+                continue 'outer;
+            }
+        }
+        break;
+    }
+}
+
+/// Allocating wrapper over [`normalize_nilpotent_into`].
+pub fn normalize_nilpotent<G: Copy + Ord>(
+    ms: &[Pair<G>],
+    rules: &[NfRule<G>],
+    order: u8,
+) -> Vec<Pair<G>> {
+    let mut out = Vec::new();
+    let mut scratch = Vec::new();
+    normalize_nilpotent_into(&mut out, &mut scratch, ms, rules, order);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,5 +561,44 @@ mod tests {
         normalize_ms_into(&mut out, &mut scratch, &input, &rules);
         assert_eq!(out, ms(&[(5, 1)]));
         assert_eq!(out, normalize_ms(&input, &rules));
+    }
+
+    #[test]
+    fn clamp_nilpotent_reduces_mod_order_and_drops_zeros() {
+        // Order 2: counts mod 2, zeros dropped. {a:2, b:3, c:4} → {b:1}.
+        let mut m = ms(&[(1, 2), (2, 3), (3, 4)]);
+        clamp_nilpotent(&mut m, 2);
+        assert_eq!(m, ms(&[(2, 1)]));
+        // Order 3: {a:3, b:4, c:5} → {b:1, c:2}.
+        let mut m3 = ms(&[(1, 3), (2, 4), (3, 5)]);
+        clamp_nilpotent(&mut m3, 3);
+        assert_eq!(m3, ms(&[(2, 1), (3, 2)]));
+        // A fully-even monomial empties.
+        let mut even = ms(&[(1, 2), (2, 4)]);
+        clamp_nilpotent(&mut even, 2);
+        assert!(even.is_empty());
+    }
+
+    #[test]
+    fn normalize_nilpotent_symmetric_difference_join() {
+        // Rule {a,b}→{} (i.e. a⊕b = e). Normalizing {a,b,c} cancels the pair, leaving {c};
+        // the mod-2 clamp is what makes the union in a rewrite step cancel. Also check a step
+        // that raises a count to 2 then cancels: input {a,a,c} clamps to {c} up front.
+        let rules = vec![NfRule {
+            lhs: ms(&[(1, 1), (2, 1)]),
+            rhs: vec![], // → the unit (empty monomial)
+        }];
+        assert_eq!(
+            normalize_nilpotent(&ms(&[(1, 1), (2, 1), (3, 1)]), &rules, 2),
+            ms(&[(3, 1)])
+        );
+        // {a,a} → {} regardless of rules (build gives {a:2}; clamp cancels).
+        assert!(normalize_nilpotent(&ms(&[(1, 2)]), &[], 2).is_empty());
+        // _into matches the wrapper and clears a dirty buffer.
+        let input = ms(&[(1, 1), (2, 1), (3, 1)]);
+        let mut out = ms(&[(99, 3)]);
+        let mut scratch = ms(&[(88, 2)]);
+        normalize_nilpotent_into(&mut out, &mut scratch, &input, &rules, 2);
+        assert_eq!(out, normalize_nilpotent(&input, &rules, 2));
     }
 }

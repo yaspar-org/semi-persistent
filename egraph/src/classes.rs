@@ -7,10 +7,10 @@
 //! use-list tracking which e-nodes reference it as a child.
 
 use crate::containers::DenseId;
-use crate::containers::Tagged;
 use crate::containers::list::{ListArena, ListArenaToken};
 use crate::containers::sparse_set::{SparseSet, SparseSetToken};
 use crate::containers::{self, ShrinkPolicy, VecToken};
+use crate::containers::{Opt, Tagged};
 use crate::union_find::{Justification, ProofBuf, UnionFind, UnionFindToken};
 
 // ---------------------------------------------------------------------------
@@ -86,42 +86,55 @@ impl<T: DenseId> Tagged for EClassEntry<T> {
 /// Per-class data stored in the `reprs` sparse set, keyed by `repr_id`.
 ///
 /// - `use_list` — the class's use-list id (parents referencing this class).
-/// - `ac_min` — the class's current AC minimum-monomial node: the member node
-///   whose monomial is `≫_f`-least (see `doc/design/ac-congruence-completeness.md`
-///   §9a). Maintained O(1) on merge by `EGraph` (which has the node access
-///   `monomial_cmp` needs); `EClasses` only stores and shuttles it.
-/// - `atomic` — whether the class is referenced as a child of some node, making
-///   the size-1 monomial `{classid}` a real term and the class's normal-form
-///   representative (§9a). Set on `add_use` and on gaining a non-AC node,
-///   OR-combined on merge. The completion rule RHS is `{classid}` if `atomic`,
-///   else `ac_min`'s monomial.
+/// - `min_row` — a nullable **plain offset** (`Option<usize>`) into `EClasses::min_pool` of
+///   this class's row of per-completion-op minimum-monomial nodes (design "the column → op
+///   reference array"). `None` means "no row: the class holds no completion monomial yet".
+///   It is a pool offset, not a node-derived id, so it is a plain `Option<usize>` — not
+///   `T::default()` (id 0 is a real node, so an id-typed sentinel would be unsound) and not an
+///   id index type. The pool cells, which *are* node ids, use `Opt<T>` (niche) instead. A
+///   row's column `k` is the class's `≫_f`-least monomial node for completion op `k`, or
+///   `None` if absent. Maintained O(1) on merge by `EGraph` (which has the op→column map and
+///   the node access `monomial_cmp` needs); `EClasses` only stores and shuttles the pool.
+/// - `atomic` — whether the class is referenced as a child of some node, making the size-1
+///   monomial `{classid}` a real term and the class's normal-form representative (§9a). Set
+///   on `add_use` and on gaining a non-completion node, OR-combined on merge. The completion
+///   rule RHS is `{classid}` if `atomic`, else the relevant column's monomial.
 ///
-/// One slot for all three facts, so they cannot desync and roll back together.
+/// One slot for all three facts, so they cannot desync and roll back together. The `min_row`
+/// offset rolls back with the sparse-set entry; the pool row it points at rolls back with the
+/// pool's own `mark`/`restore` (they are marked together).
 #[derive(Clone, Copy)]
 pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
-    pub ac_min: T,
+    /// Base offset of this class's row in `EClasses::min_pool`, or `None` if no row is
+    /// allocated (the class holds no completion monomial yet). This is a **plain pool
+    /// offset**, not a node-derived id: `usize`, `None` for absent — not `T::default()` (id 0
+    /// is a real node) and not an id index type. The pool itself is `usize`-indexed.
+    pub min_row: Option<usize>,
     pub atomic: bool,
+    _t: core::marker::PhantomData<T>,
 }
 
-// `Tagged` by delegating the tag to the first field (`use_list`), the same idiom
-// as `ListNode` in `containers/list.rs`. No bit-packing: `Repr` is a tuple of the
-// component reprs (and `bool`, which is `Copy`), so it works at any id width.
+// `Tagged` by delegating the CAPTURE tag to the first field (`use_list`), the same idiom as
+// `ListNode` in `containers/list.rs`. `min_row` is stored as `(offset, present)`: a plain
+// `usize` offset plus a presence bool (both are just `Copy` data in the `Repr` tuple — the
+// capture bit lives only on `use_list`, element 0).
 impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
-    type Repr = (L::Repr, T::Repr, bool);
+    type Repr = (L::Repr, usize, bool, bool);
 
     fn into_repr(self) -> Self::Repr {
-        (
-            self.use_list.into_repr(),
-            self.ac_min.into_repr(),
-            self.atomic,
-        )
+        let (off, present) = match self.min_row {
+            Some(o) => (o, true),
+            None => (0, false),
+        };
+        (self.use_list.into_repr(), off, present, self.atomic)
     }
     fn from_repr(r: &Self::Repr) -> Self {
         Self {
             use_list: L::from_repr(&r.0),
-            ac_min: T::from_repr(&r.1),
-            atomic: r.2,
+            min_row: if r.2 { Some(r.1) } else { None },
+            atomic: r.3,
+            _t: core::marker::PhantomData,
         }
     }
     fn tag(r: &Self::Repr) -> bool {
@@ -139,8 +152,9 @@ impl<L: DenseId, T: DenseId> Default for ClassData<L, T> {
     fn default() -> Self {
         Self {
             use_list: L::default(),
-            ac_min: T::default(),
+            min_row: None,
             atomic: false,
+            _t: core::marker::PhantomData,
         }
     }
 }
@@ -153,9 +167,11 @@ pub struct MergeInfo<T, L> {
     pub survivor: T,
     pub absorbed: T,
     pub absorbed_uses: L,
-    /// The absorbed class's AC minimum-monomial node, so the caller can fold it
-    /// into the survivor's `ac_min` (`EGraph` does the `monomial_cmp`, §9a).
-    pub absorbed_ac_min: T,
+    /// The absorbed class's min-monomial pool row offset (`None` if it had no row), so the
+    /// caller can fold each column into the survivor's row (`EGraph` does the per-column
+    /// `monomial_cmp`, §9a). The pool is append-only, so this offset stays valid after the
+    /// absorbed repr is removed from the sparse set.
+    pub absorbed_min_row: Option<usize>,
     /// The absorbed class's `atomic` flag, OR-combined into the survivor's (§9a).
     pub absorbed_atomic: bool,
 }
@@ -181,6 +197,18 @@ pub struct EClasses<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const
     >,
     uf: UnionFind<T, TRACK, PROOFS>,
     uses: ListArena<T, L, N, TRACK>,
+    /// Per-class min-monomial pool: flat rows of `min_width` completion columns, `min_row`
+    /// (in `ClassData`) locates a class's row. `Opt<T>`: `Opt::none()` = the class holds no
+    /// monomial for that column's op; `Opt::some(id)` is a real node id (id 0 included, no
+    /// collision — the niche tag encodes None, not a reserved id). Stored in a `VecP`
+    /// (out-of-line, `ParallelStore`) rather than `VecI`: `Opt` cannot sit in a bit-stealing
+    /// `VecI` (it needs its own tag bit, which VecI would steal — see containers `tagged.rs`),
+    /// but `VecP` steals nothing, so `Opt`'s niche encoding is safe and compact here.
+    /// Semi-persistent: rows roll back with the pool's own `mark`/`restore`.
+    min_pool: containers::VecP<Opt<T>, usize, TRACK>,
+    /// Fixed row width = number of completion ops (`nb_completion`). Set once by
+    /// `set_min_width` before the first row is allocated; 0 until then (no completion ops).
+    min_width: usize,
 }
 
 impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool> Default
@@ -200,7 +228,51 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             reprs: SparseSet::new_inline(),
             uf: UnionFind::new(),
             uses: ListArena::new(),
+            min_pool: containers::VecP::new(),
+            min_width: 0,
         }
+    }
+
+    /// Set the min-monomial pool row width (`nb_completion`). Called once by `EGraph` before
+    /// any completion monomial is recorded. Rejects a change after rows exist (declare-before-
+    /// build: fixed-width rows cannot be widened in place). A no-op if the width is unchanged.
+    pub fn set_min_width(&mut self, width: usize) {
+        if self.min_width == width {
+            return;
+        }
+        assert!(
+            self.min_pool.is_empty(),
+            "min-monomial pool width fixed at {} once rows exist; cannot change to {width} \
+             (declare all AC/ACI ops before building terms)",
+            self.min_width
+        );
+        self.min_width = width;
+    }
+
+    /// The min-monomial pool row width (`nb_completion`), for the merge fold's column loop.
+    pub fn min_width(&self) -> usize {
+        self.min_width
+    }
+
+    /// Ensure this class has a pool row, allocating one (all-`Opt::none()` cells) on first use.
+    /// Returns the row's base pool offset (a plain `usize`; `min_row` stores it as
+    /// `Some(offset)`).
+    fn ensure_min_row(&mut self, repr_id: T::Index) -> usize {
+        let mut data = self.reprs.get(repr_id);
+        if let Some(off) = data.min_row {
+            return off;
+        }
+        debug_assert!(
+            self.min_width > 0,
+            "set_min_width must precede row allocation"
+        );
+        let off = self.min_pool.len();
+        for _ in 0..self.min_width {
+            self.min_pool.push(Opt::none());
+        }
+        data.min_row = Some(off);
+        self.reprs.set(repr_id, data);
+        off
     }
 
     pub fn len(&self) -> T::Index {
@@ -218,12 +290,14 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn add_singleton(&mut self, id: T) -> T::Index {
         self.uf.make_set(id);
         let list_id = self.uses.new_list();
-        // Seed ac_min to the node itself: a singleton class's only member is its
-        // own minimum monomial. Not yet referenced as a child, so not atomic (§9a).
+        // No pool row yet (`min_row` is `Opt::none()`): a fresh class holds no completion
+        // monomial until its op's column is seeded by `EGraph` (which knows the node's op).
+        // Not yet referenced as a child, so not atomic (§9a).
         let repr_id = self.reprs.add(ClassData {
             use_list: list_id,
-            ac_min: id,
+            min_row: None,
             atomic: false,
+            _t: core::marker::PhantomData,
         });
         self.entries.push(EClassEntry::new(id, repr_id));
         repr_id
@@ -248,28 +322,48 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         self.reprs.get(repr_id).use_list
     }
 
-    /// The class's current AC minimum-monomial node (the completion rule RHS when the
-    /// class is not `atomic`, §9a).
-    pub fn ac_min(&self, repr_id: T::Index) -> T {
-        self.reprs.get(repr_id).ac_min
+    /// Number of parents in a representative's use-list, O(1) (cached in the list header).
+    /// Used to choose the merge survivor by parent count (the larger list survives, so the
+    /// smaller absorbed set is what gets recanonicalized).
+    pub fn use_list_len(&self, repr_id: T::Index) -> u32 {
+        self.uses.len(self.reprs.get(repr_id).use_list)
+    }
+
+    /// The class's current minimum-monomial node for completion column `col` (the completion
+    /// rule RHS for that op when the class is not `atomic`, §9a), or `None` if the class holds
+    /// no monomial of that op. `col` is the op's completion column (`EGraph` supplies it via
+    /// the registry `completion_column`).
+    pub fn min_monomial(&self, repr_id: T::Index, col: usize) -> Option<T> {
+        let row = self.reprs.get(repr_id).min_row?;
+        debug_assert!(col < self.min_width, "completion column out of range");
+        self.min_pool.get(row + col).get()
     }
 
     /// Whether the class is referenced as a child of some node, making `{classid}` its
     /// normal-form representative (§9a).
-    pub fn ac_atomic(&self, repr_id: T::Index) -> bool {
+    pub fn atomic(&self, repr_id: T::Index) -> bool {
         self.reprs.get(repr_id).atomic
     }
 
-    /// Overwrite the class's AC minimum-monomial node. Called by `EGraph` after a
-    /// merge, once it has compared the two classes' minima with `monomial_cmp`.
-    pub fn set_ac_min(&mut self, repr_id: T::Index, node: T) {
-        let mut data = self.reprs.get(repr_id);
-        data.ac_min = node;
-        self.reprs.set(repr_id, data);
+    /// Set the class's minimum-monomial node for completion column `col`. Allocates the
+    /// class's pool row on first use. Called by `EGraph` after a merge, once it has compared
+    /// the two classes' minima with `monomial_cmp`.
+    pub fn set_min_monomial(&mut self, repr_id: T::Index, col: usize, node: T) {
+        debug_assert!(col < self.min_width, "completion column out of range");
+        let row = self.ensure_min_row(repr_id);
+        self.min_pool.set(row + col, Opt::some(node));
+    }
+
+    /// Read completion column `col` of a raw pool row offset (as carried in `MergeInfo`), for
+    /// the merge fold. Returns `None` if the offset is absent (`None`) or the column is empty.
+    pub fn min_monomial_at_row(&self, row: Option<usize>, col: usize) -> Option<T> {
+        let base = row?;
+        debug_assert!(col < self.min_width, "completion column out of range");
+        self.min_pool.get(base + col).get()
     }
 
     /// Mark the class `atomic` (it has a non-AC node, so `{classid}` is its RHS, §9a).
-    pub fn set_ac_atomic(&mut self, repr_id: T::Index) {
+    pub fn set_atomic(&mut self, repr_id: T::Index) {
         let mut data = self.reprs.get(repr_id);
         if !data.atomic {
             data.atomic = true;
@@ -321,7 +415,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             survivor,
             absorbed,
             absorbed_uses: absorbed_data.use_list,
-            absorbed_ac_min: absorbed_data.ac_min,
+            absorbed_min_row: absorbed_data.min_row,
             absorbed_atomic: absorbed_data.atomic,
         })
     }
@@ -340,7 +434,57 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             survivor,
             absorbed,
             absorbed_uses: absorbed_data.use_list,
-            absorbed_ac_min: absorbed_data.ac_min,
+            absorbed_min_row: absorbed_data.min_row,
+            absorbed_atomic: absorbed_data.atomic,
+        })
+    }
+
+    /// Whether `find(a)`'s class has at least as many parents as `find(b)`'s. The directed
+    /// merges below keep the larger-use-list class as survivor, so the smaller class is the
+    /// one absorbed and recanonicalized.
+    fn prefer_a_by_uses(&self, a: T, b: T) -> bool {
+        let ra = self.uf.find_const(a);
+        let rb = self.uf.find_const(b);
+        let len_a = self.repr_id(ra).map_or(0, |r| self.use_list_len(r));
+        let len_b = self.repr_id(rb).map_or(0, |r| self.use_list_len(r));
+        len_a >= len_b
+    }
+
+    /// Like [`merge`], but selects the survivor by parent-count (larger use-list survives)
+    /// instead of by union-find rank. Reduces post-merge recanonicalization work, at the cost
+    /// of union-by-rank's height optimality (see `UnionFind::union_directed`).
+    pub fn merge_directed(&mut self, a: T, b: T) -> Option<MergeInfo<T, L>> {
+        let prefer_a = self.prefer_a_by_uses(a, b);
+        let (survivor, absorbed) = self.uf.union_directed(a, b, prefer_a)?;
+        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_data = self.reprs.get(absorbed_repr);
+        self.splice_classes((survivor, absorbed));
+        Some(MergeInfo {
+            survivor,
+            absorbed,
+            absorbed_uses: absorbed_data.use_list,
+            absorbed_min_row: absorbed_data.min_row,
+            absorbed_atomic: absorbed_data.atomic,
+        })
+    }
+
+    /// Justified counterpart of [`merge_directed`].
+    pub fn merge_justified_directed(
+        &mut self,
+        a: T,
+        b: T,
+        just: Justification<T>,
+    ) -> Option<MergeInfo<T, L>> {
+        let prefer_a = self.prefer_a_by_uses(a, b);
+        let (survivor, absorbed) = self.uf.union_justified_directed(a, b, just, prefer_a)?;
+        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_data = self.reprs.get(absorbed_repr);
+        self.splice_classes((survivor, absorbed));
+        Some(MergeInfo {
+            survivor,
+            absorbed,
+            absorbed_uses: absorbed_data.use_list,
+            absorbed_min_row: absorbed_data.min_row,
             absorbed_atomic: absorbed_data.atomic,
         })
     }
@@ -387,6 +531,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             reprs: self.reprs.mark(shrink),
             uf: self.uf.mark(shrink),
             uses: self.uses.mark(shrink),
+            min_pool: self.min_pool.mark(shrink),
         }
     }
 
@@ -395,6 +540,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         self.reprs.restore(token.reprs);
         self.uf.restore(token.uf);
         self.uses.restore(token.uses);
+        self.min_pool.restore(token.min_pool);
     }
 }
 
@@ -403,6 +549,7 @@ pub struct EClassesToken {
     entries: VecToken,
     reprs: SparseSetToken,
     uf: UnionFindToken,
+    min_pool: VecToken,
     uses: ListArenaToken,
 }
 
@@ -569,5 +716,52 @@ mod tests {
         );
 
         eprintln!("\n✓ All checks passed");
+    }
+
+    #[test]
+    fn use_list_len_is_o1_and_matches_iteration() {
+        let mut ec = EC::new();
+        let x = ENodeId::new(0);
+        let p0 = ENodeId::new(1);
+        let p1 = ENodeId::new(2);
+        let p2 = ENodeId::new(3);
+        for &id in &[x, p0, p1, p2] {
+            ec.add_singleton(id);
+        }
+        let rx = ec.repr_id(x).unwrap();
+        assert_eq!(ec.use_list_len(rx), 0);
+        ec.add_use(rx, p0);
+        ec.add_use(rx, p1);
+        ec.add_use(rx, p2);
+        assert_eq!(ec.use_list_len(rx), 3);
+        assert_eq!(ec.use_list_len(rx) as usize, ec.iter_uses(rx).count());
+    }
+
+    #[test]
+    fn merge_directed_keeps_larger_use_list_as_survivor() {
+        // `big` has two parents, `small` has one; `merge_directed` must keep `big` as the
+        // survivor regardless of argument order, so the smaller class is the one absorbed.
+        let mut ec = EC::new();
+        let big = ENodeId::new(0);
+        let small = ENodeId::new(1);
+        let pb0 = ENodeId::new(2);
+        let pb1 = ENodeId::new(3);
+        let ps0 = ENodeId::new(4);
+        for &id in &[big, small, pb0, pb1, ps0] {
+            ec.add_singleton(id);
+        }
+        let rb = ec.repr_id(big).unwrap();
+        let rs = ec.repr_id(small).unwrap();
+        ec.add_use(rb, pb0);
+        ec.add_use(rb, pb1);
+        ec.add_use(rs, ps0);
+        assert_eq!(ec.use_list_len(rb), 2);
+        assert_eq!(ec.use_list_len(rs), 1);
+
+        // Pass the smaller class first to prove order-independence.
+        let m = ec.merge_directed(small, big).unwrap();
+        assert_eq!(m.survivor, big, "larger use-list should survive");
+        assert_eq!(m.absorbed, small);
+        assert_eq!(ec.find_const(small), big);
     }
 }

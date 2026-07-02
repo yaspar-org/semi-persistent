@@ -1,0 +1,14 @@
+;; EXPECT: check-failed
+;; DERIVE_AC_EQS: off
+;; Nilpotent soundness: xor(a,a) must NEVER equal a. The old bug routed nilpotent through the Set
+;; (dedup) build path, which hash-consed xor(a,a) as {a} = a — a false equality. Canonization now
+;; reduces the count mod 2, so xor(a,a) = e (the unit), and it is never a. This `check (= x_aa a)`
+;; is expected to FAIL (a ≠ e, since a and e are distinct constants) — the sound outcome. That
+;; xor(a,a) = e *does* hold (with completion off) is asserted in canonize_clamp_no_cc.egg.
+(sort E)
+(function e () E)
+(function a () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(let x_aa (xor (a) (a)))
+(run 3)
+(check (= x_aa (a)))

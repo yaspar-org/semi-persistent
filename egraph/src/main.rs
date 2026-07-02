@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     derive_ac_eqs: bool,
 
-    /// Check AC reduced-basis invariants (ac_min minimality, Kapur-reducedness) each
+    /// Check AC reduced-basis invariants (min_monomial minimality, Kapur-reducedness) each
     /// completion round and print the report. Diagnostic only: superlinear brute-force
     /// checks; needs --derive-ac-eqs to have an effect. Off by default.
     #[arg(long, default_value_t = false)]
@@ -166,7 +166,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     surface_cmds: &[semi_persistent_egraph::surface_ast::SurfaceCommand],
     model: M,
     strategy: semi_persistent_egraph::saturate::SaturationStrategy,
-    ac_complete: bool,
+    cc: bool,
     basis_checks: bool,
     count_match_steps: bool,
 ) where
@@ -174,7 +174,8 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     Cfg::O: std::hash::Hash,
     L: semi_persistent_egraph::literal::LitVal,
     M: semi_persistent_egraph::lit_model::LitModel<Value = L>,
-    semi_persistent_egraph::canon::ACCanon: semi_persistent_egraph::canon::VarCanon<Cfg::G, Cfg::C>,
+    semi_persistent_egraph::canon::MSetCanon:
+        semi_persistent_egraph::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     if count_match_steps {
         semi_persistent_egraph::ematch::set_match_step_counting(true);
@@ -182,7 +183,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     let mut interp =
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
     interp.set_strategy(strategy);
-    interp.set_ac_complete(ac_complete);
+    interp.set_cc(cc);
     interp.set_basis_checks(basis_checks);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
