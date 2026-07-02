@@ -1,0 +1,50 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Multiple ACI (Set) symbols complete independently, coexisting with an MSet op — exercising
+;; per-op pool columns across representations (multi-AC/ACI plan, step 5).
+(sort E)
+(function And (E) E :assoc-comm-idem)
+(function Or (E) E :assoc-comm-idem)
+(function Add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function d () E)
+(function c1 () E)
+(function e1 () E)
+(function c2 () E)
+(function e2 () E)
+(function c3 () E)
+(function e3 () E)
+
+;; Superposition under And: And(a,b)=c1, And(b,d)=e1  ⟹  And(c1,d)=And(a,e1).
+(let a_ab (And (a) (b)))
+(let a_bd (And (b) (d)))
+(union a_ab (c1))
+(union a_bd (e1))
+(let a_cd (And (c1) (d)))
+(let a_ae (And (a) (e1)))
+
+;; Independent superposition under Or, with its own constants.
+(let o_ab (Or (a) (b)))
+(let o_bd (Or (b) (d)))
+(union o_ab (c2))
+(union o_bd (e2))
+(let o_cd (Or (c2) (d)))
+(let o_ae (Or (a) (e2)))
+
+;; And an MSet superposition alongside, with its own constants.
+(let m_ab (Add (a) (b)))
+(let m_bd (Add (b) (d)))
+(union m_ab (c3))
+(union m_bd (e3))
+(let m_cd (Add (c3) (d)))
+(let m_ae (Add (a) (e3)))
+
+(run 8)
+
+(check (= a_cd a_ae))
+(check (= o_cd o_ae))
+(check (= m_cd m_ae))
+;; No cross-op contamination between the two Set ops.
+(check (!= a_ab o_ab))

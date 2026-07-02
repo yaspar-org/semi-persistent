@@ -307,6 +307,11 @@ egg_test!(ac_complete_nested_match, "ac_complete_nested_match.egg");
 // Composable property tags (multi-AC/ACI plan Facet A): `:assoc :comm` reproduces the
 // `:assoc-comm` alias behavior, and invalid tag combinations are rejected at registration.
 egg_test!(alg_tags_composable_ac, "alg_tags_composable_ac.egg");
+// Multiple AC (MSet) symbols complete independently (multi-AC/ACI plan, step 4).
+egg_test!(ac_complete_multi_mset, "ac_complete_multi_mset.egg");
+// ACI (Set) completion: the §4b superposition under an idempotent op (step 5).
+egg_test!(aci_complete_superposition, "aci_complete_superposition.egg");
+egg_test!(aci_complete_multi, "aci_complete_multi.egg");
 egg_test!(
     alg_tags_reject_idem_nilpotent,
     "alg_tags_reject_idem_nilpotent.egg"
