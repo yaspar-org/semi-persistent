@@ -24,7 +24,36 @@ pub enum AssocDir {
     Both,
 }
 
+/// Why a `Set`-represented op's per-summand count is bounded to {0,1} (design "three
+/// independent axes"). This is a Set-only axis; `MSet` ops have no clamp (counts stay in ℕ).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetClamp {
+    /// `x∘x = x`: duplicate summands collapse to one (dedup). `and`, `or`.
+    Idempotent,
+    /// `x∘x = e` (order 2), or count mod `order` in general: pairs cancel to the unit
+    /// (symmetric difference). `xor`, `bvxor`. Requires an `identity`.
+    Nilpotent { order: u8 },
+}
+
+/// A deferred reference to an operator's identity (unit) element (design "the unit is a
+/// deferred ground term"). Parsed and sort-checked at registration, but the actual e-node is
+/// built lazily at first completion use, so registration stays side-effect-free on the e-graph.
+#[derive(Clone, Debug)]
+pub enum UnitRef {
+    /// A literal unit (`0`, `true`, `#b0000`): its surface token and the sort to parse it at.
+    Lit { token: String },
+    /// A constructed unit (`(zero)`): the parsed surface term, built via the term builder.
+    Ctor { term: crate::ast::Term },
+}
+
 /// Signature and algebraic kind of a registered operator.
+///
+/// The `MSet`/`Set` variants carry the resolved algebra beyond the representation: an optional
+/// `identity` (unit-drop; applies to either representation) and `cancellative` flag, plus a
+/// Set-only `clamp`. The group `inverse` op is deferred until the group facet is implemented
+/// (it needs the op-id type, which `OpKind<S>` does not carry); the `:inverse` tag parses and
+/// validates but its resolved op is not stored here yet. See
+/// `doc/future/multi-ac-aci-tasks.md`.
 #[derive(Clone, Debug)]
 pub enum OpKind<S: DenseId> {
     Normal {
@@ -38,15 +67,18 @@ pub enum OpKind<S: DenseId> {
         dir: AssocDir,
     },
     /// Associative-commutative, multiset child representation (`(G, mult)`, ℕ counts).
-    /// (Clamp/identity fields are added with the property-tag resolver; see the multi-AC/ACI
-    /// completion plan.)
     MSet {
         arg_sort: S,
+        identity: Option<UnitRef>,
+        cancellative: bool,
     },
     /// Associative-commutative with {0,1}-bounded counts, set child representation (bare `G`).
-    /// Today this is the idempotent case (ACI); nilpotent shares it later via a clamp field.
+    /// `clamp` says why the counts are bounded (idempotent = dedup; nilpotent = mod-n cancel).
     Set {
         arg_sort: S,
+        clamp: SetClamp,
+        identity: Option<UnitRef>,
+        cancellative: bool,
     },
     Lit,
 }
@@ -257,12 +289,33 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         self.insert(name, return_sort, OpKind::A { arg_sort, dir })
     }
 
+    /// Register a plain AC (multiset) op: no identity, not cancellative. Richer algebra
+    /// (identity/cancellative) is set via the property-tag resolver (`register_with_algebra`).
     pub fn register_mset(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::MSet { arg_sort })
+        self.insert(
+            name,
+            return_sort,
+            OpKind::MSet {
+                arg_sort,
+                identity: None,
+                cancellative: false,
+            },
+        )
     }
 
+    /// Register a plain ACI (idempotent set) op: no identity, not cancellative. This is the
+    /// `SetClamp::Idempotent` case; nilpotent sets come via the property-tag resolver.
     pub fn register_set(&mut self, name: &str, arg_sort: S, return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::Set { arg_sort })
+        self.insert(
+            name,
+            return_sort,
+            OpKind::Set {
+                arg_sort,
+                clamp: SetClamp::Idempotent,
+                identity: None,
+                cancellative: false,
+            },
+        )
     }
 
     pub fn register_lit(&mut self, name: &str, return_sort: S) -> O {

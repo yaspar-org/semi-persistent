@@ -1087,9 +1087,9 @@ fn check_arity(op: &str, expected: usize, got: usize, span: Span) -> R<()> {
 
 fn variadic_sort<S: DenseId + Copy>(kind: &OpKind<S>, op: &str, span: Span) -> R<S> {
     match kind {
-        OpKind::A { arg_sort, .. } | OpKind::MSet { arg_sort } | OpKind::Set { arg_sort } => {
-            Ok(*arg_sort)
-        }
+        OpKind::A { arg_sort, .. }
+        | OpKind::MSet { arg_sort, .. }
+        | OpKind::Set { arg_sort, .. } => Ok(*arg_sort),
         _ => Err(err(format!("operator '{op}' is not variadic"), span)),
     }
 }
@@ -1565,7 +1565,9 @@ fn arg_sorts_for_rhs<S: DenseId + Copy>(
             Ok(arg_sorts.clone())
         }
         OpKind::Commutative { arg_sorts } => Ok(arg_sorts.to_vec()),
-        OpKind::A { arg_sort, .. } | OpKind::MSet { arg_sort } | OpKind::Set { arg_sort } => {
+        OpKind::A { arg_sort, .. }
+        | OpKind::MSet { arg_sort, .. }
+        | OpKind::Set { arg_sort, .. } => {
             // All children get the same sort
             Ok(vec![*arg_sort; nchildren])
         }
