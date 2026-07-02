@@ -351,12 +351,57 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             .map(|(i, _)| O::from_usize(i))
     }
 
-    /// Number of registered `OpKind::MSet` ops (excludes ACI). The completion pass
-    /// supports exactly one AC symbol: the per-class `min_monomial`/`atomic` slot stores one
-    /// op's minimal monomial, so two AC symbols sharing a class would conflate. `rebuild`
-    /// checks this before running completion (see `EGraph::rebuild`).
+    /// Number of registered `OpKind::MSet` ops (excludes Set). Until the per-op
+    /// `min_monomial` pool lands, completion supports exactly one MSet symbol (the single
+    /// per-class slot holds one op's minimal monomial); `rebuild` checks this.
     pub fn mset_op_count(&self) -> usize {
         self.mset_ops().count()
+    }
+
+    /// Is this op a `Set` (idempotent/nilpotent) op?
+    pub fn is_set(&self, id: O) -> bool {
+        matches!(self.map.get(id.to_usize()).kind, OpKind::Set { .. })
+    }
+
+    /// Iterator over the ids of all registered `Set` ops (idempotent or nilpotent), in
+    /// registration order. The Set analogue of [`mset_ops`](Self::mset_ops).
+    pub fn set_ops(&self) -> impl Iterator<Item = O> + '_ {
+        self.map
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, info))| matches!(info.kind, OpKind::Set { .. }))
+            .map(|(i, _)| O::from_usize(i))
+    }
+
+    /// Number of registered `Set` ops.
+    pub fn set_op_count(&self) -> usize {
+        self.set_ops().count()
+    }
+
+    /// The ordered list of *completion* ops (MSet then Set, each in registration order). This
+    /// is the column → op reference array for the per-op `min_monomial` pool (design "the
+    /// column → op reference array"): `completion_ops()[k]` is the op owning pool column `k`,
+    /// and its length is the fixed row width `nb_completion`. Registration order is stable
+    /// (the backing `Map` is append-only, never renumbered), so a column's meaning is fixed
+    /// for the run.
+    pub fn completion_ops(&self) -> Vec<O> {
+        let mut v: Vec<O> = self.mset_ops().collect();
+        v.extend(self.set_ops());
+        v
+    }
+
+    /// Number of completion ops (`nb_completion` = MSet + Set), the `min_monomial` pool row
+    /// width.
+    pub fn completion_op_count(&self) -> usize {
+        self.mset_op_count() + self.set_op_count()
+    }
+
+    /// The pool column index of a completion op, or `None` if `id` is not an MSet/Set op.
+    /// O(nb_completion) scan of [`completion_ops`](Self::completion_ops); `nb_completion` is
+    /// tiny (a handful), and the pool builder caches the array per round rather than calling
+    /// this in a hot loop.
+    pub fn completion_column(&self, id: O) -> Option<usize> {
+        self.completion_ops().iter().position(|&o| o == id)
     }
 
     pub fn id_by_name(&self, name: &str) -> Option<O> {
@@ -684,5 +729,45 @@ mod tests {
         let mut ops = OR::new();
         ops.register("F", &[int_sort], int_sort);
         assert_eq!(ops.mset_ops().count(), 0);
+    }
+
+    #[test]
+    fn completion_ops_mset_then_set_in_registration_order() {
+        let mut sorts = SR::new();
+        let bool_sort = sorts.intern("Bool");
+        let int_sort = sorts.intern("Int");
+
+        let mut ops = OR::new();
+        let add = ops.register_mset("Add", int_sort, int_sort);
+        let and = ops.register_set("And", bool_sort, bool_sort);
+        let mul = ops.register_mset("Mul", int_sort, int_sort);
+        let or = ops.register_set("Or", bool_sort, bool_sort);
+        ops.register("Not", &[bool_sort], bool_sort); // non-completion op, excluded
+
+        // completion_ops = all MSet (registration order) then all Set (registration order).
+        assert_eq!(ops.completion_ops(), vec![add, mul, and, or]);
+        assert_eq!(ops.completion_op_count(), 4);
+        assert_eq!(ops.set_op_count(), 2);
+        assert_eq!(ops.mset_op_count(), 2);
+
+        // column() is the position in that array; non-completion ops have none.
+        assert_eq!(ops.completion_column(add), Some(0));
+        assert_eq!(ops.completion_column(mul), Some(1));
+        assert_eq!(ops.completion_column(and), Some(2));
+        assert_eq!(ops.completion_column(or), Some(3));
+        assert_eq!(ops.completion_column(ops.id_by_name("Not").unwrap()), None);
+
+        // is_set agrees.
+        assert!(ops.is_set(and) && ops.is_set(or));
+        assert!(!ops.is_set(add));
+    }
+
+    #[test]
+    fn completion_ops_empty_when_none() {
+        let int_sort = SortId::new(1);
+        let mut ops = OR::new();
+        ops.register("F", &[int_sort], int_sort);
+        assert_eq!(ops.completion_ops(), Vec::<OpId>::new());
+        assert_eq!(ops.completion_op_count(), 0);
     }
 }
