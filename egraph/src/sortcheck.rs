@@ -842,6 +842,17 @@ where
             Span::Dummy,
         ));
     }
+    // Idempotent + inverse is algebraically incoherent, not merely unimplemented: an idempotent
+    // group is trivial (x∘x = x ⟹ x = e), so an idempotent op has no non-trivial inverses. (The
+    // intended `not`/complement cancels to the annihilator, not the identity — it is a `xor`, not
+    // an `and`-inverse. See the design doc "Inverse is a group inverse, not a complement".)
+    if idempotent && inverse.is_some() {
+        return Err(serr(
+            ":idempotent and :inverse are mutually exclusive (an idempotent op has no group inverse; \
+             logical negation is xor-with-true, not an and-inverse)",
+            Span::Dummy,
+        ));
+    }
     if (idempotent || nilpotent.is_some()) && !(assoc && comm) {
         return Err(serr(
             ":idempotent/:nilpotent require :assoc :comm",

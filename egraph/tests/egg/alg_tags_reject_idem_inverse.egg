@@ -1,0 +1,10 @@
+;; EXPECT: sort-error
+;; :idempotent and :inverse are mutually exclusive: an idempotent group is trivial, so an
+;; idempotent op has no group inverse. (Logical `not` is not an `and`-inverse — it cancels to the
+;; annihilator `false`, not the identity `true`; model it as `xor`-with-`true`, which is nilpotent
+;; order 2.) The unit is declared so the failure is the idempotent+inverse clash, not the
+;; :inverse-requires-:identity rule.
+(sort E)
+(function unit () E)
+(function comp (E) E)
+(function bad (E) E :assoc :comm :idempotent :identity (unit) :inverse comp)
