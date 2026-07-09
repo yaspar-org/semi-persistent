@@ -1,0 +1,18 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Kapur 4.2 nilpotent self-critical-pair: from xor(a,b)=c with x⊕x=e,
+;; xor(a, xor(a,b)) = xor(a,b) i.e. xor(b) = xor(a,c), so b = xor(a,c) and a = xor(b,c).
+(sort E)
+(function e () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(let ab (xor (a) (b)))
+(union ab (c))
+(let ac (xor (a) (c)))
+(let bc (xor (b) (c)))
+(run 6)
+(check (= (b) ac))
+(check (= (a) bc))

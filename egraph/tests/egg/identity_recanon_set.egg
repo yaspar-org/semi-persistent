@@ -1,0 +1,13 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; Identity unit-drop must survive RECANONIZATION, not just build. Merge b into the unit,
+;; then join(a,b) recanonicalizes to join(a,unit) which must drop the unit and become a.
+(sort E)
+(function unit () E)
+(function a () E)
+(function b () E)
+(function join (E) E :assoc :comm :idempotent :identity (unit))
+(let s_ab (join (a) (b)))
+(union (b) (unit))
+(run 3)
+(check (= s_ab (a)))

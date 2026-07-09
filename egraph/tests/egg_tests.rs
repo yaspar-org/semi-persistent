@@ -224,6 +224,14 @@ macro_rules! egg_test {
             check_panic(concat!("tests/egg/", $file));
         }
     };
+    // Known-failing reproducer: runs only under `--ignored`. `$why` documents the open bug.
+    ($name:ident, $file:expr, ignore = $why:expr) => {
+        #[test]
+        #[ignore = $why]
+        fn $name() {
+            check(concat!("tests/egg/", $file));
+        }
+    };
 }
 
 // ── Arithmetic: checked (default) ──
@@ -343,3 +351,49 @@ egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
 // OFF (build AND recanonize paths): xor(a,a)=e, and(a,a)=a, add(a,e)=a, etc. Guards the
 // architecture fix that moved these out of the completion pass and into canonization.
 egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");
+
+// ── Known-failing reproducers (open bugs; run with `--ignored`) ──
+// BUG 1: identity unit-drop is not re-established on recanonicalization. After a child merges
+// into the unit's class, the parent AC/Set node is not revisited (the unit is a childless leaf
+// that loses the survivor race), so `join(a,b)` with `b=unit` never collapses to `a`.
+egg_test!(
+    identity_recanon_set,
+    "identity_recanon_set.egg",
+    ignore = "BUG: identity unit-drop not re-established on recanonize (rebuild trigger)"
+);
+egg_test!(
+    identity_recanon_mset,
+    "identity_recanon_mset.egg",
+    ignore = "BUG: identity unit-drop not re-established on recanonize (rebuild trigger)"
+);
+// BUG 2: Kapur's semantic-property self-critical-pairs (LMCS'23 §4.1 idempotent, §4.2 nilpotent)
+// are not generated. Completion only superposes pairs of distinct rules; a single rule
+// `f(M)->f(N)` needs the extra CP `(f(N∪{a}), f(M))` for each a∈M under idempotency/nilpotency.
+egg_test!(
+    idem_semantic_cp,
+    "idem_semantic_cp.egg",
+    ignore = "BUG: idempotent self-critical-pairs (Kapur 4.1) not generated"
+);
+egg_test!(
+    nilpotent_semantic_cp,
+    "nilpotent_semantic_cp.egg",
+    ignore = "BUG: nilpotent self-critical-pairs (Kapur 4.2) not generated"
+);
+// BUG 3: Additional semantic-property facets parse/store tags but are not implemented as
+// completion inferences yet. These gates should flip once cancellativity, group inverse, and
+// general nilpotent order-n semantic critical pairs are wired.
+egg_test!(
+    nilpotent3_semantic_cp,
+    "nilpotent3_semantic_cp.egg",
+    ignore = "GATE: nilpotent order-3 self-critical-pairs not generated"
+);
+egg_test!(
+    cancellative_cancel,
+    "cancellative_cancel.egg",
+    ignore = "GATE: cancellative AC inference not implemented"
+);
+egg_test!(
+    group_inverse_cancel,
+    "group_inverse_cancel.egg",
+    ignore = "GATE: group inverse cancellation not implemented"
+);

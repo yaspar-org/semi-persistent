@@ -1,0 +1,17 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Kapur 4.1 idempotent self-critical-pair: from join(a,b)=c with idempotent join,
+;; join(a, join(a,b)) = join(a,b) forces join(a,c) = c and join(b,c) = c.
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function join (E) E :assoc :comm :idempotent)
+(let ab (join (a) (b)))
+(union ab (c))
+(let ac (join (a) (c)))
+(let bc (join (b) (c)))
+(run 6)
+(check (= ac (c)))
+(check (= bc (c)))

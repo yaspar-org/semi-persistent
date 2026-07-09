@@ -1,0 +1,13 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; MSet analogue: after b = zero (the declared unit), add(a,b) recanonicalizes to add(a,zero),
+;; identity-drop gives {a} = a. Guards unit-drop on the recanonize path for MSet.
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function add (E) E :assoc :comm :identity (zero))
+(let s_ab (add (a) (b)))
+(union (b) (zero))
+(run 3)
+(check (= s_ab (a)))

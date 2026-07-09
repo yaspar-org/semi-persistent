@@ -1,0 +1,14 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; Cancellative AC missing feature: from add(a,c)=add(b,c), cancellativity entails a=b.
+;; The tag parses and is stored, but no completion/inference rule consumes it today.
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function add (E) E :assoc :comm :cancellative)
+(let ac (add (a) (c)))
+(let bc (add (b) (c)))
+(union ac bc)
+(run 5)
+(check (= (a) (b)))

@@ -1,0 +1,12 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; Group inverse missing feature: :inverse parses/validates with :identity, but inverse
+;; cancellation is not wired, so add(a, neg(a)) does not reduce to zero today.
+(sort E)
+(function zero () E)
+(function a () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(let a_neg_a (add (a) (neg (a))))
+(run 5)
+(check (= a_neg_a (zero)))
