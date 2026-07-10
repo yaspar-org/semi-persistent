@@ -352,6 +352,12 @@ egg_test!(
     nilpotent_xor_superposition,
     "nilpotent_xor_superposition.egg"
 );
+// Per-rule AXIOM critical pairs (Kapur §4 Lemmas 4.1(ii), 4.2(ii)/4.5; Kapur-conformance
+// fix W3, spec §3 table): superpositions of a rule with the op's own
+// idempotency/nilpotency axiom, which the count clamp alone cannot derive.
+egg_test!(aci_rule_axiom_cp, "aci_rule_axiom_cp.egg");
+egg_test!(nilpotent_rule_axiom_cp, "nilpotent_rule_axiom_cp.egg");
+egg_test!(nilpotent3_rule_axiom_cp, "nilpotent3_rule_axiom_cp.egg");
 // Soundness: xor(a,a) is never a (the old Set-dedup bug). check is expected to fail.
 egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
 // Canonization establishes the clamp / identity-drop / degeneracy normal form with completion
@@ -364,27 +370,11 @@ egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");
 // carries the unit class; the became-a-unit sweep revisits the surviving side's parents).
 egg_test!(identity_recanon_set, "identity_recanon_set.egg");
 egg_test!(identity_recanon_mset, "identity_recanon_mset.egg");
-// BUG 2: Kapur's semantic-property self-critical-pairs (LMCS'23 §4.1 idempotent, §4.2 nilpotent)
-// are not generated. Completion only superposes pairs of distinct rules; a single rule
-// `f(M)->f(N)` needs the extra CP `(f(N∪{a}), f(M))` for each a∈M under idempotency/nilpotency.
-egg_test!(
-    idem_semantic_cp,
-    "idem_semantic_cp.egg",
-    ignore = "BUG: idempotent self-critical-pairs (Kapur 4.1) not generated"
-);
-egg_test!(
-    nilpotent_semantic_cp,
-    "nilpotent_semantic_cp.egg",
-    ignore = "BUG: nilpotent self-critical-pairs (Kapur 4.2) not generated"
-);
-// BUG 3: Additional semantic-property facets parse/store tags but are not implemented as
-// completion inferences yet. These gates should flip once cancellativity, group inverse, and
-// general nilpotent order-n semantic critical pairs are wired.
-egg_test!(
-    nilpotent3_semantic_cp,
-    "nilpotent3_semantic_cp.egg",
-    ignore = "GATE: nilpotent order-3 self-critical-pairs not generated"
-);
+// BUG 2 (Kapur §4 semantic-property axiom critical pairs, idempotent 4.1(ii) and nilpotent
+// 4.2(ii)) was fixed by Kapur-conformance fix W3; the general order-n arm covers the order-3 gate.
+egg_test!(idem_semantic_cp, "idem_semantic_cp.egg");
+egg_test!(nilpotent_semantic_cp, "nilpotent_semantic_cp.egg");
+egg_test!(nilpotent3_semantic_cp, "nilpotent3_semantic_cp.egg");
 egg_test!(
     cancellative_cancel,
     "cancellative_cancel.egg",

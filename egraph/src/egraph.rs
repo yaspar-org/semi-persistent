@@ -1398,6 +1398,54 @@ where
             let op = Cfg::O::from_usize(op_u);
             let m_node = rules[ti].node;
 
+            // Per-rule AXIOM critical pairs (Kapur §4, Kapur-conformance fix W3): superpose the
+            // rule with the op's own semantic axiom. The count clamp canonizes counts
+            // *within* a monomial but cannot produce these cross-rule consequences — e.g.
+            // or(a,b)=c ⟹ or(a,c)=c, and xor(a,b)=c ⟹ xor(a,c)=b — so without these
+            // pairs completion is incomplete (Lemmas 4.1(ii), 4.2(ii)/4.5). Generated for
+            // antichain members only (like (B) sources), when the rule is in the delta;
+            // the full confirmation round is the completeness net, as for (B).
+            if in_delta(m_node) {
+                match self.op_clamp(op) {
+                    CompletionClamp::Idempotent => {
+                        // x∘x = x: for each a ∈ M, the pair (N ⊎ {a}, N). Since M → N by
+                        // the rule itself, joinability of Kapur's (f(M), f(N∪{a})) reduces
+                        // to exactly this pair. a ∈ N clamps to N — trivial, skip early.
+                        for &(a, _) in &rules[ti].lhs {
+                            let mut r1 = crate::multiset::multiset_union(
+                                &rules[ti].rhs,
+                                &[(a, Multiplicity(1))],
+                            );
+                            crate::multiset::clamp_idempotent(&mut r1);
+                            if r1 != rules[ti].rhs {
+                                crit.push((op, r1, rules[ti].rhs.clone()));
+                            }
+                        }
+                    }
+                    CompletionClamp::Nilpotent { order } => {
+                        // xⁿ = e: for a with multiplicity m in M, superpose M with aⁿ → e
+                        // on the lcm M ⊎ {a: n−m}. The rule reduct is N ⊎ {a: n−m}; the
+                        // axiom reduct is (M − {a: m}) ⊎ {e}, whose unit drops (stored
+                        // monomials never carry the unit). At n=2, m=1 this is literally
+                        // Kapur's (f(N ∪ {a}), f((M − {a}) ∪ {e})).
+                        for &(a, m) in &rules[ti].lhs {
+                            let k = (order as u32).saturating_sub(m.0);
+                            if k == 0 {
+                                continue; // m ≡ 0 (mod n) never stored; defensive
+                            }
+                            let mut r1 = crate::multiset::multiset_union(
+                                &rules[ti].rhs,
+                                &[(a, Multiplicity(k))],
+                            );
+                            crate::multiset::clamp_nilpotent(&mut r1, order);
+                            let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
+                            crit.push((op, r1, r2));
+                        }
+                    }
+                    CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
+                }
+            }
+
             // Gather candidate partner nodes from the use-lists of M's distinct children.
             partner_buf.clear();
             for &(x, _) in &rules[ti].lhs {
