@@ -1,0 +1,13 @@
+;; EXPECT: ok
+;; Semi-persistence of the recanonize unit-drop, positive half (adversarial analysis B.7):
+;; inside the push, the b = zero merge drops b from add(a,b) and s = a holds.
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function add (E) E :assoc :comm :identity (zero))
+(let s (add (a) (b)))
+(push)
+(union (b) (zero))
+(check (= s (a)))
+(pop)

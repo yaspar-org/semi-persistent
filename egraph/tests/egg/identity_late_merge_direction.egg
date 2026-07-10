@@ -1,0 +1,15 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; Union-direction twin of identity_late_merge_mset (adversarial analysis B.5): the
+;; became-a-unit sweep exists because recanonize only visits the absorbed side's parents,
+;; and which side survives is a rank choice. Pin BOTH directions: here the unit is the
+;; union's first argument.
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function add (E) E :assoc :comm :identity (zero))
+(let s_ab (add (a) (b)))
+(union (zero) (b))
+(run 5)
+(check (= s_ab (a)))

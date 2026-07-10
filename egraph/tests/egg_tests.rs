@@ -338,6 +338,18 @@ egg_test!(identity_aci, "identity_aci.egg");
 egg_test!(identity_late_merge_mset, "identity_late_merge_mset.egg");
 egg_test!(identity_late_merge_aci, "identity_late_merge_aci.egg");
 egg_test!(identity_late_merge_cc, "identity_late_merge_cc.egg");
+// Adversarial coverage batch (adversarial analysis §B): behaviors that were correct but
+// unpinned. cross_op_unit_isolation is a SOUNDNESS guard (per-op unit-drop); the push/pop
+// pair pins semi-persistence of the unit merge; the direction twin pins the became-a-unit
+// sweep against rank-dependent survivor choice.
+egg_test!(cross_op_unit_isolation, "cross_op_unit_isolation.egg");
+egg_test!(
+    identity_late_merge_direction,
+    "identity_late_merge_direction.egg"
+);
+egg_test!(nilpotent_unit_then_clamp, "nilpotent_unit_then_clamp.egg");
+egg_test!(push_pop_unit_merge_in, "push_pop_unit_merge_in.egg");
+egg_test!(push_pop_unit_merge_out, "push_pop_unit_merge_out.egg");
 egg_test!(
     alg_tags_reject_idem_nilpotent,
     "alg_tags_reject_idem_nilpotent.egg"
@@ -372,6 +384,7 @@ egg_test!(
     nilpotent3_singleton_lhs_axiom,
     "nilpotent3_singleton_lhs_axiom.egg"
 );
+egg_test!(nilpotent3_mult2_axiom_cp, "nilpotent3_mult2_axiom_cp.egg");
 // Soundness: xor(a,a) is never a (the old Set-dedup bug). check is expected to fail.
 egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
 // Canonization establishes the clamp / identity-drop / degeneracy normal form with completion

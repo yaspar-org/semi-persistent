@@ -1,0 +1,16 @@
+;; EXPECT: check-failed
+;; SOUNDNESS guard (adversarial analysis B.1): the identity unit-drop is per-op. Merging a
+;; class into `add`'s zero must NOT drop it from `mul` monomials — mul(a,b) with b = zero
+;; is NOT a (zero is not mul's unit; one is). A regression that drops another op's unit
+;; would be an unsoundness, so this check must keep failing.
+(sort E)
+(function zero () E)
+(function one () E)
+(function a () E)
+(function b () E)
+(function add (E) E :assoc :comm :identity (zero))
+(function mul (E) E :assoc :comm :identity (one))
+(let s (mul (a) (b)))
+(union (b) (zero))
+(run 5)
+(check (= s (a)))

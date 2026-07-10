@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; Unit-drop and count clamp composing in one recanonize cascade (adversarial analysis
+;; B.6): xr(c,d,f) with f = e (unit-drop → {c,d}) and c = d (coalesce → {c:2}, clamp → {})
+;; must empty to the unit, whichever order the worklist processes the merges.
+(sort E)
+(function e () E)
+(function c () E)
+(function d () E)
+(function f () E)
+(function xr (E) E :assoc :comm :nilpotent :identity (e))
+(let s (xr (c) (d) (f)))
+(union (f) (e))
+(union (c) (d))
+(run 5)
+(check (= s (e)))

@@ -1,0 +1,17 @@
+;; EXPECT: check-failed
+;; Semi-persistence of the recanonize unit-drop, negative half (adversarial analysis B.7):
+;; after the pop the b = zero merge is rolled back — the recanonized node and its
+;; degeneracy merge must be restored, so s = a no longer holds. (The in-push half is
+;; asserted by push_pop_unit_merge_in.egg; this file's first check re-derives it, so the
+;; failure here is necessarily the post-pop check.)
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function add (E) E :assoc :comm :identity (zero))
+(let s (add (a) (b)))
+(push)
+(union (b) (zero))
+(check (= s (a)))
+(pop)
+(check (= s (a)))
