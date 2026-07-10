@@ -1236,7 +1236,9 @@ where
     fn cc_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
         use crate::multiplicity::Multiplicity;
         use crate::multiset::{
-            NfRule, multiset_disjoint, multiset_lcm, multiset_subset, normalize_ms,
+            NfRuleRef, multiset_disjoint, multiset_lcm_into, multiset_subset,
+            multiset_subtract_into, multiset_union, normalize_ms_into, normalize_nilpotent_into,
+            normalize_set_into,
         };
 
         // Canonical monomial of a completion node as sorted (class-repr, mult): coalesced
@@ -1435,6 +1437,11 @@ where
         // binary search (no map, no per-round allocation). Each unordered pair is processed
         // once (`ti.node < partner.node`). Both reducts are normalized before merge.
         let mut partner_buf: Vec<Cfg::G> = Vec::new();
+        // Reusable temporaries for the (B) reduct arithmetic (adversarial analysis A2): the
+        // lcm and residual are per-pair scratch; only the stored reducts (`crit` entries)
+        // allocate. Grown once, reused across every pair.
+        let mut ab_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut sub_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
         let mut delta_skipped = 0usize;
         let delta_in_rules = rules.iter().filter(|r| in_delta(r.node)).count();
         for ti in 0..rules.len() {
@@ -1540,15 +1547,11 @@ where
                 if multiset_subset(a, m) || multiset_subset(m, a) {
                     continue;
                 }
-                let ab = multiset_lcm(m, a);
-                let mut r1 = crate::multiset::multiset_union(
-                    &crate::multiset::multiset_subtract(&ab, m),
-                    &rules[ti].rhs,
-                );
-                let mut r2 = crate::multiset::multiset_union(
-                    &crate::multiset::multiset_subtract(&ab, a),
-                    &rules[pi].rhs,
-                );
+                multiset_lcm_into(&mut ab_buf, m, a);
+                multiset_subtract_into(&mut sub_buf, &ab_buf, m);
+                let mut r1 = multiset_union(&sub_buf, &rules[ti].rhs);
+                multiset_subtract_into(&mut sub_buf, &ab_buf, a);
+                let mut r2 = multiset_union(&sub_buf, &rules[pi].rhs);
                 // Clamp the reducts to the op's normal-form count domain before the pair is
                 // closed: idempotent → {0,1} (ACI union), nilpotent → mod-n (symmetric
                 // difference). Multiset (plain AC) keeps ℕ counts, no clamp.
@@ -1589,26 +1592,38 @@ where
         // LHS is in normal form w.r.t. itself; reducing it by itself would subsume the
         // rule before it can superpose — the §4b regression). So a node is collapsed only
         // when a *different*, strictly-contained rule reduces it (genuine inter-reduction).
+        // Borrowed rule views + reused normalize buffers (adversarial analysis A1/A2):
+        // the per-target rule set is a `clear`+`extend` refill of `Copy` views into the
+        // round's rule table — no deep clones — and the normal form lands in a reused
+        // destination buffer. Zero steady-state allocation per target.
+        let mut nf_refs: Vec<NfRuleRef<'_, Cfg::G>> = Vec::with_capacity(rules.len());
+        let mut nf_out: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut nf_ping: Vec<(Cfg::G, Multiplicity)> = Vec::new();
         for (op, mset, class, node, _is_rule) in targets {
-            let normal = {
-                let nf_rules: Vec<NfRule<Cfg::G>> = rules
+            nf_refs.clear();
+            nf_refs.extend(
+                rules
                     .iter()
                     .filter(|r| r.op == op.to_usize() && r.node != node)
-                    .map(|r| NfRule {
-                        lhs: r.lhs.clone(),
-                        rhs: r.rhs.clone(),
-                    })
-                    .collect();
-                // Normalize in the op's count domain: idempotent → set (clamp to 1); nilpotent →
-                // mod-n; plain AC (MSet) → ℕ.
-                match self.op_clamp(op) {
-                    CompletionClamp::Idempotent => crate::multiset::normalize_set(&mset, &nf_rules),
-                    CompletionClamp::Nilpotent { order } => {
-                        crate::multiset::normalize_nilpotent(&mset, &nf_rules, order)
-                    }
-                    CompletionClamp::Multiset => normalize_ms(&mset, &nf_rules),
+                    .map(|r| NfRuleRef {
+                        lhs: &r.lhs,
+                        rhs: &r.rhs,
+                    }),
+            );
+            // Normalize in the op's count domain: idempotent → set (clamp to 1); nilpotent →
+            // mod-n; plain AC (MSet) → ℕ.
+            match self.op_clamp(op) {
+                CompletionClamp::Idempotent => {
+                    normalize_set_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs)
                 }
-            };
+                CompletionClamp::Nilpotent { order } => {
+                    normalize_nilpotent_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs, order)
+                }
+                CompletionClamp::Multiset => {
+                    normalize_ms_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs)
+                }
+            }
+            let normal = &nf_out;
             // If normalization by the other rules changed the monomial, materialize the normal
             // form and merge. `materialize` calls `add`, which now resolves a degenerate result
             // itself: an emptied monomial (`a ⊕ a → {}`, or `+(a,e)`-style cancellation) becomes
@@ -1616,8 +1631,8 @@ where
             // this one branch covers the empty/size-1 cases too (a completion target always has
             // `mset.len() ≥ 2`, canonization never stores a degenerate node, so any empty/size-1
             // `normal` differs from `mset` and lands here).
-            if normal != mset {
-                let c_prime = materialize(self, op, &normal);
+            if *normal != mset {
+                let c_prime = materialize(self, op, normal);
                 changed |= do_merge(self, c_prime, class);
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
@@ -1642,7 +1657,7 @@ where
         // (perf doc §2). A reduct of op X must normalize ONLY against op-X rules: a different
         // op's LHS is a set of class ids that could spuriously match inside X's monomial. So
         // group `nf_rules` by op. Keyed by op index; lookup is a small linear scan (few ops).
-        let mut nf_by_op: Vec<(usize, Vec<NfRule<Cfg::G>>)> = Vec::new();
+        let mut nf_by_op: Vec<(usize, Vec<NfRuleRef<'_, Cfg::G>>)> = Vec::new();
         for r in &rules {
             let entry = match nf_by_op.iter_mut().find(|(o, _)| *o == r.op) {
                 Some(e) => &mut e.1,
@@ -1651,13 +1666,15 @@ where
                     &mut nf_by_op.last_mut().unwrap().1
                 }
             };
-            entry.push(NfRule {
-                lhs: r.lhs.clone(),
-                rhs: r.rhs.clone(),
+            entry.push(NfRuleRef {
+                lhs: &r.lhs,
+                rhs: &r.rhs,
             });
         }
-        let empty_nf: Vec<NfRule<Cfg::G>> = Vec::new();
+        let empty_nf: Vec<NfRuleRef<'_, Cfg::G>> = Vec::new();
         let crit_generated = crit.len();
+        let mut n1_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut n2_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
         for (op, r1, r2) in crit {
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
             // already coincide as multisets), so skip the two full normalizations entirely
@@ -1672,19 +1689,21 @@ where
                 .map_or(&empty_nf, |(_, v)| v);
             // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
             // mod-n, plain AC → ℕ) before comparing/merging.
-            let (n1, n2) = match self.op_clamp(op) {
-                CompletionClamp::Idempotent => (
-                    crate::multiset::normalize_set(&r1, nf_rules),
-                    crate::multiset::normalize_set(&r2, nf_rules),
-                ),
-                CompletionClamp::Nilpotent { order } => (
-                    crate::multiset::normalize_nilpotent(&r1, nf_rules, order),
-                    crate::multiset::normalize_nilpotent(&r2, nf_rules, order),
-                ),
-                CompletionClamp::Multiset => {
-                    (normalize_ms(&r1, nf_rules), normalize_ms(&r2, nf_rules))
+            match self.op_clamp(op) {
+                CompletionClamp::Idempotent => {
+                    normalize_set_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules);
+                    normalize_set_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules);
                 }
-            };
+                CompletionClamp::Nilpotent { order } => {
+                    normalize_nilpotent_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules, order);
+                    normalize_nilpotent_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules, order);
+                }
+                CompletionClamp::Multiset => {
+                    normalize_ms_into(&mut n1_buf, &mut nf_ping, &r1, nf_rules);
+                    normalize_ms_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules);
+                }
+            }
+            let (n1, n2) = (&n1_buf, &n2_buf);
             if n1 == n2 {
                 trivial += 1;
                 trivial_after_nf += 1;
@@ -1694,8 +1713,8 @@ where
             // `materialize` calls `add`, which resolves a degenerate reduct itself: an emptied
             // reduct (nilpotent cancellation / identity drop) becomes the unit, a single mult-1
             // summand becomes that class. So no empty/size-1 special-casing is needed here.
-            let c1 = materialize(self, op, &n1);
-            let c2 = materialize(self, op, &n2);
+            let c1 = materialize(self, op, n1);
+            let c2 = materialize(self, op, n2);
             changed |= do_merge(self, c1, c2);
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {

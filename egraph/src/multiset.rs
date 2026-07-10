@@ -220,6 +220,26 @@ pub struct NfRule<G> {
     pub rhs: Vec<Pair<G>>,
 }
 
+/// A borrowed view of a ground AC rewrite rule, the form the completion hot loop lends to
+/// every normalization: the round's rule table owns each `lhs`/`rhs` once and hands out
+/// `Copy` views — no per-call deep copies (adversarial analysis A1). The allocating
+/// [`normalize_ms`]/[`normalize_set`]/[`normalize_nilpotent`] wrappers keep accepting owned
+/// [`NfRule`]s for tests and diagnostics and build the views internally.
+#[derive(Clone, Copy)]
+pub struct NfRuleRef<'a, G> {
+    pub lhs: &'a [Pair<G>],
+    pub rhs: &'a [Pair<G>],
+}
+
+impl<'a, G> From<&'a NfRule<G>> for NfRuleRef<'a, G> {
+    fn from(r: &'a NfRule<G>) -> Self {
+        Self {
+            lhs: &r.lhs,
+            rhs: &r.rhs,
+        }
+    }
+}
+
 /// Release-mode backstop for the normalize loops. With every rule oriented `lhs ≫ rhs`
 /// in the admissible order, each rewrite strictly lowers the host monomial, so the loop
 /// terminates unconditionally; legitimate chains are short in practice but have no small
@@ -243,7 +263,7 @@ pub fn normalize_ms_into<G: Copy + Ord>(
     out: &mut Vec<Pair<G>>,
     scratch: &mut Vec<Pair<G>>,
     ms: &[Pair<G>],
-    rules: &[NfRule<G>],
+    rules: &[NfRuleRef<'_, G>],
 ) {
     out.clear();
     out.extend_from_slice(ms);
@@ -254,13 +274,13 @@ pub fn normalize_ms_into<G: Copy + Ord>(
     let mut guard = GUARD_MAX_REWRITES;
     'outer: loop {
         for rule in rules {
-            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+            debug_assert!(monomial_cmp(rule.lhs, rule.rhs) == std::cmp::Ordering::Greater);
+            if !rule.lhs.is_empty() && multiset_subset(rule.lhs, out) {
                 #[cfg(debug_assertions)]
                 let before = out.clone();
                 // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
-                multiset_subtract_into(scratch, out, &rule.lhs);
-                multiset_union_into(out, scratch, &rule.rhs);
+                multiset_subtract_into(scratch, out, rule.lhs);
+                multiset_union_into(out, scratch, rule.rhs);
                 #[cfg(debug_assertions)]
                 debug_assert!(
                     monomial_cmp(out, &before) == std::cmp::Ordering::Less,
@@ -284,9 +304,10 @@ pub fn normalize_ms_into<G: Copy + Ord>(
 
 /// Allocating wrapper over [`normalize_ms_into`].
 pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
+    let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
-    normalize_ms_into(&mut out, &mut scratch, ms, rules);
+    normalize_ms_into(&mut out, &mut scratch, ms, &refs);
     out
 }
 
@@ -311,7 +332,7 @@ pub fn normalize_set_into<G: Copy + Ord>(
     out: &mut Vec<Pair<G>>,
     scratch: &mut Vec<Pair<G>>,
     ms: &[Pair<G>],
-    rules: &[NfRule<G>],
+    rules: &[NfRuleRef<'_, G>],
 ) {
     out.clear();
     out.extend_from_slice(ms);
@@ -319,12 +340,12 @@ pub fn normalize_set_into<G: Copy + Ord>(
     let mut guard = GUARD_MAX_REWRITES;
     'outer: loop {
         for rule in rules {
-            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+            debug_assert!(monomial_cmp(rule.lhs, rule.rhs) == std::cmp::Ordering::Greater);
+            if !rule.lhs.is_empty() && multiset_subset(rule.lhs, out) {
                 #[cfg(debug_assertions)]
                 let before = out.clone();
-                multiset_subtract_into(scratch, out, &rule.lhs);
-                multiset_union_into(out, scratch, &rule.rhs);
+                multiset_subtract_into(scratch, out, rule.lhs);
+                multiset_union_into(out, scratch, rule.rhs);
                 clamp_idempotent(out);
                 // Strictness survives the clamp: the multiset step is strict (admissible
                 // order + lhs ≫ rhs) and the clamp only lowers counts (can(t) ≼ t).
@@ -347,9 +368,10 @@ pub fn normalize_set_into<G: Copy + Ord>(
 
 /// Allocating wrapper over [`normalize_set_into`].
 pub fn normalize_set<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
+    let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
-    normalize_set_into(&mut out, &mut scratch, ms, rules);
+    normalize_set_into(&mut out, &mut scratch, ms, &refs);
     out
 }
 
@@ -379,7 +401,7 @@ pub fn normalize_nilpotent_into<G: Copy + Ord>(
     out: &mut Vec<Pair<G>>,
     scratch: &mut Vec<Pair<G>>,
     ms: &[Pair<G>],
-    rules: &[NfRule<G>],
+    rules: &[NfRuleRef<'_, G>],
     order: u8,
 ) {
     out.clear();
@@ -388,12 +410,12 @@ pub fn normalize_nilpotent_into<G: Copy + Ord>(
     let mut guard = GUARD_MAX_REWRITES;
     'outer: loop {
         for rule in rules {
-            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+            debug_assert!(monomial_cmp(rule.lhs, rule.rhs) == std::cmp::Ordering::Greater);
+            if !rule.lhs.is_empty() && multiset_subset(rule.lhs, out) {
                 #[cfg(debug_assertions)]
                 let before = out.clone();
-                multiset_subtract_into(scratch, out, &rule.lhs);
-                multiset_union_into(out, scratch, &rule.rhs);
+                multiset_subtract_into(scratch, out, rule.lhs);
+                multiset_union_into(out, scratch, rule.rhs);
                 clamp_nilpotent(out, order);
                 // Strictness survives the clamp: the multiset step is strict (admissible
                 // order + lhs ≫ rhs) and the mod-n clamp only lowers counts (can(t) ≼ t).
@@ -420,9 +442,10 @@ pub fn normalize_nilpotent<G: Copy + Ord>(
     rules: &[NfRule<G>],
     order: u8,
 ) -> Vec<Pair<G>> {
+    let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
-    normalize_nilpotent_into(&mut out, &mut scratch, ms, rules, order);
+    normalize_nilpotent_into(&mut out, &mut scratch, ms, &refs, order);
     out
 }
 
@@ -610,9 +633,10 @@ mod tests {
             },
         ];
         let input = ms(&[(1, 1), (2, 1), (4, 1)]);
+        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
         let mut out = ms(&[(99, 3)]); // pre-dirtied
         let mut scratch = ms(&[(88, 2)]); // pre-dirtied
-        normalize_ms_into(&mut out, &mut scratch, &input, &rules);
+        normalize_ms_into(&mut out, &mut scratch, &input, &refs);
         assert_eq!(out, ms(&[(5, 1)]));
         assert_eq!(out, normalize_ms(&input, &rules));
     }
@@ -650,9 +674,10 @@ mod tests {
         assert!(normalize_nilpotent(&ms(&[(1, 2)]), &[], 2).is_empty());
         // _into matches the wrapper and clears a dirty buffer.
         let input = ms(&[(1, 1), (2, 1), (3, 1)]);
+        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
         let mut out = ms(&[(99, 3)]);
         let mut scratch = ms(&[(88, 2)]);
-        normalize_nilpotent_into(&mut out, &mut scratch, &input, &rules, 2);
+        normalize_nilpotent_into(&mut out, &mut scratch, &input, &refs, 2);
         assert_eq!(out, normalize_nilpotent(&input, &rules, 2));
     }
 
