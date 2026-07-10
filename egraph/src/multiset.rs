@@ -187,16 +187,28 @@ pub fn multiset_size<G: Copy>(m: &[Pair<G>]) -> u64 {
 }
 
 /// Degree-lexicographic order on monomials — a *total admissible* monomial order
-/// (Kapur §3.1): compare total size first, then lexicographically by the sorted
-/// `(class id, multiplicity)` sequence. Admissible = subterm property (a proper
-/// super-multiset is strictly larger, since size grows) + compatibility (`a ≫ b ⟹
-/// a⊎x ≫ b⊎x`). The `≫`-smaller monomial is a class's normal-form representative;
-/// orienting every rule "larger → smaller" is what makes AC rewriting shrink and
-/// terminate (design doc §6b, §9).
+/// (Kapur LMCS 2023 §3): compare total size first, then lexicographically over the
+/// `(class id, multiplicity)` entries **from the largest class id downward**. At the
+/// first non-tied position (descending) either one side holds a strictly larger id, or
+/// both hold the same id with different counts and the larger count wins — both branches
+/// say "the side with more of the largest differing class is greater", which is exactly
+/// Kapur's degree-lex (`∃c ∈ A−B, ∀d ∈ B−A, c ≫ d`).
+///
+/// Admissible = subterm property (a proper super-multiset is strictly larger, since size
+/// grows) + compatibility (`a ≫ b ⟹ a⊎x ≫ b⊎x`; adding `x` shifts both counts equally,
+/// so the largest differing id and the sign of its count difference are unchanged). The
+/// `≫`-smaller monomial is a class's normal-form representative; orienting every rule
+/// "larger → smaller" is what makes AC rewriting shrink and terminate (design doc §6b, §9).
+///
+/// NOTE: the tie-break direction matters. Comparing the *ascending* sequences
+/// (`a.iter().cmp(b.iter())`) is NOT admissible: at the smallest differing id it says
+/// "more copies wins" when both sides carry the id but "absence wins" when one lacks it,
+/// and those two branches disagree — `{b:2} ≫ {a,c}` yet `{a,b:2} ≺ {a:2,c}`, breaking
+/// compatibility and with it the termination of [`normalize_ms_into`].
 pub fn monomial_cmp<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> std::cmp::Ordering {
     multiset_size(a)
         .cmp(&multiset_size(b))
-        .then_with(|| a.iter().cmp(b.iter()))
+        .then_with(|| a.iter().rev().cmp(b.iter().rev()))
 }
 
 /// A ground AC rewrite rule `+lhs → +rhs`, both monomials, oriented `lhs ≫ rhs` by
@@ -207,6 +219,14 @@ pub struct NfRule<G> {
     pub lhs: Vec<Pair<G>>,
     pub rhs: Vec<Pair<G>>,
 }
+
+/// Release-mode backstop for the normalize loops. With every rule oriented `lhs ≫ rhs`
+/// in the admissible order, each rewrite strictly lowers the host monomial, so the loop
+/// terminates unconditionally; legitimate chains are short in practice but have no small
+/// closed-form bound (a chain of equal-size rules can lex-descend many times), so the cap
+/// must be generous enough to never truncate a real normalization. Reaching it means a
+/// mis-oriented rule got in — debug builds assert instead of truncating silently.
+const GUARD_MAX_REWRITES: usize = 1_000_000;
 
 /// Normalize a monomial to a fixpoint by AC rewriting (Kapur Def. 3): while some rule
 /// `+A → +B` has `A ⊆ ms`, replace `A` by `B` (`ms := (ms − A) ⊎ B`). Every rule is
@@ -227,18 +247,32 @@ pub fn normalize_ms_into<G: Copy + Ord>(
 ) {
     out.clear();
     out.extend_from_slice(ms);
-    // Defensive iteration cap: each rewrite strictly lowers `out` in the well-founded
-    // degree-lex order, but guard against a mis-oriented rule slipping in.
-    let mut guard = 4 * (multiset_size(out) as usize + 1);
+    // Termination is a theorem, not a hope: every rule is oriented `lhs ≫ rhs` in the
+    // admissible [`monomial_cmp`] order, so each step strictly lowers `out` (compatibility)
+    // in a well-founded order. The guard is a release-mode backstop against a caller
+    // passing a mis-oriented rule; hitting it is always a bug (debug builds assert).
+    let mut guard = GUARD_MAX_REWRITES;
     'outer: loop {
         for rule in rules {
             debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
             if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                #[cfg(debug_assertions)]
+                let before = out.clone();
                 // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
                 multiset_subtract_into(scratch, out, &rule.lhs);
                 multiset_union_into(out, scratch, &rule.rhs);
-                guard = guard.saturating_sub(1);
+                #[cfg(debug_assertions)]
+                debug_assert!(
+                    monomial_cmp(out, &before) == std::cmp::Ordering::Less,
+                    "rewrite step failed to lower the host monomial (order not admissible?)"
+                );
+                guard -= 1;
                 if guard == 0 {
+                    debug_assert!(
+                        false,
+                        "normalize_ms_into hit the rewrite guard: a rule set \
+                         oriented by monomial_cmp cannot loop, so a mis-oriented rule slipped in"
+                    );
                     break 'outer;
                 }
                 continue 'outer;
@@ -282,16 +316,26 @@ pub fn normalize_set_into<G: Copy + Ord>(
     out.clear();
     out.extend_from_slice(ms);
     clamp_idempotent(out);
-    let mut guard = 4 * (out.len() + 1);
+    let mut guard = GUARD_MAX_REWRITES;
     'outer: loop {
         for rule in rules {
-            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) != std::cmp::Ordering::Less);
+            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
             if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                #[cfg(debug_assertions)]
+                let before = out.clone();
                 multiset_subtract_into(scratch, out, &rule.lhs);
                 multiset_union_into(out, scratch, &rule.rhs);
                 clamp_idempotent(out);
-                guard = guard.saturating_sub(1);
+                // Strictness survives the clamp: the multiset step is strict (admissible
+                // order + lhs ≫ rhs) and the clamp only lowers counts (can(t) ≼ t).
+                #[cfg(debug_assertions)]
+                debug_assert!(
+                    monomial_cmp(out, &before) == std::cmp::Ordering::Less,
+                    "idempotent rewrite step failed to lower the host monomial"
+                );
+                guard -= 1;
                 if guard == 0 {
+                    debug_assert!(false, "normalize_set_into hit the rewrite guard");
                     break 'outer;
                 }
                 continue 'outer;
@@ -341,16 +385,26 @@ pub fn normalize_nilpotent_into<G: Copy + Ord>(
     out.clear();
     out.extend_from_slice(ms);
     clamp_nilpotent(out, order);
-    let mut guard = 4 * (multiset_size(out) as usize + 1);
+    let mut guard = GUARD_MAX_REWRITES;
     'outer: loop {
         for rule in rules {
-            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) != std::cmp::Ordering::Less);
+            debug_assert!(monomial_cmp(&rule.lhs, &rule.rhs) == std::cmp::Ordering::Greater);
             if !rule.lhs.is_empty() && multiset_subset(&rule.lhs, out) {
+                #[cfg(debug_assertions)]
+                let before = out.clone();
                 multiset_subtract_into(scratch, out, &rule.lhs);
                 multiset_union_into(out, scratch, &rule.rhs);
                 clamp_nilpotent(out, order);
-                guard = guard.saturating_sub(1);
+                // Strictness survives the clamp: the multiset step is strict (admissible
+                // order + lhs ≫ rhs) and the mod-n clamp only lowers counts (can(t) ≼ t).
+                #[cfg(debug_assertions)]
+                debug_assert!(
+                    monomial_cmp(out, &before) == std::cmp::Ordering::Less,
+                    "nilpotent rewrite step failed to lower the host monomial"
+                );
+                guard -= 1;
                 if guard == 0 {
+                    debug_assert!(false, "normalize_nilpotent_into hit the rewrite guard");
                     break 'outer;
                 }
                 continue 'outer;
@@ -600,5 +654,113 @@ mod tests {
         let mut scratch = ms(&[(88, 2)]);
         normalize_nilpotent_into(&mut out, &mut scratch, &input, &rules, 2);
         assert_eq!(out, normalize_nilpotent(&input, &rules, 2));
+    }
+
+    // ── Admissibility of monomial_cmp (Kapur LMCS 2023 §3) ──────────────────────
+    // These guard the W1 conformance fix: the tie-break must compare from the largest
+    // class id downward. The ascending tie-break it replaced violated compatibility.
+
+    fn lcg(rng: &mut u64, m: u32) -> u32 {
+        *rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*rng >> 33) as u32) % m
+    }
+
+    /// Random canonical monomial over ids 1..=6 with counts 0..=3.
+    fn rand_ms(rng: &mut u64) -> Vec<Pair<ENodeId>> {
+        let mut v = Vec::new();
+        for g in 1..=6u32 {
+            let c = lcg(rng, 4);
+            if c > 0 {
+                v.push((id(g), Multiplicity(c)));
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn monomial_cmp_kapur_deglex_counterexample() {
+        // The exact pair the old ascending tie-break got wrong (ids a=1 < b=2 < c=3).
+        // Sizes tie at 2; the largest differing id is c, owned by {a,c}: {a,c} ≫ {b:2}.
+        let bb = ms(&[(2, 2)]);
+        let ac = ms(&[(1, 1), (3, 1)]);
+        assert_eq!(monomial_cmp(&ac, &bb), std::cmp::Ordering::Greater);
+        // Compatibility on the pair that used to flip after ⊎{a}.
+        let ac_a = multiset_union(&ac, &ms(&[(1, 1)])); // {a:2, c}
+        let bb_a = multiset_union(&bb, &ms(&[(1, 1)])); // {a, b:2}
+        assert_eq!(monomial_cmp(&ac_a, &bb_a), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn monomial_cmp_compatibility_randomized() {
+        // Admissibility axiom: a ≫ b ⟹ a⊎x ≫ b⊎x (and Equal only for identical multisets).
+        let mut rng: u64 = 42;
+        let mut checked = 0usize;
+        for _ in 0..2000 {
+            let a = rand_ms(&mut rng);
+            let b = rand_ms(&mut rng);
+            let x = rand_ms(&mut rng);
+            let ord = monomial_cmp(&a, &b);
+            if ord == std::cmp::Ordering::Equal {
+                assert_eq!(a, b, "Equal must mean identical multisets");
+                continue;
+            }
+            assert_eq!(
+                monomial_cmp(&multiset_union(&a, &x), &multiset_union(&b, &x)),
+                ord,
+                "compatibility violated: a={a:?} b={b:?} x={x:?}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 1000);
+    }
+
+    #[test]
+    fn monomial_cmp_subterm_property_randomized() {
+        // A proper super-multiset is strictly greater (degree component).
+        let mut rng: u64 = 7;
+        for _ in 0..1000 {
+            let b = rand_ms(&mut rng);
+            let mut ext = rand_ms(&mut rng);
+            if ext.is_empty() {
+                ext = ms(&[(1, 1)]);
+            }
+            let a = multiset_union(&b, &ext);
+            assert_eq!(monomial_cmp(&a, &b), std::cmp::Ordering::Greater);
+        }
+    }
+
+    #[test]
+    fn former_cycle_rules_terminate_at_irreducible_normal_form() {
+        // Under the old tie-break, {b:2}→{a,c} and {a:2,c}→{a,b:2} both passed the
+        // Greater orientation guard and normalize_ms two-cycled on {a,b:2} until the
+        // defensive guard, returning a REDUCIBLE monomial. Under Kapur deg-lex the first
+        // orients the other way; with both correctly oriented, normalization terminates
+        // at an irreducible normal form from every start point.
+        let r1 = NfRule {
+            lhs: ms(&[(1, 1), (3, 1)]),
+            rhs: ms(&[(2, 2)]),
+        }; // {a,c} → {b:2}
+        let r2 = NfRule {
+            lhs: ms(&[(1, 2), (3, 1)]),
+            rhs: ms(&[(1, 1), (2, 2)]),
+        }; // {a:2,c} → {a,b:2}
+        assert_eq!(monomial_cmp(&r1.lhs, &r1.rhs), std::cmp::Ordering::Greater);
+        assert_eq!(monomial_cmp(&r2.lhs, &r2.rhs), std::cmp::Ordering::Greater);
+        let rules = [r1, r2];
+        for host in [
+            ms(&[(1, 1), (2, 2)]),
+            ms(&[(1, 2), (3, 1)]),
+            ms(&[(1, 2), (3, 2)]),
+        ] {
+            let out = normalize_ms(&host, &rules);
+            for r in &rules {
+                assert!(
+                    !multiset_subset(&r.lhs, &out),
+                    "normalize_ms({host:?}) returned a reducible result {out:?}"
+                );
+            }
+        }
     }
 }
