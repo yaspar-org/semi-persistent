@@ -572,38 +572,35 @@ where
         buf.clear();
         match self.node_ref(node) {
             NodeRef::MSet(_) => {
-                // mset_children, find-canonicalized + coalesced (same form as MSetCanon).
-                let mut raw = Vec::new();
-                self.mset_children(node, &mut raw);
-                let mut m: Vec<(Cfg::G, Multiplicity)> = raw
-                    .into_iter()
-                    .map(|(g, mult)| (self.classes.find_const(g), Multiplicity(mult.into())))
-                    .collect();
-                m.sort_by_key(|p| p.0);
-                for (g, mult) in m {
-                    if let Some(last) = buf.last_mut()
-                        && last.0 == g
-                    {
-                        last.1 = Multiplicity(last.1.0 + mult.0);
+                // Children find-canonicalized, then sorted + coalesced IN PLACE in the
+                // destination (same form as MSetCanon) — no intermediate Vec (adversarial
+                // analysis A3: this `_into` used to allocate twice internally).
+                self.for_each_child(node, |g, mult| {
+                    buf.push((self.classes.find_const(g), Multiplicity(mult)));
+                });
+                buf.sort_by_key(|p| p.0);
+                let mut w = 0usize;
+                for r in 1..buf.len() {
+                    if buf[r].0 == buf[w].0 {
+                        buf[w].1 = Multiplicity(buf[w].1.0 + buf[r].1.0);
                     } else {
-                        buf.push((g, mult));
+                        w += 1;
+                        buf[w] = buf[r];
                     }
+                }
+                if !buf.is_empty() {
+                    buf.truncate(w + 1);
                 }
             }
             NodeRef::Set(_) => {
-                // set_children, find-canonicalized + deduped (set semantics, all mult 1 —
-                // same form as SetCanon). This is the ACI monomial.
-                let mut raw = Vec::new();
-                self.set_children(node, &mut raw);
-                let mut m: Vec<Cfg::G> = raw
-                    .into_iter()
-                    .map(|g| self.classes.find_const(g))
-                    .collect();
-                m.sort();
-                m.dedup();
-                for g in m {
-                    buf.push((g, Multiplicity(1)));
-                }
+                // Set semantics: find-canonicalize, sort, DEDUP — multiplicity stays 1
+                // (two summands whose classes merged count once, the idempotent join).
+                // This is the ACI monomial, same form as SetCanon.
+                self.for_each_child(node, |g, _| {
+                    buf.push((self.classes.find_const(g), Multiplicity(1)));
+                });
+                buf.sort_by_key(|p| p.0);
+                buf.dedup_by_key(|p| p.0);
             }
             _ => {
                 buf.push((self.classes.find_const(node), Multiplicity(1)));
@@ -1292,13 +1289,6 @@ where
                 });
             }
         }
-        // The (B) partner search binary-searches `rules` by global node id, so it must be
-        // sorted by `node`. `completion_node_ids` yields the MSet partition then the Set
-        // partition, each internally id-sorted but interleaved in the global id space, so sort
-        // by `node` here (a cheap merge of two sorted runs). Distinct nodes ⇒ strictly sorted.
-        rules.sort_unstable_by_key(|r| r.node);
-        debug_assert!(rules.windows(2).all(|w| w[0].node < w[1].node));
-
         // Dedup the reducer/superposition set by (op, LHS). Congruent AC nodes can
         // recanonicalize to the same monomial after a child merge without being hash-consed
         // into one node, so the same rule `+M → r` appears as several nodes. Kapur step 2
@@ -1312,13 +1302,20 @@ where
         // (the implied equality fires through `targets`, not `rules`). Without the dedup, every
         // copy reduces every other copy, so they mutually collapse and the rule vanishes
         // entirely (the §6b "merge before mark" / self-reduction hazard, at the set level).
-        // O(rules) with one hash per rule; in line with the batch round's existing per-rule
-        // clones (the DPS rewrite is S3b).
-        {
-            let mut seen: std::collections::HashSet<(usize, Vec<(Cfg::G, Multiplicity)>)> =
-                std::collections::HashSet::with_capacity(rules.len());
-            rules.retain(|r| seen.insert((r.op, r.lhs.clone())));
-        }
+        // Clone-free (adversarial analysis A4): sort by (op, lhs, node) with borrowed
+        // comparisons, drop adjacent (op, lhs) duplicates keeping the first (= lowest node
+        // id), then restore node order for the (B) binary search.
+        rules.sort_unstable_by(|x, y| {
+            x.op.cmp(&y.op)
+                .then_with(|| x.lhs.cmp(&y.lhs))
+                .then_with(|| x.node.cmp(&y.node))
+        });
+        rules.dedup_by(|later, earlier| later.op == earlier.op && later.lhs == earlier.lhs);
+
+        // The (B) partner search binary-searches `rules` by global node id, so it must be
+        // sorted by `node`. Distinct nodes ⇒ strictly sorted.
+        rules.sort_unstable_by_key(|r| r.node);
+        debug_assert!(rules.windows(2).all(|w| w[0].node < w[1].node));
 
         // Delta rule-node set for incremental (B): sorted, dedup'd node ids touched since
         // the previous round. `touched` may contain duplicates; sort+dedup once, then test
@@ -1355,16 +1352,23 @@ where
             .collect();
         let dt_reducible = t_reducible.elapsed();
 
-        // Expand a multiset to a flat child list; `add` re-sorts and re-coalesces.
-        let materialize = |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)]| -> Cfg::G {
-            let mut children: Vec<Cfg::G> = Vec::new();
-            for (g, mult) in ms {
-                for _ in 0..mult.0 {
-                    children.push(*g);
+        // Expand a multiset to a flat child list into a reused scratch; `add` re-sorts and
+        // re-coalesces. The expansion (O(total count), not O(distinct summands)) stays for
+        // now: `add`'s whole canonize pipeline — flatten, unit-drop, clamp, degeneracy —
+        // operates on child lists, and counts are bounded by the lcm of existing monomials.
+        // A pair-based `add` entry that multiplies multiplicities through the splice is the
+        // remaining follow-up (adversarial analysis A5).
+        let mut mat_buf: Vec<Cfg::G> = Vec::new();
+        let materialize =
+            |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)], buf: &mut Vec<Cfg::G>| {
+                buf.clear();
+                for (g, mult) in ms {
+                    for _ in 0..mult.0 {
+                        buf.push(*g);
+                    }
                 }
-            }
-            eg.add(op, &children)
-        };
+                eg.add(op, buf)
+            };
         let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G| -> bool {
             if eg.classes.find_const(x) == eg.classes.find_const(y) {
                 return false;
@@ -1632,7 +1636,7 @@ where
             // `mset.len() ≥ 2`, canonization never stores a degenerate node, so any empty/size-1
             // `normal` differs from `mset` and lands here).
             if *normal != mset {
-                let c_prime = materialize(self, op, normal);
+                let c_prime = materialize(self, op, normal, &mut mat_buf);
                 changed |= do_merge(self, c_prime, class);
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
@@ -1713,8 +1717,8 @@ where
             // `materialize` calls `add`, which resolves a degenerate reduct itself: an emptied
             // reduct (nilpotent cancellation / identity drop) becomes the unit, a single mult-1
             // summand becomes that class. So no empty/size-1 special-casing is needed here.
-            let c1 = materialize(self, op, n1);
-            let c2 = materialize(self, op, n2);
+            let c1 = materialize(self, op, n1, &mut mat_buf);
+            let c2 = materialize(self, op, n2, &mut mat_buf);
             changed |= do_merge(self, c1, c2);
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
