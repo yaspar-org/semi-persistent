@@ -66,11 +66,11 @@ pub struct EGraph<
     /// drives the per-round delta index. Not part of persistent state.
     touched: Vec<Cfg::G>,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
-    /// inter-reduction). **Default off**: completion can materialize nested same-op
-    /// nodes, which the matcher cannot handle until AC flattening lands (`WF_flat`,
-    /// see `doc/design/ac-congruence-completeness.md` §6b). Opt in with
-    /// [`set_cc`](Self::set_cc) once flattening is in place; the
-    /// completion tests enable it for the flat scenarios they exercise.
+    /// inter-reduction). **Default off** — but NOT for the historical flattening reason
+    /// (nested same-op flattening, `WF_flat`, landed in `flatten_ac_children`): the
+    /// standing gate is divergence *scoping* — ground AC completion is doubly exponential
+    /// in the worst case and the growth backstop is only checked between rounds (see
+    /// `doc/future/ac-completion-review-debt.md` §1). Opt in with [`set_cc`](Self::set_cc).
     cc: bool,
     /// Whether `rebuild` runs the AC reduced-basis invariant checks (`cc_basis_dump`:
     /// `min_monomial` minimality, the Kapur-reduced antichain, etc., see `ac_invariants.rs`).
@@ -469,8 +469,14 @@ where
         // Flatten nested same-op AC children (associativity, `WF_flat`, design §6c): splice
         // any child whose class is a pure same-op sum, keyed on the class's canonical
         // summand form (atomic-aware), so `+(+(a,b), c)` becomes `+(a,b,c)`. An atomic child
-        // (e.g. `c` used as `neg`'s child in §5b) is kept as a summand.
-        if matches!(self.ops.info(op).kind, OpKind::MSet { .. }) {
+        // (e.g. `c` used as `neg`'s child in §5b) is kept as a summand. BOTH completion
+        // representations flatten — gating on MSet only left `(Or (Or x y) z) ≠ (Or x y z)`
+        // for Set (ACI) ops with completion off (bug found 2026-07-10; fixture
+        // set_flatten_build.egg).
+        if matches!(
+            self.ops.info(op).kind,
+            OpKind::MSet { .. } | OpKind::Set { .. }
+        ) {
             self.flatten_ac_children(op);
         }
 
@@ -2351,7 +2357,6 @@ where
         // only guards a degenerate cyclic class, which we must not loop on.
         let cap = 1 + 64 * self.node_count();
         let op_col = self.ops.completion_column(op);
-        let mut mset_kids: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         while let Some(g) = work.pop() {
             let cls = self.classes.find_const(g);
             // A child is a pure `op`-sum to splice iff its class is non-atomic AND its
@@ -2365,15 +2370,15 @@ where
                 && !self.classes.atomic(repr)
                 && let Some(min_node) = self.classes.min_monomial(repr, col)
                 && self.node_op(min_node) == op
-                && matches!(self.node_ref(min_node), NodeRef::MSet(_))
+                && matches!(self.node_ref(min_node), NodeRef::MSet(_) | NodeRef::Set(_))
             {
-                self.mset_children(min_node, &mut mset_kids);
-                for (cg, m) in mset_kids.iter() {
-                    let times: u32 = (*m).into();
+                // Expand the canonical summand form; `for_each_child` yields (class, count)
+                // for either representation (a Set member counts once).
+                self.for_each_child(min_node, |cg, times| {
                     for _ in 0..times {
-                        work.push(*cg);
+                        work.push(cg);
                     }
-                }
+                });
                 spliced = true;
             }
             if !spliced {

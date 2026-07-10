@@ -310,6 +310,8 @@ egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 
 // ── AC build-side flattening (WF_flat) ──
 egg_test!(ac_flatten_build, "ac_flatten_build.egg");
+// Set (ACI) ops flatten at build too — the MSet-only gate was a bug (2026-07-10).
+egg_test!(set_flatten_build, "set_flatten_build.egg");
 
 // ── AC congruence completeness (superposition + inter-reduction) ──
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");

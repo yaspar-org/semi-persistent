@@ -1,0 +1,19 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; Build-side flattening for Set (ACI) ops (WF_flat), completion OFF: nested same-op
+;; children splice at construction exactly as for MSet ops. Before the 2026-07-10 fix,
+;; `flatten_ac_children` was gated on OpKind::MSet only, so `(Or (Or x y) z)` and
+;; `(Or x y z)` landed in different classes unless completion happened to reconcile them.
+(sort E)
+(function Or (E) E :assoc-comm-idem)
+(function x () E)
+(function y () E)
+(function z () E)
+(function w () E)
+(let nested (Or (Or (x) (y)) (z)))
+(let flat (Or (x) (y) (z)))
+(let deep (Or (Or (Or (x) (y)) (z)) (w)))
+(let flat4 (Or (x) (y) (z) (w)))
+(run 3)
+(check (= nested flat))
+(check (= deep flat4))
