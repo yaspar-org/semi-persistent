@@ -181,6 +181,38 @@ pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>>
     out
 }
 
+/// Multiset intersection `a ∩ b` into `out` (cleared first): per-class **minimum**
+/// multiplicity, the common part canceled by a cancelative op (Kapur §5.1's `A ∩ B`).
+/// `out` must not alias `a` or `b`.
+pub fn multiset_intersect_into<G: Copy + Ord>(
+    out: &mut Vec<Pair<G>>,
+    a: &[Pair<G>],
+    b: &[Pair<G>],
+) {
+    debug_assert_canonical(a);
+    debug_assert_canonical(b);
+    out.clear();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].0.cmp(&b[j].0) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                out.push((a[i].0, Multiplicity(a[i].1.0.min(b[j].1.0))));
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+}
+
+/// Allocating wrapper over [`multiset_intersect_into`].
+pub fn multiset_intersect<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+    let mut out = Vec::new();
+    multiset_intersect_into(&mut out, a, b);
+    out
+}
+
 /// Total size of a monomial: the sum of its multiplicities.
 pub fn multiset_size<G: Copy>(m: &[Pair<G>]) -> u64 {
     m.iter().map(|(_, mult)| mult.0 as u64).sum()

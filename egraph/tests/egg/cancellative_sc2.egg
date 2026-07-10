@@ -1,0 +1,24 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Kapur LMCS 2023 SC2 (§5.2): mul(a,a,a)=mul(b,b) and mul(b,b,b)=mul(a,a), cancelative,
+;; NO identity. Plain superposition finds nothing (the two LHS are disjoint); the
+;; cancelative disjoint superposition of the pair joins to mul(a,a,a,b,b,b)=mul(a,a,b,b),
+;; whose cancelation EMPTIES one side — the §5.2(iii)(b) per-constant closure then yields
+;; mul(a,a,b)=a and mul(a,b,b)=b. This is the paper's own example of why orienting the
+;; input equations alone is NOT a cancelative congruence closure (Thm 5.1).
+(sort E)
+(function a () E)
+(function b () E)
+(function mul (E) E :assoc :comm :cancellative)
+(let t1 (mul (a) (a) (a)))
+(let t2 (mul (b) (b)))
+(union t1 t2)
+(let t3 (mul (b) (b) (b)))
+(let t4 (mul (a) (a)))
+(union t3 t4)
+(let q1 (mul (a) (a) (b)))
+(let q2 (mul (a) (b) (b)))
+(run 8)
+(check (= q1 (a)))
+(check (= q2 (b)))

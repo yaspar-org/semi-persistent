@@ -1,0 +1,23 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Kapur LMCS 2023 Example 4 (SC3, §5.3): mul(a,b)=mul(c,d), mul(a,c)=mul(b,d'),
+;; cancelative. The disjoint join mul(a,b,a,c)=mul(c,d,b,d') shares {b,c}; canceling
+;; yields the cancelative-disjoint-superposition critical pair mul(a,a)=mul(d,d').
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function dp () E)
+(function mul (E) E :assoc :comm :cancellative)
+(let t1 (mul (a) (b)))
+(let t2 (mul (c) (d)))
+(union t1 t2)
+(let t3 (mul (a) (c)))
+(let t4 (mul (b) (dp)))
+(union t3 t4)
+(let q1 (mul (a) (a)))
+(let q2 (mul (d) (dp)))
+(run 8)
+(check (= q1 q2))

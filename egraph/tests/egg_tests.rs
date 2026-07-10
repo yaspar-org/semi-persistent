@@ -402,10 +402,16 @@ egg_test!(identity_recanon_mset, "identity_recanon_mset.egg");
 egg_test!(idem_semantic_cp, "idem_semantic_cp.egg");
 egg_test!(nilpotent_semantic_cp, "nilpotent_semantic_cp.egg");
 egg_test!(nilpotent3_semantic_cp, "nilpotent3_semantic_cp.egg");
+// GATE flipped 2026-07-10: `:cancellative` drives the Kapur §5 cancel-closure
+// inferences (rule cancel-close + cancelative disjoint superposition + the §5.2(iii)(b)
+// per-constant closure over the op's summand pool).
+egg_test!(cancellative_cancel, "cancellative_cancel.egg");
+// The paper's own cancelative examples: SC2 (§5.2, needs the per-constant closure) and
+// Example 4 / SC3 (§5.3, cancelative disjoint superposition).
+egg_test!(cancellative_sc2, "cancellative_sc2.egg");
 egg_test!(
-    cancellative_cancel,
-    "cancellative_cancel.egg",
-    ignore = "GATE: cancellative AC inference not implemented"
+    cancellative_disjoint_superposition,
+    "cancellative_disjoint_superposition.egg"
 );
 egg_test!(
     group_inverse_cancel,

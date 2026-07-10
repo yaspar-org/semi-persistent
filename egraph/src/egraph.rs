@@ -630,6 +630,15 @@ where
         }
     }
 
+    /// Whether the op is declared cancelative (`:cancellative`, or implied by `:inverse` —
+    /// groups are cancelative, Kapur §5.4). Drives the §5 cancel-closure inferences.
+    fn op_cancellative(&self, op: Cfg::O) -> bool {
+        match self.ops.info(op).kind {
+            OpKind::MSet { cancellative, .. } | OpKind::Set { cancellative, .. } => cancellative,
+            _ => false,
+        }
+    }
+
     /// The normalization clamp for an op's completion monomials: unbounded (MSet), clamp-to-1
     /// (Set idempotent, ACI), or mod-n (Set nilpotent). Determines how reducts and normal forms
     /// are reduced (design "three independent axes").
@@ -1571,6 +1580,125 @@ where
                     CompletionClamp::Multiset => {}
                 }
                 crit.push((op, r1, r2));
+            }
+        }
+
+        // ── Cancelative facet (Kapur §5) ──
+        // (C1) Cancel-close every antichain rule of a cancelative op (§5.2): a rule
+        // f(M) → f(R) is an equation; canceling the common part C = M ∩ R entails
+        // f(M−C) = f(R−C). (C2) Cancelative disjoint superposition (§5.3): for two rules
+        // of the same cancelative op, the disjoint join f(M₁⊎M₂) = f(R₁⊎R₂) may not be
+        // cancelatively closed; its cancel-closure yields further critical pairs (Kapur's
+        // SC2/SC3 examples — without these, orienting the input equations is canonical but
+        // NOT a cancelative congruence closure, Thm 5.1/5.2).
+        //
+        // Empty-side policy after canceling: with a declared identity the empty side IS
+        // the unit (f({}) = e) and the pair closes against it. Without one, Kapur's
+        // §5.2(iii)(b) applies: an equation f(A) = f(B) whose cancelation empties one side
+        // entails f((A−B) ∪ {c}) = f({c}) for EVERY constant c (his SC2 derives
+        // f(a,a,b) = a this way). Kapur's constant set C is fixed by purification; ours is
+        // incremental, so the closure is generated over the op's CURRENT summand pool (the
+        // distinct classes appearing in its active monomials) — a class that appears later
+        // is covered by the full confirmation round that sees it, the same net that covers
+        // every other delta miss.
+        let cancel_close =
+            |a: &[(Cfg::G, Multiplicity)],
+             b: &[(Cfg::G, Multiplicity)]|
+             -> Option<(Vec<(Cfg::G, Multiplicity)>, Vec<(Cfg::G, Multiplicity)>)> {
+                let c = crate::multiset::multiset_intersect(a, b);
+                if c.is_empty() {
+                    return None;
+                }
+                Some((
+                    crate::multiset::multiset_subtract(a, &c),
+                    crate::multiset::multiset_subtract(b, &c),
+                ))
+            };
+        // The op's summand pool, for the per-constant closure (computed only when an
+        // empty-side cancelation actually occurs — rare).
+        let summand_pool =
+            |targets: &[(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)],
+             op_u: usize|
+             -> Vec<Cfg::G> {
+                let mut pool: Vec<Cfg::G> = targets
+                    .iter()
+                    .filter(|t| t.0.to_usize() == op_u)
+                    .flat_map(|t| t.1.iter().map(|p| p.0))
+                    .collect();
+                pool.sort_unstable();
+                pool.dedup();
+                pool
+            };
+        let push_cancel = |crit: &mut Vec<(
+            Cfg::O,
+            Vec<(Cfg::G, Multiplicity)>,
+            Vec<(Cfg::G, Multiplicity)>,
+        )>,
+                           op: Cfg::O,
+                           has_unit: bool,
+                           pool: &[Cfg::G],
+                           m: Vec<(Cfg::G, Multiplicity)>,
+                           r: Vec<(Cfg::G, Multiplicity)>| {
+            if (!m.is_empty() && !r.is_empty()) || has_unit {
+                crit.push((op, m, r));
+            } else {
+                // §5.2(iii)(b): f(ne ∪ {c}) = f({c}) for every constant c in the pool.
+                let ne = if m.is_empty() { r } else { m };
+                for &g in pool {
+                    let one = [(g, Multiplicity(1))];
+                    crit.push((op, crate::multiset::multiset_union(&ne, &one), one.to_vec()));
+                }
+            }
+        };
+        for ti in 0..rules.len() {
+            if reducible[ti] {
+                continue;
+            }
+            let op = Cfg::O::from_usize(rules[ti].op);
+            if !self.op_cancellative(op) {
+                continue;
+            }
+            let has_unit = self.unit_node(op).is_some();
+            let op_u = rules[ti].op;
+            // Lazily computed at most once per rule that needs it; empty-side cases are rare.
+            let mut pool: Option<Vec<Cfg::G>> = None;
+            let pool_ref = |pool: &mut Option<Vec<Cfg::G>>| -> Vec<Cfg::G> {
+                pool.get_or_insert_with(|| summand_pool(&targets, op_u))
+                    .clone()
+            };
+            // (C1) — regenerated when the rule is in the delta; the full confirmation
+            // round is the completeness net, as for (B) and the axiom pairs.
+            if in_delta(rules[ti].node)
+                && let Some((m, r)) = cancel_close(&rules[ti].lhs, &rules[ti].rhs)
+            {
+                let needs_pool = (m.is_empty() || r.is_empty()) && !has_unit;
+                let pl = if needs_pool {
+                    pool_ref(&mut pool)
+                } else {
+                    Vec::new()
+                };
+                push_cancel(&mut crit, op, has_unit, &pl, m, r);
+            }
+            // (C2) cancelative disjoint superposition — each unordered same-op antichain
+            // pair once. O(rules²) but only over the (rare) cancelative ops' rules.
+            for pj in ti + 1..rules.len() {
+                if reducible[pj] || rules[pj].op != rules[ti].op {
+                    continue;
+                }
+                if !in_delta(rules[ti].node) && !in_delta(rules[pj].node) {
+                    continue;
+                }
+                let u1 = crate::multiset::multiset_union(&rules[ti].lhs, &rules[pj].lhs);
+                let u2 = crate::multiset::multiset_union(&rules[ti].rhs, &rules[pj].rhs);
+                if let Some((m, r)) = cancel_close(&u1, &u2) {
+                    let needs_pool = (m.is_empty() || r.is_empty()) && !has_unit;
+                    let pl = if needs_pool {
+                        pool_ref(&mut pool)
+                    } else {
+                        Vec::new()
+                    };
+                    push_cancel(&mut crit, op, has_unit, &pl, m, r);
+                }
             }
         }
 
