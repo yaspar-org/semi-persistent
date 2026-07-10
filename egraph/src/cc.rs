@@ -13,8 +13,11 @@
 //! nodes and run a per-AC-op critical-pair round against it, materializing new
 //! nodes and pushing merges back through the worklist, to a joint fixpoint.
 //!
-//! This file currently contains the snapshot (T3). The completion round (T4/T5)
-//! lands here next.
+//! This file contains the per-round snapshot (T3). The completion round itself lives in
+//! `egraph.rs::cc_round` (it finds partners through the class use-lists); the snapshot is
+//! the frozen-index alternative retained for diagnostics and for the S3b worklist rewrite,
+//! and it must stay representation-agnostic (MSet AND Set) to agree with
+//! `completion_node_ids` semantics.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
@@ -55,8 +58,9 @@ where
         let mut by_op_contains: HashMap<(Cfg::O, Cfg::G), Vec<Cfg::G>> = HashMap::new();
         let mut completion_nodes: Vec<Cfg::G> = Vec::new();
 
-        // Active AC nodes only: skip user-subsumed (not matchable) and AC-collapsed
-        // (reducible by a smaller rule) — neither is a completion rule. See §6b.
+        // Active completion nodes only: skip user-subsumed (not matchable) and AC-collapsed
+        // (reducible by a smaller rule) — neither is a completion rule. See §6b. Both
+        // completion partitions are covered: MSet (plain AC / nilpotent) and Set (ACI).
         let inactive = crate::node_types::FLAG_SUBSUMED | crate::node_types::FLAG_AC_COLLAPSED;
         for i in 0..eg.node_count() {
             let gid = Cfg::G::from_usize(i);
@@ -64,7 +68,7 @@ where
                 continue;
             }
             let op = eg.node_op(gid);
-            if !eg.ops().is_mset(op) {
+            if !eg.ops().is_mset(op) && !eg.ops().is_set(op) {
                 continue;
             }
             completion_nodes.push(gid);
@@ -129,10 +133,11 @@ mod tests {
             if eg.node_flags(gid) & inactive != 0 {
                 continue;
             }
-            if eg.node_op(gid) != op || !eg.ops().is_mset(op) {
+            if eg.node_op(gid) != op || !(eg.ops().is_mset(op) || eg.ops().is_set(op)) {
                 continue;
             }
-            eg.mset_children(gid, &mut buf);
+            buf.clear();
+            eg.for_each_child(gid, |c, m| buf.push((c, m)));
             if buf.iter().any(|&(c, _)| eg.class_repr(c) == cr) {
                 out.push(gid);
             }

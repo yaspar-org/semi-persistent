@@ -57,26 +57,12 @@ impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    /// Canonical child monomial (class-repr, mult) of an AC node, sorted + coalesced.
-    /// Mirrors `cc_round`'s `multiset_of`.
+    /// Canonical child monomial (class-repr, mult) of a completion node — MSet (coalesced
+    /// counts) or Set (deduped, all counts 1). Delegates to the engine's own
+    /// `node_monomial_into` so the checker cannot drift from what completion reads.
     fn cc_invariant_monomial(&self, id: Cfg::G) -> Vec<(Cfg::G, Multiplicity)> {
-        let mut raw = Vec::new();
-        self.mset_children(id, &mut raw);
-        let mut m: Vec<(Cfg::G, Multiplicity)> = raw
-            .into_iter()
-            .map(|(g, mult)| (self.class_repr(g), Multiplicity(mult.into())))
-            .collect();
-        m.sort_by_key(|p| p.0);
-        let mut out: Vec<(Cfg::G, Multiplicity)> = Vec::with_capacity(m.len());
-        for (g, mult) in m {
-            if let Some(last) = out.last_mut()
-                && last.0 == g
-            {
-                last.1 = Multiplicity(last.1.0 + mult.0);
-            } else {
-                out.push((g, mult));
-            }
-        }
+        let mut out = Vec::new();
+        self.node_monomial_into(id, &mut out);
         out
     }
 
@@ -109,7 +95,8 @@ where
 
         for i in 0..self.node_count() {
             let gid = Cfg::G::from_usize(i);
-            if !matches!(self.node_ref(gid), NodeRef::MSet(_)) {
+            // Both completion partitions: MSet (plain AC / nilpotent) and Set (ACI).
+            if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_)) {
                 continue;
             }
             n_ac_nodes += 1;
@@ -180,7 +167,7 @@ where
         let mut truemin: BTreeMap<(Cfg::G, usize), Vec<(Cfg::G, Multiplicity)>> = BTreeMap::new();
         for i in 0..self.node_count() {
             let gid = Cfg::G::from_usize(i);
-            if !matches!(self.node_ref(gid), NodeRef::MSet(_))
+            if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
                 || self.node_flags(gid) & inactive != 0
             {
                 continue;
@@ -201,7 +188,7 @@ where
         let mut offenders: Vec<(Cfg::G, usize)> = Vec::new();
         for i in 0..self.node_count() {
             let gid = Cfg::G::from_usize(i);
-            if !matches!(self.node_ref(gid), NodeRef::MSet(_))
+            if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
                 || self.node_flags(gid) & inactive != 0
             {
                 continue;
@@ -237,6 +224,8 @@ where
     /// Returns (n_lhs_reducible, n_rhs_reducible): rules whose LHS / RHS is `normalize_ms`-
     /// reducible by the rest. Non-zero LHS count ⟹ not Kapur-reduced (collapse incomplete).
     pub fn cc_not_kapur_reduced(&self) -> (usize, usize) {
+        use crate::egraph::CompletionClamp;
+        use crate::multiset::{normalize_nilpotent, normalize_set};
         let r = self.cc_basis_report();
         // Per op, the NfRule set (every rule except the one under test is the reducer set).
         let mut n_lhs = 0usize;
@@ -253,10 +242,21 @@ where
                     rhs: rj.rhs.clone(),
                 })
                 .collect();
-            if normalize_ms(&r.rules[k].lhs, &others) != r.rules[k].lhs {
+            // Normalize in the op's count domain (idempotent → set, nilpotent → mod-n,
+            // plain AC → ℕ), matching cc_round — a Set rule checked in ℕ would miss
+            // clamp-joins and report spurious reducibility.
+            let clamp = self.op_clamp(<Cfg::O as DenseId>::from_usize(op));
+            let nf = |m: &[(Cfg::G, Multiplicity)]| -> Vec<(Cfg::G, Multiplicity)> {
+                match clamp {
+                    CompletionClamp::Idempotent => normalize_set(m, &others),
+                    CompletionClamp::Nilpotent { order } => normalize_nilpotent(m, &others, order),
+                    CompletionClamp::Multiset => normalize_ms(m, &others),
+                }
+            };
+            if nf(&r.rules[k].lhs) != r.rules[k].lhs {
                 n_lhs += 1;
             }
-            if normalize_ms(&r.rules[k].rhs, &others) != r.rules[k].rhs {
+            if nf(&r.rules[k].rhs) != r.rules[k].rhs {
                 n_rhs += 1;
             }
         }

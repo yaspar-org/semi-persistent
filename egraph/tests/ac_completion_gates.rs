@@ -27,8 +27,8 @@ fn set_fixture() -> (
 }
 
 #[test]
-#[ignore = "GATE: CHECK_AC_BASIS/ac_invariants must count Set/ACI completion nodes, not only MSet"]
 fn basis_report_counts_set_completion_nodes() {
+    // GATE (flipped 2026-07-10): ac_invariants scans both completion partitions now.
     let (eg, ab) = set_fixture();
 
     let report = eg.cc_basis_report();
@@ -40,8 +40,8 @@ fn basis_report_counts_set_completion_nodes() {
 }
 
 #[test]
-#[ignore = "GATE: delete CcSnapshot or make it representation-agnostic for Set/ACI"]
 fn cc_snapshot_counts_set_completion_nodes_if_kept() {
+    // GATE (flipped 2026-07-10): CcSnapshot is representation-agnostic — kept, not deleted.
     let (eg, ab) = set_fixture();
 
     let snap = CcSnapshot::build(&eg);
