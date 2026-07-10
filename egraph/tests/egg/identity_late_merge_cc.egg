@@ -1,0 +1,26 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; A rule whose LHS loses a summand to a late merge-into-unit keeps completing:
+;; add(a,b,x)=c and add(b,d)=f, then x=0, turn into rules {a,b}→c and {b,d}→f, which
+;; superpose on the shared b (lcm {a,b,d}): add(c,d) = add(a,f).
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function f () E)
+(function x () E)
+(function add (E) E :assoc :comm :identity (zero))
+
+(let s_abx (add (a) (b) (x)))
+(let s_bd (add (b) (d)))
+(union s_abx (c))
+(union s_bd (f))
+(let t_cd (add (c) (d)))
+(let t_af (add (a) (f)))
+(union (x) (zero))
+
+(run 5)
+(check (= t_cd t_af))

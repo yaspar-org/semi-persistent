@@ -306,10 +306,16 @@ where
     /// `g_buf` — scratch for PlainN/A/ACI (child type G).
     /// `mset_buf` — scratch for MSet children (child type `C` = `(G, mult)`).
     /// `collisions` — destination for collision pairs to push onto worklist.
+    /// `unit_of` resolves an op to its identity (unit) **class** as of this rebuild
+    /// (the caller composes the per-op unit node with `find`), or `None` for ops without
+    /// a declared identity. It feeds the class-relative unit-drop law into MSet/Set
+    /// canonization, so a summand that merged into the unit's class is dropped on
+    /// recanonize exactly as at build.
     pub fn recanonize_node<S: crate::DenseId>(
         &mut self,
         id: G,
         find: impl Fn(G) -> G,
+        unit_of: impl Fn(O) -> Option<G>,
         g_buf: &mut Vec<G>,
         mset_buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
@@ -318,7 +324,7 @@ where
     ) where
         MSetCanon: VarCanon<G, C>,
     {
-        use crate::canon::MSetClamp;
+        use crate::canon::CanonMode;
         match self.routing.get(id) {
             NodeRef::Plain0(_) => {}
             NodeRef::Plain1(l) => self
@@ -339,7 +345,7 @@ where
                 g_buf,
                 collisions,
                 touched,
-                MSetClamp::None,
+                CanonMode::PLAIN,
             ),
             NodeRef::Seq(l) => self.seq.recanonize_node::<OrderedCanon>(
                 l,
@@ -347,7 +353,7 @@ where
                 g_buf,
                 collisions,
                 touched,
-                MSetClamp::None,
+                CanonMode::PLAIN,
             ),
             NodeRef::MSet(l) => {
                 // Fetch the op's count clamp from the registry before canonizing this slice, so
@@ -355,18 +361,22 @@ where
                 // in one step. The node's op is known here (we route on it), matching the `add`
                 // path that already takes `&ops`.
                 let op = self.mset.get(l).op();
-                let clamp = mset_clamp_of(ops, op);
+                let mode = CanonMode {
+                    clamp: mset_clamp_of(ops, op),
+                    unit: unit_of(op),
+                };
                 self.mset
-                    .recanonize_node::<MSetCanon>(l, &find, mset_buf, collisions, touched, clamp)
+                    .recanonize_node::<MSetCanon>(l, &find, mset_buf, collisions, touched, mode)
             }
-            NodeRef::Set(l) => self.set.recanonize_node::<SetCanon>(
-                l,
-                &find,
-                g_buf,
-                collisions,
-                touched,
-                MSetClamp::None,
-            ),
+            NodeRef::Set(l) => {
+                let op = self.set.get(l).op();
+                let mode = CanonMode {
+                    clamp: crate::canon::MSetClamp::None,
+                    unit: unit_of(op),
+                };
+                self.set
+                    .recanonize_node::<SetCanon>(l, &find, g_buf, collisions, touched, mode)
+            }
             NodeRef::Lit(_) => {}
         }
     }
@@ -574,6 +584,7 @@ mod tests {
         ns.recanonize_node(
             nb,
             |g| if g == b { a } else { g },
+            |_op| None,
             &mut g_buf,
             &mut mset_buf,
             &mut collisions,
@@ -599,6 +610,7 @@ mod tests {
         ns.recanonize_node(
             _na,
             |g| g,
+            |_op| None,
             &mut g_buf,
             &mut mset_buf,
             &mut collisions,

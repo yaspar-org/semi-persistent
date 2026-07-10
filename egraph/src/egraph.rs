@@ -1024,29 +1024,77 @@ where
         }
     }
 
+    /// Recanonize one parent node — find-canonicalize its children and apply the op's
+    /// algebraic canonization laws (count clamp, identity unit-drop) — and record any
+    /// resulting hash-cons collision or degenerate-arity merge into `self.collisions`.
+    /// Shared by the absorbed-uses sweep and the became-a-unit sweep in
+    /// [`rebuild_congruence`](Self::rebuild_congruence).
+    fn recanonize_parent(&mut self, parent: Cfg::G) {
+        let find = |g: Cfg::G| self.classes.find_const(g);
+        // The op's identity as a *class* under the current union-find: recanonize drops it
+        // from MSet/Set children (`f(x,e) = x`), so a summand that merged into the unit's
+        // class after the node was built is dropped exactly as it would have been at build
+        // (Kapur Lemma 4.3's normalization assumption). Field-precise captures keep the
+        // borrows disjoint from `self.nodes`.
+        let units = &self.unit_node;
+        let classes = &self.classes;
+        let unit_of = |op: Cfg::O| {
+            units
+                .get_by_key(&op)
+                .copied()
+                .map(|u| classes.find_const(u))
+        };
+        self.nodes.recanonize_node(
+            parent,
+            find,
+            unit_of,
+            &mut self.g_buf,
+            &mut self.mset_buf,
+            &mut self.collisions,
+            &mut self.touched,
+            &self.ops,
+        );
+        // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
+        // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
+        // then *equals* an existing class — empty ⇒ the unit, size-1 mult-1 ⇒ that child.
+        // Recanonize (representation) can't express that equality, so record it as a merge
+        // here (the congruence layer), alongside the hash-cons collisions. `and(a,b)` after
+        // `a=b` becomes `{a}` = `a`; `xor(a,b)` after `a=b` becomes `{}` = the unit.
+        if let Some(pair) = self.degeneracy_merge(parent) {
+            self.collisions.push(pair);
+        }
+    }
+
     /// Ordinary worklist-driven congruence closure: drain the merge worklist,
     /// recanonicalizing the parents of each absorbed class and merging the
     /// resulting hash-cons collisions, to a fixpoint.
     fn rebuild_congruence(&mut self) {
         while let Some((absorbed_uses, survivor)) = self.worklist.pop() {
             self.collisions.clear();
+            // Hot path: iterate the absorbed use list directly (no allocation). The body
+            // mirrors `recanonize_parent` — it cannot be a method call here because the
+            // use-list iterator holds `self.classes` for the whole loop, and only inline
+            // field-disjoint borrows split around it.
             for parent in self.classes.uses().iter(absorbed_uses) {
                 let find = |g: Cfg::G| self.classes.find_const(g);
+                let units = &self.unit_node;
+                let classes = &self.classes;
+                let unit_of = |op: Cfg::O| {
+                    units
+                        .get_by_key(&op)
+                        .copied()
+                        .map(|u| classes.find_const(u))
+                };
                 self.nodes.recanonize_node(
                     parent,
                     find,
+                    unit_of,
                     &mut self.g_buf,
                     &mut self.mset_buf,
                     &mut self.collisions,
                     &mut self.touched,
                     &self.ops,
                 );
-                // Canonization can shrink an MSet/Set node to a degenerate arity (a child merge
-                // pushes a nilpotent count to 0, or coalesces/drops to a single summand): the node
-                // then *equals* an existing class — empty ⇒ the unit, size-1 mult-1 ⇒ that child.
-                // Recanonize (representation) can't express that equality, so record it as a merge
-                // here (the congruence layer), alongside the hash-cons collisions. `and(a,b)` after
-                // `a=b` becomes `{a}` = `a`; `xor(a,b)` after `a=b` becomes `{}` = the unit.
                 if let Some(pair) = self.degeneracy_merge(parent) {
                     self.collisions.push(pair);
                 }
@@ -1056,6 +1104,30 @@ where
             let surv_repr = self.classes.repr_id(current_surv).unwrap();
             let surv_list = self.classes.use_list_id(surv_repr);
             self.classes.splice_uses(surv_list, absorbed_uses);
+
+            // If this merge made the merged class an op's identity (unit) class, the
+            // unit-drop law now applies to EVERY parent holding this class as a summand —
+            // including parents on the *surviving* side, which the absorbed-uses sweep
+            // never visits (their children's `find` did not change; their canonization
+            // mode did). Sweep the full spliced use list; parents that are already
+            // canonical early-return inside recanonize. Rare path (a class becomes a unit
+            // class at most once per op), so the scratch collection is acceptable.
+            let merged_is_unit = {
+                let units = &self.unit_node;
+                let classes = &self.classes;
+                self.ops.mset_ops().chain(self.ops.set_ops()).any(|op| {
+                    units
+                        .get_by_key(&op)
+                        .copied()
+                        .is_some_and(|u| classes.find_const(u) == current_surv)
+                })
+            };
+            if merged_is_unit {
+                let parents: Vec<Cfg::G> = self.classes.uses().iter(surv_list).collect();
+                for parent in parents {
+                    self.recanonize_parent(parent);
+                }
+            }
 
             for i in 0..self.collisions.len() {
                 let (a, b) = self.collisions[i];

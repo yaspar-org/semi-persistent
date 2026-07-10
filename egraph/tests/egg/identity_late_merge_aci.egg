@@ -1,0 +1,19 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; Same as identity_late_merge_mset, for an idempotent (Set) op with :identity: the
+;; unit-drop is class-relative, so it must also fire on recanonize when a summand's
+;; class merges into the unit's class late.
+(sort E)
+(function top () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function And (E) E :assoc :comm :idempotent :identity (top))
+
+(let s_ab (And (a) (b)))
+(let s_abc (And (a) (b) (c)))
+(union (b) (top))
+
+(run 5)
+(check (= s_ab (a)))
+(check (= s_abc (And (a) (c))))

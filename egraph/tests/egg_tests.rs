@@ -323,6 +323,13 @@ egg_test!(aci_complete_multi, "aci_complete_multi.egg");
 // Identity (unit drop) on MSet and ACI ops (multi-AC/ACI plan, property 1).
 egg_test!(identity_mset, "identity_mset.egg");
 egg_test!(identity_aci, "identity_aci.egg");
+// Identity unit-drop on the RECANONIZE path: a summand class merging into the unit's
+// class after the node is built (Kapur Lemma 4.3; Kapur-conformance fix W2 (spec §3 table)). The first two are
+// canonization facts (completion off); the third checks a unit-dropped rule still
+// superposes (completion on).
+egg_test!(identity_late_merge_mset, "identity_late_merge_mset.egg");
+egg_test!(identity_late_merge_aci, "identity_late_merge_aci.egg");
+egg_test!(identity_late_merge_cc, "identity_late_merge_cc.egg");
 egg_test!(
     alg_tags_reject_idem_nilpotent,
     "alg_tags_reject_idem_nilpotent.egg"
@@ -352,20 +359,11 @@ egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
 // architecture fix that moved these out of the completion pass and into canonization.
 egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");
 
-// ── Known-failing reproducers (open bugs; run with `--ignored`) ──
-// BUG 1: identity unit-drop is not re-established on recanonicalization. After a child merges
-// into the unit's class, the parent AC/Set node is not revisited (the unit is a childless leaf
-// that loses the survivor race), so `join(a,b)` with `b=unit` never collapses to `a`.
-egg_test!(
-    identity_recanon_set,
-    "identity_recanon_set.egg",
-    ignore = "BUG: identity unit-drop not re-established on recanonize (rebuild trigger)"
-);
-egg_test!(
-    identity_recanon_mset,
-    "identity_recanon_mset.egg",
-    ignore = "BUG: identity unit-drop not re-established on recanonize (rebuild trigger)"
-);
+// ── Former known-failing reproducers, now live (fixed by the Kapur-conformance series) ──
+// BUG 1 (identity unit-drop on recanonize) was fixed by Kapur-conformance fix W2 (spec §3 table) (`CanonMode`
+// carries the unit class; the became-a-unit sweep revisits the surviving side's parents).
+egg_test!(identity_recanon_set, "identity_recanon_set.egg");
+egg_test!(identity_recanon_mset, "identity_recanon_mset.egg");
 // BUG 2: Kapur's semantic-property self-critical-pairs (LMCS'23 §4.1 idempotent, §4.2 nilpotent)
 // are not generated. Completion only superposes pairs of distinct rules; a single rule
 // `f(M)->f(N)` needs the extra CP `(f(N∪{a}), f(M))` for each a∈M under idempotency/nilpotency.

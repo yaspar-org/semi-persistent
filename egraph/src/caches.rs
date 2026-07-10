@@ -453,7 +453,7 @@ impl<
         buf: &mut Vec<C>,
         collisions: &mut Vec<(G, G)>,
         touched: &mut Vec<G>,
-        mode: crate::canon::MSetClamp,
+        mode: crate::canon::CanonMode<G>,
     ) {
         let node = self.nodes.get(local_id);
         let (start, end) = node.span();
@@ -882,7 +882,7 @@ mod tests {
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
-            crate::canon::MSetClamp::None,
+            crate::canon::CanonMode::PLAIN,
         );
         assert!(collisions.is_empty());
     }
@@ -903,7 +903,7 @@ mod tests {
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
-            crate::canon::MSetClamp::None,
+            crate::canon::CanonMode::PLAIN,
         );
         assert_eq!(collisions, vec![(id(20), id(10))]);
     }
@@ -925,7 +925,7 @@ mod tests {
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
-            crate::canon::MSetClamp::None,
+            crate::canon::CanonMode::PLAIN,
         );
         assert!(collisions.is_empty());
         assert!(c.probe(op, &[id(1), id(3)]).is_some());
@@ -954,7 +954,7 @@ mod tests {
             &mut buf,
             &mut collisions,
             &mut Vec::new(),
-            crate::canon::MSetClamp::None,
+            crate::canon::CanonMode::PLAIN,
         );
         assert!(collisions.is_empty());
         let expected: &[MSetChild] = &[(id(1), Multiplicity(2)), (id(3), Multiplicity(1))];

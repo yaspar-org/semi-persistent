@@ -1,0 +1,26 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; Identity unit-drop on the RECANONIZE path (Kapur LMCS 2023, Lemma 4.3's standing
+;; assumption f(x,e) → x): a summand whose class merges into the unit's class AFTER the
+;; node is built must drop, with completion OFF — it is a canonization fact, like
+;; canonize_clamp_no_cc. Before the fix, add(a,b) with a late b=0 stayed a 2-ary monomial
+;; {a, 0} forever (the build path dropped units, the recanonize path did not).
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function add (E) E :assoc :comm :identity (zero))
+
+(let s_ab (add (a) (b)))
+(let s_abc (add (a) (b) (c)))
+(let s_bbc (add (b) (b) (c)))
+(union (b) (zero))
+
+(run 5)
+;; add(a,b) with b=0 collapses to a (unit-drop + size-1 degeneracy).
+(check (= s_ab (a)))
+;; add(a,b,c) with b=0 stays a well-formed sum {a,c}.
+(check (= s_abc (add (a) (c))))
+;; A unit summand with multiplicity > 1 drops wholesale: add(b,b,c) with b=0 is c.
+(check (= s_bbc (c)))

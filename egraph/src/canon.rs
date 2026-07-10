@@ -63,13 +63,36 @@ pub enum MSetClamp {
     Nilpotent { order: u8 },
 }
 
+/// The full canonization mode for a variadic op: the count clamp plus the op's identity
+/// (unit) **class**, if any. The unit is the second algebraic canonization law (`f(x,e) = x`:
+/// drop the unit's class from the monomial) and, unlike the count clamp, it is
+/// *class-relative* — the caller resolves the unit node to its current class (`find`) before
+/// canonizing, so a summand that merged into the unit's class after the node was built is
+/// dropped on recanonize exactly as it would have been at build (Kapur Lemma 4.3's standing
+/// assumption that monomials are normalized by `f(x,e) → x`). `unit: None` for ops without a
+/// declared identity, and for the clamp-free canonizers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanonMode<G> {
+    pub clamp: MSetClamp,
+    pub unit: Option<G>,
+}
+
+impl<G> CanonMode<G> {
+    /// No clamp, no unit — plain AC and the clamp-free canonizers.
+    pub const PLAIN: Self = Self {
+        clamp: MSetClamp::None,
+        unit: None,
+    };
+}
+
 /// `canonize` must *establish* the representation invariant: its output is, by definition, the
 /// canonical child form for the op — never a temporarily-wrong form fixed up by a later pass.
-/// Where an op's canonical form depends on an algebraic count clamp (nilpotent: counts mod n), the
-/// clamp is applied *inside* `canonize` via the `mode` argument, exactly as [`SetCanon`] bakes its
-/// idempotent clamp (`dedup`) into its own `canonize`. `mode` is a concrete parameter (not an
-/// associated type) so it adds no `where`-clause bound anywhere; canonizers that do not act on it
-/// take it and ignore it.
+/// Where an op's canonical form depends on an algebraic law — the count clamp (nilpotent:
+/// counts mod n) or the identity unit-drop (`f(x,e) = x`) — the law is applied *inside*
+/// `canonize` via the `mode` argument, exactly as [`SetCanon`] bakes its idempotent clamp
+/// (`dedup`) into its own `canonize`. `mode` is a concrete parameter (not an associated type)
+/// so it adds no `where`-clause bound anywhere; canonizers that do not act on it take it and
+/// ignore it.
 pub trait VarCanon<G: DenseId, C> {
     fn canonize(
         buf: &mut Vec<C>,
@@ -77,7 +100,7 @@ pub trait VarCanon<G: DenseId, C> {
         end: usize,
         get: impl Fn(usize) -> C,
         find: impl Fn(G) -> G,
-        mode: MSetClamp,
+        mode: CanonMode<G>,
     );
 }
 
@@ -92,7 +115,7 @@ impl<G: DenseId> VarCanon<G, G> for OrderedCanon {
         end: usize,
         get: impl Fn(usize) -> G,
         find: impl Fn(G) -> G,
-        _mode: MSetClamp,
+        _mode: CanonMode<G>,
     ) {
         for i in start..end {
             buf.push(find(get(i)));
@@ -164,10 +187,16 @@ impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for M
         end: usize,
         get: impl Fn(usize) -> (G, crate::multiplicity::Multiplicity),
         find: impl Fn(G) -> G,
-        mode: MSetClamp,
+        mode: CanonMode<G>,
     ) {
         Self::update_multiset(buf, start, end, get, find);
-        Self::clamp_multiset(buf, mode);
+        // Identity unit-drop (`f(x,e) = x`) before the count clamp, matching the build
+        // path (`EGraph::add` drops the unit before the nilpotent clamp). `mode.unit` is
+        // the unit's *class* as of this rebuild, resolved by the caller through `find`.
+        if let Some(u) = mode.unit {
+            buf.retain(|p| p.0 != u);
+        }
+        Self::clamp_multiset(buf, mode.clamp);
     }
 }
 
@@ -183,13 +212,17 @@ impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
         end: usize,
         get: impl Fn(usize) -> G,
         find: impl Fn(G) -> G,
-        _mode: MSetClamp,
+        mode: CanonMode<G>,
     ) {
         for i in start..end {
             buf.push(find(get(i)));
         }
         buf.sort();
         buf.dedup();
+        // Identity unit-drop, mirroring the build path (`and(a, true) → {a}`).
+        if let Some(u) = mode.unit {
+            buf.retain(|&g| g != u);
+        }
     }
 }
 
@@ -234,7 +267,7 @@ mod tests {
             (id(3), Multiplicity(1)),
         ];
         let mut buf = Vec::new();
-        MSetCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g, MSetClamp::None);
+        MSetCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g, CanonMode::PLAIN);
         assert_eq!(
             buf,
             vec![(id(1), Multiplicity(2)), (id(3), Multiplicity(2))]
@@ -257,7 +290,10 @@ mod tests {
             4,
             |i| pool[i],
             |g| g,
-            MSetClamp::Nilpotent { order: 2 },
+            CanonMode {
+                clamp: MSetClamp::Nilpotent { order: 2 },
+                unit: None,
+            },
         );
         assert_eq!(
             buf,
@@ -272,7 +308,10 @@ mod tests {
             2,
             |i| even[i],
             |g| g,
-            MSetClamp::Nilpotent { order: 2 },
+            CanonMode {
+                clamp: MSetClamp::Nilpotent { order: 2 },
+                unit: None,
+            },
         );
         assert!(b2.is_empty());
     }
@@ -294,7 +333,7 @@ mod tests {
             |g| {
                 if g.raw() <= 3 { id(1) } else { g }
             },
-            MSetClamp::None,
+            CanonMode::PLAIN,
         );
         assert_eq!(
             buf,
@@ -306,8 +345,64 @@ mod tests {
     fn aci_canon_dedup() {
         let pool = [id(3), id(1), id(3), id(2), id(1)];
         let mut buf = Vec::new();
-        SetCanon::canonize(&mut buf, 0, 5, |i| pool[i], |g| g, MSetClamp::None);
+        SetCanon::canonize(&mut buf, 0, 5, |i| pool[i], |g| g, CanonMode::PLAIN);
         assert_eq!(buf, vec![id(1), id(2), id(3)]);
+    }
+
+    #[test]
+    fn mset_canon_drops_unit_class() {
+        // add(a, u, u) after the unit resolves to class 7: {1:1, 7:2} → {1:1}.
+        let pool = [(id(1), Multiplicity(1)), (id(7), Multiplicity(2))];
+        let mut buf = Vec::new();
+        MSetCanon::canonize(
+            &mut buf,
+            0,
+            2,
+            |i| pool[i],
+            |g| g,
+            CanonMode {
+                clamp: MSetClamp::None,
+                unit: Some(id(7)),
+            },
+        );
+        assert_eq!(buf, vec![(id(1), Multiplicity(1))]);
+    }
+
+    #[test]
+    fn mset_canon_unit_drop_before_nilpotent_clamp() {
+        // xor(a, a, u) with unit class 7 at order 2: drop u, then {a:2} clamps to {}.
+        let pool = [(id(1), Multiplicity(2)), (id(7), Multiplicity(1))];
+        let mut buf = Vec::new();
+        MSetCanon::canonize(
+            &mut buf,
+            0,
+            2,
+            |i| pool[i],
+            |g| g,
+            CanonMode {
+                clamp: MSetClamp::Nilpotent { order: 2 },
+                unit: Some(id(7)),
+            },
+        );
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn set_canon_drops_unit_class() {
+        let pool = [id(1), id(7), id(2)];
+        let mut buf = Vec::new();
+        SetCanon::canonize(
+            &mut buf,
+            0,
+            3,
+            |i| pool[i],
+            |g| g,
+            CanonMode {
+                clamp: MSetClamp::None,
+                unit: Some(id(7)),
+            },
+        );
+        assert_eq!(buf, vec![id(1), id(2)]);
     }
 
     #[test]
@@ -323,7 +418,7 @@ mod tests {
             |g| {
                 if g.raw() <= 3 { id(1) } else { g }
             },
-            MSetClamp::None,
+            CanonMode::PLAIN,
         );
         assert_eq!(buf, vec![id(1)]);
     }

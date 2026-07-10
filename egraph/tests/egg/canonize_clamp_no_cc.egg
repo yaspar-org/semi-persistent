@@ -30,3 +30,12 @@
 (union a b)
 (check (= x_ab (e)))
 (check (= mt_ab (a)))
+
+;; --- recanonize-path unit-drop (a summand merges INTO the unit's class) ---
+(function c () E)
+(function d () E)
+(let pl_cd (pl (c) (d)))         ;; {c,d}; after d=e → {c} = c
+(let xr_cd (xr (c) (d)))         ;; {c,d}; after d=e → {c} = c
+(union d e)
+(check (= pl_cd (c)))
+(check (= xr_cd (c)))
