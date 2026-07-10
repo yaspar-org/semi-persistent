@@ -124,6 +124,7 @@ fn run_with<
                 let report = interp.eg.cc_basis_report();
                 let (nonmin, _) = interp.eg.cc_min_used_nonminimal();
                 let (lhs_red, _rhs_red) = interp.eg.cc_not_kapur_reduced();
+                let (axiom_nonjoin, axiom_offenders) = interp.eg.cc_axiom_cps_nonjoinable();
                 assert_eq!(
                     nonmin,
                     0,
@@ -134,6 +135,13 @@ fn run_with<
                     lhs_red,
                     0,
                     "CHECK_AC_BASIS: {lhs_red} rules have a Kapur-reducible LHS (active_rules={})",
+                    report.rules.len()
+                );
+                assert_eq!(
+                    axiom_nonjoin,
+                    0,
+                    "CHECK_AC_BASIS: {axiom_nonjoin} per-rule axiom critical pairs are not joinable \
+                     (Kapur Lemma 4.1(ii)/4.2(ii); active_rules={}; offenders (node, op): {axiom_offenders:?})",
                     report.rules.len()
                 );
             }
@@ -358,6 +366,12 @@ egg_test!(
 egg_test!(aci_rule_axiom_cp, "aci_rule_axiom_cp.egg");
 egg_test!(nilpotent_rule_axiom_cp, "nilpotent_rule_axiom_cp.egg");
 egg_test!(nilpotent3_rule_axiom_cp, "nilpotent3_rule_axiom_cp.egg");
+// Adversarial axiom-pair edges: singleton LHS whose second reduct empties to the unit,
+// and the general n−m arm with summand multiplicity m > 1.
+egg_test!(
+    nilpotent3_singleton_lhs_axiom,
+    "nilpotent3_singleton_lhs_axiom.egg"
+);
 // Soundness: xor(a,a) is never a (the old Set-dedup bug). check is expected to fail.
 egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
 // Canonization establishes the clamp / identity-drop / degeneracy normal form with completion

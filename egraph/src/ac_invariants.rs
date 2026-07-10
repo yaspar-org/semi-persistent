@@ -80,10 +80,17 @@ where
         out
     }
 
-    /// The class's canonical summand form (the rule RHS): `{class}` if atomic, else the
-    /// monomial of the stored `min_monomial`. Mirrors `class_rhs_into`.
+    /// The class's canonical summand form (the rule RHS): the empty monomial if the class
+    /// is the op's identity (Kapur's `f({}) = e`, see `class_rhs_into`), `{class}` if
+    /// atomic, else the monomial of the stored `min_monomial`. Mirrors `class_rhs_into`.
     fn cc_invariant_rhs(&self, id: Cfg::G) -> Vec<(Cfg::G, Multiplicity)> {
         let cls = self.class_repr(id);
+        if self
+            .unit_node(self.node_op(id))
+            .is_some_and(|u| self.class_repr(u) == cls)
+        {
+            return Vec::new();
+        }
         if self.class_atomic(id) == Some(true) {
             vec![(cls, Multiplicity(1))]
         } else if let Some(min_node) = self.class_min_monomial(id) {
@@ -254,6 +261,131 @@ where
             }
         }
         (n_lhs, n_rhs)
+    }
+
+    /// GROUND-TRUTH check 3 (Kapur §4; Kapur-conformance fix W3): every per-rule AXIOM critical
+    /// pair of an idempotent or nilpotent op is joinable under the current state.
+    ///
+    /// - Idempotent (Lemma 4.1(ii)): for a rule `f(M) → f(N)` and each `a ∈ M`, the pair
+    ///   `(f(N ⊎ {a}), f(N))` must join.
+    /// - Nilpotent order n (Lemma 4.2(ii)/4.5): for each `a` with multiplicity `m` in `M`,
+    ///   the pair `(f(N ⊎ {a: n−m}), f(M − {a: m}))` must join.
+    ///
+    /// "Join" is checked at the e-graph level, where Kapur's constant rules live in the
+    /// union-find: the two reducts join iff their normal forms coincide as multisets, or
+    /// both resolve (lookup-only, no mutation) to the *same class*. A reduct that neither
+    /// matches nor resolves was never materialized — the completion missed the axiom
+    /// superposition. Rules are read over BOTH completion partitions (MSet and Set).
+    /// Returns the non-joinable pair count and up to 20 (rule node, op) witnesses.
+    pub fn cc_axiom_cps_nonjoinable(&self) -> (usize, Vec<(Cfg::G, usize)>) {
+        use crate::egraph::CompletionClamp;
+        use crate::multiset::{
+            clamp_idempotent, clamp_nilpotent, multiset_subtract, multiset_union,
+            normalize_nilpotent, normalize_set,
+        };
+        let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
+
+        // Active rules over both partitions, exactly as cc_round reads them.
+        struct AxRule<G> {
+            node: G,
+            op: usize,
+            lhs: Vec<(G, Multiplicity)>,
+            rhs: Vec<(G, Multiplicity)>,
+        }
+        let mut rules: Vec<AxRule<Cfg::G>> = Vec::new();
+        let mut lhs_buf = Vec::new();
+        let mut rhs_buf = Vec::new();
+        for i in 0..self.node_count() {
+            let gid = Cfg::G::from_usize(i);
+            if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
+                || self.node_flags(gid) & inactive != 0
+            {
+                continue;
+            }
+            self.node_monomial_into(gid, &mut lhs_buf);
+            if !self.class_rhs_into(gid, &mut rhs_buf) {
+                continue;
+            }
+            if monomial_cmp(&lhs_buf, &rhs_buf) == std::cmp::Ordering::Greater {
+                rules.push(AxRule {
+                    node: gid,
+                    op: self.node_op(gid).to_usize(),
+                    lhs: lhs_buf.clone(),
+                    rhs: rhs_buf.clone(),
+                });
+            }
+        }
+
+        let mut nonjoin = 0usize;
+        let mut offenders: Vec<(Cfg::G, usize)> = Vec::new();
+        for k in 0..rules.len() {
+            let op = <Cfg::O as DenseId>::from_usize(rules[k].op);
+            let clamp = self.op_clamp(op);
+            type Pair<G> = (Vec<(G, Multiplicity)>, Vec<(G, Multiplicity)>);
+            let axiom_pairs: Vec<Pair<Cfg::G>> = match clamp {
+                CompletionClamp::Idempotent => rules[k]
+                    .lhs
+                    .iter()
+                    .map(|&(a, _)| {
+                        let mut r1 = multiset_union(&rules[k].rhs, &[(a, Multiplicity(1))]);
+                        clamp_idempotent(&mut r1);
+                        (r1, rules[k].rhs.clone())
+                    })
+                    .collect(),
+                CompletionClamp::Nilpotent { order } => rules[k]
+                    .lhs
+                    .iter()
+                    .filter_map(|&(a, m)| {
+                        let extra = (order as u32).saturating_sub(m.0);
+                        if extra == 0 {
+                            return None;
+                        }
+                        let mut r1 = multiset_union(&rules[k].rhs, &[(a, Multiplicity(extra))]);
+                        clamp_nilpotent(&mut r1, order);
+                        Some((r1, multiset_subtract(&rules[k].lhs, &[(a, m)])))
+                    })
+                    .collect(),
+                CompletionClamp::Multiset => Vec::new(),
+            };
+            if axiom_pairs.is_empty() {
+                continue;
+            }
+            let nf_rules: Vec<NfRule<Cfg::G>> = rules
+                .iter()
+                .filter(|r| r.op == rules[k].op)
+                .map(|r| NfRule {
+                    lhs: r.lhs.clone(),
+                    rhs: r.rhs.clone(),
+                })
+                .collect();
+            for (r1, r2) in axiom_pairs {
+                let (n1, n2) = match clamp {
+                    CompletionClamp::Idempotent => {
+                        (normalize_set(&r1, &nf_rules), normalize_set(&r2, &nf_rules))
+                    }
+                    CompletionClamp::Nilpotent { order } => (
+                        normalize_nilpotent(&r1, &nf_rules, order),
+                        normalize_nilpotent(&r2, &nf_rules, order),
+                    ),
+                    CompletionClamp::Multiset => unreachable!(),
+                };
+                let joined = n1 == n2
+                    || matches!(
+                        (
+                            self.resolve_monomial_class(op, &n1),
+                            self.resolve_monomial_class(op, &n2)
+                        ),
+                        (Some(c1), Some(c2)) if c1 == c2
+                    );
+                if !joined {
+                    nonjoin += 1;
+                    if offenders.len() < 20 {
+                        offenders.push((rules[k].node, rules[k].op));
+                    }
+                }
+            }
+        }
+        (nonjoin, offenders)
     }
 
     /// Print the basis report (one line per rule + the invariant verdicts). `tag` labels

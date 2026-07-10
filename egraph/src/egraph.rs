@@ -21,7 +21,7 @@ use crate::union_find::{Justification, ProofBuf};
 /// or reduced mod `order` (Set nilpotent, e.g. XOR at order 2). Selects the normalize/reduct
 /// reduction in `cc_round`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompletionClamp {
+pub(crate) enum CompletionClamp {
     Multiset,
     Idempotent,
     Nilpotent { order: u8 },
@@ -563,7 +563,7 @@ where
     /// Fill `buf` with `node`'s monomial for `monomial_cmp`: its canonical AC child
     /// multiset if it is an AC node, else the singleton `{node}` (a non-AC node is a
     /// size-1 monomial, §9b). Children are `find`-canonicalized and coalesced.
-    fn node_monomial_into(
+    pub(crate) fn node_monomial_into(
         &self,
         node: Cfg::G,
         buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
@@ -636,7 +636,7 @@ where
     /// The normalization clamp for an op's completion monomials: unbounded (MSet), clamp-to-1
     /// (Set idempotent, ACI), or mod-n (Set nilpotent). Determines how reducts and normal forms
     /// are reduced (design "three independent axes").
-    fn op_clamp(&self, op: Cfg::O) -> CompletionClamp {
+    pub(crate) fn op_clamp(&self, op: Cfg::O) -> CompletionClamp {
         use crate::registry::Clamp;
         match self.ops.info(op).kind {
             // Nilpotent is stored MSet (keeps multiplicities); its clamp is read here.
@@ -656,12 +656,21 @@ where
     }
 
     /// Fill `buf` with the completion rule right-hand side for the class of `node`: the
-    /// size-1 monomial `{find(node)}` if the class is `atomic` (referenced as a child), else
+    /// **empty monomial** if the class is `node`'s op's identity (unit) class, the size-1
+    /// monomial `{find(node)}` if the class is `atomic` (referenced as a child), else
     /// the monomial of the class's stored min-monomial for `node`'s op column (§9a). Reads the
     /// per-class pool slot; O(1) plus the monomial read. Returns `false` if `node` has no class
     /// (or, in the non-atomic case, no stored monomial for its op — a genuine rule always has
     /// one, so this only guards the degenerate case).
-    fn class_rhs_into(
+    ///
+    /// The unit case is Kapur's `f({}) = e` convention (§2.4) and it is load-bearing: a rule
+    /// whose class is the identity must rewrite `f(M) → f({})`, NOT `f(M) → {e}`. With the
+    /// atom form, every monomial built from the RHS — superposition reducts, axiom critical
+    /// pairs, normalization steps — would carry the unit as a summand that `normalize_*`
+    /// (which has no `f(x,e) = x` law) can never remove and that no stored node matches
+    /// (canonization unit-drops). The empty-monomial form folds the identity law into the
+    /// representation, so rewriting can never insert a unit anywhere.
+    pub(crate) fn class_rhs_into(
         &self,
         node: Cfg::G,
         buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
@@ -671,6 +680,13 @@ where
         let Some(repr) = self.classes.repr_id(cls) else {
             return false;
         };
+        if self
+            .unit_node(self.node_op(node))
+            .is_some_and(|u| self.classes.find_const(u) == cls)
+        {
+            buf.clear();
+            return true;
+        }
         if self.classes.atomic(repr) {
             buf.clear();
             buf.push((cls, Multiplicity(1)));
@@ -684,6 +700,39 @@ where
         };
         self.node_monomial_into(min, buf);
         true
+    }
+
+    /// Lookup-only resolution of a canonical monomial to the class of an existing node of
+    /// `op`: degenerate monomials resolve structurally (empty → the op's unit class, size-1
+    /// mult-1 → that child's class); otherwise the op's partition is probed by hash-cons and
+    /// the found node's class returned. `None` if no such node exists. Read-only diagnostic
+    /// helper for the axiom-CP joinability checker (`ac_invariants`); never mutates.
+    pub(crate) fn resolve_monomial_class(
+        &self,
+        op: Cfg::O,
+        m: &[(Cfg::G, crate::multiplicity::Multiplicity)],
+    ) -> Option<Cfg::G> {
+        if m.is_empty() {
+            return self.unit_node(op).map(|u| self.classes.find_const(u));
+        }
+        if m.len() == 1 && m[0].1.0 == 1 {
+            return Some(self.classes.find_const(m[0].0));
+        }
+        let node = match self.ops.info(op).kind {
+            OpKind::MSet { .. } => {
+                let elems: Vec<Cfg::C> = m
+                    .iter()
+                    .map(|&(g, mult)| Cfg::mset_child_with_mult(g, Cfg::M::from(mult.0)))
+                    .collect();
+                self.nodes.mset.probe(op, &elems)
+            }
+            OpKind::Set { .. } => {
+                let elems: Vec<Cfg::G> = m.iter().map(|&(g, _)| g).collect();
+                self.nodes.set.probe(op, &elems)
+            }
+            _ => None,
+        };
+        node.map(|n| self.classes.find_const(n))
     }
 
     /// After a merge, fold the absorbed class's per-class AC data into the survivor's,
