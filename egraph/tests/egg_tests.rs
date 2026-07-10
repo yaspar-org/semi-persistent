@@ -413,8 +413,10 @@ egg_test!(
     cancellative_disjoint_superposition,
     "cancellative_disjoint_superposition.egg"
 );
-egg_test!(
-    group_inverse_cancel,
-    "group_inverse_cancel.egg",
-    ignore = "GATE: group inverse cancellation not implemented"
-);
+// GATE flipped 2026-07-10: `:inverse` (implying cancelative) drives inverse-pair
+// cancellation at build and in the completion round.
+egg_test!(group_inverse_cancel, "group_inverse_cancel.egg");
+// The §5b virtual-sum scenario solved natively (no user rule) and build-time
+// multiplicity handling.
+egg_test!(group_inverse_virtual_sum, "group_inverse_virtual_sum.egg");
+egg_test!(group_inverse_multiplicity, "group_inverse_multiplicity.egg");

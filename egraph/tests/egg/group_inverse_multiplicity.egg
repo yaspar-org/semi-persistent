@@ -1,0 +1,12 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: off
+;; Inverse-pair cancellation respects multiplicities at BUILD time (completion off —
+;; it is a canonization-adjacent law in `add`): a + a + neg(a) = a, one pair cancels.
+(sort E)
+(function zero () E)
+(function a () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(let t (add (a) (a) (neg (a))))
+(run 5)
+(check (= t (a)))

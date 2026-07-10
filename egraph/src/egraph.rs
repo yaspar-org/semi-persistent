@@ -37,6 +37,7 @@ pub struct EGraphToken {
     axioms: AxiomRegistryToken,
     lits: LitValStoreToken,
     unit_node: crate::containers::MapToken,
+    inverse_op: crate::containers::MapToken,
 }
 
 pub struct EGraph<
@@ -94,6 +95,12 @@ pub struct EGraph<
     /// carry. Semi-persistent (its own token), so it rolls back with the op declarations that
     /// created the units. Absent key = the op has no declared identity.
     unit_node: crate::containers::Map<Cfg::O, Cfg::G, TRACK>,
+    /// Per-op group inverse operator, for AC ops declared with `:inverse neg`
+    /// (`x ∘ neg(x) = e`). Resolved to a real op id at registration (sortcheck validates
+    /// the unary signature). Same persistence story as `unit_node`. Absent key = no
+    /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
+    /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
+    inverse_op: crate::containers::Map<Cfg::O, Cfg::O, TRACK>,
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -139,6 +146,7 @@ where
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
             unit_node: crate::containers::Map::new(),
+            inverse_op: crate::containers::Map::new(),
         }
     }
 
@@ -277,6 +285,61 @@ where
     /// The identity (unit) element node of `op`, or `None` if `op` has no declared identity.
     pub fn unit_node(&self, op: Cfg::O) -> Option<Cfg::G> {
         self.unit_node.get_by_key(&op).copied()
+    }
+    pub fn set_inverse_op(&mut self, op: Cfg::O, inv: Cfg::O) {
+        self.inverse_op.insert(op, inv);
+    }
+    /// The group inverse operator of `op` (`:inverse neg`), or `None` if none declared.
+    pub fn inverse_op(&self, op: Cfg::O) -> Option<Cfg::O> {
+        self.inverse_op.get_by_key(&op).copied()
+    }
+
+    /// Cancel inverse pairs in a canonical monomial of an op declared `:inverse inv`
+    /// (the group law `x ∘ inv(x) = e` applied at pair level, Kapur §5.4's simplest
+    /// instance): for each summand class `x`, if the class of the EXISTING node `inv(x)`
+    /// is also a summand, matched pairs are removed; a self-inverse class
+    /// (`find(inv(x)) == x`) cancels within its own count. Lookup-only (hash-cons probe of
+    /// the inverse op's unary partition); removing a pair is sound because the pair equals
+    /// the unit, which canonical monomials do not carry (`f({}) = e`). Returns whether the
+    /// monomial changed; zeroed entries are dropped. This is NOT full group completion —
+    /// no Gaussian elimination, and pairs whose inverse node was never built are not seen.
+    pub(crate) fn group_cancel_pairs(
+        &self,
+        inv: Cfg::O,
+        m: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    ) -> bool {
+        use crate::multiplicity::Multiplicity;
+        let mut changed = false;
+        for i in 0..m.len() {
+            let (x, xc) = (m[i].0, m[i].1.0);
+            if xc == 0 {
+                continue;
+            }
+            let Some(inv_node) = self.nodes.plain1.probe(&inv, &[x]) else {
+                continue;
+            };
+            let y = self.classes.find_const(inv_node);
+            if y == x {
+                // x is its own inverse: copies cancel pairwise (x ∘ x = e here).
+                if xc >= 2 {
+                    m[i].1 = Multiplicity(xc % 2);
+                    changed = true;
+                }
+            } else if let Ok(j) = m.binary_search_by(|p| p.0.cmp(&y)) {
+                // The probe is one-directional (inv(y)'s node may not exist), so cancel
+                // eagerly on first sight; the mirrored visit then finds a zeroed side.
+                let k = m[i].1.0.min(m[j].1.0);
+                if k > 0 {
+                    m[i].1 = Multiplicity(m[i].1.0 - k);
+                    m[j].1 = Multiplicity(m[j].1.0 - k);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            m.retain(|p| p.1.0 != 0);
+        }
+        changed
     }
     pub fn register_lit(&mut self, name: &str, ret: Cfg::S) -> Cfg::O {
         self.ops.register_lit(name, ret)
@@ -462,6 +525,30 @@ where
                             .iter()
                             .map(|(g, m)| Cfg::mset_child_with_mult(*g, Cfg::M::from(m.0))),
                     );
+                }
+                // Group inverse-pair cancellation (`x ∘ inv(x) = e`): summand pairs related
+                // by the op's declared `:inverse` cancel at build, like the unit drop. Rare
+                // (inverse ops only), so the tuple conversion is off the common path.
+                if let Some(inv) = self.inverse_op(op) {
+                    use crate::multiplicity::Multiplicity;
+                    let mut tuples: Vec<(Cfg::G, Multiplicity)> = self
+                        .mset_buf
+                        .iter()
+                        .map(|c| {
+                            (
+                                Cfg::mset_child_id(c),
+                                Multiplicity(Cfg::mset_child_mult(c).into()),
+                            )
+                        })
+                        .collect();
+                    if self.group_cancel_pairs(inv, &mut tuples) {
+                        self.mset_buf.clear();
+                        self.mset_buf.extend(
+                            tuples
+                                .iter()
+                                .map(|(g, m)| Cfg::mset_child_with_mult(*g, Cfg::M::from(m.0))),
+                        );
+                    }
                 }
                 // Degenerate arity ⇒ an existing class, not a fresh node. An empty monomial is the
                 // unit; a single mult-1 summand is that summand's class. Empty *without* a declared
@@ -1755,6 +1842,11 @@ where
                     normalize_ms_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs)
                 }
             }
+            // Inverse-pair cancellation on the normal form (group ops): normalization can
+            // bring x and inv(x) together in one monomial; cancel before comparing.
+            if let Some(inv) = self.inverse_op(op) {
+                self.group_cancel_pairs(inv, &mut nf_out);
+            }
             let normal = &nf_out;
             // If normalization by the other rules changed the monomial, materialize the normal
             // form and merge. `materialize` calls `add`, which now resolves a degenerate result
@@ -1835,6 +1927,10 @@ where
                     normalize_ms_into(&mut n2_buf, &mut nf_ping, &r2, nf_rules);
                 }
             }
+            if let Some(inv) = self.inverse_op(op) {
+                self.group_cancel_pairs(inv, &mut n1_buf);
+                self.group_cancel_pairs(inv, &mut n2_buf);
+            }
             let (n1, n2) = (&n1_buf, &n2_buf);
             if n1 == n2 {
                 trivial += 1;
@@ -1884,6 +1980,7 @@ where
             axioms: self.axioms.mark(shrink),
             lits: self.lits.mark(shrink),
             unit_node: self.unit_node.mark(shrink),
+            inverse_op: self.inverse_op.mark(shrink),
         }
     }
 
@@ -1896,6 +1993,7 @@ where
         self.axioms.restore(token.axioms);
         self.lits.restore(token.lits);
         self.unit_node.restore(token.unit_node);
+        self.inverse_op.restore(token.inverse_op);
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();

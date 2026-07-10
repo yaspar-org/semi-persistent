@@ -868,6 +868,13 @@ where
     if inverse.is_some() && identity.is_none() {
         return Err(serr(":inverse requires :identity", Span::Dummy));
     }
+    // Facet status (2026-07-10): `:cancellative` drives the Kapur §5 cancel-closure
+    // inferences (C1 rule cancel-close + C2 cancelative disjoint superposition, plus the
+    // §5.2(iii)(b) per-constant closure), and `:inverse` drives inverse-PAIR cancellation
+    // (x ∘ inv(x) = e) — gate-level group support, not §5.4's full Abelian-group
+    // completion. An op with an inverse is cancelative (a group is), so the flag is
+    // implied below.
+    let cancellative = cancellative || inverse.is_some();
 
     // Build the deferred unit reference from the identity term, if any.
     let unit_ref = match &identity {
@@ -924,6 +931,33 @@ where
                     })?;
                 let unit = eg.build_ground_cterm(&ct);
                 eg.set_unit_node(op, unit);
+            }
+            // Resolve `:inverse neg` to a real op id now (it must be declared before this
+            // op, like the identity's constructors) and validate the group-inverse
+            // signature `neg : ret -> ret`. Stored in the egraph's per-op inverse map
+            // (same persistence as the unit map).
+            if let Some(inv_name) = &inverse {
+                let inv_op = eg.ops().id_by_name(inv_name).ok_or_else(|| {
+                    serr(
+                        format!(":inverse operator '{inv_name}' is not declared"),
+                        Span::Dummy,
+                    )
+                })?;
+                let info = eg.ops().info(inv_op);
+                let sig_ok = matches!(
+                    &info.kind,
+                    OpKind::Normal { arg_sorts } if arg_sorts.as_slice() == [ret]
+                ) && info.return_sort == ret;
+                if !sig_ok {
+                    return Err(serr(
+                        format!(
+                            ":inverse operator '{inv_name}' must be unary over the op's \
+                             sort (inv : S -> S)"
+                        ),
+                        Span::Dummy,
+                    ));
+                }
+                eg.set_inverse_op(op, inv_op);
             }
             Ok(op)
         }

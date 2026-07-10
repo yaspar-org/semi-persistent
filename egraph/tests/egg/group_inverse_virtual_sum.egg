@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; The §5b cancellation scenario solved NATIVELY by the group facet — no user rewrite
+;; rule (contrast ac_complete_cancel.egg, which needs one): a + b + neg(a+b) = 0.
+;; Completion's (A′) inter-reduction substitutes the inner sum's class c into the outer
+;; monomial ({a,b,neg(c)} → {c,neg(c)}), and inverse-pair cancellation collapses the
+;; materialized pair to the unit.
+(sort E)
+(function zero () E)
+(function a () E)
+(function b () E)
+(function neg (E) E)
+(function add (E) E :assoc :comm :identity (zero) :inverse neg)
+(let t (add (a) (b) (neg (add (a) (b)))))
+(run 8)
+(check (= t (zero)))
