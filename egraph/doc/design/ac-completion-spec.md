@@ -23,8 +23,12 @@ rewrites to the other under those constant rules.
 ## 1. `min_monomial`: the properties the engine must keep
 
 The main doc §9a defines the per-class data: a class carries `find(c)` (the union-find tag,
-not necessarily an AC monomial) and `min_monomial(c)` (the `≫_f`-least `+`-monomial of the class,
-the rule RHS), and the rule RHS is `{c}` if `atomic(c)` else `monomial_of(min_monomial(c))`. This
+not necessarily an AC monomial) and `min_monomial(c)` (the `≫_f`-least `+`-monomial of the
+class, the rule RHS; `≫_f` is the admissible monomial order for op `f` — degree-lex:
+total size, then lexicographic from the largest class id down, Kapur's deglex), and the rule RHS is: the **empty monomial** if `c` is the op's identity
+(unit) class — Kapur's `f({}) = e`; rewriting with the atom `{e}` instead would leak unit
+summands into reducts that normalization (which has no `f(x,e) = x` law) can never remove —
+else `{c}` if `atomic(c)`, else `monomial_of(min_monomial(c))`. This
 section does not re-derive that. It states the four invariants `min_monomial` must satisfy *as
 checkable properties* (the ground-truth checkers of §3 verify them), and the one place
 maintenance is weaker than Kapur's "reduced".
@@ -129,7 +133,7 @@ survives. Matcher-soundness fix, independent of completion. Committed `2501b32`.
 | Our code | Kapur 2023 | Match |
 |---|---|---|
 | AC node `+M` in class `c` = rule `+M → r(c)` | f-monomial rule `f(A₁) → f(A₂)` (§3) | ✓ |
-| `monomial_cmp` (degree-lex), orientation guard | admissible ordering `≫_f`, orient `f(A₁) ≫ f(A₂)` (§3) | ✓ |
+| `monomial_cmp` (degree-lex: size, then lex from the LARGEST class id down), orientation guard | admissible ordering `≫_f`, orient `f(A₁) ≫ f(A₂)` (§3) | ✓ |
 | `ab = multiset_lcm(m,a)`; reducts `(ab−m)⊎rhs_m`, `(ab−a)⊎rhs_a` | `AB = (A₁∪B₁)−(A₁∩B₁)`; critical pair `(f((AB−A₁)∪A₂), f((AB−B₁)∪B₂))` (Def 3.2) | ✓ (lcm = componentwise max = his `AB`) |
 | disjoint partners skipped | "if A₁,B₁ disjoint, their critical pair is trivial" (§3) | ✓ |
 | trivial-pair filter (normal forms equal ⟹ skip) | "nontrivial iff normal forms ... not the same" (§3) | ✓ |
@@ -138,6 +142,10 @@ survives. Matcher-soundness fix, independent of completion. Committed `2501b32`.
 | dedup reducer/superposition set by (op, LHS) | step 2: "if equal, discard the equation" (keep one) | ✓ (duplicate *nodes* stay in `targets`, so their merges are not lost) |
 | incremental (B): superpose only delta rules | step 3 + fn 3: CPs of the new rule vs existing, "incrementally ... instead of all critical pairs" | ✓ |
 | termination backstop / antichain | Thm 3.4 (Dickson's Lemma on noncomparable LHSs) | ✓ |
+| per-rule axiom critical pairs: idempotent `(f(N⊎{a}), f(N))`, nilpotent `(f(N⊎{a:n−m}), f(M−{a:m}))` | Lemma 4.1(ii); Lemma 4.2(ii)/4.5 (superpose each rule with the op's own axiom) | ✓ (2026-07-09; checker `cc_axiom_cps_nonjoinable` under `CHECK_AC_BASIS`) |
+| identity-class rule RHS = the empty monomial; unit-drop at build AND recanonize (`CanonMode`) | `f({}) = e` (§2.4); Lemma 4.3's standing normalization `f(x,e) → x` | ✓ (2026-07-09) |
+| (C1) rule cancel-close + (C2) cancelative disjoint superposition + §5.2(iii)(b) per-constant closure over the summand pool | §5.1–§5.3: CancelClose, cancelative disjoint superposition (SC2 / Example 4 fixtures) | ✓ (2026-07-10; pool-relative per-constant closure, full-round net for late constants) |
+| `:inverse` ⟹ cancelative; inverse-PAIR cancellation at build + in the round (hash-cons probe) | §5.4's group law at pair level (`x ∘ inv(x) = e`) | partial by design — full §5.4 (Gaussian elimination) postponed indefinitely; completion-off late pairs uncancelled (review-debt §3) |
 | `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §1.2 gap** |
 
 ### 3.2 The two deviations from "fully reduced", checked against ground truth

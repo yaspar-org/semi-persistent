@@ -534,7 +534,11 @@ two cursor types coexist without an enum or trait object.
 
 The delta index exists for exactly one round. It's built from a
 **touched log** — an append-only list of node ids that were either
-created or recanonicalized during the round's rebuild phase. At the
+created or recanonicalized during the round's rebuild phase. (The same
+log has a second consumer: AC completion's incremental superposition
+watermarks it to superpose only critical pairs with a changed endpoint
+— so completion-materialized nodes flow into the matcher's next delta,
+and matcher-created nodes into completion's, through one mechanism.) At the
 end of each round:
 
 1. Sort and dedup the touched log into `SortedVec<G>` values, keyed

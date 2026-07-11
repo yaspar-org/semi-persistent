@@ -849,6 +849,10 @@ fn parse_alg_tags(input: &mut &str, base: usize) -> ModalResult<Vec<AlgTag>> {
             } else {
                 None
             };
+            // `Option<u8>`: the ORDER is optional surface syntax — bare `:nilpotent`
+            // means order 2 (the resolver's `unwrap_or(2)`); `:nilpotent 3` is explicit.
+            // It is a number, not a term: the order is the modulus of the count clamp,
+            // never an e-graph entity (see `registry::Clamp::Nilpotent`).
             tags.push(AlgTag::Nilpotent(order));
         } else if input.starts_with(":identity") {
             *input = &input[":identity".len()..];

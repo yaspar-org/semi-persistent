@@ -50,6 +50,27 @@ sorted by id. Canonization:
 2. If two entries now have the same canonical id, merge their
    multiplicities (sum them).
 3. Re-sort by canonical id.
+4. Apply the op's algebraic laws (`CanonMode`, 2026-07): drop the identity (unit) class
+   if the op declares one — the unit is resolved through `find` at canonize time, so a
+   summand that merged into the unit's class later still drops — then the count clamp
+   (nilpotent: counts mod n, zeroed summands removed). `SetCanon`'s dedup IS the
+   idempotent clamp; nilpotent ops are stored MSet precisely because dedup would destroy
+   the parity the mod-n clamp needs (see `ac-algebraic-properties.md`).
+
+   When a merge makes a class equal to an op's unit class, `rebuild_congruence` also
+   recanonizes every parent in the merged class's use list (not only the absorbed side's
+   parents, which are the only ones recanonization normally visits). Reason: parents on
+   the surviving side have unchanged child representatives, so nothing re-visits them,
+   but the unit-drop rule now applies to their children. This is deliberately not solved
+   by forcing the unit's class to be the union survivor: (1) canonical forms must be
+   independent of the choice of representative (`ac-congruence-completeness.md` §6c) —
+   any behavior conditioned on which element survives a union is order-dependent and
+   therefore not canonical; (2) a class may be the unit of one op and an ordinary
+   operand of another, so a single per-class survivor cannot encode per-op unit status;
+   (3) overriding union-by-rank was implemented, measured slower (16% on the divergent
+   benchmark), and removed (`ac-completion-performance.md` §5.6). Both union argument
+   orders are covered by `identity_late_merge_mset.egg` and
+   `identity_late_merge_direction.egg`.
 4. The span may shrink (fewer distinct elements after merging).
 
 ```
@@ -104,10 +125,10 @@ e-classes and collecting new collisons until none subsist).
 | Kind | Children | Canonical form | Merge behavior |
 |------|----------|---------------|----------------|
 | Plain | `[c₀, ..., cₙ]` | Order preserved | Update in place |
-| C | `[c₀, c₁]` | Sorted pair | Re-sort |
-| A | `[c₀, ..., cₙ]` | Order preserved | Update in place |
-| AC | `[(id, mult), ...]` | Sorted by id | Merge multiplicities |
-| ACI | `[id, ...]` | Sorted, unique | Deduplicate |
+| SPair (was C) | `[c₀, c₁]` | Sorted pair | Re-sort |
+| Seq (was A) | `[c₀, ..., cₙ]` | Order preserved | Update in place |
+| MSet (theory: AC) | `[(id, mult), ...]` | Sorted by id | Merge multiplicities + clamp + unit-drop |
+| Set (theory: ACI) | `[id, ...]` | Sorted, unique | Deduplicate + unit-drop |
 
 ---
 [← Ch 3: Hash-Consing Caches](03-hash-consing-caches.md) · [Table of Contents](00-table-of-contents.md) · [Ch 5: The E-Graph →](05-egraph.md)

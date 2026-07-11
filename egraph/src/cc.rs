@@ -6,7 +6,7 @@
 //! provide: recanonicalizing an AC node substitutes equal *atoms* but never
 //! equal *sub-sums*, so equalities like `+(a,b)=c ∧ +(b,d)=e ⊨ +(c,d)=+(a,e)`
 //! are missed. See `doc/design/ac-congruence-completeness.md` for the theory and
-//! `doc/future/ac-congruence-completeness-plan.md` for this implementation.
+//! `doc/design/ac-completion-spec.md` for the engine-level spec.
 //!
 //! The completion is owned by `rebuild()` (plan §2, Option A): after the existing
 //! worklist closure drains, we build the [`CcSnapshot`] over the live AC

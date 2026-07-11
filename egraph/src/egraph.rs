@@ -703,8 +703,11 @@ where
         // the op's algebraic normal form (nilpotent mod-n, identity unit-drop) in the stored node,
         // and `cc_round` only runs after `rebuild_congruence` recanonicalizes every node. So a
         // stored MSet/Set node's children are already the canonical monomial; reading them back is
-        // enough. (This used to re-apply the clamp/drop, which was the symptom of the clamp living
-        // in completion rather than canonization — now fixed.)
+        // enough. The unit-drop holds on the recanonize path via `CanonMode.unit` plus the
+        // became-a-unit sweep in `rebuild_congruence` (Kapur-conformance fix W2 (spec §3 table)) — before that fix,
+        // only the build path dropped units and this claim overclaimed. (It also used to
+        // re-apply the clamp/drop here, the symptom of the clamp living in completion rather
+        // than canonization — long fixed.)
     }
 
     /// The completion column of `node`'s op (its position in the registry `completion_ops`
@@ -1041,7 +1044,7 @@ where
     /// Rebuild to a congruence-closed, AC-congruence-closed fixpoint.
     ///
     /// Two interleaved closures run to a joint fixpoint (see
-    /// `doc/future/ac-congruence-completeness-plan.md` §2, Option A):
+    /// `doc/design/ac-congruence-completeness.md` §8, rebuild = Kapur's Algorithm 3):
     /// - [`rebuild_congruence`](Self::rebuild_congruence): ordinary worklist-driven
     ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
     /// - [`cc_round`](Self::cc_round): AC completion (substitutes
@@ -1064,8 +1067,10 @@ where
         // MSet ops therefore complete as independent rule sets sharing only the constant pool;
         // a class holding monomials of both (`a+b = a*b`) keeps each in its own column, and
         // union-find records the cross-op equality (Kapur's shared-constant case). Set (ACI)
-        // completion is not yet driven (step 5): Set ops canonicalize but the round only reads
-        // the MSet partition, so a registered Set op is sound-but-uncompleted, as before.
+        // completion is driven too: `completion_node_ids` yields both partitions, reducts
+        // normalize in the op's count domain (idempotent clamp / mod-n / ℕ), and each rule
+        // additionally superposes with its op's own axiom (Kapur §4 per-rule critical
+        // pairs — Kapur-conformance fix W3 (spec §3 table)).
         let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
         // Safety backstop against a diverging completion (minting unbounded
         // critical-pair nodes). A convergent completion adds few nodes; if the AC
@@ -1560,7 +1565,7 @@ where
             let op = Cfg::O::from_usize(op_u);
             let m_node = rules[ti].node;
 
-            // Per-rule AXIOM critical pairs (Kapur §4, Kapur-conformance fix W3): superpose the
+            // Per-rule AXIOM critical pairs (Kapur §4, Kapur-conformance fix W3 (spec §3 table)): superpose the
             // rule with the op's own semantic axiom. The count clamp canonizes counts
             // *within* a monomial but cannot produce these cross-rule consequences — e.g.
             // or(a,b)=c ⟹ or(a,c)=c, and xor(a,b)=c ⟹ xor(a,c)=b — so without these
@@ -2737,7 +2742,7 @@ mod tests {
     // `plus`-monomial across merges, and rolls back with the e-graph token. A leaf constant is
     // NOT a `plus`-monomial (it has no `plus` column); merging it in makes the class `atomic`
     // rather than lowering the `plus` column. See design §9a and the pool design in
-    // `doc/future/multi-ac-aci-completion-plan.md`.
+    // `doc/design/ac-algebraic-properties.md`.
     #[test]
     fn min_monomial_tracks_least_and_rolls_back() {
         let (ref mut eg, th) = eg::<true, false>();

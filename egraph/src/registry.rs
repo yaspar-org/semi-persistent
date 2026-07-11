@@ -27,7 +27,7 @@ pub enum AssocDir {
 /// How an AC op's normal form bounds a summand's count (design "three independent axes", the
 /// 2026-07-01 correction). This is a *unified* axis carried on BOTH `MSet` and `Set` descriptors,
 /// independent of the storage partition: the partition is derived from the clamp (`Idempotent →
-/// Set`; `None` / `Nilpotent → MSet`). See `doc/future/multi-ac-aci-completion-plan.md`.
+/// Set`; `None` / `Nilpotent → MSet`). See `doc/design/ac-algebraic-properties.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clamp {
     /// No count bound: counts stay in ℕ. Plain AC (`+`, `*`). Stored as `MSet`.
@@ -40,6 +40,18 @@ pub enum Clamp {
     /// the true multiplicity, which the `Set` dedup canonize would destroy at build time; the
     /// mod-n reduction happens at completion instead. The NF counts are {0,1} at order 2 but the
     /// *storage* is MSet regardless of order.
+    ///
+    /// Why `order: u8` and not a node id: the two halves of the law `xⁿ = e` have different
+    /// natures. The order `n` is pure ARITHMETIC — its entire life is being the modulus in
+    /// `count % n` (`clamp_nilpotent`, `MSetCanon::clamp_multiset`); no e-node denotes it,
+    /// so an id type would be a category error. The identity `e` IS a graph entity, and it
+    /// is stored as one — a resolved node id in the egraph's per-op `unit_node` map (as the
+    /// inverse operator is in `inverse_op`), kept OFF this descriptor because `OpKind<S>`
+    /// is generic over sorts only and cannot carry a `Cfg::G`/`Cfg::O` (hence the deferred
+    /// [`UnitRef`] here). `u8` is the "orders are tiny" choice (xor = 2); its one known
+    /// limit is foreclosing the `bvadd(N)`-as-nilpotent-`2^N` torsion encoding for N ≥ 8 —
+    /// widen to `u32` (enum field, `MSetClamp`, the two clamp fns, the tag parser) if
+    /// bitvector modeling ever lands. Numbers for laws, ids for entities.
     Nilpotent { order: u8 },
 }
 
@@ -61,7 +73,7 @@ pub enum UnitRef {
 /// Set-only `clamp`. The group `inverse` op is deferred until the group facet is implemented
 /// (it needs the op-id type, which `OpKind<S>` does not carry); the `:inverse` tag parses and
 /// validates but its resolved op is not stored here yet. See
-/// `doc/future/multi-ac-aci-tasks.md`.
+/// `doc/design/ac-algebraic-properties.md` (surface property tags).
 #[derive(Clone, Debug)]
 pub enum OpKind<S: DenseId> {
     Normal {
@@ -356,7 +368,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
 
     /// Iterator over the ids of all registered AC ops. Used by AC congruence
     /// completion to drive the per-AC-op critical-pair pass (see
-    /// `doc/future/ac-congruence-completeness-plan.md`). Excludes ACI ops.
+    /// `doc/design/ac-congruence-completeness.md`). Excludes ACI ops.
     pub fn mset_ops(&self) -> impl Iterator<Item = O> + '_ {
         self.map
             .iter()

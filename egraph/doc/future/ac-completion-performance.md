@@ -8,8 +8,29 @@ convergent graphs and ~16 % slower on the diverging one (§5.6). The standing co
 once the redundant per-pair clone is removed, the remaining cost is algorithmic at the round
 level, so the next lever is scoping (when completion runs), not further inner-loop tuning (§6).
 The algorithm and its correctness are unchanged throughout. Companion to
-[ac-congruence-completeness-plan.md](ac-congruence-completeness-plan.md) (§0.4/§0.5
-divergence) and the design chapter (`../design/ac-congruence-completeness.md`).
+[ac-completion-review-debt.md](ac-completion-review-debt.md) (§1, the divergence budget)
+and the design chapter (`../design/ac-congruence-completeness.md`).
+
+## Addendum (2026-07-09): the destination-passing round landed, and two new observations
+
+The "remaining per-round cost is algorithmic" conclusion above predates the adversarial
+allocation pass (the 2026-07-09 Kapur-conformance series; retired plan in git history). What landed:
+`NfRuleRef` borrowed rule views end the O(targets × rules) per-target deep clones in (A′)
+(the §5.4 hoist only covered Bclose, and still cloned once per rule); all normalize calls
+go through the `_into` forms with reused buffers; the (B) lcm/residual arithmetic is
+destination-passing; the rule dedup is clone-free (sort + `dedup_by`);
+`node_monomial_into` no longer allocates internally; flatten/materialize scratch is
+hoisted. Combined-branch measurements on rule-heavy convergent workloads (vs. the
+pre-conformance base, release): 4.5×–440×, dominated by the admissible-order fix
+producing far smaller bases (one instance: 91 rounds/20k nodes → 44 rounds/2.7k nodes) —
+the old tie-break minted guard-truncated junk rules.
+
+Two operational observations from the same measurements: (i) the transition into the
+doubly-exponential regime is razor-sharp (a few extra leaf merges took an instance from
+0.2 s to >10 min); (ii) `MAX_COMPLETION_NODE_GROWTH` is checked **between** rounds, so a
+single blown-up round (one measured round generated 2M critical pairs) burns unbounded
+wall-time before the backstop triggers. An in-round budget check is the cheap fix and
+feeds directly into the scoping lever (§6).
 
 §2 to §4 below analyze the dominant term and the indexing idea that motivated attempt 3; §5
 records the measurements; §6 explains why indexing backfired and what to do instead. Read §6

@@ -5,7 +5,7 @@
 //! These witness, at runtime, the properties the completion machinery is supposed to
 //! maintain, so a diverging run can be inspected via `printf` to see *which* invariant
 //! breaks. Investigation tooling, not production hot path: each function rescans all
-//! nodes. See `doc/future/ac-congruence-completeness-plan.md` §0.4.
+//! nodes. See `doc/design/ac-completion-spec.md` §3 (the checkable properties).
 //!
 //! The model: every active AC node (not `FLAG_SUBSUMED`, not `FLAG_AC_COLLAPSED`) whose
 //! own monomial `M` is strictly `≫_f`-greater than its class's canonical summand form
@@ -263,7 +263,7 @@ where
         (n_lhs, n_rhs)
     }
 
-    /// GROUND-TRUTH check 3 (Kapur §4; Kapur-conformance fix W3): every per-rule AXIOM critical
+    /// GROUND-TRUTH check 3 (Kapur §4; Kapur-conformance fix W3 (spec §3 table)): every per-rule AXIOM critical
     /// pair of an idempotent or nilpotent op is joinable under the current state.
     ///
     /// - Idempotent (Lemma 4.1(ii)): for a rule `f(M) → f(N)` and each `a ∈ M`, the pair

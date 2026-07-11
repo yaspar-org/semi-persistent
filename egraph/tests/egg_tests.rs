@@ -400,25 +400,23 @@ egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");
 egg_test!(identity_recanon_set, "identity_recanon_set.egg");
 egg_test!(identity_recanon_mset, "identity_recanon_mset.egg");
 // BUG 2 (Kapur §4 semantic-property axiom critical pairs, idempotent 4.1(ii) and nilpotent
-// 4.2(ii)) was fixed by Kapur-conformance fix W3; the general order-n arm covers the order-3 gate.
+// 4.2(ii)) was fixed by Kapur-conformance fix W3 (spec §3 table); the general order-n arm covers the order-3 gate.
 egg_test!(idem_semantic_cp, "idem_semantic_cp.egg");
 egg_test!(nilpotent_semantic_cp, "nilpotent_semantic_cp.egg");
 egg_test!(nilpotent3_semantic_cp, "nilpotent3_semantic_cp.egg");
-// GATE flipped 2026-07-10: `:cancellative` drives the Kapur §5 cancel-closure
-// inferences (rule cancel-close + cancelative disjoint superposition + the §5.2(iii)(b)
-// per-constant closure over the op's summand pool).
+// GATES flipped 2026-07-10: `:cancellative` drives the Kapur §5 cancel-closure
+// inferences (rule cancel-close + cancelative disjoint superposition; the no-identity
+// §5.2(iii)(b) per-constant case remains a documented gap), and `:inverse` drives
+// inverse-pair cancellation at build and in the completion round.
 egg_test!(cancellative_cancel, "cancellative_cancel.egg");
+egg_test!(group_inverse_cancel, "group_inverse_cancel.egg");
 // The paper's own cancelative examples: SC2 (§5.2, needs the per-constant closure) and
-// Example 4 / SC3 (§5.3, cancelative disjoint superposition).
+// Example 4 / SC3 (§5.3, cancelative disjoint superposition); plus the group facet on the
+// §5b virtual-sum scenario (no user rule) and build-time multiplicity handling.
 egg_test!(cancellative_sc2, "cancellative_sc2.egg");
 egg_test!(
     cancellative_disjoint_superposition,
     "cancellative_disjoint_superposition.egg"
 );
-// GATE flipped 2026-07-10: `:inverse` (implying cancelative) drives inverse-pair
-// cancellation at build and in the completion round.
-egg_test!(group_inverse_cancel, "group_inverse_cancel.egg");
-// The §5b virtual-sum scenario solved natively (no user rule) and build-time
-// multiplicity handling.
 egg_test!(group_inverse_virtual_sum, "group_inverse_virtual_sum.egg");
 egg_test!(group_inverse_multiplicity, "group_inverse_multiplicity.egg");

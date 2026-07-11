@@ -175,7 +175,15 @@ satisfies `=_T`, preserved by each operation, with no appeal to termination or t
 reaching a fixpoint. Soundness therefore holds whether or not completion is enabled
 and whether or not it converges.
 
-### 2.5 Completion is restricted to a single AC symbol
+### 2.5 Completion is restricted to a single AC symbol — SUPERSEDED (2026-07)
+
+*(The restriction below was lifted by the multi-AC/ACI series: the per-class slot became a
+per-op min-monomial POOL (one column per completion op, element-wise merge fold), the
+`mset_op_count() <= 1` guard was removed, and completion drives BOTH the MSet and Set
+partitions — multiple AC and ACI operators complete soundly, sharing only the constant
+pool. See `ac-algebraic-properties.md`. Original text kept for the failure mode it
+explains — a single slot conflating two ops' minima — which is exactly what the per-op
+columns prevent.)*
 
 Completion stores the rule right-hand side in a per-class slot holding one `min_monomial`
 (the class's minimal monomial) and one `atomic` flag (§3.4 of the AC chapter §9a).

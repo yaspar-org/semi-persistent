@@ -1,12 +1,16 @@
-# Multiple AC and ACI symbols: completion via a per-op min-monomial pool
+# Algebraic properties of AC operators: representation, canonization, and the per-op pool
 
-Status: design converged, not yet implemented. This is the plan to lift the two standing
-limitations recorded in
-[ac-congruence-completeness-plan.md](ac-congruence-completeness-plan.md) §0 items 1 and 2:
-completion supports a single AC symbol and runs no completion at all for ACI. Both are the
-same storage upgrade plus, for ACI, one parameterized normalization step. Read the design doc
-§9a (the `min_monomial`/`atomic` per-class slot) and §9b axis-1 (the storage options) first; this
-plan picks option 3 and fills in the ACI specifics.
+Design chapter (promoted 2026-07-10 from the retired implementation plan
+`doc/future/multi-ac-aci-completion-plan.md`, now deleted; the staging/build-order sections live
+in git history — the dated corrections inside predate the promotion and are kept verbatim).
+The monomial order referenced throughout is defined in `ac-completion-spec.md` §3.1
+(degree-lex: total size, then lexicographic from the largest class id down — Kapur's
+deglex). This is the durable record of how multiple AC/ACI symbols and their
+semantic properties (identity, idempotent, nilpotent, cancelative, inverse) are
+represented and canonized: the three independent axes, the canonization-not-completion
+doctrine, the per-op min-monomial pool, and the surface property tags. Companions: the
+completion algorithm chapter (`ac-congruence-completeness.md`) and the engine-level spec
+with the Kapur-correspondence table (`ac-completion-spec.md`).
 
 ## Reference
 
@@ -90,9 +94,9 @@ compact partition that can hold that normal form.
 | AC + identity (`+`,`0`)         | coalesce + drop unit     | MSet (ℕ)          | ℕ, may empty| **MSet**             |
 | AC + idempotent (`and`)         | dedup (presence)         | **Set** ({0,1})   | {0,1}       | **Set**              |
 | AC + idem + identity            | dedup + drop unit        | **Set**           | {0,1}, empty| **Set**              |
-| AC + nilpotent₂ + id (`xor`)    | parity (mod 2)           | **MSet** (needs run-length) | {0,1} | Set *in principle*, **MSet in practice** |
+| AC + nilpotent₂ + id (`xor`)    | parity (mod 2)           | **MSet** (needs run-length) | {0,1} | **MSet** (required for soundness — the 2026-07-01 correction below) |
 | AC + nilpotentₙ + id (n>2)      | count mod n              | MSet ({0..n−1})   | {0..n−1}    | **MSet** (Set can't hold count 2) |
-| AC + identity + inverse (group) | signed coalesce (ℤ)      | signed MSet (ℤ)   | ℤ∖{0}       | signed MSet          |
+| AC + identity + inverse (group) | signed coalesce (ℤ) — POSTPONED design; shipped: pair cancellation on ℕ counts | signed MSet (ℤ) — not built | ℤ∖{0} | MSet (ℕ) + inverse-pair cancel |
 
 Reading the table: the `xor` row is the mismatch — during-canon must be MSet for soundness under
 recanonize, even though its NF values are {0,1}. Storing xor in the Set partition would need a
@@ -131,10 +135,66 @@ node child storage picks MSet vs Set from the op (the existing `nodes.mset`/`nod
 
 **In scope to implement now:** plain AC = MSet with no clamp, idempotent = Set (clamp Idempotent),
 nilpotent = MSet with clamp Nilpotent, and identity on MSet or Set. Group (inverse/signed) is
+— see the 2026-07-10 note below: "shape-only" means the descriptor validates and stores the
+tag, while the shipped inference is inverse-PAIR cancellation, not signed counts —
 recorded so the descriptor has the right *shape* but is not built here.
 
 See the SMT-LIB operator survey at the end of this doc for which real operators land in each
 representation.
+
+### Correction (2026-07-09): clamps canonize; they do not replace Kapur §4's axiom critical pairs
+
+The clamp axis establishes each monomial's canonical form (it is the `can` of canonized
+rewriting, Conchon–Contejean–Iguernelala Def. 4.1), but completion must ALSO superpose
+every rule with the op's own axiom: for a rule `f(M) → f(N)`, idempotency requires the
+pairs `(f(M), f(N ∪ {a}))` per `a ∈ M` (Kapur Lemma 4.1(ii)) and nilpotency order `n` the
+pairs `(f(N ⊎ {a: n−m}), f((M − {a: m}) ⊎ {e}))` per summand (Lemma 4.2(ii)/4.5). These
+are *cross-rule* consequences the within-monomial clamp cannot produce — e.g.
+`or(a,b)=c ⟹ or(a,c)=c` and `xor(a,b)=c ⟹ xor(a,c)=b` were underivable before the axiom
+pairs were added to `cc_round` (Kapur-conformance fix W3 (spec §3 table); fixtures `aci_rule_axiom_cp.egg`,
+`nilpotent_rule_axiom_cp.egg`, `nilpotent3_rule_axiom_cp.egg`; ground-truth checker
+`cc_axiom_cps_nonjoinable`, asserted under `CHECK_AC_BASIS`). Identity needs no axiom
+pairs (Lemma 4.3) — provided the unit-drop also runs on the recanonize path, which is the
+companion W2 fix (`CanonMode.unit` + the became-a-unit sweep).
+
+## Numbers for laws, ids for entities (why `order: u8`, why the unit is a node)
+
+A recurring reading question: why is the nilpotent order a plain `u8` while the identity
+and the inverse are ids? Because the pieces of an algebraic law have different natures,
+and each is stored as what it IS:
+
+- **The order `n` in `xⁿ = e` is arithmetic.** Its only use is as the modulus in the
+  count clamp (`count % n`). No e-node denotes it — there is nothing in the graph to
+  point AT — so a node-id type would be a category error. `u8` is the "orders are tiny"
+  choice (xor = 2); the one known consequence is that encoding `bvadd(N)`'s additive
+  torsion as nilpotency of order `2^N` needs `N < 8`, so widen to `u32` if bitvector
+  modeling ever lands (a four-site mechanical change: the `Clamp` field, `MSetClamp`,
+  the two clamp functions, the tag parser). The surface `Option<u8>` is only a parsing
+  default: bare `:nilpotent` means order 2.
+- **The identity `e` and the inverse operator ARE graph entities**, and they are stored
+  as such — a resolved node id (`unit_node`) and op id (`inverse_op`) in egraph-side
+  per-op maps with the same semi-persistence as the rest of the graph. They live OFF the
+  `OpKind` descriptor deliberately: `OpKind<S>` is generic over sorts only and cannot
+  carry a `Cfg::G`/`Cfg::O`, which is also why the descriptor holds a *deferred*
+  `UnitRef` (a term to resolve at registration) rather than a node.
+
+## Type-width rationale (every numeric choice, and why it is sufficient)
+
+Audited 2026-07-11. The rule of thumb from the previous section (numbers for laws, ids
+for entities) plus one more: every width is justified either by a HARD bound (checked or
+structural) or by a PHYSICAL bound (memory exhausts first); no width relies on "probably
+big enough" without an argument.
+
+| Type | Width | Sufficiency argument |
+|---|---|---|
+| ids (`Cfg::G`/`Cfg::O`/`Cfg::S`) | **generic** via `EGraphConfig` — the engine never names a concrete id type (verified: zero hard-coded id uses in production code; tests bind a config, `literal.rs` has one overridable default param). `DefaultConfig`/`EGraph31` binds the 31-bit family (u32, bit 31 = capture flag); `EGraph63` binds 64-bit; `--id-bits` selects at runtime | for the 31-bit binding: ids are dense arena indices; 2³¹ nodes at ≥16 B/node ≥ 32 GB — memory exhausts first, and the 63-bit binding is the escape hatch. Width is a CONFIG choice, not an engine constant. |
+| `RuleId`/`AxiomId` | 15-bit (u16, flag bit) | rules/axioms are program-declared; 32 767 is the tightest ceiling in the system — fine for written programs, the one to widen first if rule GENERATION ever lands. |
+| `Multiplicity` | u32 (also the stored `Cfg::M` in both id widths — no narrowing) | counts originate from a built child list (a count of k requires a k-element `add` call: 4 B/child ⇒ 2³² copies ≈ 16 GB in one call) and completion never inflates them: `normalize` hosts only shrink (admissible order), `lcm` takes max, the (C2) join adds two rule sizes, axiom/per-constant pairs add ≤ order. Debug builds panic on overflow; release wrap is physically unreachable. |
+| `multiset_size` | u64 accumulator | worst case 2³¹ distinct summands × u32::MAX counts ≈ 2⁶³ — fits u64 exactly; u32/usize would not. |
+| `Clamp::Nilpotent.order` | u8 | previous section; widen to u32 only for the postponed `bvadd` 2^N torsion encoding. |
+| `GUARD_MAX_REWRITES` | usize = 1 000 000 | policy backstop, not a bound: termination is a theorem (admissible order), the cap only catches a mis-oriented rule and debug-asserts. |
+| `MAX_COMPLETION_NODE_GROWTH` | usize = 50 000 | policy: divergence bail (sound-but-incomplete); granularity caveat in review-debt §1. |
+| flatten cap `1 + 64·node_count` | usize | 64 × 2³¹ = 2³⁷ needs a 64-bit usize — fine on supported targets; would overflow on 32-bit (not a supported deployment). |
 
 ## Where the algebra lives: ENodeKind (routing) vs OpKind (algebra)
 
@@ -160,6 +220,14 @@ split rather than inventing a side table.
   // clamp and identity are representation-independent fields on both variants.
   ```
 
+  Note (2026-07-10): the resolved `:inverse` OPERATOR ID is deliberately NOT an `OpKind`
+  field — `OpKind<S>` cannot carry an op id. Like the resolved identity node, it lives in
+  an egraph-side per-op map (`inverse_op`, same semi-persistence as `unit_node`), consumed
+  by inverse-PAIR cancellation (`x ∘ inv(x) = e`, at build and on completion normal
+  forms). Full Abelian-group completion (§5.4 signed counts / Gaussian elimination) is
+  postponed indefinitely — the signed-count sketch further down describes that postponed
+  design, not the shipped mechanism.
+
   The clamp is a *unified* field on both variants (the 2026-07-01 correction above): partition is
   derived from the resolved clamp — `Idempotent → Set`; `None` / `Nilpotent → MSet`. The resolver
   is the single point that enforces the legal (clamp, partition) pairings; a `MSet { clamp:
@@ -173,8 +241,9 @@ bytes plus an `Option<UnitRef>`, immutable after registration, so co-locating it
 existing per-op record, read by op id only where completion needs it) is strictly simpler.
 
 **In scope now:** `OpKind::MSet { clamp: None }` (AC), `OpKind::Set { clamp: Idempotent }` (ACI),
-`OpKind::MSet { clamp: Nilpotent }` (XOR), and identity on either. Group (inverse/signed) is
-shape-only.
+`OpKind::MSet { clamp: Nilpotent }` (XOR), and identity on either. Group: the `:inverse`
+tag is validated and consumed at pair-cancellation level (2026-07-10); the signed-count
+representation this section sketches is the POSTPONED full-group design, not shipped.
 
 ## Storage: one pool of node ids, fixed-width rows over a strongly-typed op array
 
@@ -314,9 +383,11 @@ so the migration is mechanical: route the existing `min_monomial`/`set_min_monom
 Nothing about the algorithm changes; only storage reads/writes index by op through the column
 array.
 
-- **RHS read** (`class_rhs_into`): if `atomic` → `{class}`; else `min_mono(node's op, repr)`
-  (column `i`) → emit that node's monomial. For a real rule, the `node` is itself a column-`i`
-  node, so the slot is non-absent.
+- **RHS read** (`class_rhs_into`): the empty monomial if the class is the op's identity
+  class (Kapur's `f({}) = e` — the normative RHS definition is `ac-completion-spec.md` §1);
+  else if `atomic` → `{class}`; else `min_mono(node's op, repr)` (column `i`) → emit that
+  node's monomial. For a real rule, the `node` is itself a column-`i` node, so the slot is
+  non-absent.
 - **Merge fold** (`fold_min_monomial`): element-wise over the row (invariant 3), OR the `atomic`
   bool. `MergeInfo` carries the absorbed class's row offset so the survivor can fold it.
 - **Completion loop**: drop the `mset_op_count() <= 1` guard. Build rules from all AC nodes as
@@ -332,7 +403,8 @@ ACI uses its own columns (one per ACI op) with two localized changes:
 
 1. **Set monomials.** ACI children are bare `G` with multiplicity always 1 (`nodes.set`). So an
    ACI node's monomial emits each class with count 1, and `monomial_cmp` over an ACI monomial is
-   the degree-lex with every count 1 (set comparison).
+   the degree-lex applied to the deduplicated element set (every count 1 — so "size" is the
+   number of distinct elements).
 2. **Idempotent normalization.** The I axiom clamps every count to 1 after each rewrite step.
    The superposition arithmetic is the same shape (lcm = union, subtract, normalize); the AC
    primitives in `multiset.rs` (`multiset_union`/`multiset_lcm`/`normalize_ms`) gain an
@@ -358,51 +430,6 @@ needed beyond running the standard loop with the idempotent clamp.
 merge is first-write-wins captured per entry, so restore reverts row contents, and the
 `SparseSet` revert restores each class's `min_row` offset. Pool and offset roll back together,
 the same consistency the current single-slot design relies on.
-
-## Out of scope
-
-- **Distributivity** (`*` over `+`): a user rewrite rule (Kapur §6, the Gröbner recasting), not
-  AC-CC. Unchanged from today.
-- **Identity, nilpotency, cancellativity, group**: further per-pool clamps/rules in the same
-  shape (the multiplicity-clamp table). The pool design leaves room without structural change,
-  but none is built or promised here. Only AC (ℕ) and ACI ({0,1}) are in scope.
-
-## Build order (each step a self-contained clean build passing all tests)
-
-1. **Surface tags + resolver + descriptor (done up front, to avoid migration debt).** Replace the
-   pre-combined `AlgAttr` with composable basic tags (`:assoc`, `:comm`, `:idempotent`,
-   `:nilpotent`, `:identity <term>`, plus `:assoc-left`/`-right`), keeping `:assoc-comm` /
-   `:assoc-comm-idem` as aliases. Add the registration-time resolver `tags → AcAlgebra` with all
-   validation, store `AcAlgebra` (including the deferred `UnitRef`) on `OpInfo`. Map
-   `AcRepr::Set`/`Multiset` to the existing `OpKind`/partition. No completion behavior change:
-   `{Multiset,None}` and `{Set,Idempotent}` resolve exactly to today's AC/ACI; nilpotent/identity
-   resolve, store, and report not-yet-completed. Parse-and-resolve tests for every tag combination
-   (including the rejected ones) and the deferred-unit storage.
-2. **Registry completion array.** Build `completion_ops: Vec<Cfg::O>` (AC then ACI ops in
-   registration order), store each AC/ACI op's column on `OpInfo` (or map by scanning), add
-   `aci_op_count()` and a unified completion-op iterator over AC ∪ ACI. Add the
-   declare-before-build assert (reject a new AC/ACI op once a node of that kind exists). No
-   behavior change to completion yet.
-3. **Storage refactor at `nb_completion == 1`.** Add `min_pool`, change `ClassData` to `min_row`
-   (drop `min_monomial: T`), route existing single-op reads/writes through `min_mono`/`set_min_mono`.
-   Pure refactor: all tests green, no new behavior. This isolates the risky storage change from
-   new behavior.
-4. **Multi-AC.** Widen the row to all AC ops; generalize `fold_min_monomial`, `class_rhs_into`, and
-   the completion loop to per-column reads; remove the single-AC guard (and its two guard tests).
-   Add a multi-AC test (`+` and `*` with a shared constant, e.g. assert `a+b = a*b` and check it
-   does not corrupt either op's completion). Extend the `ac_vs_rules` harness to two ops.
-5. **ACI completion.** Admit ACI ops into `completion_ops` (their columns in the same row); add
-   the idempotent-clamp normalization variant in `multiset.rs`; make `completion_node_ids()`
-   walk the ACI partition; run the round over ACI ops with the set monomial reads and the {0,1}
-   clamp (selected per column from the op's `AcAlgebra.clamp`). Add `and`/`or` completion tests
-   (including the idempotence join `a∘a∘b = a∘b` and a multi-ACI case, since two ACI ops are
-   currently allowed but un-completed).
-
-Steps mirror the bisectable-commit discipline from the merged AC-completion PR: each commit
-builds clean and passes the full suite, with step 3 the storage change carrying no behavior delta
-so a bisect can pinpoint a regression to either storage or the per-op generalization. Step 1 is
-pure surface/resolver plumbing with no completion change, landed first so the grammar and
-descriptor never need a later migration.
 
 ## Surface language: composable property tags
 
@@ -575,15 +602,16 @@ own additive inverse (`x ⊕ x = 0`) — so xor's "inverse" is already covered b
 shipped in property 2, with no signing needed. Net: complementation is modeled as `xor` with the
 constant `true` (available today), never as an inverse on `and`.
 
-### Scope and compatibility
+### Scope and compatibility — SUPERSEDED (2026-07-10): everything below is wired
 
-Wire only `:assoc`+`:comm` (→ `AcAlgebra { Multiset, None }`, AC) and
-`:assoc`+`:comm`+`:idempotent` (→ `{ Set, Idempotent }`, ACI) to actual completion now.
-`:nilpotent`, `:identity`, `:inverse` parse, sort-check, validate, and store on the descriptor
-(including the deferred `UnitRef`) but are recorded as not-yet-completed (the same posture as
-today's "ACI canonicalizes but is not completed" gap). Keep `:assoc-comm` and `:assoc-comm-idem`
-as accepted aliases that expand to the basic-tag combinations before resolution, so existing
-`.egg` fixtures do not break.
+*(Original staging text retained for the record.)* Current state: `:identity` and
+`:nilpotent` are fully wired (canonization + completion, 2026-07-09 series);
+`:cancellative` drives the Kapur §5 cancel-closure and `:inverse` (implying cancelative)
+drives inverse-pair cancellation (2026-07-10); full Abelian-group completion is postponed
+indefinitely. The aliases `:assoc-comm` / `:assoc-comm-idem` remain accepted. Original:
+wire only `:assoc`+`:comm` and `:assoc`+`:comm`+`:idempotent` to actual completion now;
+`:nilpotent`, `:identity`, `:inverse` parse, sort-check, validate, and store on the
+descriptor but are recorded as not-yet-completed.
 
 ## SMT-LIB AC operator survey
 

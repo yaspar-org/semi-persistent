@@ -869,11 +869,11 @@ where
         return Err(serr(":inverse requires :identity", Span::Dummy));
     }
     // Facet status (2026-07-10): `:cancellative` drives the Kapur §5 cancel-closure
-    // inferences (C1 rule cancel-close + C2 cancelative disjoint superposition, plus the
-    // §5.2(iii)(b) per-constant closure), and `:inverse` drives inverse-PAIR cancellation
-    // (x ∘ inv(x) = e) — gate-level group support, not §5.4's full Abelian-group
-    // completion. An op with an inverse is cancelative (a group is), so the flag is
-    // implied below.
+    // inferences (C1 rule cancel-close + C2 cancelative disjoint superposition, minus the
+    // §5.2(iii)(b) no-identity per-constant case), and `:inverse` drives inverse-PAIR
+    // cancellation (x ∘ inv(x) = e) — gate-level group support, not §5.4's full
+    // Abelian-group completion. An op with an inverse is cancelative (a group is), so the
+    // flag is implied below.
     let cancellative = cancellative || inverse.is_some();
 
     // Build the deferred unit reference from the identity term, if any.

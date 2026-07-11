@@ -3,7 +3,7 @@
 //! Multiset algebra over canonical AC child slices.
 //!
 //! These are the search-and-arithmetic primitives for AC congruence completion
-//! (superposition / inter-reduction). See `doc/future/ac-congruence-completeness-plan.md`
+//! (superposition / inter-reduction). See `doc/design/ac-completion-spec.md`
 //! and `doc/design/ac-congruence-completeness.md` §6–§7.
 //!
 //! All functions operate on the *canonical* AC child form produced by

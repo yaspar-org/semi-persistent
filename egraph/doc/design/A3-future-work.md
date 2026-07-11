@@ -13,7 +13,9 @@ listed below.
 
 ## AC Completion: remaining work
 
-The algorithm is implemented (see the chapters above); three pieces remain.
+The algorithm is implemented (see the chapters above). Two pieces remain — scoping and
+verification; the formerly-third piece (multi-AC/ACI + semantic properties) landed in the
+2026-07 series and is summarized in a done-note below for the record.
 
 **Enable by default (scoping).** Completion is off by default pending a termination
 guard. On a sweep of stress graphs it converges on all but one pathological instance,
@@ -25,14 +27,18 @@ materialized monomials. All three trade completeness for termination, and the fa
 is sound (it derives fewer equalities, never wrong ones; see Ch 14 on the trustworthy
 polarity).
 
-**Multiple AC symbols.** Completion stores one `min_monomial`/`atomic` per class, so it
-supports one AC operator; `rebuild` rejects a configuration with more than one
-registered `OpKind::MSet` when completion is on (`mset_op_count`). Lifting this is a storage
-change: a per-op `min_monomial` slice (a pool indexed by AC op) instead of a single slot. The
-algorithm already runs per-op; only the slot widens (AC chapter §9a multi-op note). ACI
-operators get no completion at all today (the round gates on `OpKind::MSet`), so ACI
-congruence is sound but incomplete; adding it needs the idempotence critical pair
-(Kapur §4) plus the same per-op storage.
+**Multiple AC symbols — DONE (2026-07, multi-AC/ACI series + conformance fixes).**
+The per-op `min_monomial` pool landed (per-class rows, one column per completion op), the
+round drives both the MSet and Set partitions, and the Kapur §4 semantic properties are in:
+identity (unit-drop at build AND recanonize, `CanonMode`), idempotent and nilpotent count
+clamps, and the per-rule *axiom* critical pairs (Lemmas 4.1(ii), 4.2(ii)/4.5) that clamping
+alone cannot derive. A rule whose class is the op's identity has the **empty monomial** as
+RHS (Kapur's `f({}) = e`). `:cancellative`/`:inverse` are rejected until their facets exist.
+See `ac-completion-spec.md` §3 (the Kapur-correspondence table) and
+`ac-algebraic-properties.md` (the storage and property-tag design). The cancelative facet
+(Kapur §5.1–5.3) and gate-level `:inverse` pair cancellation landed 2026-07-10; **full
+Abelian-group completion (§5.4, Gaussian elimination) is postponed indefinitely**
+(operator decision 2026-07-10, recorded in `future/ac-completion-review-debt.md` §3).
 
 **Verification.** The two halves have different proof character
 (see [the design doc §12](ac-congruence-completeness.md) for the sketch), so:

@@ -267,7 +267,7 @@ pub enum MultExpr {
 
 /// A single composable algebraic-property tag on a function declaration. Tags combine freely
 /// at the surface (`:assoc :comm :idempotent`); the sortcheck resolver maps a tag *set* to a
-/// concrete `OpKind` and validates the combination (see `doc/future/multi-ac-aci-tasks.md`
+/// concrete `OpKind` and validates the combination (see `doc/design/ac-algebraic-properties.md`
 /// Facet A). The old pre-combined `:assoc-comm` / `:assoc-comm-idem` are accepted as aliases
 /// that the parser expands into these basic tags.
 #[derive(Clone, Debug, PartialEq, Eq)]

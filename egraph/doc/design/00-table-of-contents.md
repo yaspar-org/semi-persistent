@@ -28,6 +28,7 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   implemented algorithm itself is in the AC chapter and Ch 14.
 
 - **[AC Congruence Completeness](ac-congruence-completeness.md)**
+- **[Algebraic Properties of AC Operators](ac-algebraic-properties.md)**
   Part I explains why flattening AC nodes into canonical multisets erases the 
   intermediate sub-sum subterms and breaks congruence completeness
   (even though matching stays complete), and why `rest`-variable

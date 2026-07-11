@@ -98,11 +98,12 @@ them. When reading or extending the code, classify a name by which axis it belon
    names the algorithm and the theory below; and "ACI" baked the idempotent *clamp* into the
    representation name, when in fact idempotent and nilpotent ops share one `Set` layout and
    differ only by a clamp field. The representation axis is `{MSet, Set}`; the clamp is separate.
-   See `doc/future/multi-ac-aci-completion-plan.md`, "three independent axes".)
+   See `doc/design/ac-algebraic-properties.md`, "three independent axes".)
 
 2. **Completion procedure (`cc`).** The congruence-closure *completion* this chapter adds
-   (superposition + inter-reduction). It is not tied to one representation: it runs over MSet
-   today and Set later, so its names use `cc`, never `ac`: `cc` / `set_cc` (the enable flag),
+   (superposition + inter-reduction). It is not tied to one representation: it runs over
+   BOTH MSet and Set (the Set leg landed with the multi-AC/ACI series), so its names use
+   `cc`, never `ac`: `cc` / `set_cc` (the enable flag),
    `cc.rs` (the module), `cc_round`, `CcSnapshot`, `completion_node_ids`, `fold_min_monomial`,
    `min_monomial` (the per-class normal-form representative the round reads as a rule RHS),
    `cc_basis_dump` / `cc_basis_report` and the `cc_*` invariant diagnostics.
@@ -789,7 +790,8 @@ plus normalize-into-minimal-monomial is the step that cannot be skipped.
    round) to a fixpoint before comparing (see the `normalize_ac` correction in §9).
    If the two reducts land in one class, add nothing.
 4. **Orient rules and substitute minimal monomials, never class-as-atom.** Pick a total
-   admissible monomial order `≫_f` (degree-lex: size, then class-id lex). Every rule is
+   admissible monomial order `≫_f` (degree-lex: size, then lex from the **largest**
+   class id downward — see the 2026-07-09 correction below). Every rule is
    `larger-monomial → its-class's-minimal-monomial`; closing a critical pair substitutes
    that minimal monomial (over existing constants), never a bare class id used as a fresh
    summand. This is what keeps the constant pool fixed and superposition bounded
@@ -825,9 +827,28 @@ class's *canonical summand form*, which is exactly what the completion machinery
 maintains in the per-class slot (§9a) and reads via the rule-RHS function:
 
 ```
-summand_form(class) = if atomic(class) { {class} }            // a single atom
-                      else              { min_monomial(class) }      // its minimal f-monomial
+summand_form(class, f) = if atomic(class)               { {class} }   // a real atom: keep
+                         else if min_monomial(class, f) { it }        // splice the f-least member
+                         else                           { {class} }   // no f-monomial: keep opaque
 ```
+
+(2026-07-10 precision.) Three cases, not two, and the second argument matters:
+
+1. **Atomic** (referenced as a child anywhere, or holding a non-completion node): kept as
+   one summand, even if the class *also* contains one or more `f`-sum nodes — the atom is
+   the ≺-least representative, and splicing a sum member would rewrite uphill; completion's
+   rules `M → {class}` reconcile spelled-out occurrences downward instead.
+2. **Non-atomic with `f`-monomials**: the class's `min_monomial` for `f`'s pool column — the
+   deglex-least among possibly *several* same-op members — is spliced. The non-minimal
+   members are not lost: each is a completion rule `M → min`, so every choice of member
+   normalizes to the same expansion. This is what makes flattening canonical when the child
+   class holds more than one node.
+3. **Non-atomic with only other-op monomials** (a `*`-sum used inside a `+`-sum): the `f`
+   column is empty, the class id is kept opaque — Kapur's purification, the class id playing
+   the fresh-constant role shared between the two AC theories.
+
+Both completion representations flatten this way at build (`MSet` and `Set` — the
+`Set`/ACI gate was missing until 2026-07-10, fixture `set_flatten_build.egg`).
 
 `atomic` and `min_monomial` are merge-folded class properties (§9a), independent of which node
 is the representative. So flattening becomes: **when canonicalizing an `f`-node, replace
@@ -1090,6 +1111,13 @@ superposition (B), and step 4 is the two halves of inter-reduction, substituting
 half is what makes the rule set a Dickson antichain and is what termination rests on (§6b,
 §10); substitution alone would diverge.
 
+*(2026-07-10 note.)* The table above maps the **plain-AC** framework. The semantic-property
+extensions of the LMCS 2023 journal version add pair generators beyond step 3: the per-rule
+AXIOM critical pairs (§4: idempotent, nilpotent order n), the cancelative closure (§5.1–5.3:
+rule cancel-close, cancelative disjoint superposition, the per-constant closure), and
+inverse-pair cancellation. Their code↔paper correspondence lives in the normative table of
+`ac-completion-spec.md` §3.1.
+
 ## 9. Implementation
 
 ```rust
@@ -1098,6 +1126,9 @@ half is what makes the rule set a Dickson antichain and is what termination rest
 // larger -> smaller by the degree-lex monomial order ≫_f. The RHS is the class's
 // MINIMAL MONOMIAL (a multiset over existing constants), NOT the bare class id:
 // substituting a class-as-atom reintroduces a fresh constant each round and diverges (§6b).
+// EXCEPTION (2026-07-09): a class that IS the op's identity has the EMPTY monomial as RHS
+// (Kapur's f({}) = e) — the atom form {e} would leak unit summands into reducts that
+// normalization (no f(x,e)=x law) can never remove. See ac-completion-spec.md §1.
 // INVARIANT: `active` holds only IRREDUCIBLE rules (no LHS ⊊ another LHS), a
 // Dickson antichain. Collapse (below) maintains it; without it, diverges (§6b).
 
@@ -1158,10 +1189,23 @@ needs and what keeps `active` a finite antichain. Two distinct roles:
   this for free: the LHS is the multiset `+M`, the RHS is the canonical class `find(d)`.
 - **Orientation *between* two rules** (when `+A` and `+M` are containment-comparable,
   which collapses): this needs a total admissible monomial order `≫_f`, concretely
-  **degree-lexicographic** (compare multiset size, ties broken by the total order on
-  class ids), which satisfies Kapur's subterm + compatibility properties. The larger
+  **degree-lexicographic** (compare multiset size; break ties comparing the
+  `(class id, count)` entries from the **largest class id downward**), which satisfies
+  Kapur's subterm + compatibility properties. The larger
   LHS is always the one retired (marked `FLAG_AC_COLLAPSED`). Without this the active set
   is not kept reduced, and completion diverges (§6b).
+
+### Correction (2026-07-09): the tie-break direction is load-bearing
+
+The tie-break must compare monomials **from the largest class id downward** — Kapur's
+degree-lex: at equal size, the side owning the largest constant of the symmetric
+difference is greater. An earlier `monomial_cmp` compared the *ascending* sequences,
+which is **not** compatible with multiset sum (`{b:2} ≫ {a,c}` yet `{a,b:2} ≺ {a:2,c}`):
+a correctly oriented rule could *raise* the host monomial it rewrote, `normalize_ac`
+could two-cycle until its defensive guard and return a reducible "normal form", and the
+termination/uniqueness arguments (Kapur Thm 3.4 / 3.6) did not apply. Fixed in
+`monomial_cmp` (Kapur-conformance fix W1, 2026-07-09; see `ac-completion-spec.md` §3), with
+step-decrease debug asserts in the normalize loops and randomized admissibility tests.
 
 So we still drop the *machinery* Kapur needs for a unique reduced canonical
 presentation across AC symbols (we do not need canonical signatures to derive
@@ -1195,7 +1239,9 @@ So we **store** it and maintain it on merge.
 
 `EClasses` already stores per-class data in a `SparseSet` keyed by the class's `repr_id`:
 today the value is the use-list id. We **widen that value** to a small `Copy` struct
-`{ use_list, min_monomial }` (two `DenseId`s) rather than adding a second sparse set, so the two
+`{ use_list, min_monomial }` (two `DenseId`s) rather than adding a second sparse set
+*(historical first step — later widened again to per-op POOL rows plus the `atomic` flag
+for multi-AC/ACI; see the superseded scope note below and `ac-algebraic-properties.md`)*, so the two
 per-class facts share one slot and cannot desync. The struct derives `Tagged` by
 delegating the tag to its first field (the precedent is `ListNode` in `containers/list.rs`,
 `Repr = (L::Repr, T::Repr)`), so `InlineStore` works unchanged at both id widths, with no
@@ -1270,7 +1316,11 @@ canonicalizes anyway (it does this for every rule LHS regardless). This keeps th
 path O(1) and places the only exactness requirement at the read site, which already pays
 for canonicalization.
 
-**Scope: one AC symbol now; multiple via a pool later.** A single `min_monomial` slot assumes one
+**Scope (superseded 2026-07): the per-op pool is implemented — multiple AC and ACI
+symbols complete.** The paragraph below is the original single-op design note, kept for
+the rationale; the "upgrade" it describes landed (per-class rows, one column per
+completion op, see `ac-algebraic-properties.md`), and the `mset_op_count ≤ 1` guard is
+gone. Original text: a single `min_monomial` slot assumes one
 AC op per e-graph, because the minimum monomial is per-(class, *op*): a class may hold both
 a `+`-monomial and a `*`-monomial (assert `a+b = a*b`), and a `+`-rule's normal form must be
 a `+`-monomial. This is no harder *algorithmically*: Kapur's multi-symbol algorithm is just
@@ -1283,7 +1333,7 @@ slot holds one op's minimum. The vectorized form keeps `min_monomial` as an offs
 min of two rows), recovering per-(class, op) minima without a per-class heap allocation. It
 slots in behind the same `min_mono(op, class)` accessor, so callers do not change. The engine
 uses the single-op slot (one AC symbol per e-graph); the pool is the upgrade for a
-multi-AC-symbol e-graph.
+multi-AC-symbol e-graph. *(End of superseded original; the pool shipped.)*
 
 **Reusable buffers, destination-passing, like the rest of `rebuild`.** `rebuild` already
 threads scratch `Vec`s (`g_buf`, `mset_buf`, `collisions`, `touched`) by `&mut` into
@@ -1373,7 +1423,14 @@ on this argument.
 The argument has three parts (the search finds every applicable pair, the result is
 locally confluent, the loop terminates), and Newman's Lemma then closes it.
 
-- Search completeness (a finite combinatorial lemma, not metatheory). For a node
+- Search completeness (a finite combinatorial lemma, not metatheory). *(Scope note,
+  2026-07-10: this lemma is for the plain-AC pass — the shared-child union is where all
+  PLAIN superposition partners live. The semantic-property facets deliberately generate
+  pairs OUTSIDE this union through their own generators: a rule's axiom critical pairs
+  (Kapur §4) are self-pairs needing no partner, and the cancelative disjoint superposition
+  (§5.3) pairs same-op rules that may share no child at all — its generator is an explicit
+  all-pairs loop over the op's antichain, so the search-completeness claim for those
+  facets is by construction, not by this index argument.)* For a node
   `+M`, the only AC nodes that can rewrite-interact with it are those sharing at
   least one child class, and they all lie in
   `⋃_{x ∈ distinct(M)} by_contains[x] ∩ by_op[+]` (§7). Containment partners
