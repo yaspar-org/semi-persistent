@@ -66,6 +66,34 @@ pub enum Justification<G: Copy> {
     Axiom {
         axiom_id: crate::id::AxiomId,
     },
+    /// AC completion: a critical-pair superposition between two rules sharing a child class.
+    /// The merge equates the normalized reducts. (Kapur Def 3.2.)
+    ACSuperposition {
+        node_a: G,
+        node_b: G,
+    },
+    /// AC completion: inter-reduction collapsed a rule's monomial to a smaller normal form,
+    /// merging it with the materialized reduct. (Kapur Algo 1 step 4.)
+    ACInterReduction {
+        node_a: G,
+        node_b: G,
+    },
+    /// Semantic-axiom critical pair (Kapur §4 per-rule): idempotent/nilpotent axiom critical
+    /// pair, or an identity-drop / degeneracy merge derived during completion normalization.
+    ACAxiomCP {
+        node_a: G,
+        node_b: G,
+    },
+    /// Cancellative closure: `x∘z = y∘z ⟹ x = y` (Kapur §5.2).
+    Cancellative {
+        node_a: G,
+        node_b: G,
+    },
+    /// Inverse-pair cancellation: `x ∘ inv(x) = e` recognized and merged.
+    InverseCancel {
+        node_a: G,
+        node_b: G,
+    },
 }
 
 impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justification<G> {

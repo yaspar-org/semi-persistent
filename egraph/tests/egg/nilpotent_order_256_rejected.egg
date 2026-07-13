@@ -1,0 +1,5 @@
+;; EXPECT: parse-error
+;; Nilpotent order 256 overflows u8 and is rejected at parse time (valid range is 2..=255).
+(sort E)
+(function e () E)
+(function xor (E) E :assoc :comm :nilpotent 256 :identity (e))

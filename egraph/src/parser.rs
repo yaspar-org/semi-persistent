@@ -845,7 +845,15 @@ fn parse_alg_tags(input: &mut &str, base: usize) -> ModalResult<Vec<AlgTag>> {
             // Optional integer order (default 2). Only consume a number if one follows.
             ws_inner(input);
             let order = if input.starts_with(|c: char| c.is_ascii_digit()) {
-                Some(number(input)? as u8)
+                let n = number(input)?;
+                if !(2..=255).contains(&n) {
+                    let mut e = ContextError::new();
+                    e.push(StrContext::Expected(StrContextValue::Description(
+                        ":nilpotent order must be 2..=255",
+                    )));
+                    return Err(ErrMode::Cut(e));
+                }
+                Some(n as u8)
             } else {
                 None
             };

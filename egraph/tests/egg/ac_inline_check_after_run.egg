@@ -1,0 +1,17 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; Regression: check builds the AC context AFTER the previous run, materializing fresh nodes.
+;; The interpreter must rebuild before comparing so completion consequences of those nodes are
+;; discovered. Without the fix, this check fails (the two terms are not yet proven equal).
+(sort E)
+(function Add (E) E :assoc-comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(let s_ab (Add (a) (b)))
+(union s_ab (c))
+(run 5)
+;; Add(a,b,d) and Add(c,d) are built inline here — fresh nodes — and their equality is an AC
+;; congruence consequence of Add(a,b)=c that completion must derive after a rebuild.
+(check (= (Add (a) (b) (d)) (Add (c) (d))))

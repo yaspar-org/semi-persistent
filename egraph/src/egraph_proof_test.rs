@@ -233,6 +233,11 @@ mod deep_proof_test {
                     format!("congruence({}, {})", name(na), name(nb))
                 }
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
+                Justification::ACSuperposition { .. }
+                | Justification::ACInterReduction { .. }
+                | Justification::ACAxiomCP { .. }
+                | Justification::Cancellative { .. }
+                | Justification::InverseCancel { .. } => "ac-algebraic".to_string(),
                 Justification::Filler => unreachable!("filler is never a real proof step"),
             };
             eprintln!("  [{i}] {} ≡ {}  by {reason}", name(*from), name(*to));
@@ -318,6 +323,11 @@ mod kind_proof_tests {
                     eg.node_op_name(*node_b)
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
+                Justification::ACSuperposition { .. }
+                | Justification::ACInterReduction { .. }
+                | Justification::ACAxiomCP { .. }
+                | Justification::Cancellative { .. }
+                | Justification::InverseCancel { .. } => "ac-algebraic".to_string(),
                 Justification::Filler => unreachable!("filler is never a real proof step"),
             };
             eprintln!(
@@ -1074,6 +1084,11 @@ mod aci_deep_proof_test {
                     eg.node_op_name(*node_b)
                 ),
                 Justification::Rewrite { rule_id, .. } => format!("rewrite #{rule_id}"),
+                Justification::ACSuperposition { .. }
+                | Justification::ACInterReduction { .. }
+                | Justification::ACAxiomCP { .. }
+                | Justification::Cancellative { .. }
+                | Justification::InverseCancel { .. } => "ac-algebraic".to_string(),
                 Justification::Filler => unreachable!("filler is never a real proof step"),
             };
             eprintln!(

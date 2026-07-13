@@ -196,21 +196,33 @@ where
                 self.build_cterm(ct);
             }
             CCommand::CheckEq(a, b) => {
+                let before = self.eg.node_count();
                 let (a_id, _) = self.build_cterm(a);
                 let (b_id, _) = self.build_cterm(b);
+                if self.eg.node_count() > before {
+                    self.eg.rebuild();
+                }
                 if self.eg.find(a_id) != self.eg.find(b_id) {
                     return Err(InterpError::CheckFailed("terms are not equal".into()));
                 }
             }
             CCommand::CheckNeq(a, b) => {
+                let before = self.eg.node_count();
                 let (a_id, _) = self.build_cterm(a);
                 let (b_id, _) = self.build_cterm(b);
+                if self.eg.node_count() > before {
+                    self.eg.rebuild();
+                }
                 if self.eg.find(a_id) == self.eg.find(b_id) {
                     return Err(InterpError::CheckFailed("terms are equal".into()));
                 }
             }
             CCommand::Extract(ct) => {
+                let before = self.eg.node_count();
                 let (id, _) = self.build_cterm(ct);
+                if self.eg.node_count() > before {
+                    self.eg.rebuild();
+                }
                 match crate::extract::extract_best(&self.eg, id) {
                     Some(t) => println!("{t}"),
                     None => println!("(extract: no term found)"),

@@ -1,0 +1,5 @@
+;; EXPECT: parse-error
+;; Nilpotent order 0 is rejected at parse time (would cause div-by-zero in the mod-n clamp).
+(sort E)
+(function e () E)
+(function xor (E) E :assoc :comm :nilpotent 0 :identity (e))

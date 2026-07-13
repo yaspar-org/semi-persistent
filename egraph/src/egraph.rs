@@ -101,6 +101,21 @@ pub struct EGraph<
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
     inverse_op: crate::containers::Map<Cfg::O, Cfg::O, TRACK>,
+    /// Outcome of the most recent `rebuild` when `cc` is enabled. Lets callers distinguish
+    /// convergence from a growth-budget abort. `None` if completion hasn't run yet.
+    completion_outcome: Option<CompletionOutcome>,
+}
+
+/// Outcome of the AC congruence-completion pass inside `rebuild`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompletionOutcome {
+    /// Completion was not enabled (`set_cc(false)`).
+    Disabled,
+    /// Completion reached a fixpoint (the rule set is confluent).
+    Converged { rounds: usize },
+    /// Completion aborted because the node-growth budget was exceeded. The e-graph is
+    /// sound-but-incomplete: some AC-entailed equalities may be missing.
+    AbortedGrowthLimit { added_nodes: usize, limit: usize },
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -147,7 +162,14 @@ where
             flatten_buf: Vec::new(),
             unit_node: crate::containers::Map::new(),
             inverse_op: crate::containers::Map::new(),
+            completion_outcome: None,
         }
+    }
+
+    /// Outcome of the most recent `rebuild` when `cc` is enabled. `None` before the first
+    /// rebuild. Callers can use this to distinguish convergence from a growth-budget abort.
+    pub fn completion_outcome(&self) -> Option<CompletionOutcome> {
+        self.completion_outcome
     }
 
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
@@ -563,7 +585,14 @@ where
                 match self.mset_buf.len() {
                     0 => match unit {
                         Some(u) => return u,
-                        None => self.nodes.add_mset(op, &self.mset_buf),
+                        None => {
+                            debug_assert!(
+                                false,
+                                "zero-child MSet term without a declared identity — \
+                                 the empty monomial has no algebraic meaning for a semigroup op"
+                            );
+                            self.nodes.add_mset(op, &self.mset_buf)
+                        }
                     },
                     1 if Cfg::mset_child_mult(&self.mset_buf[0]).into() == 1 => {
                         return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
@@ -585,7 +614,14 @@ where
                 match self.g_buf.len() {
                     0 => match unit {
                         Some(u) => return u,
-                        None => self.nodes.add_set(op, &self.g_buf),
+                        None => {
+                            debug_assert!(
+                                false,
+                                "zero-child Set term without a declared identity — \
+                                 the empty monomial has no algebraic meaning for a semigroup op"
+                            );
+                            self.nodes.add_set(op, &self.g_buf)
+                        }
                     },
                     1 => return self.classes.find(self.g_buf[0]),
                     _ => self.nodes.add_set(op, &self.g_buf),
@@ -1059,6 +1095,7 @@ where
         // when opted in (default off until nested same-op flattening lands — §6b).
         if !self.cc {
             self.rebuild_congruence();
+            self.completion_outcome = Some(CompletionOutcome::Disabled);
             return;
         }
         // Multiple MSet symbols are supported: the per-class min-monomial pool stores a
@@ -1117,6 +1154,7 @@ where
                 // Incremental round found nothing: confirm with a full round before exiting.
                 // A full round that also finds nothing is true convergence.
                 if was_full {
+                    self.completion_outcome = Some(CompletionOutcome::Converged { rounds: round });
                     return;
                 }
                 full = true;
@@ -1124,8 +1162,13 @@ where
             }
             // Made progress: stay incremental for the next round.
             full = false;
-            if self.node_count() - start_nodes > MAX_COMPLETION_NODE_GROWTH {
+            let added = self.node_count() - start_nodes;
+            if added > MAX_COMPLETION_NODE_GROWTH {
                 self.rebuild_congruence();
+                self.completion_outcome = Some(CompletionOutcome::AbortedGrowthLimit {
+                    added_nodes: added,
+                    limit: MAX_COMPLETION_NODE_GROWTH,
+                });
                 debug_assert!(
                     false,
                     "ac completion diverged: added >{MAX_COMPLETION_NODE_GROWTH} nodes \
@@ -1476,19 +1519,12 @@ where
                 }
                 eg.add(op, buf)
             };
-        let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G| -> bool {
+        let do_merge = |eg: &mut Self, x: Cfg::G, y: Cfg::G, just: Justification<Cfg::G>| -> bool {
             if eg.classes.find_const(x) == eg.classes.find_const(y) {
                 return false;
             }
             let m = if PROOFS {
-                eg.classes.merge_justified(
-                    x,
-                    y,
-                    Justification::Congruence {
-                        node_a: x,
-                        node_b: y,
-                    },
-                )
+                eg.classes.merge_justified(x, y, just)
             } else {
                 eg.classes.merge(x, y)
             };
@@ -1868,7 +1904,15 @@ where
             // `normal` differs from `mset` and lands here).
             if *normal != mset {
                 let c_prime = materialize(self, op, normal, &mut mat_buf);
-                changed |= do_merge(self, c_prime, class);
+                changed |= do_merge(
+                    self,
+                    c_prime,
+                    class,
+                    Justification::ACInterReduction {
+                        node_a: c_prime,
+                        node_b: node,
+                    },
+                );
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
@@ -1954,7 +1998,15 @@ where
             // summand becomes that class. So no empty/size-1 special-casing is needed here.
             let c1 = materialize(self, op, n1, &mut mat_buf);
             let c2 = materialize(self, op, n2, &mut mat_buf);
-            changed |= do_merge(self, c1, c2);
+            changed |= do_merge(
+                self,
+                c1,
+                c2,
+                Justification::ACSuperposition {
+                    node_a: c1,
+                    node_b: c2,
+                },
+            );
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
             eprintln!(
@@ -3025,6 +3077,13 @@ mod tests {
                 Justification::Congruence { .. } => {}
                 Justification::Rewrite { .. } => {}
                 Justification::Filler => unreachable!("filler is never a real proof step"),
+                Justification::ACSuperposition { .. }
+                | Justification::ACInterReduction { .. }
+                | Justification::ACAxiomCP { .. }
+                | Justification::Cancellative { .. }
+                | Justification::InverseCancel { .. } => {
+                    panic!("algebraic justification in a non-completion test")
+                }
             }
         }
     }

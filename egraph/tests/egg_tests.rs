@@ -420,3 +420,15 @@ egg_test!(
 );
 egg_test!(group_inverse_virtual_sum, "group_inverse_virtual_sum.egg");
 egg_test!(group_inverse_multiplicity, "group_inverse_multiplicity.egg");
+// Inline check/extract rebuilds after building fresh terms so AC consequences fire.
+egg_test!(ac_inline_check_after_run, "ac_inline_check_after_run.egg");
+// Nilpotent order validation: invalid orders produce a parse-error, not a panic.
+egg_test!(
+    nilpotent_order_zero_rejected,
+    "nilpotent_order_zero_rejected.egg"
+);
+egg_test!(
+    nilpotent_order_256_rejected,
+    "nilpotent_order_256_rejected.egg"
+);
+egg_test!(nilpotent_order_255_ok, "nilpotent_order_255_ok.egg");

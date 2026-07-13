@@ -1,0 +1,12 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; CHECK_AC_BASIS: on
+;; Nilpotent order 255 (max valid u8) parses and completes without panic.
+(sort E)
+(function e () E)
+(function a () E)
+(function xor255 (E) E :assoc :comm :nilpotent 255 :identity (e))
+(let t (xor255 (a) (a)))
+(run 3)
+;; count 2 mod 255 = 2, so xor255(a,a) is NOT the unit (unlike order 2).
+(check (= t t))
