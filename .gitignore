@@ -21,10 +21,11 @@ session*.md
 
 # Claude Code (agent state / transcripts — never commit),
 # EXCEPT the repo-root .claude/ — that is the committed sdd harness
-# (agents/skills/workflows/probes + CALIBRATION.md), not agent state.
+# (agents/skills/workflows/probes + CALIBRATION.md + CLAUDE.md), not agent state.
 **/.claude/
 !/.claude/
 CLAUDE.md
+!/.claude/CLAUDE.md
 
 # sdd run evidence (ephemeral; distilled into <crate>/doc/verification/)
 runs/
