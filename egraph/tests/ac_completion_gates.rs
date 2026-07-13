@@ -1,11 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Gates for known AC/ACI completion gaps.
+//! Regression gates for formerly-known AC/ACI completion gaps.
 //!
-//! These are intentionally `#[ignore]`: they encode behavior the next implementation
-//! iteration should make true, while keeping the normal suite green until the feature lands.
-//! Run with:
-//!   cargo test -p semi-persistent-egraph --test ac_completion_gates -- --ignored
+//! These started life as intentionally-`#[ignore]`d witnesses of missing Set/ACI coverage
+//! in the basis diagnostics and `CcSnapshot`. Both gaps were closed (2026-07-10:
+//! Set-aware basis diagnostics; representation-agnostic `CcSnapshot`), so the gates were
+//! flipped and now run in the normal suite as ordinary regressions.
 
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::cc::CcSnapshot;
@@ -34,8 +34,8 @@ fn basis_report_counts_set_completion_nodes() {
     let report = eg.cc_basis_report();
     assert!(
         report.n_ac_nodes >= 1,
-        "Set/ACI node {ab:?} must be included in completion-basis diagnostics; \
-         today ac_invariants.rs scans only NodeRef::MSet, so CHECK_AC_BASIS can pass vacuously"
+        "Set/ACI node {ab:?} must be included in completion-basis diagnostics \
+         (regression: an MSet-only scan would let CHECK_AC_BASIS pass vacuously)"
     );
 }
 
@@ -48,6 +48,7 @@ fn cc_snapshot_counts_set_completion_nodes_if_kept() {
     assert_eq!(
         snap.completion_nodes(),
         &[ab],
-        "CcSnapshot is stale/MSet-only; if retained, it must agree with current completion_node_ids semantics for Set/ACI"
+        "CcSnapshot must agree with completion_node_ids semantics for Set/ACI \
+         (regression: it was once MSet-only)"
     );
 }

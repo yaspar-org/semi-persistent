@@ -33,7 +33,8 @@ round drives both the MSet and Set partitions, and the Kapur §4 semantic proper
 identity (unit-drop at build AND recanonize, `CanonMode`), idempotent and nilpotent count
 clamps, and the per-rule *axiom* critical pairs (Lemmas 4.1(ii), 4.2(ii)/4.5) that clamping
 alone cannot derive. A rule whose class is the op's identity has the **empty monomial** as
-RHS (Kapur's `f({}) = e`). `:cancellative`/`:inverse` are rejected until their facets exist.
+RHS (Kapur's `f({}) = e`). `:cancellative` drives the Kapur §5 cancel-closure inferences
+and `:inverse` (which implies cancellative) drives pair-level inverse cancellation.
 See `ac-completion-spec.md` §3 (the Kapur-correspondence table) and
 `ac-algebraic-properties.md` (the storage and property-tag design). The cancelative facet
 (Kapur §5.1–5.3) and gate-level `:inverse` pair cancellation landed 2026-07-10; **full

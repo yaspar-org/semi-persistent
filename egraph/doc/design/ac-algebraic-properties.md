@@ -448,8 +448,8 @@ representation from the combination. Properties that need a value take a ground 
 (function +    (Int)  Int  :assoc :comm)                        ; AC, multiset
 (function and  (Bool) Bool :assoc :comm :idempotent)            ; ACI, set (clamp to 1)
 (function -    (Int)  Int  :assoc-left)                         ; A-only, unchanged
-(function xor  (Bool) Bool :assoc :comm :nilpotent :identity (false))  ; set (mod 2) [future]
-(function +    (Int)  Int  :assoc :comm :identity 0)            ; AC + unit drop [future]
+(function xor  (Bool) Bool :assoc :comm :nilpotent :identity (false))  ; MSet, mod-2 clamp
+(function +    (Int)  Int  :assoc :comm :identity 0)            ; AC + unit drop
 ```
 
 ### Derivation from tags
@@ -460,7 +460,7 @@ representation from the combination. Properties that need a value take a ground 
 | `:comm` (binary)                | C             | pair               | reorder                  |
 | `:assoc :comm`                  | AC            | **multiset** (ℕ)   | union                    |
 | `:assoc :comm :idempotent`      | ACI           | **set** ({0,1})    | union, clamp to 1        |
-| `:assoc :comm :nilpotent`       | set-nilpotent | **set** ({0,1})    | symmetric difference     |
+| `:assoc :comm :nilpotent`       | nilpotent     | **multiset** (mod-n clamp; the 2026-07-01 correction) | symmetric difference (n=2) |
 | + `:identity e` on any AC row   | (same)        | (same)             | additionally drop `e`    |
 
 ### Which properties take a parameter, and which are baked in
@@ -486,7 +486,7 @@ equal a real node, the unit. That is also why `:nilpotent` requires `:identity` 
 
 Parameter syntax: a value-taking tag is followed by a **ground term of the op's return sort** —
 `:identity 0` (literal) or `:identity (zero)` (nullary constant application), `:nilpotent` (order
-2 default) or `:nilpotent 3`, `:inverse neg` (names the unary inverse op, future). This is not a
+2 default) or `:nilpotent 3`, `:inverse neg` (names the unary inverse op). This is not a
 new literal syntax: the tag argument is an ordinary surface term, parsed by the existing term
 grammar (`Term::Lit` / `Term::App`).
 
@@ -509,15 +509,17 @@ struct AcAlgebra {
 }
 ```
 
-`repr` is derived (`Idempotent` | `Nilpotent` → `Set`; `None` → `Multiset`), stored explicitly so
+`repr` is derived (`Idempotent` → `Set`; `None` / `Nilpotent` → `Multiset` — the 2026-07-01
+correction: dedup would destroy the run-lengths the mod-n clamp needs), stored explicitly so
 every downstream site is a single exhaustive match on `AcAlgebra`, never a re-derivation from
 tags. `AcAlgebra` is stored on `OpInfo`. Invalid tag combinations are rejected here and become
 unrepresentable downstream.
 
 This lands on the existing structure with no new partition: `AcRepr::Multiset` routes to
-`nodes.mset` (`(G, mult)` children), `AcRepr::Set` to `nodes.set` (bare `G`). Idempotent and
-nilpotent **share** the set partition (both have {0,1} normal-form counts) and differ only in the
-`AcClamp` the canonicalizer/merge reads — dedup for `Idempotent`, pair-cancel for `Nilpotent`.
+`nodes.mset` (`(G, mult)` children), `AcRepr::Set` to `nodes.set` (bare `G`). Plain AC and
+nilpotent **share** the multiset partition (nilpotent needs true multiplicities before the mod-n
+clamp) and differ only in the `AcClamp` the canonicalizer/merge reads — none for plain AC,
+mod-n for `Nilpotent`; idempotent is the one `Set` case (dedup IS its clamp).
 
 ### Validation at registration
 
@@ -687,13 +689,14 @@ associative** (rounding), so they are not AC and get no completion.
 
 ### Summary
 
-- **set** (bare `G`, {0,1} counts): `and`, `or`, `xor`, `xnor`, `bvand`, `bvor`, `bvxor`,
-  `bvxnor`, `set.union`, `set.inter`, `bag.union_max`, `bag.inter_min`, `re.union`, `re.inter`,
-  `min`, `max`. The majority of AC operators, in two merge flavors — union-clamp (idempotent) and
-  symmetric-difference (nilpotent).
-- **mset** (`(G, u32)`, ℕ counts): `+`, `*`, `bvadd`, `bvmul`, `bag.union_disjoint`. The minority.
+- **set** (bare `G`, {0,1} counts): `and`, `or`, `bvand`, `bvor`, `set.union`, `set.inter`,
+  `bag.union_max`, `bag.inter_min`, `re.union`, `re.inter`, `min`, `max` — the idempotent
+  (union-clamp) operators.
+- **mset** (`(G, u32)`, ℕ counts): `+`, `*`, `bvadd`, `bvmul`, `bag.union_disjoint` (plain AC),
+  **plus the nilpotent family** (`xor`, `xnor`, `bvxor`, `bvxnor`) — stored MSet with the mod-n
+  clamp (symmetric difference at n=2), per the 2026-07-01 correction.
 - **signed mset** (ℤ counts): only if abelian groups are ever modeled (out of scope).
 
-In scope to implement: set-idempotent (ACI: `and`, `or`, …) and multiset (AC: `+`, `*`, …). The
-set-nilpotent family (`xor`, bitwise) is future work on the same machinery with a
-symmetric-difference merge and a declared unit.
+Implemented: set-idempotent (ACI: `and`, `or`, …), multiset (AC: `+`, `*`, …), and the
+nilpotent family (MSet + mod-n clamp + declared unit). The signed-count group representation
+remains out of scope (shipped group support is inverse-PAIR cancellation).

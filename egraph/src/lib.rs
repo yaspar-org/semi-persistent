@@ -52,7 +52,7 @@ pub mod viz;
 pub use containers::{DenseId, IdFactory, IndexLike, SparseSet};
 
 // Flat re-exports from egraph module
-pub use egraph::{EGraph, EGraph31, EGraph63, EGraphToken};
+pub use egraph::{CompletionOutcome, EGraph, EGraph31, EGraph63, EGraphToken};
 
 // Flat re-exports from other modules
 pub use classes::EClasses;

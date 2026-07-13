@@ -1,0 +1,6 @@
+;; With a declared :identity, the empty monomial IS the unit: (Add) = (zero).
+(sort E)
+(function zero () E)
+(function Add (E) E :assoc :comm :identity (zero))
+(let z (Add))
+(check (= z (zero)))

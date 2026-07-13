@@ -1,0 +1,4 @@
+;; EXPECT: sort-error
+;; :cancellative alone (no :assoc/:comm) is rejected — a plain op has no monomial equations.
+(sort E)
+(function bad (E E) E :cancellative)

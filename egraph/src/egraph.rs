@@ -17,8 +17,9 @@ use crate::typed_routing::NodeRef;
 use crate::union_find::{Justification, ProofBuf};
 
 /// How a completion op's monomial counts are bounded during normalization (design "three
-/// independent axes"): unbounded ℕ (MSet), clamped to {0,1} by dedup (Set idempotent = ACI),
-/// or reduced mod `order` (Set nilpotent, e.g. XOR at order 2). Selects the normalize/reduct
+/// independent axes"): unbounded ℕ (MSet plain AC), clamped to {0,1} by dedup (Set idempotent =
+/// ACI), or reduced mod `order` (nilpotent, e.g. XOR at order 2 — stored MSet, the clamp is the
+/// algebra axis, not the storage axis). Selects the normalize/reduct
 /// reduction in `cc_round`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CompletionClamp {
@@ -38,6 +39,10 @@ pub struct EGraphToken {
     lits: LitValStoreToken,
     unit_node: crate::containers::MapToken,
     inverse_op: crate::containers::MapToken,
+    /// The completion outcome at mark time. `mark()` rebuilds first, so this value
+    /// describes exactly the state being snapshotted; `restore` puts it back so a caller
+    /// can never observe an outcome from a discarded scope.
+    completion_outcome: Option<CompletionOutcome>,
 }
 
 pub struct EGraph<
@@ -173,7 +178,8 @@ where
     }
 
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
-    /// Off until nested same-op flattening lands — see `cc` field docs.
+    /// Off by default for divergence *scoping* (nested same-op flattening landed long
+    /// ago) — see the `cc` field docs and `doc/future/ac-completion-review-debt.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
         self.cc = enabled;
     }
@@ -580,19 +586,17 @@ where
                 }
                 // Degenerate arity ⇒ an existing class, not a fresh node. An empty monomial is the
                 // unit; a single mult-1 summand is that summand's class. Empty *without* a declared
-                // unit (only reachable for a plain AC op built with no non-unit children) falls
-                // through to the (empty) node, the pre-canonization behavior.
+                // unit is an API-contract violation (the surface layer rejects it at sortcheck):
+                // the empty monomial names nothing in a semigroup, so minting a node for it would
+                // put a meaningless term in the graph — panic in ALL builds, like the other
+                // registration invariants.
                 match self.mset_buf.len() {
                     0 => match unit {
                         Some(u) => return u,
-                        None => {
-                            debug_assert!(
-                                false,
-                                "zero-child MSet term without a declared identity — \
-                                 the empty monomial has no algebraic meaning for a semigroup op"
-                            );
-                            self.nodes.add_mset(op, &self.mset_buf)
-                        }
+                        None => panic!(
+                            "zero-child MSet term without a declared identity — \
+                             the empty monomial has no algebraic meaning for a semigroup op"
+                        ),
                     },
                     1 if Cfg::mset_child_mult(&self.mset_buf[0]).into() == 1 => {
                         return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
@@ -610,18 +614,15 @@ where
                 }
                 // Degenerate arity ⇒ an existing class (idempotent has no nilpotent clamp, so a
                 // Set monomial only reaches {} via identity-drop, and size-1 via dedup/drop).
-                // Empty without a declared unit falls through (pre-canonization behavior).
+                // Empty without a declared unit is an API-contract violation — panic (see the
+                // MSet twin above).
                 match self.g_buf.len() {
                     0 => match unit {
                         Some(u) => return u,
-                        None => {
-                            debug_assert!(
-                                false,
-                                "zero-child Set term without a declared identity — \
-                                 the empty monomial has no algebraic meaning for a semigroup op"
-                            );
-                            self.nodes.add_set(op, &self.g_buf)
-                        }
+                        None => panic!(
+                            "zero-child Set term without a declared identity — \
+                             the empty monomial has no algebraic meaning for a semigroup op"
+                        ),
                     },
                     1 => return self.classes.find(self.g_buf[0]),
                     _ => self.nodes.add_set(op, &self.g_buf),
@@ -772,7 +773,7 @@ where
     }
 
     /// The normalization clamp for an op's completion monomials: unbounded (MSet), clamp-to-1
-    /// (Set idempotent, ACI), or mod-n (Set nilpotent). Determines how reducts and normal forms
+    /// (Set idempotent, ACI), or mod-n (nilpotent — stored MSet). Determines how reducts and normal forms
     /// are reduced (design "three independent axes").
     pub(crate) fn op_clamp(&self, op: Cfg::O) -> CompletionClamp {
         use crate::registry::Clamp;
@@ -1092,7 +1093,7 @@ where
     /// equalities.
     pub fn rebuild(&mut self) {
         // Ordinary atom-level congruence closure always runs. AC completion runs only
-        // when opted in (default off until nested same-op flattening lands — §6b).
+        // when opted in (default off for divergence scoping — see the `cc` field docs).
         if !self.cc {
             self.rebuild_congruence();
             self.completion_outcome = Some(CompletionOutcome::Disabled);
@@ -1546,8 +1547,18 @@ where
         // (already the small active set), via an all-pairs loop.
         //   targets — (A): collapse a node's class into its residual's normal form.
         //   crit    — (B): merge the normal forms of the two lcm reducts.
+        // Each critical pair carries its ORIGIN so the close-time merge records the
+        // faithful proof justification (pairwise superposition vs. per-rule semantic
+        // axiom CP vs. cancelative closure) instead of a catch-all label.
+        #[derive(Clone, Copy)]
+        enum CpOrigin {
+            Superposition,
+            AxiomCp,
+            Cancellative,
+        }
         let mut crit: Vec<(
             Cfg::O,
+            CpOrigin,
             Vec<(Cfg::G, Multiplicity)>,
             Vec<(Cfg::G, Multiplicity)>,
         )> = Vec::new();
@@ -1621,7 +1632,7 @@ where
                             );
                             crate::multiset::clamp_idempotent(&mut r1);
                             if r1 != rules[ti].rhs {
-                                crit.push((op, r1, rules[ti].rhs.clone()));
+                                crit.push((op, CpOrigin::AxiomCp, r1, rules[ti].rhs.clone()));
                             }
                         }
                     }
@@ -1642,7 +1653,7 @@ where
                             );
                             crate::multiset::clamp_nilpotent(&mut r1, order);
                             let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
-                            crit.push((op, r1, r2));
+                            crit.push((op, CpOrigin::AxiomCp, r1, r2));
                         }
                     }
                     CompletionClamp::Multiset => {} // plain AC / identity-only: none (Lemma 4.3)
@@ -1713,7 +1724,7 @@ where
                     }
                     CompletionClamp::Multiset => {}
                 }
-                crit.push((op, r1, r2));
+                crit.push((op, CpOrigin::Superposition, r1, r2));
             }
         }
 
@@ -1765,6 +1776,7 @@ where
             };
         let push_cancel = |crit: &mut Vec<(
             Cfg::O,
+            CpOrigin,
             Vec<(Cfg::G, Multiplicity)>,
             Vec<(Cfg::G, Multiplicity)>,
         )>,
@@ -1774,13 +1786,18 @@ where
                            m: Vec<(Cfg::G, Multiplicity)>,
                            r: Vec<(Cfg::G, Multiplicity)>| {
             if (!m.is_empty() && !r.is_empty()) || has_unit {
-                crit.push((op, m, r));
+                crit.push((op, CpOrigin::Cancellative, m, r));
             } else {
                 // §5.2(iii)(b): f(ne ∪ {c}) = f({c}) for every constant c in the pool.
                 let ne = if m.is_empty() { r } else { m };
                 for &g in pool {
                     let one = [(g, Multiplicity(1))];
-                    crit.push((op, crate::multiset::multiset_union(&ne, &one), one.to_vec()));
+                    crit.push((
+                        op,
+                        CpOrigin::Cancellative,
+                        crate::multiset::multiset_union(&ne, &one),
+                        one.to_vec(),
+                    ));
                 }
             }
         };
@@ -1890,9 +1907,13 @@ where
                 }
             }
             // Inverse-pair cancellation on the normal form (group ops): normalization can
-            // bring x and inv(x) together in one monomial; cancel before comparing.
+            // bring x and inv(x) together in one monomial; cancel before comparing. Track
+            // whether it fired: a merge produced by pair cancellation is a group-law
+            // inference (`x ∘ inv(x) = e`), not plain rule inter-reduction, and the proof
+            // label must say so.
+            let mut inverse_cancelled = false;
             if let Some(inv) = self.inverse_op(op) {
-                self.group_cancel_pairs(inv, &mut nf_out);
+                inverse_cancelled = self.group_cancel_pairs(inv, &mut nf_out);
             }
             let normal = &nf_out;
             // If normalization by the other rules changed the monomial, materialize the normal
@@ -1904,15 +1925,18 @@ where
             // `normal` differs from `mset` and lands here).
             if *normal != mset {
                 let c_prime = materialize(self, op, normal, &mut mat_buf);
-                changed |= do_merge(
-                    self,
-                    c_prime,
-                    class,
+                let just = if inverse_cancelled {
+                    Justification::InverseCancel {
+                        node_a: c_prime,
+                        node_b: node,
+                    }
+                } else {
                     Justification::ACInterReduction {
                         node_a: c_prime,
                         node_b: node,
-                    },
-                );
+                    }
+                };
+                changed |= do_merge(self, c_prime, class, just);
                 // Collapse: the node was reducible by another rule (proper containment),
                 // so retire it from the active AC rule set (design §6b). FLAG_AC_COLLAPSED,
                 // NOT subsume — the node stays matchable and a legal child; only
@@ -1954,7 +1978,7 @@ where
         let crit_generated = crit.len();
         let mut n1_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
-        for (op, r1, r2) in crit {
+        for (op, origin, r1, r2) in crit {
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
             // already coincide as multisets), so skip the two full normalizations entirely
             // when r1 == r2 already.
@@ -1998,15 +2022,24 @@ where
             // summand becomes that class. So no empty/size-1 special-casing is needed here.
             let c1 = materialize(self, op, n1, &mut mat_buf);
             let c2 = materialize(self, op, n2, &mut mat_buf);
-            changed |= do_merge(
-                self,
-                c1,
-                c2,
-                Justification::ACSuperposition {
+            // The proof label reflects the pair's ORIGIN: pairwise rule superposition
+            // (Kapur Def 3.2), the op's own semantic-axiom CP (§4), or cancelative
+            // closure (§5.2/§5.3).
+            let just = match origin {
+                CpOrigin::Superposition => Justification::ACSuperposition {
                     node_a: c1,
                     node_b: c2,
                 },
-            );
+                CpOrigin::AxiomCp => Justification::ACAxiomCP {
+                    node_a: c1,
+                    node_b: c2,
+                },
+                CpOrigin::Cancellative => Justification::Cancellative {
+                    node_a: c1,
+                    node_b: c2,
+                },
+            };
+            changed |= do_merge(self, c1, c2, just);
         }
         if std::env::var_os("AC_COMPLETE_TRACE").is_some() {
             eprintln!(
@@ -2044,6 +2077,7 @@ where
             lits: self.lits.mark(shrink),
             unit_node: self.unit_node.mark(shrink),
             inverse_op: self.inverse_op.mark(shrink),
+            completion_outcome: self.completion_outcome,
         }
     }
 
@@ -2057,6 +2091,10 @@ where
         self.lits.restore(token.lits);
         self.unit_node.restore(token.unit_node);
         self.inverse_op.restore(token.inverse_op);
+        // Roll the outcome back with the graph: the mark-time value describes exactly the
+        // restored state (mark() rebuilds first), so a post-restore reader never sees an
+        // outcome computed for the discarded scope.
+        self.completion_outcome = token.completion_outcome;
         self.worklist.clear();
         self.collisions.clear();
         self.touched.clear();

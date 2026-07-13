@@ -173,6 +173,33 @@ where
                 ));
             }
 
+            // Zero-child variadic applications: the empty monomial denotes the op's
+            // identity, so `(add)` is meaningful only when the op declares `:identity e`
+            // (it then builds the unit). Without one, the empty monomial names nothing in
+            // the algebra — reject here, mirroring the pattern-side "at least 1 child"
+            // rule, instead of minting a meaningless empty node.
+            if children.is_empty() {
+                match &info.kind {
+                    OpKind::MSet { identity: None, .. } | OpKind::Set { identity: None, .. } => {
+                        return Err(serr(
+                            format!(
+                                "operator '{op}' has no :identity — a zero-argument \
+                                 application (the empty monomial) is meaningless; declare \
+                                 an identity or supply at least one argument"
+                            ),
+                            *span,
+                        ));
+                    }
+                    OpKind::A { .. } => {
+                        return Err(serr(
+                            format!("operator '{op}' requires at least 1 argument"),
+                            *span,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+
             // Sort-check children
             let mut checked = Vec::with_capacity(children.len());
             for (i, child) in children.iter().enumerate() {
@@ -867,6 +894,15 @@ where
     }
     if inverse.is_some() && identity.is_none() {
         return Err(serr(":inverse requires :identity", Span::Dummy));
+    }
+    // Cancellativity is an inference rule on AC monomial equations (Kapur §5); on an
+    // A-only, C-only, or plain operator the tag would be stored nowhere and silently
+    // ignored, so reject it up front like the other AC-only property tags.
+    if cancellative && !(assoc && comm) {
+        return Err(serr(
+            ":cancellative requires :assoc :comm (an AC operator)",
+            Span::Dummy,
+        ));
     }
     // Facet status (2026-07-10): `:cancellative` drives the Kapur §5 cancel-closure
     // inferences (C1 rule cancel-close + C2 cancelative disjoint superposition, minus the

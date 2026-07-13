@@ -88,16 +88,19 @@ confusion, so the names are split along three axes and "AC" is reserved for exac
 them. When reading or extending the code, classify a name by which axis it belongs to.
 
 1. **Representation (`MSet` / `Set`).** How a variadic node stores its children. `MSet` =
-   multiset, children `(G, mult)` with counts in ℕ (`+`, `*`); `Set` = set, children bare `G`
-   with counts bounded to {0,1} (`and`, `or`, and later `xor`). This is the axis the storage
+   multiset, children `(G, mult)` with counts in ℕ (`+`, `*`, and nilpotent ops like `xor`,
+   which need true multiplicities before the mod-n clamp); `Set` = set, children bare `G`
+   with counts bounded to {0,1} (`and`, `or` — idempotent only). This is the axis the storage
    and routing layers care about, so the *representation* names appear there: `OpKind::MSet` /
    `OpKind::Set`, `ENodeKind::MSet` / `Set`, `NodeRef::MSet` / `Set`, `nodes.mset` / `nodes.set`,
    `MSetCanon` / `SetCanon`, `register_mset` / `register_set`, `is_mset`, `mset_ops`,
    `mset_child_*`, `mset_buf`. A name carrying `mset`/`set` is about *layout*, never about the
    algorithm. (Why not keep "AC"/"ACI"? "AC" named the multiset representation, but it also
    names the algorithm and the theory below; and "ACI" baked the idempotent *clamp* into the
-   representation name, when in fact idempotent and nilpotent ops share one `Set` layout and
-   differ only by a clamp field. The representation axis is `{MSet, Set}`; the clamp is separate.
+   representation name — the clamp is a separate axis: idempotent is the one `Set` case
+   (dedup IS its clamp), while nilpotent lives in `MSet` (dedup would destroy the run-lengths
+   the mod-n clamp needs — the 2026-07-01 correction). The representation axis is `{MSet,
+   Set}`; the clamp is separate.
    See `doc/design/ac-algebraic-properties.md`, "three independent axes".)
 
 2. **Completion procedure (`cc`).** The congruence-closure *completion* this chapter adds

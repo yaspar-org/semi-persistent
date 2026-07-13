@@ -367,6 +367,20 @@ egg_test!(
     alg_tags_reject_idem_inverse,
     "alg_tags_reject_idem_inverse.egg"
 );
+// :cancellative is an AC-only inference tag: on an A-only, C-only, or plain op it would
+// be stored nowhere and silently ignored, so registration rejects it.
+egg_test!(
+    alg_tags_reject_cancellative_assoc_only,
+    "alg_tags_reject_cancellative_assoc_only.egg"
+);
+egg_test!(
+    alg_tags_reject_cancellative_comm_only,
+    "alg_tags_reject_cancellative_comm_only.egg"
+);
+egg_test!(
+    alg_tags_reject_cancellative_plain,
+    "alg_tags_reject_cancellative_plain.egg"
+);
 // Nilpotent (XOR) completion: mod-n cancellation, empty→unit, stored MSet (multi-AC/ACI plan,
 // property 2).
 egg_test!(nilpotent_xor, "nilpotent_xor.egg");
@@ -432,3 +446,17 @@ egg_test!(
     "nilpotent_order_256_rejected.egg"
 );
 egg_test!(nilpotent_order_255_ok, "nilpotent_order_255_ok.egg");
+// Zero-child variadic applications: the empty monomial is meaningful only for an op with
+// a declared identity (it is the unit); otherwise it is rejected at sortcheck.
+egg_test!(
+    zero_arity_mset_without_identity_rejected,
+    "zero_arity_mset_without_identity_rejected.egg"
+);
+egg_test!(
+    zero_arity_set_without_identity_rejected,
+    "zero_arity_set_without_identity_rejected.egg"
+);
+egg_test!(
+    zero_arity_with_identity_is_unit,
+    "zero_arity_with_identity_is_unit.egg"
+);

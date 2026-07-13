@@ -1,0 +1,4 @@
+;; EXPECT: sort-error
+;; :cancellative requires :assoc :comm — on an A-only op it would be silently ignored.
+(sort E)
+(function bad (E) E :assoc :cancellative)

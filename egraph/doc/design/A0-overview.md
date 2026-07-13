@@ -102,15 +102,18 @@ they are encoded as rewrite rules. Pattern matching dispatches
 automatically based on the operator's registered kind.
 
 **Caveat (AC congruence completeness):** the structural canonization
-gives correct matching and prevents the exponential blowup, but it
-does *not* provide full AC congruence closure. Rebuild re-canonicalizes
-AC nodes but generates no AC critical pairs: given `+(a,b) = c` and
-`+(b,d) = e`, the entailed equality `+(c,d) = +(a,e)` (via the shared
-`b`) is not discovered. Our rebuild is Kapur's ground AC-CC algorithm
-minus its completion steps (we have the union-find and node
-re-canonicalization; we lack superposition and rule inter-reduction).
-Closing the gap means adding those steps — a known extension (Kapur,
-FSCD 2021). See
+gives correct matching and prevents the exponential blowup, but on its
+own it does *not* provide full AC congruence closure: recanonicalizing
+an AC node substitutes equal *atoms*, never equal *sub-sums*, so given
+`+(a,b) = c` and `+(b,d) = e`, the entailed equality `+(c,d) = +(a,e)`
+(via the shared `b`) is not discovered by canonization alone. The
+missing steps — Kapur-style superposition and rule inter-reduction
+(FSCD 2021 / LMCS 2023, including the semantic-property facets:
+identity, idempotent, nilpotent, cancelative, inverse-pair) — are
+implemented in the completion pass that `rebuild` runs when opted in
+(`EGraph::set_cc(true)` / `--derive-ac-eqs`). Completion stays **off by
+default** for divergence *scoping* (rare pathological inputs have a
+genuinely large canonical basis), not because the algorithm is absent. See
 [AC Congruence Completeness](ac-congruence-completeness.md) for the full
 problem/fix analysis and [Future Work](A3-future-work.md) for status.
 

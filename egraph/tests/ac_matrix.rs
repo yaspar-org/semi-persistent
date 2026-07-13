@@ -52,6 +52,28 @@ fn assert_eq_class<const TRACK: bool, const PROOFS: bool>(
     }
 }
 
+/// Under PROOFS, assert the class-level proof chain for `a ≡ b` contains at least one
+/// step matching `pred` — the exact-label check that pins each completion inference to
+/// its faithful justification variant (not a catch-all congruence/superposition label).
+fn assert_proof_label<const TRACK: bool, const PROOFS: bool>(
+    eg: &mut Eg<TRACK, PROOFS>,
+    a: semi_persistent_egraph::ENodeId,
+    b: semi_persistent_egraph::ENodeId,
+    pred: impl Fn(&Justification<semi_persistent_egraph::ENodeId>) -> bool,
+    what: &str,
+) {
+    if !PROOFS {
+        return;
+    }
+    let mut buf = ProofBuf::new();
+    assert!(eg.explain(a, b, &mut buf), "{what}: explain found no proof");
+    assert!(
+        buf.steps.iter().any(|(_, _, j)| pred(j)),
+        "{what}: expected proof label missing; chain labels: {:?}",
+        buf.steps.iter().map(|(_, _, j)| j).collect::<Vec<_>>()
+    );
+}
+
 /// Kapur §4.2 nilpotent axiom critical pair: xor(a,b)=c ⟹ xor(a,c)=b.
 fn nilpotent_axiom_cp<const TRACK: bool, const PROOFS: bool>() {
     let mut eg = Eg::<TRACK, PROOFS>::new();
@@ -82,6 +104,15 @@ fn nilpotent_axiom_cp<const TRACK: bool, const PROOFS: bool>() {
     let x_ac = eg.add(xor, &[a, c]);
     eg.rebuild();
     assert_eq_class(&mut eg, x_ac, b, "nilpotent axiom CP xor(a,c)=b");
+    // The derived equality must be justified by the semantic-axiom CP label, not a
+    // catch-all superposition/congruence.
+    assert_proof_label(
+        &mut eg,
+        x_ac,
+        b,
+        |j| matches!(j, Justification::ACAxiomCP { .. }),
+        "nilpotent axiom CP proof label",
+    );
 }
 
 /// Recanonize unit-drop (late merge into the unit's class): add(a,b), b=0 ⟹ add(a,b)=a.
@@ -153,6 +184,14 @@ fn inverse_cancellation<const TRACK: bool, const PROOFS: bool>() {
         zero,
         "late inverse pair add(a,x)=0 after x=neg(a)",
     );
+    // The completion-derived step must carry the group-law label.
+    assert_proof_label(
+        &mut eg,
+        t2,
+        zero,
+        |j| matches!(j, Justification::InverseCancel { .. }),
+        "late inverse pair proof label",
+    );
 }
 
 /// Cancelative closure (Kapur §5.2 C1): add(a,c)=add(b,c) ⟹ a=b.
@@ -181,6 +220,14 @@ fn cancelative_close<const TRACK: bool, const PROOFS: bool>() {
     eg.merge_justified(ac, bc, axiom(0));
     eg.rebuild();
     assert_eq_class(&mut eg, a, b, "cancelative close a=b");
+    // a=b is a §5.2 cancel-closure consequence; its proof step must say so.
+    assert_proof_label(
+        &mut eg,
+        a,
+        b,
+        |j| matches!(j, Justification::Cancellative { .. }),
+        "cancelative close proof label",
+    );
 }
 
 /// TRACK-only: the new AC state (derived merges, unit map, inverse map) round-trips
@@ -269,11 +316,92 @@ fn semi_persistence_round_trip<const PROOFS: bool>() {
     }
 }
 
+/// Pairwise rule superposition (§4b): add(a,b)=c ∧ add(b,d)=e ⟹ add(c,d) = add(a,e).
+fn superposition_label<const TRACK: bool, const PROOFS: bool>() {
+    let mut eg = Eg::<TRACK, PROOFS>::new();
+    eg.set_cc(true);
+    let s = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let c_op = eg.register_op0("c", s);
+    let d_op = eg.register_op0("d", s);
+    let e_op = eg.register_op0("e", s);
+    let add = eg.register_mset("add", s, s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let c = eg.add(c_op, &[]);
+    let d = eg.add(d_op, &[]);
+    let e = eg.add(e_op, &[]);
+    let s_ab = eg.add(add, &[a, b]);
+    let s_bd = eg.add(add, &[b, d]);
+    eg.merge_justified(s_ab, c, axiom(0));
+    eg.merge_justified(s_bd, e, axiom(1));
+    eg.rebuild();
+    let s_cd = eg.add(add, &[c, d]);
+    let s_ae = eg.add(add, &[a, e]);
+    eg.rebuild();
+    assert_eq_class(&mut eg, s_cd, s_ae, "superposition add(c,d)=add(a,e)");
+    assert_proof_label(
+        &mut eg,
+        s_cd,
+        s_ae,
+        |j| matches!(j, Justification::ACSuperposition { .. }),
+        "superposition proof label",
+    );
+}
+
+/// TRACK-only: `completion_outcome` reflects the current graph state and rolls back with
+/// it. `Disabled` before opting in, `Converged` after a completed rebuild, and after a
+/// `restore` the mark-time outcome is back (never a value from the discarded scope).
+fn completion_outcome_semantics<const PROOFS: bool>() {
+    use semi_persistent_egraph::CompletionOutcome;
+    let mut eg = Eg::<true, PROOFS>::new();
+    assert_eq!(eg.completion_outcome(), None, "no rebuild yet");
+
+    let s = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let add = eg.register_mset("add", s, s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let s_ab = eg.add(add, &[a, b]);
+
+    // cc off: rebuild records Disabled.
+    eg.rebuild();
+    assert_eq!(eg.completion_outcome(), Some(CompletionOutcome::Disabled));
+
+    // mark() rebuilds first, so the token snapshots a Disabled-state graph.
+    let tok = eg.mark(ShrinkPolicy::Never);
+
+    // Inside the scope: enable completion and derive; outcome becomes Converged.
+    eg.set_cc(true);
+    eg.merge_justified(s_ab, a, axiom(0));
+    eg.rebuild();
+    assert!(
+        matches!(
+            eg.completion_outcome(),
+            Some(CompletionOutcome::Converged { .. })
+        ),
+        "expected Converged inside the scope, got {:?}",
+        eg.completion_outcome()
+    );
+
+    // Restore: the outcome must roll back to the mark-time value, not report the
+    // discarded scope's Converged run.
+    eg.restore(tok);
+    assert_eq!(
+        eg.completion_outcome(),
+        Some(CompletionOutcome::Disabled),
+        "restore must roll the outcome back with the graph"
+    );
+}
+
 fn run_all<const TRACK: bool, const PROOFS: bool>() {
     nilpotent_axiom_cp::<TRACK, PROOFS>();
     late_unit_merge::<TRACK, PROOFS>();
     inverse_cancellation::<TRACK, PROOFS>();
     cancelative_close::<TRACK, PROOFS>();
+    superposition_label::<TRACK, PROOFS>();
 }
 
 #[test]
@@ -285,6 +413,7 @@ fn matrix_track_off_proofs_off() {
 fn matrix_track_on_proofs_off() {
     run_all::<true, false>();
     semi_persistence_round_trip::<false>();
+    completion_outcome_semantics::<false>();
 }
 
 #[test]
@@ -296,4 +425,5 @@ fn matrix_track_off_proofs_on() {
 fn matrix_track_on_proofs_on() {
     run_all::<true, true>();
     semi_persistence_round_trip::<true>();
+    completion_outcome_semantics::<true>();
 }

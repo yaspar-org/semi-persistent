@@ -1,0 +1,5 @@
+;; EXPECT: sort-error
+;; Zero-argument ACI application without :identity — same rule as the MSet twin.
+(sort E)
+(function And (E) E :assoc :comm :idempotent)
+(let z (And))

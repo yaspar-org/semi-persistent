@@ -1,0 +1,6 @@
+;; EXPECT: sort-error
+;; A zero-argument AC application is the empty monomial, which is meaningless without
+;; a declared :identity — rejected at sortcheck (mirrors the pattern-side rule).
+(sort E)
+(function Add (E) E :assoc :comm)
+(let z (Add))
