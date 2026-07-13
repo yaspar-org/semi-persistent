@@ -193,7 +193,7 @@ big enough" without an argument.
 | `multiset_size` | u64 accumulator | worst case 2³¹ distinct summands × u32::MAX counts ≈ 2⁶³ — fits u64 exactly; u32/usize would not. |
 | `Clamp::Nilpotent.order` | u8 | previous section; widen to u32 only for the postponed `bvadd` 2^N torsion encoding. |
 | `GUARD_MAX_REWRITES` | usize = 1 000 000 | policy backstop, not a bound: termination is a theorem (admissible order), the cap only catches a mis-oriented rule and debug-asserts. |
-| `MAX_COMPLETION_NODE_GROWTH` | usize = 50 000 | policy: divergence bail (sound-but-incomplete); granularity caveat in review-debt §1. |
+| `DEFAULT_COMPLETION_NODE_BUDGET` | usize = 50 000 | policy: divergence bail (sound-but-incomplete, reported via `CompletionOutcome::AbortedGrowthLimit`); configurable per-egraph (`set_completion_node_budget`); granularity caveat in review-debt §1. |
 | flatten cap `1 + 64·node_count` | usize | 64 × 2³¹ = 2³⁷ needs a 64-bit usize — fine on supported targets; would overflow on 32-bit (not a supported deployment). |
 
 ## Where the algebra lives: ENodeKind (routing) vs OpKind (algebra)

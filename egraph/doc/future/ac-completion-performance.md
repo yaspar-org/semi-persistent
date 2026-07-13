@@ -27,7 +27,8 @@ the old tie-break minted guard-truncated junk rules.
 
 Two operational observations from the same measurements: (i) the transition into the
 doubly-exponential regime is razor-sharp (a few extra leaf merges took an instance from
-0.2 s to >10 min); (ii) `MAX_COMPLETION_NODE_GROWTH` is checked **between** rounds, so a
+0.2 s to >10 min); (ii) the completion node budget (`completion_node_budget`, default
+`DEFAULT_COMPLETION_NODE_BUDGET`) is checked **between** rounds, so a
 single blown-up round (one measured round generated 2M critical pairs) burns unbounded
 wall-time before the backstop triggers. An in-round budget check is the cheap fix and
 feeds directly into the scoping lever (§6).

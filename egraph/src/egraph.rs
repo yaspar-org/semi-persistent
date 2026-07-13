@@ -109,7 +109,21 @@ pub struct EGraph<
     /// Outcome of the most recent `rebuild` when `cc` is enabled. Lets callers distinguish
     /// convergence from a growth-budget abort. `None` if completion hasn't run yet.
     completion_outcome: Option<CompletionOutcome>,
+    /// Node-growth budget for one completion-enabled `rebuild`: if completion mints more
+    /// than this many nodes beyond where the rebuild started, it stops (sound-but-
+    /// incomplete, reported as [`CompletionOutcome::AbortedGrowthLimit`]) rather than OOM
+    /// on a diverging input. This is NOT the termination argument — it is the divergence
+    /// backstop (review-debt §1). A config knob like `cc`/`basis_checks`, not
+    /// semi-persistent state; default [`DEFAULT_COMPLETION_NODE_BUDGET`], overridable via
+    /// [`set_completion_node_budget`](Self::set_completion_node_budget) (tests use a tiny
+    /// budget to exercise the abort path directly).
+    completion_node_budget: usize,
 }
+
+/// Default node-growth budget for one completion-enabled `rebuild` (see
+/// [`EGraph::set_completion_node_budget`]). A convergent completion adds few nodes; the
+/// measured diverging stress instance balloons past this within a few rounds.
+pub const DEFAULT_COMPLETION_NODE_BUDGET: usize = 50_000;
 
 /// Outcome of the AC congruence-completion pass inside `rebuild`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,6 +182,7 @@ where
             unit_node: crate::containers::Map::new(),
             inverse_op: crate::containers::Map::new(),
             completion_outcome: None,
+            completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
         }
     }
 
@@ -175,6 +190,14 @@ where
     /// rebuild. Callers can use this to distinguish convergence from a growth-budget abort.
     pub fn completion_outcome(&self) -> Option<CompletionOutcome> {
         self.completion_outcome
+    }
+
+    /// Set the node-growth budget for one completion-enabled `rebuild` (default
+    /// [`DEFAULT_COMPLETION_NODE_BUDGET`]). Exceeding it aborts completion soundly and
+    /// records [`CompletionOutcome::AbortedGrowthLimit`]. A config knob (like
+    /// [`set_cc`](Self::set_cc)), not semi-persistent state.
+    pub fn set_completion_node_budget(&mut self, budget: usize) {
+        self.completion_node_budget = budget;
     }
 
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
@@ -1111,11 +1134,12 @@ where
         // pairs — Kapur-conformance fix W3 (spec §3 table)).
         let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
         // Safety backstop against a diverging completion (minting unbounded
-        // critical-pair nodes). A convergent completion adds few nodes; if the AC
-        // node count balloons past this many beyond where it started, we stop
-        // rather than OOM. This is NOT the termination argument — it is a guard
-        // rail while the proper inter-reduction is being put in place.
-        const MAX_COMPLETION_NODE_GROWTH: usize = 50_000;
+        // critical-pair nodes): the configurable node-growth budget (see
+        // `set_completion_node_budget`). A convergent completion adds few nodes; if the AC
+        // node count balloons past the budget beyond where it started, we stop rather
+        // than OOM. This is NOT the termination argument — it is a guard rail, and the
+        // abort is REPORTED (`CompletionOutcome::AbortedGrowthLimit`), never silent.
+        let budget = self.completion_node_budget;
         let start_nodes = self.node_count();
         let basis_dump = self.basis_checks;
         let mut round = 0usize;
@@ -1164,17 +1188,24 @@ where
             // Made progress: stay incremental for the next round.
             full = false;
             let added = self.node_count() - start_nodes;
-            if added > MAX_COMPLETION_NODE_GROWTH {
+            if added > budget {
+                // Sound-but-incomplete stop: drain the pending congruence work so the
+                // graph is a valid (plain-congruence-closed) state, then report the abort
+                // through `completion_outcome` — the caller decides what to do with a
+                // partial completion (there is deliberately NO assert here: the abort is
+                // an expected, reported condition on pathological inputs, and tests drive
+                // it directly with a tiny budget).
                 self.rebuild_congruence();
                 self.completion_outcome = Some(CompletionOutcome::AbortedGrowthLimit {
                     added_nodes: added,
-                    limit: MAX_COMPLETION_NODE_GROWTH,
+                    limit: budget,
                 });
-                debug_assert!(
-                    false,
-                    "ac completion diverged: added >{MAX_COMPLETION_NODE_GROWTH} nodes \
-                     without converging (set AC_COMPLETE_TRACE=1 to inspect growth)"
-                );
+                if trace {
+                    eprintln!(
+                        "[ac-complete] ABORT: added {added} nodes > budget {budget} \
+                         without converging"
+                    );
+                }
                 return;
             }
         }

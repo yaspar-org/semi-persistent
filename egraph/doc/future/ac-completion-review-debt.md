@@ -15,8 +15,11 @@ the Kapur-correspondence table in [../design/ac-completion-spec.md](../design/ac
 
 ### Current state
 
-`rebuild()` guards against a diverging completion with `MAX_COMPLETION_NODE_GROWTH`
-(50 000 added nodes), checked **between** completion rounds (`egraph.rs::rebuild`, the
+`rebuild()` guards against a diverging completion with the per-egraph completion node
+budget (`completion_node_budget`, default `DEFAULT_COMPLETION_NODE_BUDGET` = 50 000 added
+nodes, settable via `set_completion_node_budget`; an exceeded budget is reported as
+`CompletionOutcome::AbortedGrowthLimit`), checked **between** completion rounds
+(`egraph.rs::rebuild`, the
 round loop). Inside one round, `cc_round` first *collects* every critical pair into the
 `crit` vector — the (B) superposition scan, the Kapur §4 axiom pairs — and then closes
 them all; nothing bounds the work of a single round.

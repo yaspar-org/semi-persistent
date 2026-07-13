@@ -396,12 +396,72 @@ fn completion_outcome_semantics<const PROOFS: bool>() {
     );
 }
 
+/// The growth-budget abort path, driven directly with a zero budget: completion must stop
+/// soundly, REPORT `AbortedGrowthLimit` (never silently claim convergence), and a later
+/// rebuild with a real budget must finish the job on the same graph.
+fn aborted_growth_limit<const TRACK: bool, const PROOFS: bool>() {
+    use semi_persistent_egraph::{CompletionOutcome, DEFAULT_COMPLETION_NODE_BUDGET};
+    let mut eg = Eg::<TRACK, PROOFS>::new();
+    eg.set_cc(true);
+    // Budget 0: the first completion round that materializes ANY node trips the guard.
+    eg.set_completion_node_budget(0);
+    let s = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let c_op = eg.register_op0("c", s);
+    let d_op = eg.register_op0("d", s);
+    let e_op = eg.register_op0("e", s);
+    let add = eg.register_mset("add", s, s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let c = eg.add(c_op, &[]);
+    let d = eg.add(d_op, &[]);
+    let e = eg.add(e_op, &[]);
+    // Overlapping rules force a genuine superposition, whose closure materializes fresh
+    // reduct nodes — guaranteed growth, so budget 0 must abort.
+    let s_ab = eg.add(add, &[a, b]);
+    let s_bd = eg.add(add, &[b, d]);
+    eg.merge_justified(s_ab, c, axiom(0));
+    eg.merge_justified(s_bd, e, axiom(1));
+    eg.rebuild();
+    match eg.completion_outcome() {
+        Some(CompletionOutcome::AbortedGrowthLimit { added_nodes, limit }) => {
+            assert_eq!(limit, 0, "the configured budget is reported back");
+            assert!(added_nodes > 0, "the abort reports the actual growth");
+        }
+        other => panic!("expected AbortedGrowthLimit with budget 0, got {other:?}"),
+    }
+    // Sound-but-incomplete: nothing wrong was asserted — a,b,c,d,e stay distinct atoms.
+    assert_ne!(
+        eg.find(a),
+        eg.find(b),
+        "abort must not merge unrelated atoms"
+    );
+    // Recovery: restore a real budget and rebuild — the same graph completes and the
+    // §4b superposition consequence add(c,d) = add(a,e) is derived.
+    eg.set_completion_node_budget(DEFAULT_COMPLETION_NODE_BUDGET);
+    eg.rebuild();
+    assert!(
+        matches!(
+            eg.completion_outcome(),
+            Some(CompletionOutcome::Converged { .. })
+        ),
+        "expected Converged after raising the budget, got {:?}",
+        eg.completion_outcome()
+    );
+    let s_cd = eg.add(add, &[c, d]);
+    let s_ae = eg.add(add, &[a, e]);
+    eg.rebuild();
+    assert_eq_class(&mut eg, s_cd, s_ae, "post-recovery add(c,d)=add(a,e)");
+}
+
 fn run_all<const TRACK: bool, const PROOFS: bool>() {
     nilpotent_axiom_cp::<TRACK, PROOFS>();
     late_unit_merge::<TRACK, PROOFS>();
     inverse_cancellation::<TRACK, PROOFS>();
     cancelative_close::<TRACK, PROOFS>();
     superposition_label::<TRACK, PROOFS>();
+    aborted_growth_limit::<TRACK, PROOFS>();
 }
 
 #[test]
