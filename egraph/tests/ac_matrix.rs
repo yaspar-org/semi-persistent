@@ -455,12 +455,77 @@ fn aborted_growth_limit<const TRACK: bool, const PROOFS: bool>() {
     assert_eq_class(&mut eg, s_cd, s_ae, "post-recovery add(c,d)=add(a,e)");
 }
 
+/// Kapur §4.1 idempotent axiom critical pair: or(a,b)=c ⟹ or(a,c)=c — the idempotent
+/// twin of `nilpotent_axiom_cp`, pinning the same `ACAxiomCP` label on the Set/ACI arm.
+fn idempotent_axiom_cp<const TRACK: bool, const PROOFS: bool>() {
+    let mut eg = Eg::<TRACK, PROOFS>::new();
+    eg.set_cc(true);
+    let s = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let c_op = eg.register_op0("c", s);
+    let or = eg.register_set("or", s, s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let c = eg.add(c_op, &[]);
+    let o_ab = eg.add(or, &[a, b]);
+    eg.merge_justified(o_ab, c, axiom(0));
+    eg.rebuild();
+    let o_ac = eg.add(or, &[a, c]);
+    eg.rebuild();
+    assert_eq_class(&mut eg, o_ac, c, "idempotent axiom CP or(a,c)=c");
+    assert_proof_label(
+        &mut eg,
+        o_ac,
+        c,
+        |j| matches!(j, Justification::ACAxiomCP { .. }),
+        "idempotent axiom CP proof label",
+    );
+}
+
+/// Inter-reduction / containment collapse (§4a): add(a,b)=c ∧ add(a,b,d)=e ⟹ e=add(c,d).
+/// The (A′) normalize pass rewrites the containing monomial {a,b,d} by the rule
+/// {a,b}→{c} and merges it with the materialized reduct — the `ACInterReduction` label.
+fn inter_reduction_label<const TRACK: bool, const PROOFS: bool>() {
+    let mut eg = Eg::<TRACK, PROOFS>::new();
+    eg.set_cc(true);
+    let s = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", s);
+    let b_op = eg.register_op0("b", s);
+    let c_op = eg.register_op0("c", s);
+    let d_op = eg.register_op0("d", s);
+    let e_op = eg.register_op0("e", s);
+    let add = eg.register_mset("add", s, s);
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let c = eg.add(c_op, &[]);
+    let d = eg.add(d_op, &[]);
+    let e = eg.add(e_op, &[]);
+    let s_ab = eg.add(add, &[a, b]);
+    let s_abd = eg.add(add, &[a, b, d]);
+    eg.merge_justified(s_ab, c, axiom(0));
+    eg.merge_justified(s_abd, e, axiom(1));
+    eg.rebuild();
+    let s_cd = eg.add(add, &[c, d]);
+    eg.rebuild();
+    assert_eq_class(&mut eg, e, s_cd, "inter-reduction e=add(c,d)");
+    assert_proof_label(
+        &mut eg,
+        e,
+        s_cd,
+        |j| matches!(j, Justification::ACInterReduction { .. }),
+        "inter-reduction proof label",
+    );
+}
+
 fn run_all<const TRACK: bool, const PROOFS: bool>() {
     nilpotent_axiom_cp::<TRACK, PROOFS>();
+    idempotent_axiom_cp::<TRACK, PROOFS>();
     late_unit_merge::<TRACK, PROOFS>();
     inverse_cancellation::<TRACK, PROOFS>();
     cancelative_close::<TRACK, PROOFS>();
     superposition_label::<TRACK, PROOFS>();
+    inter_reduction_label::<TRACK, PROOFS>();
     aborted_growth_limit::<TRACK, PROOFS>();
 }
 
