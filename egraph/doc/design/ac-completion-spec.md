@@ -102,18 +102,18 @@ which lives only on `Step::Join`), then a `DecomposeAC`:
 Steps 2–3 bind `n1`, `n2` in enclosing frames; those bindings must live until subtree 4–8 is
 fully enumerated.
 
-### 2.2 The crash and the fix
+### 2.2 The hazard and the invariant
 
-`leapfrog_join` (old) did `env.set(target, key)` per key and an unconditional
-`env.clear(target)` on exit. Step 5 enumerates sibling splits of `+{a,b}` (`x=a`, then
+A `leapfrog_join` that does `env.set(target, key)` per key and an unconditional
+`env.clear(target)` on exit is wrong here. Step 5 enumerates sibling splits of `+{a,b}` (`x=a`, then
 `x=b`), calling `run_step(6)` each time. On the first split, step 6's re-join on `n2` runs,
 then clears `n2` on exit (the bug: `n2` was bound upstream by step 3, not by this join). On
 the second split, step 6 reads `env.get(n2)` → `Match::get` → `unwrap()` on `None` → panic.
 `n1`'s premature clear at step 4 is harmless (nothing re-reads it before step 1 re-extracts
 it), which is why it takes *two* same-op AC atoms under one parent to surface; AC completion
-exposed it by minting enough `add` nodes for the planner to choose this schedule.
+exposes it by minting enough `add` nodes for the planner to choose this schedule.
 
-Fix (`leapfrog_join`): save and restore the prior binding instead of clearing.
+The invariant (`leapfrog_join`): save and restore the prior binding instead of clearing.
 
 ```rust
 let prev = env.get_opt(target);   // Some(add2) for the re-join; None for a plain join
@@ -121,8 +121,9 @@ while join.is_valid() { env.set(target, join.key()); run_step(/* +1 */); join.ne
 env.set_opt(target, prev);        // restore, not clear
 ```
 
-Plain join: `prev == None`, reduces to the old set/clear. Re-join: the upstream binding
-survives. Matcher-soundness fix, independent of completion. Committed `2501b32`.
+Plain join: `prev == None`, equivalent to set/clear. Re-join: the upstream binding
+survives. A matcher-soundness invariant, independent of completion (regression
+fixtures `ac_two_same_op_atoms.egg`, `ac_complete_nested_match.egg`).
 
 ---
 
@@ -142,9 +143,9 @@ survives. Matcher-soundness fix, independent of completion. Committed `2501b32`.
 | dedup reducer/superposition set by (op, LHS) | step 2: "if equal, discard the equation" (keep one) | ✓ (duplicate *nodes* stay in `targets`, so their merges are not lost) |
 | incremental (B): superpose only delta rules | step 3 + fn 3: CPs of the new rule vs existing, "incrementally ... instead of all critical pairs" | ✓ |
 | termination backstop / antichain | Thm 3.4 (Dickson's Lemma on noncomparable LHSs) | ✓ |
-| per-rule axiom critical pairs: idempotent `(f(N⊎{a}), f(N))`, nilpotent `(f(N⊎{a:n−m}), f(M−{a:m}))` | Lemma 4.1(ii); Lemma 4.2(ii)/4.5 (superpose each rule with the op's own axiom) | ✓ (2026-07-09; checker `cc_axiom_cps_nonjoinable` under `CHECK_AC_BASIS`) |
-| identity-class rule RHS = the empty monomial; unit-drop at build AND recanonize (`CanonMode`) | `f({}) = e` (§2.4); Lemma 4.3's standing normalization `f(x,e) → x` | ✓ (2026-07-09) |
-| (C1) rule cancel-close + (C2) cancelative disjoint superposition + §5.2(iii)(b) per-constant closure over the summand pool | §5.1–§5.3: CancelClose, cancelative disjoint superposition (SC2 / Example 4 fixtures) | ✓ (2026-07-10; pool-relative per-constant closure, full-round net for late constants) |
+| per-rule axiom critical pairs: idempotent `(f(N⊎{a}), f(N))`, nilpotent `(f(N⊎{a:n−m}), f(M−{a:m}))` | Lemma 4.1(ii); Lemma 4.2(ii)/4.5 (superpose each rule with the op's own axiom) | ✓ (checker `cc_axiom_cps_nonjoinable` under `CHECK_AC_BASIS`) |
+| identity-class rule RHS = the empty monomial; unit-drop at build AND recanonize (`CanonMode`) | `f({}) = e` (§2.4); Lemma 4.3's standing normalization `f(x,e) → x` | ✓ |
+| (C1) rule cancel-close + (C2) cancelative disjoint superposition + §5.2(iii)(b) per-constant closure over the summand pool | §5.1–§5.3: CancelClose, cancelative disjoint superposition (SC2 / Example 4 fixtures) | ✓ (pool-relative per-constant closure, full-round net for late constants) |
 | `:inverse` ⟹ cancelative; inverse-PAIR cancellation at build + in the round (hash-cons probe) | §5.4's group law at pair level (`x ∘ inv(x) = e`) | partial by design — full §5.4 (Gaussian elimination) postponed indefinitely; completion-off late pairs uncancelled (review-debt §3) |
 | `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §1.2 gap** |
 
@@ -189,16 +190,17 @@ degree-minimum is fixed entirely by class merges, which `fold_min_monomial` alre
 refresh was reverted (cost on the default `rebuild` path, zero benefit). Under a degree-first
 order, `min_monomial`-on-merge already *is* the exact degree-minimum.
 
-**Deviation 2 (duplicate-LHS rules): found by the ground-truth checker, now fixed.** The
-weaker `reducible_pairs` proxy (direct strict containment) reported a clean antichain while
-the true `kapur_lhs_reducible` was larger (round 0: 4 vs 9). The gap was *exact-LHS
-duplicates*: congruent AC nodes that recanonicalized to the same monomial without being
-hash-consed into one node, so the same rule `+M → r` appeared as several nodes (round 0 had
-five nodes for `{9,22}→{75}`). The `reducible_pairs` check skipped them (it required
-`lhs_i != lhs_j`); Kapur's step 2 discards them. Fix: dedup the reducer/superposition set by
+**Deviation 2 (duplicate-LHS rules): why the rule set is deduped by (op, LHS).** The
+weaker `reducible_pairs` proxy (direct strict containment) can report a clean antichain while
+the true `kapur_lhs_reducible` is larger (a measured round 0: 4 vs 9). The gap is *exact-LHS
+duplicates*: congruent AC nodes that recanonicalize to the same monomial without being
+hash-consed into one node, so the same rule `+M → r` appears as several nodes (that round 0 had
+five nodes for `{9,22}→{75}`). A containment check that requires
+`lhs_i != lhs_j` skips them; Kapur's step 2 discards them. Hence the dedup of the
+reducer/superposition set by
 (op, LHS), keeping the lowest node id. The duplicate *nodes* stay in `targets`, so their
 collapses and any differing-RHS merges still fire; only the redundant *rules* (reducers and
-superposition sources) are dropped. After the fix, rounds that reach a collapse fixpoint show
+superposition sources) are dropped. With the dedup, rounds that reach a collapse fixpoint show
 `kapur_lhs_reducible = 0` (§3.4).
 
 Everything else (orientation, the superposition formula, the collapse trigger, disjoint and

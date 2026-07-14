@@ -50,7 +50,7 @@ sorted by id. Canonization:
 2. If two entries now have the same canonical id, merge their
    multiplicities (sum them).
 3. Re-sort by canonical id.
-4. Apply the op's algebraic laws (`CanonMode`, 2026-07): drop the identity (unit) class
+4. Apply the op's algebraic laws (`CanonMode`): drop the identity (unit) class
    if the op declares one — the unit is resolved through `find` at canonize time, so a
    summand that merged into the unit's class later still drops — then the count clamp
    (nilpotent: counts mod n, zeroed summands removed). `SetCanon`'s dedup IS the

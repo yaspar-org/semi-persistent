@@ -13,33 +13,30 @@ listed below.
 
 ## AC Completion: remaining work
 
-The algorithm is implemented (see the chapters above). Two pieces remain — scoping and
-verification; the formerly-third piece (multi-AC/ACI + semantic properties) landed in the
-2026-07 series and is summarized in a done-note below for the record.
+The algorithm is implemented, including multiple AC/ACI symbols and the semantic-property
+facets — the per-op `min_monomial` pool (per-class rows, one column per completion op),
+both MSet and Set partitions driven by the round, identity (unit-drop at build AND
+recanonize, `CanonMode`), idempotent and nilpotent count clamps, the per-rule *axiom*
+critical pairs (Kapur Lemmas 4.1(ii), 4.2(ii)/4.5) that clamping alone cannot derive, the
+empty-monomial RHS for identity classes (Kapur's `f({}) = e`), the `:cancellative` §5
+cancel-closure, and `:inverse` pair-level cancellation (which implies cancelative). See
+`ac-completion-spec.md` §3 (the Kapur-correspondence table) and
+`ac-algebraic-properties.md` (the storage and property-tag design). **Full Abelian-group
+completion (§5.4, Gaussian elimination) is postponed indefinitely** (see
+`future/ac-completion-review-debt.md` §3). Two pieces remain — scoping and verification.
 
-**Enable by default (scoping).** Completion is off by default pending a termination
-guard. On a sweep of stress graphs it converges on all but one pathological instance,
+**Enable by default (scoping).** Completion is off by default. On a sweep of stress
+graphs it converges on all but one pathological instance,
 whose AC equation set has a genuinely large canonical basis (the growth is
-input-specific, not size-specific; AC spec §3.3). Enabling it generally wants one of: a
-per-`rebuild` growth guard that disables completion and falls back to plain congruence,
+input-specific, not size-specific; AC spec §3.3). The shipped backstop is the per-egraph
+node-growth budget (`set_completion_node_budget`), checked between rounds; exceeding it
+aborts soundly and reports `CompletionOutcome::AbortedGrowthLimit`. Turning completion on
+by default additionally wants one of: an in-round budget check (a single blown-up round
+can burn unbounded wall time before the between-rounds check fires; review-debt §1),
 on-demand completion scoped to the sub-graph a query needs, or a degree bound on
-materialized monomials. All three trade completeness for termination, and the fallback
+materialized monomials. All of these trade completeness for termination, and the fallback
 is sound (it derives fewer equalities, never wrong ones; see Ch 14 on the trustworthy
 polarity).
-
-**Multiple AC symbols — DONE (2026-07, multi-AC/ACI series + conformance fixes).**
-The per-op `min_monomial` pool landed (per-class rows, one column per completion op), the
-round drives both the MSet and Set partitions, and the Kapur §4 semantic properties are in:
-identity (unit-drop at build AND recanonize, `CanonMode`), idempotent and nilpotent count
-clamps, and the per-rule *axiom* critical pairs (Lemmas 4.1(ii), 4.2(ii)/4.5) that clamping
-alone cannot derive. A rule whose class is the op's identity has the **empty monomial** as
-RHS (Kapur's `f({}) = e`). `:cancellative` drives the Kapur §5 cancel-closure inferences
-and `:inverse` (which implies cancellative) drives pair-level inverse cancellation.
-See `ac-completion-spec.md` §3 (the Kapur-correspondence table) and
-`ac-algebraic-properties.md` (the storage and property-tag design). The cancelative facet
-(Kapur §5.1–5.3) and gate-level `:inverse` pair cancellation landed 2026-07-10; **full
-Abelian-group completion (§5.4, Gaussian elimination) is postponed indefinitely**
-(operator decision 2026-07-10, recorded in `future/ac-completion-review-debt.md` §3).
 
 **Verification.** The two halves have different proof character
 (see [the design doc §12](ac-congruence-completeness.md) for the sketch), so:

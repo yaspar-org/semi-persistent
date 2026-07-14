@@ -71,9 +71,10 @@ derives a subset of the entailed equalities, never a superset. The AC completion
 pass enlarges that subset toward the entailed set; with it off, the engine still
 decides every equality plain congruence reaches and merely misses some AC
 consequences (§3.3). Nothing it does assert becomes wrong. This is why completion
-can default off (and why a multi-AC-symbol configuration that completion does not
-support, §2.5, falls back to sound-but-incomplete plain congruence) without
-endangering any consumer that respects the polarity above.
+can default off — and why a growth-budget abort mid-completion (the divergence
+backstop, reported as `CompletionOutcome::AbortedGrowthLimit`) leaves a sound,
+plain-congruence-closed state — without endangering any consumer that respects the
+polarity above.
 
 ## 2. Soundness
 
@@ -175,38 +176,26 @@ satisfies `=_T`, preserved by each operation, with no appeal to termination or t
 reaching a fixpoint. Soundness therefore holds whether or not completion is enabled
 and whether or not it converges.
 
-### 2.5 Completion is restricted to a single AC symbol — SUPERSEDED (2026-07)
+### 2.5 Multiple AC symbols: why the rule-RHS storage is per-op
 
-*(The restriction below was lifted by the multi-AC/ACI series: the per-class slot became a
-per-op min-monomial POOL (one column per completion op, element-wise merge fold), the
-`mset_op_count() <= 1` guard was removed, and completion drives BOTH the MSet and Set
-partitions — multiple AC and ACI operators complete soundly, sharing only the constant
-pool. See `ac-algebraic-properties.md`. Original text kept for the failure mode it
-explains — a single slot conflating two ops' minima — which is exactly what the per-op
-columns prevent.)*
+Completion reads each rule's right-hand side from per-class data: the class's minimal
+monomial plus an `atomic` flag (AC chapter §9a). A single `min_monomial` slot per class
+would be unsound in the presence of two AC operators: a class may hold monomials of two
+different AC operators at once (assert `a+b = a*b` and the class contains both a `+`-node
+and a `*`-node), each with its own minimum. One slot cannot hold both minima, so a
+`+`-rule could read the `*`-monomial as its RHS — a wrong closure, not merely a weaker
+one.
 
-Completion stores the rule right-hand side in a per-class slot holding one `min_monomial`
-(the class's minimal monomial) and one `atomic` flag (§3.4 of the AC chapter §9a).
-That slot records the minimum for *one* AC operator. If a class held monomials of
-two different AC operators at once (for example after asserting `a+b = a*b`, where
-the class contains both a `+`-node and a `*`-node), the single slot could not hold
-both minima, and a `+`-rule could read the `*`-monomial as its RHS, which is wrong.
-
-To keep completion sound, `rebuild` asserts that at most one `OpKind::MSet` operator
-is registered before running the completion pass, and panics otherwise
-(`OpRegistry::mset_op_count`). The check is at the point of use, not at
-`set_cc`, because the interpreter enables completion before sortcheck has
-registered the operators. ACI operators are a distinct kind and are not counted by
-this restriction; completion currently drives `OpKind::MSet` only.
-
-This is a precondition on the configuration, not a soundness hole: a program with
-two AC operators that wants completion is rejected outright rather than given a
-wrong closure. Lifting the restriction is a storage change (§3.4 of the AC chapter,
-and the multi-op note there): replace the single `min_monomial` slot with a per-op slice
-so each class tracks one minimal monomial per AC operator. The completion algorithm
-is unchanged; it already runs per-op (`mset_ops()`), and the union-find handles the
-one cross-operator interaction (a constant equal to monomials in two operators is
-just one e-class holding both, with the same `find`). Only the slot widens.
+The engine therefore stores the per-class minima as a per-op POOL row: one column per
+completion operator (MSet and Set alike, in registration order), merge-folded
+element-wise, behind the `min_mono(op, class)` accessor (see
+`ac-algebraic-properties.md`, the storage chapter). A `+`-rule can only ever read the
+`+` column, so the conflation hazard is structurally unrepresentable. The completion
+algorithm itself needs nothing further for multiple symbols: it already runs per-op
+(superposition and normalization filter on the rule's op), and the union-find handles
+the one cross-operator interaction — a constant equal to monomials in two operators is
+just one e-class holding both nodes, with the same `find`, no fresh constant needed
+(Kapur's shared-constant case).
 
 ## 3. Completeness
 

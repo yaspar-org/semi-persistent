@@ -1,11 +1,8 @@
 # Algebraic properties of AC operators: representation, canonization, and the per-op pool
 
-Design chapter (promoted 2026-07-10 from the retired implementation plan
-`doc/future/multi-ac-aci-completion-plan.md`, now deleted; the staging/build-order sections live
-in git history — the dated corrections inside predate the promotion and are kept verbatim).
 The monomial order referenced throughout is defined in `ac-completion-spec.md` §3.1
 (degree-lex: total size, then lexicographic from the largest class id down — Kapur's
-deglex). This is the durable record of how multiple AC/ACI symbols and their
+deglex). This chapter is the durable record of how multiple AC/ACI symbols and their
 semantic properties (identity, idempotent, nilpotent, cancelative, inverse) are
 represented and canonized: the three independent axes, the canonization-not-completion
 doctrine, the per-op min-monomial pool, and the surface property tags. Companions: the
@@ -52,8 +49,8 @@ separate:
    `MSet` node whose canonize rule guarantees every count is {0,1}, so the count need not be stored.
 2. **Count clamp (none / idempotent / nilpotent).** How the normal form bounds a summand's count:
    none (ℕ, plain AC), idempotent (clamp to 1, `x∘x = x`), or nilpotent order-n (count mod n,
-   `x∘x = e`; merge = symmetric difference at n=2). **This axis is NOT Set-only** — see the
-   correction below. It is an algebra property of the op, applied **inside canonization** (at build
+   `x∘x = e`; merge = symmetric difference at n=2). **This axis is NOT Set-only** — see
+   "nilpotent must be MSet" below. It is an algebra property of the op, applied **inside canonization** (at build
    and on recanonicalize), not at completion time — the clamp establishes the stored normal form,
    so `xor(a,a) = e` holds with completion OFF (see "Canonization, not completion" below).
 3. **Identity = a dropped unit element, orthogonal to both, on either representation.** A
@@ -62,11 +59,12 @@ separate:
    It is *not* a count clamp; it is a separate optional field. Nilpotency *requires* an identity
    because the emptied monomial `{}` (`a⊕a`) must reduce to a real node, the unit.
 
-### Correction (2026-07-01): storage partition and clamp are genuinely independent; nilpotent is MSet
+### Storage partition and clamp are independent axes; nilpotent must be MSet
 
-An earlier version of this section claimed the clamp is "Set-only" and that **XOR is a Set**. That is
-**wrong**, and building on it would be unsound. The reason is the *canonize* step (run at build AND
-on `recanonize_node` after a child merge). The Set partition is hardwired to exactly one canonize
+One could be tempted to store nilpotent ops in the Set partition — their normal-form
+counts at order 2 are {0,1}, which "fit" a Set, and XOR reads like a set operation. **That
+is unsound**, and the reason is the *canonize* step (run at build AND on `recanonize_node`
+after a child merge). The Set partition is hardwired to exactly one canonize
 rule — `sort; dedup` (`SetCanon`) — which is the *idempotent* clamp. An op may live in the Set
 partition only if `dedup` is its correct canonize rule. For nilpotent it is not: `xor(a, a)` must
 reduce toward the unit `e`, but `dedup` collapses `{a,a} → {a} = a`, a **false equality**, and it
@@ -94,7 +92,7 @@ compact partition that can hold that normal form.
 | AC + identity (`+`,`0`)         | coalesce + drop unit     | MSet (ℕ)          | ℕ, may empty| **MSet**             |
 | AC + idempotent (`and`)         | dedup (presence)         | **Set** ({0,1})   | {0,1}       | **Set**              |
 | AC + idem + identity            | dedup + drop unit        | **Set**           | {0,1}, empty| **Set**              |
-| AC + nilpotent₂ + id (`xor`)    | parity (mod 2)           | **MSet** (needs run-length) | {0,1} | **MSet** (required for soundness — the 2026-07-01 correction below) |
+| AC + nilpotent₂ + id (`xor`)    | parity (mod 2)           | **MSet** (needs run-length) | {0,1} | **MSet** (required for soundness — see above) |
 | AC + nilpotentₙ + id (n>2)      | count mod n              | MSet ({0..n−1})   | {0..n−1}    | **MSet** (Set can't hold count 2) |
 | AC + identity + inverse (group) | signed coalesce (ℤ) — POSTPONED design; shipped: pair cancellation on ℕ counts | signed MSet (ℤ) — not built | ℤ∖{0} | MSet (ℕ) + inverse-pair cancel |
 
@@ -105,8 +103,8 @@ recanonize path* — hash-cons-core surgery for a constant-factor space win on x
 helps only n=2 (n>2 must be MSet regardless). **Decision: all nilpotent (every order) is stored in
 the MSet partition.** The mod-n clamp is applied **inside `MSetCanon`** (`canonize` =
 `update_multiset` then `clamp_multiset`), so the stored node is already `{0,…,n−1}`-valued — the
-store never holds an unreduced count past a canonize. This also immediately closes the earlier
-unsoundness (nilpotent no longer routes through `dedup`).
+store never holds an unreduced count past a canonize, and nilpotent never routes through
+`dedup` (the false-equality hazard above is structurally unreachable).
 
 Consequently the clamp is a property of the op **regardless of partition**, and lives as a unified
 field on both descriptors: `Idempotent → Set`; `None` / `Nilpotent{order}` → `MSet`.
@@ -133,29 +131,32 @@ The representation choice matters for memory: an MSet child is `(G, u32)` (the m
 (Set) ops should not pay. The completion *pool* is unaffected either way (it stores node ids); the
 node child storage picks MSet vs Set from the op (the existing `nodes.mset`/`nodes.set` partitions).
 
-**In scope to implement now:** plain AC = MSet with no clamp, idempotent = Set (clamp Idempotent),
-nilpotent = MSet with clamp Nilpotent, and identity on MSet or Set. Group (inverse/signed) is
-— see the 2026-07-10 note below: "shape-only" means the descriptor validates and stores the
-tag, while the shipped inference is inverse-PAIR cancellation, not signed counts —
-recorded so the descriptor has the right *shape* but is not built here.
+**In scope:** plain AC = MSet with no clamp, idempotent = Set (clamp Idempotent),
+nilpotent = MSet with clamp Nilpotent, and identity on MSet or Set. Group is "shape-only"
+at the descriptor level: the `:inverse` tag validates and stores, and the shipped
+inference is inverse-PAIR cancellation (`x ∘ inv(x) = e`), not signed counts — the
+signed-count representation sketched later in this chapter is a postponed design.
 
 See the SMT-LIB operator survey at the end of this doc for which real operators land in each
 representation.
 
-### Correction (2026-07-09): clamps canonize; they do not replace Kapur §4's axiom critical pairs
+### Clamps canonize; they do not replace Kapur §4's axiom critical pairs
 
-The clamp axis establishes each monomial's canonical form (it is the `can` of canonized
+One could hope the count clamp alone makes completion property-aware — after all, it
+enforces the axiom `x∘x = x` (or `xⁿ = e`) inside every stored monomial. It does not
+suffice. The clamp axis establishes each monomial's canonical form (it is the `can` of canonized
 rewriting, Conchon–Contejean–Iguernelala Def. 4.1), but completion must ALSO superpose
 every rule with the op's own axiom: for a rule `f(M) → f(N)`, idempotency requires the
 pairs `(f(M), f(N ∪ {a}))` per `a ∈ M` (Kapur Lemma 4.1(ii)) and nilpotency order `n` the
 pairs `(f(N ⊎ {a: n−m}), f((M − {a: m}) ⊎ {e}))` per summand (Lemma 4.2(ii)/4.5). These
 are *cross-rule* consequences the within-monomial clamp cannot produce — e.g.
-`or(a,b)=c ⟹ or(a,c)=c` and `xor(a,b)=c ⟹ xor(a,c)=b` were underivable before the axiom
-pairs were added to `cc_round` (Kapur-conformance fix W3 (spec §3 table); fixtures `aci_rule_axiom_cp.egg`,
-`nilpotent_rule_axiom_cp.egg`, `nilpotent3_rule_axiom_cp.egg`; ground-truth checker
-`cc_axiom_cps_nonjoinable`, asserted under `CHECK_AC_BASIS`). Identity needs no axiom
-pairs (Lemma 4.3) — provided the unit-drop also runs on the recanonize path, which is the
-companion W2 fix (`CanonMode.unit` + the became-a-unit sweep).
+`or(a,b)=c ⟹ or(a,c)=c` and `xor(a,b)=c ⟹ xor(a,c)=b` are underivable without the axiom
+pairs `cc_round` generates (spec §3 table row "per-rule axiom critical pairs"; fixtures
+`aci_rule_axiom_cp.egg`, `nilpotent_rule_axiom_cp.egg`, `nilpotent3_rule_axiom_cp.egg`;
+ground-truth checker `cc_axiom_cps_nonjoinable`, asserted under `CHECK_AC_BASIS`).
+Identity needs no axiom pairs (Lemma 4.3) — provided the unit-drop also runs on the
+recanonize path (`CanonMode.unit` + the became-a-unit sweep in `rebuild_congruence`),
+not just at build.
 
 ## Numbers for laws, ids for entities (why `order: u8`, why the unit is a node)
 
@@ -180,7 +181,7 @@ and each is stored as what it IS:
 
 ## Type-width rationale (every numeric choice, and why it is sufficient)
 
-Audited 2026-07-11. The rule of thumb from the previous section (numbers for laws, ids
+The rule of thumb from the previous section (numbers for laws, ids
 for entities) plus one more: every width is justified either by a HARD bound (checked or
 structural) or by a PHYSICAL bound (memory exhausts first); no width relies on "probably
 big enough" without an argument.
@@ -220,7 +221,7 @@ split rather than inventing a side table.
   // clamp and identity are representation-independent fields on both variants.
   ```
 
-  Note (2026-07-10): the resolved `:inverse` OPERATOR ID is deliberately NOT an `OpKind`
+  Note: the resolved `:inverse` OPERATOR ID is deliberately NOT an `OpKind`
   field — `OpKind<S>` cannot carry an op id. Like the resolved identity node, it lives in
   an egraph-side per-op map (`inverse_op`, same semi-persistence as `unit_node`), consumed
   by inverse-PAIR cancellation (`x ∘ inv(x) = e`, at build and on completion normal
@@ -228,7 +229,7 @@ split rather than inventing a side table.
   postponed indefinitely — the signed-count sketch further down describes that postponed
   design, not the shipped mechanism.
 
-  The clamp is a *unified* field on both variants (the 2026-07-01 correction above): partition is
+  The clamp is a *unified* field on both variants (the independence argument above): partition is
   derived from the resolved clamp — `Idempotent → Set`; `None` / `Nilpotent → MSet`. The resolver
   is the single point that enforces the legal (clamp, partition) pairings; a `MSet { clamp:
   Idempotent }` or `Set { clamp: Nilpotent }` is never constructed. `OpInfo::canon_class` projects
@@ -240,9 +241,9 @@ source of truth that must stay in sync with the representation tag. `AcAlgebra` 
 bytes plus an `Option<UnitRef>`, immutable after registration, so co-locating it on `OpKind` (the
 existing per-op record, read by op id only where completion needs it) is strictly simpler.
 
-**In scope now:** `OpKind::MSet { clamp: None }` (AC), `OpKind::Set { clamp: Idempotent }` (ACI),
+**In scope:** `OpKind::MSet { clamp: None }` (AC), `OpKind::Set { clamp: Idempotent }` (ACI),
 `OpKind::MSet { clamp: Nilpotent }` (XOR), and identity on either. Group: the `:inverse`
-tag is validated and consumed at pair-cancellation level (2026-07-10); the signed-count
+tag is validated and consumed at pair-cancellation level; the signed-count
 representation this section sketches is the POSTPONED full-group design, not shipped.
 
 ## Storage: one pool of node ids, fixed-width rows over a strongly-typed op array
@@ -460,7 +461,7 @@ representation from the combination. Properties that need a value take a ground 
 | `:comm` (binary)                | C             | pair               | reorder                  |
 | `:assoc :comm`                  | AC            | **multiset** (ℕ)   | union                    |
 | `:assoc :comm :idempotent`      | ACI           | **set** ({0,1})    | union, clamp to 1        |
-| `:assoc :comm :nilpotent`       | nilpotent     | **multiset** (mod-n clamp; the 2026-07-01 correction) | symmetric difference (n=2) |
+| `:assoc :comm :nilpotent`       | nilpotent     | **multiset** (mod-n clamp; see "nilpotent must be MSet") | symmetric difference (n=2) |
 | + `:identity e` on any AC row   | (same)        | (same)             | additionally drop `e`    |
 
 ### Which properties take a parameter, and which are baked in
@@ -509,8 +510,8 @@ struct AcAlgebra {
 }
 ```
 
-`repr` is derived (`Idempotent` → `Set`; `None` / `Nilpotent` → `Multiset` — the 2026-07-01
-correction: dedup would destroy the run-lengths the mod-n clamp needs), stored explicitly so
+`repr` is derived (`Idempotent` → `Set`; `None` / `Nilpotent` → `Multiset` — dedup would
+destroy the run-lengths the mod-n clamp needs, see "nilpotent must be MSet"), stored explicitly so
 every downstream site is a single exhaustive match on `AcAlgebra`, never a re-derivation from
 tags. `AcAlgebra` is stored on `OpInfo`. Invalid tag combinations are rejected here and become
 unrepresentable downstream.
@@ -576,8 +577,8 @@ summand against its inverse (`a + (−a) → 0`). Three points fix what this is 
 | `*` | `1`          | `1/x` (`recip`) | `1` = `e` ✓ | exponent           | **partial** (`0` has no inverse); `*` also has annihilator `0` (treat opaque); distribution is cross-op (a ring), out of scope |
 
 So `a + a + neg(a)` reads as `{a: +2, a: −1} = {a: +1} = a`, and `a + neg(a)` reads as `{} = 0`.
-This is the same "store honest + unsigned, interpret at completion" shape as nilpotent (§ the
-2026-07-01 correction): the node `neg(a)` is a real child; completion *recognizes* it as `−a` and
+This is the same "store honest + unsigned, interpret at completion" shape as nilpotent (see
+"nilpotent must be MSet"): the node `neg(a)` is a real child; completion *recognizes* it as `−a` and
 signs the count, the store never holds a negative multiplicity.
 
 **2. Idempotent + inverse is incoherent, so it is rejected — this is why `not` is not an
@@ -604,16 +605,14 @@ own additive inverse (`x ⊕ x = 0`) — so xor's "inverse" is already covered b
 shipped in property 2, with no signing needed. Net: complementation is modeled as `xor` with the
 constant `true` (available today), never as an inverse on `and`.
 
-### Scope and compatibility — SUPERSEDED (2026-07-10): everything below is wired
+### Scope and compatibility
 
-*(Original staging text retained for the record.)* Current state: `:identity` and
-`:nilpotent` are fully wired (canonization + completion, 2026-07-09 series);
-`:cancellative` drives the Kapur §5 cancel-closure and `:inverse` (implying cancelative)
-drives inverse-pair cancellation (2026-07-10); full Abelian-group completion is postponed
-indefinitely. The aliases `:assoc-comm` / `:assoc-comm-idem` remain accepted. Original:
-wire only `:assoc`+`:comm` and `:assoc`+`:comm`+`:idempotent` to actual completion now;
-`:nilpotent`, `:identity`, `:inverse` parse, sort-check, validate, and store on the
-descriptor but are recorded as not-yet-completed.
+All property tags are wired end to end: `:identity` and `:nilpotent` run in canonization
+AND completion; `:cancellative` drives the Kapur §5 cancel-closure; `:inverse` (which
+implies cancelative) drives inverse-pair cancellation. Full Abelian-group completion
+(§5.4 signed counts / Gaussian elimination) is postponed indefinitely. The pre-combined
+aliases `:assoc-comm` / `:assoc-comm-idem` remain accepted for compatibility and expand
+to the basic tags.
 
 ## SMT-LIB AC operator survey
 
@@ -694,7 +693,7 @@ associative** (rounding), so they are not AC and get no completion.
   (union-clamp) operators.
 - **mset** (`(G, u32)`, ℕ counts): `+`, `*`, `bvadd`, `bvmul`, `bag.union_disjoint` (plain AC),
   **plus the nilpotent family** (`xor`, `xnor`, `bvxor`, `bvxnor`) — stored MSet with the mod-n
-  clamp (symmetric difference at n=2), per the 2026-07-01 correction.
+  clamp (symmetric difference at n=2), see "nilpotent must be MSet".
 - **signed mset** (ℤ counts): only if abelian groups are ever modeled (out of scope).
 
 Implemented: set-idempotent (ACI: `and`, `or`, …), multiset (AC: `+`, `*`, …), and the
