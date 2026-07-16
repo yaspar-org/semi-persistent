@@ -75,6 +75,19 @@ pub enum CCommand<O, S, L> {
         actions: Vec<crate::resolve::ResolvedAction<O, S, L>>,
     },
     Run(u64),
+    AntiUnify {
+        left: CTerm<O, S, L>,
+        right: CTerm<O, S, L>,
+        playouts: u64,
+        algorithm: String,
+    },
+    CheckAu {
+        left: CTerm<O, S, L>,
+        right: CTerm<O, S, L>,
+        max_size: u32,
+        playouts: u64,
+        algorithm: String,
+    },
     Push(bool), // true = shrink on mark
     Pop,
 }
@@ -737,6 +750,38 @@ where
             Ok(CCommand::Extract(ct))
         }
         Command::Run(n) => Ok(CCommand::Run(n)),
+        Command::AntiUnify {
+            left,
+            right,
+            playouts,
+            algorithm,
+        } => {
+            let cl = check_term(&left, None, eg.ops(), eg.sorts(), model, globals)?;
+            let cr = check_term(&right, None, eg.ops(), eg.sorts(), model, globals)?;
+            Ok(CCommand::AntiUnify {
+                left: cl,
+                right: cr,
+                playouts,
+                algorithm,
+            })
+        }
+        Command::CheckAu {
+            left,
+            right,
+            max_size,
+            playouts,
+            algorithm,
+        } => {
+            let cl = check_term(&left, None, eg.ops(), eg.sorts(), model, globals)?;
+            let cr = check_term(&right, None, eg.ops(), eg.sorts(), model, globals)?;
+            Ok(CCommand::CheckAu {
+                left: cl,
+                right: cr,
+                max_size,
+                playouts,
+                algorithm,
+            })
+        }
         Command::Push(shrink) => Ok(CCommand::Push(shrink)),
         Command::Pop => Ok(CCommand::Pop),
         _ => unreachable!(),

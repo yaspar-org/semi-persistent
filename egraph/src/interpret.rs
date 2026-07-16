@@ -294,6 +294,96 @@ where
                     _phantom: std::marker::PhantomData,
                 });
             }
+            CCommand::AntiUnify {
+                left,
+                right,
+                playouts,
+                algorithm,
+            } => {
+                let before = self.eg.node_count();
+                let (l_id, _) = self.build_cterm(left);
+                let (r_id, _) = self.build_cterm(right);
+                if self.eg.node_count() > before {
+                    self.eg.rebuild();
+                }
+
+                let alg = match algorithm.as_str() {
+                    "syntactic" => crate::au::session::AuAlgorithm::Syntactic,
+                    "exact" => crate::au::session::AuAlgorithm::Exact,
+                    _ => crate::au::session::AuAlgorithm::Uct,
+                };
+
+                let snap = crate::au::egraph_api::AuSnapshot::new(&self.eg)
+                    .map_err(|e| InterpError::CheckFailed(format!("{e}")))?;
+
+                let config = crate::au::session::AuConfig {
+                    algorithm: alg,
+                    playouts: *playouts,
+                    ..Default::default()
+                };
+
+                let result = crate::au::session::anti_unify(&snap, l_id, r_id, &config)
+                    .map_err(|e| InterpError::CheckFailed(format!("{e}")))?;
+
+                let rendered = result.to_string_with(|op| match op {
+                    crate::au::terms::TermOp::EGraph(o) => self.eg.ops().info(*o).name.clone(),
+                    crate::au::terms::TermOp::Literal(_, v) => {
+                        format!("{}", self.eg.lits().get(*v))
+                    }
+                    crate::au::terms::TermOp::Variants => "Variants".to_string(),
+                });
+
+                println!(
+                    "(anti-unify size {} cr {:.4} {})",
+                    result.size,
+                    crate::au::session::compression_ratio(
+                        &snap,
+                        snap.class_of(l_id).unwrap(),
+                        snap.class_of(r_id).unwrap(),
+                        result.size,
+                    ),
+                    rendered,
+                );
+            }
+            CCommand::CheckAu {
+                left,
+                right,
+                max_size,
+                playouts,
+                algorithm,
+            } => {
+                let before = self.eg.node_count();
+                let (l_id, _) = self.build_cterm(left);
+                let (r_id, _) = self.build_cterm(right);
+                if self.eg.node_count() > before {
+                    self.eg.rebuild();
+                }
+
+                let alg = match algorithm.as_str() {
+                    "syntactic" => crate::au::session::AuAlgorithm::Syntactic,
+                    "exact" => crate::au::session::AuAlgorithm::Exact,
+                    _ => crate::au::session::AuAlgorithm::Uct,
+                };
+
+                let snap = crate::au::egraph_api::AuSnapshot::new(&self.eg)
+                    .map_err(|e| InterpError::CheckFailed(format!("{e}")))?;
+
+                let config = crate::au::session::AuConfig {
+                    algorithm: alg,
+                    playouts: *playouts,
+                    ..Default::default()
+                };
+
+                let result = crate::au::session::anti_unify(&snap, l_id, r_id, &config)
+                    .map_err(|e| InterpError::CheckFailed(format!("{e}")))?;
+
+                if result.size > *max_size {
+                    return Err(InterpError::CheckFailed(format!(
+                        "anti-unifier size {} exceeds max_size {}",
+                        result.size, max_size
+                    )));
+                }
+            }
             CCommand::Pop => {
                 let mark = self.marks.pop().ok_or(InterpError::PopWithoutPush)?;
                 self.eg.restore(mark.token);

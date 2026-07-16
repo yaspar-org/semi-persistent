@@ -320,6 +320,19 @@ pub enum Command {
     CheckEq(Term, Term),
     CheckNeq(Term, Term),
     Extract(Term),
+    AntiUnify {
+        left: Term,
+        right: Term,
+        playouts: u64,
+        algorithm: String,
+    },
+    CheckAu {
+        left: Term,
+        right: Term,
+        max_size: u32,
+        playouts: u64,
+        algorithm: String,
+    },
     Push(bool), // true = shrink on mark
     Pop,
 }

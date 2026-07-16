@@ -1,0 +1,22 @@
+(sort Int)
+(function a () Int)
+(function b () Int)
+(function c () Int)
+(function f (Int Int) Int)
+(function g (Int) Int)
+
+(let x (f (a) (b)))
+(let y (f (a) (c)))
+(antiunify x y :algorithm exact)
+(antiunify x y :algorithm uct :playouts 200)
+
+; with saturation: a = g(c) merged, so f(a,b) vs f(g(c),b) = f(a,b) (no Variants)
+(let r (f (a) (b)))
+(let s (f (g (c)) (b)))
+(union (a) (g (c)))
+(run 3)
+(antiunify r s :algorithm exact)
+
+; checkau: assert that the AU is at most size 4
+(checkau x y :max_size 4 :algorithm exact)
+

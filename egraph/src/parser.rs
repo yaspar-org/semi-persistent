@@ -783,6 +783,69 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
             let t = parse_term_inner(input, base)?;
             SurfaceCommand::Pass(Command::Extract(t))
         }
+        "checkau" => {
+            ws(input)?;
+            let left = parse_term_inner(input, base)?;
+            ws(input)?;
+            let right = parse_term_inner(input, base)?;
+            let mut max_size = u32::MAX;
+            let mut playouts = 1000u64;
+            let mut algorithm = "uct".to_string();
+            loop {
+                ws(input)?;
+                if input.starts_with(')') {
+                    break;
+                }
+                if input.starts_with(":max_size") {
+                    *input = &input[":max_size".len()..];
+                    max_size = number(input)? as u32;
+                } else if input.starts_with(":playouts") {
+                    *input = &input[":playouts".len()..];
+                    playouts = number(input)?;
+                } else if input.starts_with(":algorithm") {
+                    *input = &input[":algorithm".len()..];
+                    algorithm = ident(input)?.to_string();
+                } else {
+                    break;
+                }
+            }
+            SurfaceCommand::Pass(Command::CheckAu {
+                left,
+                right,
+                max_size,
+                playouts,
+                algorithm,
+            })
+        }
+        "antiunify" => {
+            ws(input)?;
+            let left = parse_term_inner(input, base)?;
+            ws(input)?;
+            let right = parse_term_inner(input, base)?;
+            let mut playouts = 1000u64;
+            let mut algorithm = "uct".to_string();
+            loop {
+                ws(input)?;
+                if input.starts_with(')') {
+                    break;
+                }
+                if input.starts_with(":playouts") {
+                    *input = &input[":playouts".len()..];
+                    playouts = number(input)?;
+                } else if input.starts_with(":algorithm") {
+                    *input = &input[":algorithm".len()..];
+                    algorithm = ident(input)?.to_string();
+                } else {
+                    break;
+                }
+            }
+            SurfaceCommand::Pass(Command::AntiUnify {
+                left,
+                right,
+                playouts,
+                algorithm,
+            })
+        }
         _ => {
             // Ground term insertion: (op args...)
             let mut children = Vec::new();
