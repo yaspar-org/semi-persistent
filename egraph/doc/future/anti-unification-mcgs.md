@@ -135,33 +135,206 @@ a new table.
 
 ### 2.5 Cost, compression ratio, and selection reward
 
-Both algorithms minimize term size. The reported compression ratio is the linear ratio
-used to compare a result with the two smallest root representatives:
+Both algorithms minimize term size as the primary objective, then variant mass as a
+secondary tiebreak (see Appendix C.1). The reported compression ratio is the linear
+ratio that compares a result against the two smallest root representatives:
 
 ```text
-compression_ratio(t, l, r) =
-    (size(t) − min(best_size(l), best_size(r))) / max(best_size(l), best_size(r))
+compression_ratio(t, l, r) = (size(t) - a) / b
+
+where  a = min(best_size(l), best_size(r))
+       b = max(best_size(l), best_size(r))
 ```
 
-MCGS uses a separate bounded transformation only inside selection. For a node n:
+MCGS uses a bounded monotone transformation of the expected size, applied only inside
+selection, to map the unbounded range [0, +inf) into [0, 1) for UCT:
 
 ```text
-local_cr(n)  = (E[size](n) − min_size(n)) / max_size(n)
-normalize(n) = 0                              if local_cr(n) ≤ 0
-             = 1 − exp(−λ · local_cr(n)),     λ = −ln(1 − x_target), x_target = 0.8
-reward(n)    = 1 − normalize(n)
+local_cr(n)  = (E[size](n) - a_n) / b_n
+normalize(n) = 0                              if local_cr(n) <= 0
+             = 1 - exp(-lambda * local_cr(n))   lambda = -ln(1 - x_target), x_target = 0.8
+reward(n)    = 1 - normalize(n)
 ```
 
-For an OR node, `min_size`/`max_size` are the sizes of the two classes' smallest concrete
-terms; for an AND node they are the extrema over its child pairs of
-`best_size(l_i) + best_size(r_i) + 1`. We track and backpropagate **sizes**, not rewards:
-sums of sizes are meaningful (an AND node's size is 1 plus the sum of its children's),
-sums of nonlinear rewards are not. The inverse exponential is applied only at selection
-time, to the already-averaged expected size; this computes `normalize(E[size])` rather
-than the true `E[normalize(size)]`, which cannot be recovered from expectations of a
-nonlinear function. The approximation is deliberate: the normalization is monotone, so
-candidate rankings are preserved, and selection needs rankings, not calibrated
-expectations. It is also not the reported compression ratio.
+For a given OR node `n = AU(l, r, ...)`, the constants `a_n` and `b_n` are
+`min(best_size(l), best_size(r))` and `max(best_size(l), best_size(r))`: the node's
+own class-pair representative sizes. All actions at one parent OR node are normalized
+with that single pair; using per-action constants (e.g. child-pair extrema) can invert
+the size preference between two sibling actions and is unsound (see below).
+
+The scale is `b_n` (not `b_n - a_n`). With this choice the bare-Variants no-sharing
+result (size approximately `a + b`) gives `local_cr` approximately 1, i.e.
+`normalize(Variants) = x_target`. A `max - min` scale would give zero whenever both
+representatives have equal size (the common case), saturating every non-perfect
+candidate at 1 and collapsing the ranking. The `b_n` scale retains strict size ordering
+everywhere.
+
+Worked ranking (basis a=5, b=10); the bare-Variants point lands on `x_target`:
+
+```text
+size  local_cr  normalize  reward   meaning
+  5    0.00      0.0000     1.0000   perfect: AU equals the smaller input
+  7    0.20      0.2752     0.7248   good compression
+ 10    0.50      0.5528     0.4472   moderate: at the larger input's size
+ 15    1.00      0.8000     0.2000   bare Variants (no sharing)
+ 25    2.00      0.9600     0.0400   poor: blowup past the inputs
+ 45    4.00      0.9984     0.0016   degenerate
+```
+
+Same formula with equal-size representatives (basis a=5, b=5); the scale stays nonzero:
+
+```text
+size  local_cr  normalize  reward
+  5    0.00      0.0000     1.0000
+  6    0.20      0.2752     0.7248
+  8    0.60      0.6193     0.3807
+ 10    1.00      0.8000     0.2000
+```
+
+Per-action normalization inversion example: actions A (expected size 10) and B
+(expected size 12) at one OR node with basis a=5, b=10. Shared-basis ranking gives
+`normalize(A) = 0.55`, `normalize(B) = 0.68`, so A wins on reward. If instead each
+action uses its own child-derived basis (A with a=2, b=2; B with a=11, b=11), then
+A normalizes as `(10-2)/2 = 4.0` giving 0.998, while B normalizes as `(12-11)/11 = 0.09`
+giving 0.136: the larger action appears better, reversing the true preference.
+
+Statistics are tracked and backpropagated in raw size units. Sums of sizes are
+meaningful (an AND node's size is 1 plus the weighted sum of its children's sizes);
+sums of nonlinear rewards are not. The exponential normalization is applied only at
+selection time, to the already-averaged expected size; this computes
+`normalize(E[size])` rather than `E[normalize(size)]`, which cannot be recovered from
+expectations of a nonlinear function. The approximation is deliberate: the
+normalization is monotone, so candidate rankings are preserved, and selection needs
+rankings, not calibrated expectations. It is distinct from the reported compression
+ratio.
+
+#### 2.5.1 Normalization and convergence requirements
+
+The search is a deterministic additive-cost decision process: OR states, factoring
+actions, AND transitions whose child costs sum, terminal costs fixed by `best_term`.
+Per OR state `s`, define `a_s = min(best_size(l), best_size(r))` and
+`b_s = max(best_size(l), best_size(r))`. The linear compression ratio is
+`CR_s(t) = (size(t) - a_s) / b_s`, and the selection reward is:
+
+```text
+R_s(t) = 1 - normalize(CR_s(t)) = exp(-lambda * CR_s(t))      for CR_s(t) > 0
+```
+
+Landmarks: perfect compression (size = a_s) gives reward 1; bare no-sharing result
+(size = a_s + b_s, CR = 1) gives reward 1 - x_target; unbounded size gives reward
+approaching 0. Since a_s and b_s are constants of the state and the map is strictly
+increasing, for any two candidates of one state:
+
+```text
+size(t1) < size(t2)  <=>  CR_s(t1) < CR_s(t2)  <=>  R_s(t1) > R_s(t2)
+```
+
+The compression-optimal policy is therefore the minimum-size policy; the normalizer
+exists to satisfy UCT's bounded-reward assumption, not to change the objective.
+
+Expectation must come before normalization. Aggregation needs the additive unit (AND
+combination and expectation commute only with linear maps); selection needs a bounded
+unit (the exploration term is dimensionless, calibrated against [0,1]). The only safe
+placement for a nonlinear map is a comparison after which no further composition
+occurs, i.e. the within-node argmax. Since CR is affine, `g(E[CR])` is equivalent to
+minimizing `E[size]`. The alternative `E[g(CR)]` (averaging normalized rollout rewards,
+as vanilla game MCTS does) is a different, risk-sensitive objective: by Jensen it can
+prefer a policy with worse expected size but greater variance. Averaging normalized
+rewards is prohibited.
+
+Convergence properties. UCT's policy at every OR node converges to the minimum-size
+(maximum-compression) action provided:
+
+- A (objective alignment): all actions of one state are scored through the same
+  strictly increasing transform with that state's own (a_s, b_s). Action-dependent
+  transforms break `Q_A < Q_B => R_A > R_B`; the §2.5 inversion example is stable at
+  every visit count, misdirecting search and corrupting learned priors (§3.3.6).
+  State-dependent normalization is safe; action-dependent is not.
+- B (stationary basis): (a_s, b_s) are immutable for the session; never empirical
+  running extrema, never action-specific descendants. A drifting scale makes
+  historical statistics incomparable.
+- C (denormalized compositionality): the §2.6/§3.3 value equations operate entirely
+  in raw size units; no normalized reward enters an AND sum.
+- D (consistent estimators): edge estimates converge to true values; idempotent
+  recomputation from converging child values (§2.6) satisfies this. The permanent
+  first sample U(s) has weight 1/(1 + sum_a N(s,a)), vanishing asymptotically.
+- E (infinite exploration, vanishing waste): `C * sqrt(sum_N) / (1 + N(s,a))` diverges
+  for any neglected action, so every action is selected infinitely often. A
+  suboptimal action with reward gap delta stops being selected once roughly
+  `N(s,a) ~ C * sqrt(N(s)) / delta`, giving O(sqrt(N)) suboptimal visits; the optimal
+  action's fraction approaches 1 (modulo equal-quality ties).
+- F (fair AND refinement): every child of a realized AND node is refined infinitely
+  often. Round-robin (§3.3.5) provides this directly. A heuristic AND selector is
+  admissible only with an explicit fairness guarantee; starving one child leaves the
+  additive AND value permanently biased.
+- G (complete action language): every action able to contain the optimum stays
+  reachable. Convergence claims are conditional: with the full action model (lazy-AC
+  states or unbounded enumeration, §3.4.4) the limit is the global optimum; with
+  A_max truncation it is the optimum of the truncated action model only.
+- H (parent-edge-local counts): selection reads only N(s,a), never a shared child's
+  total visits (§2.6); otherwise one parent's exploration suppresses another's action.
+- I (eventual propagation): every child improvement eventually reaches every parent.
+  Path-only backpropagation suffices given E and F (every path is revisited infinitely
+  often); ancestor-subgraph propagation accelerates but is not required (§3.3.3).
+- J (monotone publication): the best-result table improves strictly monotonically
+  under the contractual order (size, variant_mass) (§4.5, Appendix C.1); it is a
+  separate structure from the expected-size search statistics.
+- K (valid numerics): best_size > 0; 0 < x_target < 1; all values finite; no NaN or
+  infinity reaches a score comparison; ties broken deterministically (§5.7). The
+  `CR <= 0` clamp is unreachable for distinct classes (a valid anti-unifier projects
+  into both classes, so size >= b_s, and contains at least one Variants); it fires
+  only at l = r terminals, whose values are exact.
+
+Convergence sketch. On the finite context-quotiented DAG: terminals hold exact sizes;
+by E and F every edge is visited infinitely often; by D and induction from the leaves
+upward, child estimates converge; by C every AND value converges; by A and B the common
+monotone transform preserves the converged ordering, so by E suboptimal visit fractions
+vanish and each OR value converges to its minimum child value; by I improvements reach
+the root; by J the root entry receives the optimum of the (possibly truncated per G)
+action model. The residual gap between ranking by E[size] and ranking by minimum
+achievable size closes by the same concentration: as the policy concentrates below an
+action, its expected size converges toward its minimum.
+
+Equal-size ties. Size-derived metrics cannot separate equal-size candidates (Appendix
+C.1); UCT keeps expected size as its value, E guarantees all equal-size actions are
+examined, and the best-result table applies the (size, variant_mass) order. A
+finite-budget tie-optimization, if ever needed, must be lexicographic; a weighted
+scalar blend is inadmissible unless a proven bound shows the secondary term can never
+outweigh a one-unit size difference.
+
+#### 2.5.2 Proptest verification properties
+
+The properties A through K above are not design-time prose; they are testable
+invariants. The following property tests (driven by proptest with random e-graphs,
+random class pairs, and random playout budgets) discharge them:
+
+1. Order preservation (A): for random q1 < q2 and any shared basis (a, b) with b > 0,
+   assert reward(q1) > reward(q2).
+2. Common-basis invariant (A, B): instrument selection to record the (a, b) pair used
+   for every action scored at one OR node; assert all pairs are identical within one
+   call to select.
+3. No action-local reversal (A): pin the §2.5 inversion example; assert that a
+   shared-basis selection prefers the smaller-size action.
+4. Landmarks (K): for any a, b with b > 0 and any x_target in (0,1), assert
+   normalize(0) = 0, normalize(1) = x_target (within epsilon), and normalize(x) < 1
+   for all finite x.
+5. Expectation-order (C): construct a distribution where E[g(CR)] reverses g(E[CR]);
+   assert that the implementation uses g(E[CR]).
+6. AND additivity (C): after every AND recomputation, assert Q_AND = 1 + sum of
+   count_i * Q_child_i.
+7. Fairness (E, F): run 1000 playouts; assert every OR-edge visit count and every
+   AND-child visit count is at least 1.
+8. Exact-oracle convergence (E, I, J): on randomly generated finite small graphs (at
+   most 5 classes, at most 3 members per class), run MCGS with increasing budget until
+   the returned (size, variant_mass) matches the exact solver.
+9. Shared-DAG propagation (H, I): construct a graph with a shared child reached from
+   two parent OR nodes; improve the child; assert both parents eventually see the
+   improvement.
+10. Monotone publication (J): instrument the best-result table; after every offer call
+    that returns true, assert quality(new) < quality(old).
+11. AC completeness qualification (G): on an instance with more than A_max matrices,
+    assert that the MCGS result may be worse than exact, and that exact (with
+    unbounded enumeration) finds the true optimum.
 
 ### 2.6 Adapting MCTS to graphs
 
@@ -1173,3 +1346,71 @@ two orientations are different subproblems (swapping every Variant arm maps one 
 the other at equal size). Repeated children compress: `AU(or{a,a}, or{b,b})` has exactly
 one matrix, one child `AU(a,b)` with count 2. Compare §3.4.4's table for what the same
 example costs with explicit rewrite encodings.
+
+**Size arithmetic.** The syntactic seed zips the sorted multisets positionally:
+`and(Variants(a,b), Variants(b,c), Variants(c,d))`, size 1+0+1+1+0+1+1+0+1+1 = 7.
+The greedy diagonal (action 1) produces `and(b, c, Variants(a,d))`, size 1+1+1+0+1+1 = 5.
+Because 5 < 7, the diagonal strictly improves over the seed and replaces it. On this
+instance the exact solver and MCGS both converge to size 5; the syntactic baseline
+returns 7 — the gap is the value of matrix enumeration over positional zipping.
+
+## Appendix C. Worked examples: cycle tie-breaking and AC multiplicities
+
+### C.1 Cyclic e-graph tie-break, and the variant-mass secondary objective
+
+Consider `AU(class_x, class_fy)` where `class_x = {x, f(x), f(f(x)), …}` (created by
+the rewrite `x → f(x)` and saturation) and `class_fy = {f(y)}`. The best members are
+`x` (size 1) and `f(y)` (size 2).
+
+The syntactic seed zips `best_term(class_x) = x` against `best_term(class_fy) = f(y)`:
+operators differ (`x` vs `f`), so the seed is `Variants(x, f(y))`, size 1+2 = 3.
+
+The search also tries pairing the `f(x)` member of `class_x` with `f(y)` from
+`class_fy`: same operator `f`, so it factors to `f(AU(class_x, class_y))`. Since
+`class_x ≠ class_y` and neither has a common operator, `AU(class_x, class_y) =
+Variants(x, y)`, size 2. Thus the candidate is `f(Variants(x, y))`, size 1+0+1+1 = 3.
+
+Both candidates have size 3, so size alone cannot separate them — yet they are not
+equally good anti-unifiers: `Variants(x, f(y))` has an empty backbone (everything
+diverges), while `f(Variants(x, y))` factors the constructor `f` into shared
+structure. The compression ratio (§2.5) is size-derived and identical for both.
+
+**Variant mass.** Define `vmass(t)` as the number of concrete nodes lying under
+`Variants` nodes: `vmass(Variants(a,b)) = size(a) + size(b)`, and for an ordinary
+node `vmass(op(c₁…cₙ)) = Σ vmass(cᵢ)`. Then `size(t) = backbone(t) + vmass(t)`, so
+at equal size, smaller variant mass is exactly larger backbone. Here
+`vmass(Variants(x, f(y))) = 3` but `vmass(f(Variants(x,y))) = 2`.
+
+Results are ranked by the lexicographic key `(size, vmass)`; replacement anywhere
+requires a strict improvement in that order (§4.5 amended). The primary objective and
+reported compression ratio are unchanged; the secondary objective only resolves
+equal-size ties, always toward the candidate that factors more constructors into the
+backbone. The exact solver remains exact for this order: sizes and vmasses both add
+over an AND node's children, so per-child lexicographic minimization composes.
+On this example the search therefore returns `f(Variants(x, y))`.
+
+Ties in `(size, vmass)` both — e.g. two different bijections of an AC matching with
+symmetric children — remain resolved by first-found (action order), which is
+deterministic and pinned by golden traces. Enumerating all co-optimal anti-unifiers
+is a possible extension: the exact memo would store a set of optimal terms per state
+instead of one, with the usual combinatorial caveats.
+
+### C.2 AC multiplicities
+
+`AU(plus{a^2, b^1}, plus{a^1, b^2})`: row margins [2, 1], column margins [1, 2], total 3.
+The matching-count matrices are:
+
+```text
+Matrix 1 (greedy diagonal):   x[a][a]=1, x[a][b]=1, x[b][b]=1
+  → plus(a, AU(a,b), b) = plus(a, Variants(a,b), b)
+  → size: 1 + 1 + 0 + 1 + 1 + 1 = 5
+
+Matrix 2 (crossed):           x[a][a]=0, x[a][b]=2, x[b][a]=1
+  → plus(AU(a,b), AU(a,b), AU(b,a)) = plus(Variants(a,b), Variants(a,b), Variants(b,a))
+  → size: 1 + 0 + 1 + 1 + 0 + 1 + 1 + 0 + 1 + 1 = 7
+```
+
+Matrix 1 costs 5, matrix 2 costs 7; the greedy diagonal is optimal. The syntactic seed
+zips positionally (which here happens to produce the same result as matrix 1, because
+the canonical multiset ordering places common elements first): size 5. Both exact and
+MCGS return 5; no strictly better factoring exists.
