@@ -11,6 +11,7 @@ pub use semi_persistent_containers as containers;
 pub mod ac_invariants;
 pub mod apply;
 pub mod ast;
+pub mod au;
 pub mod caches;
 pub mod canon;
 pub mod cc;
