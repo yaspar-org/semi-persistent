@@ -48,6 +48,12 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         self.data.len()
     }
 
+    /// Borrow all currently stored elements as a contiguous slice.
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        &self.data
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()

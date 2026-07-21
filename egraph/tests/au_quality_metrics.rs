@@ -14,7 +14,7 @@
 //! one OR node: action-local constants can reverse the underlying size ordering.
 
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
-use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, anti_unify};
+use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
 use semi_persistent_egraph::au::terms::{TermOp, TermPool};
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::NiraLitVal;
@@ -229,6 +229,39 @@ fn exact_and_uct_apply_the_approved_equal_size_backbone_tie_break() {
     }
 }
 
+#[test]
+fn exact_certifies_structural_improvement_over_generalize_action() {
+    let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+    let sort = eg.intern_sort("S");
+    let x_op = eg.register_op0("x", sort);
+    let y_op = eg.register_op0("y", sort);
+    let f_op = eg.register_op1("f", sort, sort);
+
+    let x = eg.add(x_op, &[]);
+    let fx = eg.add(f_op, &[x]);
+    let y = eg.add(y_op, &[]);
+    let fy = eg.add(f_op, &[y]);
+    eg.merge(x, fx);
+    eg.rebuild();
+
+    let snapshot = AuSnapshot::new(&eg).unwrap();
+    let exact = anti_unify(
+        &snapshot,
+        x,
+        fy,
+        &AuConfig {
+            algorithm: AuAlgorithm::Exact,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // The shared generalize action is Variants(x, f(y)) at quality (3, 3).
+    // Exact must retain the equal-size structural result with less variant mass.
+    assert_eq!(exact.pool.quality(exact.term_id), (3, 2));
+    assert!(exact.pool.quality(exact.term_id) < (3, 3));
+    assert_eq!(exact.completion, Completion::Exact);
+}
 #[test]
 fn raw_size_is_not_comparable_across_different_eclass_pairs() {
     // Across independent AU problems, a smaller absolute term can represent much

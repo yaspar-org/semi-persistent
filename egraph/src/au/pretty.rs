@@ -10,13 +10,14 @@
 
 use crate::containers::DenseId;
 
-use super::terms::{TermId, TermOp, TermPool};
+use super::terms::{TermOp, TermPool};
+use crate::config::AuIds;
 
 /// Pretty-print a term from the pool using `op_name` for rendering operators.
 /// `col_limit` is the target line width (0 means always break).
-pub fn pretty_print<O, V, F>(
-    pool: &TermPool<O, V>,
-    root: TermId,
+pub fn pretty_print<O, V, A: AuIds, F>(
+    pool: &TermPool<O, V, A>,
+    root: A::Term,
     op_name: F,
     col_limit: usize,
 ) -> String
@@ -30,9 +31,9 @@ where
     buf
 }
 
-fn pp_recursive<O, V, F>(
-    pool: &TermPool<O, V>,
-    id: TermId,
+fn pp_recursive<O, V, A: AuIds, F>(
+    pool: &TermPool<O, V, A>,
+    id: A::Term,
     op_name: F,
     col_limit: usize,
     indent: usize,
@@ -69,7 +70,7 @@ fn pp_recursive<O, V, F>(
     buf.push(')');
 }
 
-fn render_flat<O, V, F>(pool: &TermPool<O, V>, id: TermId, op_name: F) -> String
+fn render_flat<O, V, A: AuIds, F>(pool: &TermPool<O, V, A>, id: A::Term, op_name: F) -> String
 where
     O: DenseId + core::hash::Hash,
     V: DenseId + core::hash::Hash,

@@ -8,9 +8,10 @@
 //! All storage uses semi-persistent containers (AppendOnlyVec for structural fields,
 //! Map for deduplication caches); mark/restore truncates them as one unit.
 
+use crate::config::AuIds;
 use crate::containers::{AppendOnlyVec, DenseId, Map, MapToken, ShrinkPolicy, VecToken};
 
-use super::AuClassId;
+use super::{AuIds31, Span};
 
 // ---------------------------------------------------------------------------
 // Id types
@@ -22,23 +23,8 @@ crate::containers::define_id31! {
 }
 
 crate::containers::define_id31! {
-    /// Index of an AND node (realized factoring) in the search-space layer.
-    pub struct AndId / StoredAndId, "and";
-}
-
-crate::containers::define_id31! {
-    /// Index of an action in the action pool.
+    /// Index of a cached action list in the action cache.
     pub struct ActionId / StoredActionId, "act";
-}
-
-crate::containers::define_id31! {
-    /// Index of a child-pair entry in the action pair pool.
-    pub struct ActionPairId / StoredActionPairId, "ap";
-}
-
-crate::containers::define_id31! {
-    /// Index of a child in the AND-node child pool.
-    pub struct AndChildId / StoredAndChildId, "andc";
 }
 
 crate::containers::define_id31! {
@@ -66,15 +52,15 @@ pub enum CycleMode {
 // Context interner (semi-persistent: AppendOnlyVec + Map)
 // ---------------------------------------------------------------------------
 
-/// Interns sorted `AuClassId` vectors as `CtxId` values. Two equal vectors
-/// get the same `CtxId`; comparison is then a single integer compare.
-pub struct ContextStore {
-    /// Each interned context's data as a range `(start, len)` into `classes`.
-    spans: AppendOnlyVec<(u32, u32)>,
+/// Interns sorted class-id vectors as context ids. Two equal vectors get the
+/// same context id; comparison is then a single integer compare.
+pub struct ContextStore<A: AuIds = AuIds31> {
+    /// Each interned context's data as a typed span into `classes`.
+    spans: AppendOnlyVec<Span<A::ContextElem>>,
     /// Pool of class ids (all interned contexts concatenated).
-    classes: AppendOnlyVec<AuClassId>,
-    /// Deduplication map: sorted class vector -> CtxId (stored as value in the Map log).
-    index: Map<Vec<AuClassId>, CtxId>,
+    classes: AppendOnlyVec<A::Class>,
+    /// Deduplication map: sorted class vector -> context id.
+    index: Map<Vec<A::Class>, A::Context>,
 }
 
 /// Token for restoring a `ContextStore` to a previous state.
@@ -85,7 +71,7 @@ pub struct ContextStoreToken {
     index: MapToken,
 }
 
-impl ContextStore {
+impl<A: AuIds> ContextStore<A> {
     pub fn new() -> Self {
         let mut store = ContextStore {
             spans: AppendOnlyVec::new(),
@@ -96,30 +82,29 @@ impl ContextStore {
         store
     }
 
-    pub fn empty(&self) -> CtxId {
-        CtxId::from_usize(0)
+    pub fn empty(&self) -> A::Context {
+        A::Context::from_usize(0)
     }
 
-    pub fn intern(&mut self, sorted_classes: &[AuClassId]) -> CtxId {
+    pub fn intern(&mut self, sorted_classes: &[A::Class]) -> A::Context {
         if let Some(log_idx) = self.index.id_of(&sorted_classes.to_vec()) {
             return *self.index.get(log_idx);
         }
-        let id = CtxId::from_usize(self.spans.len());
-        let start = self.classes.len() as u32;
+        let id = A::Context::from_usize(self.spans.len());
+        let start = self.classes.len();
         for &c in sorted_classes {
             self.classes.push(c);
         }
-        let len = sorted_classes.len() as u32;
-        self.spans.push((start, len));
+        self.spans.push(Span::new(start, sorted_classes.len()));
         self.index.insert(sorted_classes.to_vec(), id);
         id
     }
 
     #[inline]
-    pub fn get(&self, id: CtxId) -> &[AuClassId] {
-        let &(start, len) = self.spans.get(id.to_usize());
-        let start = start as usize;
-        let len = len as usize;
+    pub fn get(&self, id: A::Context) -> &[A::Class] {
+        let span = *self.spans.get(id.to_usize());
+        let start = span.start_usize();
+        let len = span.len_usize();
         if len == 0 {
             return &[];
         }
@@ -127,13 +112,13 @@ impl ContextStore {
         // at positions [start..start+len] were pushed together and remain
         // contiguous. We get a pointer to the first element and extend it.
         unsafe {
-            let ptr = self.classes.get(start) as *const AuClassId;
+            let ptr = self.classes.get(start) as *const A::Class;
             std::slice::from_raw_parts(ptr, len)
         }
     }
 
     #[inline]
-    pub fn contains(&self, id: CtxId, class: AuClassId) -> bool {
+    pub fn contains(&self, id: A::Context, class: A::Class) -> bool {
         self.get(id).binary_search(&class).is_ok()
     }
 
@@ -153,6 +138,12 @@ impl ContextStore {
         }
     }
 
+    pub fn is_valid_token(&self, token: &ContextStoreToken) -> bool {
+        self.spans.is_valid_token(&token.spans)
+            && self.classes.is_valid_token(&token.classes)
+            && self.index.is_valid_token(&token.index)
+    }
+
     pub fn restore(&mut self, token: ContextStoreToken) {
         self.index.restore(token.index);
         self.classes.restore(token.classes);
@@ -160,7 +151,7 @@ impl ContextStore {
     }
 }
 
-impl Default for ContextStore {
+impl<A: AuIds> Default for ContextStore<A> {
     fn default() -> Self {
         Self::new()
     }
@@ -171,17 +162,15 @@ impl Default for ContextStore {
 // ---------------------------------------------------------------------------
 
 /// The OR-node arena: each node is a subproblem `AU(l, r)` with cycle contexts.
-pub struct OrArena {
-    pub left: AppendOnlyVec<AuClassId>,
-    pub right: AppendOnlyVec<AuClassId>,
-    pub left_ctx: AppendOnlyVec<CtxId>,
-    pub right_ctx: AppendOnlyVec<CtxId>,
-    pub action_start: AppendOnlyVec<u32>,
-    pub action_len: AppendOnlyVec<u32>,
+pub struct OrArena<A: AuIds = AuIds31> {
+    pub left: AppendOnlyVec<A::Class>,
+    pub right: AppendOnlyVec<A::Class>,
+    pub left_ctx: AppendOnlyVec<A::Context>,
+    pub right_ctx: AppendOnlyVec<A::Context>,
     pub terminal: AppendOnlyVec<bool>,
     pub left_best_size: AppendOnlyVec<u32>,
     pub right_best_size: AppendOnlyVec<u32>,
-    pub by_key: Map<(AuClassId, AuClassId, CtxId, CtxId), OrId>,
+    pub by_key: Map<(A::Class, A::Class, A::Context, A::Context), A::Or>,
 }
 
 /// Token for restoring an `OrArena`.
@@ -191,23 +180,19 @@ pub struct OrArenaToken {
     right: VecToken,
     left_ctx: VecToken,
     right_ctx: VecToken,
-    action_start: VecToken,
-    action_len: VecToken,
     terminal: VecToken,
     left_best_size: VecToken,
     right_best_size: VecToken,
     by_key: MapToken,
 }
 
-impl OrArena {
+impl<A: AuIds> OrArena<A> {
     pub fn new() -> Self {
         OrArena {
             left: AppendOnlyVec::new(),
             right: AppendOnlyVec::new(),
             left_ctx: AppendOnlyVec::new(),
             right_ctx: AppendOnlyVec::new(),
-            action_start: AppendOnlyVec::new(),
-            action_len: AppendOnlyVec::new(),
             terminal: AppendOnlyVec::new(),
             left_best_size: AppendOnlyVec::new(),
             right_best_size: AppendOnlyVec::new(),
@@ -229,8 +214,6 @@ impl OrArena {
             right: self.right.mark(ShrinkPolicy::Never),
             left_ctx: self.left_ctx.mark(ShrinkPolicy::Never),
             right_ctx: self.right_ctx.mark(ShrinkPolicy::Never),
-            action_start: self.action_start.mark(ShrinkPolicy::Never),
-            action_len: self.action_len.mark(ShrinkPolicy::Never),
             terminal: self.terminal.mark(ShrinkPolicy::Never),
             left_best_size: self.left_best_size.mark(ShrinkPolicy::Never),
             right_best_size: self.right_best_size.mark(ShrinkPolicy::Never),
@@ -243,93 +226,18 @@ impl OrArena {
         self.right_best_size.restore(token.right_best_size);
         self.left_best_size.restore(token.left_best_size);
         self.terminal.restore(token.terminal);
-        self.action_len.restore(token.action_len);
-        self.action_start.restore(token.action_start);
         self.right_ctx.restore(token.right_ctx);
         self.left_ctx.restore(token.left_ctx);
         self.right.restore(token.right);
         self.left.restore(token.left);
     }
-}
 
-impl Default for OrArena {
-    fn default() -> Self {
-        Self::new()
+    pub fn is_valid_token(&self, token: &OrArenaToken) -> bool {
+        self.left.is_valid_token(&token.left)
     }
 }
 
-// ---------------------------------------------------------------------------
-// AND arena (semi-persistent: AppendOnlyVec + Map)
-// ---------------------------------------------------------------------------
-
-/// The AND-node arena: each node is a realized factoring (parent OR + action).
-pub struct AndArena {
-    pub parent: AppendOnlyVec<OrId>,
-    pub action: AppendOnlyVec<ActionId>,
-    pub children_start: AppendOnlyVec<u32>,
-    pub children_len: AppendOnlyVec<u32>,
-    pub child_or: AppendOnlyVec<OrId>,
-    pub child_count: AppendOnlyVec<u32>,
-    pub by_parent_action: Map<(OrId, u32), AndId>,
-}
-
-/// Token for restoring an `AndArena`.
-#[derive(Clone, Copy, Debug)]
-pub struct AndArenaToken {
-    parent: VecToken,
-    action: VecToken,
-    children_start: VecToken,
-    children_len: VecToken,
-    child_or: VecToken,
-    child_count: VecToken,
-    by_parent_action: MapToken,
-}
-
-impl AndArena {
-    pub fn new() -> Self {
-        AndArena {
-            parent: AppendOnlyVec::new(),
-            action: AppendOnlyVec::new(),
-            children_start: AppendOnlyVec::new(),
-            children_len: AppendOnlyVec::new(),
-            child_or: AppendOnlyVec::new(),
-            child_count: AppendOnlyVec::new(),
-            by_parent_action: Map::new(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.parent.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.parent.is_empty()
-    }
-
-    pub fn mark(&mut self) -> AndArenaToken {
-        AndArenaToken {
-            parent: self.parent.mark(ShrinkPolicy::Never),
-            action: self.action.mark(ShrinkPolicy::Never),
-            children_start: self.children_start.mark(ShrinkPolicy::Never),
-            children_len: self.children_len.mark(ShrinkPolicy::Never),
-            child_or: self.child_or.mark(ShrinkPolicy::Never),
-            child_count: self.child_count.mark(ShrinkPolicy::Never),
-            by_parent_action: self.by_parent_action.mark(ShrinkPolicy::Never),
-        }
-    }
-
-    pub fn restore(&mut self, token: AndArenaToken) {
-        self.by_parent_action.restore(token.by_parent_action);
-        self.child_count.restore(token.child_count);
-        self.child_or.restore(token.child_or);
-        self.children_len.restore(token.children_len);
-        self.children_start.restore(token.children_start);
-        self.action.restore(token.action);
-        self.parent.restore(token.parent);
-    }
-}
-
-impl Default for AndArena {
+impl<A: AuIds> Default for OrArena<A> {
     fn default() -> Self {
         Self::new()
     }
@@ -339,53 +247,49 @@ impl Default for AndArena {
 // SearchSpace: combines the above into one structure
 // ---------------------------------------------------------------------------
 
-/// Token for restoring the entire search-space layer.
+/// Token for restoring the entire search-space layer. Validity is delegated
+/// to the inner semi-persistent containers' branch genealogy.
 #[derive(Clone, Copy, Debug)]
 pub struct SpaceToken {
     or_arena: OrArenaToken,
-    and_arena: AndArenaToken,
     contexts: ContextStoreToken,
 }
 
 /// The complete search-space layer shared by all algorithms in a session.
-pub struct SearchSpace {
-    pub or_arena: OrArena,
-    pub and_arena: AndArena,
-    pub contexts: ContextStore,
+pub struct SearchSpace<A: AuIds = AuIds31> {
+    pub or_arena: OrArena<A>,
+    pub contexts: ContextStore<A>,
     pub cycle_mode: CycleMode,
 }
 
-impl SearchSpace {
+impl<A: AuIds> SearchSpace<A> {
     pub fn new(cycle_mode: CycleMode) -> Self {
         SearchSpace {
             or_arena: OrArena::new(),
-            and_arena: AndArena::new(),
             contexts: ContextStore::new(),
             cycle_mode,
         }
     }
 
-    /// Look up or create an OR node for the given state. Returns `(OrId, is_new)`.
+    /// Look up or create an OR node for the given state. Returns `(id, is_new)`.
     pub fn get_or_insert_or_node(
         &mut self,
-        l: AuClassId,
-        r: AuClassId,
-        ctx_l: CtxId,
-        ctx_r: CtxId,
+        l: A::Class,
+        r: A::Class,
+        ctx_l: A::Context,
+        ctx_r: A::Context,
         left_best_size: u32,
         right_best_size: u32,
-    ) -> (OrId, bool) {
+    ) -> (A::Or, bool) {
         let key = (l, r, ctx_l, ctx_r);
         if let Some(log_idx) = self.or_arena.by_key.id_of(&key) {
             return (*self.or_arena.by_key.get(log_idx), false);
         }
-        let id = OrId::from_usize(self.or_arena.len());
+        let id = A::Or::from_usize(self.or_arena.len());
         self.or_arena.left.push(l);
         self.or_arena.right.push(r);
         self.or_arena.left_ctx.push(ctx_l);
         self.or_arena.right_ctx.push(ctx_r);
-        self.or_arena.action_start.push(0);
-        self.or_arena.action_len.push(0);
         self.or_arena.terminal.push(l == r);
         self.or_arena.left_best_size.push(left_best_size);
         self.or_arena.right_best_size.push(right_best_size);
@@ -396,13 +300,13 @@ impl SearchSpace {
     /// Derive the child context for one side (§2.3).
     pub fn derive_child_context(
         &mut self,
-        parent_ctx: CtxId,
-        parent_class: AuClassId,
-        is_reachable_from_child: impl Fn(AuClassId) -> bool,
-    ) -> CtxId {
+        parent_ctx: A::Context,
+        parent_class: A::Class,
+        is_reachable_from_child: impl Fn(A::Class) -> bool,
+    ) -> A::Context {
         let parent_classes = self.contexts.get(parent_ctx);
 
-        let mut result: Vec<AuClassId> = Vec::new();
+        let mut result: Vec<A::Class> = Vec::new();
         for &c in parent_classes {
             if is_reachable_from_child(c) {
                 result.push(c);
@@ -417,7 +321,7 @@ impl SearchSpace {
     }
 
     /// Check if an action's child pair is blocked by the cycle mode filter.
-    pub fn is_cycle_blocked(&self, or_id: OrId, child_l: AuClassId, child_r: AuClassId) -> bool {
+    pub fn is_cycle_blocked(&self, or_id: A::Or, child_l: A::Class, child_r: A::Class) -> bool {
         let ctx_l = *self.or_arena.left_ctx.get(or_id.to_usize());
         let ctx_r = *self.or_arena.right_ctx.get(or_id.to_usize());
 
@@ -442,13 +346,18 @@ impl SearchSpace {
     pub fn mark(&mut self) -> SpaceToken {
         SpaceToken {
             or_arena: self.or_arena.mark(),
-            and_arena: self.and_arena.mark(),
             contexts: self.contexts.mark(),
         }
     }
 
+    /// Is this token restorable right now (same instances, live branches on
+    /// every inner container)?
+    pub fn is_valid_token(&self, token: &SpaceToken) -> bool {
+        self.or_arena.is_valid_token(&token.or_arena)
+            && self.contexts.is_valid_token(&token.contexts)
+    }
+
     pub fn restore(&mut self, token: SpaceToken) {
-        self.and_arena.restore(token.and_arena);
         self.or_arena.restore(token.or_arena);
         self.contexts.restore(token.contexts);
     }
@@ -457,10 +366,11 @@ impl SearchSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::au::AuClassId;
 
     #[test]
     fn context_interner_empty() {
-        let store = ContextStore::new();
+        let store: ContextStore = ContextStore::new();
         assert_eq!(store.empty(), CtxId::from_usize(0));
         assert_eq!(store.get(store.empty()), &[]);
         assert!(!store.contains(store.empty(), AuClassId::from_usize(0)));
@@ -468,7 +378,7 @@ mod tests {
 
     #[test]
     fn context_interner_dedup() {
-        let mut store = ContextStore::new();
+        let mut store: ContextStore = ContextStore::new();
         let c0 = AuClassId::from_usize(0);
         let c1 = AuClassId::from_usize(1);
         let c2 = AuClassId::from_usize(2);
@@ -488,7 +398,7 @@ mod tests {
 
     #[test]
     fn or_node_dedup() {
-        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let c0 = AuClassId::from_usize(0);
         let c1 = AuClassId::from_usize(1);
         let ctx = space.contexts.empty();
@@ -507,7 +417,7 @@ mod tests {
 
     #[test]
     fn derive_child_context_acyclic() {
-        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let parent_ctx = space.contexts.empty();
         let parent_class = AuClassId::from_usize(0);
 
@@ -517,7 +427,7 @@ mod tests {
 
     #[test]
     fn derive_child_context_cyclic() {
-        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let c0 = AuClassId::from_usize(0);
         let c1 = AuClassId::from_usize(1);
 
@@ -533,7 +443,7 @@ mod tests {
 
     #[test]
     fn cycle_blocking_ancestor_only() {
-        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let c0 = AuClassId::from_usize(0);
         let c1 = AuClassId::from_usize(1);
         let c2 = AuClassId::from_usize(2);
@@ -549,7 +459,7 @@ mod tests {
 
     #[test]
     fn cycle_blocking_current_inclusive() {
-        let mut space = SearchSpace::new(CycleMode::CurrentInclusive);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::CurrentInclusive);
         let c0 = AuClassId::from_usize(0);
         let c1 = AuClassId::from_usize(1);
         let c2 = AuClassId::from_usize(2);
@@ -565,7 +475,7 @@ mod tests {
 
     #[test]
     fn terminal_when_l_eq_r() {
-        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let c0 = AuClassId::from_usize(0);
         let ctx = space.contexts.empty();
 
@@ -575,7 +485,7 @@ mod tests {
 
     #[test]
     fn mark_restore_truncates() {
-        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let c0 = AuClassId::from_usize(0);
         let c1 = AuClassId::from_usize(1);
         let c2 = AuClassId::from_usize(2);

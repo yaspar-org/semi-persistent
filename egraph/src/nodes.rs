@@ -40,6 +40,7 @@ semi_persistent_containers::define_id31! {
 /// Standard node-id configuration for the generic node store.
 pub struct DefaultNodeIds;
 impl crate::typed_routing::NodeIds for DefaultNodeIds {
+    type Index = u32;
     type L0 = Plain0Id;
     type L1 = Plain1Id;
     type L2 = Plain2Id;
@@ -60,6 +61,7 @@ semi_persistent_containers::define_id31! {
 /// Default 31-bit e-graph configuration.
 pub struct DefaultConfig;
 impl crate::config::EGraphConfig for DefaultConfig {
+    type Index = u32;
     type G = crate::id::ENodeId;
     type O = crate::id::OpId;
     type S = crate::id::SortId;
@@ -69,6 +71,7 @@ impl crate::config::EGraphConfig for DefaultConfig {
     type C = crate::node_store::MSetChild<crate::id::ENodeId>;
     type M = crate::multiplicity::Multiplicity;
     type Ids = DefaultNodeIds;
+    type Au = crate::au::AuIds31;
 
     fn mset_child_id(c: &Self::C) -> Self::G {
         c.0
@@ -115,6 +118,7 @@ semi_persistent_containers::define_id63! { pub struct LitNodeId64 / StoredLitNod
 
 pub struct NodeIds64;
 impl crate::typed_routing::NodeIds for NodeIds64 {
+    type Index = u64;
     type L0 = Plain0Id64;
     type L1 = Plain1Id64;
     type L2 = Plain2Id64;
@@ -127,9 +131,10 @@ impl crate::typed_routing::NodeIds for NodeIds64 {
     type LLit = LitNodeId64;
 }
 
-/// 63-bit e-graph configuration.
+/// 63-bit e-graph configuration (63 payload bits in a u64 word).
 pub struct Config64;
 impl crate::config::EGraphConfig for Config64 {
+    type Index = u64;
     type G = ENodeId64;
     type O = OpId64;
     type S = SortId64;
@@ -139,6 +144,8 @@ impl crate::config::EGraphConfig for Config64 {
     type C = crate::node_store::MSetChild<ENodeId64>;
     type M = crate::multiplicity::Multiplicity;
     type Ids = NodeIds64;
+    // AU width selection is activated in the following typed-ID commit.
+    type Au = crate::au::AuIds31;
 
     fn mset_child_id(c: &Self::C) -> Self::G {
         c.0

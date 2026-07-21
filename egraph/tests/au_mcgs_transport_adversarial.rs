@@ -75,9 +75,8 @@ fn mcgs_transport_improvement_preserves_ordered_parent_positions() {
 
 /// CurrentInclusive blocks every transport cell whose left child is the current
 /// left root. Exact therefore has no feasible structural transport and returns
-/// the syntactic seed. MCGS currently ignores that blocked-cell mask and returns
-/// an illegally cheaper transport result, so the two algorithms search different
-/// spaces under the same CycleMode.
+/// the terminal generalize action. MCGS must obey that same blocked-cell mask so
+/// both algorithms search the same action space under the same CycleMode.
 #[test]
 fn mcgs_transport_respects_current_inclusive_blocked_cells() {
     let mut eg = Eg::new();
@@ -121,11 +120,68 @@ fn mcgs_transport_respects_current_inclusive_blocked_cells() {
     let exact_quality = exact.pool.quality(exact.term_id);
     let mcgs_quality = mcgs.pool.quality(mcgs.term_id);
 
-    assert_eq!(exact_quality, (8, 8), "fixture must exercise seed fallback");
+    assert_eq!(
+        exact_quality,
+        (8, 8),
+        "fixture must exercise the generalize action"
+    );
     assert_eq!(
         mcgs_quality, exact_quality,
         "MCGS must obey the same cycle-filtered transport space as Exact"
     );
+}
+
+/// MCGS performs one mandatory action-aware initialization rollout even with a
+/// zero playout budget. For an identity-padded AC singleton, static transport
+/// selection and its chosen flow immediately expose
+/// `combine(f(x), Variants(a,e))` at (5,2), rather than leaving only whole-term
+/// generalization at (6,6).
+#[test]
+fn mcgs_initial_rollout_uses_identity_padded_transport() {
+    let mut eg = Eg::new();
+    let sort = eg.intern_sort("E");
+    let e_op = eg.register_op0("e", sort);
+    let a_op = eg.register_op0("a", sort);
+    let x_op = eg.register_op0("x", sort);
+    let f_op = eg.register_op1("f", sort, sort);
+    let combine = eg.register_mset("combine", sort, sort);
+
+    let e = eg.add(e_op, &[]);
+    eg.set_unit_node(combine, e);
+    let a = eg.add(a_op, &[]);
+    let x = eg.add(x_op, &[]);
+    let fx = eg.add(f_op, &[x]);
+    let left = eg.add(combine, &[a, fx]);
+    let right = eg.add(combine, &[fx]);
+    assert_eq!(right, fx, "singleton AC application must canonicalize away");
+    eg.rebuild();
+
+    let snap = AuSnapshot::new(&eg).unwrap();
+    let mut result = anti_unify(
+        &snap,
+        left,
+        right,
+        &AuConfig {
+            algorithm: AuAlgorithm::Uct,
+            playouts: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.pool.quality(result.term_id),
+        (5, 2),
+        "the permanent first estimate must be the greedy identity-padded transport rollout"
+    );
+    assert_eq!(
+        result.completion,
+        Completion::BudgetExhausted { playouts_used: 0 }
+    );
+    let left_projection = result.pool.project(result.term_id, 0);
+    let right_projection = result.pool.project(result.term_id, 1);
+    assert!(!result.pool.has_variants(left_projection));
+    assert!(!result.pool.has_variants(right_projection));
 }
 
 /// A fully cycle-blocked representation pair is not an action. This guards
@@ -223,57 +279,4 @@ fn mcgs_skips_partially_allowed_hall_infeasible_transport() {
         semi_persistent_egraph::au::session::Completion::Exact,
         "an infeasible representation pair must not consume an MCGS action"
     );
-}
-
-/// MCGS performs one mandatory action-aware initialization rollout even with a
-/// zero playout budget. For an identity-padded AC singleton, static transport
-/// selection and its chosen flow immediately expose
-/// `combine(f(x), Variants(a,e))` at (5,2), rather than leaving only whole-term
-/// generalization at (6,6).
-#[test]
-fn mcgs_initial_rollout_uses_identity_padded_transport() {
-    let mut eg = Eg::new();
-    let sort = eg.intern_sort("E");
-    let e_op = eg.register_op0("e", sort);
-    let a_op = eg.register_op0("a", sort);
-    let x_op = eg.register_op0("x", sort);
-    let f_op = eg.register_op1("f", sort, sort);
-    let combine = eg.register_mset("combine", sort, sort);
-
-    let e = eg.add(e_op, &[]);
-    eg.set_unit_node(combine, e);
-    let a = eg.add(a_op, &[]);
-    let x = eg.add(x_op, &[]);
-    let fx = eg.add(f_op, &[x]);
-    let left = eg.add(combine, &[a, fx]);
-    let right = eg.add(combine, &[fx]);
-    assert_eq!(right, fx, "singleton AC application must canonicalize away");
-    eg.rebuild();
-
-    let snap = AuSnapshot::new(&eg).unwrap();
-    let mut result = anti_unify(
-        &snap,
-        left,
-        right,
-        &AuConfig {
-            algorithm: AuAlgorithm::Uct,
-            playouts: 0,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        result.pool.quality(result.term_id),
-        (5, 2),
-        "the permanent first estimate must be the greedy identity-padded transport rollout"
-    );
-    assert_eq!(
-        result.completion,
-        Completion::BudgetExhausted { playouts_used: 0 }
-    );
-    let left_projection = result.pool.project(result.term_id, 0);
-    let right_projection = result.pool.project(result.term_id, 1);
-    assert!(!result.pool.has_variants(left_projection));
-    assert!(!result.pool.has_variants(right_projection));
 }

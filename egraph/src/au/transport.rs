@@ -119,10 +119,21 @@ pub struct TransportSolutionF64 {
 
 /// Solve a float-cost transportation problem with the same SPFA successive
 /// shortest augmenting path algorithm, using native f64 cost arithmetic.
-/// Finite costs only (asserted in debug); ties resolve deterministically to
-/// the first (lowest-index) candidate. No scalarization or rounding: the exact
-/// argmin over the represented f64 values is preserved.
+/// Finite costs only (asserted unconditionally: NaN would silently corrupt
+/// the relaxation); ties resolve deterministically to the first
+/// (lowest-index) candidate. No scalarization or rounding: the exact argmin
+/// over the represented f64 values is preserved.
 pub fn solve_transport_f64(p: &TransportProblemF64) -> Option<TransportSolutionF64> {
+    // Validate ALL costs before any early return: a non-finite cost is a
+    // caller bug and must panic in every build and on every input shape
+    // (zero-flow and mismatched-margin instances included), never be
+    // conflated with infeasibility (None) or absorbed by a trivial solution.
+    for row in &p.cost {
+        for c in row.iter().flatten() {
+            assert!(c.is_finite(), "transport f64 cost must be finite");
+        }
+    }
+
     let rows = p.row_supply.len();
     let cols = p.col_demand.len();
     if rows == 0 || cols == 0 {
@@ -153,7 +164,6 @@ pub fn solve_transport_f64(p: &TransportProblemF64) -> Option<TransportSolutionF
     for i in 0..rows {
         for j in 0..cols {
             if let Some(c) = p.cost[i][j] {
-                debug_assert!(c.is_finite(), "transport f64 cost must be finite");
                 let cap = p.row_supply[i].min(p.col_demand[j]);
                 if cap > 0 {
                     cell_edge[i][j] = Some(net.edges.len());
@@ -455,6 +465,57 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Non-finite f64 costs are a caller bug and must panic in ALL builds
+    /// (a NaN would silently corrupt the SPFA relaxation), never be
+    /// conflated with transport infeasibility (which returns None).
+    #[test]
+    #[should_panic(expected = "transport f64 cost must be finite")]
+    fn f64_nan_cost_panics() {
+        let p = TransportProblemF64 {
+            row_supply: vec![1],
+            col_demand: vec![1],
+            cost: vec![vec![Some(f64::NAN)]],
+        };
+        let _ = solve_transport_f64(&p);
+    }
+
+    #[test]
+    #[should_panic(expected = "transport f64 cost must be finite")]
+    fn f64_infinite_cost_panics() {
+        let p = TransportProblemF64 {
+            row_supply: vec![1],
+            col_demand: vec![1],
+            cost: vec![vec![Some(f64::INFINITY)]],
+        };
+        let _ = solve_transport_f64(&p);
+    }
+
+    /// The finiteness contract holds on every input shape: a zero-flow
+    /// instance must not absorb a NaN into a trivial solution.
+    #[test]
+    #[should_panic(expected = "transport f64 cost must be finite")]
+    fn f64_nan_cost_panics_on_zero_flow() {
+        let p = TransportProblemF64 {
+            row_supply: vec![0],
+            col_demand: vec![0],
+            cost: vec![vec![Some(f64::NAN)]],
+        };
+        let _ = solve_transport_f64(&p);
+    }
+
+    /// ... and a mismatched-margin instance must not conflate the NaN with
+    /// infeasibility (None).
+    #[test]
+    #[should_panic(expected = "transport f64 cost must be finite")]
+    fn f64_infinite_cost_panics_on_mismatched_margins() {
+        let p = TransportProblemF64 {
+            row_supply: vec![2],
+            col_demand: vec![1],
+            cost: vec![vec![Some(f64::INFINITY)]],
+        };
+        let _ = solve_transport_f64(&p);
+    }
 
     /// Exhaustive reference: enumerate every feasible integer matrix, return
     /// the lexicographic minimum total quality (or None if infeasible).

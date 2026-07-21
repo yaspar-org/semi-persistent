@@ -10,7 +10,7 @@ use proptest::prelude::*;
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::actions::{ActionCache, generate_actions};
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
-use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, anti_unify};
+use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
 use semi_persistent_egraph::literal::NiraLitVal;
 
 type Eg = EGraph31<NiraLitVal, false, false>;
@@ -78,14 +78,14 @@ proptest! {
     }
 }
 
-// Small ordered terms provide a non-algebraic control: exact search may
-// improve on the generalize seed, and bounded UCT must never beat the exact
-// oracle for the same action language.
+// Small ordered terms provide a non-algebraic control: both algorithms must
+// stay within the shared generalize action, bounded UCT must never beat Exact,
+// certified UCT must equal Exact, and every returned projection is concrete.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(40))]
 
     #[test]
-    fn prop_small_ordered_quality_is_bounded_by_seed_and_exact(
+    fn prop_small_ordered_quality_is_bounded_and_projection_valid(
         i0 in 0usize..4,
         i1 in 0usize..4,
         j0 in 0usize..4,
@@ -103,6 +103,12 @@ proptest! {
         eg.rebuild();
         let snapshot = AuSnapshot::new(&eg).unwrap();
 
+        // Recorded scalar baseline from the pre-change initializer for these
+        // fixed ordered fixtures. This intentionally records only expected
+        // quality; it does not reconstruct or expose a syntactic zipper.
+        let recorded_baseline_size = 1
+            + if i0 == j0 { 1 } else { 2 }
+            + if i1 == j1 { 1 } else { 2 };
         let exact = anti_unify(&snapshot, left, right, &AuConfig {
             algorithm: AuAlgorithm::Exact,
             ..Default::default()
@@ -113,6 +119,21 @@ proptest! {
             ..Default::default()
         }).unwrap();
 
+        prop_assert!(exact.size <= recorded_baseline_size);
         prop_assert!(uct.size >= exact.size);
+        prop_assert!(uct.size <= recorded_baseline_size);
+        if uct.completion == Completion::Exact {
+            prop_assert_eq!(
+                uct.pool.quality(uct.term_id),
+                exact.pool.quality(exact.term_id)
+            );
+        }
+
+        for mut result in [exact, uct] {
+            let left_projection = result.pool.project(result.term_id, 0);
+            let right_projection = result.pool.project(result.term_id, 1);
+            prop_assert!(!result.pool.has_variants(left_projection));
+            prop_assert!(!result.pool.has_variants(right_projection));
+        }
     }
 }

@@ -10,16 +10,18 @@ use crate::containers::ShrinkPolicy;
 
 /// Bundle of local DenseId types — one per node kind.
 pub trait NodeIds {
-    type L0: DenseId;
-    type L1: DenseId;
-    type L2: DenseId;
-    type L3: DenseId;
-    type LSPair: DenseId;
-    type LN: DenseId;
-    type LSeq: DenseId;
-    type LMSet: DenseId;
-    type LSet: DenseId;
-    type LLit: DenseId;
+    /// Backing word; must match the owning config's `Index`.
+    type Index: crate::containers::IndexLike + crate::containers::Tagged;
+    type L0: DenseId<Index = Self::Index>;
+    type L1: DenseId<Index = Self::Index>;
+    type L2: DenseId<Index = Self::Index>;
+    type L3: DenseId<Index = Self::Index>;
+    type LSPair: DenseId<Index = Self::Index>;
+    type LN: DenseId<Index = Self::Index>;
+    type LSeq: DenseId<Index = Self::Index>;
+    type LMSet: DenseId<Index = Self::Index>;
+    type LSet: DenseId<Index = Self::Index>;
+    type LLit: DenseId<Index = Self::Index>;
 }
 
 /// Typed local id reference — one variant per node kind.
@@ -161,6 +163,7 @@ mod tests {
 
     struct TestIds;
     impl NodeIds for TestIds {
+        type Index = u32;
         type L0 = Plain0Id;
         type L1 = Plain1Id;
         type L2 = Plain2Id;

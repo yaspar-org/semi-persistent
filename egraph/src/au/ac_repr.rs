@@ -17,17 +17,16 @@ use crate::containers::DenseId;
 use crate::id::ENodeKind;
 use crate::literal::LitVal;
 
-use super::AuClassId;
-use super::egraph_api::AuSnapshot;
+use super::egraph_api::{AuSnapshot, ClassOf};
 
 /// One canonical monomial: sorted, deduplicated `(child class, multiplicity)`
 /// pairs with all multiplicities positive.
-pub type Monomial = Vec<(AuClassId, u32)>;
+pub type Monomial<C> = Vec<(C, u32)>;
 
-fn canonize(mut m: Monomial) -> Monomial {
+fn canonize<C: DenseId>(mut m: Monomial<C>) -> Monomial<C> {
     m.sort_unstable_by_key(|(c, _)| c.to_usize());
     // Merge duplicate classes (defensive; canonical members are already merged).
-    let mut out: Monomial = Vec::with_capacity(m.len());
+    let mut out: Monomial<C> = Vec::with_capacity(m.len());
     for (c, k) in m {
         if k == 0 {
             continue;
@@ -44,9 +43,9 @@ fn canonize(mut m: Monomial) -> Monomial {
 /// `op` must have canon class MSet or Set.
 pub fn monomials_of<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    class: AuClassId,
+    class: ClassOf<Cfg>,
     op: Cfg::O,
-) -> Vec<Monomial>
+) -> Vec<Monomial<ClassOf<Cfg>>>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -54,13 +53,13 @@ where
     let kind = eg.ops().info(op).canon_class();
     debug_assert!(matches!(kind, ENodeKind::MSet | ENodeKind::Set));
 
-    let mut reprs: Vec<Monomial> = Vec::new();
+    let mut reprs: Vec<Monomial<ClassOf<Cfg>>> = Vec::new();
 
     for &(member_op, member_id) in snap.members(class) {
         if member_op != op {
             continue;
         }
-        let mono: Monomial = if kind == ENodeKind::MSet {
+        let mono: Monomial<ClassOf<Cfg>> = if kind == ENodeKind::MSet {
             let mut buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
             eg.mset_children(member_id, &mut buf);
             canonize(
@@ -69,7 +68,7 @@ where
                     .collect(),
             )
         } else {
-            let mut children: Monomial = Vec::new();
+            let mut children: Monomial<ClassOf<Cfg>> = Vec::new();
             eg.for_each_child(member_id, |child, _| {
                 children.push((snap.class_of(child).unwrap(), 1));
             });
@@ -96,7 +95,7 @@ where
 }
 
 /// Total multiplicity of a monomial.
-pub fn total(m: &Monomial) -> u32 {
+pub fn total<C: DenseId>(m: &Monomial<C>) -> u32 {
     m.iter().map(|(_, k)| *k).sum()
 }
 
@@ -105,9 +104,9 @@ pub fn total(m: &Monomial) -> u32 {
 pub fn pad_pair<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     op: Cfg::O,
-    left: &Monomial,
-    right: &Monomial,
-) -> Option<(Monomial, Monomial)>
+    left: &Monomial<ClassOf<Cfg>>,
+    right: &Monomial<ClassOf<Cfg>>,
+) -> Option<(Monomial<ClassOf<Cfg>>, Monomial<ClassOf<Cfg>>)>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -127,7 +126,7 @@ where
     Some((canonize(l), canonize(r)))
 }
 
-fn add_identity(m: &mut Monomial, id_class: AuClassId, deficit: u32) {
+fn add_identity<C: DenseId>(m: &mut Monomial<C>, id_class: C, deficit: u32) {
     if let Some(entry) = m.iter_mut().find(|(c, _)| *c == id_class) {
         entry.1 += deficit;
     } else {
@@ -140,10 +139,10 @@ fn add_identity(m: &mut Monomial, id_class: AuClassId, deficit: u32) {
 /// identity are skipped. Deduplicated.
 pub fn representation_pairs<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    l: AuClassId,
-    r: AuClassId,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
     op: Cfg::O,
-) -> Vec<(Monomial, Monomial)>
+) -> Vec<(Monomial<ClassOf<Cfg>>, Monomial<ClassOf<Cfg>>)>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -153,10 +152,11 @@ where
     // itself and would recurse unproductively; require at least one real
     // op-member representation in the pair. A representation is virtual
     // exactly when it is the singleton of its own class.
-    let is_virtual =
-        |m: &Monomial, class: AuClassId| m.len() == 1 && m[0].0 == class && m[0].1 == 1;
+    let is_virtual = |m: &Monomial<ClassOf<Cfg>>, class: ClassOf<Cfg>| {
+        m.len() == 1 && m[0].0 == class && m[0].1 == 1
+    };
 
-    let mut out: Vec<(Monomial, Monomial)> = Vec::new();
+    let mut out: Vec<(Monomial<ClassOf<Cfg>>, Monomial<ClassOf<Cfg>>)> = Vec::new();
     for lm in &l_reprs {
         for rm in &r_reprs {
             if is_virtual(lm, l) && is_virtual(rm, r) {
@@ -177,8 +177,8 @@ where
 /// one side only still matter through the virtual singleton of the other side.)
 pub fn common_ac_ops<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    l: AuClassId,
-    r: AuClassId,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
 ) -> Vec<Cfg::O>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,

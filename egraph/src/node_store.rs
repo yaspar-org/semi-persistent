@@ -492,6 +492,7 @@ mod tests {
 
     struct TestIds;
     impl NodeIds for TestIds {
+        type Index = u32;
         type L0 = Plain0Id;
         type L1 = Plain1Id;
         type L2 = Plain2Id;

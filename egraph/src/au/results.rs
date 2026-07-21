@@ -9,164 +9,146 @@
 //! size first; at equal size, minimum variant mass (= maximum backbone) wins.
 //! Updates are strict improvements only under that order.
 //!
-//! Semi-persistence: mark saves the current length and starts an undo log for
-//! overwrites to pre-existing entries. Restore replays the undo log backward
-//! (restoring old values), then truncates entries added after the mark.
+//! Semi-persistence: the table is one `VecP` arena of `ResultEntry` values.
+//! The vector's conditional capture records pre-mark values on first write
+//! per frame, and its branch genealogy validates tokens (foreign or abandoned
+//! tokens are rejected by the underlying container). Mark/restore delegate.
 
-use super::space::OrId;
-use super::terms::TermId;
-use crate::containers::DenseId;
+use super::AuIds31;
+use crate::config::AuIds;
+use crate::containers::{DenseId, IndexLike, ShrinkPolicy, VecP, VecToken};
 
 /// Sentinel quality for "no result yet": worse than every real result.
 const NO_RESULT: (u32, u32) = (u32::MAX, u32::MAX);
 
-/// One undo-log entry: the old state of a pre-mark entry before it was overwritten.
-#[derive(Clone, Debug)]
-struct UndoEntry {
-    idx: usize,
-    old_term: Option<TermId>,
-    old_quality: (u32, u32),
-    old_exact: bool,
+/// One table entry. `Default` is the "no result yet" state.
+#[derive(Clone, Copy, Debug)]
+struct ResultEntry<T> {
+    term: Option<T>,
+    quality: (u32, u32),
+    exact: bool,
 }
 
-/// Token for restoring a `BestResults` to a previous state.
+impl<T> Default for ResultEntry<T> {
+    fn default() -> Self {
+        ResultEntry {
+            term: None,
+            quality: NO_RESULT,
+            exact: false,
+        }
+    }
+}
+
+/// Token for restoring a `BestResults` to a previous state. Wraps the inner
+/// vector's token; container identity and branch genealogy are validated by
+/// the underlying semi-persistent vector.
 #[derive(Clone, Copy, Debug)]
 pub struct BestResultsToken {
-    len: usize,
-    undo_len: usize,
+    entries: VecToken,
 }
 
-/// The best-result table for a search session.
-#[derive(Debug)]
-pub struct BestResults {
-    term: Vec<Option<TermId>>,
-    quality: Vec<(u32, u32)>,
-    exact: Vec<bool>,
-    undo_log: Vec<UndoEntry>,
-    /// The length at the last mark (entries below this get undo-logged on overwrite).
-    mark_len: usize,
+/// The best-result table for a search session. The entry vector's index type
+/// matches the configured word width, so wide OR ids never narrow.
+pub struct BestResults<A: AuIds = AuIds31> {
+    entries: VecP<ResultEntry<A::Term>, A::Index>,
 }
 
-impl BestResults {
+impl<A: AuIds> BestResults<A> {
     pub fn new() -> Self {
         BestResults {
-            term: Vec::new(),
-            quality: Vec::new(),
-            exact: Vec::new(),
-            undo_log: Vec::new(),
-            mark_len: 0,
+            entries: VecP::new(),
         }
     }
 
-    pub fn ensure_capacity(&mut self, or_id: OrId) {
+    pub fn ensure_capacity(&mut self, or_id: A::Or) {
         let idx = or_id.to_usize();
-        if idx >= self.term.len() {
-            self.term.resize(idx + 1, None);
-            self.quality.resize(idx + 1, NO_RESULT);
-            self.exact.resize(idx + 1, false);
+        while self.entries.len().as_usize() <= idx {
+            self.entries.push(ResultEntry::default());
         }
     }
 
-    pub fn offer(&mut self, or_id: OrId, term: TermId, quality: (u32, u32)) -> bool {
-        let idx = or_id.to_usize();
+    /// The typed index for an OR id (checked; same word width by construction).
+    #[inline]
+    fn index_of(or_id: A::Or) -> A::Index {
+        A::Index::try_from_usize(or_id.to_usize()).expect("OR id exceeds configured index width")
+    }
+
+    pub fn offer(&mut self, or_id: A::Or, term: A::Term, quality: (u32, u32)) -> bool {
         self.ensure_capacity(or_id);
-        if quality < self.quality[idx] {
-            // Log the old value if this entry existed before the current mark.
-            if idx < self.mark_len {
-                self.undo_log.push(UndoEntry {
-                    idx,
-                    old_term: self.term[idx],
-                    old_quality: self.quality[idx],
-                    old_exact: self.exact[idx],
-                });
-            }
-            self.term[idx] = Some(term);
-            self.quality[idx] = quality;
+        let idx = Self::index_of(or_id);
+        let entry = self.entries.get(idx);
+        if quality < entry.quality {
+            self.entries.set(
+                idx,
+                ResultEntry {
+                    term: Some(term),
+                    quality,
+                    exact: entry.exact,
+                },
+            );
             true
         } else {
             false
         }
     }
 
-    pub fn mark_exact(&mut self, or_id: OrId) {
-        let idx = or_id.to_usize();
+    pub fn mark_exact(&mut self, or_id: A::Or) {
         self.ensure_capacity(or_id);
-        if idx < self.mark_len && !self.exact[idx] {
-            self.undo_log.push(UndoEntry {
-                idx,
-                old_term: self.term[idx],
-                old_quality: self.quality[idx],
-                old_exact: self.exact[idx],
-            });
-        }
-        self.exact[idx] = true;
-    }
-
-    #[inline]
-    pub fn best_term(&self, or_id: OrId) -> Option<TermId> {
-        let idx = or_id.to_usize();
-        if idx < self.term.len() {
-            self.term[idx]
-        } else {
-            None
+        let idx = Self::index_of(or_id);
+        let mut entry = self.entries.get(idx);
+        if !entry.exact {
+            entry.exact = true;
+            self.entries.set(idx, entry);
         }
     }
 
     #[inline]
-    pub fn best_size(&self, or_id: OrId) -> u32 {
+    fn entry(&self, or_id: A::Or) -> ResultEntry<A::Term> {
         let idx = or_id.to_usize();
-        if idx < self.quality.len() {
-            self.quality[idx].0
+        if idx < self.entries.len().as_usize() {
+            self.entries.get(Self::index_of(or_id))
         } else {
-            u32::MAX
+            ResultEntry::default()
         }
     }
 
     #[inline]
-    pub fn best_quality(&self, or_id: OrId) -> (u32, u32) {
-        let idx = or_id.to_usize();
-        if idx < self.quality.len() {
-            self.quality[idx]
-        } else {
-            NO_RESULT
-        }
+    pub fn best_term(&self, or_id: A::Or) -> Option<A::Term> {
+        self.entry(or_id).term
     }
 
     #[inline]
-    pub fn is_exact(&self, or_id: OrId) -> bool {
-        let idx = or_id.to_usize();
-        if idx < self.exact.len() {
-            self.exact[idx]
-        } else {
-            false
-        }
+    pub fn best_size(&self, or_id: A::Or) -> u32 {
+        self.entry(or_id).quality.0
+    }
+
+    #[inline]
+    pub fn best_quality(&self, or_id: A::Or) -> (u32, u32) {
+        self.entry(or_id).quality
+    }
+
+    #[inline]
+    pub fn is_exact(&self, or_id: A::Or) -> bool {
+        self.entry(or_id).exact
     }
 
     pub fn mark(&mut self) -> BestResultsToken {
-        self.mark_len = self.term.len();
         BestResultsToken {
-            len: self.term.len(),
-            undo_len: self.undo_log.len(),
+            entries: self.entries.mark(ShrinkPolicy::Never),
         }
+    }
+
+    /// Is this token restorable right now (same instance, live branch)?
+    pub fn is_valid_token(&self, token: &BestResultsToken) -> bool {
+        self.entries.is_valid_token(&token.entries)
     }
 
     pub fn restore(&mut self, token: BestResultsToken) {
-        // Replay undo log backward to restore overwritten pre-mark entries.
-        while self.undo_log.len() > token.undo_len {
-            let entry = self.undo_log.pop().unwrap();
-            self.term[entry.idx] = entry.old_term;
-            self.quality[entry.idx] = entry.old_quality;
-            self.exact[entry.idx] = entry.old_exact;
-        }
-        // Truncate entries added after the mark.
-        self.term.truncate(token.len);
-        self.quality.truncate(token.len);
-        self.exact.truncate(token.len);
-        self.mark_len = token.len;
+        self.entries.restore(token.entries);
     }
 }
 
-impl Default for BestResults {
+impl<A: AuIds> Default for BestResults<A> {
     fn default() -> Self {
         Self::new()
     }
@@ -175,10 +157,12 @@ impl Default for BestResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::au::space::OrId;
+    use crate::au::terms::TermId;
 
     #[test]
     fn strict_improvement_only() {
-        let mut results = BestResults::new();
+        let mut results: BestResults = BestResults::new();
         let or0 = OrId::from_usize(0);
         let t0 = TermId::from_usize(0);
         let t1 = TermId::from_usize(1);
@@ -200,7 +184,7 @@ mod tests {
 
     #[test]
     fn equal_size_lower_vmass_wins() {
-        let mut results = BestResults::new();
+        let mut results: BestResults = BestResults::new();
         let or0 = OrId::from_usize(0);
         let t0 = TermId::from_usize(0);
         let t1 = TermId::from_usize(1);
@@ -217,7 +201,7 @@ mod tests {
 
     #[test]
     fn exact_flag_write_once() {
-        let mut results = BestResults::new();
+        let mut results: BestResults = BestResults::new();
         let or0 = OrId::from_usize(0);
 
         assert!(!results.is_exact(or0));
@@ -229,7 +213,7 @@ mod tests {
 
     #[test]
     fn uninitialized_returns_none() {
-        let results = BestResults::new();
+        let results: BestResults = BestResults::new();
         let or5 = OrId::from_usize(5);
 
         assert_eq!(results.best_term(or5), None);
@@ -239,7 +223,7 @@ mod tests {
 
     #[test]
     fn mark_restore_truncates_new_entries() {
-        let mut results = BestResults::new();
+        let mut results: BestResults = BestResults::new();
         let or0 = OrId::from_usize(0);
         let or1 = OrId::from_usize(1);
         let t0 = TermId::from_usize(0);
@@ -257,7 +241,7 @@ mod tests {
 
     #[test]
     fn mark_restore_undoes_overwrites() {
-        let mut results = BestResults::new();
+        let mut results: BestResults = BestResults::new();
         let or0 = OrId::from_usize(0);
         let t0 = TermId::from_usize(0);
         let t1 = TermId::from_usize(1);
