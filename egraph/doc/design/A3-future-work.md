@@ -176,5 +176,13 @@ The implementation requires:
 See `design_future/sp-stratified-negation.md` for the full
 design including interaction with e-class merging.
 
+## Anti-Unification: remaining work
+
+Anti-unification is implemented and documented in
+[Ch 19: Anti-Unification](19-anti-unification.md). The remaining work —
+structural factoring for unequal-length associative (Seq) operators, PUCT and prior
+processors, value-guided AND selectors, non-injective ACI matching, golden traces,
+and JSON export — is collected in `doc/future/au-associative-operators.md`.
+
 ---
 [← Developer Guide](A2-developer-guide.md) · [Table of Contents](00-table-of-contents.md) · [Ch 1: Node Storage →](01-node-storage.md)

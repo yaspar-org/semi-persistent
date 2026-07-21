@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Canonical AC/ACI monomial representations, shared by the exact solver's
-//! transport path and MCGS's bounded action enumeration (§3.4.4).
+//! Canonical AC/ACI monomial representations, shared by the exact solver's and
+//! MCGS's min-cost transport paths (§3.4.4).
 //!
 //! A class viewed under an AC/ACI operator has one monomial representation per
 //! member with that operator (the member's canonical child multiset), plus, when

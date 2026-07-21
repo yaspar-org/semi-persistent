@@ -6,7 +6,9 @@
 //! The algorithm: render each subterm flat; if the flat form fits within the
 //! remaining columns at the current indent level, emit it inline. Otherwise
 //! break after the operator and emit each child on its own line, indented by
-//! two spaces, applying the same rule recursively.
+//! two spaces, applying the same rule recursively. Both passes are iterative
+//! with explicit stacks, so rendering depth is heap-bounded rather than
+//! call-stack-bounded.
 
 use crate::containers::DenseId;
 
@@ -26,67 +28,88 @@ where
     V: DenseId + core::hash::Hash,
     F: Fn(&TermOp<O, V>) -> String + Copy,
 {
+    // Explicit frame stack replacing the recursive descent: a frame is an
+    // open (broken) node whose children still need their own lines.
+    struct Frame<T> {
+        children: Vec<T>,
+        cursor: usize,
+        indent: usize,
+    }
     let mut buf = String::new();
-    pp_recursive(pool, root, op_name, col_limit, 0, &mut buf);
-    buf
-}
-
-fn pp_recursive<O, V, A: AuIds, F>(
-    pool: &TermPool<O, V, A>,
-    id: A::Term,
-    op_name: F,
-    col_limit: usize,
-    indent: usize,
-    buf: &mut String,
-) where
-    O: DenseId + core::hash::Hash,
-    V: DenseId + core::hash::Hash,
-    F: Fn(&TermOp<O, V>) -> String + Copy,
-{
-    let flat = render_flat(pool, id, op_name);
-    if indent + flat.len() <= col_limit {
-        buf.push_str(&flat);
-        return;
-    }
-
-    let children = pool.children(id);
-    if children.is_empty() {
-        buf.push_str(&flat);
-        return;
-    }
-
-    let name = op_name(pool.op(id));
-    buf.push('(');
-    buf.push_str(&name);
-
-    let child_indent = indent + 2;
-    for &child in children {
-        buf.push('\n');
-        for _ in 0..child_indent {
-            buf.push(' ');
+    let mut stack: Vec<Frame<A::Term>> = Vec::new();
+    let mut pending = Some((root, 0usize));
+    loop {
+        if let Some((id, indent)) = pending.take() {
+            let flat = render_flat(pool, id, op_name);
+            let children = pool.children(id);
+            if indent + flat.len() <= col_limit || children.is_empty() {
+                buf.push_str(&flat);
+            } else {
+                buf.push('(');
+                buf.push_str(&op_name(pool.op(id)));
+                stack.push(Frame {
+                    children: children.to_vec(),
+                    cursor: 0,
+                    indent: indent + 2,
+                });
+            }
         }
-        pp_recursive(pool, child, op_name, col_limit, child_indent, buf);
+        let Some(top) = stack.last_mut() else {
+            return buf;
+        };
+        if top.cursor < top.children.len() {
+            let child = top.children[top.cursor];
+            top.cursor += 1;
+            buf.push('\n');
+            for _ in 0..top.indent {
+                buf.push(' ');
+            }
+            pending = Some((child, top.indent));
+        } else {
+            buf.push(')');
+            stack.pop();
+        }
     }
-    buf.push(')');
 }
 
+/// Render the flat one-line form of a term. Iterative preorder emission with
+/// open/space/close markers on an explicit stack; produces exactly the string
+/// of the recursive definition `({name} {children joined by spaces})`.
 fn render_flat<O, V, A: AuIds, F>(pool: &TermPool<O, V, A>, id: A::Term, op_name: F) -> String
 where
     O: DenseId + core::hash::Hash,
     V: DenseId + core::hash::Hash,
     F: Fn(&TermOp<O, V>) -> String + Copy,
 {
-    let children = pool.children(id);
-    let name = op_name(pool.op(id));
-    if children.is_empty() {
-        name
-    } else {
-        let child_strs: Vec<String> = children
-            .iter()
-            .map(|&c| render_flat(pool, c, op_name))
-            .collect();
-        format!("({} {})", name, child_strs.join(" "))
+    enum Item<T> {
+        Node(T),
+        Space,
+        Close,
     }
+    let mut out = String::new();
+    let mut stack: Vec<Item<A::Term>> = vec![Item::Node(id)];
+    while let Some(item) = stack.pop() {
+        match item {
+            Item::Node(t) => {
+                let children = pool.children(t);
+                let name = op_name(pool.op(t));
+                if children.is_empty() {
+                    out.push_str(&name);
+                } else {
+                    out.push('(');
+                    out.push_str(&name);
+                    stack.push(Item::Close);
+                    for &c in children.iter().rev() {
+                        stack.push(Item::Node(c));
+                        stack.push(Item::Space);
+                    }
+                }
+            }
+            Item::Space => out.push(' '),
+            Item::Close => out.push(')'),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use proptest::prelude::*;
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::reward;
-use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, anti_unify};
+use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
 use semi_persistent_egraph::literal::NiraLitVal;
 
 const X_TARGET: f64 = 0.8;
@@ -185,11 +185,30 @@ proptest! {
             ..Default::default()
         }).unwrap();
 
-        prop_assert!(
-            mcgs_result.size <= exact_result.size + 1,
-            "MCGS size {} should be close to exact size {} (seed {seed})",
-            mcgs_result.size, exact_result.size
-        );
+        // The completion certificate is a hard contract: when MCGS reports
+        // Exact, its full lexicographic quality must EQUAL the exact oracle.
+        if mcgs_result.completion == Completion::Exact {
+            prop_assert_eq!(
+                mcgs_result.pool.quality(mcgs_result.term_id),
+                exact_result.pool.quality(exact_result.term_id),
+                "Completion::Exact must mean lexicographic equality with the oracle (seed {})",
+                seed
+            );
+        } else {
+            // Budget-exhausted runs must still be valid upper bounds (never
+            // better than the oracle, and never wildly worse on these tiny
+            // instances).
+            prop_assert!(
+                mcgs_result.pool.quality(mcgs_result.term_id)
+                    >= exact_result.pool.quality(exact_result.term_id),
+                "MCGS cannot beat the exact oracle (seed {seed})"
+            );
+            prop_assert!(
+                mcgs_result.size <= exact_result.size + 1,
+                "budget-exhausted MCGS size {} should be close to exact size {} (seed {seed})",
+                mcgs_result.size, exact_result.size
+            );
+        }
     }
 }
 

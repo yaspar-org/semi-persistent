@@ -158,6 +158,15 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     Selectable via `SaturationStrategy` / `--strategy semi-naive`;
     default remains naive, with no automatic fallback.
 
+## Part VIII: Anti-Unification
+
+19. **[Anti-Unification](19-anti-unification.md)**
+    Exact memoized solver and Monte-Carlo graph search over the AND/OR
+    graph of e-class-pair subproblems. Cycle contexts over SCC
+    reachability, `(size, variant_mass)` ranking, AC/ACI matching via
+    min-cost transportation, semi-persistent `SearchSession`
+    mark/restore, `(antiunify)` / `(checkau)` commands.
+
 ---
 
 ## See Also

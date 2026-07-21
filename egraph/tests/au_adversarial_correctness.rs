@@ -311,6 +311,47 @@ fn aci_identity_padding_handles_canonical_singleton() {
     );
 }
 
+/// Identity padding must not inject a class whose only representative was
+/// subsumed. Such a class has no admissible finite AU term, even though the
+/// operator registry still points at its historical identity node.
+#[test]
+fn subsumed_identity_is_not_used_for_ac_padding() {
+    for idempotent in [false, true] {
+        let mut eg = Eg::new();
+        let sort = eg.intern_sort("E");
+        // Keep an unrelated term at node zero: before the fix, the unresolved
+        // identity's best-node sentinel accidentally selected this node.
+        let sentinel_op = eg.register_op0("sentinel", sort);
+        let a_op = eg.register_op0("a", sort);
+        let unit_op = eg.register_op0("unit", sort);
+        let b_op = eg.register_op0("b", sort);
+        let combine = if idempotent {
+            eg.register_set("combine", sort, sort)
+        } else {
+            eg.register_mset("combine", sort, sort)
+        };
+
+        eg.add(sentinel_op, &[]);
+        let a = eg.add(a_op, &[]);
+        let unit = eg.add(unit_op, &[]);
+        eg.set_unit_node(combine, unit);
+        let b = eg.add(b_op, &[]);
+        let left = eg.add(combine, &[a, b]);
+        let right = a;
+        eg.subsume(unit);
+        eg.rebuild();
+
+        {
+            let snapshot = AuSnapshot::new(&eg).unwrap();
+            assert!(
+                snapshot.op_identity_class(combine).is_none(),
+                "a subsumed-only identity class is not available to AU padding"
+            );
+        }
+        assert_projection_membership(&mut eg, left, right);
+    }
+}
+
 fn duplicate_member_actions(cap: usize) -> (usize, usize) {
     let mut eg = Eg::new();
     let sort = eg.intern_sort("E");

@@ -12,7 +12,7 @@ use crate::literal::LitVal;
 use super::actions::{ActionCache, ActionCacheToken};
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::exact;
-use super::mcgs::{self, McgsConfig};
+use super::mcgs::{self, AndSelector, McgsConfig};
 use super::results::{BestResults, BestResultsToken};
 use super::space::{CycleMode, SearchSpace, SpaceToken};
 use super::terms::{TermOp, TermPool, TermPoolToken};
@@ -39,6 +39,8 @@ pub struct AuConfig {
     pub playouts: u64,
     pub exploration_constant: f64,
     pub x_target: f64,
+    /// Effort allocation at AND nodes (§3.3.5). Default `AndSelector::LctAnd`.
+    pub and_selector: AndSelector,
 }
 
 impl Default for AuConfig {
@@ -49,6 +51,7 @@ impl Default for AuConfig {
             playouts: 1000,
             exploration_constant: std::f64::consts::SQRT_2,
             x_target: 0.8,
+            and_selector: AndSelector::default(),
         }
     }
 }
@@ -154,6 +157,7 @@ where
                 cycle_mode: config.cycle_mode,
                 exploration_constant: config.exploration_constant,
                 x_target: config.x_target,
+                and_selector: config.and_selector,
             };
             let (term_id, pool, completion) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
             let size = pool.size(term_id);
