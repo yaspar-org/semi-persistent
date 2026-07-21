@@ -6,13 +6,18 @@
 //! sizes (§A.2), SCC-based reachability bitsets (§2.4).
 //! Borrows: the e-graph reference for node-level reads (op, children, flags).
 
-use super::{AuClassId, AuError, SccId};
+use super::{AuError, Span};
 use crate::canon::{MSetCanon, VarCanon};
-use crate::config::EGraphConfig;
+use crate::config::{AuIds, EGraphConfig};
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
 use crate::node_types::FLAG_SUBSUMED;
+
+/// Class id projected from a config's AU family.
+pub type ClassOf<Cfg> = <<Cfg as EGraphConfig>::Au as AuIds>::Class;
+/// SCC id projected from a config's AU family.
+pub type SccOf<Cfg> = <<Cfg as EGraphConfig>::Au as AuIds>::Scc;
 
 /// Per-class: which e-nodes belong to it, grouped by operator.
 #[derive(Debug, Clone)]
@@ -35,12 +40,12 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub(crate) eg: &'eg EGraph<Cfg, L, T, P>,
-    /// Dense representative -> AuClassId map (representative global ids only).
-    repr_to_au: hashbrown::HashMap<Cfg::G, AuClassId>,
-    /// AuClassId -> representative global id.
+    /// Dense representative -> ClassOf<Cfg> map (representative global ids only).
+    repr_to_au: hashbrown::HashMap<Cfg::G, ClassOf<Cfg>>,
+    /// ClassOf<Cfg> -> representative global id.
     pub(crate) au_to_repr: Vec<Cfg::G>,
     /// Per-class member list: `members[class]` is a range into `member_pool`.
-    member_spans: Vec<(u32, u32)>,
+    member_spans: Vec<Span<<Cfg::Au as AuIds>::SnapshotMember>>,
     /// All admissible members across all classes: (op, global_id).
     member_pool: Vec<(Cfg::O, Cfg::G)>,
     /// Best (minimum) size of any finite member in each class.
@@ -48,36 +53,36 @@ where
     /// Global id of the best (cheapest) member per class.
     best_node: Vec<Cfg::G>,
     /// Reachability data: which class is reachable from which.
-    reach: Reachability,
+    reach: Reachability<Cfg::Au>,
 }
 
 /// SCC-condensed reachability (§2.4): Tarjan SCCs, one bitset per SCC.
 #[derive(Debug, Clone)]
-pub struct Reachability {
+pub struct Reachability<A: AuIds> {
     /// class -> SCC index.
-    class_to_scc: Vec<SccId>,
-    /// Per-SCC: start offset and length in `bit_blocks`.
-    scc_spans: Vec<(u32, u32)>,
+    class_to_scc: Vec<A::Scc>,
+    /// Per-SCC: typed span into `bit_blocks`.
+    scc_spans: Vec<Span<A::ReachBlock>>,
     /// Packed bit blocks (one dense bitset per SCC, each `ceil(num_classes/64)` u64s).
     bit_blocks: Vec<u64>,
     /// Number of classes (determines bitset width).
-    num_classes: u32,
+    num_classes: u64,
 }
 
-impl Reachability {
+impl<A: AuIds> Reachability<A> {
     /// Does class `target` belong to `reach(source)`?
     #[inline]
-    pub fn is_reachable(&self, source: AuClassId, target: AuClassId) -> bool {
+    pub fn is_reachable(&self, source: A::Class, target: A::Class) -> bool {
         let scc = self.class_to_scc[source.to_usize()];
-        let (start, _len) = self.scc_spans[scc.to_usize()];
+        let start = self.scc_spans[scc.to_usize()].start_usize();
         let t = target.to_usize();
-        let word = (start as usize) + t / 64;
+        let word = start + t / 64;
         let bit = t % 64;
         (self.bit_blocks[word] >> bit) & 1 != 0
     }
 
     /// Number of classes in this reachability table.
-    pub fn num_classes(&self) -> u32 {
+    pub fn num_classes(&self) -> u64 {
         self.num_classes
     }
 }
@@ -91,7 +96,7 @@ where
     pub fn new(eg: &'eg EGraph<Cfg, L, T, P>) -> Result<Self, AuError> {
         // --- Step 1: collect live class representatives ---
         let n = eg.len();
-        let mut repr_to_au: hashbrown::HashMap<Cfg::G, AuClassId> =
+        let mut repr_to_au: hashbrown::HashMap<Cfg::G, ClassOf<Cfg>> =
             hashbrown::HashMap::with_capacity(n / 2);
         let mut au_to_repr: Vec<Cfg::G> = Vec::new();
 
@@ -101,7 +106,7 @@ where
             let id = Cfg::G::from_usize(i);
             let repr = eg.find_const(id);
             repr_to_au.entry(repr).or_insert_with(|| {
-                let au = AuClassId::from_usize(au_to_repr.len());
+                let au = <ClassOf<Cfg>>::from_usize(au_to_repr.len());
                 au_to_repr.push(repr);
                 au
             });
@@ -133,13 +138,13 @@ where
         // Flatten into member_pool + spans.
         let total_members: usize = class_members.iter().map(|m| m.len()).sum();
         let mut member_pool: Vec<(Cfg::O, Cfg::G)> = Vec::with_capacity(total_members);
-        let mut member_spans: Vec<(u32, u32)> = Vec::with_capacity(num_classes);
+        let mut member_spans: Vec<Span<<Cfg::Au as AuIds>::SnapshotMember>> =
+            Vec::with_capacity(num_classes);
 
         for members in &class_members {
-            let start = member_pool.len() as u32;
+            let start = member_pool.len();
             member_pool.extend_from_slice(members);
-            let len = members.len() as u32;
-            member_spans.push((start, len));
+            member_spans.push(Span::new(start, members.len()));
         }
 
         // --- Step 3: best-term fixpoint (§A.2) ---
@@ -170,45 +175,45 @@ where
     /// Map a representative global id to its dense class id.
     /// Returns `None` if the id is not a representative in this snapshot.
     #[inline]
-    pub fn class_id(&self, repr: Cfg::G) -> Option<AuClassId> {
+    pub fn class_id(&self, repr: Cfg::G) -> Option<ClassOf<Cfg>> {
         self.repr_to_au.get(&repr).copied()
     }
 
     /// Map a global id (not necessarily a representative) to its dense class id.
     #[inline]
-    pub fn class_of(&self, id: Cfg::G) -> Option<AuClassId> {
+    pub fn class_of(&self, id: Cfg::G) -> Option<ClassOf<Cfg>> {
         let repr = self.eg.find_const(id);
         self.repr_to_au.get(&repr).copied()
     }
 
     /// The representative global id for a dense class id.
     #[inline]
-    pub fn repr(&self, au: AuClassId) -> Cfg::G {
+    pub fn repr(&self, au: ClassOf<Cfg>) -> Cfg::G {
         self.au_to_repr[au.to_usize()]
     }
 
     /// The best (smallest) member size for class `au`.
     #[inline]
-    pub fn best_size(&self, au: AuClassId) -> u32 {
+    pub fn best_size(&self, au: ClassOf<Cfg>) -> u32 {
         self.best_size[au.to_usize()]
     }
 
     /// The global id of the best member for class `au`.
     #[inline]
-    pub fn best_node(&self, au: AuClassId) -> Cfg::G {
+    pub fn best_node(&self, au: ClassOf<Cfg>) -> Cfg::G {
         self.best_node[au.to_usize()]
     }
 
     /// Iterator over `(op, global_id)` pairs for all admissible members of `au`.
     #[inline]
-    pub fn members(&self, au: AuClassId) -> &[(Cfg::O, Cfg::G)] {
-        let (start, len) = self.member_spans[au.to_usize()];
-        &self.member_pool[start as usize..(start + len) as usize]
+    pub fn members(&self, au: ClassOf<Cfg>) -> &[(Cfg::O, Cfg::G)] {
+        let span = self.member_spans[au.to_usize()];
+        &self.member_pool[span.start_usize()..span.end_usize()]
     }
 
     /// The reachability table.
     #[inline]
-    pub fn reachability(&self) -> &Reachability {
+    pub fn reachability(&self) -> &Reachability<Cfg::Au> {
         &self.reach
     }
 
@@ -228,21 +233,21 @@ where
     /// A class is infinite when every admissible member references the class itself
     /// (e.g. its only finite leaf was subsumed).
     #[inline]
-    pub fn has_finite_member(&self, au: AuClassId) -> bool {
+    pub fn has_finite_member(&self, au: ClassOf<Cfg>) -> bool {
         self.best_size[au.to_usize()] != u32::MAX
     }
 
     /// Validate that `root` and every class reachable from it has a finite member
     /// (§4.1: `AuError::NoFiniteRepresentative` if any class needed by a root has no
     /// admissible finite member). Called once per root before a search starts.
-    pub fn validate_finite_from(&self, root: AuClassId) -> Result<(), AuError> {
+    pub fn validate_finite_from(&self, root: ClassOf<Cfg>) -> Result<(), AuError> {
         if !self.has_finite_member(root) {
-            return Err(AuError::NoFiniteRepresentative(root));
+            return Err(AuError::NoFiniteRepresentative(root.to_usize() as u64));
         }
         for i in 0..self.num_classes() {
-            let c = AuClassId::from_usize(i);
+            let c = <ClassOf<Cfg>>::from_usize(i);
             if self.reach.is_reachable(root, c) && !self.has_finite_member(c) {
-                return Err(AuError::NoFiniteRepresentative(c));
+                return Err(AuError::NoFiniteRepresentative(c.to_usize() as u64));
             }
         }
         Ok(())
@@ -251,11 +256,11 @@ where
     /// Whether the canonical node kind of `op` is commutative (SPair, MSet, Set):
     /// result-term children for such operators are sorted into canonical order,
     /// while ordered operators preserve positional order.
-    /// The identity (unit) element's AuClassId for an operator, if the operator
+    /// The identity (unit) element's ClassOf<Cfg> for an operator, if the operator
     /// has a declared identity (e.g. `true` for `and`, `false` for `or`, `0` for `+`).
     /// Returns `None` if no identity is declared or the identity node is not in any
     /// live class.
-    pub fn op_identity_class(&self, op: Cfg::O) -> Option<AuClassId> {
+    pub fn op_identity_class(&self, op: Cfg::O) -> Option<ClassOf<Cfg>> {
         let unit_node = self.eg.unit_node(op)?;
         self.class_of(unit_node)
     }
@@ -271,10 +276,10 @@ where
 
     /// Best-term fixpoint: cost = 1 + sum(mult * cost(class(child))) per node,
     /// minimized per class (§A.2). Returns (best_size, best_node) vectors indexed
-    /// by AuClassId.
+    /// by ClassOf<Cfg>.
     fn compute_best_terms(
         eg: &EGraph<Cfg, L, T, P>,
-        repr_to_au: &hashbrown::HashMap<Cfg::G, AuClassId>,
+        repr_to_au: &hashbrown::HashMap<Cfg::G, ClassOf<Cfg>>,
         num_classes: usize,
     ) -> Result<(Vec<u32>, Vec<Cfg::G>), AuError> {
         let n = eg.len();
@@ -339,15 +344,15 @@ where
     /// 2. Bitset union in reverse topological order
     fn compute_reachability(
         eg: &EGraph<Cfg, L, T, P>,
-        repr_to_au: &hashbrown::HashMap<Cfg::G, AuClassId>,
+        repr_to_au: &hashbrown::HashMap<Cfg::G, ClassOf<Cfg>>,
         au_to_repr: &[Cfg::G],
         num_classes: usize,
-    ) -> Reachability {
+    ) -> Reachability<Cfg::Au> {
         let n = eg.len();
         let words_per_scc = num_classes.div_ceil(64);
 
         // Build adjacency: class -> set of successor classes.
-        let mut adj: Vec<Vec<AuClassId>> = vec![Vec::new(); num_classes];
+        let mut adj: Vec<Vec<ClassOf<Cfg>>> = vec![Vec::new(); num_classes];
         for i in 0..n {
             let id = Cfg::G::from_usize(i);
             let flags = eg.node_flags(id);
@@ -375,17 +380,17 @@ where
 
         // --- Tarjan's SCC algorithm ---
         let mut index_counter: u32 = 0;
-        let mut stack: Vec<AuClassId> = Vec::new();
+        let mut stack: Vec<ClassOf<Cfg>> = Vec::new();
         let mut on_stack: Vec<bool> = vec![false; num_classes];
         let mut node_index: Vec<u32> = vec![u32::MAX; num_classes]; // u32::MAX = undefined
         let mut node_lowlink: Vec<u32> = vec![0; num_classes];
-        let mut class_to_scc: Vec<SccId> = vec![SccId::from_usize(0); num_classes];
-        let mut scc_members: Vec<Vec<AuClassId>> = Vec::new();
+        let mut class_to_scc: Vec<SccOf<Cfg>> = vec![<SccOf<Cfg>>::from_usize(0); num_classes];
+        let mut scc_members: Vec<Vec<ClassOf<Cfg>>> = Vec::new();
 
         // Iterative Tarjan to avoid stack overflow on deep graphs.
         #[derive(Clone, Copy)]
-        struct TarjanFrame {
-            node: AuClassId,
+        struct TarjanFrame<C> {
+            node: C,
             neighbor_idx: u32,
         }
 
@@ -394,15 +399,15 @@ where
                 continue;
             }
 
-            let mut call_stack: Vec<TarjanFrame> = Vec::new();
+            let mut call_stack: Vec<TarjanFrame<ClassOf<Cfg>>> = Vec::new();
             // Initialize the start node.
             node_index[start] = index_counter;
             node_lowlink[start] = index_counter;
             index_counter += 1;
             on_stack[start] = true;
-            stack.push(AuClassId::from_usize(start));
+            stack.push(<ClassOf<Cfg>>::from_usize(start));
             call_stack.push(TarjanFrame {
-                node: AuClassId::from_usize(start),
+                node: <ClassOf<Cfg>>::from_usize(start),
                 neighbor_idx: 0,
             });
 
@@ -433,7 +438,7 @@ where
                 } else {
                     // All neighbors processed: check if this is a root.
                     if node_lowlink[vi] == node_index[vi] {
-                        let scc_id = SccId::from_usize(scc_members.len());
+                        let scc_id = <SccOf<Cfg>>::from_usize(scc_members.len());
                         let mut members = Vec::new();
                         loop {
                             let w = stack.pop().unwrap();
@@ -460,7 +465,7 @@ where
         let num_sccs = scc_members.len();
 
         // --- Build SCC DAG adjacency (for reverse topological order) ---
-        let mut scc_adj: Vec<Vec<SccId>> = vec![Vec::new(); num_sccs];
+        let mut scc_adj: Vec<Vec<SccOf<Cfg>>> = vec![Vec::new(); num_sccs];
         for (src_class, neighbors) in adj.iter().enumerate() {
             let src_scc = class_to_scc[src_class];
             for &dst_class in neighbors {
@@ -482,11 +487,11 @@ where
                 in_degree[dst.to_usize()] += 1;
             }
         }
-        let mut topo_order: Vec<SccId> = Vec::with_capacity(num_sccs);
-        let mut queue: std::collections::VecDeque<SccId> = std::collections::VecDeque::new();
+        let mut topo_order: Vec<SccOf<Cfg>> = Vec::with_capacity(num_sccs);
+        let mut queue: std::collections::VecDeque<SccOf<Cfg>> = std::collections::VecDeque::new();
         for i in 0..num_sccs {
             if in_degree[i] == 0 {
-                queue.push_back(SccId::from_usize(i));
+                queue.push_back(<SccOf<Cfg>>::from_usize(i));
             }
         }
         while let Some(scc) = queue.pop_front() {
@@ -503,10 +508,9 @@ where
 
         // --- Bitset union in reverse topological order ---
         let mut bit_blocks: Vec<u64> = vec![0u64; num_sccs * words_per_scc];
-        let mut scc_spans: Vec<(u32, u32)> = Vec::with_capacity(num_sccs);
+        let mut scc_spans: Vec<Span<<Cfg::Au as AuIds>::ReachBlock>> = Vec::with_capacity(num_sccs);
         for i in 0..num_sccs {
-            let start = (i * words_per_scc) as u32;
-            scc_spans.push((start, words_per_scc as u32));
+            scc_spans.push(Span::new(i * words_per_scc, words_per_scc));
         }
 
         // Process in reverse topological order (leaves first).
@@ -523,7 +527,7 @@ where
             if is_cyclic {
                 for &member in &scc_members[si] {
                     let bit = member.to_usize();
-                    let word = scc_spans[si].0 as usize + bit / 64;
+                    let word = scc_spans[si].start_usize() + bit / 64;
                     bit_blocks[word] |= 1u64 << (bit % 64);
                 }
             }
@@ -533,15 +537,15 @@ where
             for &dst_scc in &scc_adj[si] {
                 for &member in &scc_members[dst_scc.to_usize()] {
                     let bit = member.to_usize();
-                    let word = scc_spans[si].0 as usize + bit / 64;
+                    let word = scc_spans[si].start_usize() + bit / 64;
                     bit_blocks[word] |= 1u64 << (bit % 64);
                 }
             }
 
             // Union successor SCCs' reach sets.
             for &dst_scc in &scc_adj[si] {
-                let dst_start = scc_spans[dst_scc.to_usize()].0 as usize;
-                let src_start = scc_spans[si].0 as usize;
+                let dst_start = scc_spans[dst_scc.to_usize()].start_usize();
+                let src_start = scc_spans[si].start_usize();
                 for w in 0..words_per_scc {
                     bit_blocks[src_start + w] |= bit_blocks[dst_start + w];
                 }
@@ -555,7 +559,7 @@ where
             class_to_scc,
             scc_spans,
             bit_blocks,
-            num_classes: num_classes as u32,
+            num_classes: num_classes as u64,
         }
     }
 }

@@ -2,68 +2,93 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Action generation per node kind (§3.4).
 //!
-//! For a class pair `(l, r)`, actions are the ways to factor both classes through a
-//! common operator. Dispatch is on the operator's `OpKind`. Results are cached by
-//! `(l, r)` and shared across contexts; cycle filtering happens at the OR node level.
+//! For a class pair `(l, r)`, structural actions are the ways to factor both classes
+//! through a common operator. Every unequal state also has the shared terminal
+//! generalize action `Variants(best_term(l), best_term(r))`, evaluated by
+//! `terms::evaluate_generalize_action`. It is not cached here because it has no
+//! operator or child subproblems. Structural results are cached by `(l, r)` and
+//! shared across contexts; cycle filtering happens at the OR node level.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
-use crate::containers::DenseId;
+use crate::containers::{DenseId, Map, MapToken, ShrinkPolicy};
 use crate::egraph::EGraph;
 use crate::id::ENodeKind;
 use crate::literal::LitVal;
 
-use super::AuClassId;
-use super::egraph_api::AuSnapshot;
+use super::AuIds31;
+use super::egraph_api::{AuSnapshot, ClassOf};
+use crate::config::AuIds;
 
-/// One action: an operator plus its paired children with multiplicities.
-#[derive(Debug, Clone)]
-pub struct Action<O: DenseId> {
+/// One structural action: an operator plus its paired children with multiplicities.
+#[derive(Debug)]
+pub struct Action<O: DenseId, A: AuIds = AuIds31> {
     pub op: O,
-    pub pairs: Vec<ActionPair>,
+    pub pairs: Vec<ActionPair<A>>,
+}
+
+// Manual impls: derives would demand `A: Clone`, but `A` is a family marker.
+impl<O: DenseId, A: AuIds> Clone for Action<O, A> {
+    fn clone(&self) -> Self {
+        Action {
+            op: self.op,
+            pairs: self.pairs.clone(),
+        }
+    }
 }
 
 /// A single child-pair in an action. `count` is the multiplicity (>1 for AC repeated children).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ActionPair {
-    pub left: AuClassId,
-    pub right: AuClassId,
+#[derive(Debug)]
+pub struct ActionPair<A: AuIds = AuIds31> {
+    pub left: A::Class,
+    pub right: A::Class,
     pub count: u32,
 }
+
+impl<A: AuIds> Clone for ActionPair<A> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<A: AuIds> Copy for ActionPair<A> {}
+impl<A: AuIds> PartialEq for ActionPair<A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.left == other.left && self.right == other.right && self.count == other.count
+    }
+}
+impl<A: AuIds> Eq for ActionPair<A> {}
 
 /// Default maximum number of AC matrices to materialize before using lazy chain states.
 pub const DEFAULT_A_MAX: usize = 32;
 
 /// The action cache: maps class pair `(l, r)` to a list of actions.
-/// Semi-persistent by length-based truncation: mark saves the entry count,
-/// restore clears entries added after the mark. Since actions are deterministic
-/// and derived from the class pair's members (which are part of the immutable
-/// snapshot), re-deriving them after restore produces the same result; the cache
-/// is purely a performance optimization.
-#[derive(Debug)]
-pub struct ActionCache<O: DenseId> {
-    keys: Vec<(AuClassId, AuClassId)>,
-    values: Vec<Vec<Action<O>>>,
-    index: hashbrown::HashMap<(AuClassId, AuClassId), usize>,
+/// Semi-persistent: the `index` map (AppendOnlyVec + Map) is append-only and
+/// provides branch genealogy for tokens. The `values` vec grows in lockstep
+/// and is truncated on restore. Actions are deterministic from the immutable
+/// snapshot, so re-derivation after restore is cheap (cache is a performance
+/// optimization, not a correctness requirement).
+pub struct ActionCache<O: DenseId, A: AuIds = AuIds31> {
+    /// Deduplication map: (l, r) -> typed action-list id into `values`.
+    index: Map<(A::Class, A::Class), A::Action>,
+    /// Action lists, indexed by the map's stored value.
+    values: Vec<Vec<Action<O, A>>>,
     a_max: usize,
-    /// Whether AC/ACI matrix actions are materialized. MCGS needs them (bounded
-    /// by `a_max`); the exact solver skips them entirely and solves each
-    /// representation pair by min-cost transport instead (§3.4.4).
     include_ac: bool,
 }
 
-/// Token for restoring an `ActionCache`.
+/// Token for restoring an `ActionCache`. Wraps the Map's token, which
+/// carries container identity and branch genealogy.
 #[derive(Clone, Copy, Debug)]
 pub struct ActionCacheToken {
-    len: usize,
+    index: MapToken,
+    values_len: usize,
 }
 
-impl<O: DenseId> ActionCache<O> {
+impl<O: DenseId, A: AuIds> ActionCache<O, A> {
     pub fn new(a_max: usize) -> Self {
         ActionCache {
-            keys: Vec::new(),
+            index: Map::new(),
             values: Vec::new(),
-            index: hashbrown::HashMap::new(),
             a_max,
             include_ac: true,
         }
@@ -73,9 +98,8 @@ impl<O: DenseId> ActionCache<O> {
     /// Used by the exact solver, which handles those operators by transport.
     pub fn without_ac_actions(a_max: usize) -> Self {
         ActionCache {
-            keys: Vec::new(),
+            index: Map::new(),
             values: Vec::new(),
-            index: hashbrown::HashMap::new(),
             a_max,
             include_ac: false,
         }
@@ -85,15 +109,16 @@ impl<O: DenseId> ActionCache<O> {
         self.include_ac
     }
 
-    pub fn get(&self, l: AuClassId, r: AuClassId) -> Option<&[Action<O>]> {
-        self.index
-            .get(&(l, r))
-            .map(|&idx| self.values[idx].as_slice())
+    pub fn get(&self, l: A::Class, r: A::Class) -> Option<&[Action<O, A>]> {
+        let key = (l, r);
+        self.index.id_of(&key).map(|log_idx| {
+            let &idx = self.index.get(log_idx);
+            self.values[idx.to_usize()].as_slice()
+        })
     }
 
-    pub fn insert(&mut self, l: AuClassId, r: AuClassId, actions: Vec<Action<O>>) {
-        let idx = self.keys.len();
-        self.keys.push((l, r));
+    pub fn insert(&mut self, l: A::Class, r: A::Class, actions: Vec<Action<O, A>>) {
+        let idx = A::Action::from_usize(self.values.len());
         self.values.push(actions);
         self.index.insert((l, r), idx);
     }
@@ -102,23 +127,25 @@ impl<O: DenseId> ActionCache<O> {
         self.a_max
     }
 
-    pub fn mark(&self) -> ActionCacheToken {
+    pub fn mark(&mut self) -> ActionCacheToken {
         ActionCacheToken {
-            len: self.keys.len(),
+            index: self.index.mark(ShrinkPolicy::Never),
+            values_len: self.values.len(),
         }
+    }
+
+    /// Is this token restorable right now (same instance, live branch)?
+    pub fn is_valid_token(&self, token: &ActionCacheToken) -> bool {
+        self.index.is_valid_token(&token.index)
     }
 
     pub fn restore(&mut self, token: ActionCacheToken) {
-        self.keys.truncate(token.len);
-        self.values.truncate(token.len);
-        self.index.clear();
-        for (i, key) in self.keys.iter().enumerate() {
-            self.index.insert(*key, i);
-        }
+        self.index.restore(token.index);
+        self.values.truncate(token.values_len);
     }
 }
 
-impl<O: DenseId> Default for ActionCache<O> {
+impl<O: DenseId, A: AuIds> Default for ActionCache<O, A> {
     fn default() -> Self {
         Self::new(DEFAULT_A_MAX)
     }
@@ -128,9 +155,9 @@ impl<O: DenseId> Default for ActionCache<O> {
 /// Actions are NOT cycle-filtered here; that is done at the OR-node level.
 pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    cache: &mut ActionCache<Cfg::O>,
-    l: AuClassId,
-    r: AuClassId,
+    cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -144,7 +171,7 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     let a_max = cache.a_max();
     let include_ac = cache.include_ac();
 
-    let mut actions: Vec<Action<Cfg::O>> = Vec::new();
+    let mut actions: Vec<Action<Cfg::O, Cfg::Au>> = Vec::new();
 
     // Group members by op (they are already sorted by op).
     let mut il = 0;
@@ -270,11 +297,11 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             // ACI: right is a singleton set {r}.
             let r_children = vec![(r, 1u32)];
             for &(_, l_id) in &l_op_members {
-                let mut l_children: Vec<AuClassId> = Vec::new();
+                let mut l_children: Vec<ClassOf<Cfg>> = Vec::new();
                 eg.for_each_child(l_id, |child, _| {
                     l_children.push(snap.class_of(child).unwrap());
                 });
-                let mut l_classes: Vec<(AuClassId, u32)> =
+                let mut l_classes: Vec<(ClassOf<Cfg>, u32)> =
                     l_children.iter().map(|&c| (c, 1)).collect();
                 let id_class = identity.unwrap();
                 let r_total: u32 = r_children.iter().map(|(_, m)| m).sum();
@@ -296,7 +323,7 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             let mut l_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
             for &(_, l_id) in &l_op_members {
                 eg.mset_children(l_id, &mut l_mset_buf);
-                let l_classes: Vec<(AuClassId, u32)> = l_mset_buf
+                let l_classes: Vec<(ClassOf<Cfg>, u32)> = l_mset_buf
                     .iter()
                     .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
                     .collect();
@@ -332,11 +359,11 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
         if kind == ENodeKind::Set {
             let l_children = vec![(l, 1u32)];
             for &(_, r_id) in &r_op_members {
-                let mut r_children: Vec<AuClassId> = Vec::new();
+                let mut r_children: Vec<ClassOf<Cfg>> = Vec::new();
                 eg.for_each_child(r_id, |child, _| {
                     r_children.push(snap.class_of(child).unwrap());
                 });
-                let mut r_classes: Vec<(AuClassId, u32)> =
+                let mut r_classes: Vec<(ClassOf<Cfg>, u32)> =
                     r_children.iter().map(|&c| (c, 1)).collect();
                 let id_class = identity.unwrap();
                 let r_total: u32 = r_classes.iter().map(|(_, m)| m).sum();
@@ -357,7 +384,7 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             let mut r_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
             for &(_, r_id) in &r_op_members {
                 eg.mset_children(r_id, &mut r_mset_buf);
-                let r_classes: Vec<(AuClassId, u32)> = r_mset_buf
+                let r_classes: Vec<(ClassOf<Cfg>, u32)> = r_mset_buf
                     .iter()
                     .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
                     .collect();
@@ -380,11 +407,11 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 /// actions from different (l_node, r_node) pairs; duplicates would surface as
 /// separate statistics edges and bias MCGS selection toward the duplicated
 /// action.
-fn dedup_and_insert<O: DenseId>(
-    cache: &mut ActionCache<O>,
-    l: AuClassId,
-    r: AuClassId,
-    mut actions: Vec<Action<O>>,
+fn dedup_and_insert<O: DenseId, A: AuIds>(
+    cache: &mut ActionCache<O, A>,
+    l: A::Class,
+    r: A::Class,
+    mut actions: Vec<Action<O, A>>,
 ) {
     let mut seen: hashbrown::HashSet<Vec<(usize, usize, u32)>> = hashbrown::HashSet::new();
     actions.retain(|action| {
@@ -406,7 +433,7 @@ fn generate_ordered_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -427,7 +454,7 @@ fn generate_ordered_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P
             for i in 0..l_arity {
                 let lc = snap.class_of(l_children[i]).unwrap();
                 let rc = snap.class_of(r_children[i]).unwrap();
-                pairs.push(ActionPair {
+                pairs.push(ActionPair::<Cfg::Au> {
                     left: lc,
                     right: rc,
                     count: 1,
@@ -446,7 +473,7 @@ fn generate_seq_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -461,12 +488,12 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     for &(_, l_id) in l_nodes {
-        let mut l_children = [AuClassId::default(); 2];
+        let mut l_children = [<ClassOf<Cfg>>::default(); 2];
         let mut li = 0;
         eg.for_each_child(l_id, |child, _| {
             if li < 2 {
@@ -476,7 +503,7 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
         });
 
         for &(_, r_id) in r_nodes {
-            let mut r_children = [AuClassId::default(); 2];
+            let mut r_children = [<ClassOf<Cfg>>::default(); 2];
             let mut ri = 0;
             eg.for_each_child(r_id, |child, _| {
                 if ri < 2 {
@@ -487,12 +514,12 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
 
             // Orientation 1: positional (a,c), (b,d).
             let pairs1 = vec![
-                ActionPair {
+                ActionPair::<Cfg::Au> {
                     left: l_children[0],
                     right: r_children[0],
                     count: 1,
                 },
-                ActionPair {
+                ActionPair::<Cfg::Au> {
                     left: l_children[1],
                     right: r_children[1],
                     count: 1,
@@ -503,12 +530,12 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
             // Orientation 2: crossed (a,d), (b,c) — skip if same as orientation 1.
             if !(l_children[0] == l_children[1] || r_children[0] == r_children[1]) {
                 let pairs2 = vec![
-                    ActionPair {
+                    ActionPair::<Cfg::Au> {
                         left: l_children[0],
                         right: r_children[1],
                         count: 1,
                     },
-                    ActionPair {
+                    ActionPair::<Cfg::Au> {
                         left: l_children[1],
                         right: r_children[0],
                         count: 1,
@@ -532,7 +559,7 @@ fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: b
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
     a_max: usize,
-    actions: &mut Vec<Action<Cfg::O>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -548,11 +575,11 @@ fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: b
             eg.mset_children(r_id, &mut r_mset_buf);
             let r_total: u32 = r_mset_buf.iter().map(|(_, m)| Into::<u32>::into(*m)).sum();
 
-            let mut l_classes: Vec<(AuClassId, u32)> = l_mset_buf
+            let mut l_classes: Vec<(ClassOf<Cfg>, u32)> = l_mset_buf
                 .iter()
                 .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
                 .collect();
-            let mut r_classes: Vec<(AuClassId, u32)> = r_mset_buf
+            let mut r_classes: Vec<(ClassOf<Cfg>, u32)> = r_mset_buf
                 .iter()
                 .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
                 .collect();
@@ -595,20 +622,20 @@ fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
     a_max: usize,
-    actions: &mut Vec<Action<Cfg::O>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let identity_class = snap.op_identity_class(op);
 
     for &(_, l_id) in l_nodes {
-        let mut l_children: Vec<AuClassId> = Vec::new();
+        let mut l_children: Vec<ClassOf<Cfg>> = Vec::new();
         eg.for_each_child(l_id, |child, _| {
             l_children.push(snap.class_of(child).unwrap());
         });
 
         for &(_, r_id) in r_nodes {
-            let mut r_children: Vec<AuClassId> = Vec::new();
+            let mut r_children: Vec<ClassOf<Cfg>> = Vec::new();
             eg.for_each_child(r_id, |child, _| {
                 r_children.push(snap.class_of(child).unwrap());
             });
@@ -626,8 +653,8 @@ fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
                 }
             }
 
-            let l_classes: Vec<(AuClassId, u32)> = l_children.iter().map(|&c| (c, 1)).collect();
-            let r_classes: Vec<(AuClassId, u32)> = r_children.iter().map(|&c| (c, 1)).collect();
+            let l_classes: Vec<(ClassOf<Cfg>, u32)> = l_children.iter().map(|&c| (c, 1)).collect();
+            let r_classes: Vec<(ClassOf<Cfg>, u32)> = r_children.iter().map(|&c| (c, 1)).collect();
 
             enumerate_matrices(op, &l_classes, &r_classes, a_max, actions);
         }
@@ -640,7 +667,7 @@ fn generate_lit_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -671,12 +698,12 @@ fn generate_lit_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 /// multiplicity, using row-by-row distribution. Used only by MCGS (the exact solver
 /// uses min-cost transport instead). `a_max` bounds the number of emitted actions.
 /// The enumeration is complete and greedy-first (diagonal matches tried first).
-fn enumerate_matrices<O: DenseId>(
+fn enumerate_matrices<O: DenseId, A: AuIds>(
     op: O,
-    l_classes: &[(AuClassId, u32)],
-    r_classes: &[(AuClassId, u32)],
+    l_classes: &[(A::Class, u32)],
+    r_classes: &[(A::Class, u32)],
     a_max: usize,
-    actions: &mut Vec<Action<O>>,
+    actions: &mut Vec<Action<O, A>>,
 ) {
     let rows = l_classes.len();
     let cols = r_classes.len();
@@ -705,17 +732,17 @@ fn enumerate_matrices<O: DenseId>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn enumerate_row<O: DenseId>(
+fn enumerate_row<O: DenseId, A: AuIds>(
     op: O,
-    l_classes: &[(AuClassId, u32)],
-    r_classes: &[(AuClassId, u32)],
+    l_classes: &[(A::Class, u32)],
+    r_classes: &[(A::Class, u32)],
     row_sums: &[u32],
     matrix: &mut [Vec<u32>],
     row: usize,
     col_residual: &mut Vec<u32>,
     a_max: usize,
     count: &mut usize,
-    actions: &mut Vec<Action<O>>,
+    actions: &mut Vec<Action<O, A>>,
 ) {
     if *count >= a_max {
         return;
@@ -725,11 +752,11 @@ fn enumerate_row<O: DenseId>(
     let cols = r_classes.len();
 
     if row == rows {
-        let mut pairs: Vec<ActionPair> = Vec::new();
+        let mut pairs: Vec<ActionPair<A>> = Vec::new();
         for i in 0..rows {
             for j in 0..cols {
                 if matrix[i][j] > 0 {
-                    pairs.push(ActionPair {
+                    pairs.push(ActionPair::<A> {
                         left: l_classes[i].0,
                         right: r_classes[j].0,
                         count: matrix[i][j],
@@ -759,10 +786,10 @@ fn enumerate_row<O: DenseId>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn distribute_row<O: DenseId>(
+fn distribute_row<O: DenseId, A: AuIds>(
     op: O,
-    l_classes: &[(AuClassId, u32)],
-    r_classes: &[(AuClassId, u32)],
+    l_classes: &[(A::Class, u32)],
+    r_classes: &[(A::Class, u32)],
     row_sums: &[u32],
     matrix: &mut [Vec<u32>],
     row: usize,
@@ -771,7 +798,7 @@ fn distribute_row<O: DenseId>(
     col_residual: &mut Vec<u32>,
     a_max: usize,
     count: &mut usize,
-    actions: &mut Vec<Action<O>>,
+    actions: &mut Vec<Action<O, A>>,
 ) {
     if *count >= a_max {
         return;
@@ -964,6 +991,70 @@ mod tests {
         assert_eq!(acts[0].pairs.len(), 2);
         assert_eq!(acts[0].pairs[0].count, 1);
         assert_eq!(acts[0].pairs[1].count, 1);
+    }
+
+    /// Seq preserves order and zips only equal-length members positionally.
+    #[test]
+    fn seq_equal_length_zips_positionally() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let d_op = eg.register_op0("d", int);
+        let seq_op = eg.register_a("seq", int, int, crate::registry::AssocDir::Both);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let d = eg.add(d_op, &[]);
+        let left = eg.add(seq_op, &[a, b]);
+        let right = eg.add(seq_op, &[c, d]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let left_class = snap.class_of(left).unwrap();
+        let right_class = snap.class_of(right).unwrap();
+        let mut cache = ActionCache::new(100);
+        generate_actions(&snap, &mut cache, left_class, right_class);
+
+        let actions = cache.get(left_class, right_class).unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].pairs.len(), 2);
+        assert_eq!(actions[0].pairs[0].left, snap.class_of(a).unwrap());
+        assert_eq!(actions[0].pairs[0].right, snap.class_of(c).unwrap());
+        assert_eq!(actions[0].pairs[1].left, snap.class_of(b).unwrap());
+        assert_eq!(actions[0].pairs[1].right, snap.class_of(d).unwrap());
+    }
+
+    /// Unequal-length Seq factoring is deferred; no identity/end padding is added.
+    #[test]
+    fn seq_unequal_length_has_no_structural_action() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let d_op = eg.register_op0("d", int);
+        let e_op = eg.register_op0("e", int);
+        let seq_op = eg.register_a("seq", int, int, crate::registry::AssocDir::Both);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let d = eg.add(d_op, &[]);
+        let e = eg.add(e_op, &[]);
+        let left = eg.add(seq_op, &[a, b]);
+        let right = eg.add(seq_op, &[c, d, e]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let left_class = snap.class_of(left).unwrap();
+        let right_class = snap.class_of(right).unwrap();
+        let mut cache = ActionCache::new(100);
+        generate_actions(&snap, &mut cache, left_class, right_class);
+
+        assert!(cache.get(left_class, right_class).unwrap().is_empty());
     }
 
     /// SPair: eq(a,b) vs eq(c,d) produces 2 orientations.

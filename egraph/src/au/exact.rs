@@ -8,25 +8,24 @@
 //! Memoization on states = node sharing: each distinct subproblem is solved once.
 
 use crate::canon::{MSetCanon, VarCanon};
-use crate::config::EGraphConfig;
+use crate::config::{AuIds, EGraphConfig};
 use crate::containers::DenseId;
 use crate::literal::LitVal;
 
-use super::AuClassId;
 use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
-use super::egraph_api::AuSnapshot;
+use super::egraph_api::{AuSnapshot, ClassOf};
 use super::results::BestResults;
-use super::space::{CycleMode, OrId, SearchSpace};
-use super::terms::{TermId, TermOp, TermPool, build_best_term, evaluate_generalize_action};
+use super::space::{CycleMode, SearchSpace};
+use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
 use super::transport::{Cell, TransportProblem, solve_transport};
 
-/// Memo states for the exact solver.
+/// Memo states for the exact solver, generic over the term id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MemoState {
+enum MemoState<T> {
     Empty,
     Visiting,
-    Solved(TermId),
+    Solved(T),
 }
 
 /// Run the exact solver from a root class pair, returning the optimal anti-unifier.
@@ -34,27 +33,27 @@ enum MemoState {
 /// Errors with `AuError::NoFiniteRepresentative` if either root (or any class
 /// reachable from one) has no admissible finite member (§4.1).
 ///
-/// The action cache is unbounded here: exactness requires every matching-count
-/// matrix to remain reachable (§3.4.4), so the `A_max` materialization bound
-/// applies only to the anytime searcher, never to this oracle.
+/// AC/ACI operators are solved via min-cost transportation (§3.4.4): each cell
+/// subproblem is solved once and the optimal matching is found by flow, so no
+/// matrix is ever materialized. Non-AC actions use the cached action list.
 pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    l_root: AuClassId,
-    r_root: AuClassId,
+    l_root: ClassOf<Cfg>,
+    r_root: ClassOf<Cfg>,
     cycle_mode: CycleMode,
-) -> Result<(TermId, TermPool<Cfg::O, Cfg::V>), super::AuError>
+) -> Result<(<Cfg::Au as AuIds>::Term, TermPool<Cfg::O, Cfg::V, Cfg::Au>), super::AuError>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     snap.validate_finite_from(l_root)?;
     snap.validate_finite_from(r_root)?;
 
-    let mut space = SearchSpace::new(cycle_mode);
+    let mut space: SearchSpace<Cfg::Au> = SearchSpace::new(cycle_mode);
     let mut pool = TermPool::new();
     // AC/ACI pairs are solved by min-cost transport (zero matrix enumeration);
     // the cache materializes only the non-AC action kinds.
-    let mut cache = ActionCache::without_ac_actions(usize::MAX);
-    let mut results = BestResults::new();
+    let mut cache: ActionCache<Cfg::O, Cfg::Au> = ActionCache::without_ac_actions(usize::MAX);
+    let mut results: BestResults<Cfg::Au> = BestResults::new();
 
     let empty_ctx = space.contexts.empty();
     let l_best = snap.best_size(l_root);
@@ -62,7 +61,7 @@ where
     let (root_or, _) =
         space.get_or_insert_or_node(l_root, r_root, empty_ctx, empty_ctx, l_best, r_best);
 
-    let mut memo: Vec<MemoState> = Vec::new();
+    let mut memo: Vec<MemoState<<Cfg::Au as AuIds>::Term>> = Vec::new();
 
     let result = solve_recursive(
         snap,
@@ -77,7 +76,7 @@ where
     Ok((result, pool))
 }
 
-fn ensure_memo(memo: &mut Vec<MemoState>, or_id: OrId) {
+fn ensure_memo<T: Copy, O: DenseId>(memo: &mut Vec<MemoState<T>>, or_id: O) {
     let idx = or_id.to_usize();
     if idx >= memo.len() {
         memo.resize(idx + 1, MemoState::Empty);
@@ -86,13 +85,13 @@ fn ensure_memo(memo: &mut Vec<MemoState>, or_id: OrId) {
 
 fn solve_recursive<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    space: &mut SearchSpace,
-    pool: &mut TermPool<Cfg::O, Cfg::V>,
-    cache: &mut ActionCache<Cfg::O>,
-    results: &mut BestResults,
-    memo: &mut Vec<MemoState>,
-    or_id: OrId,
-) -> TermId
+    space: &mut SearchSpace<Cfg::Au>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    results: &mut BestResults<Cfg::Au>,
+    memo: &mut Vec<MemoState<<Cfg::Au as AuIds>::Term>>,
+    or_id: <Cfg::Au as AuIds>::Or,
+) -> <Cfg::Au as AuIds>::Term
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -125,10 +124,11 @@ where
         return term;
     }
 
-    // Start with the generalize seed as baseline.
-    let seed = evaluate_generalize_action(snap, pool, l, r);
-    let mut best = seed;
-    let mut best_quality = pool.quality(seed);
+    // The terminal generalize action is part of the shared action space. Eagerly
+    // evaluate it as a valid incumbent before considering structural actions.
+    let generalize = evaluate_generalize_action(snap, pool, l, r);
+    let mut best = generalize;
+    let mut best_quality = pool.quality(generalize);
 
     // Generate actions for this class pair.
     generate_actions(snap, cache, l, r);
@@ -151,7 +151,8 @@ where
         }
 
         // Solve each child pair.
-        let mut child_terms: Vec<(TermId, u32)> = Vec::with_capacity(action.pairs.len());
+        let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> =
+            Vec::with_capacity(action.pairs.len());
 
         for pair in &action.pairs {
             // Derive child contexts.
@@ -203,7 +204,8 @@ where
             // Solve each cell once (memoized across the whole search); blocked
             // cells become forbidden transport edges.
             let mut cost: Vec<Vec<Cell>> = vec![vec![Cell::Forbidden; cols]; rows];
-            let mut cell_term: Vec<Vec<Option<TermId>>> = vec![vec![None; cols]; rows];
+            let mut cell_term: Vec<Vec<Option<<Cfg::Au as AuIds>::Term>>> =
+                vec![vec![None; cols]; rows];
             for (i, &(lc, _)) in lm.iter().enumerate() {
                 for (j, &(rc, _)) in rm.iter().enumerate() {
                     if space.is_cycle_blocked(or_id, lc, rc) {
@@ -241,7 +243,7 @@ where
 
             // Compose the winning matrix into a term. AC/ACI kinds are
             // commutative: canonical child order.
-            let mut child_terms: Vec<(TermId, u32)> = Vec::new();
+            let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> = Vec::new();
             for (i, row) in solution.flow.iter().enumerate() {
                 for (j, &x) in row.iter().enumerate() {
                     if x > 0 {

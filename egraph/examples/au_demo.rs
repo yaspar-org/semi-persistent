@@ -10,14 +10,13 @@ use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, AuResult, anti_unify};
 use semi_persistent_egraph::au::terms::TermOp;
-use semi_persistent_egraph::id::{ENodeId, OpId};
+use semi_persistent_egraph::id::ENodeId;
 use semi_persistent_egraph::literal::NiraLitVal;
-use semi_persistent_egraph::nodes::LitValId;
 
 type Eg = EGraph31<NiraLitVal, false, false>;
 
 /// Render a result term using the e-graph's operator names and literal values.
-fn render(eg: &Eg, result: &AuResult<OpId, LitValId>) -> String {
+fn render(eg: &Eg, result: &AuResult<semi_persistent_egraph::nodes::DefaultConfig>) -> String {
     result.to_string_with(|op| match op {
         TermOp::EGraph(o) => eg.ops().info(*o).name.clone(),
         TermOp::Literal(_, v) => format!("{}", eg.lits().get(*v)),

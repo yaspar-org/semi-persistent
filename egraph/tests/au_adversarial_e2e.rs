@@ -119,18 +119,51 @@ fn algebraic_tag_surface_exercises_ac_aci_unit_nilpotent_and_inverse_with_au() {
 }
 
 #[test]
-fn unknown_algorithm_is_rejected_instead_of_running_uct() {
+fn exact_and_uct_algorithms_are_accepted() {
     let source = r#"
         (sort E)
         (function a () E)
         (function b () E)
-        (antiunify (a) (b) :algorithm exat :playouts 0)
+        (antiunify (a) (b) :algorithm exact :playouts 0)
+        (checkau (a) (b) :max_size 2 :algorithm uct :playouts 0)
+    "#;
+    run_program(source).expect("exact and uct must both be accepted");
+}
+
+#[test]
+fn syntactic_algorithm_is_rejected_with_supported_values() {
+    let source = r#"
+        (sort E)
+        (function a () E)
+        (function b () E)
+        (antiunify (a) (b) :algorithm syntactic :playouts 0)
+    "#;
+    let error = match run_program(source) {
+        Ok(_) => panic!("syntactic algorithm should be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error,
+        "run: check failed: unknown AU algorithm 'syntactic' (expected exact or uct)"
+    );
+}
+
+#[test]
+fn unknown_checkau_algorithm_names_only_supported_values() {
+    let source = r#"
+        (sort E)
+        (function a () E)
+        (function b () E)
+        (checkau (a) (b) :max_size 2 :algorithm exat :playouts 0)
     "#;
     let error = match run_program(source) {
         Ok(_) => panic!("unknown algorithm should be rejected"),
         Err(error) => error,
     };
-    assert!(error.contains("algorithm"), "unexpected error: {error}");
+    assert_eq!(
+        error,
+        "run: check failed: unknown AU algorithm 'exat' (expected exact or uct)"
+    );
 }
 
 #[test]

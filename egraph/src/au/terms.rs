@@ -7,12 +7,12 @@
 //! per ordinary node and 0 for each `Variants` node (its children are counted).
 
 use crate::canon::{MSetCanon, VarCanon};
-use crate::config::EGraphConfig;
+use crate::config::{AuIds, EGraphConfig};
 use crate::containers::{AppendOnlyVec, DenseId, Map, MapToken, ShrinkPolicy, VecToken};
 use crate::literal::LitVal;
 
-use super::AuClassId;
-use super::egraph_api::AuSnapshot;
+use super::egraph_api::{AuSnapshot, ClassOf};
+use super::{AuIds31, Span};
 
 crate::containers::define_id31! {
     /// Index of a term in the hash-consed term pool.
@@ -30,15 +30,17 @@ pub enum TermOp<O: DenseId, V: DenseId> {
     Variants,
 }
 
-/// Hash-consed term pool. Structurally equal terms get the same `TermId`.
+/// Hash-consed term pool. Structurally equal terms get the same term id.
 /// All fields are semi-persistent (AppendOnlyVec/Map); mark/restore truncates.
-pub struct TermPool<O: DenseId, V: DenseId> {
+/// The id family `A` defaults to the 31-bit family; a Config64 session
+/// instantiates `TermPool<O, V, AuIds64>` through `Cfg::Au`.
+pub struct TermPool<O: DenseId, V: DenseId, A: AuIds = AuIds31> {
     ops: AppendOnlyVec<TermOp<O, V>>,
-    child_spans: AppendOnlyVec<(u32, u32)>,
-    child_pool: AppendOnlyVec<TermId>,
+    child_spans: AppendOnlyVec<Span<A::TermChild>>,
+    child_pool: AppendOnlyVec<A::Term>,
     sizes: AppendOnlyVec<u32>,
     vmasses: AppendOnlyVec<u32>,
-    by_structure: Map<(TermOp<O, V>, Vec<TermId>), TermId>,
+    by_structure: Map<(TermOp<O, V>, Vec<A::Term>), A::Term>,
 }
 
 /// Token for restoring a `TermPool` to a previous state.
@@ -52,7 +54,7 @@ pub struct TermPoolToken {
     by_structure: MapToken,
 }
 
-impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V> {
+impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> TermPool<O, V, A> {
     pub fn new() -> Self {
         TermPool {
             ops: AppendOnlyVec::new(),
@@ -74,18 +76,17 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
     }
 
     /// Intern a term. Returns the existing id if structurally equal term exists.
-    pub fn intern(&mut self, op: TermOp<O, V>, children: &[TermId]) -> TermId {
+    pub fn intern(&mut self, op: TermOp<O, V>, children: &[A::Term]) -> A::Term {
         let key = (op.clone(), children.to_vec());
         if let Some(log_idx) = self.by_structure.id_of(&key) {
             return *self.by_structure.get(log_idx);
         }
 
-        let id = TermId::from_usize(self.ops.len());
-        let start = self.child_pool.len() as u32;
+        let id = A::Term::from_usize(self.ops.len());
+        let start = self.child_pool.len();
         for &c in children {
             self.child_pool.push(c);
         }
-        let len = children.len() as u32;
 
         let child_size_sum: u32 = children
             .iter()
@@ -103,7 +104,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
         };
 
         self.ops.push(op);
-        self.child_spans.push((start, len));
+        self.child_spans.push(Span::new(start, children.len()));
         self.sizes.push(size);
         self.vmasses.push(vmass);
         self.by_structure.insert(key, id);
@@ -119,11 +120,11 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
     pub fn intern_action_result(
         &mut self,
         op: TermOp<O, V>,
-        children_with_counts: &[(TermId, u32)],
+        children_with_counts: &[(A::Term, u32)],
         commutative: bool,
-    ) -> TermId {
+    ) -> A::Term {
         // Expand counts into repeated children.
-        let mut expanded: Vec<TermId> = Vec::new();
+        let mut expanded: Vec<A::Term> = Vec::new();
         for &(child, count) in children_with_counts {
             for _ in 0..count {
                 expanded.push(child);
@@ -141,7 +142,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
     /// operator variant rank, then operator/value ids, then arity, then children
     /// lexicographically. Equal ids are structurally equal (hash-consing), so this
     /// returns `Equal` only for identical ids.
-    pub fn structural_cmp(&self, a: TermId, b: TermId) -> core::cmp::Ordering {
+    pub fn structural_cmp(&self, a: A::Term, b: A::Term) -> core::cmp::Ordering {
         use core::cmp::Ordering;
         if a == b {
             return Ordering::Equal;
@@ -185,14 +186,14 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
 
     /// Get the size of a term.
     #[inline]
-    pub fn size(&self, id: TermId) -> u32 {
+    pub fn size(&self, id: A::Term) -> u32 {
         *self.sizes.get(id.to_usize())
     }
 
     /// Get the variant mass of a term: concrete nodes under `Variants` nodes.
     /// `size - variant_mass` is the backbone (shared structure) size.
     #[inline]
-    pub fn variant_mass(&self, id: TermId) -> u32 {
+    pub fn variant_mass(&self, id: A::Term) -> u32 {
         *self.vmasses.get(id.to_usize())
     }
 
@@ -200,7 +201,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
     /// primary objective is minimum size; at equal size the term with less
     /// variant mass has more backbone (more factored structure) and wins.
     #[inline]
-    pub fn quality(&self, id: TermId) -> (u32, u32) {
+    pub fn quality(&self, id: A::Term) -> (u32, u32) {
         (
             *self.sizes.get(id.to_usize()),
             *self.vmasses.get(id.to_usize()),
@@ -209,20 +210,21 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
 
     /// Get the operator of a term.
     #[inline]
-    pub fn op(&self, id: TermId) -> &TermOp<O, V> {
+    pub fn op(&self, id: A::Term) -> &TermOp<O, V> {
         self.ops.get(id.to_usize())
     }
 
     /// Get the children of a term.
     #[inline]
-    pub fn children(&self, id: TermId) -> &[TermId] {
-        let &(start, len) = self.child_spans.get(id.to_usize());
+    pub fn children(&self, id: A::Term) -> &[A::Term] {
+        let span = *self.child_spans.get(id.to_usize());
+        let (start, len) = (span.start_usize(), span.len_usize());
         if len == 0 {
             return &[];
         }
         unsafe {
-            let ptr = self.child_pool.get(start as usize) as *const TermId;
-            std::slice::from_raw_parts(ptr, len as usize)
+            let ptr = self.child_pool.get(start) as *const A::Term;
+            std::slice::from_raw_parts(ptr, len)
         }
     }
 
@@ -235,6 +237,17 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
             vmasses: self.vmasses.mark(ShrinkPolicy::Never),
             by_structure: self.by_structure.mark(ShrinkPolicy::Never),
         }
+    }
+
+    /// Is this token restorable right now (same instances, live branches on
+    /// every inner container)?
+    pub fn is_valid_token(&self, token: &TermPoolToken) -> bool {
+        self.ops.is_valid_token(&token.ops)
+            && self.child_spans.is_valid_token(&token.child_spans)
+            && self.child_pool.is_valid_token(&token.child_pool)
+            && self.sizes.is_valid_token(&token.sizes)
+            && self.vmasses.is_valid_token(&token.vmasses)
+            && self.by_structure.is_valid_token(&token.by_structure)
     }
 
     pub fn restore(&mut self, token: TermPoolToken) {
@@ -250,7 +263,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
     /// at any depth — by its left (side 0) or right (side 1) child, recursively.
     /// The result contains no `Variants` node (§1: variant projection must land
     /// in the source class). New nodes may be interned for rebuilt spines.
-    pub fn project(&mut self, id: TermId, side: usize) -> TermId {
+    pub fn project(&mut self, id: A::Term, side: usize) -> A::Term {
         debug_assert!(side < 2);
         match self.op(id).clone() {
             TermOp::Variants => {
@@ -277,7 +290,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> TermPool<O, V
     }
 
     /// Does this term contain any `Variants` node (at any depth)?
-    pub fn has_variants(&self, id: TermId) -> bool {
+    pub fn has_variants(&self, id: A::Term) -> bool {
         if matches!(self.op(id), TermOp::Variants) {
             return true;
         }
@@ -299,16 +312,23 @@ impl<O: DenseId, V: DenseId> core::fmt::Debug for TermPool<O, V> {
     }
 }
 
-/// Evaluate the shared terminal generalize action for an unequal class pair.
+/// Evaluate the shared terminal generalize action for a class pair.
 ///
-/// This action deliberately does not recurse positionally: structural factoring
-/// is represented by the same operator actions consumed by Exact and UCT.
-pub fn evaluate_generalize_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+/// Equal classes yield their smallest concrete representative. Unequal classes
+/// yield `Variants(best_term(l), best_term(r))` without recursively factoring
+/// either representative; operator-aware factoring belongs to structural
+/// actions shared by Exact and UCT.
+pub(crate) fn evaluate_generalize_action<
+    Cfg: EGraphConfig,
+    L: LitVal,
+    const T: bool,
+    const P: bool,
+>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    pool: &mut TermPool<Cfg::O, Cfg::V>,
-    l: AuClassId,
-    r: AuClassId,
-) -> TermId
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
+) -> <Cfg::Au as AuIds>::Term
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -323,9 +343,9 @@ where
 /// Build the best (smallest) concrete term for a class, interned in the pool.
 pub fn build_best_term<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    pool: &mut TermPool<Cfg::O, Cfg::V>,
-    class: AuClassId,
-) -> TermId
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    class: ClassOf<Cfg>,
+) -> <Cfg::Au as AuIds>::Term
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -339,7 +359,7 @@ where
     }
 
     // Collect children (respecting multiplicities for AC nodes).
-    let mut children: Vec<TermId> = Vec::new();
+    let mut children: Vec<<Cfg::Au as AuIds>::Term> = Vec::new();
     eg.for_each_child(best_id, |child, mult| {
         let child_class = snap.class_of(child).unwrap();
         let child_term = build_best_term(snap, pool, child_class);
@@ -383,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_generalize_action_identical() {
+    fn generalize_action_identical_class_returns_best_term() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -394,13 +414,13 @@ mod tests {
         let ac = snap.class_of(a).unwrap();
 
         let mut pool = TermPool::new();
-        let seed = evaluate_generalize_action(&snap, &mut pool, ac, ac);
-        assert_eq!(pool.size(seed), 1);
-        assert_eq!(*pool.op(seed), TermOp::EGraph(a_op));
+        let result = evaluate_generalize_action(&snap, &mut pool, ac, ac);
+        assert_eq!(pool.size(result), 1);
+        assert_eq!(*pool.op(result), TermOp::EGraph(a_op));
     }
 
     #[test]
-    fn evaluate_generalize_action_mismatch() {
+    fn generalize_action_unequal_classes_returns_best_term_variants() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -414,10 +434,11 @@ mod tests {
         let bc = snap.class_of(b).unwrap();
 
         let mut pool = TermPool::new();
-        let seed = evaluate_generalize_action(&snap, &mut pool, ac, bc);
+        let result = evaluate_generalize_action(&snap, &mut pool, ac, bc);
         // Variants(a, b) -> size 2 (1+1, Variants itself costs 0).
-        assert_eq!(pool.size(seed), 2);
-        assert_eq!(*pool.op(seed), TermOp::Variants);
+        assert_eq!(pool.size(result), 2);
+        assert_eq!(*pool.op(result), TermOp::Variants);
+        assert_eq!(pool.children(result).len(), 2);
     }
 
     /// P1 regression: projection must descend below ordinary operators.
@@ -493,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_generalize_action_partial_overlap() {
+    fn generalize_action_does_not_positionally_factor_shared_structure() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -513,10 +534,14 @@ mod tests {
         let rc = snap.class_of(fac).unwrap();
 
         let mut pool = TermPool::new();
-        let seed = evaluate_generalize_action(&snap, &mut pool, lc, rc);
-        // Shared terminal action: Variants(f(a, b), f(a, c)); structural factoring
-        // is represented by operator actions, not by the generalize evaluator.
-        assert_eq!(pool.size(seed), 6);
-        assert_eq!(*pool.op(seed), TermOp::Variants);
+        let result = evaluate_generalize_action(&snap, &mut pool, lc, rc);
+        // The terminal base action is whole-term generalization, not a
+        // positional zipper: Variants(f(a,b), f(a,c)) has size 3 + 3 = 6.
+        assert_eq!(pool.size(result), 6);
+        assert_eq!(*pool.op(result), TermOp::Variants);
+        let arms = pool.children(result);
+        assert_eq!(arms.len(), 2);
+        assert_eq!(*pool.op(arms[0]), TermOp::EGraph(f_op));
+        assert_eq!(*pool.op(arms[1]), TermOp::EGraph(f_op));
     }
 }

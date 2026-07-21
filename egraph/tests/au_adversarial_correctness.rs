@@ -64,7 +64,9 @@ fn materialize(eg: &mut Eg, term: &OwnedTerm) -> ENodeId {
     }
 }
 
-fn projected_terms(mut result: AuResult<OpId, LitValId>) -> (OwnedTerm, OwnedTerm) {
+fn projected_terms(
+    mut result: AuResult<semi_persistent_egraph::nodes::DefaultConfig>,
+) -> (OwnedTerm, OwnedTerm) {
     let left = result.pool.project(result.term_id, 0);
     let right = result.pool.project(result.term_id, 1);
     assert!(!result.pool.has_variants(left));
@@ -107,6 +109,67 @@ fn assert_projection_membership(eg: &mut Eg, left: ENodeId, right: ENodeId) {
             "{algorithm:?} right projection did not land in its source e-class"
         );
     }
+}
+
+/// The lower-ordered `g` representatives are larger than the `f`
+/// representatives. A first-action rollout picks `g` and leaves only the
+/// whole-term size-4 generalization, while the recorded initializer baseline
+/// factors through `f` at quality (3, 2).
+#[test]
+fn zero_playout_uct_selects_better_later_operator_action() {
+    const RECORDED_BASELINE: (u32, u32) = (3, 2);
+
+    let mut eg = Eg::new();
+    let sort = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", sort);
+    let b_op = eg.register_op0("b", sort);
+    let c_op = eg.register_op0("c", sort);
+    let d_op = eg.register_op0("d", sort);
+    let g = eg.register_op2("g", sort, sort, sort);
+    let f = eg.register_op1("f", sort, sort);
+
+    let a = eg.add(a_op, &[]);
+    let b = eg.add(b_op, &[]);
+    let c = eg.add(c_op, &[]);
+    let d = eg.add(d_op, &[]);
+    let left = eg.add(f, &[a]);
+    let left_g = eg.add(g, &[a, c]);
+    eg.merge(left, left_g);
+    let right = eg.add(f, &[b]);
+    let right_g = eg.add(g, &[b, d]);
+    eg.merge(right, right_g);
+    eg.rebuild();
+
+    let (quality, completion, projections) = {
+        let snapshot = AuSnapshot::new(&eg).unwrap();
+        let result = anti_unify(
+            &snapshot,
+            left,
+            right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Uct,
+                playouts: 0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let quality = result.pool.quality(result.term_id);
+        let completion = result.completion;
+        let projections = projected_terms(result);
+        (quality, completion, projections)
+    };
+
+    assert!(
+        quality <= RECORDED_BASELINE,
+        "zero-playout initialization regressed past the recorded baseline: {quality:?}"
+    );
+    assert_eq!(completion, Completion::BudgetExhausted { playouts_used: 0 });
+
+    let projected_left = materialize(&mut eg, &projections.0);
+    let projected_right = materialize(&mut eg, &projections.1);
+    eg.rebuild();
+    assert_eq!(eg.find_const(projected_left), eg.find_const(left));
+    assert_eq!(eg.find_const(projected_right), eg.find_const(right));
 }
 
 /// Build the minimal cost-sensitive transportation counterexample. The only
@@ -310,7 +373,7 @@ fn action_cap_is_global_and_actions_are_deduplicated_per_class_pair() {
 fn best_results_restore_recovers_pre_mark_entry() {
     let mut pool = TermPool::<OpId, LitValId>::new();
     let before = pool.intern(TermOp::EGraph(OpId::from_usize(0)), &[]);
-    let mut results = BestResults::new();
+    let mut results: BestResults = BestResults::new();
     let root = OrId::from_usize(0);
     assert!(results.offer(root, before, (10, 10)));
 
@@ -330,7 +393,7 @@ fn best_results_restore_recovers_pre_mark_entry() {
 fn best_results_restore_can_leave_a_dangling_term_id() {
     let mut pool = TermPool::<OpId, LitValId>::new();
     let before = pool.intern(TermOp::EGraph(OpId::from_usize(0)), &[]);
-    let mut results = BestResults::new();
+    let mut results: BestResults = BestResults::new();
     let root = OrId::from_usize(0);
     results.offer(root, before, (10, 10));
 
@@ -527,65 +590,4 @@ fn all_algorithms_reject_a_reachable_class_without_a_finite_member() {
             semi_persistent_egraph::au::AuError::NoFiniteRepresentative(_)
         ));
     }
-}
-
-/// The lower-ordered `g` representatives are larger than the `f`
-/// representatives. A first-action rollout picks `g` and leaves only the
-/// whole-term size-4 generalization, while the recorded initializer baseline
-/// factors through `f` at quality (3, 2).
-#[test]
-fn zero_playout_uct_selects_better_later_operator_action() {
-    const RECORDED_BASELINE: (u32, u32) = (3, 2);
-
-    let mut eg = Eg::new();
-    let sort = eg.intern_sort("E");
-    let a_op = eg.register_op0("a", sort);
-    let b_op = eg.register_op0("b", sort);
-    let c_op = eg.register_op0("c", sort);
-    let d_op = eg.register_op0("d", sort);
-    let g = eg.register_op2("g", sort, sort, sort);
-    let f = eg.register_op1("f", sort, sort);
-
-    let a = eg.add(a_op, &[]);
-    let b = eg.add(b_op, &[]);
-    let c = eg.add(c_op, &[]);
-    let d = eg.add(d_op, &[]);
-    let left = eg.add(f, &[a]);
-    let left_g = eg.add(g, &[a, c]);
-    eg.merge(left, left_g);
-    let right = eg.add(f, &[b]);
-    let right_g = eg.add(g, &[b, d]);
-    eg.merge(right, right_g);
-    eg.rebuild();
-
-    let (quality, completion, projections) = {
-        let snapshot = AuSnapshot::new(&eg).unwrap();
-        let result = anti_unify(
-            &snapshot,
-            left,
-            right,
-            &AuConfig {
-                algorithm: AuAlgorithm::Uct,
-                playouts: 0,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let quality = result.pool.quality(result.term_id);
-        let completion = result.completion;
-        let projections = projected_terms(result);
-        (quality, completion, projections)
-    };
-
-    assert!(
-        quality <= RECORDED_BASELINE,
-        "zero-playout initialization regressed past the recorded baseline: {quality:?}"
-    );
-    assert_eq!(completion, Completion::BudgetExhausted { playouts_used: 0 });
-
-    let projected_left = materialize(&mut eg, &projections.0);
-    let projected_right = materialize(&mut eg, &projections.1);
-    eg.rebuild();
-    assert_eq!(eg.find_const(projected_left), eg.find_const(left));
-    assert_eq!(eg.find_const(projected_right), eg.find_const(right));
 }
