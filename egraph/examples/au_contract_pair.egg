@@ -1,0 +1,108 @@
+(sort Bool)
+(sort Int)
+(sort Real)
+
+; variables
+(function x () Int)
+(function y () Int)
+(function z () Int)
+(function w () Real)
+(function v () Real)
+(function t () Real)
+(function p () Bool)
+(function q () Bool)
+(function r () Bool)
+
+; truth values (identities)
+(function tt () Bool)
+(function ff () Bool)
+
+; implication: ordered (antecedent, consequent)
+(function impl (Bool Bool) Bool)
+
+; negation: unary
+(function neg (Bool) Bool)
+
+; integer comparisons: ordered (asymmetric)
+(function lti (Int Int) Bool)
+(function lei (Int Int) Bool)
+(function gti (Int Int) Bool)
+
+; real comparisons: ordered (asymmetric)
+(function gtr (Real Real) Bool)
+(function ger (Real Real) Bool)
+
+; integer equality: commutative (symmetric)
+(function eqi (Int Int) Bool :comm)
+
+; real addition: associative-commutative with identity 0
+(function zero () Real)
+(function addr (Real) Real :assoc-comm :identity (zero))
+
+; integer zero for gti
+(function izero () Int)
+
+; conjunction: ACI with identity tt (order and duplicates irrelevant)
+(function conj (Bool) Bool :assoc-comm-idem :identity (tt))
+
+; disjunction: ACI with identity ff
+(function disj (Bool) Bool :assoc-comm-idem :identity (ff))
+
+; ═══════════════════════════════════════════════════════════════════
+; Two contracts differing in exactly 3 atoms.
+; Conjunct order is deliberately SCRAMBLED within each conjunction
+; to exercise the ACI bijection mechanism.
+;
+; Difference 1: clause 2 postcondition uses (gtr w v) vs (ger w v)
+; Difference 2: clause 3 precondition uses p vs q
+; Difference 3: clause 4 postcondition uses (lti x y) vs (lei x y)
+; ═══════════════════════════════════════════════════════════════════
+
+; --- Clause 1 (identical in both): (x = y) => neg p ---
+; Note: eqi is :comm, so (eqi x y) and (eqi y x) are the same node.
+; A writes (eqi x y), B writes (eqi y x) -- they canonize identically.
+(let c1a (impl (eqi (x) (y)) (neg (p))))
+(let c1b (impl (eqi (y) (x)) (neg (p))))
+
+; --- Clause 2: precond (y <= z) and r => postcond (neg q) and (w {>|>=} v) ---
+; Note: conj elements in DIFFERENT orders; also eqi used in postcond
+(let c2a (impl (conj (lei (y) (z)) (r)) (conj (gtr (w) (v)) (neg (q)))))
+(let c2b (impl (conj (r) (lei (y) (z))) (conj (neg (q)) (ger (w) (v)))))
+
+; --- Clause 3: precond {p|q} and (x = z) => postcond neg r ---
+; Note: atom order flipped in conj; eqi arguments flipped between A and B
+(let c3a (impl (conj (p) (eqi (x) (z))) (neg (r))))
+(let c3b (impl (conj (eqi (z) (x)) (q)) (neg (r))))
+
+; --- Clause 4: precond (y = izero) and w > v => postcond {x < y | x <= y} ---
+; Note: precondition conjuncts flipped; eqi argument order flipped
+(let c4a (impl (conj (eqi (y) (izero)) (gtr (w) (v))) (lti (x) (y))))
+(let c4b (impl (conj (gtr (w) (v)) (eqi (izero) (y))) (lei (x) (y))))
+
+; --- Clause 5 (identical in both): w > v and t > v => (w + t) > v ---
+; Note: A and B write the same clause but addr arguments in different order
+; (addr is :assoc-comm so the result canonizes the same)
+(let c5a (impl (conj (gtr (w) (v)) (gtr (t) (v))) (gtr (addr (w) (t)) (v))))
+(let c5b (impl (conj (gtr (t) (v)) (gtr (w) (v))) (gtr (addr (t) (w)) (v))))
+
+; --- The two full contracts: top-level conjuncts in DIFFERENT orders ---
+(let contractA (conj c1a c3a c5a c2a c4a))
+(let contractB (conj c4b c2b c1b c5b c3b))
+
+; Anti-unify: the ACI matching must find the optimal bijection despite scrambled order
+(antiunify contractA contractB :algorithm exact)
+(antiunify contractA contractB :algorithm uct :playouts 5000)
+
+; ═══════════════════════════════════════════════════════════════════
+; Second example: UNEQUAL number of clauses.
+; Contract C has 4 clauses; contract D has 3 (missing one clause).
+; The identity element `tt` for `conj` absorbs the missing clause:
+; conj{a, b, c, d} vs conj{a, b, c} becomes conj{a, b, c, Variants(d, tt)}
+; ═══════════════════════════════════════════════════════════════════
+
+(let contractC (conj c1a c2a c3a c5a))
+(let contractD (conj c5b c1b c2a))
+
+; Contract C has 4 clauses, contract D has 3:
+; the identity padding adds `tt` to D's side, producing Variants(c3a, tt)
+(antiunify contractC contractD :algorithm exact)

@@ -299,9 +299,11 @@ impl<O: DenseId, V: DenseId> core::fmt::Debug for TermPool<O, V> {
     }
 }
 
-/// Build the syntactic seed of two best-terms (§A.3): recursively zip, emit
-/// `Variants` at every mismatch.
-pub fn syntactic_seed<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+/// Evaluate the shared terminal generalize action for an unequal class pair.
+///
+/// This action deliberately does not recurse positionally: structural factoring
+/// is represented by the same operator actions consumed by Exact and UCT.
+pub fn evaluate_generalize_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     pool: &mut TermPool<Cfg::O, Cfg::V>,
     l: AuClassId,
@@ -315,7 +317,7 @@ where
     }
     let l_term = build_best_term(snap, pool, l);
     let r_term = build_best_term(snap, pool, r);
-    seed_zip(pool, l_term, r_term)
+    pool.intern(TermOp::Variants, &[l_term, r_term])
 }
 
 /// Build the best (smallest) concrete term for a class, interned in the pool.
@@ -347,39 +349,6 @@ where
     });
 
     pool.intern(TermOp::EGraph(op), &children)
-}
-
-/// Zip two terms: if same op and same arity, recurse positionally; otherwise Variants.
-fn seed_zip<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash>(
-    pool: &mut TermPool<O, V>,
-    l_term: TermId,
-    r_term: TermId,
-) -> TermId {
-    if l_term == r_term {
-        return l_term;
-    }
-
-    let l_op = pool.op(l_term).clone();
-    let r_op = pool.op(r_term).clone();
-
-    if l_op != r_op {
-        return pool.intern(TermOp::Variants, &[l_term, r_term]);
-    }
-
-    let l_children = pool.children(l_term).to_vec();
-    let r_children = pool.children(r_term).to_vec();
-
-    if l_children.len() != r_children.len() {
-        return pool.intern(TermOp::Variants, &[l_term, r_term]);
-    }
-
-    // Same op and arity: zip children.
-    let mut new_children: Vec<TermId> = Vec::with_capacity(l_children.len());
-    for i in 0..l_children.len() {
-        new_children.push(seed_zip(pool, l_children[i], r_children[i]));
-    }
-
-    pool.intern(l_op, &new_children)
 }
 
 #[cfg(test)]
@@ -414,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn syntactic_seed_identical() {
+    fn evaluate_generalize_action_identical() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -425,13 +394,13 @@ mod tests {
         let ac = snap.class_of(a).unwrap();
 
         let mut pool = TermPool::new();
-        let seed = syntactic_seed(&snap, &mut pool, ac, ac);
+        let seed = evaluate_generalize_action(&snap, &mut pool, ac, ac);
         assert_eq!(pool.size(seed), 1);
         assert_eq!(*pool.op(seed), TermOp::EGraph(a_op));
     }
 
     #[test]
-    fn syntactic_seed_mismatch() {
+    fn evaluate_generalize_action_mismatch() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -445,7 +414,7 @@ mod tests {
         let bc = snap.class_of(b).unwrap();
 
         let mut pool = TermPool::new();
-        let seed = syntactic_seed(&snap, &mut pool, ac, bc);
+        let seed = evaluate_generalize_action(&snap, &mut pool, ac, bc);
         // Variants(a, b) -> size 2 (1+1, Variants itself costs 0).
         assert_eq!(pool.size(seed), 2);
         assert_eq!(*pool.op(seed), TermOp::Variants);
@@ -524,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn syntactic_seed_partial_overlap() {
+    fn evaluate_generalize_action_partial_overlap() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -544,9 +513,10 @@ mod tests {
         let rc = snap.class_of(fac).unwrap();
 
         let mut pool = TermPool::new();
-        let seed = syntactic_seed(&snap, &mut pool, lc, rc);
-        // f(a, Variants(b, c)) -> 1(f) + 1(a) + 0(V) + 1(b) + 1(c) = 4
-        assert_eq!(pool.size(seed), 4);
-        assert_eq!(*pool.op(seed), TermOp::EGraph(f_op));
+        let seed = evaluate_generalize_action(&snap, &mut pool, lc, rc);
+        // Shared terminal action: Variants(f(a, b), f(a, c)); structural factoring
+        // is represented by operator actions, not by the generalize evaluator.
+        assert_eq!(pool.size(seed), 6);
+        assert_eq!(*pool.op(seed), TermOp::Variants);
     }
 }

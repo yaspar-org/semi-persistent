@@ -210,20 +210,6 @@ fn exact_and_uct_apply_the_approved_equal_size_backbone_tie_break() {
 
     let snapshot = AuSnapshot::new(&eg).unwrap();
 
-    let syntactic = anti_unify(
-        &snapshot,
-        x,
-        fy,
-        &AuConfig {
-            algorithm: AuAlgorithm::Syntactic,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(syntactic.size, 3);
-    assert_eq!(syntactic.pool.variant_mass(syntactic.term_id), 3);
-    assert_eq!(*syntactic.pool.op(syntactic.term_id), TermOp::Variants);
-
     for algorithm in [AuAlgorithm::Exact, AuAlgorithm::Uct] {
         let result = anti_unify(
             &snapshot,

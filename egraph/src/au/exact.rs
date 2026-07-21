@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Memoized exact solver: `eager_with_memo` (§3.2).
 //!
-//! Dynamic programming over cycle-context states. Enumerates every surviving action
-//! and takes the minimum-size result. Memoization on states = node sharing: each
-//! distinct subproblem is solved once regardless of how many factorings reach it.
+//! Dynamic programming over cycle-context states. For non-AC operators: enumerates
+//! every surviving action and takes the minimum. For AC/ACI: solves each cell
+//! subproblem once, then finds the optimal matching via min-cost transportation.
+//! Memoization on states = node sharing: each distinct subproblem is solved once.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
@@ -12,11 +13,13 @@ use crate::containers::DenseId;
 use crate::literal::LitVal;
 
 use super::AuClassId;
+use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
 use super::egraph_api::AuSnapshot;
 use super::results::BestResults;
 use super::space::{CycleMode, OrId, SearchSpace};
-use super::terms::{TermId, TermOp, TermPool, build_best_term, syntactic_seed};
+use super::terms::{TermId, TermOp, TermPool, build_best_term, evaluate_generalize_action};
+use super::transport::{Cell, TransportProblem, solve_transport};
 
 /// Memo states for the exact solver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +51,9 @@ where
 
     let mut space = SearchSpace::new(cycle_mode);
     let mut pool = TermPool::new();
-    let mut cache = ActionCache::new(usize::MAX);
+    // AC/ACI pairs are solved by min-cost transport (zero matrix enumeration);
+    // the cache materializes only the non-AC action kinds.
+    let mut cache = ActionCache::without_ac_actions(usize::MAX);
     let mut results = BestResults::new();
 
     let empty_ctx = space.contexts.empty();
@@ -120,8 +125,8 @@ where
         return term;
     }
 
-    // Start with the syntactic seed as baseline.
-    let seed = syntactic_seed(snap, pool, l, r);
+    // Start with the generalize seed as baseline.
+    let seed = evaluate_generalize_action(snap, pool, l, r);
     let mut best = seed;
     let mut best_quality = pool.quality(seed);
 
@@ -182,6 +187,74 @@ where
         if candidate_quality < best_quality {
             best = candidate;
             best_quality = candidate_quality;
+        }
+    }
+
+    // AC/ACI operators: zero matrix enumeration. For each canonical
+    // representation pair, recursively solve every legal cell subproblem once,
+    // then one lexicographic min-cost transportation solve returns the optimal
+    // matching directly (§3.4.4). Cycle-blocked cells are forbidden edges;
+    // infeasible pairs contribute no candidate.
+    for op in ac_repr::common_ac_ops(snap, l, r) {
+        for (lm, rm) in ac_repr::representation_pairs(snap, l, r, op) {
+            let rows = lm.len();
+            let cols = rm.len();
+
+            // Solve each cell once (memoized across the whole search); blocked
+            // cells become forbidden transport edges.
+            let mut cost: Vec<Vec<Cell>> = vec![vec![Cell::Forbidden; cols]; rows];
+            let mut cell_term: Vec<Vec<Option<TermId>>> = vec![vec![None; cols]; rows];
+            for (i, &(lc, _)) in lm.iter().enumerate() {
+                for (j, &(rc, _)) in rm.iter().enumerate() {
+                    if space.is_cycle_blocked(or_id, lc, rc) {
+                        continue;
+                    }
+                    let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
+                        snap.reachability().is_reachable(lc, c)
+                    });
+                    let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
+                        snap.reachability().is_reachable(rc, c)
+                    });
+                    let (child_or, _) = space.get_or_insert_or_node(
+                        lc,
+                        rc,
+                        child_ctx_l,
+                        child_ctx_r,
+                        snap.best_size(lc),
+                        snap.best_size(rc),
+                    );
+                    let term = solve_recursive(snap, space, pool, cache, results, memo, child_or);
+                    let (s, v) = pool.quality(term);
+                    cost[i][j] = Cell::Cost(s, v);
+                    cell_term[i][j] = Some(term);
+                }
+            }
+
+            let problem = TransportProblem {
+                row_supply: lm.iter().map(|(_, k)| *k).collect(),
+                col_demand: rm.iter().map(|(_, k)| *k).collect(),
+                cost,
+            };
+            let Some(solution) = solve_transport(&problem) else {
+                continue; // infeasible under cycle blocking: no candidate here
+            };
+
+            // Compose the winning matrix into a term. AC/ACI kinds are
+            // commutative: canonical child order.
+            let mut child_terms: Vec<(TermId, u32)> = Vec::new();
+            for (i, row) in solution.flow.iter().enumerate() {
+                for (j, &x) in row.iter().enumerate() {
+                    if x > 0 {
+                        child_terms.push((cell_term[i][j].unwrap(), x));
+                    }
+                }
+            }
+            let candidate = pool.intern_action_result(TermOp::EGraph(op), &child_terms, true);
+            let candidate_quality = pool.quality(candidate);
+            if candidate_quality < best_quality {
+                best = candidate;
+                best_quality = candidate_quality;
+            }
         }
     }
 
@@ -440,5 +513,48 @@ mod tests {
         // Greedy diagonal: b,c pair with themselves, leaves AU(a,d) = Variants(a,d).
         // and(b, c, Variants(a,d)) = 1(and) + 1(b) + 1(c) + 0(V) + 1(a) + 1(d) = 5
         assert_eq!(pool.size(term), 5);
+    }
+
+    /// Regression: virtual singleton must be available even when the class has an
+    /// explicit AC member (the P0 fix). X = {f(p,q), combine(a,b)} merged;
+    /// AU(X, combine(X,c)) should factor as combine(X, Variants(e,c)) = size 6.
+    #[test]
+    fn exact_virtual_singleton_with_explicit_member() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let sort = eg.intern_sort("E");
+        let p_op = eg.register_op0("p", sort);
+        let q_op = eg.register_op0("q", sort);
+        let a_op = eg.register_op0("a", sort);
+        let b_op = eg.register_op0("b", sort);
+        let c_op = eg.register_op0("c", sort);
+        let e_op = eg.register_op0("e", sort);
+        let f = eg.register_op2("f", sort, sort, sort);
+        let combine = eg.register_mset("combine", sort, sort);
+
+        let p = eg.add(p_op, &[]);
+        let q = eg.add(q_op, &[]);
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let e = eg.add(e_op, &[]);
+        eg.set_unit_node(combine, e);
+
+        let x_f = eg.add(f, &[p, q]);
+        let x_c = eg.add(combine, &[a, b]);
+        eg.merge(x_f, x_c); // X has both f and combine members
+        let right = eg.add(combine, &[x_f, c]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let (term, pool) = eager_with_memo(
+            &snap,
+            snap.class_of(x_f).unwrap(),
+            snap.class_of(right).unwrap(),
+            CycleMode::AncestorOnly,
+        )
+        .unwrap();
+        // combine(X, Variants(e, c)): 1 + 3 + 0 + 1 + 1 = 6, vmass 2.
+        assert_eq!(pool.size(term), 6);
+        assert_eq!(pool.variant_mass(term), 2);
     }
 }

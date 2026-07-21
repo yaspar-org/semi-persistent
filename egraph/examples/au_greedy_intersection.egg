@@ -1,0 +1,31 @@
+(sort E)
+
+(function v () E)
+(function u () E)
+(function f (E E) E)
+(function g (E E) E)
+(function acop (E) E :assoc-comm)
+
+; X is an operator-polymorphic e-class: it contains BOTH f(v,v) and g(v,v).
+(let x (f (v) (v)))
+(union x (g (v) (v)))
+
+; Y contains only an f-node; Z contains only a g-node.
+(let y (f (v) (u)))
+(let z (g (v) (u)))
+
+; The two sides share the element X:
+;   left  = acop{X, Y}
+;   right = acop{X, Z}
+;
+; Subtracting the intersection multiset {X} from both sides pairs X with X
+; (cost 3, locally the cheapest possible pair) and leaves AU(Y, Z), which have
+; no common operator: Variants(f(v,u), g(v,u)), cost 6. Total 1 + 3 + 6 = 10.
+;
+; The crossed matching gives up the free X-X pair: AU(X, Z) factors through g
+; (using X's g-member) for cost 4, and AU(Y, X) factors through f (using X's
+; f-member) for cost 4. Total 1 + 4 + 4 = 9.
+(let left (acop x y))
+(let right (acop x z))
+
+(antiunify left right :algorithm exact)

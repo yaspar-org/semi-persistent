@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Anti-unification demo: builds a series of e-graph pairs and prints the
-//! anti-unifiers found by the syntactic baseline, the exact solver, and MCGS.
+//! anti-unifiers found by the generalize baseline, the exact solver, and MCGS.
 //!
 //! Run with: `cargo run --example au_demo -p semi-persistent-egraph`
 
@@ -32,7 +32,6 @@ fn run_case(title: &str, eg: &Eg, left: ENodeId, right: ENodeId) {
     let snap = AuSnapshot::new(eg).expect("snapshot construction failed");
 
     for (name, algorithm, playouts) in [
-        ("syntactic", AuAlgorithm::Syntactic, 0),
         ("exact     ", AuAlgorithm::Exact, 0),
         ("uct       ", AuAlgorithm::Uct, 2000),
     ] {
@@ -197,7 +196,7 @@ fn example_ac_multiplicity() {
 }
 
 /// Example 8: equivalence helps — a merge lets the e-graph find shared structure
-/// that no syntactic comparison of the original terms could find.
+/// that no generalize comparison of the original terms could find.
 fn example_saturation_helps() {
     let mut eg = Eg::new();
     let int = eg.intern_sort("Int");

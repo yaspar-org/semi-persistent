@@ -8,7 +8,7 @@
 //!
 //! **Milestone scope** (see `anti-unification-plan.md`, "Delivered / Deferred"):
 //! UCT + round-robin only (no PUCT, priors, or uct_and/lct_and); no lazy-AC chain
-//! states (the exact solver enumerates matrices unboundedly instead; MCGS truncates
+//! states (the exact solver uses min-cost transportation instead; MCGS truncates
 //! at `A_max` and is anytime, not complete, past that bound); plain `Vec`/`HashMap`
 //! storage (no semi-persistent containers, so no whole-search mark/restore and no
 //! `SearchSession`/`SearchToken`); no interpreter commands.
@@ -19,15 +19,18 @@
 //! `f(Variants(x,y))` beats `Variants(x, f(y))`. See `terms.rs` and Appendix C.1
 //! of the design doc.
 
+pub mod ac_repr;
 pub mod actions;
 pub mod egraph_api;
 pub mod exact;
 pub mod mcgs;
+pub mod pretty;
 pub mod results;
 pub mod reward;
 pub mod session;
 pub mod space;
 pub mod terms;
+pub mod transport;
 
 use crate::containers;
 
