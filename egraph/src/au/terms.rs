@@ -142,11 +142,12 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     /// operator variant rank, then operator/value ids, then arity, then children
     /// lexicographically. Equal ids are structurally equal (hash-consing), so this
     /// returns `Equal` only for identical ids.
+    ///
+    /// Iterative (explicit work stack): the first non-`Equal` comparison in
+    /// depth-first, left-to-right order decides, exactly like the recursive
+    /// lexicographic definition. Depth is heap-bounded, not call-stack-bounded.
     pub fn structural_cmp(&self, a: A::Term, b: A::Term) -> core::cmp::Ordering {
         use core::cmp::Ordering;
-        if a == b {
-            return Ordering::Equal;
-        }
         fn rank<O: DenseId, V: DenseId>(op: &TermOp<O, V>) -> u8 {
             match op {
                 TermOp::EGraph(_) => 0,
@@ -154,31 +155,35 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
                 TermOp::Variants => 2,
             }
         }
-        let (oa, ob) = (self.op(a), self.op(b));
-        let ord = rank(oa).cmp(&rank(ob));
-        if ord != Ordering::Equal {
-            return ord;
-        }
-        let ord = match (oa, ob) {
-            (TermOp::EGraph(x), TermOp::EGraph(y)) => x.to_usize().cmp(&y.to_usize()),
-            (TermOp::Literal(x, v), TermOp::Literal(y, w)) => x
-                .to_usize()
-                .cmp(&y.to_usize())
-                .then(v.to_usize().cmp(&w.to_usize())),
-            _ => Ordering::Equal,
-        };
-        if ord != Ordering::Equal {
-            return ord;
-        }
-        let (ca, cb) = (self.children(a), self.children(b));
-        let ord = ca.len().cmp(&cb.len());
-        if ord != Ordering::Equal {
-            return ord;
-        }
-        for (&x, &y) in ca.iter().zip(cb.iter()) {
-            let ord = self.structural_cmp(x, y);
+        let mut stack: Vec<(A::Term, A::Term)> = vec![(a, b)];
+        while let Some((a, b)) = stack.pop() {
+            if a == b {
+                continue;
+            }
+            let (oa, ob) = (self.op(a), self.op(b));
+            let ord = rank(oa).cmp(&rank(ob));
             if ord != Ordering::Equal {
                 return ord;
+            }
+            let ord = match (oa, ob) {
+                (TermOp::EGraph(x), TermOp::EGraph(y)) => x.to_usize().cmp(&y.to_usize()),
+                (TermOp::Literal(x, v), TermOp::Literal(y, w)) => x
+                    .to_usize()
+                    .cmp(&y.to_usize())
+                    .then(v.to_usize().cmp(&w.to_usize())),
+                _ => Ordering::Equal,
+            };
+            if ord != Ordering::Equal {
+                return ord;
+            }
+            let (ca, cb) = (self.children(a), self.children(b));
+            let ord = ca.len().cmp(&cb.len());
+            if ord != Ordering::Equal {
+                return ord;
+            }
+            // Push child pairs in reverse so the leftmost pair is compared first.
+            for (&x, &y) in ca.iter().zip(cb.iter()).rev() {
+                stack.push((x, y));
             }
         }
         Ordering::Equal
@@ -263,38 +268,75 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     /// at any depth — by its left (side 0) or right (side 1) child, recursively.
     /// The result contains no `Variants` node (§1: variant projection must land
     /// in the source class). New nodes may be interned for rebuilt spines.
+    ///
+    /// Iterative post-order fold (explicit frame stack): each frame projects
+    /// its children left to right, then re-interns only if a child changed, so
+    /// the interning order matches the recursive definition exactly. A
+    /// `Variants` node is a tail step (follow the chosen arm), so it never
+    /// occupies a frame. Depth is heap-bounded, not call-stack-bounded.
     pub fn project(&mut self, id: A::Term, side: usize) -> A::Term {
         debug_assert!(side < 2);
-        match self.op(id).clone() {
-            TermOp::Variants => {
-                let chosen = self.children(id)[side];
-                // The chosen arm may itself contain nested Variants.
-                self.project(chosen, side)
+        struct Frame<T, Op> {
+            id: T,
+            op: Op,
+            children: Vec<T>,
+            cursor: usize,
+            new_children: Vec<T>,
+            changed: bool,
+        }
+        let mut stack: Vec<Frame<A::Term, TermOp<O, V>>> = Vec::new();
+        let mut pending = id;
+        loop {
+            // Enter: resolve the Variants chain (tail steps), push a frame.
+            let mut nid = pending;
+            while matches!(self.op(nid), TermOp::Variants) {
+                nid = self.children(nid)[side];
             }
-            op => {
-                let children = self.children(id).to_vec();
-                let mut changed = false;
-                let mut new_children = Vec::with_capacity(children.len());
-                for c in children {
-                    let pc = self.project(c, side);
-                    changed |= pc != c;
-                    new_children.push(pc);
+            let children = self.children(nid).to_vec();
+            let capacity = children.len();
+            stack.push(Frame {
+                id: nid,
+                op: self.op(nid).clone(),
+                children,
+                cursor: 0,
+                new_children: Vec::with_capacity(capacity),
+                changed: false,
+            });
+            // Advance the top frame; complete frames deliver upward.
+            loop {
+                let top = stack.last_mut().expect("project stack cannot be empty");
+                if top.cursor < top.children.len() {
+                    pending = top.children[top.cursor];
+                    break; // descend into the next child
                 }
-                if changed {
-                    self.intern(op, &new_children)
+                let frame = stack.pop().expect("project stack cannot be empty");
+                let projected = if frame.changed {
+                    self.intern(frame.op, &frame.new_children)
                 } else {
-                    id
-                }
+                    frame.id
+                };
+                let Some(parent) = stack.last_mut() else {
+                    return projected;
+                };
+                let original = parent.children[parent.cursor];
+                parent.changed |= projected != original;
+                parent.new_children.push(projected);
+                parent.cursor += 1;
             }
         }
     }
 
     /// Does this term contain any `Variants` node (at any depth)?
+    /// Iterative DFS with an explicit stack; depth is heap-bounded.
     pub fn has_variants(&self, id: A::Term) -> bool {
-        if matches!(self.op(id), TermOp::Variants) {
-            return true;
+        let mut stack: Vec<A::Term> = vec![id];
+        while let Some(t) = stack.pop() {
+            if matches!(self.op(t), TermOp::Variants) {
+                return true;
+            }
+            stack.extend_from_slice(self.children(t));
         }
-        self.children(id).iter().any(|&c| self.has_variants(c))
+        false
     }
 }
 
@@ -341,6 +383,12 @@ where
 }
 
 /// Build the best (smallest) concrete term for a class, interned in the pool.
+///
+/// Iterative post-order fold (explicit frame stack): each frame resolves its
+/// class's best node, evaluates child classes left to right (in
+/// `for_each_child` order, repeating AC children per multiplicity), then
+/// interns — the same interning order as the recursive definition. Depth is
+/// heap-bounded, not call-stack-bounded.
 pub fn build_best_term<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
@@ -349,26 +397,59 @@ pub fn build_best_term<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let eg = snap.egraph();
-    let best_id = snap.best_node(class);
-    let op = eg.node_op(best_id);
-
-    // Check if it's a literal.
-    if let Some(val_id) = eg.get_lit_val_id(best_id) {
-        return pool.intern(TermOp::Literal(op, val_id), &[]);
+    struct Frame<O, C, Term> {
+        op: O,
+        /// Child classes with multiplicities, in `for_each_child` order.
+        child_classes: Vec<(C, u32)>,
+        cursor: usize,
+        children: Vec<Term>,
     }
-
-    // Collect children (respecting multiplicities for AC nodes).
-    let mut children: Vec<<Cfg::Au as AuIds>::Term> = Vec::new();
-    eg.for_each_child(best_id, |child, mult| {
-        let child_class = snap.class_of(child).unwrap();
-        let child_term = build_best_term(snap, pool, child_class);
-        for _ in 0..mult {
-            children.push(child_term);
+    let eg = snap.egraph();
+    let mut stack: Vec<Frame<Cfg::O, ClassOf<Cfg>, <Cfg::Au as AuIds>::Term>> = Vec::new();
+    let mut pending = class;
+    loop {
+        // Enter: resolve the class's best node; literals complete immediately,
+        // other nodes get a frame.
+        let best_id = snap.best_node(pending);
+        let op = eg.node_op(best_id);
+        let mut done: Option<<Cfg::Au as AuIds>::Term> = None;
+        if let Some(val_id) = eg.get_lit_val_id(best_id) {
+            done = Some(pool.intern(TermOp::Literal(op, val_id), &[]));
+        } else {
+            let mut child_classes: Vec<(ClassOf<Cfg>, u32)> = Vec::new();
+            eg.for_each_child(best_id, |child, mult| {
+                child_classes.push((snap.class_of(child).unwrap(), mult));
+            });
+            stack.push(Frame {
+                op,
+                child_classes,
+                cursor: 0,
+                children: Vec::new(),
+            });
         }
-    });
-
-    pool.intern(TermOp::EGraph(op), &children)
+        // Advance: deliver any completed term upward, then descend or compose.
+        loop {
+            if let Some(term) = done.take() {
+                let Some(parent) = stack.last_mut() else {
+                    return term;
+                };
+                let (_, mult) = parent.child_classes[parent.cursor];
+                for _ in 0..mult {
+                    parent.children.push(term);
+                }
+                parent.cursor += 1;
+            }
+            let top = stack
+                .last_mut()
+                .expect("build_best_term stack cannot be empty");
+            if top.cursor < top.child_classes.len() {
+                pending = top.child_classes[top.cursor].0;
+                break; // descend into the next child class
+            }
+            let frame = stack.pop().expect("build_best_term stack cannot be empty");
+            done = Some(pool.intern(TermOp::EGraph(frame.op), &frame.children));
+        }
+    }
 }
 
 #[cfg(test)]

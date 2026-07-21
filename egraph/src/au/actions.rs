@@ -465,8 +465,9 @@ fn generate_ordered_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P
     }
 }
 
-/// Associative operators (sequences): milestone = one positional action when lengths
-/// are equal, none otherwise (§3.4.3).
+/// Associative operators (sequences): one positional action when lengths
+/// are equal, none otherwise (§3.4.3). Unequal-length factoring is future work
+/// (doc/future/au-associative-operators.md).
 fn generate_seq_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     eg: &EGraph<Cfg, L, T, P>,
@@ -547,7 +548,8 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
     }
 }
 
-/// AC operators (multisets): bounded matrix enumeration for MCGS (§3.4.4).
+/// AC operators (multisets): bounded matrix enumeration, used only by the
+/// differential test oracle — both production paths use min-cost transport (§3.4.4).
 /// When totals are unequal and the operator has a declared identity element, the
 /// shorter side is padded with identity copies to equalize the totals; the resulting
 /// anti-unifier pairs unmatched elements against the identity (producing
@@ -695,8 +697,9 @@ fn generate_lit_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 /// row i sums to `m_i`, column j sums to `n_j`.
 ///
 /// Enumerate all valid matching-count matrices for multisets with equal total
-/// multiplicity, using row-by-row distribution. Used only by MCGS (the exact solver
-/// uses min-cost transport instead). `a_max` bounds the number of emitted actions.
+/// multiplicity, using row-by-row distribution. Used only as a differential test
+/// oracle (both production paths use min-cost transport instead). `a_max` bounds
+/// the number of emitted actions.
 /// The enumeration is complete and greedy-first (diagonal matches tried first).
 fn enumerate_matrices<O: DenseId, A: AuIds>(
     op: O,

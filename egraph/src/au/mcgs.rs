@@ -2,17 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Monte-Carlo Graph Search for anti-unification (§3.3).
 //!
-//! Playout = selection (UCT at OR nodes, round-robin at AND nodes), expansion,
-//! initial rollout (§A.4) for first estimates, then path-only backpropagation:
-//! every AND node on the traversed path recomputes its value idempotently from
-//! its children (§2.6), composes its children's stored best results into a
-//! candidate term, and offers it to its parent's best-result entry (§3.3).
-//! That composition step is what lets the search improve past the initial
-//! initial rollout and converge to the exact optimum on exhausted graphs.
+//! Playout = selection (UCT at OR nodes, a configurable effort selector at
+//! AND nodes), expansion, initial rollout (§A.4) for first estimates, then
+//! path-only backpropagation: every AND node on the traversed path recomputes
+//! its value idempotently from its children (§2.6), composes its children's
+//! stored best results into a candidate term, and offers it to its parent's
+//! best-result entry (§3.3). That composition step is what lets the search
+//! improve past the initial rollout and converge to the exact optimum on
+//! exhausted graphs.
 //!
-//! Milestone scope: UCT selection and round-robin AND allocation only
-//! (PUCT, uct_and/lct_and, priors, and the completion counter are deferred;
-//! see anti-unification-plan.md "Delivered / Deferred").
+//! Implemented policies: UCT selection at OR nodes and three AND-node effort
+//! selectors (`lct_and` default, `uct_and`, `round_robin`; §3.3.5). PUCT,
+//! priors, and an incremental completion counter are future work; see
+//! doc/future/au-associative-operators.md.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
@@ -33,6 +35,34 @@ use super::transport::{
 };
 use crate::config::AuIds;
 
+/// Effort-allocation selector at AND nodes (§3.3.5). An AND node does not
+/// choose an outcome — all children must be solved — so its selector decides
+/// where the next unit of refinement effort goes.
+///
+/// Fairness (§2.5.1 F): `RoundRobin` gives every child equal visits by
+/// rotation. `UctAnd`/`LctAnd` are fair through their exploration term,
+/// `C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))`, which diverges for any neglected
+/// child, so every child is still refined infinitely often.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AndSelector {
+    /// `i = counter mod arity; counter += 1` — equal effort by rotation.
+    /// Halves playout flux at every 2-child AND level, so certifying a
+    /// depth-d branching spine needs ~2^d playouts.
+    RoundRobin,
+    /// `argmax_i (1 − normalize(Q(child_i))) + C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))`
+    /// — refines the most promising (best-normalized-value) child first.
+    UctAnd,
+    /// `argmin_i (1 − normalize(Q(child_i))) − C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))`
+    /// — selects by lower confidence bound, deliberately visiting the weakest
+    /// child (an AND result's size is a sum, so its quality is limited by its
+    /// worst child). Default: it routes effort to the least-certain child, so
+    /// unexpanded/incomplete subtrees receive nearly all flux until they
+    /// close, making certification cost proportional to graph size instead of
+    /// exponential in depth.
+    #[default]
+    LctAnd,
+}
+
 /// MCGS configuration.
 #[derive(Debug, Clone)]
 pub struct McgsConfig {
@@ -42,6 +72,8 @@ pub struct McgsConfig {
     pub exploration_constant: f64,
     /// Normalization target (§2.5). Default 0.8.
     pub x_target: f64,
+    /// Effort allocation at AND nodes (§3.3.5). Default `LctAnd`.
+    pub and_selector: AndSelector,
 }
 
 impl Default for McgsConfig {
@@ -51,6 +83,7 @@ impl Default for McgsConfig {
             cycle_mode: CycleMode::AncestorOnly,
             exploration_constant: std::f64::consts::SQRT_2,
             x_target: 0.8,
+            and_selector: AndSelector::default(),
         }
     }
 }
@@ -110,6 +143,7 @@ struct AndStatsRef<'a, OS, O, CS> {
     value: f64,
     child_or_stats: &'a [OS],
     child_counts: &'a [u32],
+    child_visits: &'a [u64],
     round_robin: u64,
     transport_rows: &'a [u32],
     transport_cols: &'a [u32],
@@ -486,7 +520,8 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
             commutative: *self.commutative.get(id.to_usize()),
             value: self.value.get(node),
             child_or_stats: &self.child_or_stats.as_slice()[range.clone()],
-            child_counts: &self.child_counts.as_slice().expect("VecP is contiguous")[range],
+            child_counts: &self.child_counts.as_slice().expect("VecP is contiguous")[range.clone()],
+            child_visits: &self.child_visits.as_slice().expect("VecP is contiguous")[range],
             round_robin: self.round_robin.get(node),
             transport_rows: self.transport_rows.get(id.to_usize()),
             transport_cols: self.transport_cols.get(id.to_usize()),
@@ -882,57 +917,62 @@ fn close_values<A: AuIds, O: DenseId>(state: &mut McgsState<A, O>, root_idx: A::
 /// Structural completion certificate: an OR node is complete when it is terminal
 /// or every legal action has been expanded and each expanded AND-node is complete.
 /// An AND-node is complete when every child OR-node is complete.
+///
+/// Iterative (explicit frame stack) with the tri-state visited protocol of the
+/// recursive definition: 0 = unseen, 1 = active (on the current path; a re-entry
+/// is a cycle and conservatively rejects), 2 = memoized complete. The first
+/// `false` anywhere (unrealized edge, or active-cycle hit) short-circuits the
+/// whole certificate, exactly like the recursive `all(..)` chains.
 fn is_structurally_complete<A: AuIds, O: DenseId>(
     state: &McgsState<A, O>,
     or_idx: A::OrStats,
 ) -> bool {
-    // Tri-state: 0 = unseen, 1 = active (on current path), 2 = memoized complete.
     let mut visited: Vec<u8> = vec![0; state.or_stats.len()];
-    is_or_complete(state, or_idx, &mut visited)
-}
-
-fn is_or_complete<A: AuIds, O: DenseId>(
-    state: &McgsState<A, O>,
-    or_idx: A::OrStats,
-    visited: &mut [u8],
-) -> bool {
-    match visited[or_idx.to_usize()] {
-        2 => return true,  // memoized: already verified complete
-        1 => return false, // active: cycle, conservatively reject
-        _ => {}
+    // Frame: an OR node whose flattened child OR list (every expanded
+    // AND-node's children, in edge then child order) is being verified.
+    let mut stack: Vec<(A::OrStats, Vec<A::OrStats>, usize)> = Vec::new();
+    let mut pending = Some(or_idx);
+    loop {
+        if let Some(current) = pending.take() {
+            match visited[current.to_usize()] {
+                2 => {}            // memoized: already verified complete
+                1 => return false, // active: cycle, conservatively reject
+                _ => {
+                    visited[current.to_usize()] = 1; // mark active
+                    let stats = state.or_stat(current);
+                    if stats.terminal {
+                        visited[current.to_usize()] = 2;
+                    } else {
+                        // Every legal action must have been expanded.
+                        if stats.edge_and.iter().any(|e| e.is_none()) {
+                            return false;
+                        }
+                        // Every expanded AND-node's children must be complete.
+                        let children: Vec<A::OrStats> = stats
+                            .edge_and
+                            .iter()
+                            .flatten()
+                            .flat_map(|&a| state.and_stat(a).child_or_stats.iter().copied())
+                            .collect();
+                        stack.push((current, children, 0));
+                    }
+                }
+            }
+        }
+        loop {
+            let Some((_, children, cursor)) = stack.last_mut() else {
+                return true;
+            };
+            if *cursor < children.len() {
+                let child = children[*cursor];
+                *cursor += 1;
+                pending = Some(child);
+                break;
+            }
+            let (done, _, _) = stack.pop().expect("completion stack cannot be empty");
+            visited[done.to_usize()] = 2; // memoize
+        }
     }
-    visited[or_idx.to_usize()] = 1; // mark active
-
-    let stats = state.or_stat(or_idx);
-    if stats.terminal {
-        visited[or_idx.to_usize()] = 2;
-        return true;
-    }
-    // Every legal action must have been expanded.
-    if stats.edge_and.iter().any(|e| e.is_none()) {
-        return false;
-    }
-    // Every expanded AND-node must be complete.
-    let complete = stats.edge_and.iter().all(|e| {
-        let and_idx = e.unwrap();
-        is_and_complete(state, and_idx, visited)
-    });
-    if complete {
-        visited[or_idx.to_usize()] = 2; // memoize
-    }
-    complete
-}
-
-fn is_and_complete<A: AuIds, O: DenseId>(
-    state: &McgsState<A, O>,
-    and_idx: A::AndStats,
-    visited: &mut [u8],
-) -> bool {
-    state
-        .and_stat(and_idx)
-        .child_or_stats
-        .iter()
-        .all(|&child| is_or_complete(state, child, visited))
 }
 
 /// One feasible AC/ACI transport action at an OR node: a representation pair
@@ -1063,7 +1103,8 @@ where
     )
 }
 
-/// One playout (§3.3): descend by UCT / round-robin, expand the first
+/// One playout (§3.3): descend by UCT at OR nodes and the configured AND
+/// selector (§3.3.5), expand the first
 /// unrealized action met, rollout fresh children, then backpropagate along the
 /// traversed path (children before parents), recomputing values idempotently
 /// and offering composed results.
@@ -1135,9 +1176,10 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
         let and_idx = state.or_stat(current).edge_and[action_idx].unwrap();
         path.push(and_idx);
 
-        // AND allocation: round-robin (§3.3.5), with its own edge visit.
-        let pos = (state.and_stat(and_idx).round_robin as usize)
-            % state.and_stat(and_idx).child_or_stats.len();
+        // AND allocation: configured selector (§3.3.5), with its own edge
+        // visit. The round-robin counter is part of the overlay state and is
+        // maintained regardless of the selector in use.
+        let pos = select_and_child(state, and_idx, config);
         let child = state.and_stats.child_id(and_idx, pos);
         state.bump_and_round_robin(and_idx);
         state.bump_and_child_visit(child);
@@ -1186,6 +1228,94 @@ fn select_uct<A: AuIds, O: DenseId>(
         }
     }
     best_action
+}
+
+/// AND-node effort allocation (§3.3.5): pick the child position that receives
+/// the next unit of refinement effort, per the configured selector:
+///
+/// ```text
+/// round_robin:  i = counter mod arity;  counter += 1
+/// uct_and:      argmax_i (1 − normalize(Q(child_i))) + C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))
+/// lct_and:      argmin_i (1 − normalize(Q(child_i))) − C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))
+/// ```
+///
+/// Each child's Q is normalized against that child OR node's own
+/// `(min_size, max_size)` basis (§2.5.1 property A: per-node basis). Scores
+/// are evaluated in ascending child order with strict improvement, so ties
+/// resolve to the smallest (scored) child index.
+///
+/// **Terminal-skip gate (delivered refinement, see
+/// doc/future/au-associative-operators.md §5).** The value-guided selectors
+/// skip children whose OR node is terminal. A terminal child can never change
+/// the completion certificate and its Q is exact and immutable, so visiting
+/// it refines nothing. The bare formulas do NOT starve such children
+/// naturally: on a deep spine the nonterminal child's reward converges to
+/// `1 − λ/best_size`, a near-tie with the terminal sibling's reward of 1, and
+/// the exploration term then forces near-equal allocation (the bonus-balance
+/// steady state is N_terminal ≈ N_spine), reproducing round-robin's 2^-depth
+/// flux decay — pinned by `lct_and_without_terminal_skip_splits_flux_on_near_ties`.
+/// Skipping terminals is admissible under §2.5.1 F because fairness exists to
+/// converge child estimates, and a terminal child's estimate is already exact.
+/// When every child is terminal the choice is inert (descent stops at any
+/// terminal child and backpropagation is path-based); the smallest index is
+/// returned.
+fn select_and_child<A: AuIds, O: DenseId>(
+    state: &McgsState<A, O>,
+    and_idx: A::AndStats,
+    config: &McgsConfig,
+) -> usize {
+    match config.and_selector {
+        AndSelector::RoundRobin => {
+            let and = state.and_stat(and_idx);
+            let arity = and.child_or_stats.len();
+            debug_assert!(arity > 0, "AND selection requires at least one child");
+            (and.round_robin as usize) % arity
+        }
+        AndSelector::UctAnd => select_and_child_value_guided(state, and_idx, config, 1.0, true),
+        AndSelector::LctAnd => select_and_child_value_guided(state, and_idx, config, -1.0, true),
+    }
+}
+
+/// Value-guided scoring core shared by `uct_and` (`sign = +1`, argmax) and
+/// `lct_and` (`sign = −1`, argmin as argmax of the negated reward). The
+/// exploration bonus is added in both cases:
+/// `sign · reward(child) + C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))`.
+/// `skip_terminal` is the terminal-skip gate documented on
+/// [`select_and_child`]; production always passes `true`, tests exercise
+/// `false` to pin why the gate is required.
+fn select_and_child_value_guided<A: AuIds, O: DenseId>(
+    state: &McgsState<A, O>,
+    and_idx: A::AndStats,
+    config: &McgsConfig,
+    sign: f64,
+    skip_terminal: bool,
+) -> usize {
+    let and = state.and_stat(and_idx);
+    debug_assert!(
+        !and.child_or_stats.is_empty(),
+        "AND selection requires at least one child"
+    );
+    let total: u64 = and.child_visits.iter().sum();
+    let sqrt_total = (total as f64).sqrt();
+
+    let mut best_score = f64::NEG_INFINITY;
+    let mut best_child = None;
+    for (i, &child_idx) in and.child_or_stats.iter().enumerate() {
+        let child = state.or_stat(child_idx);
+        if skip_terminal && child.terminal {
+            continue;
+        }
+        let r = super::reward::reward(child.value, child.min_size, child.max_size, config.x_target);
+        let exploration =
+            config.exploration_constant * sqrt_total / (1.0 + and.child_visits[i] as f64);
+        let score = sign * r + exploration;
+        if score > best_score {
+            best_score = score;
+            best_child = Some(i);
+        }
+    }
+    // Every child terminal: the choice is inert (see the gate documentation).
+    best_child.unwrap_or(0)
 }
 
 /// AND value equation (§3.3): for fixed-action AND-nodes,
@@ -1550,6 +1680,15 @@ fn wide_quality((size, variant_mass): (u32, u32)) -> (u128, u128) {
 /// structural and transport action. Then recursively follow only the selected
 /// action. This is complete at the operator-choice level without becoming an
 /// exhaustive exact recursion over every action subtree.
+///
+/// Iterative frame machine (explicit stack): each frame holds the selection
+/// outcome for its node — a structural action's pair list or a transport
+/// action's positive-flow cells, in the recursive evaluation order
+/// (left-to-right pairs / row-major cells) — plus a child cursor and the
+/// collected child terms. Child OR nodes are created (contexts derived,
+/// `get_or_insert_or_node`) at descent time, exactly when the recursion would,
+/// so search-space side effects and term-pool interning order are identical.
+/// Generalize selections and `l == r` terminals complete without a frame.
 fn initial_rollout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
@@ -1560,153 +1699,211 @@ fn initial_rollout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let l = *space.or_arena.left.get(or_id.to_usize());
-    let r = *space.or_arena.right.get(or_id.to_usize());
-
-    if l == r {
-        return build_best_term(snap, pool, l);
+    struct Frame<Cfg: EGraphConfig> {
+        l: ClassOf<Cfg>,
+        r: ClassOf<Cfg>,
+        ctx_l: <Cfg::Au as AuIds>::Context,
+        ctx_r: <Cfg::Au as AuIds>::Context,
+        op: Cfg::O,
+        /// Transport frames compose commutatively and fall back to the
+        /// generalize action when no cell carries flow.
+        transport: bool,
+        /// Child pairs in evaluation order: `(left, right, count)`.
+        items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u32)>,
+        cursor: usize,
+        child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)>,
     }
 
-    generate_actions(snap, action_cache, l, r);
-    let actions = action_cache.get(l, r).unwrap().to_vec();
-    let transport = transport_actions(snap, space, or_id, l, r);
-    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_usize());
-    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_usize());
+    let mut stack: Vec<Frame<Cfg>> = Vec::new();
+    let mut pending = or_id;
+    loop {
+        // ── Enter: evaluate the selection for `pending` ──
+        let current = pending;
+        let l = *space.or_arena.left.get(current.to_usize());
+        let r = *space.or_arena.right.get(current.to_usize());
 
-    // Eager generalization is an explicit action and wins ties, so the
-    // initializer can never return a result worse than this valid incumbent.
-    let mut choice = InitialRolloutChoice::Generalize;
-    let mut best_estimate = wide_quality(static_generalize_quality(snap, l, r));
+        let mut done: Option<<Cfg::Au as AuIds>::Term> = None;
+        if l == r {
+            done = Some(build_best_term(snap, pool, l));
+        } else {
+            generate_actions(snap, action_cache, l, r);
+            let actions = action_cache.get(l, r).unwrap().to_vec();
+            let transport = transport_actions(snap, space, current, l, r);
+            let ctx_l = *space.or_arena.left_ctx.get(current.to_usize());
+            let ctx_r = *space.or_arena.right_ctx.get(current.to_usize());
 
-    for (action_idx, action) in actions.iter().enumerate() {
-        if action
-            .pairs
-            .iter()
-            .any(|p| space.is_cycle_blocked(or_id, p.left, p.right))
-        {
-            continue;
-        }
+            // Eager generalization is an explicit action and wins ties, so the
+            // initializer can never return a result worse than this valid incumbent.
+            let mut choice = InitialRolloutChoice::Generalize;
+            let mut best_estimate = wide_quality(static_generalize_quality(snap, l, r));
 
-        let mut estimate = (1u128, 0u128);
-        for pair in &action.pairs {
-            let child = wide_quality(static_generalize_quality(snap, pair.left, pair.right));
-            estimate.0 = estimate
-                .0
-                .checked_add(child.0 * u128::from(pair.count))
-                .expect("structural rollout size estimate overflow");
-            estimate.1 = estimate
-                .1
-                .checked_add(child.1 * u128::from(pair.count))
-                .expect("structural rollout variant estimate overflow");
-        }
-        if estimate < best_estimate {
-            best_estimate = estimate;
-            choice = InitialRolloutChoice::Structural(action_idx);
-        }
-    }
+            for (action_idx, action) in actions.iter().enumerate() {
+                if action
+                    .pairs
+                    .iter()
+                    .any(|p| space.is_cycle_blocked(current, p.left, p.right))
+                {
+                    continue;
+                }
 
-    for (descriptor, desc) in transport.iter().enumerate() {
-        let n_cols = desc.right.len();
-        let mut cost = vec![vec![Cell::Forbidden; n_cols]; desc.left.len()];
-        for (i, (lc, _)) in desc.left.iter().enumerate() {
-            for (j, (rc, _)) in desc.right.iter().enumerate() {
-                if desc.legal_cells[i * n_cols + j] {
-                    let (size, variant_mass) = static_generalize_quality(snap, *lc, *rc);
-                    cost[i][j] = Cell::Cost(size, variant_mass);
+                let mut estimate = (1u128, 0u128);
+                for pair in &action.pairs {
+                    let child =
+                        wide_quality(static_generalize_quality(snap, pair.left, pair.right));
+                    estimate.0 = estimate
+                        .0
+                        .checked_add(child.0 * u128::from(pair.count))
+                        .expect("structural rollout size estimate overflow");
+                    estimate.1 = estimate
+                        .1
+                        .checked_add(child.1 * u128::from(pair.count))
+                        .expect("structural rollout variant estimate overflow");
+                }
+                if estimate < best_estimate {
+                    best_estimate = estimate;
+                    choice = InitialRolloutChoice::Structural(action_idx);
+                }
+            }
+
+            for (descriptor, desc) in transport.iter().enumerate() {
+                let n_cols = desc.right.len();
+                let mut cost = vec![vec![Cell::Forbidden; n_cols]; desc.left.len()];
+                for (i, (lc, _)) in desc.left.iter().enumerate() {
+                    for (j, (rc, _)) in desc.right.iter().enumerate() {
+                        if desc.legal_cells[i * n_cols + j] {
+                            let (size, variant_mass) = static_generalize_quality(snap, *lc, *rc);
+                            cost[i][j] = Cell::Cost(size, variant_mass);
+                        }
+                    }
+                }
+                let Some(solution) = solve_transport(&TransportProblem {
+                    row_supply: desc.left.iter().map(|(_, count)| *count).collect(),
+                    col_demand: desc.right.iter().map(|(_, count)| *count).collect(),
+                    cost,
+                }) else {
+                    continue;
+                };
+                let estimate = (
+                    solution
+                        .total
+                        .0
+                        .checked_add(1)
+                        .expect("transport rollout size estimate overflow"),
+                    solution.total.1,
+                );
+                if estimate < best_estimate {
+                    best_estimate = estimate;
+                    choice = InitialRolloutChoice::Transport {
+                        descriptor,
+                        flow: solution.flow,
+                    };
+                }
+            }
+
+            match choice {
+                InitialRolloutChoice::Generalize => {
+                    done = Some(evaluate_generalize_action(snap, pool, l, r));
+                }
+                InitialRolloutChoice::Structural(action_idx) => {
+                    let action = &actions[action_idx];
+                    let items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u32)> = action
+                        .pairs
+                        .iter()
+                        .map(|pair| (pair.left, pair.right, pair.count))
+                        .collect();
+                    let capacity = items.len();
+                    stack.push(Frame {
+                        l,
+                        r,
+                        ctx_l,
+                        ctx_r,
+                        op: action.op,
+                        transport: false,
+                        items,
+                        cursor: 0,
+                        child_terms: Vec::with_capacity(capacity),
+                    });
+                }
+                InitialRolloutChoice::Transport { descriptor, flow } => {
+                    let desc = transport
+                        .into_iter()
+                        .nth(descriptor)
+                        .expect("selected transport descriptor disappeared");
+                    let n_cols = desc.right.len();
+                    // Positive-flow cells in row-major order: the recursive
+                    // evaluation order of the selected static flow.
+                    let mut items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u32)> = Vec::new();
+                    for (i, (lc, _)) in desc.left.iter().enumerate() {
+                        for (j, (rc, _)) in desc.right.iter().enumerate() {
+                            let count = flow[i][j];
+                            if count == 0 {
+                                continue;
+                            }
+                            debug_assert!(desc.legal_cells[i * n_cols + j]);
+                            items.push((*lc, *rc, count));
+                        }
+                    }
+                    stack.push(Frame {
+                        l,
+                        r,
+                        ctx_l,
+                        ctx_r,
+                        op: desc.op,
+                        transport: true,
+                        items,
+                        cursor: 0,
+                        child_terms: Vec::new(),
+                    });
                 }
             }
         }
-        let Some(solution) = solve_transport(&TransportProblem {
-            row_supply: desc.left.iter().map(|(_, count)| *count).collect(),
-            col_demand: desc.right.iter().map(|(_, count)| *count).collect(),
-            cost,
-        }) else {
-            continue;
-        };
-        let estimate = (
-            solution
-                .total
-                .0
-                .checked_add(1)
-                .expect("transport rollout size estimate overflow"),
-            solution.total.1,
-        );
-        if estimate < best_estimate {
-            best_estimate = estimate;
-            choice = InitialRolloutChoice::Transport {
-                descriptor,
-                flow: solution.flow,
-            };
-        }
-    }
 
-    match choice {
-        InitialRolloutChoice::Generalize => evaluate_generalize_action(snap, pool, l, r),
-        InitialRolloutChoice::Structural(action_idx) => {
-            let action = &actions[action_idx];
-            let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> =
-                Vec::with_capacity(action.pairs.len());
-            for pair in &action.pairs {
-                let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
-                    snap.reachability().is_reachable(pair.left, c)
-                });
-                let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                    snap.reachability().is_reachable(pair.right, c)
-                });
+        // ── Advance: deliver completed terms upward, descend or compose ──
+        loop {
+            if let Some(term) = done.take() {
+                let Some(parent) = stack.last_mut() else {
+                    return term;
+                };
+                let (_, _, count) = parent.items[parent.cursor];
+                parent.child_terms.push((term, count));
+                parent.cursor += 1;
+            }
+            let top = stack
+                .last_mut()
+                .expect("initial rollout stack cannot be empty");
+            if top.cursor < top.items.len() {
+                // Create the child OR node now, exactly when the recursion would.
+                let (cl, cr, _) = top.items[top.cursor];
+                let (pl, pr, pctx_l, pctx_r) = (top.l, top.r, top.ctx_l, top.ctx_r);
+                let child_ctx_l = space
+                    .derive_child_context(pctx_l, pl, |c| snap.reachability().is_reachable(cl, c));
+                let child_ctx_r = space
+                    .derive_child_context(pctx_r, pr, |c| snap.reachability().is_reachable(cr, c));
                 let (child_or, _) = space.get_or_insert_or_node(
-                    pair.left,
-                    pair.right,
+                    cl,
+                    cr,
                     child_ctx_l,
                     child_ctx_r,
-                    snap.best_size(pair.left),
-                    snap.best_size(pair.right),
+                    snap.best_size(cl),
+                    snap.best_size(cr),
                 );
-                let child_term = initial_rollout(snap, space, pool, action_cache, child_or);
-                child_terms.push((child_term, pair.count));
+                pending = child_or;
+                break; // descend
             }
-            pool.intern_action_result(
-                TermOp::EGraph(action.op),
-                &child_terms,
-                snap.op_is_commutative(action.op),
-            )
-        }
-        InitialRolloutChoice::Transport { descriptor, flow } => {
-            let desc = transport
-                .into_iter()
-                .nth(descriptor)
-                .expect("selected transport descriptor disappeared");
-            let n_cols = desc.right.len();
-            let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> = Vec::new();
-            for (i, (lc, _)) in desc.left.iter().enumerate() {
-                for (j, (rc, _)) in desc.right.iter().enumerate() {
-                    let count = flow[i][j];
-                    if count == 0 {
-                        continue;
-                    }
-                    debug_assert!(desc.legal_cells[i * n_cols + j]);
-                    let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
-                        snap.reachability().is_reachable(*lc, c)
-                    });
-                    let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                        snap.reachability().is_reachable(*rc, c)
-                    });
-                    let (child_or, _) = space.get_or_insert_or_node(
-                        *lc,
-                        *rc,
-                        child_ctx_l,
-                        child_ctx_r,
-                        snap.best_size(*lc),
-                        snap.best_size(*rc),
-                    );
-                    let child_term = initial_rollout(snap, space, pool, action_cache, child_or);
-                    child_terms.push((child_term, count));
+            let frame = stack.pop().expect("initial rollout stack cannot be empty");
+            done = Some(if frame.transport {
+                if frame.child_terms.is_empty() {
+                    evaluate_generalize_action(snap, pool, frame.l, frame.r)
+                } else {
+                    pool.intern_action_result(TermOp::EGraph(frame.op), &frame.child_terms, true)
                 }
-            }
-            if child_terms.is_empty() {
-                evaluate_generalize_action(snap, pool, l, r)
             } else {
-                pool.intern_action_result(TermOp::EGraph(desc.op), &child_terms, true)
-            }
+                pool.intern_action_result(
+                    TermOp::EGraph(frame.op),
+                    &frame.child_terms,
+                    snap.op_is_commutative(frame.op),
+                )
+            });
         }
     }
 }
@@ -2436,6 +2633,375 @@ mod tests {
         state.set_or_value(os(0), 2.0);
         state.restore(outer);
         assert!(!state.is_valid_token(&abandoned));
+    }
+
+    /// Synthetic 2-child AND fixture for AND-selector tests: both children
+    /// are nonterminal. Child 0 is strong (Q at its basis, reward near 1);
+    /// child 1 is weak (large Q against a small basis, reward near 0, the
+    /// high-uncertainty child). The AND node at index 0 has both as children.
+    fn two_child_and_fixture() -> McgsState {
+        let mut state: McgsState = McgsState::new();
+        // Child 0: nonterminal, strong estimate (reward near 1).
+        push_or(
+            &mut state,
+            OrStatsData {
+                initial_value: 2.1,
+                value: 2.1,
+                min_size: 2.0,
+                max_size: 2.0,
+                terminal: false,
+                edge_visits: vec![0],
+                edge_and: vec![None],
+            },
+        );
+        // Child 1: nonterminal, weak estimate (reward near 0).
+        push_or(
+            &mut state,
+            OrStatsData {
+                initial_value: 50.0,
+                value: 50.0,
+                min_size: 1.0,
+                max_size: 2.0,
+                terminal: false,
+                edge_visits: vec![0],
+                edge_and: vec![None],
+            },
+        );
+        push_and(
+            &mut state,
+            AndStatsData {
+                parent: os(0),
+                op: crate::id::OpId::from_usize(0),
+                commutative: false,
+                value: f64::INFINITY,
+                child_or_stats: vec![os(0), os(1)],
+                child_counts: vec![1, 1],
+                child_visits: vec![0, 0],
+                round_robin: 0,
+                transport_rows: Vec::new(),
+                transport_cols: Vec::new(),
+                transport_cell_map: Vec::new(),
+            },
+        );
+        state
+    }
+
+    /// Drive `select_and_child` for `n` rounds, maintaining both counters the
+    /// way `playout` does, and return the per-child visit totals.
+    fn drive_and_selector(state: &mut McgsState, selector: AndSelector, n: usize) -> Vec<u64> {
+        let config = McgsConfig {
+            and_selector: selector,
+            ..Default::default()
+        };
+        for _ in 0..n {
+            let pos = select_and_child(state, asid(0), &config);
+            let child = state.and_stats.child_id(asid(0), pos);
+            state.bump_and_round_robin(asid(0));
+            state.bump_and_child_visit(child);
+        }
+        state.and_stats.child_visits(asid(0)).to_vec()
+    }
+
+    /// LctAnd routes visits toward the less-visited / higher-uncertainty
+    /// child: the weak nonterminal (reward near 0) receives the dominant
+    /// share of flux, while its strong sibling (reward near 1) keeps only its
+    /// O(√N) exploration visits (§2.5.1 E/F: the diverging exploration term
+    /// still revisits it — with C = √2 that is ≈ C·√N visits, ~28 of 400).
+    #[test]
+    fn lct_and_routes_visits_to_the_uncertain_child() {
+        let mut state = two_child_and_fixture();
+        let visits = drive_and_selector(&mut state, AndSelector::LctAnd, 400);
+        assert!(
+            visits[1] >= 350,
+            "LctAnd must route the dominant share of effort to the weak child; got {visits:?}"
+        );
+        assert!(
+            (1..=50).contains(&visits[0]),
+            "the strong child must keep only its O(sqrt N) exploration visits; got {visits:?}"
+        );
+    }
+
+    /// UctAnd refines the most promising child: the strong child (reward
+    /// near 1) wins over the weak sibling, with the exploration term still
+    /// paying O(√N) visits to the weak child.
+    #[test]
+    fn uct_and_routes_visits_to_the_promising_child() {
+        let mut state = two_child_and_fixture();
+        let visits = drive_and_selector(&mut state, AndSelector::UctAnd, 400);
+        assert!(
+            visits[0] >= 350,
+            "UctAnd must route the dominant share of effort to the strong child; got {visits:?}"
+        );
+        assert!(
+            (1..=50).contains(&visits[1]),
+            "the neglected child must keep only its O(sqrt N) exploration visits; got {visits:?}"
+        );
+    }
+
+    /// Necessity proof for the terminal-skip gate: on a near-tie — a terminal
+    /// child (reward exactly 1) beside a nonterminal whose converged reward is
+    /// close to 1, the deep-spine steady state — the bare lct_and formula
+    /// splits flux roughly evenly (bonus-balance equalizes visits), which is
+    /// exactly the round-robin 2^-depth decay the value-guided selector must
+    /// fix. With the gate, the nonterminal child receives every visit.
+    #[test]
+    fn lct_and_without_terminal_skip_splits_flux_on_near_ties() {
+        fn near_tie_fixture() -> McgsState {
+            let mut state: McgsState = McgsState::new();
+            // Child 0: terminal (l = r), reward exactly 1.
+            push_or(
+                &mut state,
+                OrStatsData {
+                    initial_value: 1.0,
+                    value: 1.0,
+                    min_size: 1.0,
+                    max_size: 1.0,
+                    terminal: true,
+                    edge_visits: Vec::new(),
+                    edge_and: Vec::new(),
+                },
+            );
+            // Child 1: nonterminal spine child whose Q has converged to just
+            // past its basis: reward = 1 - ncr is close to (but below) 1.
+            push_or(
+                &mut state,
+                OrStatsData {
+                    initial_value: 40.2,
+                    value: 40.2,
+                    min_size: 40.0,
+                    max_size: 40.0,
+                    terminal: false,
+                    edge_visits: vec![0],
+                    edge_and: vec![None],
+                },
+            );
+            push_and(
+                &mut state,
+                AndStatsData {
+                    parent: os(0),
+                    op: crate::id::OpId::from_usize(0),
+                    commutative: false,
+                    value: f64::INFINITY,
+                    child_or_stats: vec![os(0), os(1)],
+                    child_counts: vec![1, 1],
+                    child_visits: vec![0, 0],
+                    round_robin: 0,
+                    transport_rows: Vec::new(),
+                    transport_cols: Vec::new(),
+                    transport_cell_map: Vec::new(),
+                },
+            );
+            state
+        }
+
+        let config = McgsConfig::default();
+        assert_eq!(config.and_selector, AndSelector::LctAnd);
+
+        // Ungated formula: near-equal split (the defect).
+        let mut state = near_tie_fixture();
+        for _ in 0..400 {
+            let pos = select_and_child_value_guided(&state, asid(0), &config, -1.0, false);
+            let child = state.and_stats.child_id(asid(0), pos);
+            state.bump_and_round_robin(asid(0));
+            state.bump_and_child_visit(child);
+        }
+        let ungated = state.and_stats.child_visits(asid(0)).to_vec();
+        assert!(
+            ungated[0] >= 150 && ungated[1] >= 150,
+            "without the gate, near-ties must show the flux split that motivates it; \
+             got {ungated:?} (if this fails, the gate may no longer be necessary — \
+             re-evaluate it before weakening this pin)"
+        );
+
+        // Production selector (gated): the terminal child is skipped entirely.
+        let mut state = near_tie_fixture();
+        let visits = drive_and_selector(&mut state, AndSelector::LctAnd, 400);
+        assert_eq!(
+            visits,
+            vec![0, 400],
+            "with the gate, the nonterminal child receives every visit"
+        );
+    }
+
+    /// When every child of an AND node is terminal the value-guided selectors
+    /// return the smallest index (the choice is inert: descent stops at any
+    /// terminal child).
+    #[test]
+    fn value_guided_selector_is_inert_when_all_children_are_terminal() {
+        let mut state: McgsState = McgsState::new();
+        for value in [1.0, 2.0] {
+            push_or(
+                &mut state,
+                OrStatsData {
+                    initial_value: value,
+                    value,
+                    min_size: 1.0,
+                    max_size: 1.0,
+                    terminal: true,
+                    edge_visits: Vec::new(),
+                    edge_and: Vec::new(),
+                },
+            );
+        }
+        push_and(
+            &mut state,
+            AndStatsData {
+                parent: os(0),
+                op: crate::id::OpId::from_usize(0),
+                commutative: false,
+                value: f64::INFINITY,
+                child_or_stats: vec![os(0), os(1)],
+                child_counts: vec![1, 1],
+                child_visits: vec![0, 0],
+                round_robin: 0,
+                transport_rows: Vec::new(),
+                transport_cols: Vec::new(),
+                transport_cell_map: Vec::new(),
+            },
+        );
+        for selector in [AndSelector::LctAnd, AndSelector::UctAnd] {
+            let config = McgsConfig {
+                and_selector: selector,
+                ..Default::default()
+            };
+            assert_eq!(select_and_child(&state, asid(0), &config), 0);
+        }
+    }
+
+    /// RoundRobin rotates strictly, splitting visits equally regardless of
+    /// values, and advances the shared round-robin counter.
+    #[test]
+    fn round_robin_rotates_regardless_of_values() {
+        let mut state = two_child_and_fixture();
+        let config = McgsConfig {
+            and_selector: AndSelector::RoundRobin,
+            ..Default::default()
+        };
+        // Strict alternation 0, 1, 0, 1, ...
+        for k in 0..10 {
+            let pos = select_and_child(&state, asid(0), &config);
+            assert_eq!(pos, k % 2, "round-robin must rotate in order");
+            let child = state.and_stats.child_id(asid(0), pos);
+            state.bump_and_round_robin(asid(0));
+            state.bump_and_child_visit(child);
+        }
+        assert_eq!(state.and_stats.child_visits(asid(0)), &[5, 5]);
+        assert_eq!(state.and_stat(asid(0)).round_robin, 10);
+    }
+
+    /// The round-robin counter is overlay state and advances under every
+    /// selector (playout bumps it unconditionally), so switching selectors
+    /// mid-session cannot desynchronize pinned overlay expectations.
+    #[test]
+    fn round_robin_counter_advances_under_value_guided_selectors() {
+        for selector in [AndSelector::LctAnd, AndSelector::UctAnd] {
+            let mut state = two_child_and_fixture();
+            drive_and_selector(&mut state, selector, 7);
+            assert_eq!(
+                state.and_stat(asid(0)).round_robin,
+                7,
+                "{selector:?}: the round-robin counter must be maintained regardless of selector"
+            );
+        }
+    }
+
+    /// AND-selector ties resolve to the smallest child index: two identical
+    /// children give identical scores, and the first strict maximum wins.
+    #[test]
+    fn and_selector_ties_resolve_to_smallest_index() {
+        let mut state: McgsState = McgsState::new();
+        for _ in 0..2 {
+            push_or(
+                &mut state,
+                OrStatsData {
+                    initial_value: 5.0,
+                    value: 5.0,
+                    min_size: 1.0,
+                    max_size: 2.0,
+                    terminal: false,
+                    edge_visits: vec![0],
+                    edge_and: vec![None],
+                },
+            );
+        }
+        push_and(
+            &mut state,
+            AndStatsData {
+                parent: os(0),
+                op: crate::id::OpId::from_usize(0),
+                commutative: false,
+                value: f64::INFINITY,
+                child_or_stats: vec![os(0), os(1)],
+                child_counts: vec![1, 1],
+                child_visits: vec![0, 0],
+                round_robin: 0,
+                transport_rows: Vec::new(),
+                transport_cols: Vec::new(),
+                transport_cell_map: Vec::new(),
+            },
+        );
+        for selector in [AndSelector::LctAnd, AndSelector::UctAnd] {
+            let config = McgsConfig {
+                and_selector: selector,
+                ..Default::default()
+            };
+            assert_eq!(
+                select_and_child(&state, asid(0), &config),
+                0,
+                "{selector:?}: ties must resolve to the smallest child index"
+            );
+        }
+    }
+
+    /// End-to-end oracle equality under every AND selector: on a small
+    /// instance each selector certifies Exact and matches the exact solver.
+    #[test]
+    fn mcgs_matches_exact_under_every_and_selector() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let f_op = eg.register_op2("f", int, int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let fab = eg.add(f_op, &[a, b]);
+        let fac = eg.add(f_op, &[a, c]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(fab).unwrap();
+        let rc = snap.class_of(fac).unwrap();
+
+        let (exact_term, exact_pool) =
+            eager_with_memo(&snap, lc, rc, CycleMode::AncestorOnly).unwrap();
+        let exact_size = exact_pool.size(exact_term);
+
+        for selector in [
+            AndSelector::RoundRobin,
+            AndSelector::UctAnd,
+            AndSelector::LctAnd,
+        ] {
+            let config = McgsConfig {
+                playouts: 500,
+                cycle_mode: CycleMode::AncestorOnly,
+                and_selector: selector,
+                ..Default::default()
+            };
+            let (mcgs_term, mcgs_pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+            assert_eq!(
+                mcgs_pool.size(mcgs_term),
+                exact_size,
+                "{selector:?}: MCGS must match the exact optimum"
+            );
+            assert_eq!(
+                completion,
+                super::super::session::Completion::Exact,
+                "{selector:?}: this tiny graph must certify within 500 playouts"
+            );
+        }
     }
 
     #[test]

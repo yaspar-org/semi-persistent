@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Anti-unification over the frozen e-graph.
 //!
-//! Implements the core of `doc/future/anti-unification-mcgs.md`: an exact memoized
+//! Implements `doc/design/19-anti-unification.md`: an exact memoized
 //! solver and a Monte-Carlo graph search over the AND/OR graph of class-pair
 //! subproblems, sharing one search-space layer, term pool, and best-result table.
 //!
@@ -20,16 +20,17 @@
 //! pass, or `BudgetExhausted`). Interpreter commands `(antiunify)` and
 //! `(checkau)` expose the system from .egg programs.
 //!
-//! **Milestone scope** (see `anti-unification-plan.md`, "Delivered / Deferred"):
-//! UCT + round-robin only (no PUCT, priors, or uct_and/lct_and). AU id widths
-//! follow `EGraphConfig::Au`: every container instantiates its id family from
+//! The implemented policies are UCT OR-selection and three AND-node effort
+//! selectors — `lct_and` (default), `uct_and`, and `round_robin` (§3.3.5)
+//! (alternatives such as PUCT and priors are future work; see
+//! `doc/future/au-associative-operators.md`). AU id widths follow
+//! `EGraphConfig::Au`: every container instantiates its id family from
 //! the configuration (`AuIds31` for DefaultConfig, `AuIds64` for Config64).
 //!
-//! One deliberate extension beyond the design doc: results are ranked by the
-//! lexicographic key `(size, variant_mass)` — at equal size, the term with less
-//! structure under `Variants` nodes (= more shared backbone) wins, so
-//! `f(Variants(x,y))` beats `Variants(x, f(y))`. See `terms.rs` and Appendix C.1
-//! of the design doc.
+//! Results are ranked by the lexicographic key `(size, variant_mass)` — at equal
+//! size, the term with less structure under `Variants` nodes (= more shared
+//! backbone) wins, so `f(Variants(x,y))` beats `Variants(x, f(y))`. See `terms.rs`
+//! and Appendix C.1 of the design chapter.
 
 pub mod ac_repr;
 pub mod actions;

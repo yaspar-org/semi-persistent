@@ -63,7 +63,7 @@ where
 
     let mut memo: Vec<MemoState<<Cfg::Au as AuIds>::Term>> = Vec::new();
 
-    let result = solve_recursive(
+    let result = solve_iterative(
         snap,
         &mut space,
         &mut pool,
@@ -83,188 +83,385 @@ fn ensure_memo<T: Copy, O: DenseId>(memo: &mut Vec<MemoState<T>>, or_id: O) {
     }
 }
 
-fn solve_recursive<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+/// Stage of one in-progress OR-node solve (one frame of the explicit stack).
+enum Stage<Cfg: EGraphConfig> {
+    /// Iterating the cached non-AC actions: `action_idx` is the current
+    /// action, `pair_idx` the next child pair to solve, `child_terms` the
+    /// terms solved so far for the current action.
+    Actions {
+        action_idx: usize,
+        pair_idx: usize,
+        child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)>,
+    },
+    /// Iterating AC/ACI operators, their representation pairs, and each
+    /// pair's cell subproblems (§3.4.4). `pairs` holds the current operator's
+    /// representation pairs; `cells` the active pair's cell iteration.
+    Transport {
+        ops: Vec<Cfg::O>,
+        op_idx: usize,
+        pairs: Vec<(
+            ac_repr::Monomial<ClassOf<Cfg>>,
+            ac_repr::Monomial<ClassOf<Cfg>>,
+        )>,
+        pair_idx: usize,
+        cells: Option<CellState<Cfg>>,
+    },
+}
+
+/// Cell iteration state for one AC/ACI representation pair: row-major cursor
+/// `(i, j)` over the cost matrix, solving each legal cell subproblem once.
+struct CellState<Cfg: EGraphConfig> {
+    lm: ac_repr::Monomial<ClassOf<Cfg>>,
+    rm: ac_repr::Monomial<ClassOf<Cfg>>,
+    i: usize,
+    j: usize,
+    cost: Vec<Vec<Cell>>,
+    cell_term: Vec<Vec<Option<<Cfg::Au as AuIds>::Term>>>,
+}
+
+/// One frame of the explicit solve stack: an OR node whose actions are being
+/// enumerated. `best`/`best_quality` carry the incumbent (seeded by the
+/// terminal generalize action) across stages.
+struct SolveFrame<Cfg: EGraphConfig> {
+    or_id: <Cfg::Au as AuIds>::Or,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
+    ctx_l: <Cfg::Au as AuIds>::Context,
+    ctx_r: <Cfg::Au as AuIds>::Context,
+    actions: Vec<super::actions::Action<Cfg::O, Cfg::Au>>,
+    best: <Cfg::Au as AuIds>::Term,
+    best_quality: (u32, u32),
+    stage: Stage<Cfg>,
+}
+
+/// Iterative memoized solve (explicit frame stack). Semantics are those of the
+/// recursive definition (§3.2/§A.5), preserved step for step:
+///
+/// * memo protocol: `Empty` → mark `Visiting` on entry, publish `Solved` plus
+///   `BestResults` (offer + `mark_exact`) at completion; a `Visiting` re-entry
+///   is unreachable by the cycle-mode rank argument and panics loudly — a
+///   silent fallback would let a parent be marked exact with a nonminimal
+///   result;
+/// * evaluation order: terminal generalize incumbent first, then cached non-AC
+///   actions in order (child pairs left to right, candidate composed and
+///   compared before the next action), then AC/ACI operators in
+///   `common_ac_ops` order, representation pairs per operator, cells row-major
+///   — the transport solve for a pair runs immediately after its last cell;
+/// * side-effect timing: child contexts are derived and child OR nodes created
+///   at descent time, exactly when the recursion would create them.
+///
+/// State is re-fetched from the arenas at each step (no borrow is held across
+/// a child evaluation), mirroring the recursive code's re-fetch pattern.
+#[allow(clippy::too_many_arguments)]
+fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
     cache: &mut ActionCache<Cfg::O, Cfg::Au>,
     results: &mut BestResults<Cfg::Au>,
     memo: &mut Vec<MemoState<<Cfg::Au as AuIds>::Term>>,
-    or_id: <Cfg::Au as AuIds>::Or,
+    root_or: <Cfg::Au as AuIds>::Or,
 ) -> <Cfg::Au as AuIds>::Term
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    ensure_memo(memo, or_id);
-    match memo[or_id.to_usize()] {
-        MemoState::Solved(term) => return term,
-        MemoState::Visiting => {
-            // Unreachable by the cycle-mode rank argument (§3.2): every recursive
-            // child state either strictly shrinks the reachable-class budget or is
-            // a distinct cache state. A re-entry means that invariant is broken;
-            // failing loudly is required — a silent fallback would let a parent be
-            // marked exact with a nonminimal result.
-            unreachable!("exact solver re-entered {or_id:?}: cycle-mode rank invariant violated");
-        }
-        MemoState::Empty => {}
-    }
-
-    memo[or_id.to_usize()] = MemoState::Visiting;
-
-    let l = *space.or_arena.left.get(or_id.to_usize());
-    let r = *space.or_arena.right.get(or_id.to_usize());
-
-    // Terminal case: l == r.
-    if l == r {
-        let term = build_best_term(snap, pool, l);
-        memo[or_id.to_usize()] = MemoState::Solved(term);
-        results.ensure_capacity(or_id);
-        results.offer(or_id, term, pool.quality(term));
-        results.mark_exact(or_id);
-        return term;
-    }
-
-    // The terminal generalize action is part of the shared action space. Eagerly
-    // evaluate it as a valid incumbent before considering structural actions.
-    let generalize = evaluate_generalize_action(snap, pool, l, r);
-    let mut best = generalize;
-    let mut best_quality = pool.quality(generalize);
-
-    // Generate actions for this class pair.
-    generate_actions(snap, cache, l, r);
-    let actions = cache.get(l, r).unwrap().to_vec();
-
-    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_usize());
-    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_usize());
-
-    for action in &actions {
-        // Check cycle filtering for each pair in this action.
-        let mut blocked = false;
-        for pair in &action.pairs {
-            if space.is_cycle_blocked(or_id, pair.left, pair.right) {
-                blocked = true;
-                break;
+    let mut stack: Vec<SolveFrame<Cfg>> = Vec::new();
+    let mut pending = root_or;
+    loop {
+        // ── Enter `pending`: memo check, terminal case, or a new frame ──
+        let or_id = pending;
+        ensure_memo(memo, or_id);
+        let mut done: Option<<Cfg::Au as AuIds>::Term> = None;
+        match memo[or_id.to_usize()] {
+            MemoState::Solved(term) => done = Some(term),
+            MemoState::Visiting => {
+                // Unreachable by the cycle-mode rank argument (§3.2): every child
+                // state either strictly shrinks the reachable-class budget or is
+                // a distinct cache state. A re-entry means that invariant is broken;
+                // failing loudly is required — a silent fallback would let a parent be
+                // marked exact with a nonminimal result.
+                unreachable!(
+                    "exact solver re-entered {or_id:?}: cycle-mode rank invariant violated"
+                );
             }
-        }
-        if blocked {
-            continue;
-        }
+            MemoState::Empty => {
+                memo[or_id.to_usize()] = MemoState::Visiting;
 
-        // Solve each child pair.
-        let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> =
-            Vec::with_capacity(action.pairs.len());
+                let l = *space.or_arena.left.get(or_id.to_usize());
+                let r = *space.or_arena.right.get(or_id.to_usize());
 
-        for pair in &action.pairs {
-            // Derive child contexts.
-            let child_ctx_l = space
-                .derive_child_context(ctx_l, l, |c| snap.reachability().is_reachable(pair.left, c));
-            let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                snap.reachability().is_reachable(pair.right, c)
-            });
+                if l == r {
+                    // Terminal case: l == r.
+                    let term = build_best_term(snap, pool, l);
+                    memo[or_id.to_usize()] = MemoState::Solved(term);
+                    results.ensure_capacity(or_id);
+                    results.offer(or_id, term, pool.quality(term));
+                    results.mark_exact(or_id);
+                    done = Some(term);
+                } else {
+                    // The terminal generalize action is part of the shared action
+                    // space. Eagerly evaluate it as a valid incumbent before
+                    // considering structural actions.
+                    let generalize = evaluate_generalize_action(snap, pool, l, r);
+                    let best_quality = pool.quality(generalize);
 
-            let l_best_sz = snap.best_size(pair.left);
-            let r_best_sz = snap.best_size(pair.right);
-            let (child_or, _) = space.get_or_insert_or_node(
-                pair.left,
-                pair.right,
-                child_ctx_l,
-                child_ctx_r,
-                l_best_sz,
-                r_best_sz,
-            );
+                    // Generate actions for this class pair.
+                    generate_actions(snap, cache, l, r);
+                    let actions = cache.get(l, r).unwrap().to_vec();
 
-            let child_term = solve_recursive(snap, space, pool, cache, results, memo, child_or);
-            child_terms.push((child_term, pair.count));
-        }
+                    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_usize());
+                    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_usize());
 
-        // Build the candidate term. Child order is positional semantics for
-        // ordered operators and canonical-sorted for commutative ones (P0 fix:
-        // sorting an ordered operator's children changes its meaning).
-        let commutative = snap.op_is_commutative(action.op);
-        let candidate =
-            pool.intern_action_result(TermOp::EGraph(action.op), &child_terms, commutative);
-        let candidate_quality = pool.quality(candidate);
-
-        if candidate_quality < best_quality {
-            best = candidate;
-            best_quality = candidate_quality;
-        }
-    }
-
-    // AC/ACI operators: zero matrix enumeration. For each canonical
-    // representation pair, recursively solve every legal cell subproblem once,
-    // then one lexicographic min-cost transportation solve returns the optimal
-    // matching directly (§3.4.4). Cycle-blocked cells are forbidden edges;
-    // infeasible pairs contribute no candidate.
-    for op in ac_repr::common_ac_ops(snap, l, r) {
-        for (lm, rm) in ac_repr::representation_pairs(snap, l, r, op) {
-            let rows = lm.len();
-            let cols = rm.len();
-
-            // Solve each cell once (memoized across the whole search); blocked
-            // cells become forbidden transport edges.
-            let mut cost: Vec<Vec<Cell>> = vec![vec![Cell::Forbidden; cols]; rows];
-            let mut cell_term: Vec<Vec<Option<<Cfg::Au as AuIds>::Term>>> =
-                vec![vec![None; cols]; rows];
-            for (i, &(lc, _)) in lm.iter().enumerate() {
-                for (j, &(rc, _)) in rm.iter().enumerate() {
-                    if space.is_cycle_blocked(or_id, lc, rc) {
-                        continue;
-                    }
-                    let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
-                        snap.reachability().is_reachable(lc, c)
+                    stack.push(SolveFrame {
+                        or_id,
+                        l,
+                        r,
+                        ctx_l,
+                        ctx_r,
+                        actions,
+                        best: generalize,
+                        best_quality,
+                        stage: Stage::Actions {
+                            action_idx: 0,
+                            pair_idx: 0,
+                            child_terms: Vec::new(),
+                        },
                     });
-                    let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                        snap.reachability().is_reachable(rc, c)
-                    });
-                    let (child_or, _) = space.get_or_insert_or_node(
-                        lc,
-                        rc,
-                        child_ctx_l,
-                        child_ctx_r,
-                        snap.best_size(lc),
-                        snap.best_size(rc),
-                    );
-                    let term = solve_recursive(snap, space, pool, cache, results, memo, child_or);
-                    let (s, v) = pool.quality(term);
-                    cost[i][j] = Cell::Cost(s, v);
-                    cell_term[i][j] = Some(term);
                 }
             }
+        }
 
-            let problem = TransportProblem {
-                row_supply: lm.iter().map(|(_, k)| *k).collect(),
-                col_demand: rm.iter().map(|(_, k)| *k).collect(),
-                cost,
-            };
-            let Some(solution) = solve_transport(&problem) else {
-                continue; // infeasible under cycle blocking: no candidate here
+        // ── Advance the top frame until it descends or completes ──
+        'advance: loop {
+            let Some(frame) = stack.last_mut() else {
+                return done.expect("exact solve must produce a term for the root");
             };
 
-            // Compose the winning matrix into a term. AC/ACI kinds are
-            // commutative: canonical child order.
-            let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> = Vec::new();
-            for (i, row) in solution.flow.iter().enumerate() {
-                for (j, &x) in row.iter().enumerate() {
-                    if x > 0 {
-                        child_terms.push((cell_term[i][j].unwrap(), x));
+            // Deliver a completed child term to the frame's current stage.
+            if let Some(term) = done.take() {
+                match &mut frame.stage {
+                    Stage::Actions {
+                        action_idx,
+                        pair_idx,
+                        child_terms,
+                    } => {
+                        let count = frame.actions[*action_idx].pairs[*pair_idx].count;
+                        child_terms.push((term, count));
+                        *pair_idx += 1;
+                    }
+                    Stage::Transport { cells, .. } => {
+                        let cell = cells
+                            .as_mut()
+                            .expect("transport child delivered without an active cell");
+                        let (s, v) = pool.quality(term);
+                        cell.cost[cell.i][cell.j] = Cell::Cost(s, v);
+                        cell.cell_term[cell.i][cell.j] = Some(term);
+                        cell.j += 1;
                     }
                 }
             }
-            let candidate = pool.intern_action_result(TermOp::EGraph(op), &child_terms, true);
-            let candidate_quality = pool.quality(candidate);
-            if candidate_quality < best_quality {
-                best = candidate;
-                best_quality = candidate_quality;
+
+            // Drive the current stage forward.
+            match &mut frame.stage {
+                Stage::Actions {
+                    action_idx,
+                    pair_idx,
+                    child_terms,
+                } => {
+                    loop {
+                        if *action_idx >= frame.actions.len() {
+                            // Non-AC actions exhausted: move to the AC/ACI
+                            // transport stage (§3.4.4).
+                            frame.stage = Stage::Transport {
+                                ops: ac_repr::common_ac_ops(snap, frame.l, frame.r),
+                                op_idx: 0,
+                                pairs: Vec::new(),
+                                pair_idx: 0,
+                                cells: None,
+                            };
+                            continue 'advance;
+                        }
+                        let action = &frame.actions[*action_idx];
+                        // Starting this action: check cycle filtering for each
+                        // pair (before any child of this action is solved).
+                        if *pair_idx == 0 && child_terms.is_empty() {
+                            let blocked = action
+                                .pairs
+                                .iter()
+                                .any(|p| space.is_cycle_blocked(frame.or_id, p.left, p.right));
+                            if blocked {
+                                *action_idx += 1;
+                                continue;
+                            }
+                        }
+                        if *pair_idx < action.pairs.len() {
+                            // Solve the next child pair: derive child contexts
+                            // and create the child OR node at descent time.
+                            let pair = action.pairs[*pair_idx];
+                            let (l, r, ctx_l, ctx_r) = (frame.l, frame.r, frame.ctx_l, frame.ctx_r);
+                            let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
+                                snap.reachability().is_reachable(pair.left, c)
+                            });
+                            let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
+                                snap.reachability().is_reachable(pair.right, c)
+                            });
+                            let l_best_sz = snap.best_size(pair.left);
+                            let r_best_sz = snap.best_size(pair.right);
+                            let (child_or, _) = space.get_or_insert_or_node(
+                                pair.left,
+                                pair.right,
+                                child_ctx_l,
+                                child_ctx_r,
+                                l_best_sz,
+                                r_best_sz,
+                            );
+                            pending = child_or;
+                            break 'advance; // descend
+                        }
+                        // All child pairs solved: build the candidate term.
+                        // Child order is positional semantics for ordered
+                        // operators and canonical-sorted for commutative ones
+                        // (P0 fix: sorting an ordered operator's children
+                        // changes its meaning).
+                        let commutative = snap.op_is_commutative(action.op);
+                        let op = action.op;
+                        let candidate =
+                            pool.intern_action_result(TermOp::EGraph(op), child_terms, commutative);
+                        let candidate_quality = pool.quality(candidate);
+                        if candidate_quality < frame.best_quality {
+                            frame.best = candidate;
+                            frame.best_quality = candidate_quality;
+                        }
+                        *action_idx += 1;
+                        *pair_idx = 0;
+                        child_terms.clear();
+                    }
+                }
+                Stage::Transport {
+                    ops,
+                    op_idx,
+                    pairs,
+                    pair_idx,
+                    cells,
+                } => {
+                    loop {
+                        if let Some(cell) = cells {
+                            let rows = cell.lm.len();
+                            let cols = cell.rm.len();
+                            // Row-major scan for the next legal cell to solve;
+                            // blocked cells stay Forbidden (forbidden transport
+                            // edges).
+                            let mut dispatched = false;
+                            while cell.i < rows {
+                                if cell.j >= cols {
+                                    cell.i += 1;
+                                    cell.j = 0;
+                                    continue;
+                                }
+                                let (lc, _) = cell.lm[cell.i];
+                                let (rc, _) = cell.rm[cell.j];
+                                if space.is_cycle_blocked(frame.or_id, lc, rc) {
+                                    cell.j += 1;
+                                    continue;
+                                }
+                                let (l, r, ctx_l, ctx_r) =
+                                    (frame.l, frame.r, frame.ctx_l, frame.ctx_r);
+                                let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
+                                    snap.reachability().is_reachable(lc, c)
+                                });
+                                let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
+                                    snap.reachability().is_reachable(rc, c)
+                                });
+                                let (child_or, _) = space.get_or_insert_or_node(
+                                    lc,
+                                    rc,
+                                    child_ctx_l,
+                                    child_ctx_r,
+                                    snap.best_size(lc),
+                                    snap.best_size(rc),
+                                );
+                                pending = child_or;
+                                dispatched = true;
+                                break;
+                            }
+                            if dispatched {
+                                break 'advance; // descend into the cell subproblem
+                            }
+                            // Every cell handled: one lexicographic min-cost
+                            // transportation solve returns the optimal matching
+                            // directly (§3.4.4). Infeasible pairs contribute no
+                            // candidate.
+                            let cell = cells.take().expect("cell state present");
+                            let problem = TransportProblem {
+                                row_supply: cell.lm.iter().map(|(_, k)| *k).collect(),
+                                col_demand: cell.rm.iter().map(|(_, k)| *k).collect(),
+                                cost: cell.cost,
+                            };
+                            if let Some(solution) = solve_transport(&problem) {
+                                // Compose the winning matrix into a term. AC/ACI
+                                // kinds are commutative: canonical child order.
+                                let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> =
+                                    Vec::new();
+                                for (i, row) in solution.flow.iter().enumerate() {
+                                    for (j, &x) in row.iter().enumerate() {
+                                        if x > 0 {
+                                            child_terms.push((cell.cell_term[i][j].unwrap(), x));
+                                        }
+                                    }
+                                }
+                                let op = ops[*op_idx - 1];
+                                let candidate = pool.intern_action_result(
+                                    TermOp::EGraph(op),
+                                    &child_terms,
+                                    true,
+                                );
+                                let candidate_quality = pool.quality(candidate);
+                                if candidate_quality < frame.best_quality {
+                                    frame.best = candidate;
+                                    frame.best_quality = candidate_quality;
+                                }
+                            }
+                            *pair_idx += 1;
+                            continue;
+                        }
+                        if *pair_idx < pairs.len() {
+                            // Begin the next representation pair: fresh cost and
+                            // term matrices, all cells Forbidden until solved.
+                            let (lm, rm) = pairs[*pair_idx].clone();
+                            let rows = lm.len();
+                            let cols = rm.len();
+                            *cells = Some(CellState {
+                                lm,
+                                rm,
+                                i: 0,
+                                j: 0,
+                                cost: vec![vec![Cell::Forbidden; cols]; rows],
+                                cell_term: vec![vec![None; cols]; rows],
+                            });
+                            continue;
+                        }
+                        if *op_idx < ops.len() {
+                            // Begin the next AC/ACI operator: enumerate its
+                            // representation pairs.
+                            let op = ops[*op_idx];
+                            *pairs = ac_repr::representation_pairs(snap, frame.l, frame.r, op);
+                            *pair_idx = 0;
+                            *op_idx += 1;
+                            continue;
+                        }
+                        // All operators exhausted: this node is solved.
+                        let frame = stack.pop().expect("solve stack cannot be empty");
+                        memo[frame.or_id.to_usize()] = MemoState::Solved(frame.best);
+                        results.ensure_capacity(frame.or_id);
+                        results.offer(frame.or_id, frame.best, frame.best_quality);
+                        results.mark_exact(frame.or_id);
+                        done = Some(frame.best);
+                        continue 'advance; // deliver to the parent frame
+                    }
+                }
             }
         }
     }
-
-    memo[or_id.to_usize()] = MemoState::Solved(best);
-    results.ensure_capacity(or_id);
-    results.offer(or_id, best, best_quality);
-    results.mark_exact(or_id);
-    best
 }
 
 #[cfg(test)]

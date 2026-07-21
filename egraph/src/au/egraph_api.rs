@@ -51,7 +51,7 @@ where
     /// Best (minimum) size of any finite member in each class.
     best_size: Vec<u32>,
     /// Global id of the best (cheapest) member per class.
-    best_node: Vec<Cfg::G>,
+    best_node: Vec<Option<Cfg::G>>,
     /// Reachability data: which class is reachable from which.
     reach: Reachability<Cfg::Au>,
 }
@@ -199,9 +199,14 @@ where
     }
 
     /// The global id of the best member for class `au`.
+    ///
+    /// # Panics
+    /// Panics if `au` has no admissible finite member. Callers operating on
+    /// auxiliary classes must check [`Self::has_finite_member`] first.
     #[inline]
     pub fn best_node(&self, au: ClassOf<Cfg>) -> Cfg::G {
         self.best_node[au.to_usize()]
+            .expect("best_node requested for a class without an admissible finite member")
     }
 
     /// Iterator over `(op, global_id)` pairs for all admissible members of `au`.
@@ -258,11 +263,14 @@ where
     /// while ordered operators preserve positional order.
     /// The identity (unit) element's ClassOf<Cfg> for an operator, if the operator
     /// has a declared identity (e.g. `true` for `and`, `false` for `or`, `0` for `+`).
-    /// Returns `None` if no identity is declared or the identity node is not in any
-    /// live class.
+    /// Returns `None` if no identity is declared, the identity node is not in a live
+    /// class, or that class has no admissible finite representative. The last check is
+    /// required because identity padding materializes the representative in projections;
+    /// a subsumed-only identity class must not be injected as an auxiliary child.
     pub fn op_identity_class(&self, op: Cfg::O) -> Option<ClassOf<Cfg>> {
         let unit_node = self.eg.unit_node(op)?;
-        self.class_of(unit_node)
+        let class = self.class_of(unit_node)?;
+        self.has_finite_member(class).then_some(class)
     }
 
     pub fn op_is_commutative(&self, op: Cfg::O) -> bool {
@@ -281,10 +289,10 @@ where
         eg: &EGraph<Cfg, L, T, P>,
         repr_to_au: &hashbrown::HashMap<Cfg::G, ClassOf<Cfg>>,
         num_classes: usize,
-    ) -> Result<(Vec<u32>, Vec<Cfg::G>), AuError> {
+    ) -> Result<(Vec<u32>, Vec<Option<Cfg::G>>), AuError> {
         let n = eg.len();
         let mut best_size: Vec<u32> = vec![u32::MAX; num_classes];
-        let mut best_node: Vec<Cfg::G> = vec![Cfg::G::from_usize(0); num_classes];
+        let mut best_node: Vec<Option<Cfg::G>> = vec![None; num_classes];
 
         loop {
             let mut changed = false;
@@ -327,7 +335,7 @@ where
 
                 if total < best_size[au_class.to_usize()] {
                     best_size[au_class.to_usize()] = total;
-                    best_node[au_class.to_usize()] = id;
+                    best_node[au_class.to_usize()] = Some(id);
                     changed = true;
                 }
             }

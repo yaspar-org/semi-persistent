@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Anti-unification demo: builds a series of e-graph pairs and prints the
-//! anti-unifiers found by the generalize baseline, the exact solver, and MCGS.
+//! anti-unifiers found by the exact solver and UCT-based MCGS.
 //!
 //! Run with: `cargo run --example au_demo -p semi-persistent-egraph`
 
@@ -24,7 +24,7 @@ fn render(eg: &Eg, result: &AuResult<semi_persistent_egraph::nodes::DefaultConfi
     })
 }
 
-/// Run all three algorithms on one class pair and print the results.
+/// Run both public algorithms on one class pair and print the results.
 fn run_case(title: &str, eg: &Eg, left: ENodeId, right: ENodeId) {
     println!("=== {title} ===");
 
@@ -195,7 +195,7 @@ fn example_ac_multiplicity() {
 }
 
 /// Example 8: equivalence helps — a merge lets the e-graph find shared structure
-/// that no generalize comparison of the original terms could find.
+/// that no syntactic comparison of the original terms could find.
 fn example_saturation_helps() {
     let mut eg = Eg::new();
     let int = eg.intern_sort("Int");
@@ -264,7 +264,7 @@ fn example_disjoint() {
 }
 
 fn main() {
-    println!("Anti-unification demo: three algorithms on ten e-graph pairs.");
+    println!("Anti-unification demo: Exact and UCT on ten e-graph pairs.");
     println!("Sizes count 1 per node; Variants nodes are free (children counted).\n");
 
     example_identical();

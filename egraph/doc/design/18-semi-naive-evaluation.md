@@ -1,6 +1,6 @@
 # Chapter 18 — Semi-Naive Evaluation
 
-[← Ch 17: Interpreter and Saturation Loop](17-interpreter.md) · [Table of Contents](00-table-of-contents.md)
+[← Ch 17: Interpreter and Saturation Loop](17-interpreter.md) · [Table of Contents](00-table-of-contents.md) · [Ch 19: Anti-Unification →](19-anti-unification.md)
 
 **Status**: implemented. Select with `saturate_semi` / the
 `SaturationStrategy::SemiNaive` interpreter strategy / `--strategy
@@ -1268,4 +1268,4 @@ also the prerequisite for the backend-selection sweep above.
   fallback, trigger pre-filter, performance harness).
 
 ---
-[← Ch 17: Interpreter and Saturation Loop](17-interpreter.md) · [Table of Contents](00-table-of-contents.md)
+[← Ch 17: Interpreter and Saturation Loop](17-interpreter.md) · [Table of Contents](00-table-of-contents.md) · [Ch 19: Anti-Unification →](19-anti-unification.md)
