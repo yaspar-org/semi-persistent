@@ -344,10 +344,15 @@ where
                     result.size,
                 );
 
+                let completion_status = match result.completion {
+                    crate::au::session::Completion::Exact => "exact",
+                    crate::au::session::Completion::BudgetExhausted { .. } => "budget",
+                };
                 println!(
-                    "(anti-unify :size {} :cr {:.4}\n  {})",
+                    "(anti-unify :size {} :cr {:.4} :completion {}\n  {})",
                     result.size,
                     cr,
+                    completion_status,
                     rendered.replace('\n', "\n  ")
                 );
             }

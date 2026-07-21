@@ -100,6 +100,191 @@ impl Network {
     }
 }
 
+/// A float-cost transportation problem (for MCGS Q estimates). Costs must be
+/// finite; non-finite cells must be passed as `None` (Forbidden).
+#[derive(Clone, Debug)]
+pub struct TransportProblemF64 {
+    pub row_supply: Vec<u32>,
+    pub col_demand: Vec<u32>,
+    /// `cost[i][j]`: `Some(finite f64)` = allowed, `None` = forbidden.
+    pub cost: Vec<Vec<Option<f64>>>,
+}
+
+/// Solution of a float-cost transport: flow matrix and total cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransportSolutionF64 {
+    pub flow: Vec<Vec<u32>>,
+    pub total: f64,
+}
+
+/// Solve a float-cost transportation problem with the same SPFA successive
+/// shortest augmenting path algorithm, using native f64 cost arithmetic.
+/// Finite costs only (asserted in debug); ties resolve deterministically to
+/// the first (lowest-index) candidate. No scalarization or rounding: the exact
+/// argmin over the represented f64 values is preserved.
+pub fn solve_transport_f64(p: &TransportProblemF64) -> Option<TransportSolutionF64> {
+    let rows = p.row_supply.len();
+    let cols = p.col_demand.len();
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+    let total_supply: u64 = p.row_supply.iter().map(|&m| m as u64).sum();
+    let total_demand: u64 = p.col_demand.iter().map(|&n| n as u64).sum();
+    if total_supply != total_demand {
+        return None;
+    }
+    if total_supply == 0 {
+        return Some(TransportSolutionF64 {
+            flow: vec![vec![0; cols]; rows],
+            total: 0.0,
+        });
+    }
+
+    let source = 0usize;
+    let sink = rows + cols + 1;
+    let mut net = NetworkF64::new(rows + cols + 2);
+    for (i, &m) in p.row_supply.iter().enumerate() {
+        net.add_edge(source, 1 + i, m, 0.0);
+    }
+    for (j, &n) in p.col_demand.iter().enumerate() {
+        net.add_edge(1 + rows + j, sink, n, 0.0);
+    }
+    let mut cell_edge: Vec<Vec<Option<usize>>> = vec![vec![None; cols]; rows];
+    for i in 0..rows {
+        for j in 0..cols {
+            if let Some(c) = p.cost[i][j] {
+                debug_assert!(c.is_finite(), "transport f64 cost must be finite");
+                let cap = p.row_supply[i].min(p.col_demand[j]);
+                if cap > 0 {
+                    cell_edge[i][j] = Some(net.edges.len());
+                    net.add_edge(1 + i, 1 + rows + j, cap, c);
+                }
+            }
+        }
+    }
+
+    let n_nodes = rows + cols + 2;
+    let mut pushed_total: u64 = 0;
+    loop {
+        let mut dist: Vec<Option<f64>> = vec![None; n_nodes];
+        let mut parent_edge: Vec<Option<usize>> = vec![None; n_nodes];
+        let mut in_queue = vec![false; n_nodes];
+        let mut queue = std::collections::VecDeque::new();
+        dist[source] = Some(0.0);
+        queue.push_back(source);
+        in_queue[source] = true;
+
+        while let Some(u) = queue.pop_front() {
+            in_queue[u] = false;
+            let du = dist[u].unwrap();
+            for &e in &net.adj[u] {
+                if net.residual(e) == 0 {
+                    continue;
+                }
+                let v = net.edges[e].to;
+                let nd = du + net.edges[e].cost;
+                if dist[v].is_none() || nd < dist[v].unwrap() {
+                    dist[v] = Some(nd);
+                    parent_edge[v] = Some(e);
+                    if !in_queue[v] {
+                        queue.push_back(v);
+                        in_queue[v] = true;
+                    }
+                }
+            }
+        }
+
+        if dist[sink].is_none() {
+            break;
+        }
+        let mut bottleneck = i64::MAX;
+        let mut node = sink;
+        while node != source {
+            let e = parent_edge[node].unwrap();
+            bottleneck = bottleneck.min(net.residual(e));
+            node = net.edges[e ^ 1].to;
+        }
+        debug_assert!(bottleneck > 0);
+        let mut node = sink;
+        while node != source {
+            let e = parent_edge[node].unwrap();
+            net.edges[e].flow += bottleneck;
+            net.edges[e ^ 1].flow -= bottleneck;
+            node = net.edges[e ^ 1].to;
+        }
+        pushed_total += bottleneck as u64;
+        if pushed_total == total_supply {
+            break;
+        }
+    }
+
+    if pushed_total != total_supply {
+        return None;
+    }
+
+    let mut flow = vec![vec![0u32; cols]; rows];
+    let mut total = 0.0f64;
+    for i in 0..rows {
+        for j in 0..cols {
+            if let Some(e) = cell_edge[i][j] {
+                let x = net.edges[e].flow;
+                debug_assert!(x >= 0);
+                if x > 0 {
+                    let x = u32::try_from(x).expect("cell flow exceeds u32");
+                    flow[i][j] = x;
+                    if let Some(c) = p.cost[i][j] {
+                        total += x as f64 * c;
+                    }
+                }
+            }
+        }
+    }
+    Some(TransportSolutionF64 { flow, total })
+}
+
+struct EdgeF64 {
+    to: usize,
+    cap: i64,
+    cost: f64,
+    flow: i64,
+}
+
+struct NetworkF64 {
+    edges: Vec<EdgeF64>,
+    adj: Vec<Vec<usize>>,
+}
+
+impl NetworkF64 {
+    fn new(nodes: usize) -> Self {
+        NetworkF64 {
+            edges: Vec::new(),
+            adj: vec![Vec::new(); nodes],
+        }
+    }
+
+    fn add_edge(&mut self, from: usize, to: usize, cap: u32, cost: f64) {
+        let idx = self.edges.len();
+        self.edges.push(EdgeF64 {
+            to,
+            cap: cap as i64,
+            cost,
+            flow: 0,
+        });
+        self.edges.push(EdgeF64 {
+            to: from,
+            cap: 0,
+            cost: -cost,
+            flow: 0,
+        });
+        self.adj[from].push(idx);
+        self.adj[to].push(idx + 1);
+    }
+
+    fn residual(&self, e: usize) -> i64 {
+        self.edges[e].cap - self.edges[e].flow
+    }
+}
+
 /// Solve the transportation problem. Returns `None` if infeasible (the margins
 /// cannot be met using only allowed cells) and panics on arithmetic overflow
 /// (unreachable for realistic u32 inputs).

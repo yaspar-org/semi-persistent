@@ -798,7 +798,14 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
                 }
                 if input.starts_with(":max_size") {
                     *input = &input[":max_size".len()..];
-                    max_size = number(input)? as u32;
+                    let n = number(input)?;
+                    max_size = u32::try_from(n).map_err(|_| {
+                        let mut e = ContextError::new();
+                        e.push(StrContext::Expected(StrContextValue::Description(
+                            "checkau :max_size fitting in u32",
+                        )));
+                        ErrMode::Cut(e)
+                    })?;
                 } else if input.starts_with(":playouts") {
                     *input = &input[":playouts".len()..];
                     playouts = number(input)?;

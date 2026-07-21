@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Property-based adversarial checks for anti-unification.
 //!
-//! The ignored oracle property compares the staged transportation traversal to
-//! the complete set of 2x2 transportation-polytope vertices. It persists the
-//! minimal failing family instead of relying only on one hand-written example.
+//! The matrix-count property checks the bounded enumeration (used only as a
+//! test oracle; production paths use min-cost transport) against the full
+//! integer-point count of the 2x2 transportation polytope.
 
 use proptest::prelude::*;
 use semi_persistent_egraph::EGraph31;
@@ -16,14 +16,14 @@ use semi_persistent_egraph::literal::NiraLitVal;
 type Eg = EGraph31<NiraLitVal, false, false>;
 
 /// A 2x2 transportation polytope is a line segment. Its integer matrices are
-/// parameterized by x00 in [lower, upper], and its vertices are the one or two
-/// endpoints (one when the segment is degenerate).
-fn expected_2x2_vertices(row0: u32, row1: u32, col0: u32) -> usize {
+/// parameterized by x00 in [lower, upper]; the complete enumeration emits one
+/// action per integer point (upper - lower + 1), not just the two endpoints.
+fn expected_2x2_matrices(row0: u32, row1: u32, col0: u32) -> usize {
     let total = row0 + row1;
     let col1 = total - col0;
     let lower = row0.saturating_sub(col1);
     let upper = row0.min(col0);
-    if lower == upper { 1 } else { 2 }
+    (upper - lower + 1) as usize
 }
 
 fn generated_2x2_actions(row0: u32, row1: u32, col0: u32) -> usize {
@@ -57,15 +57,14 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
     #[test]
-    #[ignore = "known correctness bug: fixed row-major activation misses valid AC vertices"]
-    fn prop_ac_actions_match_complete_2x2_vertex_oracle(
+    fn prop_ac_actions_match_complete_2x2_matrix_oracle(
         row0 in 1u32..6,
         row1 in 1u32..6,
         col0_seed in 1u32..10,
     ) {
         let total = row0 + row1;
         let col0 = 1 + (col0_seed - 1) % (total - 1);
-        let expected = expected_2x2_vertices(row0, row1, col0);
+        let expected = expected_2x2_matrices(row0, row1, col0);
         let actual = generated_2x2_actions(row0, row1, col0);
         prop_assert_eq!(
             actual,

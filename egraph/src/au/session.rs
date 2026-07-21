@@ -51,6 +51,15 @@ impl Default for AuConfig {
     }
 }
 
+/// Whether the returned result is provably optimal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    /// Every reachable subproblem was solved (structurally certified optimal).
+    Exact,
+    /// The playout budget expired before the search graph was fully resolved.
+    BudgetExhausted { playouts_used: u64 },
+}
+
 /// The result of an anti-unification run.
 #[derive(Debug)]
 pub struct AuResult<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> {
@@ -58,6 +67,7 @@ pub struct AuResult<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash
     pub pool: TermPool<O, V>,
     pub size: u32,
     pub algorithm: AuAlgorithm,
+    pub completion: Completion,
 }
 
 impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> AuResult<O, V> {
@@ -122,6 +132,7 @@ where
                 pool,
                 size,
                 algorithm: AuAlgorithm::Exact,
+                completion: Completion::Exact,
             })
         }
         AuAlgorithm::Uct => {
@@ -131,13 +142,14 @@ where
                 exploration_constant: config.exploration_constant,
                 x_target: config.x_target,
             };
-            let (term_id, pool) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
+            let (term_id, pool, completion) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
             let size = pool.size(term_id);
             Ok(AuResult {
                 term_id,
                 pool,
                 size,
                 algorithm: AuAlgorithm::Uct,
+                completion,
             })
         }
     }
