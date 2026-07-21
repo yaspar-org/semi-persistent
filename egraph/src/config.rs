@@ -52,7 +52,7 @@ pub trait EGraphConfig: 'static {
     /// Local id bundle for the node store.
     type Ids: NodeIds<Index = Self::Index>;
     /// AU search/snapshot/pool id bundle.
-    type Au: AuIds;
+    type Au: AuIds<Index = Self::Index>;
 }
 
 /// Id bundle for the anti-unification subsystem: search-graph identities,

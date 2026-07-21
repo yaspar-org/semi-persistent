@@ -144,8 +144,7 @@ impl crate::config::EGraphConfig for Config64 {
     type C = crate::node_store::MSetChild<ENodeId64>;
     type M = crate::multiplicity::Multiplicity;
     type Ids = NodeIds64;
-    // AU width selection is activated in the following typed-ID commit.
-    type Au = crate::au::AuIds31;
+    type Au = crate::au::AuIds64;
 
     fn mset_child_id(c: &Self::C) -> Self::G {
         c.0
