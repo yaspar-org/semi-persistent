@@ -925,6 +925,15 @@ where
             Span::Dummy,
         ));
     }
+    // A cancellative idempotent monoid is trivial: x∘x = x and cancellation
+    // give x = e for every x, so the tag set describes a one-element algebra.
+    if idempotent && cancellative {
+        return Err(serr(
+            ":idempotent and :cancellative are mutually exclusive (a cancellative idempotent \
+             monoid collapses to the identity)",
+            Span::Dummy,
+        ));
+    }
     if (idempotent || nilpotent.is_some()) && !(assoc && comm) {
         return Err(serr(
             ":idempotent/:nilpotent require :assoc :comm",

@@ -119,7 +119,6 @@ fn algebraic_tag_surface_exercises_ac_aci_unit_nilpotent_and_inverse_with_au() {
 }
 
 #[test]
-#[ignore = "known API bug: unknown AU algorithm names silently select UCT"]
 fn unknown_algorithm_is_rejected_instead_of_running_uct() {
     let source = r#"
         (sort E)
@@ -135,7 +134,6 @@ fn unknown_algorithm_is_rejected_instead_of_running_uct() {
 }
 
 #[test]
-#[ignore = "known parser bug: checkau max_size narrows u64 to u32"]
 fn overflowing_checkau_max_size_is_rejected_during_parsing() {
     let source = r#"
         (sort E)
@@ -148,7 +146,6 @@ fn overflowing_checkau_max_size_is_rejected_during_parsing() {
 }
 
 #[test]
-#[ignore = "known algebraic soundness bug: cancellative idempotent monoids are accepted as nontrivial"]
 fn contradictory_idempotent_cancellative_tag_set_is_rejected() {
     let source = r#"
         (sort E)
