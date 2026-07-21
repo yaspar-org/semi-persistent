@@ -251,6 +251,15 @@ where
     /// Whether the canonical node kind of `op` is commutative (SPair, MSet, Set):
     /// result-term children for such operators are sorted into canonical order,
     /// while ordered operators preserve positional order.
+    /// The identity (unit) element's AuClassId for an operator, if the operator
+    /// has a declared identity (e.g. `true` for `and`, `false` for `or`, `0` for `+`).
+    /// Returns `None` if no identity is declared or the identity node is not in any
+    /// live class.
+    pub fn op_identity_class(&self, op: Cfg::O) -> Option<AuClassId> {
+        let unit_node = self.eg.unit_node(op)?;
+        self.class_of(unit_node)
+    }
+
     pub fn op_is_commutative(&self, op: Cfg::O) -> bool {
         matches!(
             self.eg.ops().info(op).canon_class(),

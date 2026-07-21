@@ -7,14 +7,11 @@
 //!
 //! Ranking is the lexicographic quality key `(size, variant_mass)`: minimum
 //! size first; at equal size, minimum variant mass (= maximum backbone) wins.
-//! Updates are strict improvements only under that order, so any interleaving
-//! of writers preserves validity and determinism.
+//! Updates are strict improvements only under that order.
 //!
-//! Semi-persistence: mark saves the current length; restore truncates back.
-//! Improvements made to entries that existed before the mark are lost on
-//! restore; the search re-derives them from restored child state (this is
-//! sound because values only improve, so a re-derivation from a restored
-//! child produces the same or better result).
+//! Semi-persistence: mark saves the current length and starts an undo log for
+//! overwrites to pre-existing entries. Restore replays the undo log backward
+//! (restoring old values), then truncates entries added after the mark.
 
 use super::space::OrId;
 use super::terms::TermId;
@@ -23,10 +20,20 @@ use crate::containers::DenseId;
 /// Sentinel quality for "no result yet": worse than every real result.
 const NO_RESULT: (u32, u32) = (u32::MAX, u32::MAX);
 
+/// One undo-log entry: the old state of a pre-mark entry before it was overwritten.
+#[derive(Clone, Debug)]
+struct UndoEntry {
+    idx: usize,
+    old_term: Option<TermId>,
+    old_quality: (u32, u32),
+    old_exact: bool,
+}
+
 /// Token for restoring a `BestResults` to a previous state.
 #[derive(Clone, Copy, Debug)]
 pub struct BestResultsToken {
     len: usize,
+    undo_len: usize,
 }
 
 /// The best-result table for a search session.
@@ -35,6 +42,9 @@ pub struct BestResults {
     term: Vec<Option<TermId>>,
     quality: Vec<(u32, u32)>,
     exact: Vec<bool>,
+    undo_log: Vec<UndoEntry>,
+    /// The length at the last mark (entries below this get undo-logged on overwrite).
+    mark_len: usize,
 }
 
 impl BestResults {
@@ -43,6 +53,8 @@ impl BestResults {
             term: Vec::new(),
             quality: Vec::new(),
             exact: Vec::new(),
+            undo_log: Vec::new(),
+            mark_len: 0,
         }
     }
 
@@ -59,6 +71,15 @@ impl BestResults {
         let idx = or_id.to_usize();
         self.ensure_capacity(or_id);
         if quality < self.quality[idx] {
+            // Log the old value if this entry existed before the current mark.
+            if idx < self.mark_len {
+                self.undo_log.push(UndoEntry {
+                    idx,
+                    old_term: self.term[idx],
+                    old_quality: self.quality[idx],
+                    old_exact: self.exact[idx],
+                });
+            }
             self.term[idx] = Some(term);
             self.quality[idx] = quality;
             true
@@ -70,6 +91,14 @@ impl BestResults {
     pub fn mark_exact(&mut self, or_id: OrId) {
         let idx = or_id.to_usize();
         self.ensure_capacity(or_id);
+        if idx < self.mark_len && !self.exact[idx] {
+            self.undo_log.push(UndoEntry {
+                idx,
+                old_term: self.term[idx],
+                old_quality: self.quality[idx],
+                old_exact: self.exact[idx],
+            });
+        }
         self.exact[idx] = true;
     }
 
@@ -113,16 +142,27 @@ impl BestResults {
         }
     }
 
-    pub fn mark(&self) -> BestResultsToken {
+    pub fn mark(&mut self) -> BestResultsToken {
+        self.mark_len = self.term.len();
         BestResultsToken {
             len: self.term.len(),
+            undo_len: self.undo_log.len(),
         }
     }
 
     pub fn restore(&mut self, token: BestResultsToken) {
+        // Replay undo log backward to restore overwritten pre-mark entries.
+        while self.undo_log.len() > token.undo_len {
+            let entry = self.undo_log.pop().unwrap();
+            self.term[entry.idx] = entry.old_term;
+            self.quality[entry.idx] = entry.old_quality;
+            self.exact[entry.idx] = entry.old_exact;
+        }
+        // Truncate entries added after the mark.
         self.term.truncate(token.len);
         self.quality.truncate(token.len);
         self.exact.truncate(token.len);
+        self.mark_len = token.len;
     }
 }
 
@@ -198,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_restore_truncates() {
+    fn mark_restore_truncates_new_entries() {
         let mut results = BestResults::new();
         let or0 = OrId::from_usize(0);
         let or1 = OrId::from_usize(1);
@@ -213,5 +253,26 @@ mod tests {
         results.restore(token);
         assert_eq!(results.best_term(or1), None);
         assert_eq!(results.best_term(or0), Some(t0));
+    }
+
+    #[test]
+    fn mark_restore_undoes_overwrites() {
+        let mut results = BestResults::new();
+        let or0 = OrId::from_usize(0);
+        let t0 = TermId::from_usize(0);
+        let t1 = TermId::from_usize(1);
+
+        results.offer(or0, t0, (10, 10));
+        let token = results.mark();
+
+        // Improve the pre-mark entry.
+        results.offer(or0, t1, (5, 5));
+        assert_eq!(results.best_term(or0), Some(t1));
+        assert_eq!(results.best_quality(or0), (5, 5));
+
+        // Restore: the overwrite is undone.
+        results.restore(token);
+        assert_eq!(results.best_term(or0), Some(t0));
+        assert_eq!(results.best_quality(or0), (10, 10));
     }
 }

@@ -1,0 +1,43 @@
+(sort Bool)
+(sort Int)
+(sort Real)
+
+; variables (nullary constants)
+(function x () Int)
+(function y () Int)
+(function z () Int)
+(function w () Real)
+(function v () Real)
+(function p () Bool)
+(function q () Bool)
+
+; operators
+(function impl (Bool Bool) Bool)
+(function neg (Bool) Bool)
+(function lti (Int Int) Bool)
+(function lei (Int Int) Bool)
+(function gtr (Real Real) Bool)
+(function ger (Real Real) Bool)
+
+; variadic conjunction (ACI = set: order and duplicates don't matter)
+(function conj (Bool) Bool :assoc-comm-idem)
+
+; Formula A:
+;   precondition: (x < y) and (y <= z) and p
+;   postcondition: (neg q) and (w > v)
+(let preA (conj (lti (x) (y)) (lei (y) (z)) (p)))
+(let postA (conj (neg (q)) (gtr (w) (v))))
+(let formulaA (impl preA postA))
+
+; Formula B:
+;   precondition: (x <= y) and (y < z) and q
+;   postcondition: (neg p) and (w >= v)
+(let preB (conj (lei (x) (y)) (lti (y) (z)) (q)))
+(let postB (conj (neg (p)) (ger (w) (v))))
+(let formulaB (impl preB postB))
+
+; Anti-unify with the exact solver:
+(antiunify formulaA formulaB :algorithm exact)
+
+; Anti-unify with MCGS/UCT (3000 playouts):
+(antiunify formulaA formulaB :algorithm uct :playouts 3000)

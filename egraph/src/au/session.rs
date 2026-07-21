@@ -22,8 +22,6 @@ use super::terms::{TermId, TermOp, TermPool, TermPoolToken};
 /// Which algorithm to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AuAlgorithm {
-    /// Syntactic seed only (no search).
-    Syntactic,
     /// The exact DP solver (§3.2).
     Exact,
     /// MCGS with UCT selection (§3.3).
@@ -73,29 +71,21 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash> AuResult<O, V
         self.pool.children(self.term_id)
     }
 
-    /// Recursively render the term as a string for debugging.
+    /// Render the term as a flat one-line s-expression.
     pub fn to_string_with<F>(&self, op_name: F) -> String
     where
         F: Fn(&TermOp<O, V>) -> String + Copy,
     {
-        self.render_term(self.term_id, op_name)
+        super::pretty::pretty_print(&self.pool, self.term_id, op_name, usize::MAX)
     }
 
-    fn render_term<F>(&self, id: TermId, op_name: F) -> String
+    /// Pretty-print the term with indentation, breaking lines that exceed
+    /// `col_limit` characters.
+    pub fn pretty_print_with<F>(&self, op_name: F, col_limit: usize) -> String
     where
         F: Fn(&TermOp<O, V>) -> String + Copy,
     {
-        let op = self.pool.op(id);
-        let children = self.pool.children(id);
-        if children.is_empty() {
-            op_name(op)
-        } else {
-            let child_strs: Vec<String> = children
-                .iter()
-                .map(|&c| self.render_term(c, op_name))
-                .collect();
-            format!("({} {})", op_name(op), child_strs.join(" "))
-        }
+        super::pretty::pretty_print(&self.pool, self.term_id, op_name, col_limit)
     }
 }
 
@@ -124,19 +114,6 @@ where
         ))?;
 
     match config.algorithm {
-        AuAlgorithm::Syntactic => {
-            snap.validate_finite_from(l)?;
-            snap.validate_finite_from(r)?;
-            let mut pool = TermPool::new();
-            let term_id = super::terms::syntactic_seed(snap, &mut pool, l, r);
-            let size = pool.size(term_id);
-            Ok(AuResult {
-                term_id,
-                pool,
-                size,
-                algorithm: AuAlgorithm::Syntactic,
-            })
-        }
         AuAlgorithm::Exact => {
             let (term_id, pool) = exact::eager_with_memo(snap, l, r, config.cycle_mode)?;
             let size = pool.size(term_id);
@@ -270,26 +247,6 @@ mod tests {
     use crate::literal::NiraLitVal;
 
     #[test]
-    fn session_syntactic() {
-        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
-        let int = eg.intern_sort("Int");
-        let a_op = eg.register_op0("a", int);
-        let b_op = eg.register_op0("b", int);
-        let a = eg.add(a_op, &[]);
-        let b = eg.add(b_op, &[]);
-        eg.rebuild();
-
-        let snap = AuSnapshot::new(&eg).unwrap();
-        let config = AuConfig {
-            algorithm: AuAlgorithm::Syntactic,
-            ..Default::default()
-        };
-        let result = anti_unify(&snap, a, b, &config).unwrap();
-        assert_eq!(result.size, 2);
-        assert_eq!(result.algorithm, AuAlgorithm::Syntactic);
-    }
-
-    #[test]
     fn session_exact() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
@@ -358,7 +315,7 @@ mod tests {
 
         let snap = AuSnapshot::new(&eg).unwrap();
 
-        for alg in [AuAlgorithm::Syntactic, AuAlgorithm::Exact, AuAlgorithm::Uct] {
+        for alg in [AuAlgorithm::Exact, AuAlgorithm::Uct] {
             let config = AuConfig {
                 algorithm: alg,
                 playouts: 10,
@@ -392,7 +349,7 @@ mod tests {
 
         let snap = AuSnapshot::new(&eg).unwrap();
 
-        for alg in [AuAlgorithm::Syntactic, AuAlgorithm::Exact, AuAlgorithm::Uct] {
+        for alg in [AuAlgorithm::Exact, AuAlgorithm::Uct] {
             let config = AuConfig {
                 algorithm: alg,
                 playouts: 200,

@@ -24,7 +24,7 @@ use super::actions::{ActionCache, DEFAULT_A_MAX, generate_actions};
 use super::egraph_api::AuSnapshot;
 use super::results::BestResults;
 use super::space::{CycleMode, OrId, SearchSpace};
-use super::terms::{TermId, TermOp, TermPool, build_best_term, syntactic_seed};
+use super::terms::{TermId, TermOp, TermPool, build_best_term, evaluate_generalize_action};
 
 /// MCGS configuration.
 #[derive(Debug, Clone)]
@@ -170,8 +170,8 @@ where
     let (root_or, _) =
         space.get_or_insert_or_node(l_root, r_root, empty_ctx, empty_ctx, l_best, r_best);
 
-    // Anytime floor: the syntactic seed exists from the first instant (§3.1).
-    let seed = syntactic_seed(snap, &mut pool, l_root, r_root);
+    // Anytime floor: the generalize seed exists from the first instant (§3.1).
+    let seed = evaluate_generalize_action(snap, &mut pool, l_root, r_root);
     results.ensure_capacity(root_or);
     results.offer(root_or, seed, pool.quality(seed));
 
@@ -457,7 +457,7 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
 }
 
 /// Realize one action: allocate the AND statistics struct and all child OR
-/// nodes/stats, seeding each child's best-result entry with its syntactic seed
+/// nodes/stats, seeding each child's best-result entry with its generalize seed
 /// so a valid result exists from the first instant (§3.1).
 #[allow(clippy::too_many_arguments)]
 fn expand_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
@@ -516,7 +516,7 @@ where
         );
 
         // Seed the child's best result so composition always has an operand.
-        let child_seed = syntactic_seed(snap, pool, pair.left, pair.right);
+        let child_seed = evaluate_generalize_action(snap, pool, pair.left, pair.right);
         results.ensure_capacity(child_or);
         results.offer(child_or, child_seed, pool.quality(child_seed));
 

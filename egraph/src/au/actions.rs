@@ -46,6 +46,10 @@ pub struct ActionCache<O: DenseId> {
     values: Vec<Vec<Action<O>>>,
     index: hashbrown::HashMap<(AuClassId, AuClassId), usize>,
     a_max: usize,
+    /// Whether AC/ACI matrix actions are materialized. MCGS needs them (bounded
+    /// by `a_max`); the exact solver skips them entirely and solves each
+    /// representation pair by min-cost transport instead (§3.4.4).
+    include_ac: bool,
 }
 
 /// Token for restoring an `ActionCache`.
@@ -61,7 +65,24 @@ impl<O: DenseId> ActionCache<O> {
             values: Vec::new(),
             index: hashbrown::HashMap::new(),
             a_max,
+            include_ac: true,
         }
+    }
+
+    /// A cache whose `generate_actions` skips AC/ACI matrix materialization.
+    /// Used by the exact solver, which handles those operators by transport.
+    pub fn without_ac_actions(a_max: usize) -> Self {
+        ActionCache {
+            keys: Vec::new(),
+            values: Vec::new(),
+            index: hashbrown::HashMap::new(),
+            a_max,
+            include_ac: false,
+        }
+    }
+
+    pub fn include_ac(&self) -> bool {
+        self.include_ac
     }
 
     pub fn get(&self, l: AuClassId, r: AuClassId) -> Option<&[Action<O>]> {
@@ -121,6 +142,7 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     let members_l = snap.members(l);
     let members_r = snap.members(r);
     let a_max = cache.a_max();
+    let include_ac = cache.include_ac();
 
     let mut actions: Vec<Action<Cfg::O>> = Vec::new();
 
@@ -181,18 +203,30 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
                         generate_spair_actions(snap, eg, op_l, l_nodes, r_nodes, &mut actions);
                     }
                     ENodeKind::MSet => {
-                        generate_mset_actions(
-                            snap,
-                            eg,
-                            op_l,
-                            l_nodes,
-                            r_nodes,
-                            a_max,
-                            &mut actions,
-                        );
+                        if include_ac {
+                            generate_mset_actions(
+                                snap,
+                                eg,
+                                op_l,
+                                l_nodes,
+                                r_nodes,
+                                a_max,
+                                &mut actions,
+                            );
+                        }
                     }
                     ENodeKind::Set => {
-                        generate_set_actions(snap, eg, op_l, l_nodes, r_nodes, a_max, &mut actions);
+                        if include_ac {
+                            generate_set_actions(
+                                snap,
+                                eg,
+                                op_l,
+                                l_nodes,
+                                r_nodes,
+                                a_max,
+                                &mut actions,
+                            );
+                        }
                     }
                     ENodeKind::Lit => {
                         generate_lit_actions(eg, op_l, l_nodes, r_nodes, &mut actions);
@@ -202,6 +236,166 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
         }
     }
 
+    // Identity expansion for singleton-canonized classes: if one side has AC/ACI
+    // members for an op with identity and the other side does not (because the
+    // e-graph canonized a single-child application to the bare child), generate
+    // actions by treating the bare side as the singleton monomial {class^1}.
+    if !include_ac {
+        // The exact solver handles all AC/ACI pairs (including identity
+        // expansion) through the transport path; skip materialization.
+        dedup_and_insert(cache, l, r, actions);
+        return;
+    }
+    for &(op_id, _) in members_l.iter() {
+        let kind = eg.ops().info(op_id).canon_class();
+        if !matches!(kind, ENodeKind::MSet | ENodeKind::Set) {
+            continue;
+        }
+        let identity = snap.op_identity_class(op_id);
+        if identity.is_none() {
+            continue;
+        }
+        // Check if the right side has no members with this op.
+        let r_has_op = members_r.iter().any(|&(o, _)| o == op_id);
+        if r_has_op {
+            continue;
+        }
+        // Treat right as singleton monomial {r^1}, left as its AC members.
+        let l_op_members: Vec<(Cfg::O, Cfg::G)> = members_l
+            .iter()
+            .filter(|&&(o, _)| o == op_id)
+            .copied()
+            .collect();
+        if kind == ENodeKind::Set {
+            // ACI: right is a singleton set {r}.
+            let r_children = vec![(r, 1u32)];
+            for &(_, l_id) in &l_op_members {
+                let mut l_children: Vec<AuClassId> = Vec::new();
+                eg.for_each_child(l_id, |child, _| {
+                    l_children.push(snap.class_of(child).unwrap());
+                });
+                let mut l_classes: Vec<(AuClassId, u32)> =
+                    l_children.iter().map(|&c| (c, 1)).collect();
+                let id_class = identity.unwrap();
+                let r_total: u32 = r_children.iter().map(|(_, m)| m).sum();
+                let l_total: u32 = l_classes.iter().map(|(_, m)| m).sum();
+                let mut r_padded = r_children.clone();
+                if l_total > r_total {
+                    r_padded.push((id_class, l_total - r_total));
+                } else if r_total > l_total {
+                    if let Some(entry) = l_classes.iter_mut().find(|(c, _)| *c == id_class) {
+                        entry.1 += r_total - l_total;
+                    } else {
+                        l_classes.push((id_class, r_total - l_total));
+                    }
+                }
+                enumerate_matrices(op_id, &l_classes, &r_padded, a_max, &mut actions);
+            }
+        } else {
+            // AC (MSet): right is singleton {r^1}.
+            let mut l_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+            for &(_, l_id) in &l_op_members {
+                eg.mset_children(l_id, &mut l_mset_buf);
+                let l_classes: Vec<(AuClassId, u32)> = l_mset_buf
+                    .iter()
+                    .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
+                    .collect();
+                let l_total: u32 = l_classes.iter().map(|(_, m)| m).sum();
+                let id_class = identity.unwrap();
+                let mut r_classes = vec![(r, 1u32)];
+                if l_total > 1 {
+                    r_classes.push((id_class, l_total - 1));
+                }
+                enumerate_matrices(op_id, &l_classes, &r_classes, a_max, &mut actions);
+            }
+        }
+    }
+    // Symmetric: right has the op, left does not.
+    for &(op_id, _) in members_r.iter() {
+        let kind = eg.ops().info(op_id).canon_class();
+        if !matches!(kind, ENodeKind::MSet | ENodeKind::Set) {
+            continue;
+        }
+        let identity = snap.op_identity_class(op_id);
+        if identity.is_none() {
+            continue;
+        }
+        let l_has_op = members_l.iter().any(|&(o, _)| o == op_id);
+        if l_has_op {
+            continue;
+        }
+        let r_op_members: Vec<(Cfg::O, Cfg::G)> = members_r
+            .iter()
+            .filter(|&&(o, _)| o == op_id)
+            .copied()
+            .collect();
+        if kind == ENodeKind::Set {
+            let l_children = vec![(l, 1u32)];
+            for &(_, r_id) in &r_op_members {
+                let mut r_children: Vec<AuClassId> = Vec::new();
+                eg.for_each_child(r_id, |child, _| {
+                    r_children.push(snap.class_of(child).unwrap());
+                });
+                let mut r_classes: Vec<(AuClassId, u32)> =
+                    r_children.iter().map(|&c| (c, 1)).collect();
+                let id_class = identity.unwrap();
+                let r_total: u32 = r_classes.iter().map(|(_, m)| m).sum();
+                let l_total: u32 = l_children.iter().map(|(_, m)| m).sum();
+                let mut l_padded = l_children.clone();
+                if r_total > l_total {
+                    l_padded.push((id_class, r_total - l_total));
+                } else if l_total > r_total {
+                    if let Some(entry) = r_classes.iter_mut().find(|(c, _)| *c == id_class) {
+                        entry.1 += l_total - r_total;
+                    } else {
+                        r_classes.push((id_class, l_total - r_total));
+                    }
+                }
+                enumerate_matrices(op_id, &l_padded, &r_classes, a_max, &mut actions);
+            }
+        } else {
+            let mut r_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+            for &(_, r_id) in &r_op_members {
+                eg.mset_children(r_id, &mut r_mset_buf);
+                let r_classes: Vec<(AuClassId, u32)> = r_mset_buf
+                    .iter()
+                    .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
+                    .collect();
+                let r_total: u32 = r_classes.iter().map(|(_, m)| m).sum();
+                let id_class = identity.unwrap();
+                let mut l_classes = vec![(l, 1u32)];
+                if r_total > 1 {
+                    l_classes.push((id_class, r_total - 1));
+                }
+                enumerate_matrices(op_id, &l_classes, &r_classes, a_max, &mut actions);
+            }
+        }
+    }
+
+    dedup_and_insert(cache, l, r, actions);
+}
+
+/// Deduplicate actions by canonical (left, right, count) signature and insert
+/// into the cache. Rewrite-derived equivalent members can produce identical
+/// actions from different (l_node, r_node) pairs; duplicates would surface as
+/// separate statistics edges and bias MCGS selection toward the duplicated
+/// action.
+fn dedup_and_insert<O: DenseId>(
+    cache: &mut ActionCache<O>,
+    l: AuClassId,
+    r: AuClassId,
+    mut actions: Vec<Action<O>>,
+) {
+    let mut seen: hashbrown::HashSet<Vec<(usize, usize, u32)>> = hashbrown::HashSet::new();
+    actions.retain(|action| {
+        let mut sig: Vec<(usize, usize, u32)> = action
+            .pairs
+            .iter()
+            .map(|p| (p.left.to_usize(), p.right.to_usize(), p.count))
+            .collect();
+        sig.sort_unstable();
+        seen.insert(sig)
+    });
     cache.insert(l, r, actions);
 }
 
@@ -326,7 +520,11 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
     }
 }
 
-/// AC operators (multisets): matching-count matrix enumeration (§3.4.4).
+/// AC operators (multisets): bounded matrix enumeration for MCGS (§3.4.4).
+/// When totals are unequal and the operator has a declared identity element, the
+/// shorter side is padded with identity copies to equalize the totals; the resulting
+/// anti-unifier pairs unmatched elements against the identity (producing
+/// `Variants(element, identity)` at those positions).
 fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     eg: &EGraph<Cfg, L, T, P>,
@@ -338,6 +536,7 @@ fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: b
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let identity_class = snap.op_identity_class(op);
     let mut l_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
     let mut r_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
 
@@ -349,27 +548,46 @@ fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: b
             eg.mset_children(r_id, &mut r_mset_buf);
             let r_total: u32 = r_mset_buf.iter().map(|(_, m)| Into::<u32>::into(*m)).sum();
 
-            // Milestone: equal total only (§3.4.4).
-            if l_total != r_total {
-                continue;
-            }
+            let mut l_classes: Vec<(AuClassId, u32)> = l_mset_buf
+                .iter()
+                .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
+                .collect();
+            let mut r_classes: Vec<(AuClassId, u32)> = r_mset_buf
+                .iter()
+                .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
+                .collect();
 
-            // Convert to (AuClassId, u32) for matrix enumeration.
-            let l_classes: Vec<(AuClassId, u32)> = l_mset_buf
-                .iter()
-                .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
-                .collect();
-            let r_classes: Vec<(AuClassId, u32)> = r_mset_buf
-                .iter()
-                .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
-                .collect();
+            if l_total != r_total {
+                // Pad the shorter side with identity copies if available.
+                let Some(id_class) = identity_class else {
+                    continue;
+                };
+                if l_total < r_total {
+                    let deficit = r_total - l_total;
+                    if let Some(entry) = l_classes.iter_mut().find(|(c, _)| *c == id_class) {
+                        entry.1 += deficit;
+                    } else {
+                        l_classes.push((id_class, deficit));
+                    }
+                } else {
+                    let deficit = l_total - r_total;
+                    if let Some(entry) = r_classes.iter_mut().find(|(c, _)| *c == id_class) {
+                        entry.1 += deficit;
+                    } else {
+                        r_classes.push((id_class, deficit));
+                    }
+                }
+            }
 
             enumerate_matrices(op, &l_classes, &r_classes, a_max, actions);
         }
     }
 }
 
-/// ACI operators (sets): bijection enumeration for equal-cardinality sets (§3.4.5).
+/// ACI operators (sets): bijection enumeration (§3.4.5). When cardinalities
+/// differ and the operator has a declared identity, the shorter side is padded
+/// with identity elements to equalize; unmatched elements pair against the
+/// identity (producing `Variants(element, identity)`).
 fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     eg: &EGraph<Cfg, L, T, P>,
@@ -381,6 +599,8 @@ fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let identity_class = snap.op_identity_class(op);
+
     for &(_, l_id) in l_nodes {
         let mut l_children: Vec<AuClassId> = Vec::new();
         eg.for_each_child(l_id, |child, _| {
@@ -394,10 +614,18 @@ fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             });
 
             if l_children.len() != r_children.len() {
-                continue;
+                let Some(id_class) = identity_class else {
+                    continue;
+                };
+                // Pad the shorter side with identity elements.
+                while l_children.len() < r_children.len() {
+                    l_children.push(id_class);
+                }
+                while r_children.len() < l_children.len() {
+                    r_children.push(id_class);
+                }
             }
 
-            // All multiplicities are 1: use mset matrix enumeration.
             let l_classes: Vec<(AuClassId, u32)> = l_children.iter().map(|&c| (c, 1)).collect();
             let r_classes: Vec<(AuClassId, u32)> = r_children.iter().map(|&c| (c, 1)).collect();
 
@@ -439,8 +667,10 @@ fn generate_lit_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 /// total multiplicity. A matrix X has `x[i][j]` copies of pair `(l_i, r_j)`;
 /// row i sums to `m_i`, column j sums to `n_j`.
 ///
-/// If the number of matrices exceeds `a_max`, only `a_max` are emitted (greedy-first).
-/// The full lazy chain-state extension is deferred to a future milestone.
+/// Enumerate all valid matching-count matrices for multisets with equal total
+/// multiplicity, using row-by-row distribution. Used only by MCGS (the exact solver
+/// uses min-cost transport instead). `a_max` bounds the number of emitted actions.
+/// The enumeration is complete and greedy-first (diagonal matches tried first).
 fn enumerate_matrices<O: DenseId>(
     op: O,
     l_classes: &[(AuClassId, u32)],
@@ -456,9 +686,7 @@ fn enumerate_matrices<O: DenseId>(
     }
 
     let row_sums: Vec<u32> = l_classes.iter().map(|(_, m)| *m).collect();
-    let col_sums: Vec<u32> = r_classes.iter().map(|(_, m)| *m).collect();
-
-    // Enumerate via backtracking: fill row by row, left to right.
+    let col_residual: Vec<u32> = r_classes.iter().map(|(_, m)| *m).collect();
     let mut matrix: Vec<Vec<u32>> = vec![vec![0; cols]; rows];
     let mut count = 0;
 
@@ -467,25 +695,24 @@ fn enumerate_matrices<O: DenseId>(
         l_classes,
         r_classes,
         &row_sums,
-        &col_sums,
         &mut matrix,
         0,
-        &mut col_sums.clone(),
+        &mut col_residual.clone(),
         a_max,
         &mut count,
         actions,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enumerate_row<O: DenseId>(
     op: O,
     l_classes: &[(AuClassId, u32)],
     r_classes: &[(AuClassId, u32)],
     row_sums: &[u32],
-    _col_sums: &[u32],
     matrix: &mut [Vec<u32>],
     row: usize,
-    remaining_col: &mut Vec<u32>,
+    col_residual: &mut Vec<u32>,
     a_max: usize,
     count: &mut usize,
     actions: &mut Vec<Action<O>>,
@@ -498,7 +725,6 @@ fn enumerate_row<O: DenseId>(
     let cols = r_classes.len();
 
     if row == rows {
-        // Complete matrix: emit an action.
         let mut pairs: Vec<ActionPair> = Vec::new();
         for i in 0..rows {
             for j in 0..cols {
@@ -516,18 +742,16 @@ fn enumerate_row<O: DenseId>(
         return;
     }
 
-    // Fill row `row`: distribute row_sums[row] among columns, respecting remaining_col.
     distribute_row(
         op,
         l_classes,
         r_classes,
         row_sums,
-        _col_sums,
         matrix,
         row,
         0,
         row_sums[row],
-        remaining_col,
+        col_residual,
         a_max,
         count,
         actions,
@@ -540,12 +764,11 @@ fn distribute_row<O: DenseId>(
     l_classes: &[(AuClassId, u32)],
     r_classes: &[(AuClassId, u32)],
     row_sums: &[u32],
-    col_sums: &[u32],
     matrix: &mut [Vec<u32>],
     row: usize,
     col: usize,
     remaining: u32,
-    remaining_col: &mut Vec<u32>,
+    col_residual: &mut Vec<u32>,
     a_max: usize,
     count: &mut usize,
     actions: &mut Vec<Action<O>>,
@@ -557,97 +780,81 @@ fn distribute_row<O: DenseId>(
     let cols = r_classes.len();
 
     if col == cols - 1 {
-        // Last column gets whatever remains (if it fits).
-        if remaining <= remaining_col[col] {
+        if remaining <= col_residual[col] {
             matrix[row][col] = remaining;
-            remaining_col[col] -= remaining;
+            col_residual[col] -= remaining;
             enumerate_row(
                 op,
                 l_classes,
                 r_classes,
                 row_sums,
-                col_sums,
                 matrix,
                 row + 1,
-                remaining_col,
+                col_residual,
                 a_max,
                 count,
                 actions,
             );
-            remaining_col[col] += remaining;
+            col_residual[col] += remaining;
             matrix[row][col] = 0;
         }
         return;
     }
 
-    // Try greedy-first: assign diagonal value first when l_classes[row] == r_classes[col].
-    // For general ordering: try from min(remaining, remaining_col[col]) down to 0.
-    let max_assign = remaining.min(remaining_col[col]);
-    // Greedy-first: start with the diagonal match if classes are the same.
-    let greedy_val = if l_classes[row].0 == r_classes[col].0 {
-        max_assign
-    } else {
-        0
-    };
+    let max_assign = remaining.min(col_residual[col]);
 
-    // Emit greedy value first, then the rest.
-    let mut tried_greedy = false;
-    for val in (0..=max_assign).rev() {
-        if val == greedy_val && !tried_greedy {
-            tried_greedy = true;
-        } else if val == greedy_val {
-            continue;
-        } else if !tried_greedy {
-            // Emit greedy first.
-            tried_greedy = true;
-            matrix[row][col] = greedy_val;
-            remaining_col[col] -= greedy_val;
+    // Greedy-first: if l_classes[row] == r_classes[col] (diagonal), try the
+    // maximum allocation first (it is usually optimal). Otherwise descend from max.
+    let greedy = l_classes[row].0 == r_classes[col].0;
+    if greedy {
+        // Try max_assign first (the diagonal greedy), then the rest descending.
+        for val in (0..=max_assign).rev() {
+            matrix[row][col] = val;
+            col_residual[col] -= val;
             distribute_row(
                 op,
                 l_classes,
                 r_classes,
                 row_sums,
-                col_sums,
                 matrix,
                 row,
                 col + 1,
-                remaining - greedy_val,
-                remaining_col,
+                remaining - val,
+                col_residual,
                 a_max,
                 count,
                 actions,
             );
-            remaining_col[col] += greedy_val;
+            col_residual[col] += val;
             matrix[row][col] = 0;
             if *count >= a_max {
                 return;
             }
-            if val == greedy_val {
-                continue;
-            }
         }
-
-        matrix[row][col] = val;
-        remaining_col[col] -= val;
-        distribute_row(
-            op,
-            l_classes,
-            r_classes,
-            row_sums,
-            col_sums,
-            matrix,
-            row,
-            col + 1,
-            remaining - val,
-            remaining_col,
-            a_max,
-            count,
-            actions,
-        );
-        remaining_col[col] += val;
-        matrix[row][col] = 0;
-        if *count >= a_max {
-            return;
+    } else {
+        // Off-diagonal: try from max down (so smaller allocations come later).
+        for val in (0..=max_assign).rev() {
+            matrix[row][col] = val;
+            col_residual[col] -= val;
+            distribute_row(
+                op,
+                l_classes,
+                r_classes,
+                row_sums,
+                matrix,
+                row,
+                col + 1,
+                remaining - val,
+                col_residual,
+                a_max,
+                count,
+                actions,
+            );
+            col_residual[col] += val;
+            matrix[row][col] = 0;
+            if *count >= a_max {
+                return;
+            }
         }
     }
 }
@@ -818,6 +1025,95 @@ mod tests {
             acts.len(),
             1,
             "dedup: only 1 orientation when l children are same"
+        );
+    }
+
+    /// Identity padding: conj{a, b, c} vs conj{b, c} with identity `tt`.
+    /// The shorter side is padded to conj{b, c, tt}, then the bijection pairs
+    /// b-b, c-c, a-tt, producing one action with 3 pairs.
+    #[test]
+    fn identity_padding_unequal_cardinality() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let bool_s = eg.intern_sort("Bool");
+        let a_op = eg.register_op0("a", bool_s);
+        let b_op = eg.register_op0("b", bool_s);
+        let c_op = eg.register_op0("c", bool_s);
+        let tt_op = eg.register_op0("tt", bool_s);
+        let conj_op = eg.register_set("conj", bool_s, bool_s);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let tt = eg.add(tt_op, &[]);
+        eg.set_unit_node(conj_op, tt);
+
+        let left = eg.add(conj_op, &[a, b, c]); // conj{a, b, c}
+        let right = eg.add(conj_op, &[b, c]); // conj{b, c}
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(left).unwrap();
+        let rc = snap.class_of(right).unwrap();
+
+        let mut cache = ActionCache::new(100);
+        generate_actions(&snap, &mut cache, lc, rc);
+
+        let acts = cache.get(lc, rc).unwrap();
+        // With identity padding: 3 elements on each side, so 3! = 6 bijections.
+        // But b and c are shared, so the greedy diagonal dominates. At minimum
+        // there should be actions (not zero, which the old code would produce).
+        assert!(
+            !acts.is_empty(),
+            "identity padding should produce actions for unequal cardinality"
+        );
+        // The optimal action has 3 pairs (one of which pairs a with tt).
+        let has_identity_pair = acts.iter().any(|action| {
+            action.pairs.len() == 3
+                && action.pairs.iter().any(|p| {
+                    let tt_class = snap.class_of(tt).unwrap();
+                    (p.left == snap.class_of(a).unwrap() && p.right == tt_class)
+                        || (p.right == snap.class_of(a).unwrap() && p.left == tt_class)
+                })
+        });
+        assert!(has_identity_pair, "one action should pair `a` with `tt`");
+    }
+
+    /// Complete AC matrix enumeration: plus{a^2, b^2} vs plus{c^2, d^2}
+    /// has margins [2,2] and [2,2]. The complete enumerator produces 3 valid
+    /// matrices (k=0,1,2 for the (a,c) cell), including the interior one.
+    /// The Exact solver is complete; it finds the optimum among all of them.
+    #[test]
+    fn ac_complete_enumeration_includes_all_matrices() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let d_op = eg.register_op0("d", int);
+        let plus_op = eg.register_mset("plus", int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let d = eg.add(d_op, &[]);
+        let left = eg.add(plus_op, &[a, a, b, b]); // plus{a^2, b^2}
+        let right = eg.add(plus_op, &[c, c, d, d]); // plus{c^2, d^2}
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(left).unwrap();
+        let rc = snap.class_of(right).unwrap();
+
+        let mut cache = ActionCache::new(100);
+        generate_actions(&snap, &mut cache, lc, rc);
+
+        let acts = cache.get(lc, rc).unwrap();
+        // 3 valid matrices: k=0, k=1, k=2 for the (a,c) cell.
+        assert_eq!(
+            acts.len(),
+            3,
+            "expected 3 complete matrices, got {}",
+            acts.len()
         );
     }
 

@@ -6,7 +6,7 @@
 // tests will iterate `AU_CASES` and apply the expectations below.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Expectation {
+pub enum Expectation {
     NonEmpty,
     Identical,
     CommutativeEquivalent,
@@ -15,18 +15,18 @@ enum Expectation {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct AuCase {
-    id: &'static str,
-    variables: &'static [&'static str],
-    declarations: &'static str,
-    left: &'static str,
-    right: &'static str,
-    eqsat_iterations: u32,
-    rollouts: u32,
-    expected: Expectation,
+pub struct AuCase {
+    pub id: &'static str,
+    pub variables: &'static [&'static str],
+    pub declarations: &'static str,
+    pub left: &'static str,
+    pub right: &'static str,
+    pub eqsat_iterations: u32,
+    pub rollouts: u32,
+    pub expected: Expectation,
 }
 
-const AU_CASES: &[AuCase] = &[
+pub const AU_CASES: &[AuCase] = &[
     AuCase {
         id: "au_001_conflicting_thresholds",
         variables: &["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"],

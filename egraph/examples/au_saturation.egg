@@ -1,0 +1,85 @@
+(sort Bool)
+(sort Int)
+
+(function x () Int)
+(function y () Int)
+(function p () Bool)
+(function q () Bool)
+(function r () Bool)
+(function tt () Bool)
+
+(function impl (Bool Bool) Bool)
+(function neg (Bool) Bool)
+(function lti (Int Int) Bool)
+(function lei (Int Int) Bool)
+(function eqi (Int Int) Bool :comm)
+(function conj2 (Bool Bool) Bool :comm)
+(function disj2 (Bool Bool) Bool :comm)
+
+; ═══════════════════════════════════════════════════════════════════
+; Example 1: DeMorgan's law exposes equivalence
+;
+; Formula A: impl(neg(conj2(p, q)), r)
+; Formula B: impl(disj2(neg(p), neg(q)), r)
+;
+; Without DeMorgan: different antecedent structure (neg-of-conj vs disj-of-negs).
+; With DeMorgan: the e-graph merges them; AU sees zero Variants.
+; ═══════════════════════════════════════════════════════════════════
+
+(let fA1 (impl (neg (conj2 (p) (q))) (r)))
+(let fB1 (impl (disj2 (neg (p)) (neg (q))) (r)))
+
+; Before saturation:
+(antiunify fA1 fB1 :algorithm exact)
+
+; DeMorgan: neg(conj2(a, b)) => disj2(neg(a), neg(b))
+(rewrite (neg (conj2 a b)) (disj2 (neg a) (neg b)))
+(run 3)
+
+; After saturation (classes merged):
+(antiunify fA1 fB1 :algorithm exact)
+
+; ═══════════════════════════════════════════════════════════════════
+; Example 2: comparison decomposition
+;
+; Formula A: impl(lei(x, y), p)
+; Formula B: impl(disj2(lti(x,y), eqi(x,y)), p)
+;
+; Without the rule: different antecedent structure.
+; With lei(a,b) => disj2(lti(a,b), eqi(a,b)): merged.
+; ═══════════════════════════════════════════════════════════════════
+
+(let fA2 (impl (lei (x) (y)) (p)))
+(let fB2 (impl (disj2 (lti (x) (y)) (eqi (x) (y))) (p)))
+
+; Before:
+(antiunify fA2 fB2 :algorithm exact)
+
+; lei(a,b) => disj2(lti(a,b), eqi(a,b))
+(rewrite (lei a b) (disj2 (lti a b) (eqi a b)))
+(run 3)
+
+; After:
+(antiunify fA2 fB2 :algorithm exact)
+
+; ═══════════════════════════════════════════════════════════════════
+; Example 3: double negation elimination
+;
+; Formula A: impl(p, neg(neg(q)))
+; Formula B: impl(p, q)
+;
+; Without the rule: consequent differs. With neg(neg(a)) => a: merged.
+; ═══════════════════════════════════════════════════════════════════
+
+(let fA3 (impl (p) (neg (neg (q)))))
+(let fB3 (impl (p) (q)))
+
+; Before:
+(antiunify fA3 fB3 :algorithm exact)
+
+; neg(neg(a)) => a
+(rewrite (neg (neg a)) a)
+(run 3)
+
+; After:
+(antiunify fA3 fB3 :algorithm exact)

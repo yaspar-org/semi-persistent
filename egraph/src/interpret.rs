@@ -308,9 +308,13 @@ where
                 }
 
                 let alg = match algorithm.as_str() {
-                    "syntactic" => crate::au::session::AuAlgorithm::Syntactic,
                     "exact" => crate::au::session::AuAlgorithm::Exact,
-                    _ => crate::au::session::AuAlgorithm::Uct,
+                    "uct" => crate::au::session::AuAlgorithm::Uct,
+                    other => {
+                        return Err(InterpError::CheckFailed(format!(
+                            "unknown AU algorithm '{other}' (expected exact or uct)"
+                        )));
+                    }
                 };
 
                 let snap = crate::au::egraph_api::AuSnapshot::new(&self.eg)
@@ -325,24 +329,26 @@ where
                 let result = crate::au::session::anti_unify(&snap, l_id, r_id, &config)
                     .map_err(|e| InterpError::CheckFailed(format!("{e}")))?;
 
-                let rendered = result.to_string_with(|op| match op {
+                let op_namer = |op: &crate::au::terms::TermOp<Cfg::O, Cfg::V>| match op {
                     crate::au::terms::TermOp::EGraph(o) => self.eg.ops().info(*o).name.clone(),
                     crate::au::terms::TermOp::Literal(_, v) => {
                         format!("{}", self.eg.lits().get(*v))
                     }
                     crate::au::terms::TermOp::Variants => "Variants".to_string(),
-                });
+                };
+                let rendered = result.pretty_print_with(op_namer, 80);
+                let cr = crate::au::session::compression_ratio(
+                    &snap,
+                    snap.class_of(l_id).unwrap(),
+                    snap.class_of(r_id).unwrap(),
+                    result.size,
+                );
 
                 println!(
-                    "(anti-unify size {} cr {:.4} {})",
+                    "(anti-unify :size {} :cr {:.4}\n  {})",
                     result.size,
-                    crate::au::session::compression_ratio(
-                        &snap,
-                        snap.class_of(l_id).unwrap(),
-                        snap.class_of(r_id).unwrap(),
-                        result.size,
-                    ),
-                    rendered,
+                    cr,
+                    rendered.replace('\n', "\n  ")
                 );
             }
             CCommand::CheckAu {
@@ -360,9 +366,13 @@ where
                 }
 
                 let alg = match algorithm.as_str() {
-                    "syntactic" => crate::au::session::AuAlgorithm::Syntactic,
                     "exact" => crate::au::session::AuAlgorithm::Exact,
-                    _ => crate::au::session::AuAlgorithm::Uct,
+                    "uct" => crate::au::session::AuAlgorithm::Uct,
+                    other => {
+                        return Err(InterpError::CheckFailed(format!(
+                            "unknown AU algorithm '{other}' (expected exact or uct)"
+                        )));
+                    }
                 };
 
                 let snap = crate::au::egraph_api::AuSnapshot::new(&self.eg)

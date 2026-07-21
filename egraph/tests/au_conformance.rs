@@ -228,7 +228,7 @@ fn conformance_regression_no_panic() {
     eg.rebuild();
 
     let snap = AuSnapshot::new(&eg).unwrap();
-    for alg in [AuAlgorithm::Syntactic, AuAlgorithm::Exact, AuAlgorithm::Uct] {
+    for alg in [AuAlgorithm::Exact, AuAlgorithm::Uct] {
         let config = AuConfig {
             algorithm: alg,
             playouts: 100,

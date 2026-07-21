@@ -1,0 +1,94 @@
+(sort Bool)
+(sort Int)
+
+(function x () Int)
+(function y () Int)
+(function z () Int)
+(function p () Bool)
+(function q () Bool)
+(function r () Bool)
+(function s () Bool)
+(function tt () Bool)
+
+(function impl (Bool Bool) Bool)
+(function neg (Bool) Bool)
+(function lti (Int Int) Bool)
+(function lei (Int Int) Bool)
+(function eqi (Int Int) Bool :comm)
+(function conj2 (Bool Bool) Bool :comm)
+(function disj2 (Bool Bool) Bool :comm)
+
+; ═══════════════════════════════════════════════════════════════════
+; Example 1: DeMorgan partially improves alignment
+;
+; Formula A: impl(neg(conj2(p, q)), conj2(r, s))
+; Formula B: impl(disj2(neg(p), neg(q)), conj2(r, neg(s)))
+;
+; The antecedents are equivalent (DeMorgan). The consequents genuinely
+; differ: conj2(r, s) vs conj2(r, neg(s)). Without saturation the
+; antecedent mismatch masks the consequent structure. After DeMorgan,
+; the antecedent merges and only the real difference (s vs neg(s)) shows.
+; ═══════════════════════════════════════════════════════════════════
+
+(let fA1 (impl (neg (conj2 (p) (q))) (conj2 (r) (s))))
+(let fB1 (impl (disj2 (neg (p)) (neg (q))) (conj2 (r) (neg (s)))))
+
+; Before:
+(antiunify fA1 fB1 :algorithm exact)
+
+(rewrite (neg (conj2 a b)) (disj2 (neg a) (neg b)))
+(run 3)
+
+; After: antecedent merges; the one real difference in the consequent emerges
+(antiunify fA1 fB1 :algorithm exact)
+
+; ═══════════════════════════════════════════════════════════════════
+; Example 2: comparison rewrite exposes shared sub-structure
+;
+; Formula A: impl(conj2(lei(x,y), lti(y,z)), p)
+; Formula B: impl(conj2(disj2(lti(x,y), eqi(x,y)), lti(y,z)), q)
+;
+; Both have conj2(?, lti(y,z)) in the precondition. The first conjunct
+; differs: lei(x,y) in A vs disj2(lti(x,y), eqi(x,y)) in B. Without
+; saturation, the comm matching might pair lei with lti(y,z) instead
+; (since they look equally bad). After the lei-expansion rule, lei(x,y)
+; and disj2(lti(x,y), eqi(x,y)) merge, and the only real difference
+; is the consequent (p vs q).
+; ═══════════════════════════════════════════════════════════════════
+
+(let fA2 (impl (conj2 (lei (x) (y)) (lti (y) (z))) (p)))
+(let fB2 (impl (conj2 (disj2 (lti (x) (y)) (eqi (x) (y))) (lti (y) (z))) (q)))
+
+; Before:
+(antiunify fA2 fB2 :algorithm exact)
+
+(rewrite (lei a b) (disj2 (lti a b) (eqi a b)))
+(run 3)
+
+; After: precondition fully merges; only p vs q remains
+(antiunify fA2 fB2 :algorithm exact)
+
+; ═══════════════════════════════════════════════════════════════════
+; Example 3: double negation improves one branch of a larger formula
+;
+; Formula A: impl(p, conj2(neg(neg(q)), r))
+; Formula B: impl(p, conj2(q, neg(r)))
+;
+; The consequent has conj2(?, ?). In A one child is neg(neg(q)), in B
+; it is q; they are semantically the same (double negation). The other
+; child genuinely differs: r vs neg(r). Without the rule, both children
+; look different. After double-negation elimination, one child merges
+; and only r vs neg(r) remains.
+; ═══════════════════════════════════════════════════════════════════
+
+(let fA3 (impl (p) (conj2 (neg (neg (q))) (r))))
+(let fB3 (impl (p) (conj2 (q) (neg (r)))))
+
+; Before:
+(antiunify fA3 fB3 :algorithm exact)
+
+(rewrite (neg (neg a)) a)
+(run 3)
+
+; After: neg(neg(q)) merges with q; only r vs neg(r) survives
+(antiunify fA3 fB3 :algorithm exact)
