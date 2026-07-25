@@ -13,7 +13,7 @@ resolver = "3"
 [workspace.dependencies]
 winnow = "1"
 proptest = "1"
-num-bigint = "0.4"
+num-bigint = "0.5"
 num-rational = "0.4"
 num-traits = "0.2"
 hashbrown = { version = "0.17", features = ["raw-entry"] }
