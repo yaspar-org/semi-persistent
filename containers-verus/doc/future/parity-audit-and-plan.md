@@ -18,7 +18,7 @@ production [`semi-persistent-containers`](../../../containers) crate.
 | `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolTagged` + a real bit-stealer) |
 | `dense_id.rs` | `dense_id`, `index_like`, `id_factory` | **Verified**: `DenseId31` + `IndexLike` trait, plus `IdFactory` sequential allocation |
 | `id.rs` (`define_id7/15/31/63!`) | `id_macros` | **Verified**: the `define_id7/15/31/63!` family with full proofs |
-| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root, total), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
+| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root + O(1) append fast path, total), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
 | `bitset.rs` | `bitset` (`BitSet`) | **Present** as a public type; kept outside the container proofs (see §3) |
 | `sorted_cursor.rs` | `sorted_cursor`, `sorted_vec_cursor` | **Verified**: the `SortedCursor` trait and the galloping `SortedVecCursor` |
 
@@ -139,19 +139,19 @@ The one remaining gap:
 
 **Fully verified**: generic `BPlusTreeSet<K: DenseId, L: NodeLayout, S:
 SearchKind, const TRACK>` over the real bit-stealing ids (`DenseId31`/`DenseId63`)
-and all six packed node layouts; `bplus` 127, `bplus_tree` 109, `bplus_layout`
+and all six packed node layouts; `bplus` 136, `bplus_tree` 121, `bplus_layout`
 311, `bplus_search` 9 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
-split propagation and new-root growth) is total and carries its full model
-transition; in-order traversal and `seek` are proven sound; the arena provably
-never overflows; `mark`/`restore` work. Insert-only, matching production (no
-`remove`).
+split propagation, new-root growth, and the O(1) append fast path) is total and
+carries its full model transition; in-order traversal and `seek` are proven sound;
+the arena provably never overflows; `mark`/`restore` work. Insert-only, matching
+production (no `remove`).
 
 **Performance gaps, no soundness gap.** All latent — `egraph` never calls
 `from_sorted` and never instantiates `BPlusTreeSet` outside benches — but each is a
 place where a *verified* method is materially worse than its production
 counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
 ([Design Ch. 10 §5](../design/10-bplus-tree.md), harness at
-`containers-conformance/examples/bulkload.rs`):
+`containers-conformance/examples/bulkload.rs`); two are fixed:
 
 - **The `S: SearchKind` parameter was never called — FIXED.** `grep -c 'S::'` over
   the verified tree returned 0, against six production call sites. Five
@@ -159,16 +159,35 @@ counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
   (`leaf_find_ge`, `find_child`) sat in the same file used only by `seek`. All five
   now dispatch to them. Random-order insertion went from 1.4-1.5x to **0.9-1.0x**
   (parity), and the proofs got smaller.
-- **`from_sorted` is not a bulk load** (~30-72x, remaining): it loops `insert`
-  where production fills leaves from chunks of the sorted input.
-- **`insert` has no append fast path** (1.4-2.3x, growing with `n`, remaining):
-  production caches `last_leaf` and appends in O(1) when the key extends the
-  rightmost leaf, skipping the descent entirely. Not specific to bulk building — it
-  costs on *any* ascending insertion, the common case for id-keyed indexes.
+- **`insert` had no append fast path — FIXED** (was 1.4-2.3x and growing with `n`,
+  now **1.0-1.1x**). Production caches `last_leaf` and appends in O(1) when the key
+  extends the rightmost leaf, skipping the descent entirely. Not specific to bulk
+  building — it cost on *any* ascending insertion, the common case for id-keyed
+  indexes. Verified via `last_leaf_ok` as a `wf` clause plus `lemma_append_last_wf`
+  / `lemma_binds_append_last`; sound because the rightmost child has no separator
+  above it, so growing it upward cannot break cross-node ordering.
+- **`from_sorted` is not a bulk load** (~33-38x, remaining): it loops `insert`
+  where production fills leaves from chunks of the sorted input. Unreachable by the
+  fast path — it is a complexity-class difference (O(n) sequential memcpy vs
+  O(n log n) per-key work), not a constant factor.
+
+**How the root cause was pinned down.** Not by comparing verus to production, which
+only yields ratios. By pricing each production feature against **production's own**
+baseline: production is the only implementation with *both* features, so measuring
+bulk-load vs ascending-insert vs shuffled-insert *within one binary* isolates each
+with zero cross-crate confound. Two shapes did the work — production's
+ascending-insert cost is **flat** in `n` (34.70 → 36.89 ns/key from 10k to 1M,
+which is only possible if no descent is happening), and its bulk-load cost *falls*
+with `n` (a different complexity class). The account closes because the three
+independently-measured factors multiply back to the observed total to three
+significant figures at two different `n`. And the shuffled column showed the descent
+itself was never the problem: at 0.80-1.03x, verus's recursive descent costs the
+same as production's iterative one, so recursion, bounds checks, and proof
+machinery cost nothing measurable.
 
 **The audit's question was too narrow.** This table asks "is this method
 verified?" — `from_sorted` answers yes while being asymptotically worse, and the
-missing fast path is invisible to both the proof and the property tests, since
+missing fast path was invisible to both the proof and the property tests, since
 neither observes how many nodes were touched. The `SearchKind` case is sharper
 still: the *signature* matched production exactly, generic parameter and all, and
 the trait behind it was fully verified. Only the call graph was wrong.
@@ -225,8 +244,8 @@ here.
 > methods (`iter`/`get_mut`/key-count `len`) are omitted from otherwise-verified
 > containers.
 
-Per-module verified counts are in `verify-all.sh` output; the tally is 938
-verified, 0 errors, 0 `admit`s/`assume`s across 21 modules.
+Per-module verified counts are in `verify-all.sh` output; the tally is 1399
+verified, 0 errors, 0 `admit`s/`assume`s across 31 module entries.
 
 ---
 [Design Table of Contents](../design/00-table-of-contents.md)

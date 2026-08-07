@@ -419,6 +419,107 @@ fn differential_bplus() {
     }
 }
 
+/// The **append fast path** differential: both trees cache `last_leaf` and skip
+/// the descent when a key extends the rightmost leaf. `bplus_trace`'s uniform
+/// `below(10_000)` draws hit that path only by accident, so this trace drives it
+/// deliberately — and mixes in the cases where it must *decline*:
+///
+/// - strictly ascending runs (the path fires on nearly every key),
+/// - re-inserting the current maximum (equal, not greater: must decline),
+/// - a key below the maximum (out of order: must decline and descend),
+/// - `mark`/`restore` across ascending runs, which is where the fast path's
+///   single `set_index` interacts with diff capture and where a stale
+///   `last_leaf` after a rollback would show up as a lost or duplicated key.
+fn bplus_ascending_trace(seed: u64, steps: usize) {
+    use verus::dense_id::DenseId31;
+
+    let mut p: prod::BPlusTreeSet<DiffId, prod::Layout64U32, prod::BinarySearch, true> =
+        prod::BPlusTreeSet::new();
+    let mut v: verus::bplus::BPlusTreeSet<
+        DenseId31,
+        verus::bplus_layout::Layout64U32,
+        verus::bplus_search::BinarySearch,
+        true,
+    > = verus::bplus::BPlusTreeSet::new();
+
+    let mut rng = Rng::new(seed);
+    let mut marks: Vec<(prod::BPlusToken, verus::bplus::BPlusToken)> = Vec::new();
+    // The ascending cursor. `restore` rolls the trees back but not this counter,
+    // so post-restore keys are still ascending w.r.t. the *rolled-back* tree —
+    // exactly the shape that catches a `last_leaf` not restored with the arena.
+    let mut next: u32 = 0;
+
+    for step in 0..steps {
+        let raw = match rng.below(100) {
+            // ascending: the fast path fires.
+            0..=69 => {
+                next += 1;
+                next
+            }
+            // re-insert the maximum: equal, so the path must decline (and the
+            // insert must report `false`).
+            70..=79 => next,
+            // below the maximum: out of order, so a full descent.
+            80..=89 => rng.below(next as u64 + 1) as u32,
+            90..=94 => {
+                if marks.len() < 8 {
+                    marks.push((
+                        p.mark(prod::ShrinkPolicy::Never),
+                        v.mark(verus::vec::ShrinkPolicy::Never),
+                    ));
+                }
+                continue;
+            }
+            _ => {
+                if !marks.is_empty() {
+                    let idx = rng.below(marks.len() as u64) as usize;
+                    let (tp, tv) = marks[idx].clone();
+                    p.restore(tp);
+                    v.restore(tv);
+                    marks.truncate(idx);
+                    assert_eq!(p.len(), v.len(), "step {step}: len diverged after restore");
+                }
+                continue;
+            }
+        };
+        let ip = p.insert(DiffId::new(raw));
+        let iv = v.insert(DenseId31::new(raw));
+        assert_eq!(ip, iv, "step {step}: insert({raw}) diverged");
+        assert_eq!(p.len(), v.len(), "step {step}: len diverged");
+    }
+
+    // Full in-order sweep: an incorrect fast-path append would show here as a
+    // key out of order, lost, or duplicated.
+    let mut cp = p.cursor();
+    cp.seek_first();
+    let mut cv = verus::bplus::BPlusCursor::new(&v);
+    cv.seek_first();
+    let mut prev: Option<u32> = None;
+    loop {
+        let kp = cp.key().map(|k| k.raw());
+        let kv = cv.key().map(|k| k.index() as u32);
+        assert_eq!(kp, kv, "final enumeration diverged");
+        match kp {
+            None => break,
+            Some(k) => {
+                if let Some(q) = prev {
+                    assert!(q < k, "enumeration not strictly increasing: {q} then {k}");
+                }
+                prev = Some(k);
+            }
+        }
+        cp.step();
+        cv.step();
+    }
+}
+
+#[test]
+fn differential_bplus_ascending_fast_path() {
+    for seed in [1, 0xF00D, 424_242, 7, 0xBEEF] {
+        bplus_ascending_trace(seed, 4000);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // String-keyed map differential (Phase 5.1: Clone keys). Exercises the
 // registry shape: String keys, overwrite shadows, get_by_key/len/mark/restore.
