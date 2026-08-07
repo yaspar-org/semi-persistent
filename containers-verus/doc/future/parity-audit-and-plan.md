@@ -18,7 +18,7 @@ production [`semi-persistent-containers`](../../../containers) crate.
 | `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolTagged` + a real bit-stealer) |
 | `dense_id.rs` | `dense_id`, `index_like`, `id_factory` | **Verified**: `DenseId31` + `IndexLike` trait, plus `IdFactory` sequential allocation |
 | `id.rs` (`define_id7/15/31/63!`) | `id_macros` | **Verified**: the `define_id7/15/31/63!` family with full proofs |
-| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root + O(1) append fast path, total), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
+| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root + O(1) append fast path, total), batched `from_sorted` (one arena write per leaf), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
 | `bitset.rs` | `bitset` (`BitSet`) | **Present** as a public type; kept outside the container proofs (see §3) |
 | `sorted_cursor.rs` | `sorted_cursor`, `sorted_vec_cursor` | **Verified**: the `SortedCursor` trait and the galloping `SortedVecCursor` |
 
@@ -139,7 +139,7 @@ The one remaining gap:
 
 **Fully verified**: generic `BPlusTreeSet<K: DenseId, L: NodeLayout, S:
 SearchKind, const TRACK>` over the real bit-stealing ids (`DenseId31`/`DenseId63`)
-and all six packed node layouts; `bplus` 136, `bplus_tree` 121, `bplus_layout`
+and all six packed node layouts; `bplus` 139, `bplus_tree` 124, `bplus_layout`
 311, `bplus_search` 9 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
 split propagation, new-root growth, and the O(1) append fast path) is total and
 carries its full model transition; in-order traversal and `seek` are proven sound;
@@ -151,7 +151,7 @@ production (no `remove`).
 place where a *verified* method is materially worse than its production
 counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
 ([Design Ch. 10 §5](../design/10-bplus-tree.md), harness at
-`containers-conformance/examples/bulkload.rs`); two are fixed:
+`containers-conformance/examples/bulkload.rs`); all three are now fixed:
 
 - **The `S: SearchKind` parameter was never called — FIXED.** `grep -c 'S::'` over
   the verified tree returned 0, against six production call sites. Five
@@ -166,39 +166,62 @@ counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
   indexes. Verified via `last_leaf_ok` as a `wf` clause plus `lemma_append_last_wf`
   / `lemma_binds_append_last`; sound because the rightmost child has no separator
   above it, so growing it upward cannot break cross-node ordering.
-- **`from_sorted` is not a bulk load** (~33-38x, remaining): it loops `insert`
-  where production fills leaves from chunks of the sorted input. Unreachable by the
-  fast path — it is a complexity-class difference (O(n) sequential memcpy vs
-  O(n log n) per-key work), not a constant factor.
+- **`from_sorted` looped `insert` instead of bulk loading — FIXED** (was 30-72x, now
+  **3.7-6.6x**). It now calls `fast_append_run`, which fills the *entire* rightmost
+  leaf with one arena read and one arena write, falling through to `insert` only at
+  the leaf-full boundary (once per `leaf_cap` keys). Verified by generalizing the
+  single-key fast path from a key to a run: `lemma_append_run_wf` +
+  `lemma_binds_append_run`, which inherit the same soundness argument (the rightmost
+  child has no separator above it). The residual is entirely the boundary split; see
+  [Design Ch. 10 §5.2.3](../design/10-bplus-tree.md) for the measurement that
+  isolates it and for what a fully verified level-builder would still need.
 
-**How the root cause was pinned down.** Not by comparing verus to production, which
-only yields ratios. By pricing each production feature against **production's own**
-baseline: production is the only implementation with *both* features, so measuring
-bulk-load vs ascending-insert vs shuffled-insert *within one binary* isolates each
-with zero cross-crate confound. Two shapes did the work — production's
-ascending-insert cost is **flat** in `n` (34.70 → 36.89 ns/key from 10k to 1M,
-which is only possible if no descent is happening), and its bulk-load cost *falls*
-with `n` (a different complexity class). The account closes because the three
-independently-measured factors multiply back to the observed total to three
-significant figures at two different `n`. And the shuffled column showed the descent
-itself was never the problem: at 0.80-1.03x, verus's recursive descent costs the
-same as production's iterative one, so recursion, bounds checks, and proof
-machinery cost nothing measurable.
+**How the root cause was pinned down — and first got wrong.** Not by comparing verus
+to production, which only yields ratios. By pricing each production feature against
+**production's own** baseline: production is the only implementation with *both*
+features, so measuring bulk-load vs ascending-insert vs shuffled-insert *within one
+binary* isolates each with zero cross-crate confound. Two shapes did the work —
+production's ascending-insert cost is **flat** in `n` (34.70 → 36.89 ns/key from 10k
+to 1M, which is only possible if no descent is happening), and its bulk-load cost
+*falls* with `n`. The three independently-measured factors multiply back to the
+observed total to three significant figures at two different `n`. And the shuffled
+column showed the descent itself was never the problem: at 0.80-1.03x, verus's
+recursive descent costs the same as production's iterative one, so recursion, bounds
+checks, and proof machinery cost nothing measurable.
+
+**But the *explanation* attached to that decomposition was wrong**, and it stayed
+wrong in these docs for a while: the bulk-vs-append column was called a
+complexity-class difference. Once the append fast path landed, both sides do O(n)
+node visits, and production's own append loop is *still* 20-48x slower than
+production's own bulk load — two O(n) loops cannot differ by 40x for a complexity
+reason. The actual mechanism is the **per-key whole-node copy** (`get_index`/
+`set_index` move 64-512 bytes in and out per key; priced in isolation, 20-25x an
+in-place slot write). **A correct factorization tells you which column the cost is
+in, not what that column is buying** — that distinction is the transferable lesson,
+and it is what turned a "needs a whole new proof" item into a 100-line one, since
+amortizing a copy needs far less than building a tree bottom-up.
 
 **The audit's question was too narrow.** This table asks "is this method
-verified?" — `from_sorted` answers yes while being asymptotically worse, and the
-missing fast path was invisible to both the proof and the property tests, since
-neither observes how many nodes were touched. The `SearchKind` case is sharper
-still: the *signature* matched production exactly, generic parameter and all, and
-the trait behind it was fully verified. Only the call graph was wrong.
+verified?" — `from_sorted` answered yes while touching one node per key where
+production touched one per leaf, and the missing fast path was invisible to both the
+proof and the property tests, since neither observes how many nodes were touched.
+The `SearchKind` case is sharper still: the *signature* matched production exactly,
+generic parameter and all, and the trait behind it was fully verified. Only the call
+graph was wrong.
 
-Two habits follow, and the other containers deserve both:
+Three habits follow, and the other containers deserve all three:
 
 1. **Diff the production body**, for fast paths and cached state, not just the
    signature and the contract.
 2. **Check that generic strategy parameters are actually dispatched to** — `grep -c
    'S::'`. A pluggable-strategy A/B that shows *no* difference between impls is
    evidence neither one is running, not evidence they are equivalent.
+3. **To test a per-item cost, vary only that cost.** The first probe of the
+   node-copy hypothesis swept node size across layouts, saw flat per-key cost, and
+   called the hypothesis falsified. Invalid: bigger nodes copy more bytes per key
+   but split proportionally *less* often, so the effects cancel and manufacture
+   flatness. Never vary a geometry parameter that other costs also depend on — the
+   same failure mode as Ch. 11's positional confound, in a different disguise.
 
 The complete design and proof-status accounting is its own chapter:
 [Design Ch. 10: The B+Tree Set](../design/10-bplus-tree.md). It is not repeated
@@ -244,7 +267,7 @@ here.
 > methods (`iter`/`get_mut`/key-count `len`) are omitted from otherwise-verified
 > containers.
 
-Per-module verified counts are in `verify-all.sh` output; the tally is 1399
+Per-module verified counts are in `verify-all.sh` output; the tally is 1405
 verified, 0 errors, 0 `admit`s/`assume`s across 31 module entries.
 
 ---

@@ -263,8 +263,8 @@ SparseSet, plus the tree-level rollback theorem.
 
 | Module | Facts | Content |
 |---|---|---|
-| `bplus` | 136 | the tree: `wf`, `new`/`contains`/`len`, insert (+ the append fast path + arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
-| `bplus_tree` | 121 | the ghost `Tree` model and its structural lemmas |
+| `bplus` | 139 | the tree: `wf`, `new`/`contains`/`len`, insert (+ the append fast path + arena-overflow proof), the batched `from_sorted` append, cursor + seek + the two soundness theorems, mark/restore |
+| `bplus_tree` | 124 | the ghost `Tree` model and its structural lemmas |
 | `bplus_layout` | 311 | the `NodeLayout` trait + six packed layouts + verified mutators |
 | `bplus_search` | 9 | the `SearchKind` trait: binary search + `Branchless` |
 
@@ -328,10 +328,15 @@ production's default.
 
 ### 5.2 The two body-level performance gaps: root cause and fixes
 
-The constructor *exists* and is verified, but its body is `Self::new()` plus a loop
-of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
+(Both are now fixed. §5.2.1 records how the cause was pinned down, §5.2.2 the append
+fast path, §5.2.3 the batched bulk append — which also corrects §5.2.1's account.)
+
+The constructor *exists* and is verified, but its body began as `Self::new()` plus a
+loop of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
 leaves (`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above
-them, which is O(n) with no split propagation and no per-key descent.
+them, which is O(n) with no split propagation and no per-key descent. §5.2.3 closes
+most of that gap and — importantly — corrects the account of its cause given in
+§5.2.1 below, which the append fast path invalidated.
 
 Measured in one binary (`containers-conformance/examples/bulkload.rs`), before and
 after the §5.1 fix:
@@ -384,9 +389,11 @@ path runs*.
 - Column B is **flat**: 34.70 ns/key at n=10k, 36.89 at n=1M. A hundredfold more
   data and a deeper tree with no change in per-key cost is only possible if the
   tree is **not being descended**. That flat line *is* the fast path.
-- Column A **falls** with n (4.75 → 0.74 ns/key) — a different complexity class.
-  O(n) sequential `copy_from_slice` gets *cheaper* per key as the loop amortizes,
-  where O(n log n) descend-and-split gets dearer.
+- Column A **falls** with n (4.75 → 0.74 ns/key), where B is flat and 40x above it.
+  This was read at the time as a complexity-class difference. **It is not** — see
+  §5.2.3, which prices the actual mechanism (a per-key whole-node copy) and notes
+  the tell this reading missed: B and A are *both* O(n) in node visits once the fast
+  path is available, so no complexity argument can separate them by 40x.
 
 **The factorization closes the account.** V/A should be the product of the three
 independently-measured factors:
@@ -396,8 +403,11 @@ n=1M    :  0.62 (Vrand/C)  x  4.4 (C/B)  x  39.8 (B/A)  = 108.6   measured 108.6
 n=100k  :  0.65            x  3.7        x  48.0        = 115     measured 114.0
 ```
 
-Three significant figures at two different `n`. Nothing is left over, which is
-what makes this a cause rather than a plausible story.
+Three significant figures at two different `n`. Nothing is left over — which makes
+the factorization *arithmetically* sound, and is exactly why it was trusted too far.
+A correct decomposition tells you which **column** the cost lives in; it does not
+tell you **what that column is paying for**. `B/A = 40x` was measured accurately and
+then explained wrongly. §5.2.3 keeps the decomposition and replaces the explanation.
 
 #### 5.2.2 The append fast path — FIXED (ascending insert now 1.0-1.1x)
 
@@ -454,16 +464,82 @@ must *decline* (re-inserting the current maximum; a key below it) and
 `mark`/`restore` across ascending runs, where a `last_leaf` not rolled back with the
 arena would surface as a lost or duplicated key.
 
-#### 5.2.3 No bulk load — ~33-38x, remaining
+#### 5.2.3 The batched append — FIXED (`from_sorted` 72x → 6.3x)
 
-An insert loop where production fills leaves directly. Closing it means building a
-tree that satisfies `wf()` *directly* rather than inductively: a fresh invariant for
-the leaf-fill loop and another for the level-build loop.
+`from_sorted` now calls `fast_append_run`, which fills the **entire** rightmost leaf
+with one arena read and one arena write, and falls through to `insert` only at the
+leaf-full boundary (once per `leaf_cap` keys):
 
-Note what the fast path did to this column: verus `from_sorted` improved (it goes
-through `insert`, which now takes the fast path on every key), but the ratio is
-still ~33x because A and V are in **different complexity classes** — the gap is
-`B/A`, sequential memcpy versus per-key work, not anything the fast path can reach.
+| n | prod `from_sorted` | verus `from_sorted` | ratio |
+|---|---|---|---|
+| 1 000 | 1.6 µs | 6.0 µs | **3.7x** |
+| 10 000 | 9.4 µs | 62.2 µs | **6.6x** |
+| 100 000 | 111.3 µs | 705.3 µs | **6.3x** |
+
+**Correcting the root cause recorded above.** §5.2.1 attributed this column to a
+complexity-class difference — "sequential memcpy versus per-key work". After the
+fast path landed that framing stopped holding, and the tell was in production's own
+numbers: with `fast_append` available, both sides do O(n) node visits, yet
+production's own append loop (column B) is still 20-48x slower than production's own
+bulk load (column A). Two O(n) loops cannot differ by 40x for a complexity reason.
+
+The real mechanism is the **per-key whole-node copy**. `get_index`/`set_index` move
+a whole `L::Node` — 64 to 512 bytes — in and out of the arena *per key*. Priced in
+isolation (a plain array of node-sized structs, no tree logic, no splits, varying
+only by-value versus `&mut` and nothing else):
+
+| node | keys/node | by-value ns/key | in-place ns/key | ratio |
+|---|---|---|---|---|
+| 64 B | 14 | 22.84 | 0.974 | 23.5x |
+| 128 B | 30 | 24.73 | 1.166 | 21.2x |
+| 256 B | 62 | 19.50 | 0.760 | 25.7x |
+
+The absolute numbers match the real trees (19.5-24.7 against 31-41 ns/key measured
+append; 0.76-1.17 against 0.75-1.63 bulk), so this accounts for essentially the
+whole gap. It is flat in node size because a 64 B and a 256 B memcpy both cost a
+handful of cycles — what is paid is *fixed overhead per copy*, not bytes moved.
+
+That mechanism dictates the fix directly: not "do fewer descents" but **amortize the
+copy across every key bound for the same leaf**. `fast_append_run` reads the leaf
+once, writes the whole run of ascending keys that fits into the local copy, and
+stores it back once.
+
+**A methodological correction worth recording.** The first probe of this hypothesis
+swept node size across layouts, found append cost flat (41/31/36 ns/key), and read
+that as falsifying the copy. It is not a valid falsifier: bigger nodes copy more
+bytes per key but split proportionally *less* often, so the two effects cancel and
+manufacture flatness. To test a per-item cost, hold everything fixed and vary only
+that cost — never a geometry parameter other costs also depend on. This is the same
+failure mode as Chapter 11's positional confound, in a different disguise.
+
+**What the residual 6.3x is.** Splits, entirely. Sweeping `leaf_cap` moves split
+count ~4x while leaving the per-key slot write untouched; the excess over production
+divided by split count is constant, which is the discriminator:
+
+| layout | leaf_cap | splits (n=1M) | prod ns/key | verus ns/key | excess ÷ splits |
+|---|---|---|---|---|---|
+| Layout64 | 14 | 125 000 | 7.020 | 32.882 | **207 ns** |
+| Layout128 | 30 | 62 500 | 1.481 | 12.656 | **179 ns** |
+| Layout256 | 62 | 31 250 | 1.189 | 8.289 | **227 ns** |
+
+Constant within 27% across a 4x span in *both* split count and node size. Each
+boundary key pays a full root-to-leaf descent plus a split plus (per §5.2.2's
+divergence) a rightmost-spine recompute, where production's loader pays none of the
+three. Closing it means building the levels above the leaves directly — a tree that
+satisfies `wf()` *by construction* rather than inductively, which needs a fresh
+invariant for the leaf-fill loop and another for the level-build loop.
+
+That path also has a verification-only obstacle worth stating, because it forces a
+divergence from production's code rather than a port of it: `words.chunks(LEAF_CAP)`
+leaves an **underfull remainder** leaf (for n=63 on Layout256, one key), and
+`tree_wf` requires non-root leaves to hold `>= (cap+1)/2`. The same problem recurs
+at every internal level. Production gets away with it because its search never
+relies on occupancy; our invariant does. A **balanced** partition fixes it —
+`k = ceil(m/c)` groups of `floor(m/k)` or `ceil(m/k)` — and the bound is provably
+tight: the smallest group `floor(m/ceil(m/c))` exactly equals the required minimum,
+with zero slack, for all six layouts at both the leaf level (`c = leaf_cap`) and the
+internal level (`c = key_cap+1`). So the verified loader would be *strictly
+better-formed* than production's, not a shortcut around it.
 
 **How the shuffled column earned its keep.** It was introduced to isolate the fast
 path — in random order the path cannot fire, so the residual is everything *else*.

@@ -3442,6 +3442,239 @@ pub proof fn lemma_append_last_shape(t: Tree, k: nat)
     }
 }
 
+// ===========================================================================
+// The BATCHED append (`from_sorted`'s bulk path).
+//
+// Why a whole run rather than a loop of single appends: the insert-loop
+// `from_sorted`'s cost is NOT its complexity class. Once the `last_leaf` fast
+// path landed, the loop is O(n) in node visits — and production's *own* append
+// loop is still 20-48x slower than production's *own* bulk load, so complexity
+// cannot be the discriminator. The cost is the per-key whole-node COPY:
+// `get_index`/`set_index` move an entire `L::Node` (64-512 bytes) in and out for
+// every single key. Priced in isolation (an array of node-sized structs, no tree
+// logic and no splits at all), by-value costs 20-25x an in-place slot write, and
+// those absolute numbers account for essentially the whole observed gap.
+//
+// So the fix is to amortize that copy over the whole run of keys destined for the
+// same leaf: read the rightmost leaf ONCE, write every key of the ascending run
+// that fits, and store it back ONCE. `tree_append_run` is the ghost image —
+// `tree_append_last` iterated over a sequence — which is why it inherits that
+// lemma's soundness argument verbatim: the rightmost child sits at index
+// `seps.len()`, outside the range of `tree_wf`'s `keys_all_lt` clause, so it has
+// no separator above it and growing it upward cannot break cross-node ordering.
+// ===========================================================================
+
+/// Append a whole sequence `r` to the rightmost leaf's keys (the batched image of
+/// [`tree_append_last`], which is the `r.len() == 1` case). Ids, separators,
+/// heights, and the leaf chain are all preserved; only the rightmost leaf's key
+/// sequence grows. As with the single append, the `kids.len() == 0` arm is
+/// unreachable for a `wf` tree but must be covered for totality.
+pub open(crate) spec fn tree_append_run(t: Tree, r: Seq<nat>) -> Tree
+    decreases t
+{
+    match t {
+        Tree::Leaf { id, keys } => Tree::Leaf { id, keys: keys + r },
+        Tree::Inner { id, seps, kids } =>
+            if kids.len() == 0 {
+                t
+            } else {
+                Tree::Inner {
+                    id,
+                    seps,
+                    kids: kids.update(kids.len() - 1, tree_append_run(kids[kids.len() - 1], r)),
+                }
+            },
+    }
+}
+
+/// The *shape* half of [`lemma_append_run_wf`], with **no** hypotheses: a batched
+/// append creates and destroys no node, so every id-, count-, and shape-valued
+/// projection is unchanged. The batched twin of [`lemma_append_last_shape`], and
+/// for the same reason: the arena bridge needs these equalities while walking the
+/// rightmost spine, where the key-ordering precondition is not yet in hand.
+pub proof fn lemma_append_run_shape(t: Tree, r: Seq<nat>)
+    ensures
+        tree_root_id(tree_append_run(t, r)) == tree_root_id(t),
+        tree_ids(tree_append_run(t, r)) == tree_ids(t),
+        tree_leaf_ids(tree_append_run(t, r)) == tree_leaf_ids(t),
+        node_count(tree_append_run(t, r)) == node_count(t),
+        last_leaf_id(tree_append_run(t, r)) == last_leaf_id(t),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { kids, .. } => {
+            if kids.len() == 0 {
+            } else {
+                let m = kids.len() - 1;
+                let nc = tree_append_run(kids[m], r);
+                lemma_append_run_shape(kids[m], r);
+                lemma_forest_ids_update_eq(kids, m, nc);
+                lemma_forest_leaf_ids_update_eq(kids, m, nc);
+                lemma_forest_node_count_update(kids, m, nc);
+                assert(kids.update(m, nc)[m] == nc);
+                assert(kids.update(m, nc).len() == kids.len());
+            }
+        }
+    }
+}
+
+/// **The batched append is sound.** If every key of `r` is strictly above every
+/// key already in the tree, `r` is itself strictly sorted, and the rightmost leaf
+/// has room for all of it, then `tree_append_run` preserves `tree_wf` at the same
+/// height and concatenates `r` onto the model.
+///
+/// The generalization of [`lemma_append_last_wf`] from one key to a run. The
+/// induction is on the TREE, not on `r` — which is what keeps it the same size as
+/// the single-key proof: the ordering obligation is discharged once for the whole
+/// run at the rightmost child, exactly as it was for one key.
+pub proof fn lemma_append_run_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool, r: Seq<nat>)
+    requires
+        tree_wf(t, h, cap, key_cap, is_root),
+        cap >= 1,
+        last_leaf_keys(t).len() + r.len() <= cap,
+        strictly_sorted(r),
+        // every key of the run is strictly above every key already present.
+        forall|i: int, j: int| 0 <= i < tree_keys(t).len() && 0 <= j < r.len()
+            ==> (#[trigger] tree_keys(t)[i]) < (#[trigger] r[j]),
+    ensures
+        tree_wf(tree_append_run(t, r), h, cap, key_cap, is_root),
+        tree_keys(tree_append_run(t, r)) == tree_keys(t) + r,
+        tree_ids(tree_append_run(t, r)) == tree_ids(t),
+        tree_leaf_ids(tree_append_run(t, r)) == tree_leaf_ids(t),
+        tree_root_id(tree_append_run(t, r)) == tree_root_id(t),
+        node_count(tree_append_run(t, r)) == node_count(t),
+        tree_disjoint(tree_append_run(t, r)) == tree_disjoint(t),
+        last_leaf_keys(tree_append_run(t, r)) == last_leaf_keys(t) + r,
+        // the target leaf is the SAME node, so the exec `last_leaf` cache needs no
+        // update — the whole point of the batch being cheap.
+        last_leaf_id(tree_append_run(t, r)) == last_leaf_id(t),
+    decreases t,
+{
+    let nt = tree_append_run(t, r);
+    lemma_append_run_shape(t, r);
+    match t {
+        Tree::Leaf { id, keys } => {
+            assert(nt == Tree::Leaf { id, keys: keys + r });
+            // sorted: `keys` sorted, `r` sorted, and every `r` element above every
+            // `keys` element (the hypothesis, since tree_keys(Leaf) == keys).
+            assert forall|a: int, b: int| 0 <= a < b < (keys + r).len()
+                implies #[trigger] (keys + r)[a] < #[trigger] (keys + r)[b] by {
+                if b < keys.len() {
+                    assert(keys[a] < keys[b]);
+                } else if a < keys.len() {
+                    // straddles the boundary: keys[a] < r[b - keys.len()].
+                    assert(tree_keys(t)[a] == keys[a]);
+                    assert((keys + r)[b] == r[b - keys.len()]);
+                } else {
+                    // both in the run.
+                    assert((keys + r)[a] == r[a - keys.len()]);
+                    assert((keys + r)[b] == r[b - keys.len()]);
+                    assert(r[a - keys.len()] < r[b - keys.len()]);
+                }
+            }
+            assert(tree_keys(nt) =~= tree_keys(t) + r);
+            assert(last_leaf_keys(nt) =~= last_leaf_keys(t) + r);
+        }
+        Tree::Inner { id, seps, kids } => {
+            let m = kids.len() - 1;
+            let nc = tree_append_run(kids[m], r);
+            let u = kids.update(m, nc);
+            assert(nt == Tree::Inner { id, seps, kids: u });
+            assert(m == seps.len());
+
+            // the last child is wf at h-1, and every run key is above all of ITS
+            // keys (a subsequence of the parent's, by forest_keys' split at m).
+            lemma_forest_wf_at(kids, (h - 1) as nat, cap, key_cap, m);
+            lemma_forest_keys_split(kids, m);
+            assert(kids.subrange(m, kids.len() as int) =~= seq![kids[m]]);
+            lemma_forest_keys_cons(seq![kids[m]]);
+            assert(seq![kids[m]].drop_first() =~= Seq::<Tree>::empty());
+            let pre = forest_keys(kids.subrange(0, m));
+            assert(forest_keys(kids) =~= pre + tree_keys(kids[m]));
+            assert forall|i: int, j: int| 0 <= i < tree_keys(kids[m]).len() && 0 <= j < r.len()
+                implies (#[trigger] tree_keys(kids[m])[i]) < (#[trigger] r[j]) by {
+                assert(tree_keys(t)[pre.len() + i] == tree_keys(kids[m])[i]);
+            }
+            assert(last_leaf_keys(t) == last_leaf_keys(kids[m]));
+            lemma_append_run_wf(kids[m], (h - 1) as nat, cap, key_cap, false, r);
+
+            // forest stays wf: only child m changed, and it is wf at h-1.
+            lemma_forest_wf_update(kids, (h - 1) as nat, cap, key_cap, m, nc);
+
+            // model: forest_keys(update(m, nc)) == pre ++ tree_keys(nc) ++ empty.
+            lemma_forest_keys_update(kids, m, nc);
+            assert(kids.subrange(m + 1, kids.len() as int) =~= Seq::<Tree>::empty());
+            assert(forest_keys(Seq::<Tree>::empty()) =~= Seq::<nat>::empty());
+            assert(tree_keys(nt) =~= tree_keys(t) + r);
+            assert(last_leaf_keys(nt) =~= last_leaf_keys(t) + r);
+
+            // ids / leaf-ids / node_count / disjointness: nc has kids[m]'s footprint.
+            lemma_forest_ids_update_eq(kids, m, nc);
+            lemma_forest_leaf_ids_update_eq(kids, m, nc);
+            lemma_forest_node_count_update(kids, m, nc);
+            lemma_forest_disjoint_update_eq(kids, m, nc);
+            // `tree_disjoint` is an EQUALITY postcondition (not a hypothesis), so
+            // each clause is shown equal rather than derived. Every child's id set
+            // is literally unchanged, so the pairwise clause is the same
+            // proposition on both sides — but a biconditional between two
+            // quantified propositions needs each direction separately.
+            assert forall|i: int| 0 <= i < u.len()
+                implies #[trigger] tree_ids(u[i]) == tree_ids(kids[i]) by {}
+            if forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+                (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j])) {
+                assert forall|i: int, j: int| 0 <= i < j < u.len()
+                    implies (#[trigger] tree_ids(u[i])).disjoint(#[trigger] tree_ids(u[j])) by {
+                    assert(tree_ids(kids[i]).disjoint(tree_ids(kids[j])));
+                }
+            }
+            if forall|i: int, j: int| 0 <= i < j < u.len() ==>
+                (#[trigger] tree_ids(u[i])).disjoint(#[trigger] tree_ids(u[j])) {
+                assert forall|i: int, j: int| 0 <= i < j < kids.len()
+                    implies (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j])) by {
+                    assert(tree_ids(u[i]).disjoint(tree_ids(u[j])));
+                }
+            }
+            assert(forest_ids(u) == forest_ids(kids));
+            assert(tree_disjoint(nt) == tree_disjoint(t));
+
+            // ordering, the crux. Upper bounds: i < seps.len() == m, so child i is
+            // untouched by update(m, _). Lower bounds: child m's new keys are the
+            // old ones (already >= seps[m-1]) plus the run, and every run key
+            // exceeds every key of the tree — including child m's first, which is
+            // >= seps[m-1]. When m == 0 there is no lower bound to meet.
+            assert forall|i: int| 0 <= i < seps.len() implies keys_all_lt(#[trigger] u[i], seps[i]) by {
+                assert(u[i] == kids[i]);
+            }
+            assert forall|i: int| 0 < i < u.len() implies keys_all_ge(#[trigger] u[i], seps[i - 1]) by {
+                if i < m {
+                    assert(u[i] == kids[i]);
+                } else {
+                    assert(i == m);
+                    assert(u[m] == nc);
+                    assert(tree_keys(nc) =~= tree_keys(kids[m]) + r);
+                    assert forall|j: int| 0 <= j < tree_keys(nc).len()
+                        implies seps[i - 1] <= #[trigger] tree_keys(nc)[j] by {
+                        if j < tree_keys(kids[m]).len() {
+                            // old key: the old child met the same lower bound.
+                            assert(keys_all_ge(kids[m], seps[m - 1]));
+                        } else {
+                            // a run key: it exceeds every key of the tree, and
+                            // seps[m-1] <= child m's first key (non-empty by wf's
+                            // min occupancy), hence < it.
+                            assert(tree_keys(nc)[j] == r[j - tree_keys(kids[m]).len()]);
+                            lemma_tree_keys_nonempty(kids[m], (h - 1) as nat, cap, key_cap);
+                            assert(keys_all_ge(kids[m], seps[m - 1]));
+                            assert(seps[m - 1] <= tree_keys(kids[m])[0]);
+                            assert(tree_keys(kids[m])[0] < r[j - tree_keys(kids[m]).len()]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// `forest_ids` is unchanged when a child is replaced by one with the same
 /// footprint (the append case: no node is created or destroyed).
 pub proof fn lemma_forest_ids_update_eq(kids: Seq<Tree>, m: int, nc: Tree)

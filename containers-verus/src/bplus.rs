@@ -340,6 +340,16 @@ pub open(crate) spec fn leaf_word_keys<L: NodeLayout>(arena: Seq<L::Node>, lid: 
     Seq::new(L::keys_view(arena[lid as int]).len(), |i: int| L::keys_view(arena[lid as int])[i].as_nat())
 }
 
+/// The same projection applied to a NODE rather than an arena slot. What the
+/// batched append's loop invariant needs: it grows a *local* `L::Node` across
+/// many iterations, so it must state its key view in nats (`Seq<nat>`, the model
+/// currency) without going through an arena index. `leaf_word_keys(arena, lid) ==
+/// node_word_keys(arena[lid])` by definition, which is how the two connect at
+/// the single `set_index`.
+pub open(crate) spec fn node_word_keys<L: NodeLayout>(n: L::Node) -> Seq<nat> {
+    Seq::new(L::keys_view(n).len(), |i: int| L::keys_view(n)[i].as_nat())
+}
+
 // ===========================================================================
 // B3 support: map a (leaf, position-in-leaf) pair to a flat model index.
 //
@@ -591,15 +601,21 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     }
 
     /// Bulk-build from strictly ascending keys (production `from_sorted`
-    /// surface). VERIFIED as an insert loop: total, `wf`, and the resulting
-    /// model's key set is exactly the input's.
+    /// surface). VERIFIED: total, `wf`, and the resulting model's key set is
+    /// exactly the input's.
     ///
-    /// COMPLEXITY DIVERGENCE (documented for the Phase 9 bench gate):
-    /// production's `from_sorted` is an O(n) bottom-up leaf-fill; this is
-    /// O(n log n) repeated insert (with insert's rightmost-append behavior on
-    /// ascending input). The verified O(n) bottom-up build (full model proof)
-    /// is follow-up verified work — the plan's largest single proof item —
-    /// tracked as a recorded exception for `build_from_sorted_1m`.
+    /// **Batched, not per-key.** Each iteration calls [`fast_append_run`], which
+    /// fills the entire rightmost leaf with ONE arena read and ONE arena write, so
+    /// the whole-node copy is paid once per LEAF rather than once per key. That
+    /// copy is the measured root cause of the old gap to production's bulk load
+    /// (see `fast_append_run`'s doc): priced in isolation, a by-value node move
+    /// costs 20-25x an in-place slot write, which accounted for essentially the
+    /// whole difference — it was never a complexity-class gap, since the
+    /// `last_leaf` fast path already made both O(n) in node visits.
+    ///
+    /// The remaining `insert` call handles only the leaf-full boundary (once per
+    /// `leaf_cap` keys, i.e. every 14-62), where a split must propagate. So the
+    /// per-key cost is a slot write plus an amortized 1/leaf_cap of a descent.
     pub fn from_sorted(keys: &[K]) -> (t: Self)
         where L::Node: core::default::Default
         requires
@@ -637,41 +653,83 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     ==> exists|a: int| 0 <= a < i && (#[trigger] keys@[a]).id_nat() == v,
             decreases n - i,
         {
-            let k = keys[i];
-            proof {
-                // nkeys == model.len() == i < n < usize::MAX (insert's headroom).
-                assert(t.nkeys < usize::MAX);
-                // k is NOT already present: everything in the model came from
-                // the strict prefix, whose ids are strictly below k's.
-                if t.model().to_set().contains(k.id_nat()) {
-                    let a = choose|a: int| 0 <= a < i
-                        && (#[trigger] keys@[a]).id_nat() == k.id_nat();
-                    assert(keys@[a].id_nat() < keys@[i as int].id_nat());
-                    assert(false);
-                }
-            }
             let ghost old_model = t.model();
-            proof {
-                // wf ⟹ the model (tree_keys of a wf tree) is strictly sorted.
-                crate::bplus_tree::lemma_tree_wf_sorted(
-                    t.tree@, crate::bplus_tree::tree_height(t.tree@),
-                    L::leaf_cap_spec(), L::key_cap_spec(), true);
+            // ---- THE BULK STEP: fill the whole rightmost leaf in one arena
+            // write. Consumes up to `leaf_cap` keys per call, so the per-key node
+            // copy that dominated the old insert loop is paid once per leaf.
+            let took = t.fast_append_run(keys, i);
+            if took > 0 {
+                proof {
+                    let run = Seq::new(took as nat, |a: int| keys@[i + a].id_nat());
+                    assert(t.model() == old_model + run);
+                    // Both set-invariant arms transfer index-wise across the
+                    // concatenation: a key in the model is in `old_model` (hence
+                    // from the prefix `[0, i)`) or in `run` (hence at `i + a`).
+                    assert forall|a: int| 0 <= a < i + took implies
+                        t.model().to_set().contains((#[trigger] keys@[a]).id_nat()) by {
+                        if a < i {
+                            assert(old_model.to_set().contains(keys@[a].id_nat()));
+                            let b = choose|b: int| 0 <= b < old_model.len()
+                                && old_model[b] == keys@[a].id_nat();
+                            assert(t.model()[b] == keys@[a].id_nat());
+                        } else {
+                            assert(run[a - i] == keys@[a].id_nat());
+                            assert(t.model()[old_model.len() + (a - i)] == keys@[a].id_nat());
+                        }
+                    }
+                    assert forall|v: nat| t.model().to_set().contains(v) implies
+                        exists|a: int| 0 <= a < i + took
+                            && (#[trigger] keys@[a]).id_nat() == v by {
+                        let b = choose|b: int| 0 <= b < t.model().len() && t.model()[b] == v;
+                        if b < old_model.len() {
+                            assert(old_model[b] == v);
+                            assert(old_model.to_set().contains(v));
+                            let a = choose|a: int| 0 <= a < i && (#[trigger] keys@[a]).id_nat() == v;
+                            assert(0 <= a < i + took && keys@[a].id_nat() == v);
+                        } else {
+                            let a = i + (b - old_model.len());
+                            assert(keys@[a].id_nat() == run[b - old_model.len()]);
+                            assert(0 <= a < i + took && keys@[a].id_nat() == v);
+                        }
+                    }
+                }
+                i = i + took;
+            } else {
+                // ---- THE BOUNDARY STEP: the rightmost leaf is full (or the tree
+                // is empty), so this key must split. Once per `leaf_cap` keys.
+                let k = keys[i];
+                proof {
+                    // nkeys == model.len() == i < n < usize::MAX (insert's headroom).
+                    assert(t.nkeys < usize::MAX);
+                    // k is NOT already present: everything in the model came from
+                    // the strict prefix, whose ids are strictly below k's.
+                    if t.model().to_set().contains(k.id_nat()) {
+                        let a = choose|a: int| 0 <= a < i
+                            && (#[trigger] keys@[a]).id_nat() == k.id_nat();
+                        assert(keys@[a].id_nat() < keys@[i as int].id_nat());
+                        assert(false);
+                    }
+                    // wf ⟹ the model (tree_keys of a wf tree) is strictly sorted.
+                    crate::bplus_tree::lemma_tree_wf_sorted(
+                        t.tree@, crate::bplus_tree::tree_height(t.tree@),
+                        L::leaf_cap_spec(), L::key_cap_spec(), true);
+                }
+                let added = t.insert(k);
+                proof {
+                    assert(added);  // absent above ⟹ newly added
+                    crate::bplus_tree::lemma_tree_wf_sorted(
+                        t.tree@, crate::bplus_tree::tree_height(t.tree@),
+                        L::leaf_cap_spec(), L::key_cap_spec(), true);
+                    // model set grew by exactly {k.id_nat()}; re-establish both
+                    // set-invariant arms + the length (strictly sorted model:
+                    // len == set cardinality, growing by one).
+                    crate::bplus_tree::lemma_strictly_sorted_len_eq_set(old_model);
+                    crate::bplus_tree::lemma_strictly_sorted_len_eq_set(t.model());
+                    assert(t.model().to_set() == old_model.to_set().insert(k.id_nat()));
+                    assert(t.model().to_set().len() == old_model.to_set().len() + 1);
+                }
+                i = i + 1;
             }
-            let added = t.insert(k);
-            proof {
-                assert(added);  // absent above ⟹ newly added
-                crate::bplus_tree::lemma_tree_wf_sorted(
-                    t.tree@, crate::bplus_tree::tree_height(t.tree@),
-                    L::leaf_cap_spec(), L::key_cap_spec(), true);
-                // model set grew by exactly {k.id_nat()}; re-establish both
-                // set-invariant arms + the length (strictly sorted model:
-                // len == set cardinality, growing by one).
-                crate::bplus_tree::lemma_strictly_sorted_len_eq_set(old_model);
-                crate::bplus_tree::lemma_strictly_sorted_len_eq_set(t.model());
-                assert(t.model().to_set() == old_model.to_set().insert(k.id_nat()));
-                assert(t.model().to_set().len() == old_model.to_set().len() + 1);
-            }
-            i = i + 1;
         }
         t
     }
@@ -4411,6 +4469,238 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         true
     }
 
+    /// **The batched append** — `fast_append` for a whole ascending run, and the
+    /// heart of the bulk `from_sorted`. Fills the rightmost leaf with as many keys
+    /// from `keys[start..]` as fit, using ONE arena read and ONE arena write for
+    /// the entire run. Returns how many keys were consumed (0 if the run cannot
+    /// start here, in which case nothing was mutated).
+    ///
+    /// **Why batching is the fix.** The insert-loop `from_sorted` was ~31x slower
+    /// than production's bulk load, and it is not a complexity-class gap: once the
+    /// `last_leaf` fast path landed, both do O(n) node visits, yet production's own
+    /// append loop is still 20-48x slower than production's own bulk load. The cost
+    /// is the per-key whole-node COPY — `get_index`/`set_index` move a whole
+    /// `L::Node` (64-512 bytes) in and out per key. Measured in isolation (an array
+    /// of node-sized structs, no tree logic, no splits), by-value costs 20-25x an
+    /// in-place write, which accounts for essentially the entire gap. So this method
+    /// pays that copy once per LEAF rather than once per key: `n` writes into a
+    /// local `L::Node`, then a single `set_index`.
+    ///
+    /// Soundness is inherited wholesale from the single-key path, generalized from
+    /// `k` to a run: `lemma_append_run_wf` (the run is above every existing key, so
+    /// the rightmost child — which has no separator above it — may grow) plus
+    /// `lemma_binds_append_run` (one slot differs, holding the same leaf with the
+    /// run appended and its `link_view` intact, so the whole leaf chain transfers).
+    fn fast_append_run(&mut self, keys: &[K], start: usize) -> (took: usize)
+        requires
+            old(self).wf(),
+            start < keys@.len(),
+            keys@.len() < usize::MAX,
+            // Key-count headroom, stated over the REMAINING keys rather than the
+            // whole slice: the caller has already consumed `start` of them, so
+            // `nkeys + (len - start)` is what the count can reach. That is exactly
+            // `keys@.len()` when called from `from_sorted` (where `nkeys == start`),
+            // which is how the loop discharges it without a stronger precondition
+            // on the public surface.
+            old(self).nkeys_spec() + (keys@.len() - start) < usize::MAX,
+            // strictly ascending over the whole slice (from_sorted's contract).
+            forall|i: int, j: int| 0 <= i < j < keys@.len()
+                ==> (#[trigger] keys@[i]).id_nat() < (#[trigger] keys@[j]).id_nat(),
+        ensures
+            self.wf(),
+            took <= keys@.len() - start,
+            // consumed a run: the model grew by exactly those keys, in order.
+            took > 0 ==> self.model() == old(self).model()
+                + Seq::new(took as nat, |i: int| keys@[start + i].id_nat()),
+            took == 0 ==> *self == *old(self),
+    {
+        let ll = self.last_leaf;
+        proof {
+            lemma_last_leaf_binds::<K, L, S, TRACK>(self);
+            L::lemma_arena_capacity();
+        }
+        let leaf = self.nodes.get_index(ll);
+        let n = L::count(&leaf);
+        let leaf_cap = L::leaf_cap();
+        let ghost lkeys = crate::bplus_tree::last_leaf_keys(self.tree@);
+        proof {
+            L::lemma_keys_view_len(leaf);
+            assert(leaf_word_keys::<L>(self.arena(), ll.as_nat()) == lkeys);
+            assert(n as nat == lkeys.len());
+        }
+        // Same three gates as the single-key path: the leaf must be non-empty (so
+        // it has a last key to compare against), have room, and the incoming key
+        // must extend it.
+        if n == 0 || n >= leaf_cap {
+            return 0;
+        }
+        let kw0: L::Word = keys[start].to_index();
+        let last_key: L::Word = L::key(&leaf, n - 1);
+        let gt = last_key.lt(kw0);
+        proof {
+            <L::Word as IndexLike>::lemma_order_is_as_nat(last_key, kw0);
+            assert(last_key == L::keys_view(leaf)[n - 1]);
+            assert(last_key.as_nat() == lkeys[n - 1]);
+        }
+        if !gt {
+            return 0;
+        }
+
+        // The run is bounded by the leaf's remaining room and the slice's end.
+        let room = leaf_cap - n;
+        let avail = keys.len() - start;
+        let take = if room < avail { room } else { avail };
+
+        // Every key of the run exceeds every key in the tree: the model ends with
+        // this leaf's keys and is strictly sorted, so its greatest element is
+        // `lkeys[n-1]`, which is below `keys[start]`, which is below the rest.
+        proof {
+            let model = self.model();
+            let pre = model.subrange(0, model.len() - lkeys.len() as int);
+            assert(model == pre + lkeys);
+            crate::bplus_tree::lemma_tree_wf_sorted(
+                self.tree@, crate::bplus_tree::tree_height(self.tree@),
+                L::leaf_cap_spec(), L::key_cap_spec(), true);
+            assert(crate::bplus_tree::strictly_sorted(model));
+            assert(model[model.len() - 1] == lkeys[n - 1]);
+        }
+
+        let ghost old_arena = self.arena();
+        let ghost old_tree = self.tree@;
+        let ghost run = Seq::new(take as nat, |i: int| keys@[start + i].id_nat());
+
+        // ---- the batch: `take` writes into ONE local node copy. ----
+        //
+        // The invariant is stated in NATS (`node_word_keys`, not `keys_view`)
+        // because `to_index` is exec-only — a loop invariant cannot name it. Each
+        // iteration's `to_index` postcondition (`kw.as_nat() == key.id_nat()`) is
+        // what carries the word into the nat view.
+        let mut nleaf = leaf;
+        let mut w: usize = 0;
+        while w < take
+            invariant
+                0 < take <= avail,
+                take <= room,
+                room == leaf_cap - n,
+                avail == keys@.len() - start,
+                start < keys@.len(),
+                keys@.len() < usize::MAX,
+                start + take <= keys@.len(),
+                leaf_cap as nat == L::leaf_cap_spec(),
+                n as nat == lkeys.len(),
+                L::count_spec(leaf) == n as nat,
+                n > 0,
+                0 <= w <= take,
+                L::is_leaf_spec(nleaf),
+                L::node_wf(nleaf),
+                L::count_spec(nleaf) == n + w,
+                L::link_view(nleaf) == L::link_view(leaf),
+                // the local node's nat view is the old leaf's plus the run prefix.
+                node_word_keys::<L>(nleaf) == node_word_keys::<L>(leaf)
+                    + Seq::new(w as nat, |i: int| keys@[start + i].id_nat()),
+                // `model_bounded` for the run, collected here because
+                // `lemma_id_nat_bounded` takes `tracked self` — it needs the exec
+                // key, which only exists inside this loop.
+                forall|i: int| 0 <= i < w ==> #[trigger] keys@[start + i].id_nat() < K::id_bound(),
+            decreases take - w,
+        {
+            let k: K = keys[start + w];
+            proof { k.lemma_id_nat_bounded(); }
+            let kw: L::Word = k.to_index();
+            let ghost pre = node_word_keys::<L>(nleaf);
+            let ghost pre_view = L::keys_view(nleaf);
+            proof { L::lemma_keys_view_len(nleaf); }
+            // Appending at `count` — the position is the current end, so this is a
+            // push, not a shift; no element moves.
+            L::leaf_insert_at(&mut nleaf, n + w, kw);
+            proof {
+                L::lemma_keys_view_len(nleaf);
+                L::lemma_keys_view_len(leaf);
+                let base = node_word_keys::<L>(leaf);
+                let want = Seq::new((w + 1) as nat, |i: int| keys@[start + i].id_nat());
+                assert(L::keys_view(nleaf) == pre_view.insert((n + w) as int, kw));
+                assert(node_word_keys::<L>(nleaf) =~= base + want) by {
+                    let got = node_word_keys::<L>(nleaf);
+                    assert(got.len() == base.len() + w + 1);
+                    assert forall|i: int| 0 <= i < got.len() implies got[i] == (base + want)[i] by {
+                        if i < (n + w) as int {
+                            // Seq::insert at the end leaves every earlier slot put,
+                            // so `got` agrees with the previous iteration's view.
+                            assert(L::keys_view(nleaf)[i] == pre_view[i]);
+                            assert(got[i] == pre[i]);
+                            assert(pre[i] == (base + Seq::new(w as nat,
+                                |j: int| keys@[start + j].id_nat()))[i]);
+                        } else {
+                            assert(L::keys_view(nleaf)[i] == kw);
+                            assert(got[i] == kw.as_nat());
+                        }
+                    }
+                }
+            }
+            w = w + 1;
+        }
+
+        // ---- one arena write for the whole run. ----
+        self.nodes.set_index(ll, nleaf);
+        self.nkeys = self.nkeys + take;
+        self.tree = Ghost(crate::bplus_tree::tree_append_run(old_tree, run));
+        proof {
+            let lid = ll.as_nat();
+            let h = crate::bplus_tree::tree_height(old_tree);
+            assert(self.arena() == old_arena.update(lid as int, nleaf));
+            // `leaf_word_keys(arena, lid)` IS `node_word_keys(arena[lid])`, which
+            // the loop already grew by exactly `run` — no per-key reasoning here.
+            assert(self.arena()[lid as int] == nleaf);
+            assert(old_arena[lid as int] == leaf);
+            assert(leaf_word_keys::<L>(self.arena(), lid) =~= node_word_keys::<L>(nleaf));
+            assert(leaf_word_keys::<L>(old_arena, lid) =~= node_word_keys::<L>(leaf));
+            assert(leaf_word_keys::<L>(self.arena(), lid)
+                =~= leaf_word_keys::<L>(old_arena, lid) + run);
+            assert(crate::bplus_tree::last_leaf_id(old_tree) == lid);
+
+            // the run is strictly sorted and strictly above every existing key.
+            assert(crate::bplus_tree::strictly_sorted(run));
+            let omodel = crate::bplus_tree::tree_keys(old_tree);
+            assert forall|i: int, j: int| 0 <= i < omodel.len() && 0 <= j < run.len()
+                implies (#[trigger] omodel[i]) < (#[trigger] run[j]) by {
+                // omodel's greatest element is lkeys[n-1] < keys[start] <= run[j].
+                assert(omodel[omodel.len() - 1] == lkeys[n - 1]);
+                if i < omodel.len() - 1 {
+                    assert(omodel[i] < omodel[omodel.len() - 1]);
+                }
+                assert(run[j] == keys@[start + j].id_nat());
+                if j > 0 {
+                    assert(keys@[start as int].id_nat() < keys@[start + j].id_nat());
+                }
+            }
+
+            crate::bplus_tree::lemma_append_run_wf(
+                old_tree, h, L::leaf_cap_spec(), L::key_cap_spec(), true, run);
+            lemma_binds_append_run::<L>(
+                old_arena, self.arena(), old_tree, h, nil_link::<L>(), true, run);
+            crate::bplus_tree::lemma_tree_wf_height(
+                self.tree@, h, L::leaf_cap_spec(), L::key_cap_spec(), true);
+
+            assert(self.model() == omodel + run);
+            assert(self.nkeys as nat == self.model().len());
+            // model_bounded: every run key is a real `K` image.
+            assert forall|i: int| 0 <= i < self.model().len()
+                implies #[trigger] self.model()[i] < K::id_bound() by {
+                if i < omodel.len() {
+                    assert(omodel[i] < K::id_bound());
+                } else {
+                    assert(self.model()[i] == run[i - omodel.len()]);
+                    assert(keys@[start + (i - omodel.len())].id_nat() < K::id_bound());
+                }
+            }
+            assert(self.arena().len() == old_arena.len());
+            // `last_leaf` needs NO write: the same node is still rightmost.
+            assert(self.last_leaf.as_nat() == crate::bplus_tree::last_leaf_id(self.tree@));
+            assert(self.nodes.snapshots_view() == old(self).nodes.snapshots_view());
+        }
+        take
+    }
+
     /// General multi-level insert (M4c): descend to the target leaf, insert, and
     /// propagate splits up via `insert_rec`; grow a new root if the root itself
     /// splits. Unlike [`insert`] (M4b, leaf-root only), this handles trees of any
@@ -6886,6 +7176,149 @@ pub(crate) proof fn lemma_last_leaf_keys_chain<L: NodeLayout>(
                 kids, (h - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), m);
             lemma_last_leaf_keys_chain::<L>(arena, kids[m], (h - 1) as nat, false);
             crate::bplus_tree::lemma_forest_leaf_ids_last(kids, m);
+        }
+    }
+}
+
+/// **The arena bridge for the BATCHED append** (`from_sorted`'s bulk path). The
+/// run-at-a-time twin of [`lemma_binds_append_last`]: writing the grown leaf into
+/// the single arena slot `last_leaf_id(t)` re-establishes `binds` and the
+/// leaf-link chain for `tree_append_run(t, r)`.
+///
+/// Identical in structure to the single-key bridge, and for the same reasons — the
+/// recursion walks the rightmost spine, earlier children are framed by
+/// `lemma_forest_binds_update`, and the node's own slot is untouched because
+/// `tree_disjoint` puts `id ∉ forest_ids(kids)` while the written slot is in
+/// `tree_ids(kids[m])`. The only change is the delta clause: the slot's key view
+/// grew by a whole `r` rather than one key. `link_view` preservation is again what
+/// carries the entire leaf-link chain verbatim.
+///
+/// This is the lemma that makes the bulk loader cheap *and* verified: one arena
+/// write per leaf discharges a whole run's worth of model growth, which is exactly
+/// the per-key node copy the insert loop could not avoid.
+pub(crate) proof fn lemma_binds_append_run<L: NodeLayout>(
+    a1: Seq<L::Node>,
+    a2: Seq<L::Node>,
+    t: Tree,
+    h: nat,
+    succ: nat,
+    is_root: bool,
+    r: Seq<nat>,
+)
+    requires
+        binds::<L>(a1, t),
+        crate::bplus_tree::tree_wf(t, h, L::leaf_cap_spec(), L::key_cap_spec(), is_root),
+        crate::bplus_tree::tree_disjoint(t),
+        leaf_links_to::<L>(a1, t, succ),
+        L::leaf_cap_spec() >= 1,
+        // exactly one slot differs — the rightmost leaf's — and it holds the same
+        // leaf with the whole run `r` appended.
+        a1.len() == a2.len(),
+        ({
+            let lid = crate::bplus_tree::last_leaf_id(t);
+            &&& (forall|i: int| 0 <= i < a1.len() && i != lid as int
+                    ==> #[trigger] a2[i] == a1[i])
+            &&& L::is_leaf_spec(a2[lid as int])
+            &&& L::link_view(a2[lid as int]) == L::link_view(a1[lid as int])
+            &&& L::count_spec(a2[lid as int]) == L::count_spec(a1[lid as int]) + r.len()
+            &&& leaf_word_keys::<L>(a2, lid) == leaf_word_keys::<L>(a1, lid) + r
+        }),
+    ensures
+        binds::<L>(a2, crate::bplus_tree::tree_append_run(t, r)),
+        leaf_links_to::<L>(a2, crate::bplus_tree::tree_append_run(t, r), succ),
+    decreases t,
+{
+    let lid = crate::bplus_tree::last_leaf_id(t);
+    let nt = crate::bplus_tree::tree_append_run(t, r);
+    crate::bplus_tree::lemma_append_run_shape(t, r);
+    match t {
+        Tree::Leaf { id, keys } => {
+            // the tree IS the last leaf: lid == id, nt == Leaf{id, keys + r}.
+            assert(lid == id);
+            assert(nt == Tree::Leaf { id, keys: keys + r });
+            L::lemma_keys_view_len(a1[id as int]);
+            L::lemma_keys_view_len(a2[id as int]);
+            let w1 = leaf_word_keys::<L>(a1, id);
+            let w2 = leaf_word_keys::<L>(a2, id);
+            assert(w1.len() == keys.len());
+            assert(w1 =~= keys);
+            assert(w2 =~= keys + r);
+            assert(L::count_spec(a2[id as int]) == (keys + r).len());
+            assert forall|i: int| 0 <= i < (keys + r).len() implies
+                (#[trigger] L::keys_view(a2[id as int])[i]).as_nat() == (keys + r)[i] by {
+                assert(w2[i] == (keys + r)[i]);
+            }
+            // leaf-link: the chain is the single leaf, whose link is unchanged.
+            assert(crate::bplus_tree::tree_leaf_ids(nt) =~= seq![id]);
+        }
+        Tree::Inner { id, seps, kids } => {
+            // tree_wf forces kids.len() == seps.len() + 1 >= 1.
+            let m = kids.len() - 1;
+            let nc = crate::bplus_tree::tree_append_run(kids[m], r);
+            let u = kids.update(m, nc);
+            assert(nt == Tree::Inner { id, seps, kids: u });
+            // the written slot lies in the last child's footprint...
+            crate::bplus_tree::lemma_forest_wf_at(
+                kids, (h - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), m);
+            crate::bplus_tree::lemma_forest_disjoint_at(kids, m);
+            crate::bplus_tree::lemma_last_leaf_id_in_ids(
+                kids[m], (h - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), false);
+            assert(crate::bplus_tree::last_leaf_id(kids[m]) == lid);
+            assert(crate::bplus_tree::tree_ids(kids[m]).contains(lid));
+            // ...so it is not this node's own slot (tree_disjoint: id ∉ forest_ids).
+            crate::bplus_tree::lemma_forest_ids_cons(kids);
+            assert(crate::bplus_tree::forest_ids(kids).contains(lid)) by {
+                crate::bplus_tree::lemma_forest_id_at_child(kids, m, lid);
+            }
+            assert(id != lid);
+            assert(a2[id as int] == a1[id as int]);
+
+            // recurse into the last child, with the succ the parent's chain assigns.
+            lemma_forest_binds_at::<L>(a1, kids, m);
+            let csucc = L::link_view(a1[lid as int]);
+            assert(leaf_links_to::<L>(a1, kids[m], csucc)) by {
+                lemma_last_child_links::<L>(a1, t, h, is_root, succ, m);
+            }
+            lemma_binds_append_run::<L>(a1, a2, kids[m], (h - 1) as nat, csucc, false, r);
+
+            // the forest re-binds: only child m changed; every other child's region
+            // is untouched (the one differing slot is inside child m).
+            assert forall|jd: nat| (#[trigger] crate::bplus_tree::forest_ids(kids).contains(jd))
+                && !crate::bplus_tree::tree_ids(kids[m]).contains(jd)
+                implies a1[jd as int] == a2[jd as int] by {
+                assert(jd != lid);
+                assert(crate::bplus_tree::tree_ids(t).contains(jd));
+                lemma_tree_id_in_range::<L>(a1, t, jd);
+            }
+            lemma_forest_binds_update::<L>(a1, a2, kids, m, nc);
+            // the child-pointer array is in this node's (unchanged) slot, and
+            // tree_root_id(nc) == tree_root_id(kids[m]) by the shape lemma.
+            crate::bplus_tree::lemma_append_run_shape(kids[m], r);
+            assert forall|i: int| 0 <= i < u.len() implies
+                L::child_view(a2[id as int], i)
+                    == crate::bplus_tree::tree_root_id(#[trigger] u[i]) by {
+                if i == m {
+                    assert(u[m] == nc);
+                } else {
+                    assert(u[i] == kids[i]);
+                }
+            }
+            // links: the leaf-id sequence is unchanged (shape lemma) and every link
+            // slot reads the same as in a1 (the one differing slot keeps its link).
+            assert(crate::bplus_tree::tree_leaf_ids(nt)
+                == crate::bplus_tree::tree_leaf_ids(t));
+            let lids = crate::bplus_tree::tree_leaf_ids(t);
+            assert forall|p: int| 0 <= p < lids.len() implies
+                #[trigger] L::link_view(a2[lids[p] as int])
+                    == (if p + 1 < lids.len() { lids[p + 1] } else { succ }) by {
+                assert(L::link_view(a1[lids[p] as int])
+                    == (if p + 1 < lids.len() { lids[p + 1] } else { succ }));
+                if lids[p] != lid {
+                    crate::bplus_tree::lemma_leaf_id_in_tree_ids(t, p);
+                    lemma_tree_id_in_range::<L>(a1, t, lids[p]);
+                    assert(a2[lids[p] as int] == a1[lids[p] as int]);
+                }
+            }
         }
     }
 }
