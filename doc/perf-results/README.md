@@ -47,6 +47,13 @@ Protocol, in order:
    `egraph/examples/acsite.rs`, and check the delta against what the mechanism
    can pay for (an allocation count, a probe count). E1/E2's accepted rows had
    16-23% allocation reductions behind them; E4b's had 0.2%.
+8. **A dense table is not automatically cheaper than a map.** E4a replaced maps
+   with `Vec`s indexed by class id and gained 22-29%; E11b did the same thing for
+   a table of `Term` and lost 31-75%, because `vec![None; n]` of a large non-`Copy`
+   type allocates, zeroes and drop-scans every slot even when almost none are
+   written. The dense form wins when slots are word-sized and densely written, and
+   an initially-empty map wins when they are large and sparse. Which one applies is
+   a measurement, not an inference from E4a.
 
 `examples/` holds the standalone sites protocol items 6 and 7 require:
 `complsite.rs` (completion), `acsite.rs` (AC rewrite, either width and driver),
@@ -76,5 +83,6 @@ protocol in the plan assumed.
 | [E4a](E4-extract-dense-tables.md) | dense-id `Vec`s instead of maps for the extraction cost tables | **accepted** — 22-29% where the fixpoint dominates; DAG rows unaffected (they are 99.97% `reconstruct`) |
 | [E4b](E4b-index-build-scratch.md) | hoist `build_from`'s scratch `Vec`; stop `finalize` rehashing every key | **rejected, both halves** — the hoist is inside the noise band (0.2% of allocations); the in-place `finalize` regresses completion 8% |
 | [E11a](E11a-reconstruct-redundant-clone.md) | `reconstruct` deep-cloned each child term then dropped the original | **accepted** — 91-98% on every extraction row; removes an O(depth²) term |
+| [E11b](E11b-reconstruct-memo.md) | memoize `reconstruct` per class, so a shared class is built once | **rejected** — a memo hit still deep-copies the subterm, so it trades a graph walk for a copy of the same size; 4 variants, all regress the tree rows |
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |
 | [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |
