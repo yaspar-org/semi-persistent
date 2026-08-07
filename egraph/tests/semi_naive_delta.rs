@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use proptest::prelude::*;
 use semi_persistent_egraph::EGraph;
 use semi_persistent_egraph::containers::DenseId;
-use semi_persistent_egraph::index::{IndexStore, SortedVec};
+use semi_persistent_egraph::index::{FastMap, IndexStore, SortedVec};
 use semi_persistent_egraph::literal::{NiraLitVal, NiraModel};
 use semi_persistent_egraph::nodes::DefaultConfig;
 
@@ -96,8 +96,8 @@ fn b4_v1_touched_superset_of_changed() {
 /// Assert `delta` equals `full` restricted to the touched node set, exactly:
 /// same keys, same (filtered) buckets.
 fn assert_delta_is_full_restricted<K>(
-    full: &HashMap<K, SortedVec<G>>,
-    delta: &HashMap<K, SortedVec<G>>,
+    full: &FastMap<K, SortedVec<G>>,
+    delta: &FastMap<K, SortedVec<G>>,
     tset: &HashSet<usize>,
 ) where
     K: Eq + std::hash::Hash + std::fmt::Debug,

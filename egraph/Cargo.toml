@@ -21,6 +21,7 @@ clap = { version = "4.6.0", features = ["derive"] }
 num-bigint.workspace = true
 num-rational.workspace = true
 num-traits.workspace = true
+foldhash.workspace = true
 hashbrown.workspace = true
 ordered-float.workspace = true
 rapidhash.workspace = true

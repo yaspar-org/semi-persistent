@@ -911,6 +911,7 @@ dependencies = [
  "clap",
  "criterion",
  "croaring",
+ "foldhash",
  "hashbrown 0.17.1",
  "num-bigint",
  "num-rational",
