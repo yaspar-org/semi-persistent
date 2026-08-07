@@ -8,6 +8,7 @@ members = [
     "abstract-domains",
     "containers-verus",
     "containers-verus/canary",
+    "containers-conformance",
 ]
 resolver = "3"
 
