@@ -139,8 +139,8 @@ The one remaining gap:
 
 **Fully verified**: generic `BPlusTreeSet<K: DenseId, L: NodeLayout, S:
 SearchKind, const TRACK>` over the real bit-stealing ids (`DenseId31`/`DenseId63`)
-and all six packed node layouts; `bplus` 127, `bplus_tree` 109, `bplus_layout`
-311, `bplus_search` 5 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
+and all six packed node layouts; `bplus` 132, `bplus_tree` 109, `bplus_layout`
+311, `bplus_search` 9 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
 split propagation and new-root growth) is total and carries its full model
 transition; in-order traversal and `seek` are proven sound; the arena provably
 never overflows; `mark`/`restore` work. Insert-only, matching production (no

@@ -33,39 +33,60 @@ Bottom-up BFS over e-classes:
 
 ```rust
 pub fn extract_best(eg: &EGraph, root: G) -> Option<ExtractedTerm> {
-    let mut best: HashMap<G, (usize, G)> = HashMap::new();
-    // best[class_repr] = (cost, best_node_id)
+    // Two dense arrays indexed by class id, not a map: ids are dense, so
+    // `Vec` indexing replaces a hash per lookup. `UNSET` in `best_cost`
+    // marks "this class has no best node yet".
+    let mut best_cost: Vec<usize> = vec![UNSET; n];
+    let mut best_node: Vec<G>     = vec![G::default(); n];
 
     loop {
         let mut changed = false;
         for each e-node id:
-            let repr = find(id);
-            let child_cost = sum of best[find(child)].cost for each child;
+            let slot = find(id).to_usize();
+            let child_cost = sum of best_cost[find(child)] for each child;
             let total = 1 + child_cost;
-            if total < best[repr].cost:
-                best[repr] = (total, id);
+            if total < best_cost[slot]:
+                best_cost[slot] = total;
+                best_node[slot] = id;
                 changed = true;
         if !changed: break;
     }
 
-    reconstruct(eg, best, root)
+    reconstruct(eg, &best_node, find(root))
 }
 ```
 
 Iterates until fixpoint. Each iteration may improve costs as
-cheaper representations are discovered through equivalences. The
-`reconstruct` function then builds a printable term tree from the
-`best` map:
+cheaper representations are discovered through equivalences. In practice the
+fixpoint converges in two passes on every workload measured, which is why the
+worklist variant was not adopted (`doc/perf-results/E12-worklist-fixpoint.md`).
+
+The dense-array representation is a measured choice over the map form this
+document previously showed: 22-29% faster where the fixpoint dominates
+(`doc/perf-results/E4-extract-dense-tables.md`).
+
+`reconstruct` then builds a printable term tree from `best_node`:
 
 ```rust
-fn reconstruct(eg, best, id) -> ExtractedTerm {
-    let (_, node_id) = best[find(id)];
+fn reconstruct(eg, best_node, repr) -> ExtractedTerm {
+    let node_id = best_node[repr.to_usize()];
     let op_name = eg.node_op_name(node_id);
+    // A child of multiplicity k costs k copies, but only k-1 of them need to
+    // be clones — the last one moves the original in. At the common k == 1
+    // that is one deep copy saved per child, and it matters more than it
+    // looks: cloning-then-dropping made extraction of a depth-d chain
+    // O(d^2) node copies for a d-node result.
     let children = eg.children(node_id)
-        .map(|child| reconstruct(eg, best, child));
+        .flat_map(|(child, k)| {
+            let t = reconstruct(eg, best_node, find(child));
+            repeat(t.clone()).take(k - 1).chain(once(t))
+        });
     ExtractedTerm { op: op_name, children }
 }
 ```
+
+Removing that redundant clone is 91-98% on every extraction row
+(`doc/perf-results/E11a-reconstruct-redundant-clone.md`).
 
 For literal nodes, the extracted term includes the literal value.
 For AC/ACI nodes, children are expanded from the pool.

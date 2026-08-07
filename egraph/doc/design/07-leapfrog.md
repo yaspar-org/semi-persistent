@@ -57,9 +57,20 @@ Round 2: advance past 5
   All agree on 12 → MATCH
 ```
 
-Each `seek` is O(log n) via binary search on the `SortedVec` data.
-The total work is proportional to the output size times
-log n, which is worst-case optimal for the AGM bound on join output.
+Each `seek` **gallops**: it doubles an offset from the cursor's current position
+until it lands on or past the target, then bisects the bounded window that
+doubling produced. Cost is O(log *d*) in the distance actually advanced rather
+than O(log *n*) in the list length, and since *d* ≤ *n* it is never
+asymptotically worse. That matters because leapfrog's seeks are overwhelmingly
+short — a majority advance by at most one element — so a full binary search
+paid 5-8 probes to move one position
+(`doc/perf-results/E7-galloping-seek.md`). The total work is proportional to the
+output size times log *n*, which is worst-case optimal for the AGM bound on join
+output; galloping improves the constant, not that bound.
+
+The seek is verified: `containers-verus`'s `SortedVecCursor` proves it lands on
+the first key ≥ the target and skips no present key, for every list and target
+([containers-verus Ch. 12](../../../containers-verus/doc/design/12-sorted-vec-cursor.md)).
 
 ### Usage in Pattern Matching
 
