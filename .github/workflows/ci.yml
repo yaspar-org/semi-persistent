@@ -53,6 +53,40 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo build --workspace
       - run: cargo test --workspace
+      # `--all-targets --all-features` covers what the default build does not:
+      # benches, examples, and the optional bin targets behind feature flags.
+      # This is not belt-and-braces — the abstract-domains CLI silently stopped
+      # compiling (five call sites to a renamed method) and no CI job noticed,
+      # because clippy was the only step passing these flags.
+      - run: cargo build --workspace --all-targets --all-features
+      - run: cargo test --workspace --all-features
+
+  # Performance parity gate for the containers migration. This is the "memory
+  # and performance" half of the migration criterion (the functional half is
+  # `containers-conformance`'s differential + proptest suites, run in verus.yml).
+  #
+  # It is NOT a criterion bench: `perf_gate` interleaves the prod and verus arms
+  # per sample and reduces by min, because criterion's per-group layout measures
+  # heap position rather than implementation. Each row is pinned to its own
+  # recorded baseline from `containers-conformance/BASELINE.md`, so a row that is
+  # currently verus-*faster* has to stay that way; a blanket 10% ceiling would let
+  # a −17% row rot to +9% unnoticed.
+  #
+  # Runs on a shared runner, which is noisier than the machine the baselines were
+  # taken on — hence `perf::NOISE_MARGIN`. If this job proves flaky in practice,
+  # widen that margin against a *measured* spread, or move the job to nightly;
+  # do not delete rows.
+  perf-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # Exits non-zero if any row is above its recorded ceiling; ~0.4s of timed
+      # work once built, so it is cheap enough to gate every PR.
+      - run: cargo bench --bench perf_gate -p containers-conformance
 
   deny:
     runs-on: ubuntu-latest

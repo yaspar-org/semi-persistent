@@ -110,6 +110,88 @@ jobs:
         working-directory: containers-verus
         run: cargo verus verify -- --trace
 
+      # The literal-types feature adds the group-D key-model axioms; the
+      # migration validation matrix requires the sweep green with AND
+      # without it (trust ledger §3.5).
+      - name: Verify containers-verus (literal-types)
+        working-directory: containers-verus
+        run: cargo verus verify --features literal-types -- --trace
+
+      # Trust-surface size gate. The trust ledger (doc/design/02-trust-boundary.md)
+      # enumerates every `external_body` marker and argues per item why it is
+      # trusted rather than proved; that argument is only worth anything if the
+      # counts are real. They had silently drifted 18 -> 21 (the ListArena
+      # InlineStore port added three markers, one of them contract-carrying),
+      # which is exactly the kind of quiet TCB growth a reviewer cannot audit.
+      #
+      # This pins the numbers. Adding a marker is a deliberate act: update the
+      # ledger's table AND these constants in the same commit. Removing one
+      # (discharging a trusted item into a proof) also trips the gate -- that is
+      # intentional, so the win gets recorded.
+      - name: Trust-surface size (external_body markers)
+        run: |
+          set -euo pipefail
+          EXPECTED_DEFAULT=21
+          EXPECTED_GATED=5   # literal-types only, all in external_specs.rs
+          gated=$(grep -c '#\[verifier::external_body\]' \
+            containers-verus/src/external_specs.rs || true)
+          total=$(grep -rh '#\[verifier::external_body\]' \
+            containers-verus/src/*.rs | wc -l | tr -d ' ')
+          default=$((total - gated))
+          echo "external_body markers: default=$default gated(literal-types)=$gated"
+          fail=0
+          if [ "$default" -ne "$EXPECTED_DEFAULT" ]; then
+            echo "::error::default-build external_body markers: expected $EXPECTED_DEFAULT, found $default. Update doc/design/02-trust-boundary.md (counts table, group tables, summary table, bottom line) and EXPECTED_DEFAULT here, in the same commit."
+            fail=1
+          fi
+          if [ "$gated" -ne "$EXPECTED_GATED" ]; then
+            echo "::error::literal-types external_body markers: expected $EXPECTED_GATED, found $gated. Same instruction as above."
+            fail=1
+          fi
+          exit $fail
+
+      # No `admit()`/`assume()` in the verified modules. The ledger's central
+      # claim is that the ONLY trusted code is external_body signatures plus the
+      # enumerated axioms; an admit would silently break that without changing
+      # any marker count, so it is gated separately. (The sibling crate
+      # abstract-domains does carry admits, tracked in its own proof-status.md;
+      # this gate is scoped to containers-verus, which claims none.)
+      - name: No admits or assumes in containers-verus
+        run: |
+          set -euo pipefail
+          # Strip line and block-ish comments before matching so prose about
+          # admits (the ledger references vstd's admitted RandomState axiom)
+          # does not trip the gate. Match a call, not a bare word.
+          hits=$(grep -rn --include='*.rs' -E '(^|[^[:alnum:]_])(admit|assume)[[:space:]]*\(' \
+            containers-verus/src \
+            | grep -vE ':[0-9]+:[[:space:]]*(//|///|//!|\*)' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::admit()/assume() found in containers-verus/src (the trust ledger claims none):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "no admit()/assume() in containers-verus/src"
+
+      # Axiom discipline (trust ledger group D): every obeys_key_model
+      # axiom must either live in the audited external_specs.rs or carry
+      # the axiom_key_model_ prefix that declare_key_model_assumption!
+      # pins (which also generates its justification + requirement fuzz).
+      # A bare axiom fn ensuring obeys_key_model anywhere else fails CI.
+      - name: Key-model axiom discipline
+        run: |
+          # Multiline-aware: an axiom fn's `ensures obeys_key_model` sits on
+          # a LATER line than the declaration, so grep the declaration with
+          # trailing context and scan the window (grep -A6), not the line.
+          violations=$(grep -rn -A6 "axiom fn" --include="*.rs" . \
+            | grep "obeys_key_model" \
+            | grep -v "external_specs.rs" \
+            | grep -v "axiom_key_model_" || true)
+          if [ -n "$violations" ]; then
+            echo "::error::obeys_key_model axiom outside external_specs.rs without the axiom_key_model_ prefix:"
+            echo "$violations"
+            exit 1
+          fi
+
   # Runtime tests run with regular stable rustc (Verus contracts are erased):
   # the property tests exercise the executable code against plain-std oracles,
   # and the containers-verus suite also drives the public-API runtime guards.
@@ -123,3 +205,11 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo test -p semi-persistent-abstract-domains
       - run: cargo test -p semi-persistent-containers-verus
+      # Full compat + literal-types matrix: ported production suites,
+      # differential traces, key-model requirement fuzz + violation
+      # regressions, the generated macro test, shrink-contract fuzz.
+      - run: cargo test -p semi-persistent-containers-verus --features "compat-all,literal-types"
+      - run: cargo test -p containers-verus-canary --features compat-all
+      # Conformance crate: differential traces + layout parity, prod vs verus
+      # (the only crate depending on both implementations).
+      - run: cargo test -p containers-conformance
