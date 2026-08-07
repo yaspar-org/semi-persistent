@@ -520,6 +520,102 @@ fn differential_bplus_ascending_fast_path() {
     }
 }
 
+/// The **batched bulk append** differential: `from_sorted` now fills the whole
+/// rightmost leaf per arena write (`fast_append_run`) instead of inserting key by
+/// key. Every case where the batch must stop or decline is a boundary a proof
+/// obligation sits on, and every one is a possible off-by-one:
+///
+/// - `n` straddling a leaf boundary (`leaf_cap` = 14 here): `13..=15`, `27..=29`,
+///   and the level-2 boundaries around 14·8 — where the batch fills exactly, or
+///   stops one short, or must decline into a split,
+/// - `n = 0` and `n = 1`: the empty tree, where the leaf has no last key to
+///   compare against and the batch must decline outright,
+/// - a **prefix sweep** over one size: every `n` in `0..=200` compared against
+///   production, so a wrong `take` at any single boundary surfaces,
+/// - the full contents read back through the cursor, in order, not just `len()` —
+///   a batch that wrote the right *count* into the wrong slots passes a length
+///   check and fails this one,
+/// - **all six layouts**, since `take` is bounded by `leaf_cap`, which differs per
+///   layout (14/30/62), so a boundary bug can hide in the one layout not tested.
+fn bplus_from_sorted_check<PL, VL>(n: usize, label: &str)
+where
+    PL: prod::bplus::NodeLayout<Word = u32, ArenaIdx = u32>,
+    VL: verus::bplus_layout::NodeLayout<Word = u32>,
+    PL::Node: Default + Copy + prod::Tagged,
+    VL::Node: Default + Copy + verus::tagged::Tagged,
+{
+    use verus::dense_id::DenseId31;
+
+    let pk: Vec<DiffId> = (0..n as u32).map(DiffId::new).collect();
+    let vk: Vec<DenseId31> = (0..n as u32).map(DenseId31::new).collect();
+
+    let p: prod::BPlusTreeSet<DiffId, PL, prod::BinarySearch, false> =
+        prod::BPlusTreeSet::from_sorted(&pk);
+    let v: verus::bplus::BPlusTreeSet<DenseId31, VL, verus::bplus_search::BinarySearch, false> =
+        verus::bplus::BPlusTreeSet::from_sorted(&vk);
+
+    assert_eq!(p.len(), v.len(), "{label} n={n}: len diverged");
+    assert_eq!(v.len(), n, "{label} n={n}: verus len wrong");
+
+    // Full ordered content, through the cursor: catches a batch that wrote the
+    // right number of keys into the wrong slots.
+    let mut cp = p.cursor();
+    let mut cv = v.cursor();
+    cp.seek_first();
+    cv.seek_first();
+    for i in 0..n {
+        let kp = cp.key().map(|k| k.raw());
+        let kv = cv.key().map(|k| k.index() as u32);
+        assert_eq!(kp, kv, "{label} n={n}: key at position {i} diverged");
+        assert_eq!(
+            kv,
+            Some(i as u32),
+            "{label} n={n}: position {i} out of order"
+        );
+        cp.step();
+        cv.step();
+    }
+    assert!(cv.key().is_none(), "{label} n={n}: verus cursor overran");
+    assert!(cp.key().is_none(), "{label} n={n}: prod cursor overran");
+
+    // Membership both ways: everything inserted is found, nothing beyond is.
+    for i in 0..n {
+        assert!(
+            v.contains(DenseId31::new(i as u32)),
+            "{label} n={n}: missing key {i}"
+        );
+    }
+    for i in n..(n + 4) {
+        assert!(
+            !v.contains(DenseId31::new(i as u32)),
+            "{label} n={n}: phantom key {i}"
+        );
+    }
+}
+
+#[test]
+fn differential_bplus_from_sorted_batched() {
+    // Leaf/level boundaries for leaf_cap = 14 (Layout64U32), plus the empty and
+    // singleton trees where the batch must decline.
+    for n in [
+        0, 1, 2, 13, 14, 15, 27, 28, 29, 41, 42, 43, 111, 112, 113, 1567, 4096,
+    ] {
+        bplus_from_sorted_check::<prod::Layout64U32, verus::bplus_layout::Layout64U32>(n, "L64");
+    }
+    // Boundaries for leaf_cap = 30 and 62.
+    for n in [29, 30, 31, 59, 60, 61, 900] {
+        bplus_from_sorted_check::<prod::Layout128U32, verus::bplus_layout::Layout128U32>(n, "L128");
+    }
+    for n in [61, 62, 63, 123, 124, 125, 1000] {
+        bplus_from_sorted_check::<prod::Layout256U32, verus::bplus_layout::Layout256U32>(n, "L256");
+    }
+    // Prefix sweep: every n across the first several leaf boundaries, so a wrong
+    // `take` at any one of them surfaces rather than being stepped over.
+    for n in 0..=200 {
+        bplus_from_sorted_check::<prod::Layout64U32, verus::bplus_layout::Layout64U32>(n, "sweep");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // String-keyed map differential (Phase 5.1: Clone keys). Exercises the
 // registry shape: String keys, overwrite shadows, get_by_key/len/mark/restore.
