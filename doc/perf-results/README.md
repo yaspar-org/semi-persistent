@@ -86,5 +86,6 @@ protocol in the plan assumed.
 | [E6](E6-rhs-instantiation-allocation.md) | `SmallVec` child and prim-arg lists in `apply::eval`, inline capacity swept | **accepted** — 5-11% on every rewrite row, 37-82% fewer allocations |
 | [E11a](E11a-reconstruct-redundant-clone.md) | `reconstruct` deep-cloned each child term then dropped the original | **accepted** — 91-98% on every extraction row; removes an O(depth²) term |
 | [E11b](E11b-reconstruct-memo.md) | memoize `reconstruct` per class, so a shared class is built once | **rejected** — a memo hit still deep-copies the subterm, so it trades a graph walk for a copy of the same size; 4 variants, all regress the tree rows |
+| [E8](E8-union-find-compression.md) | path-compression policy: on-the-fly vs systematic sweep vs threshold | **closed on its gate** — mean hops 0.000-0.433, deepest chain 2; nothing to compress |
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |
 | [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |
