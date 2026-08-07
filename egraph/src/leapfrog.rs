@@ -8,6 +8,16 @@
 use crate::containers::DenseId;
 use crate::index::SortedVecCursor;
 pub use semi_persistent_containers::SortedCursor;
+use smallvec::SmallVec;
+
+/// Cursor container for a single join.
+///
+/// Inline capacity 4: a join's arity is the number of index lookups the planner
+/// emitted for one atom, which is 1 for `ByOp`/`ByRepr`, 2 for the bound-node
+/// re-join, and (arity of the pattern node) for child-position joins. Every
+/// pattern in the rule pools reaching this code has arity ≤ 3, so 4 keeps the
+/// common case off the heap while staying spillable for wide variadic atoms.
+pub type CursorVec<C> = SmallVec<[C; 4]>;
 
 impl<'a, G: DenseId> SortedCursor for SortedVecCursor<'a, G> {
     type Key = G;
@@ -106,28 +116,36 @@ where
 /// After `search()`, either all iterators point to the same key (a match)
 /// or some iterator is exhausted.
 pub struct LeapfrogJoin<C: SortedCursor> {
-    iters: Vec<C>,
+    iters: CursorVec<C>,
     p: usize,
     at_end: bool,
 }
 
 impl<C: SortedCursor> LeapfrogJoin<C> {
     /// leapfrog-init (Algorithm 1 in the paper).
-    pub fn new(iters: Vec<C>) -> Self {
+    ///
+    /// Takes anything convertible into a [`CursorVec`], so a caller that
+    /// already has a `SmallVec` hands it over without touching the heap and a
+    /// caller with a `Vec` donates its buffer rather than copying.
+    pub fn new(iters: impl Into<CursorVec<C>>) -> Self {
+        let mut iters = iters.into();
         assert!(!iters.is_empty());
-        // Fetch each cursor's current key. If any is exhausted, the join is empty.
-        let keys: Option<Vec<C::Key>> = iters.iter().map(|it| it.key()).collect();
-        let Some(keys) = keys else {
+        // If any cursor starts exhausted the intersection is empty; bail before
+        // sorting. Checked by probing rather than by collecting the keys into a
+        // `Vec<Option<_>>`, which is one allocation per join and this is on the
+        // per-search-tree-node path.
+        if iters.iter().any(|it| it.key().is_none()) {
             return Self {
                 iters,
                 p: 0,
                 at_end: true,
             };
-        };
-        // Sort iters by current key.
-        let mut with_keys: Vec<(C::Key, C)> = keys.into_iter().zip(iters).collect();
-        with_keys.sort_by_key(|(k, _)| *k);
-        let iters: Vec<C> = with_keys.into_iter().map(|(_, it)| it).collect();
+        }
+        // Sort in place by current key. `sort_unstable_*` because the stable
+        // sort allocates scratch space above a size threshold, and equal keys
+        // are interchangeable here: Algorithm 1 needs the ring ordered by key,
+        // not a particular order among ties.
+        iters.sort_unstable_by_key(|it| it.key());
 
         let mut join = Self {
             iters,

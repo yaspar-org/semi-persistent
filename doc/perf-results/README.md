@@ -32,6 +32,13 @@ Protocol, in order:
 5. **Confirm the mechanism, not just the time.** If the claim is "this removes
    allocations", `egraph/examples/allocprobe.rs` must show the count drop.
    Allocation counts are deterministic; wall-clock on this machine is not.
+6. **Before attributing a delta to code, rule out layout.** Rebuilding
+   *unchanged* source moves a row by up to ±1% here (measured in E1). Where a
+   criterion delta is larger than that but the mechanism does not explain it —
+   worst of all, where the row's work provably did not change — reproduce it in
+   a standalone single-site binary (`egraph/examples/complsite.rs` is the one
+   for the completion path) before recording it. E1's apparent 4% completion
+   regression vanished at this step.
 
 ## Machine and toolchain
 
@@ -50,3 +57,4 @@ protocol in the plan assumed.
 | exp | change | outcome |
 |-----|--------|---------|
 | [E0](E0-release-profile.md) | `[profile.release]`: `lto = "fat"`, `codegen-units = 1` | **accepted** — 6-9% end-to-end, zero code change |
+| [E1](E1-join-cursor-allocation.md) | `SmallVec` cursor vector; allocation-free `LeapfrogJoin::new` | **accepted** — 2-6% on join-driven rows, 16-19% fewer allocations |

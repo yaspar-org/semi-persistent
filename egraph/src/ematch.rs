@@ -10,7 +10,7 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::egraph::EGraph;
 use crate::index::{IndexMode, IndexStore, SortedVec, SortedVecCursor, VariantIndex};
-use crate::leapfrog::{Difference, LeapfrogJoin, SortedCursor};
+use crate::leapfrog::{CursorVec, Difference, LeapfrogJoin, SortedCursor};
 use crate::literal::LitVal;
 use crate::resolve::{PatVar, RMult};
 use crate::schedule::{IndexLookup, QueryPlan, Step};
@@ -966,7 +966,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     // lookups read the same flavor); see design doc "How a Variant Executes".
     match index.mode(atom_id) {
         IndexMode::Full => {
-            let cursors: Vec<SortedVecCursor<'_, Cfg::G>> = lookups
+            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
                 .iter()
                 .map(|l| cursor_in(index.full, l, eg, globals, env))
                 .collect();
@@ -975,7 +975,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             );
         }
         IndexMode::Delta => {
-            let cursors: Vec<SortedVecCursor<'_, Cfg::G>> = lookups
+            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
                 .iter()
                 .map(|l| cursor_in(index.delta, l, eg, globals, env))
                 .collect();
@@ -984,16 +984,17 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             );
         }
         IndexMode::FullMinusDelta => {
-            let cursors: Vec<Difference<SortedVecCursor<'_, Cfg::G>, SortedVecCursor<'_, Cfg::G>>> =
-                lookups
-                    .iter()
-                    .map(|l| {
-                        Difference::new(
-                            cursor_in(index.full, l, eg, globals, env),
-                            cursor_in(index.delta, l, eg, globals, env),
-                        )
-                    })
-                    .collect();
+            let cursors: CursorVec<
+                Difference<SortedVecCursor<'_, Cfg::G>, SortedVecCursor<'_, Cfg::G>>,
+            > = lookups
+                .iter()
+                .map(|l| {
+                    Difference::new(
+                        cursor_in(index.full, l, eg, globals, env),
+                        cursor_in(index.delta, l, eg, globals, env),
+                    )
+                })
+                .collect();
             leapfrog_join(
                 cursors, plan, step_idx, target, eg, index, globals, env, results,
             );
@@ -1039,7 +1040,7 @@ where
 /// Run a leapfrog intersection over `cursors` (any `SortedCursor` flavor),
 /// binding `target` to each match and recursing into the next plan step.
 fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
-    cursors: Vec<C>,
+    cursors: CursorVec<C>,
     plan: &QueryPlan<Cfg::O>,
     step_idx: usize,
     target: VarId,
@@ -1349,15 +1350,19 @@ where
     }
 
     fn enter_join(&mut self, target: VarId, lookups: &[IndexLookup<Cfg::O>]) -> Enter {
-        let vecs: Vec<&SortedVec<Cfg::G>> = match lookups
+        // Collected straight into cursors: `resolve_lookup` borrows from the
+        // index, which outlives the frame, so there is no need for the
+        // intermediate `Vec<&SortedVec>` this used to build.
+        let iters: CursorVec<SortedVecCursor<'a, Cfg::G>> = match lookups
             .iter()
-            .map(|l| resolve_lookup(l, self.eg, self.index, self.globals, &self.env))
-            .collect::<Option<Vec<_>>>()
+            .map(|l| {
+                resolve_lookup(l, self.eg, self.index, self.globals, &self.env).map(SortedVec::iter)
+            })
+            .collect::<Option<CursorVec<_>>>()
         {
             Some(v) if !v.is_empty() => v,
             _ => return Enter::Failed,
         };
-        let iters = vecs.iter().map(|v| v.iter()).collect();
         let join = LeapfrogJoin::new(iters);
         let valid = join.is_valid();
         if valid {

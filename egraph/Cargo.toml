@@ -24,6 +24,7 @@ num-traits.workspace = true
 hashbrown.workspace = true
 ordered-float.workspace = true
 rapidhash.workspace = true
+smallvec = "1"
 winnow.workspace = true
 
 [dev-dependencies]
