@@ -3,10 +3,11 @@
 //! Equality saturation driver loop.
 
 use crate::EGraphConfig;
-use crate::apply::{PreparedRule, apply_rule};
+use crate::apply::{PreparedRule, apply_rule_pooled};
 use crate::canon::{MSetCanon, VarCanon};
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
+use crate::ematch::MatchPool;
 use crate::index::IndexStore;
 use crate::lit_model::LitModel;
 use crate::literal::LitVal;
@@ -52,13 +53,15 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let steps_base = crate::ematch::match_steps();
+    // Outside the round loop: the pool's whole purpose is to survive rounds.
+    let mut pool = MatchPool::new();
     for i in 0..limit {
         eg.rebuild();
         let index = IndexStore::build(eg);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let mut changes = 0;
         for rule in rules {
-            changes += apply_rule(rule, eg, &index, &stats, model, globals);
+            changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
         }
         if changes == 0 {
             return SatResult {
@@ -180,6 +183,8 @@ where
 
 /// Schedule one (rule, variant) against `vindex` and apply its actions to
 /// every match. Returns the number of changes applied.
+/// `pool` is carried across every (rule, variant) in a saturation run so the
+/// match buffers are allocated once and then recycled; see [`MatchPool`].
 fn run_rule_variant<Cfg, L, M, S, const T: bool, const P: bool>(
     rule: &PreparedRule<Cfg::O, S, L>,
     eg: &mut EGraph<Cfg, L, T, P>,
@@ -187,6 +192,7 @@ fn run_rule_variant<Cfg, L, M, S, const T: bool, const P: bool>(
     stats: &IndexStats<Cfg::O>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &mut MatchPool<Cfg>,
 ) -> usize
 where
     Cfg: EGraphConfig,
@@ -196,9 +202,9 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
-    let mut matches = crate::ematch::run_query(&plan, eg, vindex, globals);
+    crate::ematch::run_query_into(&plan, eg, vindex, globals, pool);
     let mut changes = 0;
-    for m in &mut matches {
+    for m in pool.matches_mut() {
         for action in &rule.actions {
             changes += crate::apply::apply_action(action, m, eg, model, globals);
         }
@@ -229,6 +235,9 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let steps_base = crate::ematch::match_steps();
+    // Outside the round loop, and shared by every variant of every rule: a
+    // round runs one query per (rule, join atom), all of similar match count.
+    let mut pool = MatchPool::new();
     for i in 0..limit {
         eg.rebuild();
         let full = IndexStore::build(eg);
@@ -248,7 +257,8 @@ where
                 let stats = IndexStats::from_index(&full);
                 let vindex = VariantIndex::naive(&full);
                 for rule in rules {
-                    changes += run_rule_variant(rule, eg, &vindex, &stats, model, globals);
+                    changes +=
+                        run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
                 }
             }
             // Rounds ≥ 1: one variant per join atom.
@@ -260,13 +270,22 @@ where
                         // No scanning atoms (e.g. a bare-literal rule): run it
                         // naive so its matches are never missed.
                         let vindex = VariantIndex::naive(&full);
-                        changes += run_rule_variant(rule, eg, &vindex, &full_stats, model, globals);
+                        changes += run_rule_variant(
+                            rule,
+                            eg,
+                            &vindex,
+                            &full_stats,
+                            model,
+                            globals,
+                            &mut pool,
+                        );
                         continue;
                     }
                     for &di in &jatoms {
                         let stats = variant_stats(&rule.query, di, &full, delta);
                         let vindex = VariantIndex::variant(&full, delta, di);
-                        changes += run_rule_variant(rule, eg, &vindex, &stats, model, globals);
+                        changes +=
+                            run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
                     }
                 }
             }

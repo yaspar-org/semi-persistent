@@ -289,7 +289,7 @@ where
 use crate::EGraphConfig;
 use crate::canon::{MSetCanon, VarCanon};
 use crate::egraph::EGraph;
-use crate::ematch::{Match, run_query};
+use crate::ematch::{Match, MatchPool, run_query_into};
 use crate::index::IndexStore;
 use crate::literal::LitVal;
 
@@ -529,11 +529,43 @@ where
     M: crate::lit_model::LitModel<Value = L>,
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
+    apply_rule_pooled(
+        rule,
+        eg,
+        index,
+        stats,
+        model,
+        globals,
+        &mut MatchPool::new(),
+    )
+}
+
+/// [`apply_rule`] with a caller-owned match buffer.
+///
+/// The naive driver calls this with one pool for the whole saturation, so the
+/// per-match allocations happen in the first round and are recycled thereafter.
+/// See [`MatchPool`].
+pub fn apply_rule_pooled<Cfg, L, M, S, const T: bool, const P: bool>(
+    rule: &PreparedRule<Cfg::O, S, L>,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    index: &IndexStore<Cfg>,
+    stats: &crate::schedule::IndexStats<Cfg::O>,
+    model: &M,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &mut MatchPool<Cfg>,
+) -> usize
+where
+    Cfg: EGraphConfig,
+    S: crate::DenseId,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
+{
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     let vindex = crate::index::VariantIndex::naive(index);
-    let mut matches = run_query(&plan, eg, &vindex, globals);
+    run_query_into(&plan, eg, &vindex, globals, pool);
     let mut changes = 0;
-    for m in &mut matches {
+    for m in pool.matches_mut() {
         for action in &rule.actions {
             changes += apply_action(action, m, eg, model, globals);
         }
