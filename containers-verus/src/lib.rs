@@ -46,6 +46,12 @@
     // same expression; vstd (2026-04-12) has no `div_ceil` spec, so a `.div_ceil(2)` rewrite
     // would jeopardise the `split_mid` ensures for a pure style change.
     clippy::manual_div_ceil,
+    // Same reasoning as `manual_div_ceil` above, for `keep_bits % 64 == 0` in
+    // `CaptureBits::truncate_words_for`: that expression appears verbatim in the
+    // `by (nonlinear_arith)` block that proves the retained words still cover
+    // every kept bit. `is_multiple_of` has no vstd spec (2026-04-12), so the
+    // rewrite would break the proof for a pure style change.
+    clippy::manual_is_multiple_of,
     // insert_rec / insert_rec_leaf take 8 args including GHOST proof parameters (is_root, the
     // split sub-models); bundling them into a struct would obscure the proof and break
     // production-signature parity.
@@ -57,7 +63,11 @@
     // `let ret_pos;` in `seek_leaf` is assigned at the leaf-break inside a verified
     // `while !done` loop carrying an invariant; clippy's "initialise at declaration" does not
     // fit the loop control flow.
-    clippy::needless_late_init
+    clippy::needless_late_init,
+    // ListNode construction goes Default-then-set_next because set_next is the verified
+    // packing primitive (its ensures establish next_wf/next_ref); a struct literal would
+    // bypass the proof surface.
+    clippy::field_reassign_with_default
 )]
 
 pub mod append_only_vec;
@@ -65,20 +75,73 @@ pub mod bplus;
 pub mod bplus_layout;
 pub mod bplus_search;
 pub mod bplus_tree;
+#[cfg(feature = "literal-types")]
+pub mod canonical_keys;
 pub mod capture_bits;
 pub mod circular_list;
 pub mod container_id;
 pub mod dense_id;
 pub mod diff_store;
+#[cfg(feature = "literal-types")]
+pub mod external_specs;
 pub mod fork_history;
 pub mod frame;
 pub mod guard;
+pub mod hasher_spec;
+pub mod id_factory;
+#[macro_use]
+pub mod id_macros;
 pub mod index_like;
 pub mod inline_store;
 pub mod list;
 pub mod map;
 pub mod opt;
 pub mod parallel_store;
+pub mod sorted_cursor;
 pub mod sparse_set;
 pub mod tagged;
 pub mod vec;
+
+// ---------------------------------------------------------------------------
+// Root re-exports (migration plan Phase 4): production-style flat surface
+// under the verus names. One name per thing, workspace-wide.
+// ---------------------------------------------------------------------------
+
+pub use append_only_vec::AppendOnlyVec;
+pub use bplus::{BPlusCursor, BPlusToken, BPlusTreeSet};
+pub use bplus_layout::{
+    Layout64U32, Layout128U32, Layout128U64, Layout256U32, Layout256U64, Layout512U64, NodeLayout,
+};
+pub use bplus_search::{BinarySearch, Branchless, SearchKind};
+#[cfg(feature = "literal-types")]
+pub use canonical_keys::{BitsF64, CanonicalF64, CanonicalRational};
+pub use circular_list::{CircularList, CircularListToken, RingIter};
+pub use container_id::ContainerId;
+pub use dense_id::{DenseId31, DenseId63};
+pub use diff_store::DiffStore;
+pub use fork_history::ForkHistory;
+pub use id_factory::{IdFactory, IdRangeError};
+pub use id_macros::ids::{SparseSetId, UseListId, UseNodeId};
+pub use index_like::IndexLike;
+pub use inline_store::InlineStore;
+pub use list::{ListArena, ListArenaToken};
+pub use map::{MapToken, SpMap};
+pub use opt::{DenseId, Opt};
+pub use parallel_store::ParallelStore;
+pub use sorted_cursor::SortedCursor;
+pub use sparse_set::{SparseSet, SparseSetToken};
+pub use tagged::{BoolTagged, Pair, Tagged};
+pub use vec::{ShrinkPolicy, Vec, VecToken, VecView, VecViewIter};
+
+// A compact bitset utility, kept outside the container proofs (production
+// exposes it too). Permanent — not part of the retired compat-gate surface.
+pub mod bitset;
+
+/// Inline capture: flag stolen inside `T::Repr`. Requires `T: Tagged`.
+/// (Production's `VecI` alias, verbatim.)
+pub type VecI<T, I, const TRACK: bool = true> = Vec<T, I, InlineStore<T, I>, TRACK>;
+
+/// Parallel capture: flag in a packed side bitvector. Works with any
+/// `T: Copy`. (Production's `VecP` alias; production accepted `T: Clone` —
+/// the Copy narrowing is the documented Phase 0 scope decision.)
+pub type VecP<T, I, const TRACK: bool = true> = Vec<T, I, ParallelStore<T, I>, TRACK>;

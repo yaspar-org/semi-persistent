@@ -31,6 +31,7 @@ verus! {
 /// for them. `external_body` lets the body use the panic-formatting machinery
 /// (which Verus does not model) and keeps the function opaque to the verifier.
 #[verifier::external_body]
+#[inline(always)]
 pub fn check_precondition(cond: bool, msg: &str)
     requires
         cond,
@@ -41,3 +42,13 @@ pub fn check_precondition(cond: bool, msg: &str)
 }
 
 } // verus!
+
+/// The same trap, callable from inside `external_body` diagnostic code where
+/// no proof context exists (so no `requires`). Outside `verus!{}` — never
+/// visible to the verifier; used only by debug-build mirrors of spec-level
+/// preconditions (e.g. `CircularList::splice`'s different-rings walk).
+pub fn check_precondition_erased(cond: bool, msg: &str) {
+    if !cond {
+        panic!("containers-verus: precondition violated: {}", msg);
+    }
+}

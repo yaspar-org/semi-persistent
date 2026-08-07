@@ -36,29 +36,47 @@
 //! mirroring production marking the absorbed class absent.)
 //!
 //! ## Modeling choices (documented divergences)
-//! - `CircularListNode<T> { payload, next }` is payload-generic, mirroring
-//!   production's `EClassEntry<T>`; `next` is a plain `usize` index. The buffer
-//!   is generic — it is only *named* `EClass`-anything in the e-graph context.
-//! - Storage is the verified semi-persistent `Vec` over `ParallelStore`
-//!   (`Copy + Default`), so mark/restore compose for free; `splice` swaps only
+//! - `CircularListNode<T, N> { payload, next }` is payload-generic AND
+//!   index-generic, mirroring production's `EClassEntry<T>`: `next` is stored as
+//!   the `DenseId` index type `N` at its natural width (e.g. 4 bytes at 31-bit
+//!   ids), not a hardcoded `usize`. Its logical position is `next.id_nat()`; the
+//!   ghost `model` stays `Seq<Seq<usize>>` (logical indices), so every merge
+//!   lemma is width-agnostic. The buffer is generic — it is only *named*
+//!   `EClass`-anything in the e-graph context.
+//! - Storage is the verified semi-persistent `Vec` over `InlineStore`
+//!   (production parity): the mark/restore capture flag is stolen from `next`'s
+//!   spare MSB — the same niche the id word never uses — so a node is exactly
+//!   `payload + one id word` with NO side capture bitmap. This is production's
+//!   `VecI<EClassEntry, _>` layout verbatim (`egraph/src/classes.rs`, where
+//!   `Tagged for EClassEntry` delegates the tag to `next`). `splice` swaps only
 //!   `next` and leaves every `payload` untouched.
 
 use vstd::prelude::*;
 
-use crate::parallel_store::ParallelStore;
+use crate::index_like::IndexLike;
+use crate::inline_store::InlineStore;
+use crate::opt::DenseId;
+use crate::tagged::Tagged;
 use crate::vec::{ShrinkPolicy, Vec as SpVec, VecToken};
 
 verus! {
 
-/// One ring node: a generic `payload` plus the index of the next node in the
-/// same class (its ring successor, wrapping around).
+/// One ring node: a generic `payload` plus the *next* node's id in the same
+/// class (its ring successor, wrapping around). The successor is stored as the
+/// index type `N` itself — a `DenseId` — at its natural width (matching the
+/// consumer's `EClassEntry { next: T }`), not as a hardcoded `usize`. A ring
+/// never has a null successor (a singleton self-loops), so — unlike
+/// `ListNode`'s use-list pointer — this niche is NOT used to encode a null:
+/// the id is always present. Instead the spare MSB carries the *capture flag*
+/// for semi-persistence, exactly as production's `EClassEntry` does. The
+/// logical successor position is `next.id_nat()`.
 #[derive(Copy)]
-pub struct CircularListNode<T> {
+pub struct CircularListNode<T, N: DenseId> {
     pub payload: T,
-    pub next: usize,
+    pub next: N,
 }
 
-impl<T: Copy> Clone for CircularListNode<T> {
+impl<T: Copy, N: DenseId> Clone for CircularListNode<T, N> {
     fn clone(&self) -> (r: Self)
         ensures r == *self,
     {
@@ -66,60 +84,192 @@ impl<T: Copy> Clone for CircularListNode<T> {
     }
 }
 
-impl<T: core::default::Default> core::default::Default for CircularListNode<T> {
-    fn default() -> CircularListNode<T> {
-        CircularListNode { payload: T::default(), next: 0 }
+impl<T: core::default::Default, N: DenseId> core::default::Default for CircularListNode<T, N> {
+    fn default() -> CircularListNode<T, N> {
+        CircularListNode { payload: T::default(), next: N::default() }
+    }
+}
+
+/// Inline-storable repr of a ring node (production parity with `EClassEntry`'s
+/// `Repr = (T::Repr, Index::Repr)`, but a NAMED struct — Verus's
+/// trait-conflict checker rejects tuple-typed associated `Repr`s, see
+/// `tagged.rs`). The capture flag is stolen from `next_repr`'s spare MSB (the
+/// id word never uses it); the `payload` rides along raw and takes no part in
+/// the niche, so the node needs no `T: Tagged` bound.
+#[derive(Copy)]
+pub struct CircularNodeRepr<T, N: DenseId> {
+    pub next_repr: <N as Tagged>::Repr,
+    pub payload: T,
+}
+
+impl<T: Copy, N: DenseId> Clone for CircularNodeRepr<T, N> {
+    fn clone(&self) -> (r: Self)
+        ensures r == *self,
+    {
+        *self
+    }
+}
+
+// `CircularListNode` is `Tagged` by delegating the capture tag entirely to its
+// `next` field's `Tagged` impl (`N: DenseId: Tagged`), the same idiom as
+// production's `impl Tagged for EClassEntry`. The `payload` is carried raw:
+// `value_of`/`repr_wf`/`tag_of` all ignore it, so it needs no niche of its own.
+impl<T: Copy + core::default::Default, N: DenseId> Tagged for CircularListNode<T, N> {
+    type Repr = CircularNodeRepr<T, N>;
+
+    open spec fn value_of(r: Self::Repr) -> Self {
+        CircularListNode { payload: r.payload, next: N::value_of(r.next_repr) }
+    }
+
+    open spec fn tag_of(r: Self::Repr) -> bool {
+        N::tag_of(r.next_repr)
+    }
+
+    open spec fn repr_wf(r: Self::Repr) -> bool {
+        N::repr_wf(r.next_repr)
+    }
+
+    proof fn lemma_repr_extensional(r1: Self::Repr, r2: Self::Repr) {
+        // value_of agreement forces payload equality AND value_of(next_repr)
+        // equality; tag_of agreement forces tag_of(next_repr) equality; N's
+        // own niche-injectivity then equates the next_reprs. Two structs equal
+        // on both fields are equal.
+        assert(N::value_of(r1.next_repr) == N::value_of(r2.next_repr));
+        assert(r1.payload == r2.payload);
+        N::lemma_repr_extensional(r1.next_repr, r2.next_repr);
+    }
+
+    fn into_repr(self) -> (r: Self::Repr) {
+        CircularNodeRepr { next_repr: self.next.into_repr(), payload: self.payload }
+    }
+
+    fn from_repr(r: &Self::Repr) -> (v: Self) {
+        CircularListNode { payload: r.payload, next: N::from_repr(&r.next_repr) }
+    }
+
+    fn tag(r: &Self::Repr) -> (b: bool) {
+        N::tag(&r.next_repr)
+    }
+
+    fn set_tag(r: &mut Self::Repr) {
+        N::set_tag(&mut r.next_repr);
+    }
+
+    fn clear_tag(r: &mut Self::Repr) {
+        N::clear_tag(&mut r.next_repr);
     }
 }
 
 /// Token for mark/restore (delegates to the inner vector's token).
 #[derive(Copy, Clone)]
 pub struct CircularListToken {
-    pub entries: VecToken,
+    pub(crate) entries: VecToken,
+}
+
+impl CircularListToken {
+    /// Reconstruction coordinate (spec twin).
+    pub open(crate) spec fn frame_idx_spec(self) -> nat {
+        self.entries.frame_idx as nat
+    }
 }
 
 /// `rotate(s, k)` = `s` cyclically left-rotated by `k`: `s[k..] ++ s[..k]`.
 /// `rotate(s, k)[p] == s[(k + p) mod len]`.
-pub open spec fn rotate(s: Seq<usize>, k: int) -> Seq<usize> {
+pub open(crate) spec fn rotate(s: Seq<usize>, k: int) -> Seq<usize> {
     s.subrange(k, s.len() as int) + s.subrange(0, k)
 }
 
-pub struct CircularList<T, const TRACK: bool>
+pub struct CircularList<T, N: DenseId, const TRACK: bool>
 where T: Sized + Copy + core::default::Default {
-    pub entries: SpVec<CircularListNode<T>, usize, ParallelStore<CircularListNode<T>, usize>, TRACK>,
+    /// Storage is indexed by the id's own **storage word** `N::Index`, not by
+    /// `usize` — production's `VecI<EClassEntry<T>, T::Index>` verbatim. The
+    /// width is what makes the semi-persistent diff-log entry `(node, N::Index)`
+    /// (16 bytes at 31-bit ids) instead of `(node, usize)` (24 bytes): a `usize`
+    /// index would inflate every captured write by 50% for no gain, since the
+    /// node count is already bounded by `N::id_bound()`.
+    pub(crate) entries: SpVec<
+        CircularListNode<T, N>,
+        <N as DenseId>::Index,
+        InlineStore<CircularListNode<T, N>, <N as DenseId>::Index>,
+        TRACK,
+    >,
     /// Ghost partition: `model@[c]` is class `c`'s node indices in ring order.
-    pub model: Ghost<Seq<Seq<usize>>>,
+    /// These are *logical* node positions (indices into `entries`), always
+    /// `usize`, independent of the `N` chosen for physical storage.
+    pub(crate) model: Ghost<Seq<Seq<usize>>>,
+    /// Ghost model-snapshot stack (plan Phase 7), parallel to the entries
+    /// vec's frame stack; lets `restore(token)` recover the marked ring
+    /// partition internally.
+    pub(crate) model_snapshots: Ghost<Seq<Seq<Seq<usize>>>>,
 }
 
-impl<T, const TRACK: bool> CircularList<T, TRACK>
+impl<T, N: DenseId, const TRACK: bool> CircularList<T, N, TRACK>
 where T: Sized + Copy + core::default::Default {
-    /// `next_seq()[i]` is node `i`'s successor pointer.
-    pub open spec fn next_seq(&self) -> Seq<usize> {
-        Seq::new(self.entries.view().len(), |i: int| self.entries.view()[i].next)
+    /// `next_seq()[i]` is node `i`'s successor position (the stored id's dense
+    /// index). Decoding through `id_nat` is what keeps the ghost `model` — and
+    /// every merge lemma stated over it — width-agnostic `usize`.
+    pub open(crate) spec fn next_seq(&self) -> Seq<usize> {
+        Seq::new(self.entries.view().len(), |i: int| self.entries.view()[i].next.id_nat() as usize)
     }
 
     /// `payload_seq()[i]` is node `i`'s payload.
-    pub open spec fn payload_seq(&self) -> Seq<T> {
+    pub open(crate) spec fn payload_seq(&self) -> Seq<T> {
         Seq::new(self.entries.view().len(), |i: int| self.entries.view()[i].payload)
     }
 
-    pub open spec fn n_spec(&self) -> nat {
+    pub open(crate) spec fn n_spec(&self) -> nat {
         self.entries.view().len()
     }
 
-    pub open spec fn model_view(&self) -> Seq<Seq<usize>> {
+    /// Entries frame-stack depth (spec twin; fields are `pub(crate)` —
+    /// privacy closeout).
+    pub open(crate) spec fn depth_spec(&self) -> nat {
+        self.entries.depth_spec()
+    }
+
+    /// Entries lifetime restore count (spec twin).
+    pub open(crate) spec fn fork_count_spec(&self) -> nat {
+        self.entries.fork_count_spec()
+    }
+
+    /// Entries snapshot stack (spec twin).
+    pub open(crate) spec fn entries_snapshots_view(&self) -> Seq<Seq<CircularListNode<T, N>>> {
+        self.entries.snapshots_view()
+    }
+
+    /// Ring-partition snapshot stack (spec twin, Phase 7 archive).
+    pub open(crate) spec fn model_snapshots_view(&self) -> Seq<Seq<Seq<usize>>> {
+        self.model_snapshots@
+    }
+
+    /// The entries sequence (spec twin; node payload+next pairs).
+    pub open(crate) spec fn entries_view(&self) -> Seq<CircularListNode<T, N>> {
+        self.entries.view()
+    }
+
+    /// Token validity, delegated to the entries component.
+    pub open(crate) spec fn is_token_valid_spec(&self, token: CircularListToken) -> bool {
+        self.entries.is_token_valid_spec(token.entries)
+    }
+
+    /// "Restorable now", delegated to the entries component.
+    pub open(crate) spec fn is_restorable_spec(&self, token: CircularListToken) -> bool {
+        self.entries.is_restorable_spec(token.entries)
+    }
+
+    pub open(crate) spec fn model_view(&self) -> Seq<Seq<usize>> {
         self.model@
     }
 
     /// in-range: every node named by any ring is allocated.
-    pub open spec fn model_in_range(&self) -> bool {
+    pub open(crate) spec fn model_in_range(&self) -> bool {
         let m = self.model@;
         forall|c: int, p: int|
             0 <= c < m.len() && 0 <= p < (#[trigger] m[c]).len() ==> #[trigger] m[c][p] < self.n_spec()
     }
 
     /// disjoint: a node index occurs in at most one ring at one position.
-    pub open spec fn model_disjoint(&self) -> bool {
+    pub open(crate) spec fn model_disjoint(&self) -> bool {
         let m = self.model@;
         forall|c1: int, p1: int, c2: int, p2: int|
             0 <= c1 < m.len() && 0 <= p1 < m[c1].len()
@@ -129,81 +279,209 @@ where T: Sized + Copy + core::default::Default {
     }
 
     /// `i` is some ring's member (used as the per-node `covers` predicate).
-    pub open spec fn in_some_ring(&self, i: int) -> bool {
+    pub open(crate) spec fn in_some_ring(&self, i: int) -> bool {
         let m = self.model@;
         exists|c: int, p: int|
             0 <= c < m.len() && 0 <= p < m[c].len() && (#[trigger] m[c][p]) == i
     }
 
     /// covers: every allocated node is in some ring.
-    pub open spec fn model_covers(&self) -> bool {
+    pub open(crate) spec fn model_covers(&self) -> bool {
         forall|i: int| 0 <= i < self.n_spec() ==> #[trigger] self.in_some_ring(i)
     }
 
     /// cyclic: `next` of a ring node is its successor, wrapping at the end.
-    pub open spec fn model_cyclic(&self) -> bool {
+    ///
+    /// Trigger note: the pattern is the NEXT-POINTER READ `ns[m[c][p]]`, not the
+    /// bare `m[c][p]`. The RHS `m[c][succ]` contains no `ns[..]` application, so
+    /// an instantiation cannot re-seed itself — without this the quantifier is a
+    /// self-matching loop (its own successor term re-fires the trigger), which
+    /// made `RingIter::next` (whose `rotate`/`walk_seq` terms produce many bare
+    /// `m[c][_]`) time the solver out. Consumers that need the fact for a
+    /// specific `(c,p)` — `lemma_pre_cyclic_at`, the splice lemmas — already
+    /// mention `next_seq()[model[c][p]]`, so the read-triggered form still fires
+    /// for them.
+    pub open(crate) spec fn model_cyclic(&self) -> bool {
         let m = self.model@;
         let ns = self.next_seq();
         forall|c: int, p: int|
             0 <= c < m.len() && 0 <= p < m[c].len()
-                ==> ns[#[trigger] m[c][p] as int] == m[c][if p + 1 < m[c].len() { p + 1 } else { 0 }]
+                ==> #[trigger] ns[m[c][p] as int] == m[c][if p + 1 < m[c].len() { p + 1 } else { 0 }]
     }
 
-    pub open spec fn wf(&self) -> bool {
+    pub open(crate) spec fn wf(&self) -> bool {
         &&& self.entries.wf()
         &&& self.model_in_range()
         &&& self.model_disjoint()
         &&& self.model_covers()
         &&& self.model_cyclic()
+        // Model-snapshot agreement (Phase 7). Opaque: ring_snap_wf's nested
+        // quantifiers would join every wf-requiring proof's matching context
+        // (a z3 matching-loop hazard — see the proof-performance playbook);
+        // only mark/restore reveal it, everything else preserves it by
+        // congruence (neither the archive nor the vec snapshots change).
+        // Keyed on the SNAPSHOT stack (not frames): ops like set/push ensure
+        // snapshots_view preservation, so the opaque predicate transfers by
+        // congruence; the vec's own wf ties snapshots.len() == frames.len().
+        &&& ring_archive_agrees(self.model_snapshots@, self.entries.snapshots_view())
     }
 
     pub fn new() -> (c: Self)
         ensures c.wf(), c.n_spec() == 0, c.model_view().len() == 0,
     {
         let c = CircularList {
-            entries: SpVec::<CircularListNode<T>, usize, ParallelStore<CircularListNode<T>, usize>, TRACK>::new(),
+            entries: SpVec::<
+                CircularListNode<T, N>,
+                <N as DenseId>::Index,
+                InlineStore<CircularListNode<T, N>, <N as DenseId>::Index>,
+                TRACK,
+            >::new(),
             model: Ghost(Seq::empty()),
+            model_snapshots: Ghost(Seq::empty()),
         };
         proof {
             assert(c.n_spec() == 0);
+            reveal(ring_archive_agrees);
         }
         c
     }
 
-    pub fn len(&self) -> (n: usize)
+    /// Node count, as the id's storage word — production's `EClasses::len`
+    /// returns `T::Index` for exactly this reason (the count is bounded by the
+    /// id range, so the narrow word suffices).
+    pub fn len(&self) -> (n: <N as DenseId>::Index)
         requires self.wf(),
-        ensures n == self.n_spec(),
+        ensures n.as_nat() == self.n_spec(),
     {
         self.entries.len()
     }
 
-    /// `next` of node `i`.
-    pub fn next_of(&self, i: usize) -> (r: usize)
-        requires self.wf(), i < self.n_spec(),
-        ensures r == self.next_seq()[i as int],
+    pub fn is_empty(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (self.n_spec() == 0),
     {
-        self.entries.get(i).next
+        self.entries.is_empty()
+    }
+
+    /// Bytes consumed by diff tracking only, forwarded from the entries vec.
+    /// Diagnostic, no spec content — the same pair production exposes on every
+    /// container (`containers/src/vec.rs`), and the pair the consumer's
+    /// memory-parity claim is measured through: the ring's retained history is
+    /// `(node, N::Index)` per captured write, 16 bytes at 31-bit ids, matching
+    /// the hand-rolled `VecI<EClassEntry, u32>` this replaced. Asserted at
+    /// runtime in `containers-conformance/tests/differential.rs`.
+    pub fn tracking_bytes(&self) -> usize {
+        self.entries.tracking_bytes()
+    }
+
+    /// Total bytes: this struct + the entries vec's store + its tracking. The
+    /// ghost fields cost nothing at runtime (they are erased), so this is the
+    /// whole footprint. Diagnostic; no spec content.
+    pub fn total_bytes(&self) -> usize {
+        self.entries.total_bytes()
+    }
+
+    /// `next` of node `i` — its ring successor, returned as the id type itself.
+    /// This is the stored word verbatim (no decode), so it is exactly
+    /// `next_seq()[i]` under `id_nat`.
+    pub fn next_of(&self, i: N) -> (r: N)
+        requires self.wf(), i.id_nat() < self.n_spec(),
+        ensures r.id_nat() == self.next_seq()[i.id_nat() as int],
+    {
+        proof { i.lemma_as_nat_is_id_nat(); }
+        let r = self.entries.get_index(i.to_index()).next;
+        // `next_seq` projects the stored id through `id_nat() as usize`; that
+        // cast is lossless because a DenseId's range fits in a usize.
+        proof { crate::opt::lemma_id_nat_fits_usize(r); }
+        r
+    }
+
+    /// Node `i`'s payload. The ring structure carries an arbitrary per-node
+    /// payload alongside `next` (production's `EClassEntry` carries the class's
+    /// sparse-set repr key there), so the consumer reads and writes it through
+    /// this pair rather than owning a second parallel vector.
+    pub fn payload_of(&self, i: N) -> (p: T)
+        requires self.wf(), i.id_nat() < self.n_spec(),
+        ensures p == self.payload_seq()[i.id_nat() as int],
+    {
+        proof { i.lemma_as_nat_is_id_nat(); }
+        self.entries.get_index(i.to_index()).payload
+    }
+
+    /// Overwrite node `i`'s payload, leaving the ring partition untouched. The
+    /// stored `next` is read back and rewritten unchanged, so `next_seq` — and
+    /// with it every `wf` clause — is preserved by congruence; only
+    /// `payload_seq` moves.
+    pub fn set_payload(&mut self, i: N, payload: T)
+        requires old(self).wf(), i.id_nat() < old(self).n_spec(),
+        ensures
+            self.wf(),
+            self.n_spec() == old(self).n_spec(),
+            self.next_seq() == old(self).next_seq(),
+            self.model_view() == old(self).model_view(),
+            self.payload_seq() == old(self).payload_seq().update(i.id_nat() as int, payload),
+            self.entries_snapshots_view() == old(self).entries_snapshots_view(),
+    {
+        proof { i.lemma_as_nat_is_id_nat(); }
+        let iw = i.to_index();
+        let next = self.entries.get_index(iw).next;
+        self.entries.set_index(iw, CircularListNode { payload, next });
+        proof {
+            // The stored `next` word is identical at every index, so next_seq
+            // (a pointwise `id_nat` projection of it) is unchanged — which is
+            // all of `wf` apart from the model clauses, and the model itself
+            // was not assigned.
+            assert(self.next_seq() =~= old(self).next_seq());
+            assert(self.payload_seq() =~= old(self).payload_seq().update(i.id_nat() as int, payload));
+            // covers is phrased on `self` (its `in_some_ring` reads `self.model@`),
+            // so re-witness it from the old receiver — same model, same witnesses.
+            assert forall|k: int| 0 <= k < self.n_spec() implies #[trigger] self.in_some_ring(k) by {
+                assert(old(self).in_some_ring(k));
+                let (c, p) = choose|c: int, p: int|
+                    0 <= c < old(self).model@.len() && 0 <= p < old(self).model@[c].len()
+                        && old(self).model@[c][p] == k;
+                assert(self.model@[c][p] == k);
+            }
+            // Phase 7: `set_index` preserves the snapshot stack and the archive
+            // was not touched, so the OPAQUE agreement transfers by congruence
+            // (no reveal — keeps ring_snap_wf's quantifiers out of scope).
+        }
     }
 
     /// Add a new singleton class: node `n` as its own ring `[n]` with the
     /// self-loop `next[n] == n`, carrying `payload`.
-    pub fn add_singleton(&mut self, payload: T) -> (id: usize)
-        requires old(self).wf(), old(self).n_spec() + 1 < usize::MAX,
+    ///
+    /// The new node's id is the pre-push length; it must be representable in the
+    /// index type `N` (`< N::id_bound()`) so the stored `next` self-loop
+    /// round-trips (`from_usize(id).id_nat() == id`). The e-graph guarantees this
+    /// the same way it bounds any dense id — id allocation is width-checked.
+    pub fn add_singleton(&mut self, payload: T) -> (nid: N)
+        requires
+            old(self).wf(),
+            old(self).n_spec() + 1 < <N as DenseId>::Index::max_nat(),
+            old(self).n_spec() + 1 < N::id_bound(),
         ensures
             self.wf(),
-            id == old(self).n_spec(),
+            nid.id_nat() == old(self).n_spec(),
             self.n_spec() == old(self).n_spec() + 1,
-            self.model_view() == old(self).model_view().push(seq![id]),
-            self.payload_seq()[id as int] == payload,
+            self.model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
+            self.payload_seq()[nid.id_nat() as int] == payload,
     {
-        let id = self.entries.len();
-        self.entries.push(CircularListNode { payload, next: id });
+        // The new node's dense index is the pre-push length. It is representable
+        // in `N` (precondition `n_spec + 1 < id_bound`), so `from_usize`
+        // round-trips and the self-loop `next_seq()[id] == id` holds.
+        let idw = self.entries.len();
+        let nid = N::from_usize(idw.as_usize());
+        let ghost id = nid.id_nat() as usize;
+        // Self-loop: the singleton's successor is itself.
+        self.entries.push(CircularListNode { payload, next: nid });
         self.model = Ghost(self.model@.push(seq![id]));
         proof {
             let m = self.model@;
             let ns = self.next_seq();
             let cnew = (m.len() - 1) as int;
             assert(m[cnew] =~= seq![id]);
+            assert(nid.id_nat() == id as nat);  // from_usize round-trip (id < id_bound)
             assert(ns[id as int] == id);
             // in-range: old indices < old_n < new_n; new singleton id < new_n.
             assert forall|c: int, p: int|
@@ -254,14 +532,88 @@ where T: Sized + Copy + core::default::Default {
                 }
             }
         }
-        id
+        nid
     }
 
     /// Ghost: the (ring, position) of node `i`. Well-defined under `wf`
     /// (covers gives existence, disjoint gives uniqueness).
-    pub open spec fn locate(&self, i: int) -> (int, int) {
+    pub open(crate) spec fn locate(&self, i: int) -> (int, int) {
         choose|c: int, p: int|
             0 <= c < self.model@.len() && 0 <= p < self.model@[c].len() && self.model@[c][p] == i
+    }
+
+    /// The node-index sequence a ring walk starting at `start` visits, in
+    /// order: the ring of `start` rotated so `start` is first. `class_seq[0] ==
+    /// start`, its length is the ring size, and it is a permutation of the
+    /// ring's node set — the verified twin of production's `ClassIter` output.
+    pub open(crate) spec fn class_seq(&self, start: int) -> Seq<usize> {
+        rotate(self.model@[self.locate(start).0], self.locate(start).1)
+    }
+
+    /// Iterate the class ring containing `start`, yielding each node index in
+    /// ring order beginning at `start` (production's `iter_class`/`ClassIter`).
+    /// The cursor wraps once around and stops when it returns to `start` — so
+    /// exactly the ring's nodes are visited, each once.
+    pub fn iter_class(&self, start: N) -> (it: RingIter<'_, T, N, TRACK>)
+        requires self.wf(), start.id_nat() < self.n_spec(),
+        ensures
+            it.list_ref() == self,
+            it.start_spec() == start.id_nat(),
+            it.pos_spec() == 0,
+            !it.done_spec(),
+            it.cursor_ok(),
+            // The walk enumerates exactly `class_seq(start)` (public twin).
+            it.walk_seq() == self.class_seq(start.id_nat() as int),
+    {
+        proof {
+            // covers ⟹ locate's choose is satisfiable; disjoint ⟹ unique.
+            assert(self.in_some_ring(start.id_nat() as int));
+        }
+        let ghost c = self.locate(start.id_nat() as int).0;
+        let ghost p0 = self.locate(start.id_nat() as int).1;
+        proof {
+            // class_seq(start) == rotate(model[c], p0) == the RingIter's walk_seq.
+            lemma_locate_pinned(self, start.id_nat() as int, c, p0);
+            lemma_rotate_props(self.model@[c], p0);  // p0 first ⟹ walk_seq[0] == start
+        }
+        RingIter { list: self, start, cur: start, pos: Ghost(0), done: false, c: Ghost(c), p0: Ghost(p0) }
+    }
+
+    /// Debug-build runtime mirror of `splice`'s different-rings precondition
+    /// (plan 2.3). `external_body` diagnostic: walks the ring containing `s`
+    /// looking for `a` (bounded by the node count) and panics on a hit. A
+    /// no-op in release builds — see the rationale at the `splice` call site.
+    #[verifier::external_body]
+    fn debug_check_different_rings(&self, s: N, a: N)
+        requires
+            self.wf(),
+            s.id_nat() < self.n_spec(),
+            a.id_nat() < self.n_spec(),
+            self.locate(s.id_nat() as int).0 != self.locate(a.id_nat() as int).0,
+    {
+        #[cfg(debug_assertions)]
+        {
+            let su = s.to_usize();
+            let au = a.to_usize();
+            let mut same_ring = su == au;
+            let mut cur = self.entries.get_index(s.to_index()).next.to_usize();
+            let mut budget = self.entries.len().as_usize();
+            while cur != su && budget > 0 {
+                if cur == au {
+                    same_ring = true;
+                }
+                cur = self.entries.get_index(N::from_usize(cur).to_index()).next.to_usize();
+                budget -= 1;
+            }
+            crate::guard::check_precondition_erased(
+                !same_ring,
+                "CircularList::splice: s and a are in the same ring",
+            );
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (s, a);
+        }
     }
 
     /// Splice the rings (classes) of `s` and `a` by swapping their `next`
@@ -271,14 +623,22 @@ where T: Sized + Copy + core::default::Default {
     /// cycle (`wf` preserved — no finite-cycle side condition). The source ring
     /// slot is emptied. Requires `s`, `a` in different rings (the class-merge
     /// use; splicing within one ring would split it).
+    ///
+    /// Payload-preserving. A caller that also rewrites a payload (the class
+    /// merge, which marks the absorbed class's key absent) follows this with
+    /// `set_payload`; folding the payload writes into the two stores this
+    /// performs was tried and measured no faster (LLVM already forwards the
+    /// redundant load), so the narrower signature stays —
+    /// `containers-conformance/examples/splicesplit.rs`.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(800)]
-    pub fn splice(&mut self, s: usize, a: usize)
+    pub fn splice(&mut self, sid: N, aid: N)
         requires
             old(self).wf(),
-            (s as int) < old(self).n_spec(),
-            (a as int) < old(self).n_spec(),
-            old(self).locate(s as int).0 != old(self).locate(a as int).0,  // different rings
+            sid.id_nat() < old(self).n_spec(),
+            aid.id_nat() < old(self).n_spec(),
+            // different rings
+            old(self).locate(sid.id_nat() as int).0 != old(self).locate(aid.id_nat() as int).0,
         ensures
             self.wf(),
             self.n_spec() == old(self).n_spec(),
@@ -286,10 +646,12 @@ where T: Sized + Copy + core::default::Default {
             self.model_view().len() == old(self).model_view().len(),
             // the two old rings: cs gets the merged ring, ca emptied.
             ({
-                let cs = old(self).locate(s as int).0;
-                let ca = old(self).locate(a as int).0;
-                let ps = old(self).locate(s as int).1;
-                let pa = old(self).locate(a as int).1;
+                let s = sid.id_nat() as int;
+                let a = aid.id_nat() as int;
+                let cs = old(self).locate(s).0;
+                let ca = old(self).locate(a).0;
+                let ps = old(self).locate(s).1;
+                let pa = old(self).locate(a).1;
                 &&& self.model_view()[cs]
                         == rotate(old(self).model_view()[cs], ps + 1)
                             + rotate(old(self).model_view()[ca], pa + 1)
@@ -298,6 +660,27 @@ where T: Sized + Copy + core::default::Default {
                         ==> #[trigger] self.model_view()[c] == old(self).model_view()[c])
             }),
     {
+        // Runtime guard (plan 2.3, debug builds only): the different-rings
+        // precondition is spec-level (the ghost model is erased at runtime),
+        // and a faithful runtime check walks a ring — O(class size) on a hot
+        // O(1) operation, an unacceptable complexity change for release
+        // builds. Debug builds pay the walk (external_body diagnostic below);
+        // release relies on caller discipline — in the e-graph, union-find
+        // guarantees distinct classes before a splice, the same discipline
+        // production's unchecked ring merge relies on.
+        self.debug_check_different_rings(sid, aid);
+        // The whole proof below is stated over the dense indices; bind them
+        // once (ghost) and the storage words once (exec), so the id→word
+        // conversion is paid twice per splice, not per proof step.
+        proof {
+            // The `as usize` casts below are lossless (dense range fits usize).
+            crate::opt::lemma_id_nat_fits_usize(sid);
+            crate::opt::lemma_id_nat_fits_usize(aid);
+        }
+        let ghost s = sid.id_nat() as usize;
+        let ghost a = aid.id_nat() as usize;
+        let sw = sid.to_index();
+        let aw = aid.to_index();
         proof {
             // covers ⟹ locate's choose is satisfiable for s and a.
             assert(self.in_some_ring(s as int));
@@ -314,12 +697,17 @@ where T: Sized + Copy + core::default::Default {
             assert(0 <= ca < old_m.len() && 0 <= pa < old_m[ca].len() && old_m[ca][pa] == a as int);
         }
 
-        let s_node = self.entries.get(s);
-        let a_node = self.entries.get(a);
+        // `to_index` preserves the dense index, so the two storage words address
+        // exactly the ghost positions `s` and `a` the proof speaks of.
+        assert(sw.as_nat() == s as nat);
+        assert(aw.as_nat() == a as nat);
+
+        let s_node = self.entries.get_index(sw);
+        let a_node = self.entries.get_index(aw);
         let old_s_next = s_node.next;
         let old_a_next = a_node.next;
-        self.entries.set(s, CircularListNode { payload: s_node.payload, next: old_a_next });
-        self.entries.set(a, CircularListNode { payload: a_node.payload, next: old_s_next });
+        self.entries.set_index(sw, CircularListNode { payload: s_node.payload, next: old_a_next });
+        self.entries.set_index(aw, CircularListNode { payload: a_node.payload, next: old_s_next });
 
         let merged = Ghost(rotate(old_m[cs], ps + 1) + rotate(old_m[ca], pa + 1));
         self.model = Ghost(self.model@.update(cs, merged@).update(ca, Seq::empty()));
@@ -336,6 +724,11 @@ where T: Sized + Copy + core::default::Default {
             // model length: two updates preserve len.
             assert(self.model@.len() == old_m.update(cs, merged@).update(ca, Seq::empty()).len());
             assert(self.model@.len() == old(self).model@.len());
+            // Phase 7: splice only set_index'd two entries — the archive,
+            // snapshot stack, and frame stack are untouched (set_index's
+            // ensures), so the OPAQUE agreement predicate transfers by
+            // congruence; no reveal needed, which keeps ring_snap_wf's nested
+            // quantifiers out of this (rlimit-sensitive) proof's context.
             lemma_splice_merge(*old(self), self, s as int, a as int, cs, ca, ps, pa);
         }
     }
@@ -343,22 +736,68 @@ where T: Sized + Copy + core::default::Default {
     // ---- semi-persistence: delegate to the inner vector ----
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: CircularListToken)
-        requires old(self).wf(), old(self).n_spec() < usize::MAX,
+        requires
+            old(self).wf(),
+            TRACK,
+            old(self).n_spec() < usize::MAX,
+            // inner Vec's u32 depth-cast bound (propagated; guarded there).
+            old(self).depth_spec() < u32::MAX,
         ensures
             self.wf(),
             self.next_seq() == old(self).next_seq(),
             self.n_spec() == old(self).n_spec(),
             self.model_view() == old(self).model_view(),
-            self.entries.snapshots_view()
-                == old(self).entries.snapshots_view().push(old(self).entries.view()),
+            self.entries_snapshots_view()
+                == old(self).entries_snapshots_view().push(old(self).entries_view()),
     {
         let entries = self.entries.mark(shrink);
+        // Archive the live ring partition alongside the vec snapshot (Phase 7).
+        self.model_snapshots = Ghost(self.model_snapshots@.push(self.model@));
         proof {
             assert(self.entries.view() == old(self).entries.view());
+            assert(self.model@ == old(self).model@);  // ghost assign touched only model_snapshots
             assert(self.next_seq() =~= old(self).next_seq());
             // model + view unchanged ⟹ covers carries (same witnesses).
             assert forall|i: int| 0 <= i < self.n_spec() implies #[trigger] self.in_some_ring(i) by {
                 assert(old(self).in_some_ring(i));
+                let (c, p) = choose|c: int, p: int|
+                    0 <= c < old(self).model@.len() && 0 <= p < old(self).model@[c].len()
+                        && old(self).model@[c][p] == i;
+                assert(self.model@[c][p] == i);
+            }
+            reveal(ring_archive_agrees);
+            // The new archive frame: ring_snap_wf(model, just-pushed snapshot)
+            // — exactly the live wf clauses over the live view (the snapshot
+            // IS the view at mark). Old frames carry over unchanged.
+            let k_new = self.model_snapshots@.len() - 1;
+            assert(self.entries.snapshots_view()[k_new] == old(self).entries.view());
+            assert forall|i: int| 0 <= i < old(self).entries.view().len()
+                implies #[trigger] idx_in_some_ring(self.model@, i) by {
+                assert(old(self).in_some_ring(i));
+            }
+            // ring_snap_wf's cyclic clause is over `snap[m[c][p]].next.id_nat()`;
+            // model_cyclic (now triggered on the next-pointer READ `ns[m[c][p]]`)
+            // gives the same equation via snap == live view. Feed each (c,p) the
+            // read term so the retriggered quantifier fires.
+            let ghost snap_kn = self.entries.snapshots_view()[k_new];
+            assert forall|c: int, p: int|
+                0 <= c < self.model@.len() && 0 <= p < self.model@[c].len() implies
+                (#[trigger] snap_kn[self.model@[c][p] as int]).next.id_nat() as usize
+                    == self.model@[c][if p + 1 < self.model@[c].len() { p + 1 } else { 0 }] by {
+                assert(self.next_seq()[self.model@[c][p] as int]
+                    == self.model@[c][if p + 1 < self.model@[c].len() { p + 1 } else { 0 }]);
+                assert(snap_kn[self.model@[c][p] as int] == self.entries.view()[self.model@[c][p] as int]);
+            }
+            assert(ring_snap_wf(self.model@, self.entries.snapshots_view()[k_new]));
+            assert forall|k: int| 0 <= k < self.model_snapshots@.len()
+                implies ring_snap_wf(
+                    #[trigger] self.model_snapshots@[k],
+                    self.entries.snapshots_view()[k]) by {
+                if k < k_new {
+                    assert(self.model_snapshots@[k] == old(self).model_snapshots@[k]);
+                    assert(self.entries.snapshots_view()[k]
+                        == old(self).entries.snapshots_view()[k]);
+                }
             }
         }
         CircularListToken { entries }
@@ -366,25 +805,41 @@ where T: Sized + Copy + core::default::Default {
 
     /// Restore to the marked snapshot. The restored entries, together with the
     /// ghost model live at the mark, must form a valid ring partition.
-    pub fn restore(&mut self, token: CircularListToken, Ghost(snap_model): Ghost<Seq<Seq<usize>>>)
+    /// "Restorable now" for the token (plan 2.2).
+    pub fn is_valid_token(&self, token: &CircularListToken) -> (b: bool)
+        requires self.wf(),
+        ensures b == self.is_restorable_spec(*token),
+    {
+        self.entries.is_valid_token(&token.entries)
+    }
+
+    pub fn restore(&mut self, token: CircularListToken)
         requires
             old(self).wf(),
-            old(self).entries.is_token_valid_spec(token.entries),
-            token.entries.frame_idx < old(self).entries.frames@.len(),
-            old(self).entries.frames@.len() < u32::MAX,
-            old(self).entries.forks.origins@.len() + 1 <= u32::MAX,
-            ring_snap_wf(
-                snap_model,
-                old(self).entries.snapshots_view()[token.entries.frame_idx as int]),
+            TRACK,
+            old(self).is_token_valid_spec(token),
+            token.frame_idx_spec() < old(self).depth_spec(),
+            old(self).depth_spec() < u32::MAX,
+            old(self).fork_count_spec() + 1 <= u32::MAX,
         ensures
             self.wf(),
-            self.entries.view()
-                == old(self).entries.snapshots_view()[token.entries.frame_idx as int],
-            self.model_view() == snap_model,
+            self.entries_view()
+                == old(self).entries_snapshots_view()[token.frame_idx_spec() as int],
+            // Restored to the ring partition archived at that mark (Phase 7).
+            self.model_view() == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
     {
-        let ghost snap = old(self).entries.snapshots_view()[token.entries.frame_idx as int];
+        // Runtime guard (plan 2.3): full restorable predicate before mutation.
+        crate::guard::check_precondition(
+            self.is_valid_token(&token),
+            "CircularList::restore: invalid, foreign, stale, consumed, or abandoned token",
+        );
+        proof { reveal(ring_archive_agrees); }
+        let ghost snap_model = self.model_snapshots@[token.entries.frame_idx_spec() as int];
+        let ghost snap = old(self).entries.snapshots_view()[token.entries.frame_idx_spec() as int];
         self.entries.restore(token.entries);
         self.model = Ghost(snap_model);
+        self.model_snapshots =
+            Ghost(self.model_snapshots@.subrange(0, token.entries.frame_idx_spec() as int));
         proof {
             assert(self.entries.view() == snap);
             let m = self.model@;
@@ -394,7 +849,7 @@ where T: Sized + Copy + core::default::Default {
             assert forall|c: int, p: int|
                 0 <= c < m.len() && 0 <= p < m[c].len() implies
                 ns[#[trigger] m[c][p] as int] == m[c][if p + 1 < m[c].len() { p + 1 } else { 0 }] by {
-                assert(ns[m[c][p] as int] == snap[m[c][p] as int].next);
+                assert(ns[m[c][p] as int] == snap[m[c][p] as int].next.id_nat() as usize);
             }
             // covers: ring_snap_wf's covers clause is over idx_in_some_ring(snap_model);
             // transfer to self.in_some_ring (same model, same witnesses).
@@ -416,11 +871,11 @@ where T: Sized + Copy + core::default::Default {
 /// swapped `next` pointers.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(800)]
-pub proof fn lemma_splice_merge<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_splice_merge<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     s: int, a: int, cs: int, ca: int, ps: int, pa: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(),
         pre.entries.wf(),
@@ -443,6 +898,10 @@ pub proof fn lemma_splice_merge<T, const TRACK: bool>(
         post.model@[ca] == Seq::<usize>::empty(),
         forall|c: int| 0 <= c < post.model@.len() && c != cs && c != ca
             ==> #[trigger] post.model@[c] == pre.model@[c],
+        // splice does not mark/restore: the archive and the vec snapshot/frame
+        // stacks are untouched, so the (opaque) Phase 7 agreement transfers
+        // from pre by congruence.
+        ring_archive_agrees(post.model_snapshots@, post.entries.snapshots_view()),
     ensures
         post.wf(),
 {
@@ -482,7 +941,7 @@ pub proof fn lemma_splice_merge<T, const TRACK: bool>(
 
 /// `rotate(x, k)` for `0 <= k <= len`: same length, and `rotate(x,k)[q] ==
 /// x[(k+q) mod len]` — so it is a permutation of `x` (same multiset/set).
-pub proof fn lemma_rotate_props(x: Seq<usize>, k: int)
+pub(crate) proof fn lemma_rotate_props(x: Seq<usize>, k: int)
     requires 0 <= k <= x.len(),
     ensures
         rotate(x, k).len() == x.len(),
@@ -504,11 +963,11 @@ pub proof fn lemma_rotate_props(x: Seq<usize>, k: int)
 
 /// in_range clause of post.wf() after splice.
 #[verifier::spinoff_prover]
-pub proof fn lemma_splice_in_range<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_splice_in_range<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     cs: int, ca: int, ps: int, pa: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(), post.n_spec() == pre.n_spec(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(), cs != ca,
@@ -543,11 +1002,11 @@ pub proof fn lemma_splice_in_range<T, const TRACK: bool>(
 /// disjoint clause of post.wf() after splice.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(800)]
-pub proof fn lemma_splice_disjoint<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_splice_disjoint<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     s: int, a: int, cs: int, ca: int, ps: int, pa: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(), post.n_spec() == pre.n_spec(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(), cs != ca,
@@ -588,7 +1047,7 @@ pub proof fn lemma_splice_disjoint<T, const TRACK: bool>(
 
 /// The pre-(ring, position) that post entry `qm[c][p]` originates from, after
 /// `splice` merged rings `cs`,`ca` into `cs = rotate(rs,ps+1) ++ rotate(ra,pa+1)`.
-pub open spec fn ring_src(
+pub open(crate) spec fn ring_src(
     pm: Seq<Seq<usize>>, cs: int, ca: int, ps: int, pa: int, rslen: int, c: int, p: int,
 ) -> (int, int) {
     if c == cs {
@@ -607,7 +1066,7 @@ pub open spec fn ring_src(
 }
 
 /// `qm[c][p] == pm[ring_src(...)]` and the source is in-bounds.
-pub proof fn lemma_ring_src(
+pub(crate) proof fn lemma_ring_src(
     pm: Seq<Seq<usize>>, qm: Seq<Seq<usize>>, cs: int, ca: int, ps: int, pa: int, rslen: int,
     c: int, p: int,
 )
@@ -636,7 +1095,7 @@ pub proof fn lemma_ring_src(
 }
 
 /// `ring_src` is injective: distinct post positions have distinct pre sources.
-pub proof fn lemma_ring_src_injective(
+pub(crate) proof fn lemma_ring_src_injective(
     pm: Seq<Seq<usize>>, cs: int, ca: int, ps: int, pa: int, rslen: int,
     c1: int, p1: int, c2: int, p2: int,
 )
@@ -735,11 +1194,11 @@ pub proof fn lemma_ring_src_injective(
 /// full `pre.wf()`, which implies `model_covers()`, so this is strictly weaker.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(50)]
-pub proof fn lemma_splice_covers<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_splice_covers<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     cs: int, ca: int, ps: int, pa: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.model_covers(), post.n_spec() == pre.n_spec(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(), cs != ca,
@@ -781,11 +1240,11 @@ pub proof fn lemma_splice_covers<T, const TRACK: bool>(
 /// cyclic clause of post.wf() after splice — the crux.
 #[verifier::spinoff_prover]
 #[verifier::rlimit(800)]
-pub proof fn lemma_splice_cyclic<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_splice_cyclic<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     s: int, a: int, cs: int, ca: int, ps: int, pa: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(), post.n_spec() == pre.n_spec(),
         0 <= s < pre.n_spec(), 0 <= a < pre.n_spec(),
@@ -868,10 +1327,10 @@ pub proof fn lemma_splice_cyclic<T, const TRACK: bool>(
 }
 
 /// pre cyclic at a specific (ring, pos): `pns[pm[c][p]] == pm[c][(p+1) mod]`.
-pub proof fn lemma_pre_cyclic_at<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, c: int, p: int,
+pub(crate) proof fn lemma_pre_cyclic_at<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, c: int, p: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires pre.wf(), 0 <= c < pre.model@.len(), 0 <= p < pre.model@[c].len(),
     ensures
         pre.next_seq()[pre.model@[c][p] as int]
@@ -881,10 +1340,10 @@ pub proof fn lemma_pre_cyclic_at<T, const TRACK: bool>(
 }
 
 /// A node in a ring other than cs/ca is neither s nor a (disjointness).
-pub proof fn lemma_other_ring_avoids_sa<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, s: int, a: int, cs: int, ca: int, c: int, p: int,
+pub(crate) proof fn lemma_other_ring_avoids_sa<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, s: int, a: int, cs: int, ca: int, c: int, p: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(),
@@ -906,11 +1365,11 @@ pub proof fn lemma_other_ring_avoids_sa<T, const TRACK: bool>(
 /// UNCHANGED by the swap (it is neither `s` nor `a`), and old `cyclic` plus the
 /// rotate-successor arithmetic give `next[merged[p]] == merged[p+1]`.
 #[verifier::spinoff_prover]
-pub proof fn lemma_merge_interior_prefix<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_merge_interior_prefix<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     cs: int, ca: int, ps: int, pa: int, p: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(), cs != ca,
@@ -974,11 +1433,11 @@ pub proof fn lemma_merge_interior_prefix<T, const TRACK: bool>(
 /// Interior-of-suffix step of the merged ring's cyclic law. Mirror of the
 /// prefix case, indexing into `ca`'s rotation (offset by `rslen`).
 #[verifier::spinoff_prover]
-pub proof fn lemma_merge_interior_suffix<T, const TRACK: bool>(
-    pre: CircularList<T, TRACK>, post: &CircularList<T, TRACK>,
+pub(crate) proof fn lemma_merge_interior_suffix<T, N: DenseId, const TRACK: bool>(
+    pre: CircularList<T, N, TRACK>, post: &CircularList<T, N, TRACK>,
     cs: int, ca: int, ps: int, pa: int, p: int,
 )
-    where T: Sized + Copy + core::default::Default
+    where T: Sized + Copy + core::default::Default, N: DenseId
     requires
         pre.wf(),
         0 <= cs < pre.model@.len(), 0 <= ca < pre.model@.len(), cs != ca,
@@ -1034,9 +1493,270 @@ pub proof fn lemma_merge_interior_suffix<T, const TRACK: bool>(
     assert(post.next_seq()[m[p] as int] == m[p + 1]);
 }
 
+/// Forward iterator over one class ring, yielding node indices starting at
+/// `start` and wrapping once around (production's `ClassIter`). Carries a
+/// physical cursor `cur` (the node at ring position `pos` relative to `start`),
+/// so each `next` is O(1): yield `cur`, step it along the verified `next`
+/// pointer (which `wf`'s `model_cyclic` ties to the ring), and stop when it
+/// returns to `start`. The ghost `(c, p0)` pin the located ring and the start's
+/// position within it; `cursor_ok` is "`cur` names `class_seq[pos]`, or the
+/// walk is done and `pos == ring length`".
+pub struct RingIter<'a, T, N: DenseId, const TRACK: bool>
+where T: Sized + Copy + core::default::Default {
+    pub(crate) list: &'a CircularList<T, N, TRACK>,
+    /// The node the walk started at, as the id type — production's `ClassIter`
+    /// stores `start_idx: T`, and yielding `N` (not `usize`) is what lets the
+    /// consumer's `iter_class` return `impl Iterator<Item = T>` unchanged.
+    pub(crate) start: N,
+    /// Physical cursor: the node at ring position `pos` (meaningless once
+    /// `done`; `cursor_ok`'s exhausted arm).
+    pub(crate) cur: N,
+    pub(crate) done: bool,
+    /// Ghost cursor position within the walk (0-based from `start`). Purely a
+    /// verification device — production's `ClassIter` has no counter, it only
+    /// compares `cur` to `start` — so making it ghost keeps exec identical to
+    /// production AND sidesteps a spurious `pos+1` usize-overflow obligation.
+    /// (Spec-only: erased in plain builds, hence `dead_code`.)
+    #[allow(dead_code)]
+    pub(crate) pos: Ghost<nat>,
+    /// Ghost: the located ring index and `start`'s position within it.
+    #[allow(dead_code)]
+    pub(crate) c: Ghost<int>,
+    #[allow(dead_code)]
+    pub(crate) p0: Ghost<int>,
+}
+
+/// Disjointness within a single ring: two positions of ring `c` holding the
+/// same node index are the same position. Isolates `model_disjoint`'s
+/// quad-nested instantiation so `RingIter::next` never brings it into scope.
+pub(crate) proof fn lemma_ring_same_pos<T, N: DenseId, const TRACK: bool>(
+    list: &CircularList<T, N, TRACK>, c: int, p1: int, p2: int,
+)
+    where T: Sized + Copy + core::default::Default, N: DenseId
+    requires
+        list.model_disjoint(),
+        0 <= c < list.model@.len(),
+        0 <= p1 < list.model@[c].len(),
+        0 <= p2 < list.model@[c].len(),
+        list.model@[c][p1] == list.model@[c][p2],
+    ensures p1 == p2,
+{
+    // direct instantiation of model_disjoint at (c,p1),(c,p2).
+}
+
+/// The ring-walk step arithmetic (pure). With `j = (p0+oldpos) mod len` and
+/// `jn = (j+1) mod len` (each a single conditional subtraction, valid because
+/// `p0, oldpos < len`), the successor position `jn` equals the start position
+/// `p0` exactly when the walk has come full circle (`oldpos+1 == len`); and
+/// when it has not, `jn` is the rotation index of `oldpos+1`.
+pub(crate) proof fn lemma_ring_step_arith(p0: int, oldpos: int, len: int, j: int, jn: int)
+    requires
+        0 <= p0 < len,
+        0 <= oldpos < len,
+        j == (if p0 + oldpos < len { p0 + oldpos } else { p0 + oldpos - len }),
+        jn == (if j + 1 < len { j + 1 } else { 0 }),
+    ensures
+        0 <= j < len,
+        0 <= jn < len,
+        (jn == p0) <==> (oldpos + 1 == len),
+        (oldpos + 1 < len)
+            ==> jn == (if p0 + (oldpos + 1) < len { p0 + (oldpos + 1) } else { p0 + (oldpos + 1) - len }),
+{
+    // All linear; the case-splits on the two conditional subtractions decide it.
+}
+
+/// `locate` is pinned: if `(c, p0)` names `start` (`model[c][p0] == start`),
+/// then under disjointness `locate(start) == (c, p0)`, so the caller-facing
+/// `class_seq(start)` equals the iterator's internal walk `rotate(model[c],
+/// p0)`. Isolates the `choose`/disjoint reasoning out of the hot `next` body.
+pub(crate) proof fn lemma_locate_pinned<T, N: DenseId, const TRACK: bool>(
+    list: &CircularList<T, N, TRACK>, start: int, c: int, p0: int,
+)
+    where T: Sized + Copy + core::default::Default, N: DenseId
+    requires
+        list.model_disjoint(),
+        0 <= c < list.model@.len(),
+        0 <= p0 < list.model@[c].len(),
+        list.model@[c][p0] == start,
+    ensures
+        list.locate(start) == (c, p0),
+        list.class_seq(start) == rotate(list.model@[c], p0),
+{
+    // covers/existence gives locate a witness; disjoint forces it to (c, p0).
+    let (lc, lp) = list.locate(start);
+    assert(0 <= lc < list.model@.len() && 0 <= lp < list.model@[lc].len()
+        && list.model@[lc][lp] == start);  // choose satisfies its predicate
+    assert(list.model_disjoint());  // (lc,lp) and (c,p0) both name start ⟹ equal
+}
+
+impl<'a, T, N: DenseId, const TRACK: bool> RingIter<'a, T, N, TRACK>
+where T: Sized + Copy + core::default::Default {
+    /// The list this iterator walks (spec twin; fields are `pub(crate)`).
+    pub open(crate) spec fn list_ref(&self) -> &'a CircularList<T, N, TRACK> {
+        self.list
+    }
+
+    pub open(crate) spec fn start_spec(&self) -> nat { self.start.id_nat() }
+    pub open(crate) spec fn pos_spec(&self) -> nat { self.pos@ }
+    pub open(crate) spec fn done_spec(&self) -> bool { self.done }
+    /// Ghost located-ring index (spec twin; field is `pub(crate)`).
+    pub open(crate) spec fn c_spec(&self) -> int { self.c@ }
+    /// Ghost start-position-within-ring (spec twin).
+    pub open(crate) spec fn p0_spec(&self) -> int { self.p0@ }
+
+    /// The located ring (`model[c]`).
+    pub open(crate) spec fn ring(&self) -> Seq<usize> {
+        self.list.model@[self.c@]
+    }
+
+    /// The walk sequence, phrased on the STORED `(c, p0)` — `rotate(ring, p0)`.
+    /// Equal to `class_seq(start)` once `locate` is pinned (lemma_locate_pinned),
+    /// but referencing `p0@` directly keeps `locate`'s `choose` out of the hot
+    /// `next` body (referencing `class_seq` there timed the solver out).
+    pub open(crate) spec fn walk_seq(&self) -> Seq<usize> {
+        rotate(self.ring(), self.p0@)
+    }
+
+    /// Cursor validity: `(c, p0)` correctly locate `start`, and — while live —
+    /// `cur` names the next node to yield (`walk_seq[pos]`), in range. Once
+    /// `done`, the whole ring has been visited (`pos == ring length`).
+    pub open(crate) spec fn cursor_ok(&self) -> bool {
+        let m = self.list.model@;
+        let ring = self.ring();
+        &&& 0 <= self.c@ < m.len()
+        &&& 0 <= self.p0@ < ring.len()
+        &&& ring[self.p0@] as nat == self.start.id_nat()
+        &&& self.pos@ <= ring.len()
+        &&& (self.done <==> self.pos@ == ring.len())
+        &&& (!self.done ==> {
+                &&& (self.pos@ as int) < ring.len()
+                &&& self.cur.id_nat() == self.walk_seq()[self.pos@ as int] as nat
+                &&& self.cur.id_nat() < self.list.n_spec()
+            })
+    }
+
+    /// Yield `walk_seq[pos]` (= `class_seq(start)[pos]`, a node index) and
+    /// advance the cursor — O(1) per call. Returns `None` once the ring has
+    /// been fully traversed. The contract is stated on `walk_seq()` (the
+    /// stored-`p0` phrasing); `walk_seq() == class_seq(start)` under `wf`
+    /// (lemma_locate_pinned), which the public `class_seq` accessor bridges.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(50)]
+    pub fn next(&mut self) -> (r: Option<N>)
+        requires
+            old(self).list_ref().wf(),
+            old(self).cursor_ok(),
+        ensures
+            self.list_ref() == old(self).list_ref(),
+            self.start_spec() == old(self).start_spec(),
+            self.c_spec() == old(self).c_spec(),
+            self.p0_spec() == old(self).p0_spec(),
+            self.cursor_ok(),
+            !old(self).done_spec() ==> {
+                &&& r is Some
+                // The yielded id's dense index is the walk position's node —
+                // stated through `id_nat` because the model is width-agnostic.
+                &&& r->Some_0.id_nat() == old(self).walk_seq()[old(self).pos_spec() as int] as nat
+                &&& self.pos_spec() == old(self).pos_spec() + 1
+            },
+            old(self).done_spec() ==> {
+                &&& r is None
+                &&& self.pos_spec() == old(self).pos_spec()
+            },
+    {
+        if self.done {
+            return None;
+        }
+        let result = self.cur;
+        let ghost ring = self.ring();
+        let ghost len = ring.len() as int;
+        let ghost oldpos = self.pos@ as int;
+        // j = (p0 + pos) mod len — the ring position `cur` sits at. Valid as a
+        // single conditional subtraction since p0, pos < len ⟹ p0+pos < 2*len.
+        let ghost j = if self.p0@ + oldpos < len {
+            self.p0@ + oldpos
+        } else {
+            self.p0@ + oldpos - len
+        };
+        // jn = (j + 1) mod len — the successor position (nxt sits here).
+        let ghost jn = if j + 1 < len { j + 1 } else { 0 };
+        proof {
+            lemma_rotate_props(ring, self.p0@);
+            lemma_ring_step_arith(self.p0@, oldpos, len, j, jn);
+            // cur == walk_seq[pos] == rotate(ring, p0)[pos] == ring[j].
+            assert(self.cur.id_nat() == ring[j] as nat);
+            assert(self.cur.id_nat() < self.list.n_spec());
+        }
+        let nxt = self.list.next_of(self.cur);
+        proof {
+            // model_cyclic at (c, j): next_seq()[ring[j]] == ring[jn]. Routed
+            // through lemma_pre_cyclic_at (as the splice proofs do) so the
+            // solver never SEARCHES model_cyclic's quantifier — the direct
+            // instantiation is what caused a matching loop / rlimit blow-up.
+            assert(nxt.id_nat() == self.list.next_seq()[self.cur.id_nat() as int] as nat);
+            lemma_pre_cyclic_at(*self.list, self.c@, j);
+            assert(self.list.next_seq()[self.cur.id_nat() as int] == ring[jn]);
+            assert(nxt.id_nat() == ring[jn] as nat);
+        }
+        // Identity test on the dense index, not on `PartialEq` — `N`'s `==` has
+        // no spec contract, but `to_usize`'s ensures ties the word to `id_nat`,
+        // and `lemma_id_injective` makes index equality decide id equality. In
+        // exec this is production's `current_idx == start_idx` verbatim (both
+        // ids are already clean words; `to_usize` is a cast).
+        let wrapped = nxt.to_usize() == self.start.to_usize();
+        proof {
+            // wrapped ⟺ ring[jn] == ring[p0] ⟺ jn == p0 (disjointness),
+            // isolated in pure lemmas so this body never pulls wf's quad-nested
+            // foralls into the solver (that made it rlimit-blow-up / time out).
+            if wrapped {
+                lemma_ring_same_pos(self.list, self.c@, jn, self.p0@);  // jn == p0
+            }
+            if jn == self.p0@ {
+                assert(nxt.id_nat() == self.start.id_nat());  // ring[jn] == ring[p0]
+                assert(wrapped);
+            }
+        }
+        proof {
+            self.pos@ = self.pos@ + 1;  // ghost counter (production has none)
+        }
+        if wrapped {
+            self.done = true;
+        } else {
+            self.cur = nxt;
+        }
+        proof {
+            let newpos = self.pos@ as int;   // oldpos + 1
+            // done ⟺ wrapped ⟺ jn == p0 ⟺ newpos == len (lemma_ring_step_arith).
+            if self.done {
+                assert(newpos == len);
+                assert(self.pos@ == ring.len());
+            } else {
+                assert(newpos < len);
+                // jn is the rotation index of newpos (lemma_ring_step_arith), so
+                // cur == ring[jn] == rotate(ring, p0)[newpos] == walk_seq[newpos].
+                assert(self.cur.id_nat() == self.walk_seq()[newpos] as nat);
+                assert(self.cur.id_nat() < self.list.n_spec());
+            }
+        }
+        Some(result)
+    }
+}
+
 /// `i` appears in some ring of `model` (the per-node `covers` predicate, with a
 /// clean trigger for the outer `forall|i|`).
-pub open spec fn idx_in_some_ring(model: Seq<Seq<usize>>, i: int) -> bool {
+/// The Phase 7 archive agreement, opaque (see `wf`'s comment): the ghost
+/// model-snapshot stack is parallel to the frame stack and each archived
+/// partition describes its archived entry snapshot.
+#[verifier::opaque]
+pub open(crate) spec fn ring_archive_agrees<T, N: DenseId>(
+    archive: Seq<Seq<Seq<usize>>>, snaps: Seq<Seq<CircularListNode<T, N>>>,
+) -> bool {
+    &&& archive.len() == snaps.len()
+    &&& (forall|k: int| 0 <= k < archive.len()
+            ==> ring_snap_wf(#[trigger] archive[k], snaps[k]))
+}
+
+pub open(crate) spec fn idx_in_some_ring(model: Seq<Seq<usize>>, i: int) -> bool {
     exists|c: int, p: int|
         0 <= c < model.len() && 0 <= p < model[c].len() && (#[trigger] model[c][p]) == i
 }
@@ -1044,7 +1764,7 @@ pub open spec fn idx_in_some_ring(model: Seq<Seq<usize>>, i: int) -> bool {
 /// Structural ring-partition validity over a raw snapshot + its ghost model
 /// (for `restore`): the model and entries jointly satisfy the same in-range +
 /// disjoint + covers + cyclic clauses as `wf`.
-pub open spec fn ring_snap_wf<T>(model: Seq<Seq<usize>>, entries: Seq<CircularListNode<T>>) -> bool {
+pub open(crate) spec fn ring_snap_wf<T, N: DenseId>(model: Seq<Seq<usize>>, entries: Seq<CircularListNode<T, N>>) -> bool {
     &&& (forall|c: int, p: int|
             0 <= c < model.len() && 0 <= p < (#[trigger] model[c]).len()
                 ==> #[trigger] model[c][p] < entries.len())
@@ -1056,8 +1776,58 @@ pub open spec fn ring_snap_wf<T>(model: Seq<Seq<usize>>, entries: Seq<CircularLi
     &&& (forall|i: int| 0 <= i < entries.len() ==> #[trigger] idx_in_some_ring(model, i))
     &&& (forall|c: int, p: int|
             0 <= c < model.len() && 0 <= p < model[c].len()
-                ==> (#[trigger] entries[model[c][p] as int]).next
+                ==> (#[trigger] entries[model[c][p] as int]).next.id_nat() as usize
                         == model[c][if p + 1 < model[c].len() { p + 1 } else { 0 }])
 }
 
 } // verus!
+
+// prod-parity: the consumer's `EClassesToken` derives `Debug` and bundles this
+// token, so it must be `Debug` (matching `VecToken`/`ListArenaToken`). Manual,
+// not derived — `#[derive(Debug)]` inside `verus!{}` is unsupported.
+impl core::fmt::Debug for CircularListToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CircularListToken")
+            .field("entries", &self.entries)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Trusted glue (outside verus!{}; trust ledger group E): std Iterator via a
+// 1-line delegation to the verified inherent `next`, mirroring `ListIter`.
+// Yields node indices in ring order (production's `ClassIter`).
+// ---------------------------------------------------------------------------
+impl<'a, T, N: DenseId, const TRACK: bool> Iterator for RingIter<'a, T, N, TRACK>
+where
+    T: Sized + Copy + core::default::Default,
+{
+    type Item = N;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<N> {
+        RingIter::next(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// White-box oracle access (plain Rust; see bplus.rs's matching comment).
+// Read-only — cannot violate any invariant.
+// ---------------------------------------------------------------------------
+impl<T, N: DenseId, const TRACK: bool> CircularList<T, N, TRACK>
+where
+    T: Sized + Copy + core::default::Default,
+{
+    /// Read-only entries access for white-box tests.
+    #[doc(hidden)]
+    pub fn white_box_entries(
+        &self,
+    ) -> &SpVec<
+        CircularListNode<T, N>,
+        <N as DenseId>::Index,
+        InlineStore<CircularListNode<T, N>, <N as DenseId>::Index>,
+        TRACK,
+    > {
+        &self.entries
+    }
+}

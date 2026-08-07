@@ -36,7 +36,14 @@ pub proof fn lemma_u64_usize_64bit()
 }
 
 /// Bijection between an exec index type and `nat`.
-pub trait IndexLike: Sized + Copy {
+///
+/// prod-parity: `Ord + Hash + Debug` match production's `IndexLike`
+/// (`containers/src/dense_id.rs:69`, `IndexLike: Copy + Ord + Hash + Debug`).
+/// The consumer relies on this transitively — e.g. `EGraphConfig::G: DenseId`
+/// (which has `IndexLike` as a supertrait) is then `Debug`/`Ord`/`Hash` without
+/// the config restating those bounds, and the caches' `#[derive(Debug)]` and
+/// hash-map keying resolve.
+pub trait IndexLike: Sized + Copy + core::cmp::Ord + core::hash::Hash + core::fmt::Debug {
     // -- ghost projections ---------------------------------------------------
 
     /// Ghost projection to a natural number. Injective and bounded.
@@ -232,7 +239,11 @@ impl IndexLike for u32 {
         fn as_usize(self) -> usize { self as usize }
 
         fn try_from_usize(n: usize) -> Option<Self> {
-        if (n as u64) <= u32::MAX as u64 { Some(n as u32) } else { None }
+        // Compared in `usize`, like u8/u16 above and production's
+        // `n.try_into().ok()`, rather than through a `u64` round-trip.
+        // Codegen-identical (LLVM canonicalizes both to the same high-word
+        // test); this is just the form that matches its siblings.
+        if n <= u32::MAX as usize { Some(n as u32) } else { None }
     }
 
     fn lt(self, other: Self) -> bool { self < other }

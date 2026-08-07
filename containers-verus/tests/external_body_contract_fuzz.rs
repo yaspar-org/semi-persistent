@@ -79,10 +79,10 @@ fn cross_container_token_rejected() {
     }
     let token_a = a.mark(ShrinkPolicy::Never);
     // a's own token is valid on a.
-    assert!(a.is_valid_token(token_a), "a's token should be valid on a");
+    assert!(a.is_valid_token(&token_a), "a's token should be valid on a");
     // but the SAME token must be rejected by b (different container id).
     assert!(
-        !b.is_valid_token(token_a),
+        !b.is_valid_token(&token_a),
         "a token from container a must be rejected by container b"
     );
     println!("cross_container_token_rejected: OK");
@@ -179,10 +179,10 @@ fn byte_counters_are_consistent() {
 // `max_nat == 256`) and the headroom query a caller uses to avoid them.
 // --------------------------------------------------------------------------
 
-// `push` traps when the length would overflow the index type, instead of
-// wrapping. `u8` indices saturate at 255 live elements (max_nat == 256, and the
-// precondition is `len + 1 < max_nat`, so the 255th push — taking len 254->255 —
-// is the last legal one; pushing at len 255 must panic).
+// Overflow protocol (production parity): `push` itself carries no check —
+// the trap fires at the NEXT `len()` read (`try_from_usize` fails), exactly
+// like production's `expect("len overflow")`. `u8` indices: max_nat == 256,
+// so a data length of 256 is the first unrepresentable one.
 #[test]
 fn push_overflow_traps_for_small_index() {
     type V = SpVec<u32, u8, ParallelStore<u32, u8>, false>;
@@ -191,14 +191,17 @@ fn push_overflow_traps_for_small_index() {
     for i in 0..255u32 {
         v.push(i);
     }
-    // The 256th push (at len 255) would make len 256 == max_nat: must panic, not
-    // wrap to a 0-length / corrupt index.
+    // The 256th push (at len 255) violates the erased requires; like
+    // production, the push itself completes (data length 256)...
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         v.push(999);
+        // ...and the NEXT length read traps instead of silently wrapping
+        // (production: `try_from_usize(256).expect("len overflow")`).
+        let _ = v.len();
     }));
     assert!(
         result.is_err(),
-        "Vec::push must trap at the index-type limit, not silently wrap"
+        "an overflowed Vec must trap at the next len() read, not silently wrap"
     );
 }
 
@@ -226,4 +229,118 @@ fn restores_remaining_tracks_fork_history() {
             "restores_remaining must drop by one per restore (after {k})"
         );
     }
+}
+
+// --------------------------------------------------------------------------
+// Shrink helpers: the trusted data-preservation contract.
+//
+// `shrink_vec_capacity` (ParallelStore/InlineStore shrink_if) and
+// `shrink_aov_capacity` (AppendOnlyVec's mark-time variant) are
+// external_body with `ensures data@ == old(data)@` — the std-documented
+// behavior of `Vec::shrink_to`. They are pub(crate), so the fuzz drives
+// them through the public surface: `mark(ShrinkPolicy::IfOverallocated)`
+// after workloads engineered to leave excess capacity (push-then-pop for
+// Vec — pop leaves capacity behind; plain growth slack for AppendOnlyVec),
+// then checks the element sequence is unchanged. This closes the last
+// contract-carrying `ensures` with no runtime test (trust ledger §2b).
+// --------------------------------------------------------------------------
+
+#[test]
+fn shrink_preserves_vec_contents() {
+    use semi_persistent_containers_verus::inline_store::InlineStore;
+    type VP = SpVec<u64, u32, ParallelStore<u64, u32>, true>;
+    type VI = SpVec<u32, u32, InlineStore<u32, u32>, true>;
+
+    let mut lcg: u64 = 0x0058_7111;
+    let mut next = move || {
+        lcg = lcg
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lcg >> 1
+    };
+
+    for round in 0..200 {
+        // Random survivor size, big over-allocation via push-then-pop, and a
+        // random (factor, headroom) policy — including factor=0/1 edge cases
+        // where the shrink branch always fires.
+        let keep = (next() % 200) as usize;
+        let excess = 1 + (next() % 2000) as usize;
+        let factor = (next() % 5) as usize;
+        let headroom = 1 + (next() % 4) as usize;
+        let policy = ShrinkPolicy::IfOverallocated { factor, headroom };
+
+        // ParallelStore-backed
+        let mut vp: VP = VP::new();
+        for _ in 0..keep + excess {
+            vp.push(next());
+        }
+        for _ in 0..excess {
+            vp.pop();
+        }
+        let before: Vec<u64> = (0..keep as u32).map(|i| vp.get_index(i)).collect();
+        let _tok = vp.mark(policy); // shrink_vec_capacity fires inside mark
+        let after: Vec<u64> = (0..keep as u32).map(|i| vp.get_index(i)).collect();
+        assert_eq!(
+            before, after,
+            "round {round}: ParallelStore shrink changed contents \
+             (factor={factor}, headroom={headroom}, keep={keep})"
+        );
+
+        // InlineStore-backed (u32 payloads: Tagged repr)
+        let keep_i = (next() % 100) as usize;
+        let mut vi: VI = VI::new();
+        for _ in 0..keep_i + excess {
+            vi.push((next() as u32) & 0x7FFF_FFFF);
+        }
+        for _ in 0..excess {
+            vi.pop();
+        }
+        let before: Vec<u32> = (0..keep_i as u32).map(|i| vi.get_index(i)).collect();
+        let _tok = vi.mark(policy);
+        let after: Vec<u32> = (0..keep_i as u32).map(|i| vi.get_index(i)).collect();
+        assert_eq!(
+            before, after,
+            "round {round}: InlineStore shrink changed contents"
+        );
+    }
+    println!("shrink_preserves_vec_contents: OK (200 rounds x 2 stores)");
+}
+
+#[test]
+fn shrink_preserves_aov_contents() {
+    use semi_persistent_containers_verus::append_only_vec::AppendOnlyVec;
+
+    let mut lcg: u64 = 0x0A05_7A7E;
+    let mut next = move || {
+        lcg = lcg
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lcg >> 1
+    };
+
+    for round in 0..200 {
+        let n = (next() % 500) as usize;
+        let factor = (next() % 5) as usize;
+        let headroom = (next() % 4) as usize;
+
+        let mut v: AppendOnlyVec<u64, true> = AppendOnlyVec::new();
+        let mut expect = Vec::with_capacity(n);
+        for _ in 0..n {
+            let x = next();
+            v.push(x);
+            expect.push(x);
+        }
+        // shrink_aov_capacity fires inside mark (AOV variant condition
+        // `cap > len*factor + headroom`, target `len + headroom`).
+        let _tok = v.mark(ShrinkPolicy::IfOverallocated { factor, headroom });
+        assert_eq!(v.len(), expect.len(), "round {round}: length changed");
+        for (i, e) in expect.iter().enumerate() {
+            assert_eq!(
+                v.get(i),
+                e,
+                "round {round}: AOV shrink changed contents at {i}"
+            );
+        }
+    }
+    println!("shrink_preserves_aov_contents: OK (200 rounds)");
 }

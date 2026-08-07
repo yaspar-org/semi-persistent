@@ -49,20 +49,41 @@ pub enum ShrinkPolicy {
 /// see 02-fork-history.md §0.5.
 #[derive(Copy, Clone)]
 pub struct VecToken {
-    pub frame_idx: usize,
-    pub branch_id: u32,
-    pub depth: u32,
-    pub container_id: ContainerId,
+    pub(crate) frame_idx: usize,
+    pub(crate) branch_id: u32,
+    pub(crate) depth: u32,
+    pub(crate) container_id: ContainerId,
+}
+
+impl VecToken {
+    /// The reconstruction coordinate (spec view; the exec field is
+    /// `pub(crate)` — privacy closeout). Public contracts phrase frame
+    /// positions through this.
+    pub open(crate) spec fn frame_idx_spec(self) -> nat {
+        self.frame_idx as nat
+    }
 }
 
 /// Spec helper: there is some entry in `diffs` pointing at index `j`.
 ///
 /// Used as the "captured" predicate in the declarative invariant.
-pub open spec fn diff_has_index<T, I: IndexLike>(
+pub open(crate) spec fn diff_has_index<T, I: IndexLike>(
     diffs: Seq<(T, I)>,
     j: nat,
 ) -> bool {
     exists|k: int| 0 <= k < diffs.len()
+        && (#[trigger] diffs[k]).1.as_nat() == j
+}
+
+/// Some entry of `diffs` in `[lo, hi)` points at index `j` (range-scoped
+/// `diff_has_index`; the replay loop's flag bookkeeping).
+pub open(crate) spec fn diff_has_index_in<T, I: IndexLike>(
+    diffs: Seq<(T, I)>,
+    lo: int,
+    hi: int,
+    j: nat,
+) -> bool {
+    exists|k: int| lo <= k < hi
         && (#[trigger] diffs[k]).1.as_nat() == j
 }
 
@@ -71,7 +92,7 @@ pub open spec fn diff_has_index<T, I: IndexLike>(
 /// Without this, multiple entries could disagree about a slot's marked
 /// value and the invariant would be ambiguous. Production enforces this
 /// via the per-slot capture flag.
-pub open spec fn diffs_unique_indices<T, I: IndexLike>(
+pub open(crate) spec fn diffs_unique_indices<T, I: IndexLike>(
     diffs: Seq<(T, I)>,
 ) -> bool {
     forall|i: int, j: int|
@@ -92,7 +113,7 @@ pub open spec fn diffs_unique_indices<T, I: IndexLike>(
 /// Both arms are stated as conjuncts. They are *jointly* the meaning of
 /// "snap is the snapshot at mark time of this view-plus-diff-log triple."
 /// First-write-wins (above) ensures the captured arm's witness is unique.
-pub open spec fn frame_inv<T, I: IndexLike>(
+pub open(crate) spec fn frame_inv<T, I: IndexLike>(
     view: Seq<T>,
     diffs: Seq<(T, I)>,
     snap: Seq<T>,
@@ -130,7 +151,7 @@ pub open spec fn frame_inv<T, I: IndexLike>(
 // index ends up outermost (winning). This is exactly the loop's result.
 
 /// Replay `diffs[lo..hi]` over `base` in reverse-index-wins order.
-pub open spec fn overlay<T, I: IndexLike>(
+pub open(crate) spec fn overlay<T, I: IndexLike>(
     base: Seq<T>,
     diffs: Seq<(T, I)>,
     lo: int,
@@ -152,7 +173,7 @@ pub open spec fn overlay<T, I: IndexLike>(
 }
 
 /// `overlay` preserves the base length (it only updates, never grows).
-pub proof fn lemma_overlay_len<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_len<T, I: IndexLike>(
     base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
 )
     ensures overlay::<T, I>(base, diffs, lo, hi).len() == base.len(),
@@ -165,7 +186,7 @@ pub proof fn lemma_overlay_len<T, I: IndexLike>(
 }
 
 /// If no entry in `[lo, hi)` hits cell `j`, overlay leaves `base[j]` alone.
-pub proof fn lemma_overlay_uncaptured<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_uncaptured<T, I: IndexLike>(
     base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, j: int,
 )
     requires
@@ -187,7 +208,7 @@ pub proof fn lemma_overlay_uncaptured<T, I: IndexLike>(
 /// If `[lo, hi)` has unique indices and the entry at position `p` hits `j`,
 /// then overlay sets `base[j]` to that entry's value — regardless of base,
 /// because the winning entry is the unique one.
-pub proof fn lemma_overlay_captured<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_captured<T, I: IndexLike>(
     base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, p: int, j: int,
 )
     requires
@@ -226,7 +247,7 @@ pub proof fn lemma_overlay_captured<T, I: IndexLike>(
 /// uniqueness in the range) to the cross-stratum case where the same index
 /// recurs in different strata: the deepest (= lowest-position) stratum's
 /// entry wins, which is exactly what reverse-replay computes.
-pub proof fn lemma_overlay_lowest<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_lowest<T, I: IndexLike>(
     base: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, p: int, j: int,
 )
     requires
@@ -259,7 +280,7 @@ pub proof fn lemma_overlay_lowest<T, I: IndexLike>(
 /// whole `[lo, hi)` agrees at `j` with overlaying just the upper part
 /// `[mid, hi)`. (The lower-part replay, applied outermost, leaves `j` alone.)
 /// Used by the flat central lemma's uncaptured/recurse step.
-pub proof fn lemma_overlay_uncaptured_prefix<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_uncaptured_prefix<T, I: IndexLike>(
     base: Seq<T>, diffs: Seq<(T, I)>, lo: int, mid: int, hi: int, j: int,
 )
     requires
@@ -286,7 +307,7 @@ pub proof fn lemma_overlay_uncaptured_prefix<T, I: IndexLike>(
 /// Bridge between subrange-position existential and absolute-range
 /// `captured_in_range`. If `sub == diffs.subrange(lo, hi)`, then
 /// "some sub[kk] hits j" iff "some diffs[k] in [lo, hi) hits j".
-pub proof fn lemma_captured_subrange<T, I: IndexLike>(
+pub(crate) proof fn lemma_captured_subrange<T, I: IndexLike>(
     diffs: Seq<(T, I)>, sub: Seq<(T, I)>, lo: int, hi: int, j: nat,
 )
     requires
@@ -318,7 +339,7 @@ pub proof fn lemma_captured_subrange<T, I: IndexLike>(
 /// popped index, so every surviving cell's bridge/captured arm is preserved.
 /// `diffs` is either `old_diffs` (no-op capture) or `old_diffs.push(e)` with
 /// `e.1.as_nat() == bound`.
-pub proof fn lemma_captured_in_range_append_other<T, I: IndexLike>(
+pub(crate) proof fn lemma_captured_in_range_append_other<T, I: IndexLike>(
     old_diffs: Seq<(T, I)>, diffs: Seq<(T, I)>, lo: int, j: nat, bound: nat,
 )
     requires
@@ -363,7 +384,7 @@ pub proof fn lemma_captured_in_range_append_other<T, I: IndexLike>(
 /// `frame_inv_range` over `[lo, hi)` depends only on the diff entries in
 /// that range. If two diff sequences agree pointwise on `[lo, hi)` (and are
 /// both long enough), the predicate holds for one iff for the other.
-pub proof fn lemma_frame_inv_range_local<T, I: IndexLike>(
+pub(crate) proof fn lemma_frame_inv_range_local<T, I: IndexLike>(
     above: Seq<T>, da: Seq<(T, I)>, db: Seq<(T, I)>,
     lo: int, hi: int, snap: Seq<T>, saved_len: nat,
 )
@@ -396,7 +417,7 @@ pub proof fn lemma_frame_inv_range_local<T, I: IndexLike>(
 /// `da`/`db` agree there, the per-cell invariant transfers. Isolated so the
 /// quantifier instantiation is local and the equality is by function
 /// congruence on `captured_in_range` + the witness entry.
-pub proof fn lemma_frame_cell_inv_local<T, I: IndexLike>(
+pub(crate) proof fn lemma_frame_cell_inv_local<T, I: IndexLike>(
     above: Seq<T>, da: Seq<(T, I)>, db: Seq<(T, I)>,
     lo: int, hi: int, snap: Seq<T>, j: int,
 )
@@ -438,7 +459,7 @@ pub proof fn lemma_frame_cell_inv_local<T, I: IndexLike>(
 /// This is what lets restore overlay onto the *truncated* base (length
 /// saved_len) and still match `overlay` onto the full view on the marked
 /// region: entries with idx >= saved_len are no-ops on `[0, saved_len)`.
-pub proof fn lemma_overlay_prefix_agnostic<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_prefix_agnostic<T, I: IndexLike>(
     base_a: Seq<T>, base_b: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int, bound: int,
 )
     requires
@@ -467,7 +488,7 @@ pub proof fn lemma_overlay_prefix_agnostic<T, I: IndexLike>(
 /// `overlay` splits at any midpoint: applying `[lo, hi)` equals applying
 /// the upper part `[mid, hi)` first, then the lower part `[lo, mid)` on top.
 /// This is what lets us peel strata one at a time.
-pub proof fn lemma_overlay_split<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_split<T, I: IndexLike>(
     base: Seq<T>, diffs: Seq<(T, I)>, lo: int, mid: int, hi: int,
 )
     requires
@@ -492,7 +513,7 @@ pub proof fn lemma_overlay_split<T, I: IndexLike>(
 }
 
 /// Range-based "captured": some entry in `diffs[lo..hi)` hits `j`.
-pub open spec fn captured_in_range<T, I: IndexLike>(
+pub open(crate) spec fn captured_in_range<T, I: IndexLike>(
     diffs: Seq<(T, I)>, lo: int, hi: int, j: nat,
 ) -> bool {
     exists|k: int| lo <= k < hi && 0 <= k < diffs.len()
@@ -510,7 +531,7 @@ pub open spec fn captured_in_range<T, I: IndexLike>(
 /// every cell `j` in `[above.len(), saved_len)` — popped out of `above` —
 /// must be captured. That's what lets `restore` regrow the popped region with
 /// `resize_default` and overwrite every filler back to `snap[j]`.
-pub open spec fn frame_cell_inv<T, I: IndexLike>(
+pub open(crate) spec fn frame_cell_inv<T, I: IndexLike>(
     above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
     snap: Seq<T>, j: int,
 ) -> bool {
@@ -531,7 +552,7 @@ pub open spec fn frame_cell_inv<T, I: IndexLike>(
 /// Note: no `saved_len <= above.len()` requirement — `above` (the view, for
 /// the top frame) may be shorter than `saved_len` in the post-pop state. The
 /// coverage clause inside `frame_cell_inv` handles the popped cells.
-pub open spec fn frame_inv_range<T, I: IndexLike>(
+pub open(crate) spec fn frame_inv_range<T, I: IndexLike>(
     above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
     snap: Seq<T>, saved_len: nat,
 ) -> bool {
@@ -547,7 +568,7 @@ pub open spec fn frame_inv_range<T, I: IndexLike>(
 /// Instantiate `frame_inv_range`'s per-cell forall at one cell `j`. The
 /// forall's trigger is `frame_cell_inv(...)`, so this is just an explicit
 /// hook for call sites that need the per-cell fact in hand.
-pub proof fn lemma_frame_inv_arm_at<T, I: IndexLike>(
+pub(crate) proof fn lemma_frame_inv_arm_at<T, I: IndexLike>(
     above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
     snap: Seq<T>, saved_len: nat, j: int,
 )
@@ -566,7 +587,7 @@ pub proof fn lemma_frame_inv_arm_at<T, I: IndexLike>(
 ///
 /// Hypotheses mirror `frame_inv` + the structural conditions, but phrased
 /// over the diff-log range rather than an extracted subrange.
-pub proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
+pub(crate) proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
     above: Seq<T>, diffs: Seq<(T, I)>, lo: int, hi: int,
     snap: Seq<T>, saved_len: nat,
 )
@@ -609,26 +630,26 @@ pub proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
 
 /// Semi-persistent vector parameterized by storage backend `S` and index
 /// type `I`. `TRACK` compiles out all tracking when false.
-pub struct Vec<T, I, S, const TRACK: bool>
+pub struct Vec<T, I, S, const TRACK: bool = true>
 where
     T: Sized + Copy,
     I: IndexLike,
     S: DiffStore<T, I, TRACK>,
 {
-    pub store: S,
-    pub diff_log: std::vec::Vec<(T, I)>,
-    pub frames: std::vec::Vec<Frame<I>>,
+    pub(crate) store: S,
+    pub(crate) diff_log: std::vec::Vec<(T, I)>,
+    pub(crate) frames: std::vec::Vec<Frame<I>>,
     /// The saved_len of the topmost (active) frame, cached for the hot path.
     /// `I::min()` when the stack is empty. Mirrors production.
-    pub active_saved_len: I,
+    pub(crate) active_saved_len: I,
     /// Branching genealogy for token-validity / branch-cut safety (M5).
-    pub forks: ForkHistory,
+    pub(crate) forks: ForkHistory,
     /// Per-container identity; rejects cross-container token use.
-    pub id: ContainerId,
-    pub phantom: core::marker::PhantomData<(T, I)>,
+    pub(crate) id: ContainerId,
+    pub(crate) phantom: core::marker::PhantomData<(T, I)>,
     /// Ghost stack of deep copies. `snapshots[k]` is `view()` at the
     /// moment frame `k` was pushed. Always `snapshots.len() == frames.len()`.
-    pub snapshots: Ghost<Seq<Seq<T>>>,
+    pub(crate) snapshots: Ghost<Seq<Seq<T>>>,
 }
 
 impl<T, I, S, const TRACK: bool> Vec<T, I, S, TRACK>
@@ -638,13 +659,31 @@ where
     S: DiffStore<T, I, TRACK>,
 {
     /// Public spec view: the abstract sequence of stored values.
-    pub open spec fn view(&self) -> Seq<T> {
+    pub open(crate) spec fn view(&self) -> Seq<T> {
         self.store.data()
     }
 
     /// Snapshot stack (ghost).
-    pub open spec fn snapshots_view(&self) -> Seq<Seq<T>> {
+    pub open(crate) spec fn snapshots_view(&self) -> Seq<Seq<T>> {
         self.snapshots@
+    }
+
+    /// Frame-stack depth (spec twin of `depth()`). Public contracts phrase
+    /// frame counts through this — the `frames` field is `pub(crate)`
+    /// (privacy closeout).
+    pub open(crate) spec fn depth_spec(&self) -> nat {
+        self.frames@.len()
+    }
+
+    /// Diff-log length (spec twin of `diff_log_len()`).
+    pub open(crate) spec fn diff_log_len_spec(&self) -> nat {
+        self.diff_log@.len()
+    }
+
+    /// Lifetime restore count (fork-history origins length). Public contracts
+    /// phrase the `u32` fork headroom through this.
+    pub open(crate) spec fn fork_count_spec(&self) -> nat {
+        self.forks.origins@.len()
     }
 
     /// Token validity (design doc §0.6): same container AND on the live branch
@@ -652,7 +691,7 @@ where
     /// of `restore` — separate from the structural `frame_idx < frames.len()`
     /// reconstruction precondition (design §0.5). `current_depth` is the live
     /// depth `frames.len()`.
-    pub open spec fn is_token_valid_spec(&self, token: VecToken) -> bool {
+    pub open(crate) spec fn is_token_valid_spec(&self, token: VecToken) -> bool {
         &&& token.container_id.id() == self.id.id()
         &&& crate::fork_history::fork_valid(
                 self.forks.origins@,
@@ -660,6 +699,21 @@ where
                 self.frames@.len() as nat,
                 token.branch_id as nat,
                 token.depth as nat)
+    }
+
+    /// "Restorable now" (migration plan 2.2): the FULL runtime-checkable
+    /// precondition of `restore`. This is what the public `is_valid_token`
+    /// answers — one public notion of validity: "would `restore(token)`
+    /// succeed right now?". Strictly stronger than `is_token_valid_spec`
+    /// (identity + genealogy), adding frame liveness (the consumed-token
+    /// case: a restored token's branch can remain on-path while its frame is
+    /// gone), the TRACK gate, and both counter headrooms.
+    pub open(crate) spec fn is_restorable_spec(&self, token: VecToken) -> bool {
+        &&& TRACK
+        &&& self.is_token_valid_spec(token)
+        &&& token.frame_idx < self.frames@.len()
+        &&& self.frames@.len() < u32::MAX
+        &&& self.forks.origins@.len() + 1 <= u32::MAX
     }
 
     /// Well-formedness. M3b invariants:
@@ -673,7 +727,7 @@ where
     ///       frame_inv(view, diff_log, snapshots[0], saved_len)
     /// The "layer above" frame `k`: snapshots[k+1] for inner frames, or the
     /// current view for the topmost frame.
-    pub open spec fn layer_above_at(&self, k: int) -> Seq<T> {
+    pub open(crate) spec fn layer_above_at(&self, k: int) -> Seq<T> {
         if k + 1 < self.frames@.len() {
             self.snapshots@[k + 1]
         } else {
@@ -682,7 +736,7 @@ where
     }
 
     /// End of frame `k`'s stratum.
-    pub open spec fn stratum_end(&self, k: int) -> int {
+    pub open(crate) spec fn stratum_end(&self, k: int) -> int {
         if k + 1 < self.frames@.len() {
             self.frames@[k + 1].diff_start as int
         } else {
@@ -714,7 +768,7 @@ where
     /// frame_inv_range captured arm ignores) — but breaks the bridge. So the
     /// central reconstruction lemma is stated over `wf_for_snap`, lettng
     /// restore invoke it on the resized (non-`wf`, but `wf_for_snap`) state.
-    pub open spec fn wf_for_snap(&self) -> bool {
+    pub open(crate) spec fn wf_for_snap(&self) -> bool {
         let frames = self.frames@;
         let diffs = self.diff_log@;
         let snaps = self.snapshots@;
@@ -722,6 +776,11 @@ where
 
         &&& self.store.wf()
         &&& snaps.len() == frames.len()
+        // TRACK=false ⟹ no frames, ever: `mark` (the only frame-pusher)
+        // requires TRACK. Carrying it in wf lets the exec hot paths gate
+        // their tracking work on `TRACK &&` — a const-generic the compiler
+        // folds away at monomorphization (production-parity erasure).
+        &&& (!TRACK ==> frames.len() == 0)
         &&& (frames.len() == 0 ==> n == 0)
         &&& (frames.len() > 0 ==> frames[0].diff_start == 0)
         &&& (frames.len() > 0 ==> frames[(frames.len() - 1) as int].diff_start <= n)
@@ -749,7 +808,7 @@ where
                     frames[k].saved_len.as_nat()))
     }
 
-    pub open spec fn wf(&self) -> bool {
+    pub open(crate) spec fn wf(&self) -> bool {
         let frames = self.frames@;
         let diffs = self.diff_log@;
 
@@ -775,6 +834,18 @@ where
                             frames[(frames.len() - 1) as int].diff_start as int,
                             diffs.len() as int,
                             j as nat))
+        // NO STRAY FLAGS (the sparse-clear enabler, production's implicit
+        // invariant): every set capture flag lies in the trackable region —
+        // below the active saved length with a live frame — where the bridge
+        // above ties it to a diff-log entry. Flags never survive outside it:
+        // capture/force_capture guard on i < saved_len, mark_captured fires
+        // only for reentered (in-marked) slots, prepare_mark/finish_restore
+        // (re)build from diff entries, push appends false, pop/truncate
+        // retire. This is what lets `prepare_mark` clear O(diffs) slots
+        // instead of sweeping O(len).
+        &&& (TRACK ==> forall|j: int| 0 <= j < self.view().len()
+                && #[trigger] self.store.captured()[j]
+                ==> frames.len() > 0 && j < self.active_saved_len.as_nat())
         // Fork history is well-formed (parent-decreasing; current branch a real
         // branch). Independent of the snapshot stack — validity is a separate
         // predicate, not a structural snapshot invariant (design §0.5).
@@ -783,7 +854,7 @@ where
 
     /// Every frame's diff_start is `<= diff_log.len()`. Follows from
     /// monotonicity plus the top frame's bound, by upward induction.
-    pub proof fn lemma_diff_start_le_n(&self, k: int)
+    pub(crate) proof fn lemma_diff_start_le_n(&self, k: int)
         requires
             self.wf_for_snap(),
             0 <= k < self.frames@.len(),
@@ -802,7 +873,7 @@ where
 
     /// diff_start is monotone non-decreasing across frames: for `a <= b`,
     /// `frames[a].diff_start <= frames[b].diff_start`.
-    pub proof fn lemma_diff_start_monotone(&self, a: int, b: int)
+    pub(crate) proof fn lemma_diff_start_monotone(&self, a: int, b: int)
         requires
             self.wf_for_snap(),
             0 <= a <= b < self.frames@.len(),
@@ -853,7 +924,7 @@ where
     /// `base` requirements: long enough (`j < base.len()`) and agreeing with
     /// the view on the shared prefix — exactly what `resize_default` gives
     /// restore.
-    pub proof fn lemma_cell_eq_overlay(&self, base: Seq<T>, k: int, j: int)
+    pub(crate) proof fn lemma_cell_eq_overlay(&self, base: Seq<T>, k: int, j: int)
         requires
             self.wf_for_snap(),
             0 <= k < self.frames@.len(),
@@ -953,14 +1024,14 @@ where
     /// frame stack is empty there is ZERO tracking storage and operations are
     /// pure `std::Vec` operations on the view. (`mark` is the only way to make
     /// the stack non-empty, so a vector that is never marked stays untracked.)
-    pub open spec fn untracked(&self) -> bool {
+    pub open(crate) spec fn untracked(&self) -> bool {
         self.frames@.len() == 0
     }
 
     /// No tracking overhead while untracked: `wf` already forces an empty diff
     /// log when the frame stack is empty, so an unmarked vector carries no
     /// diff entries. This is the TRACK=false guarantee at the model level.
-    pub proof fn lemma_untracked_no_overhead(&self)
+    pub(crate) proof fn lemma_untracked_no_overhead(&self)
         requires self.wf(), self.untracked(),
         ensures self.diff_log@.len() == 0,
     {
@@ -979,7 +1050,7 @@ where
         ensures
             self.wf(), self.untracked(),
             self.view() == old(self).view().push(value),   // std::Vec::push
-            self.diff_log@.len() == 0,                       // no overhead
+            self.diff_log_len_spec() == 0,                   // no overhead
     {
         self.push(value);
         proof { self.lemma_untracked_no_overhead(); }
@@ -992,7 +1063,7 @@ where
             old(self).view().len() == 0 ==> r is None && self.view() == old(self).view(),
             old(self).view().len() > 0 ==> r == Some(old(self).view().last())
                 && self.view() == old(self).view().drop_last(),   // std::Vec::pop
-            self.diff_log@.len() == 0,                             // no overhead
+            self.diff_log_len_spec() == 0,                         // no overhead
     {
         let r = self.pop();
         proof { self.lemma_untracked_no_overhead(); }
@@ -1006,12 +1077,13 @@ where
         ensures
             self.wf(), self.untracked(),
             self.view() == old(self).view().update(i.as_nat() as int, value),  // std update
-            self.diff_log@.len() == 0,                                          // no overhead
+            self.diff_log_len_spec() == 0,                                      // no overhead
     {
-        self.set(i, value);
+        self.set_index(i, value);
         proof { self.lemma_untracked_no_overhead(); }
     }
 
+    #[inline(always)]
     pub fn len(&self) -> (n: I)
         requires self.wf(),
         ensures n.as_nat() == self.view().len(),
@@ -1019,6 +1091,7 @@ where
         self.store.len()
     }
 
+    #[inline(always)]
     pub fn is_empty(&self) -> (b: bool)
         requires self.wf(),
         ensures b == (self.view().len() == 0),
@@ -1026,7 +1099,8 @@ where
         self.store.is_empty()
     }
 
-    pub fn get(&self, i: I) -> (v: T)
+    #[inline(always)]
+    pub fn get_index(&self, i: I) -> (v: T)
         requires
             self.wf(),
             i.as_nat() < self.view().len(),
@@ -1053,7 +1127,7 @@ where
             store,
             diff_log: std::vec::Vec::new(),
             frames: std::vec::Vec::new(),
-            active_saved_len: I::min(),
+            active_saved_len: <I as IndexLike>::min(),
             forks: ForkHistory::new(),
             id: ContainerId::new(),
             phantom: core::marker::PhantomData,
@@ -1089,16 +1163,35 @@ where
             ShrinkPolicy::Never => {}
             ShrinkPolicy::IfOverallocated { factor, headroom } => {
                 self.store.shrink_if(factor, headroom);
+                // Production parity: the same overallocation check applies to
+                // the diff log at mark time (shrink-at-mark ratcheting).
+                // Observably inert (contract: element sequence unchanged).
+                crate::parallel_store::shrink_vec_capacity(
+                    &mut self.diff_log, factor, headroom);
             }
         }
         proof {
-            // shrink_if preserves data()/captured(); all other fields untouched.
-            // Every wf conjunct reads only store.data()/captured() (unchanged),
-            // diff_log@/frames@/snapshots@/active_saved_len/forks (untouched),
-            // so wf transfers. layer_above_at/stratum_end are functions of
-            // those, hence unchanged.
+            // shrink_if preserves data()/captured-under-TRACK; all other
+            // fields untouched. Every wf conjunct that reads captured() is
+            // TRACK-guarded (frames empty otherwise), so wf transfers.
             assert(self.view() == old(self).view());
-            assert(self.store.captured() == old(self).store.captured());
+            if TRACK {
+                assert(self.store.captured() == old(self).store.captured());
+                // no-stray-flags transfers pointwise (same flags, same frames).
+                assert forall|j: int| 0 <= j < self.view().len()
+                    && #[trigger] self.store.captured()[j]
+                    implies self.frames@.len() > 0
+                        && j < self.active_saved_len.as_nat() by {
+                    assert(old(self).store.captured()[j]);
+                }
+            } else {
+                // TRACK=false: frames pinned empty by wf, so every
+                // frame-quantified conjunct is vacuous; the one
+                // unconditional captured() fact (its length) comes from the
+                // trait's wf lemma, not from pointwise preservation.
+                assert(self.frames@.len() == 0);
+                self.store.lemma_wf_captured_len();
+            }
             assert(self.diff_log@ == old(self).diff_log@);
             assert(self.frames@ == old(self).frames@);
             assert(self.snapshots@ == old(self).snapshots@);
@@ -1111,9 +1204,28 @@ where
     /// Current frame-stack depth (number of live marks). Mirrors production.
     pub fn depth(&self) -> (d: usize)
         requires self.wf(),
-        ensures d == self.frames@.len(),
+        ensures d == self.depth_spec(),
     {
         self.frames.len()
+    }
+
+    /// Number of entries in the diff log (production parity). The bounded-pop
+    /// contract is observable through this: within a frame, first-write-wins
+    /// keeps the log at most one entry per captured index, so a pop/push loop
+    /// cannot grow it (see tests/compat_bounded_pop.rs).
+    pub fn diff_log_len(&self) -> (n: usize)
+        ensures n == self.diff_log_len_spec(),
+    {
+        self.diff_log.len()
+    }
+
+    /// Contiguous read access to the raw values when the backend stores them
+    /// contiguously: `Some` for `ParallelStore`, `None` for `InlineStore`
+    /// (production parity — the backend-specific fast path).
+    pub fn as_slice(&self) -> (r: Option<&[T]>)
+        ensures r matches Some(s) ==> s@ == self.view(),
+    {
+        self.store.as_slice()
     }
 
     /// How many more `restore`s this container can accept before the
@@ -1128,9 +1240,9 @@ where
     pub fn restores_remaining(&self) -> (r: usize)
         requires self.wf(),
         ensures
-            self.forks.origins@.len() < u32::MAX ==>
-                r as nat == (u32::MAX - self.forks.origins@.len()) as nat,
-            self.forks.origins@.len() >= u32::MAX ==> r == 0,
+            self.fork_count_spec() < u32::MAX ==>
+                r as nat == (u32::MAX - self.fork_count_spec()) as nat,
+            self.fork_count_spec() >= u32::MAX ==> r == 0,
     {
         let used = self.forks.origins.len();
         (u32::MAX as usize).saturating_sub(used)
@@ -1138,45 +1250,86 @@ where
 
     /// A read-only view over the current contents (parity with production).
     pub fn view_handle(&self) -> (v: VecView<'_, T, I, S, TRACK>)
-        ensures v.vec == self,
+        ensures v.vec_ref() == self,
     {
         VecView { vec: self }
     }
 
     /// Bytes consumed by diff tracking only: diff_log + frames + fork history.
     /// Diagnostic; no spec content (capacity measurement, external_body).
+    /// Production formula (containers/src/vec.rs): CAPACITY-based, not
+    /// len-based — this reports the actual allocation footprint.
     #[verifier::external_body]
     pub fn tracking_bytes(&self) -> usize {
-        self.diff_log.len() * core::mem::size_of::<(T, I)>()
-            + self.frames.len() * core::mem::size_of::<Frame<I>>()
+        self.diff_log.capacity() * core::mem::size_of::<(T, I)>()
+            + self.frames.capacity() * core::mem::size_of::<Frame<I>>()
             + self.forks.heap_bytes()
     }
 
-    /// Total bytes: store backing + tracking. Diagnostic; no spec content.
+    /// Total bytes used by this Vec: struct + store backing + tracking.
+    /// Diagnostic; no spec content. Production formula:
+    /// `size_of::<Self>() + store.heap_bytes() + tracking_bytes()`.
     #[verifier::external_body]
     pub fn total_bytes(&self) -> usize {
-        self.store.heap_bytes() + self.tracking_bytes()
+        core::mem::size_of::<Self>() + self.store.heap_bytes() + self.tracking_bytes()
     }
 
-    /// Token validity check (design §0.6). Returns exactly
-    /// `is_token_valid_spec(token)`: same container AND on the live branch path
-    /// within its depth bound. Callers use this to satisfy `restore`'s validity
-    /// precondition. Mirrors production's `is_valid_token`.
-    pub fn is_valid_token(&self, token: VecToken) -> (b: bool)
+    /// THE public token-validity check: "restorable now" (migration plan 2.2).
+    /// Returns exactly `is_restorable_spec(token)` — true iff `restore(token)`
+    /// would succeed at this moment: TRACK on, same container, frame still
+    /// live (rejects consumed tokens), on the live branch path within its
+    /// depth bound, and both counter headrooms hold. Borrows the token
+    /// (production parity). The genealogy-only walk that older revisions
+    /// exposed under this name is the private `is_on_current_branch`.
+    pub fn is_valid_token(&self, token: &VecToken) -> (b: bool)
         requires
             self.wf(),
-            self.frames@.len() < u32::MAX,
         ensures
-            b == self.is_token_valid_spec(token),
+            b == self.is_restorable_spec(*token),
     {
+        if !TRACK {
+            return false;
+        }
         let same_container = token.container_id.eq(self.id);
         if !same_container {
             return false;
         }
+        // Frame liveness before the genealogy walk: a consumed token's branch
+        // can still be on-path, but its frame is gone (design doc 08).
+        if token.frame_idx >= self.frames.len() {
+            return false;
+        }
+        // Headrooms (frames.len() < u32::MAX also lets is_on_current_branch's
+        // `as u32` cast be exact).
+        if self.frames.len() >= u32::MAX as usize {
+            return false;
+        }
+        if self.forks.origins.len() >= u32::MAX as usize {
+            return false;
+        }
+        self.is_on_current_branch(token)
+    }
+
+    /// Genealogy-only validity (identity assumed checked): the token's branch
+    /// is on the current fork path within its depth bound. Private — the one
+    /// public validity notion is `is_valid_token` ("restorable now").
+    fn is_on_current_branch(&self, token: &VecToken) -> (b: bool)
+        requires
+            self.wf(),
+            self.frames@.len() < u32::MAX,
+        ensures
+            b == crate::fork_history::fork_valid(
+                self.forks.origins@,
+                self.forks.current_branch_id as nat,
+                self.frames@.len() as nat,
+                token.branch_id as nat,
+                token.depth as nat),
+    {
         let cur_depth = self.frames.len() as u32;
         self.forks.is_valid(token.branch_id, token.depth, cur_depth)
     }
 
+    #[inline(always)]
     pub fn push(&mut self, value: T)
         requires
             old(self).wf(),
@@ -1189,21 +1342,14 @@ where
         let ghost old_view = self.view();
         let ghost old_self = *self;
         let old_len = self.store.len();
-        // Runtime guard (overflow): a verified caller proves
-        // `view().len() + 1 < I::max_nat()`; an unverified one is trapped here
-        // before the index type would silently wrap. `old_len < I::max()` is
-        // `old_len.as_nat() < max_nat() - 1`, i.e. exactly `len + 1 < max_nat`,
-        // with no `usize` arithmetic that could itself overflow.
-        let max_idx = I::max();
-        let guard_ok = old_len.lt(max_idx);
-        proof {
-            I::lemma_max_as_nat();
-            I::lemma_order_is_as_nat(old_len, max_idx);
-        }
-        crate::guard::check_precondition(
-            guard_ok,
-            "Vec::push: length would overflow the index type",
-        );
+        // Overflow protocol (production parity, fix-2 follow-up): push itself
+        // carries NO runtime check — the verified `requires` still obliges
+        // every verified caller to prove `view().len() + 1 < I::max_nat()`,
+        // and an UNVERIFIED caller who pushes past the index capacity is
+        // trapped at the next `len()` read (`"len overflow"`), exactly
+        // production's `try_from_usize(..).expect` protocol. The wf invariant
+        // (`data().len() < I::max_nat()`) is what the requires protects; the
+        // len()-read trap is the unverified-caller backstop.
         self.store.push(value);
 
         // Pop-into-marked-region bookkeeping: if we are pushing back into a slot that
@@ -1218,32 +1364,61 @@ where
         // Compare via as_usize (whose spec relation to as_nat is concrete),
         // not via lt() — lt_spec is a default trait method whose body is not
         // transparent at the generic `I: IndexLike` use-site.
-        let has_frame = self.frames.len() > 0;
-        let in_marked = old_len.as_usize() < self.active_saved_len.as_usize();
-        let reentered = has_frame && in_marked;
+        // Short-circuit order matches production exactly: TRACK (const,
+        // folds) → frames non-empty → the index compare. Under TRACK=false
+        // the whole computation erases.
+        let reentered = TRACK
+            && self.frames.len() > 0
+            && old_len.as_usize() < self.active_saved_len.as_usize();
+        let ghost has_frame = TRACK && self.frames@.len() > 0;
+        let ghost in_marked = old_len.as_nat() < self.active_saved_len.as_nat();
+        proof {
+            // TRACK=false: wf pins frames empty, so has_frame is false either way.
+            if !TRACK {
+                assert(self.frames@.len() == 0);
+            }
+        }
         proof {
             assert(in_marked == (old_len.as_nat() < self.active_saved_len.as_nat()));
             assert(has_frame == (self.frames@.len() > 0));
             assert(reentered == (self.frames@.len() > 0
                 && old_len.as_nat() < self.active_saved_len.as_nat()));
         }
-        // push appended captured()[old_len] == false; record it.
-        assert(self.store.captured()[old_len.as_nat() as int] == false);
+        // push appended captured()[old_len] == false (TRACK-conditional:
+        // the flag facts only feed the frame invariants, which are vacuous
+        // for TRACK=false since wf pins frames empty).
+        proof {
+            if TRACK {
+                assert(self.store.captured()[old_len.as_nat() as int] == false);
+            }
+        }
         if reentered {
             // data().len() == old_len + 1 after push, so old_len is in bounds.
             self.store.mark_captured(old_len);
-        } else {
-            // captured()[old_len] stays false (still need it in scope).
-            assert(self.store.captured()[old_len.as_nat() as int] == false);
         }
-        // Merged: captured()[old_len] is exactly `reentered`.
-        assert(self.store.captured()[old_len.as_nat() as int] == reentered);
         proof {
-            // Post-state of captured(): prefix [0, old_len) unchanged (push
-            // appends at old_len; mark_captured, if it ran, updates only
-            // old_len). Index old_len == `reentered` (asserted above).
-            assert forall|j: int| 0 <= j < old_len.as_nat() implies
-                #[trigger] self.store.captured()[j] == old_self.store.captured()[j] by {}
+            if TRACK {
+                // Merged: captured()[old_len] is exactly `reentered`; prefix
+                // [0, old_len) unchanged (push appends at old_len;
+                // mark_captured, if it ran, updates only old_len).
+                assert(self.store.captured()[old_len.as_nat() as int] == reentered);
+                assert forall|j: int| 0 <= j < old_len.as_nat() implies
+                    #[trigger] self.store.captured()[j] == old_self.store.captured()[j] by {}
+                // no-stray-flags: prefix flags carry the old invariant; the
+                // new slot's flag is `reentered`, which by construction means
+                // a live frame and old_len < active.
+                assert forall|j: int| 0 <= j < self.view().len()
+                    && #[trigger] self.store.captured()[j]
+                    implies self.frames@.len() > 0
+                        && j < self.active_saved_len.as_nat() by {
+                    if j < old_len.as_nat() as int {
+                        assert(old_self.store.captured()[j]);
+                    } else {
+                        assert(j == old_len.as_nat() as int);
+                        assert(reentered);
+                    }
+                }
+            }
         }
         // diff_log, frames, snapshots all unchanged. Only `view` changed,
         // by appending one element. Inner frames' frame_inv_range references
@@ -1336,7 +1511,7 @@ where
     }
 
     /// Helper used in proofs: assert frame_inv_range for frame k from wf.
-    pub open spec fn frame_inv_range_holds(&self, k: int) -> bool {
+    pub open(crate) spec fn frame_inv_range_holds(&self, k: int) -> bool {
         frame_inv_range::<T, I>(
             self.layer_above_at(k),
             self.diff_log@,
@@ -1351,7 +1526,7 @@ where
     /// no `saved_len <= view.len()` needed — the per-cell uncaptured arm itself
     /// supplies `j < above_old.len()`, and the appended view agrees on the old
     /// prefix, so the arm transfers cell-by-cell.
-    pub proof fn lemma_saved_len_le_view_from(&self, old_self: Self, k: int)
+    pub(crate) proof fn lemma_saved_len_le_view_from(&self, old_self: Self, k: int)
         requires
             old_self.wf(),
             self.frames@ == old_self.frames@,
@@ -1400,6 +1575,7 @@ where
     /// `resize_default` and overwrites each filler back from these captures.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(300)]
+    #[inline(always)]
     pub fn pop(&mut self) -> (r: Option<T>)
         requires
             old(self).wf(),
@@ -1428,7 +1604,7 @@ where
         // data_last == value of the slot being removed (defined when nonempty).
         let ghost data_last: T = old(self).store.data()[
             if old_view.len() > 0 { old_view.len() - 1 } else { 0 } as int];
-        if self.frames.len() > 0 && len.as_usize() > 0
+        if TRACK && self.frames.len() > 0 && len.as_usize() > 0
             && len.as_usize() - 1 < self.active_saved_len.as_usize()
         {
             let last = len.as_usize() - 1;
@@ -1501,6 +1677,13 @@ where
             assert(frames == old_frames);
             assert(snaps == old(self).snapshots@);
             assert(diffs == mid_diffs);
+            if !TRACK {
+                // frames pinned empty: every captured()-reading wf conjunct
+                // is frame-quantified, hence vacuous; captured().len() comes
+                // from the trait's wf lemma.
+                assert(frames.len() == 0);
+                self.store.lemma_wf_captured_len();
+            }
 
             if old_frames.len() > 0 && old_view.len() > 0 {
                 let top = (frames.len() - 1) as int;
@@ -1726,7 +1909,8 @@ where
     /// stack depth.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
-    pub fn set(&mut self, i: I, value: T)
+    #[inline(always)]
+    pub fn set_index(&mut self, i: I, value: T)
         requires
             old(self).wf(),
             i.as_nat() < old(self).view().len(),
@@ -1743,7 +1927,7 @@ where
         let ghost active_n = self.active_saved_len.as_nat();
         let ghost iu = i.as_nat() as int;
         let ghost was_captured0 = self.store.captured()[iu];
-        if self.frames.len() > 0 {
+        if TRACK && self.frames.len() > 0 {
             let active = self.active_saved_len;
             self.store.capture(i, active, &mut self.diff_log);
             proof {
@@ -1764,13 +1948,20 @@ where
             let diffs = self.diff_log@;
             let snaps = self.snapshots@;
 
-            // set_raw leaves diff_log and the store's captured() unchanged;
-            // it only updates view[iu]. capture left view unchanged. So
-            // overall: view == old_view.update(iu, value), and diffs ==
-            // mid_diffs (whatever capture produced).
+            // set_raw leaves diff_log unchanged and (when TRACK) the store's
+            // captured() too; it only updates view[iu]. capture left view
+            // unchanged. So overall: view == old_view.update(iu, value), and
+            // diffs == mid_diffs (whatever capture produced).
             assert(self.view() == old_view.update(iu, value));
             assert(diffs == mid_diffs);
             assert(frames == old_frames);
+
+            // wf's `captured().len() == view().len()` is UNCONDITIONAL, but
+            // `set_raw` now preserves captured() only when TRACK (it skips the
+            // dead flag maintenance otherwise — see its postcondition). Get the
+            // length from the store's own wf instead of from flag preservation,
+            // so the untracked case is covered too.
+            self.store.lemma_wf_captured_len();
 
             if old_frames.len() == 0 {
                 assert(diffs.len() == 0);
@@ -2055,20 +2246,48 @@ where
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
             old(self).wf(),
+            // TRACK gate (production parity, plan 2.4): mark is uncallable on
+            // an untracked vec — production panics, and so do we (guard in
+            // body). The TRACK=false observational-equivalence theorem
+            // (untracked ⇒ plain std::Vec) is about push/pop/set/get only.
+            TRACK,
+            // The token's `depth` is `frames.len() as u32`: the cast must be
+            // exact or the token's validity coordinates are silently wrong.
+            old(self).depth_spec() < u32::MAX,
             old(self).view().len() < I::max_nat(),
         ensures
             self.wf(),
             self.view() == old(self).view(),
-            token.frame_idx == old(self).frames@.len(),
-            self.frames@.len() == old(self).frames@.len() + 1,
+            token.frame_idx_spec() == old(self).depth_spec(),
+            self.depth_spec() == old(self).depth_spec() + 1,
             self.snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
+        // Runtime guards (plan 2.3/2.4), BEFORE maybe_shrink so a rejected
+        // mark does not change capacity: TRACK parity, and the u32 depth cast.
+        crate::guard::check_precondition(TRACK, "mark() called on untracked vec");
+        crate::guard::check_precondition(
+            self.frames.len() < u32::MAX as usize,
+            "Vec::mark: frame-stack depth would overflow u32",
+        );
+
         // Capacity reclamation (production parity). Observationally inert:
         // preserves view(), diff_log@, frames@, snapshots@, and wf.
         self.maybe_shrink(shrink);
 
         let saved_len = self.store.len();
         let diff_start = self.diff_log.len();
+
+        // Parent-frame diff suffix (production parity): the only slots that
+        // can carry a set capture flag are those the CURRENT top frame
+        // captured, i.e. diff entries in [parent.diff_start, len). Pass that
+        // suffix to prepare_mark so its sparse clear is O(top-frame diffs),
+        // not O(whole log). The no-stray-flags wf invariant pins every set
+        // flag to exactly this stratum.
+        let parent_diff_start = if self.frames.len() > 0 {
+            self.frames[self.frames.len() - 1].diff_start
+        } else {
+            0
+        };
 
         // Token validity coordinates, captured BEFORE the frame push (so
         // `depth` is the count of frames below this one — its own frame index,
@@ -2081,7 +2300,47 @@ where
         let ghost old_snaps = self.snapshots@;
         let ghost old_view = self.view();
 
-        self.store.prepare_mark(saved_len, self.diff_log.as_slice());
+        let prev_suffix = vstd::slice::slice_subrange(
+            self.diff_log.as_slice(), parent_diff_start, self.diff_log.len());
+        proof {
+            // Discharge prepare_mark's sparse-clear requires: every set flag
+            // is named by a suffix entry. From wf: a set flag j is (no-stray)
+            // below active with a live frame, hence (bridge) captured_in_range
+            // over [top.diff_start, len) == [parent_diff_start, |diffs|) — the
+            // suffix. captured_in_range unfolds to exactly the existential
+            // prepare_mark wants.
+            if TRACK {
+                // At depth 0 no-stray gives no set flags (requires vacuous);
+                // when a flag IS set, no-stray forces frames>0, so `top` is a
+                // real index inside the by-block.
+                assert forall|j: int| 0 <= j < self.store.captured().len()
+                    && #[trigger] self.store.captured()[j]
+                    implies exists|k: int| 0 <= k < prev_suffix@.len()
+                        && (#[trigger] prev_suffix@[k]).1.as_nat() == j as nat by {
+                    // no-stray: live frame and j < active.
+                    assert(self.frames@.len() > 0 && j < self.active_saved_len.as_nat());
+                    let top = (self.frames@.len() - 1) as int;
+                    self.store.lemma_wf_captured_len();
+                    assert(j < self.view().len());
+                    // bridge: captured_in_range(diffs, top.diff_start, |diffs|, j).
+                    assert(self.active_saved_len == self.frames@[top].saved_len);
+                    assert(captured_in_range::<T, I>(
+                        self.diff_log@,
+                        self.frames@[top].diff_start as int,
+                        self.diff_log@.len() as int, j as nat));
+                    // captured_in_range == exists entry in [ds, |diffs|) naming j.
+                    let k0 = choose|k: int|
+                        self.frames@[top].diff_start as int <= k < self.diff_log@.len()
+                        && (self.diff_log@[k]).1.as_nat() == j as nat;
+                    // prev_suffix == diffs[parent_diff_start..]; parent_diff_start
+                    // == top.diff_start, so k0 maps to suffix index k0 - ds.
+                    assert(parent_diff_start == self.frames@[top].diff_start);
+                    assert(prev_suffix@[k0 - parent_diff_start as int]
+                        == self.diff_log@[k0]);
+                }
+            }
+        }
+        self.store.prepare_mark(saved_len, prev_suffix);
 
         self.snapshots = Ghost(self.snapshots@.push(old_view));
         self.frames.push(Frame { saved_len, diff_start });
@@ -2229,29 +2488,48 @@ where
         where T: core::default::Default
         requires
             old(self).wf(),
+            // TRACK gate (production parity, plan 2.4): restore is uncallable
+            // on an untracked vec.
+            TRACK,
             // M5 validity precondition (the formal form of production's
             // is_valid + container asserts). Rejects stale/cross-container
             // tokens. Parallel to — not a substitute for — the structural
             // frame_idx-in-range precondition (design §0.5).
             old(self).is_token_valid_spec(token),
             // Structural reconstruction precondition (mechanism, not validity).
-            token.frame_idx < old(self).frames@.len(),
+            token.frame_idx_spec() < old(self).depth_spec(),
             // Depths fit in u32 (token.depth and frames.len() are u32 in the
             // exec API); needed for fork's u32 push.
-            old(self).frames@.len() < u32::MAX,
-            old(self).forks.origins@.len() + 1 <= u32::MAX,
+            old(self).depth_spec() < u32::MAX,
+            old(self).fork_count_spec() + 1 <= u32::MAX,
         ensures
             self.wf(),
-            self.view() == old(self).snapshots_view()[token.frame_idx as int],
-            self.frames@.len() == token.frame_idx as nat,
-            self.snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx as int),
+            self.view() == old(self).snapshots_view()[token.frame_idx_spec() as int],
+            self.depth_spec() == token.frame_idx_spec(),
+            self.snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
-        // Runtime guards (overflow): a verified caller proves the two u32
-        // bounds below; an unverified one is trapped here before `fork`'s
-        // `as u32` cast on the fork-history counters would silently wrap. The
-        // fork-history origin list grows by one per restore and is never
-        // reclaimed, so `origins.len()` is the lifetime restore count: this is
-        // the ~4.29e9-restores ceiling. `frames.len()` is the live nesting depth.
+        // Runtime guards (plan 2.3): a verified caller has proven every
+        // `requires` clause, so these are provably-true no-ops for them. An
+        // unverified caller's build erases `requires`; production asserts the
+        // same conditions at runtime, and so do we — the FULL restorable
+        // predicate, BEFORE reading frames[token.frame_idx] or mutating
+        // anything. Message parity with production for the cases its tests
+        // pin ("token belongs to a different container", "abandoned future",
+        // "token points beyond frame stack").
+        crate::guard::check_precondition(TRACK, "restore() called on untracked vec");
+        crate::guard::check_precondition(
+            token.container_id.eq(self.id),
+            "token belongs to a different container",
+        );
+        crate::guard::check_precondition(
+            token.frame_idx < self.frames.len(),
+            "token points beyond frame stack",
+        );
+        // Overflow headrooms next: `fork`'s `as u32` casts on the fork-history
+        // counters must not wrap, and the genealogy walk below casts
+        // frames.len() to u32. The fork-history origin list grows by one per
+        // restore and is never reclaimed, so `origins.len()` is the lifetime
+        // restore count: this is the ~4.29e9-restores ceiling.
         crate::guard::check_precondition(
             self.frames.len() < u32::MAX as usize,
             "Vec::restore: frame-stack depth would overflow u32",
@@ -2259,6 +2537,10 @@ where
         crate::guard::check_precondition(
             self.forks.origins.len() < u32::MAX as usize,
             "Vec::restore: fork history exhausted (too many restores)",
+        );
+        crate::guard::check_precondition(
+            self.is_on_current_branch(&token),
+            "invalid restore token (abandoned future)",
         );
 
         let target_index = token.frame_idx;
@@ -2305,8 +2587,69 @@ where
             assert(self.forks.current_branch_id == forks_branch0);
         }
         self.store.resize_default(saved_len);
+        // Pre-replay flag reset (production's wholesale zero / sparse
+        // tag-clear, hoisted): its requires — every set flag is named by a
+        // replayed entry — chains from the resize flag contract + old wf
+        // (no-stray + bridge): a post-resize flag was set pre-restore, hence
+        // named in the old top stratum [old_top.ds, n) ⊆ [diff_start, n).
+        proof {
+            // diff_start <= diff_log.len(): the target frame's stratum start
+            // is within the log (wf_for_snap's diff_start bound on old_self).
+            old_self.lemma_diff_start_le_n(target_index as int);
+        }
+        let replayed_pre = vstd::slice::slice_subrange(
+            self.diff_log.as_slice(), diff_start, self.diff_log.len());
 
         let ghost base = self.store.data();
+        let ghost base_flags = self.store.captured();
+        proof {
+            if TRACK {
+                // Materialize resize_default's flag contract onto the ghost
+                // snapshot (trigger bridge: the ensures quantifies over the
+                // resized store's captured()[j]; base_flags IS that sequence).
+                assert forall|j: int| 0 <= j < saved_len.as_nat() implies
+                    #[trigger] base_flags[j]
+                        == (j < old(self).store.captured().len()
+                            && old(self).store.captured()[j]) by {
+                    assert(self.store.captured()[j]
+                        == (j < old(self).store.captured().len()
+                            && old(self).store.captured()[j]));
+                }
+                // begin_restore's requires: every post-resize flag is named
+                // by a replayed entry. Chain: post-resize flag ⟹ pre-restore
+                // flag ⟹ (old no-stray) below old active with a live frame ⟹
+                // (old bridge) captured_in_range over the old top stratum
+                // [old_top.ds, n) ⊆ [diff_start, n) (diff_start monotone) —
+                // the replayed slice.
+                self.store.lemma_wf_captured_len();
+                assert forall|j: int| 0 <= j < self.store.captured().len()
+                    && #[trigger] self.store.captured()[j]
+                    implies exists|k: int| 0 <= k < replayed_pre@.len()
+                        && (#[trigger] replayed_pre@[k]).1.as_nat() == j as nat by {
+                    assert(base_flags[j]);
+                    assert(0 <= j < saved_len.as_nat());
+                    assert(j < old(self).store.captured().len()
+                        && old(self).store.captured()[j]);
+                    assert(old(self).frames@.len() > 0
+                        && j < old(self).active_saved_len.as_nat());
+                    let old_top = (old(self).frames@.len() - 1) as int;
+                    assert(j < old(self).view().len());
+                    assert(captured_in_range::<T, I>(
+                        pre_diffs,
+                        old(self).frames@[old_top].diff_start as int,
+                        pre_diffs.len() as int, j as nat));
+                    old(self).lemma_diff_start_monotone(
+                        target_index as int, old_top);
+                    let k0 = choose|k: int|
+                        old(self).frames@[old_top].diff_start as int <= k
+                            < pre_diffs.len() as int
+                        && (pre_diffs[k]).1.as_nat() == j as nat;
+                    assert(diff_start as int <= k0);
+                    assert(replayed_pre@[k0 - diff_start as int] == pre_diffs[k0]);
+                }
+            }
+        }
+        self.store.begin_restore(replayed_pre);
         let n = self.diff_log.len();
 
         // Flat central lemma: overlaying the whole tail [diff_start, n) onto
@@ -2360,6 +2703,11 @@ where
                 forall|j: int| 0 <= j < saved_len.as_nat() ==>
                     #[trigger] self.store.data()[j]
                         == overlay::<T, I>(base, pre_diffs, i as int, n as int)[j],
+                // All flags clear through the replay: begin_restore's
+                // all-clear start, preserved by restore_entry's
+                // decrease-only clause.
+                TRACK ==> forall|j: int| 0 <= j < self.store.captured().len()
+                    ==> !(#[trigger] self.store.captured()[j]),
             decreases i,
         {
             i -= 1;
@@ -2368,6 +2716,20 @@ where
                 lemma_overlay_len::<T, I>(base, pre_diffs, (i + 1) as int, n as int);
             }
             self.store.restore_entry(idx, &old_val, saved_len);
+            proof {
+                if TRACK {
+                    // all-clear preserved: decrease-only from an all-false
+                    // state leaves all-false.
+                    assert forall|j: int| 0 <= j < self.store.captured().len()
+                        implies !(#[trigger] self.store.captured()[j]) by {
+                        if self.store.captured()[j] {
+                            // decrease-only: flag implies pre-entry flag —
+                            // contradicting the invariant.
+                            assert(false);
+                        }
+                    }
+                }
+            }
         }
 
         proof {
@@ -2381,6 +2743,25 @@ where
         let ghost old_frames = self.frames@;
         let ghost old_diffs = self.diff_log@;
         let ghost old_snaps = self.snapshots@;
+        // Pin the replay loop's flag bookkeeping before the truncates (the
+        // store is untouched below, but binding the fact to a ghost makes it
+        // robust to the heap mutations in between).
+        let ghost post_replay_flags = self.store.captured();
+        proof {
+            if TRACK {
+                self.store.lemma_wf_captured_len();
+                assert(post_replay_flags.len() == saved_len.as_nat());
+                assert forall|j: int| 0 <= j < post_replay_flags.len()
+                    && #[trigger] post_replay_flags[j]
+                    implies base_flags[j]
+                        && !diff_has_index_in::<T, I>(
+                            pre_diffs, diff_start as int, n as int, j as nat) by {
+                    // bridge the trigger: post_replay_flags IS the current
+                    // captured sequence, so the loop-exit fact fires.
+                    assert(self.store.captured()[j]);
+                }
+            }
+        }
 
         self.diff_log.truncate(diff_start);
         self.frames.truncate(target_index);
@@ -2418,10 +2799,59 @@ where
             proof {
                 surviving_view = surviving@;
                 new_top_ds_ghost = new_top_ds as int;
+                // finish_restore's all-clear requires. Loop-exit bookkeeping:
+                // a surviving flag needs base_flags[j] AND no diff entry in
+                // [diff_start, n) naming j. But base_flags is the post-resize
+                // state whose flags came from the PRE-restore wf (no-stray +
+                // bridge): every set flag was named in [old_top.ds, n), and
+                // diff_start <= old_top.ds (monotone), so every flagged slot
+                // WAS named in the replayed range — contradiction. No flag
+                // survives.
+                assert(self.store.captured() == post_replay_flags);
+                assert forall|j: int| 0 <= j < saved_len.as_nat()
+                    implies !(#[trigger] self.store.captured()[j]) by {
+                    if self.store.captured()[j] {
+                        // route through the ghost pin (immune to the later
+                        // heap mutations): trigger with range.
+                        assert(j < post_replay_flags.len());
+                        assert(post_replay_flags[j]);
+                        assert(base_flags[j]
+                            && !diff_has_index_in::<T, I>(
+                                pre_diffs, diff_start as int, n as int, j as nat));
+                        // base flag (post-resize) ⟹ pre-resize flag at j via
+                        // resize_default's flag contract (prefix-preserving,
+                        // grown region clear). base_flags was snapshotted
+                        // immediately after resize, so its contract clause
+                        // applies verbatim at index j < saved_len.
+                        assert(0 <= j < saved_len.as_nat());
+                        assert(base_flags[j]
+                            == (j < old(self).store.captured().len()
+                                && old(self).store.captured()[j]));
+                        assert(j < old(self).store.captured().len()
+                            && old(self).store.captured()[j]);
+                        // ...⟹ old no-stray puts j below the old active
+                        // length with a live frame, where the old bridge
+                        // names it in the old top stratum ⊆ replayed range.
+                        assert(old(self).frames@.len() > 0
+                            && j < old(self).active_saved_len.as_nat());
+                        let old_top = (old(self).frames@.len() - 1) as int;
+                        assert(j < old(self).view().len());
+                        assert(old(self).store.captured()[j] ==>
+                            captured_in_range::<T, I>(
+                                pre_diffs,
+                                old(self).frames@[old_top].diff_start as int,
+                                n as int, j as nat));
+                        old(self).lemma_diff_start_monotone(
+                            target_index as int, old_top);
+                        assert(diff_has_index_in::<T, I>(
+                            pre_diffs, diff_start as int, n as int, j as nat));
+                        assert(false);
+                    }
+                }
             }
             self.store.finish_restore(surviving, present_len);
         } else {
-            self.active_saved_len = I::min();
+            self.active_saved_len = <I as IndexLike>::min();
         }
 
         // Record the branch cut (design §0.6): fork off the token's branch at
@@ -2577,6 +3007,30 @@ where
                     lemma_captured_subrange::<T, I>(
                         diffs, surviving_view, new_top_ds_ghost, diffs.len() as int, j as nat);
                 }
+                // NO-STRAY: a post-restore flag means a surviving diff entry
+                // names j, and the new top's frame_inv_range (in-bounds
+                // clause, from OLD wf's per-frame invariant preserved through
+                // the truncation) bounds every such index below the new top's
+                // saved_len == the restored active_saved_len.
+                assert forall|j: int| 0 <= j < self.view().len()
+                    && #[trigger] self.store.captured()[j]
+                    implies self.frames@.len() > 0
+                        && j < self.active_saved_len.as_nat() by {
+                    // finish_restore's iff: pull the surviving witness.
+                    assert(exists|kk: int| 0 <= kk < surviving_view.len()
+                        && (#[trigger] surviving_view[kk]).1.as_nat() == j as nat);
+                    let kk = choose|kk: int| 0 <= kk < surviving_view.len()
+                        && (#[trigger] surviving_view[kk]).1.as_nat() == j as nat;
+                    // surviving_view == diffs[new_top_ds..n): index into diffs.
+                    assert(surviving_view[kk] == diffs[new_top_ds_ghost + kk]);
+                    // OLD wf: frame_inv_range holds for the (old) frame at
+                    // top (== target_index - 1 survives truncation), whose
+                    // in-bounds clause bounds the entry's index.
+                    assert(old(self).frame_inv_range_holds(top));
+                    assert(diffs[new_top_ds_ghost + kk].1.as_nat()
+                        < frames[top].saved_len.as_nat());
+                    assert(j < self.active_saved_len.as_nat() as int);
+                }
             }
             // saved_len monotonicity is no longer a wf clause — nothing to
             // re-establish for the truncated stack.
@@ -2598,7 +3052,7 @@ where
     I: IndexLike,
     S: DiffStore<T, I, TRACK>,
 {
-    pub vec: &'a Vec<T, I, S, TRACK>,
+    pub(crate) vec: &'a Vec<T, I, S, TRACK>,
 }
 
 impl<'a, T, I, S, const TRACK: bool> VecView<'a, T, I, S, TRACK>
@@ -2608,35 +3062,41 @@ where
     S: DiffStore<T, I, TRACK>,
 {
     /// The abstract sequence this view exposes (the vec's current contents).
-    pub open spec fn seq(&self) -> Seq<T> {
+    pub open(crate) spec fn seq(&self) -> Seq<T> {
         self.vec.view()
     }
 
+    /// The underlying vec (spec twin; the field is `pub(crate)` — privacy
+    /// closeout).
+    pub open(crate) spec fn vec_ref(&self) -> &Vec<T, I, S, TRACK> {
+        self.vec
+    }
+
     pub fn len(&self) -> (n: I)
-        requires self.vec.wf(),
+        requires self.vec_ref().wf(),
         ensures n.as_nat() == self.seq().len(),
     {
         self.vec.len()
     }
 
     pub fn is_empty(&self) -> (b: bool)
-        requires self.vec.wf(),
+        requires self.vec_ref().wf(),
         ensures b == (self.seq().len() == 0),
     {
         self.vec.is_empty()
     }
 
     pub fn get(&self, i: I) -> (v: T)
-        requires self.vec.wf(), i.as_nat() < self.seq().len(),
+        requires self.vec_ref().wf(), i.as_nat() < self.seq().len(),
         ensures v == self.seq()[i.as_nat() as int],
     {
-        self.vec.get(i)
+        self.vec.get_index(i)
     }
 
     /// Iterator over `[0, len)` in order.
     pub fn iter(&self) -> (it: VecViewIter<'a, T, I, S, TRACK>)
-        requires self.vec.wf(),
-        ensures it.vec == self.vec, it.pos == 0,
+        requires self.vec_ref().wf(),
+        ensures it.vec_ref() == self.vec_ref(), it.pos_spec() == 0,
     {
         VecViewIter { vec: self.vec, pos: 0 }
     }
@@ -2649,8 +3109,8 @@ where
     I: IndexLike,
     S: DiffStore<T, I, TRACK>,
 {
-    pub vec: &'a Vec<T, I, S, TRACK>,
-    pub pos: usize,
+    pub(crate) vec: &'a Vec<T, I, S, TRACK>,
+    pub(crate) pos: usize,
 }
 
 impl<'a, T, I, S, const TRACK: bool> VecViewIter<'a, T, I, S, TRACK>
@@ -2659,6 +3119,16 @@ where
     I: IndexLike,
     S: DiffStore<T, I, TRACK>,
 {
+    /// The underlying vec (spec twin; the field is `pub(crate)`).
+    pub open(crate) spec fn vec_ref(&self) -> &Vec<T, I, S, TRACK> {
+        self.vec
+    }
+
+    /// The cursor position (spec twin; the field is `pub(crate)`).
+    pub open(crate) spec fn pos_spec(&self) -> nat {
+        self.pos as nat
+    }
+
     /// Advance one step. Yields `Some(view[pos])` and increments `pos` while
     /// in range; `None` (leaving `pos` unchanged) at the end. Mirrors
     /// production's `VecViewIter::next`. (Inherent method with an explicit
@@ -2666,18 +3136,18 @@ where
     /// correctness property.)
     pub fn next(&mut self) -> (r: Option<T>)
         requires
-            old(self).vec.wf(),
-            old(self).pos <= old(self).vec.view().len(),
-            old(self).vec.view().len() < I::max_nat(),
+            old(self).vec_ref().wf(),
+            old(self).pos_spec() <= old(self).vec_ref().view().len(),
+            old(self).vec_ref().view().len() < I::max_nat(),
         ensures
-            self.vec == old(self).vec,
-            old(self).pos < old(self).vec.view().len() ==> {
-                &&& r == Some(old(self).vec.view()[old(self).pos as int])
-                &&& self.pos == old(self).pos + 1
+            self.vec_ref() == old(self).vec_ref(),
+            old(self).pos_spec() < old(self).vec_ref().view().len() ==> {
+                &&& r == Some(old(self).vec_ref().view()[old(self).pos_spec() as int])
+                &&& self.pos_spec() == old(self).pos_spec() + 1
             },
-            old(self).pos >= old(self).vec.view().len() ==> {
+            old(self).pos_spec() >= old(self).vec_ref().view().len() ==> {
                 &&& r is None
-                &&& self.pos == old(self).pos
+                &&& self.pos_spec() == old(self).pos_spec()
             },
     {
         let len = self.vec.len();
@@ -2688,7 +3158,7 @@ where
             Some(x) => x,
             None => { assert(false); return None; },
         };
-        let v = self.vec.get(i);
+        let v = self.vec.get_index(i);
         self.pos = self.pos + 1;
         Some(v)
     }
@@ -2705,7 +3175,7 @@ where
     pub fn new() -> (v: Self)
         ensures v.wf(), v.view().len() == 0, v.snapshots_view().len() == 0,
     {
-        Vec::with_store(crate::parallel_store::ParallelStore::new::<TRACK>())
+        Vec::with_store(crate::parallel_store::ParallelStore::new())
     }
 }
 
@@ -2719,9 +3189,234 @@ where
     pub fn new() -> (v: Self)
         ensures v.wf(), v.view().len() == 0, v.snapshots_view().len() == 0,
     {
-        Vec::with_store(crate::inline_store::InlineStore::new::<TRACK>())
+        Vec::with_store(crate::inline_store::InlineStore::new())
     }
 }
 
 
 } // verus!
+
+// prod-parity: production derives `Debug` on `VecToken` (`token.rs`); the
+// consumer needs it (structs holding tokens derive `Debug`, and the caches'
+// method bounds require `Debug` transitively). Manual because deriving inside
+// `verus!{}` is unsupported. Mirrors production's field layout.
+impl core::fmt::Debug for VecToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VecToken")
+            .field("frame_idx", &self.frame_idx)
+            .field("branch_id", &self.branch_id)
+            .field("depth", &self.depth)
+            .field("container_id", &self.container_id)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Production-shaped trusted glue (migration plan Phase 4, trust group E).
+//
+// A generic `impl Into<I>` bound carries no Verus-visible relation between
+// the input and the converted index, so the conversion cannot live inside a
+// verified body. These wrappers are one-line delegations to the verified
+// `get_index`/`set_index` cores: the conversion happens here (trusted, just
+// `Into::into`), and every safety property — bounds panic, capture protocol,
+// snapshot fidelity — is enforced by the verified core they call.
+// Enumerated in doc/design/02-trust-boundary.md group E.
+// ---------------------------------------------------------------------------
+
+impl<T, I, S, const TRACK: bool> Vec<T, I, S, TRACK>
+where
+    T: Sized + Copy,
+    I: IndexLike,
+    S: crate::diff_store::DiffStore<T, I, TRACK>,
+{
+    /// Production-shaped `get`: accepts anything convertible to the index
+    /// type (macro-generated ids implement `Into<Index>`). Delegates to the
+    /// verified `get_index`.
+    #[inline(always)]
+    pub fn get(&self, index: impl Into<I>) -> T {
+        self.get_index(index.into())
+    }
+
+    /// Production-shaped `set`. Delegates to the verified `set_index`.
+    #[inline(always)]
+    pub fn set(&mut self, index: impl Into<I>, value: T) {
+        self.set_index(index.into(), value)
+    }
+}
+
+/// std `Iterator` for `VecViewIter` — trusted 1-line delegation to the
+/// verified inherent `next` (trust group E). Enables `for x in
+/// vec.view_handle().iter()`; every yielded element comes from the verified
+/// method, whose contract proves in-order enumeration of `view()`.
+impl<'a, T, I, S, const TRACK: bool> Iterator for VecViewIter<'a, T, I, S, TRACK>
+where
+    T: Sized + Copy,
+    I: crate::index_like::IndexLike,
+    S: crate::diff_store::DiffStore<T, I, TRACK>,
+{
+    type Item = T;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<T> {
+        // Inherent verified `next` (same name resolves to the inherent method
+        // on the concrete type inside its own impl; here we must call it
+        // explicitly to avoid trait-method recursion).
+        VecViewIter::next(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Forged-state unit tests (migration plan 2.5, in-module half). These
+// construct token states unreachable through the public API — possible here
+// because the module sees the token fields — and check the runtime guards
+// reject them BEFORE mutation. They complement tests/misuse.rs (public-API
+// misuse) and stay valid after the Phase 5 privacy closeout (in-module code
+// keeps field access).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod forged_token_tests {
+    use super::{ShrinkPolicy, Vec, VecToken};
+    use crate::parallel_store::ParallelStore;
+
+    type V = Vec<u32, u32, ParallelStore<u32, u32>, true>;
+
+    fn read_back(v: &V) -> std::vec::Vec<u32> {
+        (0..v.len() as usize)
+            .map(|i| v.get_index(i as u32))
+            .collect()
+    }
+
+    /// A token with a forged out-of-range frame index: rejected by the
+    /// frame-liveness guard before any state change.
+    #[test]
+    fn forged_frame_index_rejected_before_mutation() {
+        let mut v = V::new();
+        for i in 0..8 {
+            v.push(i);
+        }
+        let genuine = v.mark(ShrinkPolicy::Never);
+        v.push(100);
+
+        let forged = VecToken {
+            frame_idx: 999,
+            ..genuine
+        };
+        assert!(
+            !v.is_valid_token(&forged),
+            "forged frame index must be invalid"
+        );
+
+        let before = read_back(&v);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            v.restore(forged);
+        }));
+        assert!(r.is_err(), "forged frame index must panic");
+        assert_eq!(before, read_back(&v), "rejected restore must not mutate");
+
+        // The genuine token still restores.
+        v.restore(genuine);
+        assert_eq!(v.len(), 8);
+    }
+
+    /// A token with a forged branch id (a branch that never existed): rejected
+    /// by the genealogy walk.
+    #[test]
+    fn forged_branch_id_rejected() {
+        let mut v = V::new();
+        v.push(1);
+        let genuine = v.mark(ShrinkPolicy::Never);
+        v.push(2);
+        let forged = VecToken {
+            branch_id: genuine.branch_id + 7,
+            ..genuine
+        };
+        assert!(
+            !v.is_valid_token(&forged),
+            "forged branch id must be invalid"
+        );
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            v.restore(forged);
+        }));
+        assert!(r.is_err());
+        assert_eq!(v.len(), 2, "rejected restore must not mutate");
+    }
+
+    /// A token with a forged depth beyond the branch bound: rejected by the
+    /// genealogy walk even though the frame index is live.
+    #[test]
+    fn forged_depth_rejected() {
+        let mut v = V::new();
+        v.push(1);
+        let genuine = v.mark(ShrinkPolicy::Never);
+        v.push(2);
+        let forged = VecToken {
+            depth: genuine.depth + 100,
+            ..genuine
+        };
+        assert!(!v.is_valid_token(&forged), "forged depth must be invalid");
+    }
+}
+
+#[cfg(test)]
+mod mixed_component_token_tests {
+    use super::ShrinkPolicy;
+    use crate::dense_id::DenseId31;
+    use crate::inline_store::InlineStore;
+    use crate::parallel_store::ParallelStore;
+    use crate::sparse_set::{SparseSet, SparseSetToken};
+    use crate::vec::Vec as SpVec;
+
+    type Set = SparseSet<u32, DenseId31, ParallelStore<u32, DenseId31>, true>;
+
+    fn empty_set() -> Set {
+        SparseSet {
+            dense: SpVec::<u32, DenseId31, ParallelStore<u32, DenseId31>, true>::new(),
+            sparse: SpVec::<DenseId31, DenseId31, InlineStore<DenseId31, DenseId31>, true>::new(),
+            indices: SpVec::<DenseId31, DenseId31, InlineStore<DenseId31, DenseId31>, true>::new(),
+        }
+    }
+
+    /// A compound token whose components come from DIFFERENT marks (dense
+    /// from mark 1, sparse/indices from mark 2): the atomic prevalidation
+    /// must reject it before restoring any component. (Frankentokens are
+    /// constructible here because the module sees the token fields.)
+    #[test]
+    fn mixed_mark_compound_token_rejected_atomically() {
+        let mut s = empty_set();
+        let id1 = s.add(10);
+        let tok1 = s.mark(ShrinkPolicy::Never);
+        let id2 = s.add(20);
+        let tok2 = s.mark(ShrinkPolicy::Never);
+        let id3 = s.add(30);
+
+        // Consume tok2's frame entirely on the dense component only... no —
+        // build the frankentoken directly: dense from tok1, rest from tok2.
+        let franken = SparseSetToken {
+            dense: tok1.dense,
+            sparse: tok2.sparse,
+            indices: tok2.indices,
+        };
+        // Restore with tok2 first, consuming tok2's frames (and cutting
+        // tok1's branch? No: tok1 is an ancestor, still valid). After this,
+        // franken.dense (tok1, live ancestor frame) is valid but
+        // franken.sparse/indices (tok2, just consumed) are not.
+        s.restore(tok2);
+        assert!(
+            !s.is_valid_token(&franken),
+            "mixed/consumed compound must be invalid"
+        );
+
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.restore(franken);
+        }));
+        assert!(r.is_err(), "mixed compound restore must panic");
+        // Atomicity: the set is exactly the tok2 state — dense was NOT
+        // restored to tok1's snapshot before the panic.
+        assert!(s.contains(id1));
+        assert!(s.contains(id2));
+        assert!(!s.contains(id3));
+        assert_eq!(s.get(id1), 10);
+        assert_eq!(s.get(id2), 20);
+    }
+}

@@ -85,7 +85,9 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data().push(value),
-            self.captured() == old(self).captured().push(false);
+            // Flag maintenance is TRACK-conditional: an untracked store may
+            // skip it wholesale (production parity — its flags are dead).
+            TRACK ==> self.captured() == old(self).captured().push(false);
 
     fn pop(&mut self) -> (r: Option<T>)
         requires old(self).wf(),
@@ -94,13 +96,13 @@ where
             old(self).data().len() == 0 ==> {
                 &&& r is None
                 &&& self.data() == old(self).data()
-                &&& self.captured() == old(self).captured()
+                &&& TRACK ==> self.captured() == old(self).captured()
             },
             old(self).data().len() > 0 ==> {
                 &&& r is Some
                 &&& r->Some_0 == old(self).data()[old(self).data().len() - 1]
                 &&& self.data() == old(self).data().drop_last()
-                &&& self.captured() == old(self).captured().drop_last()
+                &&& TRACK ==> self.captured() == old(self).captured().drop_last()
             };
 
     fn set_raw(&mut self, i: I, value: T)
@@ -110,7 +112,18 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data().update(i.as_nat() as int, value),
-            self.captured() == old(self).captured();
+            // TRACK-conditional for the same reason as `push`/`pop` above, and
+            // it is a PERFORMANCE contract, not just a modelling nicety.
+            // Preserving an inline store's flag across a write costs a read and
+            // a branch (read the old repr's tag, re-set it on the new one);
+            // production spends that only when tracking is on
+            // (`containers/src/diff_store.rs:263`, `let was_captured = TRACK &&
+            // T::tag(...)`). Stating the clause unconditionally forced verus's
+            // `InlineStore` to pay it always, which cost +23% on an untracked
+            // e-class ring splice (two full-cell writes per merge) —
+            // `containers-conformance/examples/splicesplit.rs`. Untracked flags
+            // are dead: nothing reads `captured()` when `!TRACK`.
+            TRACK ==> self.captured() == old(self).captured();
 
     fn truncate(&mut self, len: I)
         requires
@@ -119,7 +132,7 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data().subrange(0, len.as_nat() as int),
-            self.captured() == old(self).captured().subrange(0, len.as_nat() as int);
+            TRACK ==> self.captured() == old(self).captured().subrange(0, len.as_nat() as int);
 
     /// Mark slot `i` as captured without logging or changing `data`. Used by
     /// `Vec::push` when a previously-popped marked index is re-added: the
@@ -132,7 +145,8 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data(),
-            self.captured() == old(self).captured().update(i.as_nat() as int, true);
+            TRACK ==> self.captured()
+                == old(self).captured().update(i.as_nat() as int, true);
 
     /// Resize `data` to `len`: truncate if longer, or extend with
     /// `T::default()` fillers if shorter. Used by `restore` to regrow the
@@ -150,7 +164,12 @@ where
             // existing prefix preserved
             forall|j: int| 0 <= j < len.as_nat() && j < old(self).data().len()
                 ==> #[trigger] self.data()[j] == old(self).data()[j],
-            self.captured().len() == len.as_nat();
+            self.captured().len() == len.as_nat(),  // definitional (padded view at data len)
+            // Flags: shared prefix preserved, grown region clear (both
+            // stores: truncate retires, growth extends with clear tags).
+            TRACK ==> forall|j: int| 0 <= j < len.as_nat()
+                ==> #[trigger] self.captured()[j]
+                    == (j < old(self).captured().len() && old(self).captured()[j]);
 
     // -- capture protocol ----------------------------------------------------
 
@@ -162,10 +181,20 @@ where
         requires
             old(self).wf(),
             saved_len.as_nat() <= old(self).data().len(),
+            // Sparse-clear soundness (production's O(diffs) protocol): every
+            // set capture flag is indexed by some entry of `prev_diffs`, so
+            // clearing exactly those slots clears ALL flags. The caller
+            // (`Vec::mark`) holds this from its wf capture-flag bridge —
+            // a flag is only ever set by capture/force_capture, which push
+            // the slot into the diff log in the same step.
+            TRACK ==> forall|j: int| 0 <= j < old(self).captured().len()
+                && #[trigger] old(self).captured()[j]
+                ==> exists|k: int| 0 <= k < prev_diffs@.len()
+                        && (#[trigger] prev_diffs@[k]).1.as_nat() == j as nat,
         ensures
             self.wf(),
             self.data() == old(self).data(),
-            forall|i: int| 0 <= i < saved_len.as_nat() ==>
+            TRACK ==> forall|i: int| 0 <= i < saved_len.as_nat() ==>
                 #[trigger] self.captured()[i] == false;
 
     /// First-write-wins capture. If the slot is in-frame and not yet captured,
@@ -177,8 +206,10 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data(),
-            // First-write-wins:
-            (i.as_nat() < saved_len.as_nat() && !old(self).captured()[i.as_nat() as int])
+            // First-write-wins (all TRACK-conditional; an untracked store's
+            // flags are dead and its capture is a no-op — production parity):
+            (TRACK && i.as_nat() < saved_len.as_nat()
+                && !old(self).captured()[i.as_nat() as int])
                 ==> {
                     &&& diff_log@ == old(diff_log)@.push(
                             (old(self).data()[i.as_nat() as int], i))
@@ -186,11 +217,12 @@ where
                     &&& forall|j: int| 0 <= j < self.captured().len() && j != i.as_nat()
                             ==> #[trigger] self.captured()[j] == old(self).captured()[j]
                 },
-            // Already captured, or out of frame: no-op.
-            !(i.as_nat() < saved_len.as_nat() && !old(self).captured()[i.as_nat() as int])
+            // Already captured, out of frame, or untracked: no-op.
+            !(TRACK && i.as_nat() < saved_len.as_nat()
+                && !old(self).captured()[i.as_nat() as int])
                 ==> {
                     &&& diff_log@ == old(diff_log)@
-                    &&& self.captured() == old(self).captured()
+                    &&& (TRACK ==> self.captured() == old(self).captured())
                 };
 
     /// Unconditional capture (used by `pop` so the about-to-vanish slot is
@@ -202,17 +234,37 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data(),
-            i.as_nat() < saved_len.as_nat() ==> {
+            (TRACK && i.as_nat() < saved_len.as_nat()) ==> {
                 &&& diff_log@ == old(diff_log)@.push(
                         (old(self).data()[i.as_nat() as int], i))
                 &&& self.captured()[i.as_nat() as int] == true
                 &&& forall|j: int| 0 <= j < self.captured().len() && j != i.as_nat()
                         ==> #[trigger] self.captured()[j] == old(self).captured()[j]
             },
-            i.as_nat() >= saved_len.as_nat() ==> {
+            !(TRACK && i.as_nat() < saved_len.as_nat()) ==> {
                 &&& diff_log@ == old(diff_log)@
-                &&& self.captured() == old(self).captured()
+                &&& (TRACK ==> self.captured() == old(self).captured())
             };
+
+    /// Pre-replay flag reset: clear EVERY capture flag, given that each set
+    /// flag is named by some entry of the about-to-be-replayed slice (the
+    /// caller's wf bridge fact). ParallelStore: one in-place bitmap memset
+    /// (production pays the identical zero inside its finish_restore;
+    /// hoisting it lets `restore_entry` do NO per-entry bit work — measured
+    /// 1.6µs/2048-entry replay). InlineStore: sparse tag-clear over the
+    /// named slots, O(replayed) — the same protocol as its `prepare_mark`.
+    fn begin_restore(&mut self, replayed_diffs: &[(T, I)])
+        requires
+            old(self).wf(),
+            TRACK ==> forall|j: int| 0 <= j < old(self).captured().len()
+                && #[trigger] old(self).captured()[j]
+                ==> exists|k: int| 0 <= k < replayed_diffs@.len()
+                        && (#[trigger] replayed_diffs@[k]).1.as_nat() == j as nat,
+        ensures
+            self.wf(),
+            self.data() == old(self).data(),
+            TRACK ==> forall|j: int| 0 <= j < self.captured().len()
+                ==> !(#[trigger] self.captured()[j]);
 
     /// Rewind a single slot to `old_value`. Within `[0, target_saved_len)`,
     /// either overwrites the existing slot (`index < data.len()`) or pushes
@@ -242,21 +294,36 @@ where
                 ==> self.data() == old(self).data().push(*old_value),
             // Out-of-frame: no-op on data.
             (index.as_nat() >= target_saved_len.as_nat())
-                ==> self.data() == old(self).data();
+                ==> self.data() == old(self).data(),
+            // Flags decrease-only: a replay write never SETS a flag
+            // (InlineStore writes tag-clear reprs; ParallelStore leaves its
+            // pre-zeroed bitmap untouched). From `begin_restore`'s all-clear
+            // start this keeps every flag clear through the replay — the
+            // sparse set-only `finish_restore` needs exactly that.
+            TRACK ==> forall|j: int| 0 <= j < self.captured().len()
+                && #[trigger] self.captured()[j]
+                ==> j < old(self).captured().len() && old(self).captured()[j];
 
     /// Rebuild `captured` from the surviving diff suffix. After restore, a
     /// slot is captured iff it appears in the parent frame's diff log.
+    /// The all-clear requires (established by the replay loop via
+    /// `restore_entry`'s flag-clearing ensures) is what makes an O(diffs)
+    /// set-only implementation sound — production's protocol.
     fn finish_restore(&mut self, current_frame_diffs: &[(T, I)], saved_len: I)
         requires
             old(self).wf(),
             saved_len.as_nat() <= old(self).data().len(),
+            // ALL flags clear (begin_restore + flag-free replay establish
+            // this over the full flag range, not just [0, saved_len)).
+            TRACK ==> forall|j: int| 0 <= j < old(self).captured().len()
+                ==> !(#[trigger] old(self).captured()[j]),
         ensures
             self.wf(),
             self.data() == old(self).data(),
             // Within `[0, saved_len)`, captured iff some surviving diff entry
             // points at this index. Above `saved_len`, unspecified (those
             // slots are about to be truncated by `Vec::restore`).
-            forall|i: int| 0 <= i < saved_len.as_nat() ==>
+            TRACK ==> forall|i: int| 0 <= i < saved_len.as_nat() ==>
                 #[trigger] self.captured()[i] == exists|k: int|
                     0 <= k < current_frame_diffs@.len()
                         && (#[trigger] current_frame_diffs@[k]).1.as_nat() == i;
@@ -268,13 +335,22 @@ where
         ensures
             self.wf(),
             self.data() == old(self).data(),
-            self.captured() == old(self).captured();
+            TRACK ==> self.captured() == old(self).captured();
 
     /// Heap bytes used by the backing storage (diagnostic; no spec content —
     /// it's a capacity measurement, not part of the semi-persistent contract).
     /// Default 0 for backends that don't introspect capacity.
     fn heap_bytes(&self) -> usize {
         0
+    }
+
+    /// Contiguous read access to the raw values, when the backend stores them
+    /// contiguously (production parity: `Some` for `ParallelStore`, `None`
+    /// for `InlineStore`, whose cells are tag-carrying reprs, not `T`s).
+    fn as_slice(&self) -> (r: Option<&[T]>)
+        ensures r matches Some(s) ==> s@ == self.data(),
+    {
+        None
     }
 }
 

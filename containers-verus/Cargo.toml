@@ -2,11 +2,116 @@
 name = "semi-persistent-containers-verus"
 version = "0.1.0"
 edition = "2024"
-publish = false
+license = "Apache-2.0"
+description = "Formally verified (Verus) semi-persistent core data structures with O(1) snapshots and O(k) restore"
+repository = "https://github.com/yaspar-org/semi-persistent"
 autobins = false
 
 [dependencies]
 vstd = "=0.0.0-2026-04-12-0118"
+# SpMap's transient key index uses production's exact hasher (hashbrown 0.17's
+# default = foldhash) via std::HashMap<K, usize, foldhash::fast::RandomState>.
+# std's HashMap is what vstd models (generic over any S: BuildHasher, gated on
+# builds_valid_hashers::<S>()), so this is a fully VERIFIED fast map — not a
+# conformance-only shim — at the cost of one axiom mirroring vstd's own shipped
+# axiom_random_state_builds_valid_hashers (see src/external_specs.rs).
+foldhash = { workspace = true }
+# Literal key types for SpMap (trust ledger group D; feature `literal-types`).
+# num-bigint: keyed directly (structural-eq axiom). num-rational: NOT keyed
+# directly (its BigRational axiom was WITHDRAWN as false against vstd's
+# identity-iff-== requirement); used only inside CanonicalRational's
+# constructors (src/canonical_keys.rs), whose derived structural Eq makes
+# requirement (2) hold regardless of foreign reduction behavior.
+num-bigint = { workspace = true, optional = true }
+num-rational = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+# For the key-model VIOLATION regression tests (tests/compat_map.rs): these
+# demonstrate why raw BigRational/OrderedFloat get no axiom (ordered-float is
+# dev-only; num-rational is also an optional lib dep for CanonicalRational).
+num-rational = { workspace = true }
+ordered-float = { workspace = true }
+
+[features]
+# Opt OUT of deterministic-by-default hashing. `SpMap`'s index hasher is always
+# `hasher_spec::IndexHasher` (foldhash `fast`, seed carried by value); this
+# feature only changes what its seed DEFAULTS to when nothing configures one:
+# fixed `DEFAULT_SEED` (reproducible) vs. fresh per-process entropy (std's
+# DoS-resistance posture). Either way the seed is controllable via
+# `SP_HASHER_SEED` or `set_default_seed`, and `effective_seed()` reports what is
+# in force — so a randomized run can still be replayed. No memory or speed cost.
+# See src/hasher_spec.rs.
+hasher-random-seed = []
+
+# Trap, rather than wrap, if the process-global `ContainerId` counter is ever
+# exhausted (2^64 containers). OFF by default: the check costs +21.8% on
+# constant-count push loops because branching on the freshly minted id to a
+# diverging arm splits the basic block in `Vec::with_store`. See the bisection
+# in src/container_id.rs. Off, the allocator is production's algorithm at 4
+# billion times production's range; on, exhaustion is unconditionally fatal
+# rather than wrapping. Debug builds assert regardless.
+strict-id-exhaustion = []
+
+# Compat-test gates (migration plan Phase 1.1). Each feature unlocks the ported
+# production tests for a parity phase; it is flipped on in the same commit that
+# makes those tests pass. `compat-all` enables all of them (what CI runs).
+compat-core = []       # Phase 4: Vec/AppendOnlyVec/token/ShrinkPolicy parity
+compat-composites = [] # Phase 5.1-5.3: SpMap/SparseSet parity
+compat-list = []       # Phase 5.4: typed ListArena parity
+compat-ids = []        # Phase 6: define_id macros + IdFactory
+compat-bplus = []      # Phase 8: B+tree parity (cursor, insert, from_sorted)
+# Group D (trust ledger): assumed key-model axioms for external literal types
+# (BigInt/BigUint/BigRational/OrderedFloat<f64>) so SpMap can be keyed by the
+# egraph's interned literals. `cargo verus verify` must pass with AND without.
+literal-types = ["dep:num-bigint", "dep:num-rational"]
+compat-all = ["compat-core", "compat-composites", "compat-list", "compat-ids", "compat-bplus"]
+
+[[test]]
+name = "compat_vec"
+required-features = ["compat-core", "compat-ids"]
+
+[[test]]
+name = "compat_vec_stress"
+required-features = ["compat-core", "compat-ids"]
+
+[[test]]
+name = "compat_bounded_pop"
+required-features = ["compat-core"]
+
+[[test]]
+name = "compat_append_only_vec"
+required-features = ["compat-core"]
+
+[[test]]
+name = "compat_map"
+required-features = ["compat-composites"]
+
+[[test]]
+name = "compat_sparse_set"
+required-features = ["compat-composites"]
+
+[[test]]
+name = "compat_list_arena"
+required-features = ["compat-list", "compat-ids"]
+
+[[test]]
+name = "compat_bplus"
+required-features = ["compat-bplus", "compat-ids"]
+
+[[test]]
+name = "compat_bplus64"
+required-features = ["compat-bplus", "compat-ids"]
+
+[[test]]
+name = "key_model_macro"
+required-features = ["literal-types"]
+
+[[bench]]
+name = "compat_bplus_bench"
+harness = false
+required-features = ["compat-bplus", "compat-ids"]
 
 [package.metadata.verus]
 verify = true

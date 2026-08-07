@@ -26,8 +26,8 @@ verus! {
 
 #[derive(Copy)]
 pub struct Frame<I: IndexLike> {
-    pub saved_len: I,
-    pub diff_start: usize,
+    pub(crate) saved_len: I,
+    pub(crate) diff_start: usize,
 }
 
 // Hand-written `Clone` (a plain copy) so Verus has a spec for it; the autoderived
