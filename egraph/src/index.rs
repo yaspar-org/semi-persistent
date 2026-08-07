@@ -90,8 +90,10 @@ impl<'a, G: DenseId> SortedVecCursor<'a, G> {
         let n = data.len();
 
         // The common case, checked before any bounding work: the cursor already
-        // satisfies the seek. 25-31% of semi-naive seeks are this, because the
-        // `Difference` combinator seeks both sides to the same key.
+        // satisfies the seek — 24.7% of `ac6/semi` and 30.6% of `plain7/semi`
+        // seeks, because the `Difference` combinator seeks both sides to the same
+        // key. Not universal among semi-naive rows: `ac10/semi` is 0.5% (see the
+        // stride table in `doc/perf-results/E7-galloping-seek.md`).
         if self.pos >= n || data[self.pos] >= target {
             return;
         }

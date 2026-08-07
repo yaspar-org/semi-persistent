@@ -57,6 +57,12 @@ per-module tally. (That does not mean nothing is trusted; the trust boundary is
 10. **[The B+Tree Set](10-bplus-tree.md)**: the one recursive container: node
     layout, the ghost-`Tree` invariant, arena-never-overflows, insert with split
     propagation, the cursor soundness theorems, `mark`/`restore`, proof status.
+11. **[Layout, Algorithm & Erasure Parity](11-layout-parity.md)**: the living
+    audit that the verified containers match production's layouts, algorithms and
+    `TRACK=false` erasure — and the measurement discipline that audit taught.
+12. **[The Sorted-Vec Cursor](12-sorted-vec-cursor.md)**: the galloping seek,
+    verified. The first proof here whose subject is a query-engine algorithm
+    rather than a container; reuses the B+tree's `seek_target_idx` unchanged.
 
 ## Techniques: reusable lessons (chapters 03–08)
 
