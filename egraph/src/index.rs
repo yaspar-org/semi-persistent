@@ -9,6 +9,21 @@ use crate::egraph::EGraph;
 use crate::literal::LitVal;
 use std::collections::HashMap;
 
+/// Hasher for the index maps.
+///
+/// Their keys are dense ids — node ids, op ids, `(id, position)` pairs — and the
+/// maps are rebuilt every round and probed on every join step. std's default
+/// SipHash is DoS-resistant, which is not a property any of these keys needs
+/// (they are internal, never attacker-chosen) and costs several times a
+/// multiply-shift on a `u32`.
+///
+/// foldhash rather than `rustc-hash` or a bespoke passthrough because it is
+/// already the workspace's hasher: hashbrown 0.17's default, hence what
+/// production `Map` and verified `SpMap` both hash with (see the note on
+/// `foldhash` in the workspace `Cargo.toml`). One hasher across the workspace is
+/// worth more than a marginal per-probe difference between the fast options.
+pub type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
+
 /// Sorted index over node ids, backed by a contiguous `Vec<G>`.
 /// Supports O(log n) seek and O(1) step for leapfrog join.
 #[derive(Clone, Debug)]
@@ -65,13 +80,13 @@ impl<'a, G: DenseId> SortedVecCursor<'a, G> {
 /// All sorted indices for leapfrog join, bulk-rebuilt after each e-graph rebuild.
 pub struct IndexStore<Cfg: EGraphConfig> {
     /// by_op[op] → sorted vec of node ids with that operator
-    pub by_op: HashMap<Cfg::O, SortedVec<Cfg::G>>,
+    pub by_op: FastMap<Cfg::O, SortedVec<Cfg::G>>,
     /// by_repr[repr] → sorted vec of node ids in that e-class
-    pub by_repr: HashMap<Cfg::G, SortedVec<Cfg::G>>,
+    pub by_repr: FastMap<Cfg::G, SortedVec<Cfg::G>>,
     /// by_child_pos[(child_repr, position)] → sorted vec of parent node ids
-    pub by_child_pos: HashMap<(Cfg::G, u32), SortedVec<Cfg::G>>,
+    pub by_child_pos: FastMap<(Cfg::G, u32), SortedVec<Cfg::G>>,
     /// by_contains[child_repr] → sorted vec of variadic parent node ids (A/AC/ACI/PlainN)
-    pub by_contains: HashMap<Cfg::G, SortedVec<Cfg::G>>,
+    pub by_contains: FastMap<Cfg::G, SortedVec<Cfg::G>>,
 }
 
 impl<Cfg: EGraphConfig> IndexStore<Cfg>
@@ -111,10 +126,10 @@ where
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
         ids: impl Iterator<Item = Cfg::G>,
     ) -> Self {
-        let mut by_op: HashMap<Cfg::O, Vec<Cfg::G>> = HashMap::new();
-        let mut by_repr: HashMap<Cfg::G, Vec<Cfg::G>> = HashMap::new();
-        let mut by_child_pos: HashMap<(Cfg::G, u32), Vec<Cfg::G>> = HashMap::new();
-        let mut by_contains: HashMap<Cfg::G, Vec<Cfg::G>> = HashMap::new();
+        let mut by_op: FastMap<Cfg::O, Vec<Cfg::G>> = FastMap::default();
+        let mut by_repr: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
+        let mut by_child_pos: FastMap<(Cfg::G, u32), Vec<Cfg::G>> = FastMap::default();
+        let mut by_contains: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
 
         for gid in ids {
             if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
@@ -154,8 +169,8 @@ where
         }
 
         fn finalize<K: Eq + std::hash::Hash, G: DenseId>(
-            map: HashMap<K, Vec<G>>,
-        ) -> HashMap<K, SortedVec<G>> {
+            map: FastMap<K, Vec<G>>,
+        ) -> FastMap<K, SortedVec<G>> {
             map.into_iter()
                 .map(|(k, mut v)| {
                     v.sort_unstable();

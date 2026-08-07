@@ -26,6 +26,10 @@ use crate::egraph::EGraph;
 use crate::literal::LitVal;
 use std::collections::HashMap;
 
+/// Same rationale as `index::FastMap`: `(op, child_repr)` keys are internal
+/// dense ids, so SipHash's collision resistance buys nothing here.
+type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
+
 /// A per-round search index over the live AC nodes, restricted to AC ops.
 ///
 /// This is the narrow slice of [`crate::index::IndexStore`] that the completion
@@ -41,7 +45,7 @@ use std::collections::HashMap;
 /// Node ids in each bucket are sorted and deduplicated.
 pub struct CcSnapshot<Cfg: EGraphConfig> {
     /// `(op, child_repr) → sorted, deduped AC node ids of that op containing the child`.
-    by_op_contains: HashMap<(Cfg::O, Cfg::G), Vec<Cfg::G>>,
+    by_op_contains: FastMap<(Cfg::O, Cfg::G), Vec<Cfg::G>>,
     /// All live (non-subsumed) AC node ids, sorted — the set of completion targets/rules.
     completion_nodes: Vec<Cfg::G>,
 }
@@ -55,7 +59,7 @@ where
     pub fn build<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     ) -> Self {
-        let mut by_op_contains: HashMap<(Cfg::O, Cfg::G), Vec<Cfg::G>> = HashMap::new();
+        let mut by_op_contains: FastMap<(Cfg::O, Cfg::G), Vec<Cfg::G>> = FastMap::default();
         let mut completion_nodes: Vec<Cfg::G> = Vec::new();
 
         // Active completion nodes only: skip user-subsumed (not matchable) and AC-collapsed

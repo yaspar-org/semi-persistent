@@ -4,6 +4,9 @@
 
 use std::collections::HashMap;
 
+/// Same rationale as `index::FastMap`: keys are dense class ids.
+type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
+
 use crate::ast::Span;
 use crate::ast::Term;
 use crate::canon::{MSetCanon, VarCanon};
@@ -24,8 +27,8 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let n = eg.len();
-    let mut best_cost: HashMap<Cfg::G, usize> = HashMap::new();
-    let mut best_node: HashMap<Cfg::G, Cfg::G> = HashMap::new();
+    let mut best_cost: FastMap<Cfg::G, usize> = FastMap::default();
+    let mut best_node: FastMap<Cfg::G, Cfg::G> = FastMap::default();
 
     loop {
         let mut changed = false;
@@ -67,7 +70,7 @@ where
 
 fn reconstruct<Cfg, L, const T: bool, const P: bool>(
     eg: &EGraph<Cfg, L, T, P>,
-    best_node: &HashMap<Cfg::G, Cfg::G>,
+    best_node: &FastMap<Cfg::G, Cfg::G>,
     repr: Cfg::G,
 ) -> Term
 where
