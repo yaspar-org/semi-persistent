@@ -1,0 +1,60 @@
+[package]
+name = "containers-conformance"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Conformance harness: compliance (differential traces, layout parity) and
+# performance benchmarks for EVERY container pair, production vs verified.
+# This crate is the only place that depends on both implementations; it ships
+# nothing and gates the migration (verified-crate parity + per-component switches).
+
+[dependencies]
+semi-persistent-containers = { path = "../containers", version = "0.1.0" }
+semi-persistent-containers-verus = { path = "../containers-verus", version = "0.1.0" }
+# The verus define_id*! macros expand `::vstd` paths (ghost specs, erased at
+# runtime), so any crate invoking them needs vstd in scope. The e-graph will
+# carry the same dependency after the consumer switch.
+vstd = "=0.0.0-2026-04-12-0118"
+
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+
+[dependencies.hashbrown]
+# For the hasher-attribution probe only (prod's Map index is hashbrown).
+workspace = true
+
+[dependencies.foldhash]
+# For the hasher-attribution probe only: demonstrates that std HashMap with
+# foldhash's BuildHasher (SpMap's index hasher) matches production's hashbrown.
+workspace = true
+
+[lib]
+# Shared trace-runner / RNG helpers for the tests and benches.
+path = "src/lib.rs"
+
+[[bench]]
+name = "retained_containers_bench"
+harness = false
+
+[[bench]]
+name = "incremental_vs_rebuild"
+harness = false
+
+[[bench]]
+name = "micro_untracked"
+harness = false
+
+[[bench]]
+name = "tracked_vec_bench"
+harness = false
+
+[[bench]]
+name = "nested_mark_bench"
+harness = false
+
+[[bench]]
+name = "perf_gate"
+harness = false
