@@ -58,3 +58,4 @@ protocol in the plan assumed.
 |-----|--------|---------|
 | [E0](E0-release-profile.md) | `[profile.release]`: `lto = "fat"`, `codegen-units = 1` | **accepted** — 6-9% end-to-end, zero code change |
 | [E1](E1-join-cursor-allocation.md) | `SmallVec` cursor vector; allocation-free `LeapfrogJoin::new` | **accepted** — 2-6% on join-driven rows, 16-19% fewer allocations |
+| [E2](E2-match-recycling.md) | `MatchPool`: recycle match buffers across queries instead of cloning nine `Vec`s per match | **accepted** — 22-33% on rewrite rows, 60% fewer bytes allocated |

@@ -111,6 +111,25 @@ impl<Cfg: EGraphConfig> Clone for Match<Cfg> {
             mset_spans: self.mset_spans.clone(),
         }
     }
+
+    /// Overwrite in place, keeping every existing allocation.
+    ///
+    /// Spelled out rather than left to the default `*self = source.clone()`,
+    /// which drops nine buffers and allocates nine more. `Vec::clone_from`
+    /// reuses the destination's capacity when it suffices, so a recycled match
+    /// costs nine `memcpy`s and no allocator traffic. This is what makes
+    /// [`MatchPool`] worth having; see `doc/perf-results/E2-match-recycling.md`.
+    fn clone_from(&mut self, source: &Self) {
+        self.nodes.clone_from(&source.nodes);
+        self.mults.clone_from(&source.mults);
+        self.lit_vals.clone_from(&source.lit_vals);
+        self.seq_pool.clone_from(&source.seq_pool);
+        self.seq_spans.clone_from(&source.seq_spans);
+        self.set_pool.clone_from(&source.set_pool);
+        self.set_spans.clone_from(&source.set_spans);
+        self.mset_pool.clone_from(&source.mset_pool);
+        self.mset_spans.clone_from(&source.mset_spans);
+    }
 }
 
 impl<Cfg: EGraphConfig> Match<Cfg> {
@@ -215,6 +234,87 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
         let (s, _) = self.mset_spans[v.idx()];
         self.mset_pool.truncate(s as usize);
         self.mset_spans[v.idx()] = (0, 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MatchPool — recycled match storage across queries
+// ---------------------------------------------------------------------------
+
+/// A reusable buffer of matches.
+///
+/// `run_query` emits one `Match` per solution, and each `Match` owns nine
+/// `Vec`s. Freshly allocating them per match cost about nine allocations per
+/// emitted match, and freeing them at the end of the round cost as many again —
+/// on the `plain7` workload that is the single largest source of allocator
+/// traffic in saturation.
+///
+/// A pool keeps the matches from the previous query alive and overwrites them:
+/// `len` is the number currently valid, `slots` is however many were ever
+/// allocated. Pushing into a slot that already exists is `Match::clone_from`,
+/// which reuses that slot's nine buffers. Because a saturation round runs many
+/// queries whose match counts are similar, the pool reaches its high-water mark
+/// in the first round and allocates almost nothing afterwards.
+///
+/// Correctness note: [`Self::matches_mut`] hands out only `&mut [Match]` of
+/// length `len`, so a stale slot beyond `len` is unreachable — its contents are
+/// overwritten before ever being read.
+pub struct MatchPool<Cfg: EGraphConfig> {
+    slots: Vec<Match<Cfg>>,
+    len: usize,
+}
+
+impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Cfg: EGraphConfig> MatchPool<Cfg> {
+    pub fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            len: 0,
+        }
+    }
+
+    /// Drop the previous query's results without releasing their storage.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    /// Append a copy of `env`, reusing a retired slot when one exists.
+    #[inline]
+    pub fn push(&mut self, env: &Match<Cfg>) {
+        if self.len < self.slots.len() {
+            self.slots[self.len].clone_from(env);
+        } else {
+            self.slots.push(env.clone());
+        }
+        self.len += 1;
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The matches of the last query, mutably — `apply_action` binds RHS
+    /// comprehension variables into the match it is applying.
+    #[inline]
+    pub fn matches_mut(&mut self) -> &mut [Match<Cfg>] {
+        &mut self.slots[..self.len]
+    }
+
+    #[inline]
+    pub fn matches(&self) -> &[Match<Cfg>] {
+        &self.slots[..self.len]
     }
 }
 
@@ -352,7 +452,11 @@ where
 // Match iterator
 // ---------------------------------------------------------------------------
 
-/// Collects all matches of `plan` against `eg`/`index` into a `Vec<Match>`.
+/// Collects all matches of `plan` against `eg`/`index` into a fresh `Vec`.
+///
+/// Convenience wrapper over [`run_query_into`] for callers that run one query
+/// and do not care about allocation — tests, the REPL, `EGraph::run_query`. The
+/// saturation drivers use `run_query_into` with a persistent [`MatchPool`].
 pub fn run_query<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     plan: &QueryPlan<Cfg::O>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
@@ -364,10 +468,30 @@ where
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let mut pool = MatchPool::new();
+    run_query_into(plan, eg, index, globals, &mut pool);
+    pool.slots.truncate(pool.len);
+    pool.slots
+}
+
+/// Collect all matches of `plan` into `pool`, reusing its storage.
+///
+/// The pool is cleared first, so a caller may hand the same pool to every query
+/// in a round; see [`MatchPool`] for why that is where the win is.
+pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    plan: &QueryPlan<Cfg::O>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &mut MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    pool.clear();
     let mut env = Match::new(&plan.shape);
-    let mut results = Vec::new();
-    run_step(plan, 0, eg, index, globals, &mut env, &mut results);
-    results
+    run_step(plan, 0, eg, index, globals, &mut env, pool);
 }
 
 fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
@@ -377,7 +501,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -385,7 +509,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     bump_match_steps();
     if step_idx >= plan.steps.len() {
-        results.push(env.clone());
+        results.push(env);
         return;
     }
 
@@ -512,7 +636,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -582,7 +706,7 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -677,7 +801,7 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -699,7 +823,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -830,7 +954,7 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -854,7 +978,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -951,7 +1075,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
@@ -1048,7 +1172,7 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &mut Match<Cfg>,
-    results: &mut Vec<Match<Cfg>>,
+    results: &mut MatchPool<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
