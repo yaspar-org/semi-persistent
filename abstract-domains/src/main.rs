@@ -1,5 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+#![allow(
+    // `shl`/`shr` carry `requires self.inv(), i < 64` and `ensures r.inv()`.
+    // The std traits take no preconditions and cannot state them, so these are
+    // deliberate inherent methods -- the same call shape production uses.
+    clippy::should_implement_trait,
+    // Explicit `i = i + 1` mirrors the loop's `decreases` clause; the compound
+    // form obscures the correspondence the proof reads against.
+    clippy::assign_op_pattern
+)]
 use vstd::prelude::*;
 
 fn main() {
@@ -1069,7 +1078,7 @@ impl Anum64 {
         assert(0u64 & a.m == 0u64) by (bit_vector);
         let tm_self = Tnum64 { v: 0, m: self.m };
         let tm_a = Tnum64 { v: 0, m: a.m };
-        let tm_sum = tm_self.add(tm_a);
+        let tm_sum = tm_self.plus(tm_a);
         Anum64 { v: self.v.wrapping_add(a.v), m: tm_sum.m }
     }
 
@@ -1081,7 +1090,7 @@ impl Anum64 {
         assert(0u64 & self.m == 0u64) by (bit_vector);
         let tv = Tnum64 { v: self.v, m: 0 };
         let tm = Tnum64 { v: 0, m: self.m };
-        tm.add(tv)
+        tm.plus(tv)
     }
 }
 
@@ -1108,17 +1117,17 @@ pub exec fn tn64_times(t0: Tnum64, t1: Tnum64) -> (r: Tnum64)
         if p_v_bit != 0 {
             assert(0u64 & q_m == 0u64) by (bit_vector);
             let contrib = Tnum64 { v: 0, m: q_m };
-            acc_m = acc_m.add(contrib);
+            acc_m = acc_m.plus(contrib);
         } else if p_m_bit != 0 {
             assert(0u64 & q_max == 0u64) by (bit_vector);
             let contrib = Tnum64 { v: 0, m: q_max };
-            acc_m = acc_m.add(contrib);
+            acc_m = acc_m.plus(contrib);
         }
         i = i + 1;
     }
     assert(t0.v.wrapping_mul(t1.v) & 0u64 == 0u64) by (bit_vector);
     let acc_v = Tnum64 { v: t0.v.wrapping_mul(t1.v), m: 0 };
-    acc_m.add(acc_v)
+    acc_m.plus(acc_v)
 }
 
 }
