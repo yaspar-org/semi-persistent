@@ -8,6 +8,48 @@ permissions:
   contents: read
 
 jobs:
+  # Deep randomized conformance run. Per-PR CI executes the same properties at
+  # proptest's default 256 cases (verus.yml, `cargo test -p containers-conformance`);
+  # this tier raises the case count by ~1000x, which is where the rare interleavings
+  # live — every counterexample this suite has produced so far was a 2-op sequence
+  # that only a wide search reached.
+  #
+  # 250k cases x 8 properties measured 41s locally in release; the timeout is set
+  # generously above that for a shared runner rather than tuned close.
+  #
+  # `PROPTEST_CASES` is read by `ProptestConfig::default()`. Note that naming
+  # `cases:` explicitly in a config literal SILENTLY overrides the env var; the
+  # suite routes through a `cases()` helper so this knob actually bites. If you
+  # ever see this job finish as fast as the per-PR run, that override has crept
+  # back and the deep tier is a no-op.
+  #
+  # NOT `continue-on-error`, unlike the rustc-nightly job below: a conformance
+  # failure here is a real defect in the containers, not upstream toolchain drift.
+  deep-conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PROPTEST_CASES: '250000'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # Release: the oracle comparison is CPU-bound and a debug build wastes the
+      # case budget (100k cases run in ~17s release).
+      - run: cargo test -p containers-conformance --release
+      # A shrunk counterexample is the entire value of a failing run, and proptest
+      # writes it to a `.proptest-regressions` file — which is useless if it dies
+      # with the runner. Upload it so the seed can be replayed locally.
+      - name: Upload proptest regressions
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: proptest-regressions
+          path: '**/.proptest-regressions'
+          if-no-files-found: ignore
+
   nightly:
     runs-on: ubuntu-latest
     continue-on-error: true

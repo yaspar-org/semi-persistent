@@ -1,6 +1,30 @@
 # Abstract Domains Proof Status
 
-**880 verified, 1 error** (exp_128 rlimit), **13 admits** (all in L4 domains.rs)
+**939 verified, 0 errors**, **3 admits** (all in L4 `domains.rs`, all `ExecUnum`)
+
+Re-measured 2026-08-06 by running `cargo verus verify -- --trace` and grepping
+`admit()`, because this file had drifted badly in the optimistic direction *and*
+the pessimistic one at once: it claimed 880 verified / 1 error / 13 admits, when
+10 of those 13 had in fact been discharged (all of `ExecTnum`, `ExecAnum`, and
+`ReducedProduct`) and the `exp_128` rlimit error was fixed. It also omitted
+`ExecUnum::from_interval`, which carries an admit and appeared in no table.
+
+The remaining three are exactly:
+
+| Operation | Ensures | Why still admitted |
+|-----------|---------|--------------------|
+| `ExecUnum::add` | `r.has(c1.wrapping_add(c2))` | needs `bridge_add` + L3 `ChoppedUnum::add_sound` |
+| `ExecUnum::mul` | `r.has(c1.wrapping_mul(c2))` | needs `bridge_mul` + L3 `ChoppedUnum::mul_sound` |
+| `ExecUnum::from_interval` | `iv.has(c) ==> r.has(c)` | interval-to-bitfield abstraction; single-value and range cases both need the L3 `has` bridge |
+
+Each is stamped once per width by `abstract_domain!` (d8/d16/d32/d64), so the
+source has 3 `admit()` tokens covering 12 instantiated obligations.
+
+**These are soundness `ensures` on a reachable API**, not dead code:
+`src/demo.rs` calls `ExecUnum::from_interval` and `top`. Anything relying on
+`ExecUnum`'s *soundness* (that the abstract result over-approximates every
+concrete pair) is relying on an admitted theorem. `ExecTnum`, `ExecAnum`,
+`Interval`, and `ReducedProduct` are fully proved and carry no such caveat.
 
 ---
 
@@ -82,7 +106,7 @@ Macro-generated for u8, u16, u32, u64, u128.
 - `bridge_add(a, b)` — `wrapping_add(a,b) as nat == chop(nat_add(a as nat, b as nat), W)`
 - `bridge_mul(a, b)` — `wrapping_mul(a,b) as nat == chop(nat_mul(a as nat, b as nat), W)`
 
-### ExecTnum — 6 admits
+### ExecTnum — fully proved ✅ (was 6 admits)
 
 | Operation | Ensures | Status |
 |-----------|---------|--------|
@@ -90,33 +114,38 @@ Macro-generated for u8, u16, u32, u64, u128.
 | `bw_not`, `bw_and_not` | `wf()` | ✅ proved |
 | `neg`, `sub`, `rsh`, `lsh` | `wf()` | ✅ proved |
 | `mul` | `wf()` | ✅ proved |
-| `bw_or` | `wf()`, `r.has(c1 \| c2)` | ❌ admit (bitwise bridge) |
-| `bw_and` | `wf()`, `r.has(c1 & c2)` | ❌ admit (bitwise bridge) |
-| `bw_xor` | `wf()`, `r.has(c1 ^ c2)` | ❌ admit (bitwise bridge) |
-| `add` | `wf()`, `r.has(wrapping_add)` | ❌ admit (bitwise bridge + bridge_add) |
-| `join` | `wf()`, `self/t.has ⟹ r.has` | ❌ admit (bitwise bridge) |
-| `meet` | `wf()`, `both.has ⟹ r.has` | ❌ admit (bitwise bridge) |
+| `bw_or` | `wf()`, `r.has(c1 \| c2)` | ✅ proved (bitwise bridge) |
+| `bw_and` | `wf()`, `r.has(c1 & c2)` | ✅ proved (bitwise bridge) |
+| `bw_xor` | `wf()`, `r.has(c1 ^ c2)` | ✅ proved (bitwise bridge) |
+| `add` | `wf()`, `r.has(wrapping_add)` | ✅ proved (bitwise bridge + `bridge_add`) |
+| `join` | `wf()`, `self/t.has ⟹ r.has` | ✅ proved (bitwise bridge) |
+| `meet` | `wf()`, `both.has ⟹ r.has` | ✅ proved (bitwise bridge) |
 
-### ExecAnum — 3 admits
+### ExecAnum — fully proved ✅ (was 3 admits)
 
 | Operation | Ensures | Status |
 |-----------|---------|--------|
 | `constant`, `top` | — | ✅ proved |
 | `to_etn` | `wf()` | ✅ proved |
 | `ones_mask` | `r >= n` | ✅ proved |
-| `top_has` | `top().has(n)` | ❌ admit (standalone) |
-| `add` | `r.has(wrapping_add)` | ❌ admit (overflow + L2) |
-| `div_const` | `r.has(c / d)` | ❌ admit (L3 connection) |
+| `top_has` | `top().has(n)` | ✅ proved |
+| `add` | `r.has(wrapping_add)` | ✅ proved (overflow → `top_has`) |
+| `div_const` | `r.has(c / d)` | ✅ proved (L3 connection) |
 
-### ExecUnum — 2 admits
+### ExecUnum — 3 admits (the crate's entire remaining admit surface)
 
 | Operation | Ensures | Status |
 |-----------|---------|--------|
 | `constant`, `top` | — | ✅ proved |
 | `to_etn` | `wf()` | ✅ proved |
 | `top_has` | `top().has(n)` | ✅ proved |
-| `add` | `r.has(wrapping_add)` | ❌ admit (bridge_add + L3) |
-| `mul` | `r.has(wrapping_mul)` | ❌ admit (bridge_mul + L3) |
+| `neg`, `sub`, `to_ean`, `from_ean` | — (no soundness ensures stated) | n/a |
+| `add` | `r.has(wrapping_add)` | ❌ admit (`bridge_add` + L3) |
+| `mul` | `r.has(wrapping_mul)` | ❌ admit (`bridge_mul` + L3) |
+| `from_interval` | `iv.has(c) ⟹ r.has(c)` | ❌ admit (was missing from this table entirely) |
+
+Note `sub` is `self.add(&t.neg())`, so it inherits `add`'s admitted soundness
+without carrying an `ensures` of its own.
 
 ### Interval — fully proved ✅
 
@@ -128,14 +157,23 @@ Macro-generated for u8, u16, u32, u64, u128.
 | `join` | `self/t.has ⟹ r.has` | ✅ |
 | `div_const` | `r.has(c / d)` | ✅ |
 
-### ReducedProduct — 2 admits
+### ReducedProduct — fully proved ✅ (was 2 admits)
 
 | Operation | Ensures | Status |
 |-----------|---------|--------|
 | `constant`, `top` | `wf()` | ✅ proved |
 | `bw_or/and/xor`, `sub`, `mul`, `div_const`, `rsh`, `lsh`, `join`, `meet`, `neg` | `wf()` | ✅ proved |
-| `reduce` | `wf()`, `self.has ⟹ r.has` | ❌ admit (compose components) |
-| `add` | `wf()`, `r.has(wrapping_add)` | ❌ admit (component adds + reduce) |
+| `reduce` | `wf()`, `self.has ⟹ r.has` | ✅ proved (composes components) |
+| `add` | `wf()`, `r.has(wrapping_add)` | ✅ proved (component adds + reduce) |
+
+⚠️ **`ReducedProduct::add` is proved *relative to* an admitted lemma.** Its proof
+calls `self.unum.add(&t.unum)` and then `assert(un.has(s))`, which is discharged
+from `ExecUnum::add`'s `ensures` — and that `ensures` is admitted. So the three
+`ExecUnum` admits are not confined to `ExecUnum`: any `ReducedProduct` soundness
+claim that routes through the `unum` component inherits them. A green
+`verification results:: 939 verified, 0 errors` does **not** mean the reduced
+product's addition is unconditionally sound; it means it is sound given the
+`ExecUnum` bridge. This is the single most load-bearing fact on this page.
 
 ---
 
@@ -154,13 +192,21 @@ The prototype `bit_IsRustBit` in `exec_tnum.rs` (u64-only) proved the approach w
 ## Critical path to zero admits
 
 1. ~~**Bitwise bridge**~~ — ✅ DONE. `bit_is_native_bit`, `native_xor`, `native_or`, `native_and` proved for all 5 widths.
-2. **ExecAnum::top_has** (#7) — standalone, needs `exp_concrete` + `all_ones_has`. Quickest win.
-3. **ExecTnum bitwise/lattice** (#1–6) — use `native_xor`/`native_or`/`native_and` + L2 soundness.
-4. **ExecAnum::add** (#8) — overflow→`top_has`, non-overflow via L2 `Anum::add_sound`.
-5. **ExecAnum::div_const** (#9) — connect to L3 `ChoppedAnum::div_const_sound`.
-6. **ExecUnum::add/mul** (#10–11) — `bridge_add`/`bridge_mul` + L3 `ChoppedUnum::add_sound`/`mul_sound`.
-7. **ReducedProduct::reduce** (#12) — compose component narrowing proofs.
-8. **ReducedProduct::add** (#13) — compose component adds + reduce soundness.
+2. ~~**ExecAnum::top_has**~~ — ✅ DONE.
+3. ~~**ExecTnum bitwise/lattice**~~ — ✅ DONE (all 6).
+4. ~~**ExecAnum::add**~~ — ✅ DONE (overflow → `top_has`).
+5. ~~**ExecAnum::div_const**~~ — ✅ DONE.
+6. ~~**ReducedProduct::reduce / add**~~ — ✅ DONE, but `add` is only *relatively*
+   sound: it consumes `ExecUnum::add`'s admitted `ensures` (see the warning in
+   the ReducedProduct table). Closing item 7 is what makes it unconditional.
+7. **ExecUnum::add / mul** — `bridge_add`/`bridge_mul` + L3
+   `ChoppedUnum::add_sound`/`mul_sound`. Both bridge lemmas already exist.
+8. **ExecUnum::from_interval** — the interval-to-bitfield abstraction. Needs the
+   L3 `has` bridge for both the degenerate (`lo == hi`) and range cases.
+
+Items 7–8 are the whole remaining gap, and they are all in one type. Because
+`ReducedProduct::add` depends on item 7, closing `ExecUnum::add` upgrades the
+reduced product's soundness at the same time.
 
 ---
 
@@ -182,3 +228,19 @@ The prototype `bit_IsRustBit` in `exec_tnum.rs` (u64-only) proved the approach w
 - Proved ExecAnum: `top_has`, `add` (with overflow→top), `div_const` — all 3 admits eliminated.
 - Fixed `exp_128` rlimit, `field_admits_add_carry` rlimit, `by(compute_only)` recursion depth.
 - 4 admits remaining: ExecUnum(add, mul), ReducedProduct(reduce, add).
+
+### 2026-08-06 — Re-measured; this file was stale in both directions
+- Ran `cargo verus verify -- --trace`: **939 verified, 0 errors** (this file had
+  claimed 880 verified / 1 error; the `exp_128` rlimit error is fixed).
+- Grepped `admit()`: **3 tokens**, all `ExecUnum` (`add`, `mul`, `from_interval`),
+  stamped per width by `abstract_domain!` over d8/d16/d32/d64.
+- `ReducedProduct::reduce` and `add` are in fact **proved** — the previous entry
+  listed them as pending. But `add`'s proof consumes `ExecUnum::add`'s admitted
+  `ensures`, so it is sound only relative to that bridge; recorded as a warning
+  on the table rather than left implicit.
+- `ExecUnum::from_interval` carries an admit and was **absent from every table**.
+  It is reachable from `src/demo.rs`.
+- Lesson for this file: a hand-maintained proof-status page drifts in *both*
+  directions — understating progress (10 discharged admits still listed as open)
+  while omitting a real gap. The counts here are now generated by running the
+  verifier and grepping, and should be re-derived that way, not edited by hand.
