@@ -124,3 +124,27 @@ fn cyclic_class_extracts_through_its_grounded_member() {
     let t = extract_best(&eg, gga).expect("class is grounded through the leaf");
     assert_eq!(t.to_string(), "(a)");
 }
+
+#[test]
+fn multiset_multiplicity_is_reproduced_exactly() {
+    let mut eg = eg();
+    let e = eg.intern_sort("E");
+    eg.register_mset("add", e, e);
+    let a = eg.register_op0("a", e);
+    let b = eg.register_op0("b", e);
+    let add = eg.ops().id_by_name("add").unwrap();
+
+    let ia = eg.add(a, &[]);
+    let ib = eg.add(b, &[]);
+    // `add` is a multiset op, so this is the one path where `for_each_child`
+    // reports a multiplicity above 1. `reconstruct` emits `mult` copies of the
+    // child term, and the count is the thing that can silently go wrong: an
+    // off-by-one there changes the extracted term without failing any other test.
+    let s = eg.add(add, &[ia, ia, ia, ib]);
+    eg.rebuild();
+
+    let t = extract_best(&eg, s).expect("grounded");
+    let printed = t.to_string();
+    assert_eq!(printed.matches("(a)").count(), 3, "in {printed}");
+    assert_eq!(printed.matches("(b)").count(), 1, "in {printed}");
+}
