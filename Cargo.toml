@@ -28,3 +28,17 @@ foldhash = "0.2"
 ordered-float = "5"
 rapidhash = "4"
 criterion = { version = "0.8", features = ["html_reports"] }
+
+# Release profile: applies to `cargo build --release`, `cargo bench`, and every
+# criterion harness in the workspace.
+#
+# The hot generic code crosses the `containers-verus` -> `egraph` crate
+# boundary (`SortedCursor`, `VecI`, `DenseId` methods), which the default
+# `codegen-units = 16` and no-LTO settings leave unoptimized across. Measured
+# gain over the defaults is 6-9% on end-to-end saturation for no code change;
+# `lto = "fat"` beat `"thin"` by 5-7 points on the AC-completion path at
+# identical compile cost. Numbers and method:
+# `doc/perf-results/E0-release-profile.md`.
+[profile.release]
+lto = "fat"
+codegen-units = 1
