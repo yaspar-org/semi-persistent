@@ -139,35 +139,47 @@ The one remaining gap:
 
 **Fully verified**: generic `BPlusTreeSet<K: DenseId, L: NodeLayout, S:
 SearchKind, const TRACK>` over the real bit-stealing ids (`DenseId31`/`DenseId63`)
-and all six packed node layouts; `bplus` 132, `bplus_tree` 109, `bplus_layout`
+and all six packed node layouts; `bplus` 127, `bplus_tree` 109, `bplus_layout`
 311, `bplus_search` 9 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
 split propagation and new-root growth) is total and carries its full model
 transition; in-order traversal and `seek` are proven sound; the arena provably
 never overflows; `mark`/`restore` work. Insert-only, matching production (no
 `remove`).
 
-**Two performance gaps, no soundness gap.** Both latent — `egraph` never calls
-`from_sorted` and never instantiates `BPlusTreeSet` outside benches — but both are
-places where a *verified* method is materially worse than its production
-counterpart. Measured at 176x combined
+**Performance gaps, no soundness gap.** All latent — `egraph` never calls
+`from_sorted` and never instantiates `BPlusTreeSet` outside benches — but each is a
+place where a *verified* method is materially worse than its production
+counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
 ([Design Ch. 10 §5](../design/10-bplus-tree.md), harness at
 `containers-conformance/examples/bulkload.rs`):
 
-- **`from_sorted` is not a bulk load** (~36x): it loops `insert` where production
-  fills leaves from chunks of the sorted input.
-- **`insert` has no append fast path** (4.8-7.5x, growing with `n`): production
-  caches `last_leaf` and appends in O(1) when the key extends the rightmost leaf,
-  skipping the descent entirely. This one is not specific to bulk building — it
-  costs on *any* ascending insertion, which is the common case for id-keyed
-  indexes.
+- **The `S: SearchKind` parameter was never called — FIXED.** `grep -c 'S::'` over
+  the verified tree returned 0, against six production call sites. Five
+  hand-written linear scans stood in for it, while two verified binary searches
+  (`leaf_find_ge`, `find_child`) sat in the same file used only by `seek`. All five
+  now dispatch to them. Random-order insertion went from 1.4-1.5x to **0.9-1.0x**
+  (parity), and the proofs got smaller.
+- **`from_sorted` is not a bulk load** (~30-72x, remaining): it loops `insert`
+  where production fills leaves from chunks of the sorted input.
+- **`insert` has no append fast path** (1.4-2.3x, growing with `n`, remaining):
+  production caches `last_leaf` and appends in O(1) when the key extends the
+  rightmost leaf, skipping the descent entirely. Not specific to bulk building — it
+  costs on *any* ascending insertion, the common case for id-keyed indexes.
 
 **The audit's question was too narrow.** This table asks "is this method
 verified?" — `from_sorted` answers yes while being asymptotically worse, and the
 missing fast path is invisible to both the proof and the property tests, since
-neither observes how many nodes were touched. Checking parity properly means
-diffing the production *body* for fast paths and cached state, not just matching
-signatures and contracts. The other containers' constructors and hot methods
-deserve that pass.
+neither observes how many nodes were touched. The `SearchKind` case is sharper
+still: the *signature* matched production exactly, generic parameter and all, and
+the trait behind it was fully verified. Only the call graph was wrong.
+
+Two habits follow, and the other containers deserve both:
+
+1. **Diff the production body**, for fast paths and cached state, not just the
+   signature and the contract.
+2. **Check that generic strategy parameters are actually dispatched to** — `grep -c
+   'S::'`. A pluggable-strategy A/B that shows *no* difference between impls is
+   evidence neither one is running, not evidence they are equivalent.
 
 The complete design and proof-status accounting is its own chapter:
 [Design Ch. 10: The B+Tree Set](../design/10-bplus-tree.md). It is not repeated

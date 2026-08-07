@@ -707,7 +707,8 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             proof { assert(self.arena()[idx.as_nat() as int] == node); }
 
             if L::is_leaf(&node) {
-                // Leaf: scan its keys, return membership.
+                // Leaf: binary-search it, then probe the boundary. Production:
+                // `S::find_ge` at bplus.rs:796.
                 let ghost gkeys = crate::bplus_tree::tree_keys(cur);
                 proof {
                     match cur {
@@ -720,60 +721,52 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     }
                 }
                 let n = L::count(&node);
-                proof { assert(gkeys.len() == n as nat); assert(L::node_wf(node)); }
+                proof {
+                    assert(gkeys.len() == n as nat);
+                    assert(L::node_wf(node));
+                    lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur, idx.as_nat(), node);
+                }
+                let pos = self.leaf_find_ge(&node, kw);
+                proof {
+                    assert(pos as nat <= gkeys.len());
+                    assert forall|j: int| 0 <= j < pos implies gkeys[j] < k by {
+                        assert(L::keys_view(node)[j].as_nat() == gkeys[j]);
+                    }
+                    assert forall|j: int| pos <= j < n implies k <= gkeys[j] by {
+                        assert(L::keys_view(node)[j].as_nat() == gkeys[j]);
+                    }
+                }
 
-                let mut i: usize = 0;
-                while i < n
-                    invariant
-                        0 <= i <= n,
-                        n as nat == L::count_spec(node),
-                        node == self.arena()[idx.as_nat() as int],
-                        L::node_wf(node),
-                        L::is_leaf_spec(node),
-                        gkeys.len() == n as nat,
-                        kw.as_nat() == k,
-                        k == key.id_nat(),
-                        gkeys == crate::bplus_tree::tree_keys(cur),
-                        forall|j: int| 0 <= j < gkeys.len() ==>
-                            (#[trigger] L::keys_view(node)[j]).as_nat() == gkeys[j],
-                        forall|j: int| 0 <= j < i ==> gkeys[j] != k,
-                        crate::bplus_tree::tree_contains(self.tree@, k)
-                            <==> crate::bplus_tree::tree_contains(cur, k),
-                        self.model() == crate::bplus_tree::tree_keys(self.tree@),
-                    decreases n - i,
-                {
-                    let ki: L::Word = L::key(&node, i);
-                    let le1 = ki.le(kw);
-                    let le2 = kw.le(ki);
+                // Present iff keys[pos] <= k as well (find_ge already gives >=).
+                if pos < n {
+                    let ki: L::Word = L::key(&node, pos);
+                    let le = ki.le(kw);
                     proof {
                         <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
-                        <L::Word as IndexLike>::lemma_order_is_as_nat(kw, ki);
-                        assert(ki == L::keys_view(node)[i as int]);
-                        assert(ki.as_nat() == gkeys[i as int]);
+                        assert(ki == L::keys_view(node)[pos as int]);
+                        assert(ki.as_nat() == gkeys[pos as int]);
                     }
-                    if le1 && le2 {
+                    if le {
                         proof {
-                            assert(gkeys[i as int] == k);
+                            assert(gkeys[pos as int] == k);
                             assert(crate::bplus_tree::tree_contains(cur, k));
                             // bridge to the model: model == tree_keys(self.tree@) and
                             // tree_contains(self.tree@,k) == that.contains(k).
                             assert(crate::bplus_tree::tree_contains(self.tree@, k));
-                            // tree_contains(t,k) == tree_keys(t).contains(k) == model.contains(k).
-                            assert(crate::bplus_tree::tree_contains(self.tree@, k)
-                                == crate::bplus_tree::tree_keys(self.tree@).contains(k));
                             assert(crate::bplus_tree::tree_keys(self.tree@).contains(k));
                             assert(self.model() == crate::bplus_tree::tree_keys(self.tree@));
-                            assert(self.model().contains(k));
-                            assert(k == key.id_nat());
                             assert(self.model().contains(key.id_nat()));
                         }
                         return true;
                     }
-                    proof { assert(gkeys[i as int] != k); }
-                    i = i + 1;
                 }
                 proof {
-                    assert(forall|j: int| 0 <= j < gkeys.len() ==> gkeys[j] != k);
+                    // absent: left of pos is < k; from pos on is > k (>= k with
+                    // gkeys[pos] != k, lifted by strict sortedness).
+                    assert(crate::bplus_tree::strictly_sorted(gkeys));
+                    assert forall|j: int| 0 <= j < gkeys.len() implies gkeys[j] != k by {
+                        if pos <= j && pos < j { assert(gkeys[pos as int] < gkeys[j]); }
+                    }
                     assert(!gkeys.contains(k));
                     assert(!crate::bplus_tree::tree_contains(cur, k));
                     assert(!crate::bplus_tree::tree_contains(self.tree@, k));
@@ -810,47 +803,19 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 assert(n as nat == L::count_spec(node));
             }
 
-            let mut cp: usize = 0;
-            let mut stop = false;
-            while !stop && cp < n
-                invariant
-                    0 <= cp <= n,
-                    n as nat == gseps.len(),
-                    n as nat == L::count_spec(node),
-                    node == self.arena()[idx.as_nat() as int],
-                    L::node_wf(node),
-                    !L::is_leaf_spec(node),
-                    kw.as_nat() == k,
-                    forall|i: int| 0 <= i < gseps.len() ==>
-                        (#[trigger] L::keys_view(node)[i]).as_nat() == gseps[i],
-                    forall|j: int| 0 <= j < cp ==> gseps[j] <= k,
-                    stop ==> (cp < n && k < gseps[cp as int]),
-                decreases (if stop { 0int } else { (n - cp) as int + 1 }),
-            {
-                let ki: L::Word = L::key(&node, cp);
-                let le = ki.le(kw);  // seps[cp] <= key ?
-                proof {
-                    <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
-                    assert(ki == L::keys_view(node)[cp as int]);
-                    assert(ki.as_nat() == gseps[cp as int]);
-                }
-                if le {
-                    proof { assert(gseps[cp as int] <= k); }
-                    cp = cp + 1;
-                } else {
-                    proof { assert(k < gseps[cp as int]); }
-                    stop = true;
-                }
-            }
-            // Establish the find_gt characterization: [0..cp) <= k, [cp..) > k.
+            // cp = find_gt(seps, key), binary. Production: `S::find_gt` at
+            // bplus.rs:800.
+            proof { lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur, gid, node); }
+            let cp = self.find_child(&node, kw);
+            // The find_gt characterization on the ghost separators: [0..cp) <= k,
+            // [cp..) > k — lifted from find_child's key-view postcondition.
             proof {
-                assert(crate::bplus_tree::strictly_sorted(gseps));
+                assert(cp as nat <= gseps.len());
+                assert forall|j: int| 0 <= j < cp implies gseps[j] <= k by {
+                    assert(L::keys_view(node)[j].as_nat() == gseps[j]);
+                }
                 assert forall|i: int| cp <= i < gseps.len() implies k < gseps[i] by {
-                    if stop {
-                        // k < gseps[cp] <= gseps[i] by strict sortedness (cp <= i).
-                        if cp < i { assert(gseps[cp as int] < gseps[i]); }
-                    }
-                    // if !stop then cp == n == gseps.len(), range empty.
+                    assert(L::keys_view(node)[i].as_nat() == gseps[i]);
                 }
                 crate::bplus_tree::lemma_descent_step(gid, gseps, gkids, k, cp as int,
                     gh, L::leaf_cap_spec(), L::key_cap_spec(), true);
@@ -4085,64 +4050,40 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         let n = L::count(&leaf);
         let kw: L::Word = key.to_index();
 
-        // Scan for the sorted position: advance `pos` strictly past keys `<
-        // target`, stopping when `pos == n` or `gkeys[pos] >= target`. The
-        // invariant carries the boundary `forall j < pos. gkeys[j] < target`;
-        // the exit condition (`pos == n || !(gkeys[pos] < target)`) then gives
-        // the find-position characterization the sorted-insert lemma needs.
-        let mut pos: usize = 0;
-        proof { assert(L::node_wf(leaf)); assert(gkeys.len() == n as nat); }
-        let mut stop = false;
-        while !stop && pos < n
-            invariant
-                0 <= pos <= n,
-                root_id == self.root.as_nat() as int,
-                n as nat == L::count_spec(leaf),
-                leaf == self.arena()[root_id],
-                L::node_wf(leaf),
-                gkeys.len() == n as nat,
-                kw.as_nat() == key.id_nat(),
-                gkeys == crate::bplus_tree::tree_keys(self.tree@),
-                self.wf(),
-                L::is_leaf_spec(self.arena()[root_id]),
-                forall|j: int| 0 <= j < pos ==> gkeys[j] < key.id_nat(),
-                // once stopped, pos is the boundary: gkeys[pos] >= target.
-                stop ==> (pos < n && key.id_nat() <= gkeys[pos as int]),
-            decreases (if stop { 0int } else { (n - pos) as int + 1 }),
-        {
-            let ki: L::Word = L::key(&leaf, pos);
-            let lt = ki.lt(kw);
-            proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
-                assert(L::count_spec(self.arena()[root_id]) == n as nat);
-                lemma_leaf_binds_key::<K, L, S, TRACK>(self, pos as int);
-                assert(ki == L::keys_view(leaf)[pos as int]);
-                assert(ki.as_nat() == gkeys[pos as int]);
+        // pos = find_ge(keys, target): the O(log cap) verified binary search,
+        // whose postcondition is exactly the find-position characterization the
+        // sorted-insert lemma needs. Production: `S::find_ge` at bplus.rs:661.
+        proof {
+            assert(L::node_wf(leaf));
+            assert(gkeys.len() == n as nat);
+            lemma_tree_wf_sorted_seps_view::<L>(self.arena(), self.tree@,
+                self.root.as_nat(), leaf);
+        }
+        let pos = self.leaf_find_ge(&leaf, kw);
+        proof {
+            assert(pos as nat <= gkeys.len());
+            assert forall|j: int| 0 <= j < pos implies gkeys[j] < key.id_nat() by {
+                lemma_leaf_binds_key::<K, L, S, TRACK>(self, j);
             }
-            if lt {
-                proof { assert(gkeys[pos as int] < key.id_nat()); }
-                pos = pos + 1;
-            } else {
-                // gkeys[pos] >= target: stop here.
-                stop = true;
+            assert forall|j: int| pos <= j < n implies key.id_nat() <= gkeys[j] by {
+                lemma_leaf_binds_key::<K, L, S, TRACK>(self, j);
             }
         }
 
-        // Decide presence at the boundary, and establish the tail-ordering.
+        // Decide presence at the boundary: keys[pos] >= target already, so the
+        // target is present iff keys[pos] <= target too, and only there.
         let mut present = false;
-        if stop {
+        if pos < n {
             let ki: L::Word = L::key(&leaf, pos);
-            let le = kw.le(ki);
-            let ge = ki.le(kw);
+            let le = ki.le(kw);
             proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(kw, ki);
                 <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
                 assert(L::count_spec(self.arena()[root_id]) == n as nat);
                 lemma_leaf_binds_key::<K, L, S, TRACK>(self, pos as int);
                 assert(ki == L::keys_view(leaf)[pos as int]);
                 assert(ki.as_nat() == gkeys[pos as int]);
             }
-            if le && ge {
+            if le {
                 present = true;  // gkeys[pos] == target
                 proof { assert(gkeys[pos as int] == key.id_nat()); }
             }
@@ -4166,12 +4107,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // boundary: if pos < n then gkeys[pos] >= k; with absence, > k.
             // sortedness lifts gkeys[pos] <= gkeys[j], so k < gkeys[j] for j >= pos.
             assert forall|j: int| pos <= j < n implies key.id_nat() < gkeys[j] by {
-                if stop {
-                    assert(key.id_nat() <= gkeys[pos as int]);   // boundary
-                    assert(gkeys[pos as int] <= gkeys[j]);       // sorted, pos <= j
-                    // absence ⟹ gkeys[pos] != k ⟹ k < gkeys[pos] <= gkeys[j]
-                }
-                // if !stop then pos == n, so the range is empty (vacuous).
+                // boundary: k <= gkeys[pos] (find_ge), and gkeys[pos] != k
+                // (!present), so k < gkeys[pos] <= gkeys[j] by sortedness.
+                if pos < j { assert(gkeys[pos as int] < gkeys[j]); }
             }
             assert(!gkeys.contains(key.id_nat()));
         }
@@ -5043,58 +4981,36 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             assert(L::node_wf(leaf));
         }
 
-        // Scan for the sorted position + presence (the M3 condition-driven loop).
-        let mut pos: usize = 0;
-        let mut stop = false;
-        while !stop && pos < n
-            invariant
-                0 <= pos <= n,
-                n as nat == L::count_spec(leaf),
-                leaf == self.arena()[lid as int],
-                lid == idx.as_nat(),
-                L::node_wf(leaf),
-                L::is_leaf_spec(leaf),
-                gkeys.len() == n as nat,
-                kw.as_nat() == key.id_nat(),
-                gkeys == crate::bplus_tree::tree_keys(cur@),
-                cur@ == (Tree::Leaf { id: lid, keys: gkeys }),
-                binds::<L>(self.arena(), cur@),
-                forall|j: int| 0 <= j < pos ==> gkeys[j] < key.id_nat(),
-                stop ==> (pos < n && key.id_nat() <= gkeys[pos as int]),
-                forall|j: int| 0 <= j < gkeys.len() ==>
-                    (#[trigger] L::keys_view(leaf)[j]).as_nat() == gkeys[j],
-            decreases (if stop { 0int } else { (n - pos) as int + 1 }),
-        {
-            let ki: L::Word = L::key(&leaf, pos);
-            let lt = ki.lt(kw);
-            proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
-                lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, pos as int);
-                assert(ki == L::keys_view(leaf)[pos as int]);
-                assert(ki.as_nat() == gkeys[pos as int]);
+        // pos = find_ge(keys, key): the O(log cap) verified binary search.
+        // Production: `S::find_ge` at bplus.rs:661. Its postcondition gives the
+        // two-sided split directly, so presence reduces to one probe at `pos`.
+        proof { lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur@, lid, leaf); }
+        let pos = self.leaf_find_ge(&leaf, kw);
+        proof {
+            assert(pos as nat <= gkeys.len());
+            assert forall|j: int| 0 <= j < pos implies gkeys[j] < key.id_nat() by {
+                lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, j);
             }
-            if lt {
-                proof { assert(gkeys[pos as int] < key.id_nat()); }
-                pos = pos + 1;
-            } else {
-                stop = true;
+            assert forall|j: int| pos <= j < n implies key.id_nat() <= gkeys[j] by {
+                lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, j);
             }
         }
 
-        // presence at the boundary.
+        // presence at the boundary: keys[pos] >= key already, so the key is
+        // present iff keys[pos] <= key too (i.e. equal), and only there —
+        // everything left of pos is strictly smaller, everything right strictly
+        // larger (sortedness + the >= arm).
         let mut present = false;
-        if stop {
+        if pos < n {
             let ki: L::Word = L::key(&leaf, pos);
-            let le = kw.le(ki);
-            let ge = ki.le(kw);
+            let le = ki.le(kw);
             proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(kw, ki);
                 <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
                 lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, pos as int);
                 assert(ki == L::keys_view(leaf)[pos as int]);
                 assert(ki.as_nat() == gkeys[pos as int]);
             }
-            if le && ge {
+            if le {
                 present = true;
                 proof { assert(gkeys[pos as int] == key.id_nat()); }
             }
@@ -5109,10 +5025,8 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         proof {
             assert(crate::bplus_tree::strictly_sorted(gkeys));  // leaf tree_wf
             assert forall|j: int| pos <= j < n implies key.id_nat() < gkeys[j] by {
-                if stop {
-                    assert(key.id_nat() <= gkeys[pos as int]);
-                    assert(gkeys[pos as int] <= gkeys[j]);
-                }
+                // key <= gkeys[pos] <= gkeys[j], and gkeys[pos] != key (!present).
+                if pos < j { assert(gkeys[pos as int] < gkeys[j]); }
             }
             assert(!gkeys.contains(key.id_nat()));
         }
@@ -5498,40 +5412,21 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         let n = L::count(&node);
         proof { assert(n as nat == gseps.len()); }
 
-        // find cp = find_gt(seps, key): scan past separators <= key.
-        let mut cp: usize = 0;
-        let mut stop = false;
-        while !stop && cp < n
-            invariant
-                0 <= cp <= n,
-                n as nat == gseps.len(),
-                n as nat == L::count_spec(node),
-                node == self.arena()[gid as int],
-                idx.as_nat() == gid,
-                L::node_wf(node),
-                !L::is_leaf_spec(node),
-                kw.as_nat() == key.id_nat(),
-                forall|i: int| 0 <= i < gseps.len() ==>
-                    (#[trigger] L::keys_view(node)[i]).as_nat() == gseps[i],
-                forall|j: int| 0 <= j < cp ==> gseps[j] <= key.id_nat(),
-                stop ==> (cp < n && key.id_nat() < gseps[cp as int]),
-            decreases (if stop { 0int } else { (n - cp) as int + 1 }),
-        {
-            let ki: L::Word = L::key(&node, cp);
-            let le = ki.le(kw);
-            proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
-                assert(ki == L::keys_view(node)[cp as int]);
-                assert(ki.as_nat() == gseps[cp as int]);
-            }
-            if le { proof { assert(gseps[cp as int] <= key.id_nat()); } cp = cp + 1; }
-            else { proof { assert(key.id_nat() < gseps[cp as int]); } stop = true; }
-        }
-        // find_gt characterization: [0..cp) <= key, [cp..) > key.
+        // cp = find_gt(seps, key): the O(log n) verified binary search, whose
+        // `ensures` IS the separator characterization the descent step needs.
+        // (`lemma_inner_facts` above already gave node_wf + !is_leaf; this adds
+        // the sorted-view precondition. Production: `S::find_gt` at bplus.rs:653.)
+        proof { lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur@, gid, node); }
+        let cp = self.find_child(&node, kw);
+        // find_gt characterization: [0..cp) <= key, [cp..) > key, lifted from
+        // find_child's key-view postcondition onto the ghost separators.
         proof {
-            assert(crate::bplus_tree::strictly_sorted(gseps));
+            assert(cp as nat <= gseps.len());
+            assert forall|j: int| 0 <= j < cp implies gseps[j] <= key.id_nat() by {
+                assert(L::keys_view(node)[j].as_nat() == gseps[j]);
+            }
             assert forall|i: int| cp <= i < gseps.len() implies key.id_nat() < gseps[i] by {
-                if stop { if cp < i { assert(gseps[cp as int] < gseps[i]); } }
+                assert(L::keys_view(node)[i].as_nat() == gseps[i]);
             }
             crate::bplus_tree::lemma_descent_step(gid, gseps, gkids, key.id_nat(), cp as int, h@,
                 L::leaf_cap_spec(), L::key_cap_spec(), is_root@);
