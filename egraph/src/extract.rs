@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Optimal term extraction: pull the lowest-cost term from an e-class.
 
-use std::collections::HashMap;
-
-/// Same rationale as `index::FastMap`: keys are dense class ids.
-type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
-
 use crate::ast::Span;
 use crate::ast::Term;
 use crate::canon::{MSetCanon, VarCanon};
@@ -27,8 +22,20 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let n = eg.len();
-    let mut best_cost: FastMap<Cfg::G, usize> = FastMap::default();
-    let mut best_node: FastMap<Cfg::G, Cfg::G> = FastMap::default();
+    // Both tables are indexed by class id rather than hashed. Ids here are
+    // dense by construction — the scan below is over `from_usize(0..n)` and
+    // every representative is one of those ids — so a hash map's key storage,
+    // hashing and probing all buy nothing over a direct index.
+    //
+    // `UNSET` doubles as the "no entry yet" marker for *both* tables: they are
+    // only ever written together, and a saturated cost of `UNSET` is never
+    // recorded (it cannot be `<` the incumbent, `UNSET` included), so
+    // `best_cost[i] != UNSET` holds exactly when class `i` has a best node.
+    // That is the same condition the previous map-based code expressed as
+    // `get(..).unwrap_or(usize::MAX)`.
+    const UNSET: usize = usize::MAX;
+    let mut best_cost: Vec<usize> = vec![UNSET; n];
+    let mut best_node: Vec<Cfg::G> = vec![Cfg::G::default(); n];
 
     loop {
         let mut changed = false;
@@ -42,18 +49,21 @@ where
                 if !ok {
                     return;
                 }
-                match best_cost.get(&eg.find_const(child)) {
-                    Some(&c) => total = total.saturating_add(c * mult as usize),
-                    None => ok = false,
+                let c = best_cost[eg.find_const(child).to_usize()];
+                if c == UNSET {
+                    ok = false;
+                } else {
+                    total = total.saturating_add(c * mult as usize);
                 }
             });
             if !ok {
                 continue;
             }
 
-            if total < best_cost.get(&repr).copied().unwrap_or(usize::MAX) {
-                best_cost.insert(repr, total);
-                best_node.insert(repr, id);
+            let slot = repr.to_usize();
+            if total < best_cost[slot] {
+                best_cost[slot] = total;
+                best_node[slot] = id;
                 changed = true;
             }
         }
@@ -63,14 +73,15 @@ where
     }
 
     let root_repr = eg.find_const(root);
-    best_node
-        .get(&root_repr)
-        .map(|_| reconstruct(eg, &best_node, root_repr))
+    if best_cost[root_repr.to_usize()] == UNSET {
+        return None;
+    }
+    Some(reconstruct(eg, &best_node, root_repr))
 }
 
 fn reconstruct<Cfg, L, const T: bool, const P: bool>(
     eg: &EGraph<Cfg, L, T, P>,
-    best_node: &FastMap<Cfg::G, Cfg::G>,
+    best_node: &[Cfg::G],
     repr: Cfg::G,
 ) -> Term
 where
@@ -78,7 +89,7 @@ where
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let id = best_node[&repr];
+    let id = best_node[repr.to_usize()];
     let name = eg.node_op_name(id).to_string();
 
     if let Some(val) = eg.get_lit_val(id) {
