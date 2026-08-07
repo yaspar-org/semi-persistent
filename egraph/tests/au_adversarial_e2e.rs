@@ -4,7 +4,6 @@
 //! scheduler, and interpreter. Unlike `au_corpus_runner`, these tests register
 //! real rewrites and require saturation to improve the asserted AU bound.
 
-use semi_persistent_egraph::containers::DenseId;
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::{BignumLit, BignumModel};
 use semi_persistent_egraph::nodes::DefaultConfig;

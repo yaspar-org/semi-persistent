@@ -172,14 +172,14 @@ where
         self.au_to_repr.len()
     }
 
-    /// Map a representative global id to its dense class id.
+    /// SpMap a representative global id to its dense class id.
     /// Returns `None` if the id is not a representative in this snapshot.
     #[inline]
     pub fn class_id(&self, repr: Cfg::G) -> Option<ClassOf<Cfg>> {
         self.repr_to_au.get(&repr).copied()
     }
 
-    /// Map a global id (not necessarily a representative) to its dense class id.
+    /// SpMap a global id (not necessarily a representative) to its dense class id.
     #[inline]
     pub fn class_of(&self, id: Cfg::G) -> Option<ClassOf<Cfg>> {
         let repr = self.eg.find_const(id);

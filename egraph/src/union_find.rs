@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Semi-persistent union-find with optional proof tracking.
 
+use crate::containers::DenseId;
 use crate::containers::IndexLike;
 use crate::containers::Tagged;
-use crate::containers::dense_id::DenseId;
 use crate::containers::{self, ShrinkPolicy, VecToken};
 use std::collections::HashSet;
 

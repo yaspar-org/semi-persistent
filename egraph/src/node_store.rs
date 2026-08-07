@@ -13,7 +13,7 @@ use crate::multiplicity::Multiplicity;
 use crate::registry::{Clamp, OpKind, OpRegistry};
 use crate::typed_routing::{NodeIds, NodeRef, RoutingToken, TypedRouting};
 
-/// Map an MSet op's descriptor `Clamp` to the canonizer's [`crate::canon::MSetClamp`]. An MSet op
+/// SpMap an MSet op's descriptor `Clamp` to the canonizer's [`crate::canon::MSetClamp`]. An MSet op
 /// carries `Clamp::None` (plain AC) or `Clamp::Nilpotent` (`Idempotent` is the Set partition, and
 /// is never on an MSet op — treat defensively as no clamp). Keeps `canon.rs` free of a `registry`
 /// dependency: the store, which has the op registry, does the mapping.
@@ -30,7 +30,10 @@ fn mset_clamp_of<O: DenseId, S: DenseId, const TRACK: bool>(
     }
 }
 
-pub type MSetChild<G> = (G, Multiplicity);
+// prod-parity: a `Tagged` pair. Was `(G, Multiplicity)`, but Verus cannot impl
+// `Tagged` (a `: Copy` trait) for a tuple type, so the crate provides the named
+// `Pair<A, B>` (`containers::Pair`) instead. Field access is `.a`/`.b`.
+pub type MSetChild<G> = crate::containers::Pair<G, Multiplicity>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Added<G> {
@@ -58,7 +61,7 @@ pub struct NodeStore<
     const TRACK: bool = true,
     const PROOFS: bool = false,
 > {
-    routing: TypedRouting<G, I>,
+    routing: TypedRouting<G, I, TRACK>,
     pub plain0: FixedArityCache<G, O, I::L0, 0, TRACK, PROOFS>,
     pub plain1: FixedArityCache<G, O, I::L1, 1, TRACK, PROOFS>,
     pub plain2: FixedArityCache<G, O, I::L2, 2, TRACK, PROOFS>,
@@ -115,7 +118,7 @@ where
     pub fn is_empty(&self) -> bool {
         self.routing.is_empty()
     }
-    pub fn routing(&self) -> &TypedRouting<G, I> {
+    pub fn routing(&self) -> &TypedRouting<G, I, TRACK> {
         &self.routing
     }
 

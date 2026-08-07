@@ -18,10 +18,10 @@ pub trait LitVal: Clone + Eq + Hash + fmt::Debug + fmt::Display {}
 #[derive(Clone, Copy, Debug)]
 pub struct LitValStoreToken(crate::containers::MapToken);
 
-/// Append-only intern table for literals, backed by `Map`.
+/// Append-only intern table for literals, backed by `SpMap`.
 #[derive(Debug)]
 pub struct LitValStore<L: LitVal, V: DenseId, const TRACK: bool> {
-    map: crate::containers::Map<L, (), TRACK>,
+    map: crate::containers::SpMap<L, (), TRACK>,
     _phantom: core::marker::PhantomData<V>,
 }
 
@@ -34,7 +34,7 @@ impl<L: LitVal, V: DenseId, const TRACK: bool> Default for LitValStore<L, V, TRA
 impl<L: LitVal, V: DenseId, const TRACK: bool> LitValStore<L, V, TRACK> {
     pub fn new() -> Self {
         Self {
-            map: crate::containers::Map::new(),
+            map: crate::containers::SpMap::new(),
             _phantom: core::marker::PhantomData,
         }
     }

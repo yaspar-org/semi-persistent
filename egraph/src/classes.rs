@@ -5,79 +5,46 @@
 //! Combines circular linked lists (for class iteration) with a union-find
 //! (for fast canonical representative lookup). Each representative owns a
 //! use-list tracking which e-nodes reference it as a child.
+//!
+//! ## The class ring is the verified `CircularList`
+//!
+//! The per-node ring (`next` pointers partitioning nodes into classes) is
+//! **not** hand-rolled here — it is `containers::CircularList`, whose
+//! disjoint-ring partition invariant and O(1) `splice` merge are machine-checked
+//! (`containers-verus/src/circular_list.rs`). This module supplies only the
+//! e-graph-specific *payload* riding in each ring cell: the class's sparse-set
+//! `repr_id`, present on a live representative and absent once absorbed.
+//!
+//! ### Why `Opt<T::Index>` is the payload, and why the layout is unchanged
+//!
+//! The old hand-rolled `EClassEntry<T> { next: T, repr_stored }` was 12 bytes at
+//! 31-bit ids: a 4-byte `next` word whose spare MSB carried the semi-persistence
+//! **capture** bit, plus an 8-byte `BoolTagged<u32>` holding the repr key and its
+//! **presence** bit. `CircularList<Opt<T::Index>, T, TRACK>` stores exactly the
+//! same two fields — `CircularNodeRepr { next_repr: T::Repr, payload: Opt<..> }`
+//! — with the same two bits in the same two places: the capture bit in `next`'s
+//! spare MSB (the ring owns it, via `T: DenseId: Tagged`), the presence bit in
+//! the payload's own tag word (`Opt` owns it). Separate fields, so they cannot
+//! collide — the split `opt.rs`'s module doc prescribes. A `size_of` assertion
+//! below pins the 12 bytes so a future layout change cannot regress it silently.
 
 use crate::containers::DenseId;
+use crate::containers::circular_list::{CircularList, CircularListToken};
 use crate::containers::list::{ListArena, ListArenaToken};
 use crate::containers::sparse_set::{SparseSet, SparseSetToken};
 use crate::containers::{self, ShrinkPolicy, VecToken};
 use crate::containers::{Opt, Tagged};
 use crate::union_find::{Justification, ProofBuf, UnionFind, UnionFindToken};
 
-// ---------------------------------------------------------------------------
-// EClassEntry — per-node: next pointer in circular list + sparse set key
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy)]
-pub struct EClassEntry<T: DenseId> {
-    pub next: T,
-    repr_stored: <T::Index as Tagged>::Repr,
-}
-
-// Filler for `resize_default` during restore; never observed. Routes the id
-// through `new`/`into_repr` rather than fabricating a raw `Repr`.
-impl<T: DenseId> Default for EClassEntry<T> {
-    fn default() -> Self {
-        Self::new(T::default(), T::Index::default())
-    }
-}
-
-impl<T: DenseId> EClassEntry<T> {
-    fn new(next: T, repr_id: T::Index) -> Self {
-        Self {
-            next,
-            repr_stored: repr_id.into_repr(),
-        }
-    }
-
-    pub fn repr_id(&self) -> Option<T::Index> {
-        if T::Index::tag(&self.repr_stored) {
-            None
-        } else {
-            Some(T::Index::from_repr(&self.repr_stored))
-        }
-    }
-
-    fn repr_id_unchecked(&self) -> T::Index {
-        T::Index::from_repr(&self.repr_stored)
-    }
-
-    fn set_absent(&mut self) {
-        T::Index::set_tag(&mut self.repr_stored);
-    }
-}
-
-impl<T: DenseId> Tagged for EClassEntry<T> {
-    type Repr = (T::Repr, <T::Index as Tagged>::Repr);
-
-    fn into_repr(self) -> Self::Repr {
-        (self.next.into_repr(), self.repr_stored)
-    }
-    fn from_repr(s: &Self::Repr) -> Self {
-        Self {
-            next: T::from_repr(&s.0),
-            repr_stored: s.1,
-        }
-    }
-    fn tag(s: &Self::Repr) -> bool {
-        T::tag(&s.0)
-    }
-    fn set_tag(s: &mut Self::Repr) {
-        T::set_tag(&mut s.0);
-    }
-    fn clear_tag(s: &mut Self::Repr) {
-        T::clear_tag(&mut s.0);
-    }
-}
+/// The class ring: one cell per node, carrying its ring successor plus the
+/// class's sparse-set key (`Opt::none()` once the class has been absorbed).
+///
+/// `T` is both the payload-cell index type and the ring's id type, so the ring's
+/// storage vector is indexed by `T::Index` (4 bytes at 31-bit ids) — matching
+/// what the old `VecI<EClassEntry<T>, T::Index>` did, and keeping each captured
+/// write in the semi-persistent diff log at `(cell, T::Index)` rather than
+/// `(cell, usize)`.
+type ClassRing<T, const TRACK: bool> = CircularList<Opt<<T as DenseId>::Index>, T, TRACK>;
 
 // ---------------------------------------------------------------------------
 // ClassData — per-class payload in the `reprs` sparse set
@@ -188,7 +155,9 @@ pub struct MergeInfo<T, L> {
 /// - `TRACK` — enable mark/restore
 /// - `PROOFS` — enable proof tracking in union-find
 pub struct EClasses<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool> {
-    entries: containers::VecI<EClassEntry<T>, T::Index, TRACK>,
+    /// The verified class ring (see the module doc). Was a hand-rolled
+    /// `VecI<EClassEntry<T>, T::Index, TRACK>`; the layout is byte-identical.
+    entries: ClassRing<T, TRACK>,
     reprs: SparseSet<
         ClassData<L, T>,
         T::Index,
@@ -224,7 +193,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 {
     pub fn new() -> Self {
         Self {
-            entries: containers::VecI::new(),
+            entries: ClassRing::new(),
             reprs: SparseSet::new_inline(),
             uf: UnionFind::new(),
             uses: ListArena::new(),
@@ -299,7 +268,16 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             atomic: false,
             _t: core::marker::PhantomData,
         });
-        self.entries.push(EClassEntry::new(id, repr_id));
+        // The ring allocates the node's cell as its own singleton class
+        // (self-loop `next`), carrying the class key as the payload. Its id is
+        // the pre-push length, which `id` must equal — the caller allocates node
+        // ids densely and in order, the same contract the old `push` relied on.
+        let ring_id = self.entries.add_singleton(Opt::some(repr_id));
+        debug_assert_eq!(
+            ring_id.to_usize(),
+            id.to_usize(),
+            "add_singleton: node ids must be dense and allocated in order"
+        );
         repr_id
     }
 
@@ -326,7 +304,9 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     /// Used to choose the merge survivor by parent count (the larger list survives, so the
     /// smaller absorbed set is what gets recanonicalized).
     pub fn use_list_len(&self, repr_id: T::Index) -> u32 {
-        self.uses.len(self.reprs.get(repr_id).use_list)
+        // prod-parity: verus `ListArena::len` returns `usize` (production returned
+        // `u32`); the length is cached as `u32` internally so this never truncates.
+        self.uses.len(self.reprs.get(repr_id).use_list) as u32
     }
 
     /// The class's current minimum-monomial node for completion column `col` (the completion
@@ -336,7 +316,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn min_monomial(&self, repr_id: T::Index, col: usize) -> Option<T> {
         let row = self.reprs.get(repr_id).min_row?;
         debug_assert!(col < self.min_width, "completion column out of range");
-        self.min_pool.get(row + col).get()
+        self.min_pool.get(row + col).to_option()
     }
 
     /// Whether the class is referenced as a child of some node, making `{classid}` its
@@ -359,7 +339,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn min_monomial_at_row(&self, row: Option<usize>, col: usize) -> Option<T> {
         let base = row?;
         debug_assert!(col < self.min_width, "completion column out of range");
-        self.min_pool.get(base + col).get()
+        self.min_pool.get(base + col).to_option()
     }
 
     /// Mark the class `atomic` (it has a non-AC node, so `{classid}` is its RHS, §9a).
@@ -399,7 +379,14 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     }
 
     pub fn repr_id(&self, idx: T) -> Option<T::Index> {
-        self.entries.get(idx).repr_id()
+        self.entries.payload_of(idx).to_option()
+    }
+
+    /// The class key stored in `idx`'s ring cell **ignoring the presence bit** —
+    /// valid for an absorbed class, whose key is kept in place so the merge path
+    /// can still reach its `ClassData` before removing it from the sparse set.
+    fn repr_id_unchecked(&self, idx: T) -> T::Index {
+        self.entries.payload_of(idx).get_unchecked()
     }
 
     // -- Merge (steps 1-2 only: UF + circular list, NOT use-list splice) ----
@@ -408,7 +395,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     /// use-list id (needed by rebuild to iterate parents before splicing).
     pub fn merge(&mut self, a: T, b: T) -> Option<MergeInfo<T, L>> {
         let (survivor, absorbed) = self.uf.union(a, b)?;
-        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_repr = self.repr_id_unchecked(absorbed);
         let absorbed_data = self.reprs.get(absorbed_repr);
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
@@ -427,7 +414,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         just: Justification<T>,
     ) -> Option<MergeInfo<T, L>> {
         let (survivor, absorbed) = self.uf.union_justified(a, b, just)?;
-        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_repr = self.repr_id_unchecked(absorbed);
         let absorbed_data = self.reprs.get(absorbed_repr);
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
@@ -456,7 +443,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn merge_directed(&mut self, a: T, b: T) -> Option<MergeInfo<T, L>> {
         let prefer_a = self.prefer_a_by_uses(a, b);
         let (survivor, absorbed) = self.uf.union_directed(a, b, prefer_a)?;
-        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_repr = self.repr_id_unchecked(absorbed);
         let absorbed_data = self.reprs.get(absorbed_repr);
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
@@ -477,7 +464,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     ) -> Option<MergeInfo<T, L>> {
         let prefer_a = self.prefer_a_by_uses(a, b);
         let (survivor, absorbed) = self.uf.union_justified_directed(a, b, just, prefer_a)?;
-        let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
+        let absorbed_repr = self.repr_id_unchecked(absorbed);
         let absorbed_data = self.reprs.get(absorbed_repr);
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
@@ -489,19 +476,39 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         })
     }
 
+    /// Merge the survivor's and absorbed class's rings, and mark the absorbed
+    /// class's key absent.
+    ///
+    /// The ring surgery is the verified `CircularList::splice`: it swaps the two
+    /// `next` pointers, which is exactly what the previous hand-rolled pair of
+    /// full-cell writes did — the same two stores, but with the disjoint-ring
+    /// partition invariant proved to be preserved rather than assumed. Each
+    /// class's `repr_id` payload stays in its own cell (`splice` provably leaves
+    /// every payload untouched), so the survivor needs no payload write at all;
+    /// only the absorbed cell's presence bit is cleared.
+    ///
+    /// The presence-bit clear is a separate `set_payload` rather than a payload
+    /// carried through the splice. Folding it in was tried and measured no faster
+    /// (`containers-conformance/examples/splicesplit.rs`: 5.58 vs 5.59 µs over 10k
+    /// merges) — LLVM forwards the redundant load — so the container keeps the
+    /// narrower `splice` signature.
     fn splice_classes(&mut self, (survivor, absorbed): (T, T)) {
-        let surv = self.entries.get(survivor);
-        let abs = self.entries.get(absorbed);
-        let abs_repr = abs.repr_id_unchecked();
+        // Read before the splice; the payload survives it either way, but this
+        // is also the value `remove` needs and keeps the read off the hot path.
+        let abs_repr = self.repr_id_unchecked(absorbed);
 
-        self.entries.set(
-            survivor,
-            EClassEntry::new(abs.next, surv.repr_id_unchecked()),
-        );
+        // Distinct rings is `splice`'s precondition. Union-find has just told us
+        // these are two different classes, which is exactly that — the same
+        // discipline the hand-rolled version relied on silently; debug builds
+        // now check it (`CircularList::debug_check_different_rings`).
+        self.entries.splice(survivor, absorbed);
 
-        let mut absorbed_entry = EClassEntry::new(surv.next, abs_repr);
-        absorbed_entry.set_absent();
-        self.entries.set(absorbed, absorbed_entry);
+        // Mark the absorbed class absent, keeping the key readable through
+        // `repr_id_unchecked` (`Opt::set_none` preserves the value — it only
+        // sets the tag). One payload write, as before.
+        let mut absorbed_payload = self.entries.payload_of(absorbed);
+        absorbed_payload.set_none();
+        self.entries.set_payload(absorbed, absorbed_payload);
 
         self.reprs.remove(abs_repr);
     }
@@ -514,13 +521,13 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
     // -- Iteration ----------------------------------------------------------
 
+    /// Iterate `start_idx`'s class: every node in its ring, starting at
+    /// `start_idx` and wrapping once. The verified `RingIter` — proven to visit
+    /// exactly the ring's nodes, each once, in `next`-pointer order — replaces
+    /// the hand-rolled `ClassIter`; its exec body is the same "yield, step,
+    /// stop when back at start" loop.
     pub fn iter_class(&self, start_idx: T) -> ClassIter<'_, T, TRACK> {
-        ClassIter {
-            entries: &self.entries,
-            start_idx,
-            current_idx: start_idx,
-            done: false,
-        }
+        self.entries.iter_class(start_idx)
     }
 
     // -- Semi-persistence ---------------------------------------------------
@@ -546,7 +553,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
 #[derive(Clone, Copy, Debug)]
 pub struct EClassesToken {
-    entries: VecToken,
+    entries: CircularListToken,
     reprs: SparseSetToken,
     uf: UnionFindToken,
     min_pool: VecToken,
@@ -557,27 +564,22 @@ pub struct EClassesToken {
 // Iterators
 // ---------------------------------------------------------------------------
 
-pub struct ClassIter<'a, T: DenseId, const TRACK: bool> {
-    entries: &'a containers::VecI<EClassEntry<T>, T::Index, TRACK>,
-    start_idx: T,
-    current_idx: T,
-    done: bool,
-}
+/// Class-ring iterator: the verified `RingIter`, yielding `T` node ids in ring
+/// order. Kept under this name so callers (and `iter_class`'s signature) are
+/// unchanged from the hand-rolled version.
+pub type ClassIter<'a, T, const TRACK: bool> =
+    containers::circular_list::RingIter<'a, Opt<<T as DenseId>::Index>, T, TRACK>;
 
-impl<T: DenseId, const TRACK: bool> Iterator for ClassIter<'_, T, TRACK> {
-    type Item = T;
-    fn next(&mut self) -> Option<T> {
-        if self.done {
-            return None;
-        }
-        let result = self.current_idx;
-        self.current_idx = self.entries.get(self.current_idx).next;
-        if self.current_idx == self.start_idx {
-            self.done = true;
-        }
-        Some(result)
-    }
-}
+// The ring cell must stay at production's 12 bytes at 31-bit ids: a 4-byte
+// `next` word (capture bit in its spare MSB) plus an 8-byte `BoolTagged<u32>`
+// payload (repr key + presence bit). See the module doc; this is the memory
+// budget the verified ring had to match, so it is asserted, not assumed.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(
+    core::mem::size_of::<containers::circular_list::CircularNodeRepr<Opt<u32>, crate::id::ENodeId>>(
+    ) == 12,
+    "e-class ring cell must stay 12 bytes at 31-bit ids"
+);
 
 #[cfg(test)]
 mod tests {

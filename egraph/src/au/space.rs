@@ -6,10 +6,10 @@
 //! keyed by `(l, r, ctxL, ctxR)`, and AND nodes are chosen factorings (operator +
 //! paired children). Everything here is immutable once pushed (hash-cons semantics).
 //! All storage uses semi-persistent containers (AppendOnlyVec for structural fields,
-//! Map for deduplication caches); mark/restore truncates them as one unit.
+//! SpMap for deduplication caches); mark/restore truncates them as one unit.
 
 use crate::config::AuIds;
-use crate::containers::{AppendOnlyVec, DenseId, Map, MapToken, ShrinkPolicy, VecToken};
+use crate::containers::{AppendOnlyVec, DenseId, MapToken, ShrinkPolicy, SpMap, VecToken};
 
 use super::{AuIds31, Span};
 
@@ -49,7 +49,7 @@ pub enum CycleMode {
 }
 
 // ---------------------------------------------------------------------------
-// Context interner (semi-persistent: AppendOnlyVec + Map)
+// Context interner (semi-persistent: AppendOnlyVec + SpMap)
 // ---------------------------------------------------------------------------
 
 /// Interns sorted class-id vectors as context ids. Two equal vectors get the
@@ -60,7 +60,7 @@ pub struct ContextStore<A: AuIds = AuIds31> {
     /// Pool of class ids (all interned contexts concatenated).
     classes: AppendOnlyVec<A::Class>,
     /// Deduplication map: sorted class vector -> context id.
-    index: Map<Vec<A::Class>, A::Context>,
+    index: SpMap<Vec<A::Class>, A::Context>,
 }
 
 /// Token for restoring a `ContextStore` to a previous state.
@@ -76,7 +76,7 @@ impl<A: AuIds> ContextStore<A> {
         let mut store = ContextStore {
             spans: AppendOnlyVec::new(),
             classes: AppendOnlyVec::new(),
-            index: Map::new(),
+            index: SpMap::new(),
         };
         store.intern(&[]);
         store
@@ -88,7 +88,7 @@ impl<A: AuIds> ContextStore<A> {
 
     pub fn intern(&mut self, sorted_classes: &[A::Class]) -> A::Context {
         if let Some(log_idx) = self.index.id_of(&sorted_classes.to_vec()) {
-            return *self.index.get(log_idx);
+            return *self.index.get_val(log_idx);
         }
         let id = A::Context::from_usize(self.spans.len());
         let start = self.classes.len();
@@ -105,16 +105,13 @@ impl<A: AuIds> ContextStore<A> {
         let span = *self.spans.get(id.to_usize());
         let start = span.start_usize();
         let len = span.len_usize();
-        if len == 0 {
-            return &[];
-        }
-        // Safety: AppendOnlyVec is backed by a contiguous Vec<T>. The elements
-        // at positions [start..start+len] were pushed together and remain
-        // contiguous. We get a pointer to the first element and extend it.
-        unsafe {
-            let ptr = self.classes.get(start) as *const A::Class;
-            std::slice::from_raw_parts(ptr, len)
-        }
+        // `as_slice()` is the verified accessor for exactly this: its
+        // postcondition is `r@ == self.view()`, so the contiguity this used to
+        // assert with `from_raw_parts` is now a proof obligation the container
+        // discharges. The span was built by `intern`, which pushes the elements
+        // consecutively, so `[start, start + len)` is in bounds — and if it ever
+        // were not, this panics instead of reading out of bounds.
+        &self.classes.as_slice()[start..start + len]
     }
 
     #[inline]
@@ -158,7 +155,7 @@ impl<A: AuIds> Default for ContextStore<A> {
 }
 
 // ---------------------------------------------------------------------------
-// OR arena (semi-persistent: AppendOnlyVec + Map)
+// OR arena (semi-persistent: AppendOnlyVec + SpMap)
 // ---------------------------------------------------------------------------
 
 /// The OR-node arena: each node is a subproblem `AU(l, r)` with cycle contexts.
@@ -170,7 +167,7 @@ pub struct OrArena<A: AuIds = AuIds31> {
     pub terminal: AppendOnlyVec<bool>,
     pub left_best_size: AppendOnlyVec<u32>,
     pub right_best_size: AppendOnlyVec<u32>,
-    pub by_key: Map<(A::Class, A::Class, A::Context, A::Context), A::Or>,
+    pub by_key: SpMap<(A::Class, A::Class, A::Context, A::Context), A::Or>,
 }
 
 /// Token for restoring an `OrArena`.
@@ -196,7 +193,7 @@ impl<A: AuIds> OrArena<A> {
             terminal: AppendOnlyVec::new(),
             left_best_size: AppendOnlyVec::new(),
             right_best_size: AppendOnlyVec::new(),
-            by_key: Map::new(),
+            by_key: SpMap::new(),
         }
     }
 
@@ -283,7 +280,7 @@ impl<A: AuIds> SearchSpace<A> {
     ) -> (A::Or, bool) {
         let key = (l, r, ctx_l, ctx_r);
         if let Some(log_idx) = self.or_arena.by_key.id_of(&key) {
-            return (*self.or_arena.by_key.get(log_idx), false);
+            return (*self.or_arena.by_key.get_val(log_idx), false);
         }
         let id = A::Or::from_usize(self.or_arena.len());
         self.or_arena.left.push(l);

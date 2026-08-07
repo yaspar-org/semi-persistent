@@ -26,7 +26,7 @@ fn bench_iteration(c: &mut Criterion) {
 
     c.bench_function("bitset/view_iter", |b| {
         b.iter(|| {
-            let view = bitset.view();
+            let view = bitset.view_handle();
             let mut sum = 0u64;
             for v in view.iter() {
                 sum += v as u64;
@@ -49,7 +49,7 @@ fn bench_iteration(c: &mut Criterion) {
 
     c.bench_function("marked/view_iter", |b| {
         b.iter(|| {
-            let view = marked.view();
+            let view = marked.view_handle();
             let mut sum = 0u64;
             for v in view.iter() {
                 sum += v as u64;

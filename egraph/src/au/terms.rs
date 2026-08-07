@@ -8,7 +8,7 @@
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::{AuIds, EGraphConfig};
-use crate::containers::{AppendOnlyVec, DenseId, Map, MapToken, ShrinkPolicy, VecToken};
+use crate::containers::{AppendOnlyVec, DenseId, MapToken, ShrinkPolicy, SpMap, VecToken};
 use crate::literal::LitVal;
 
 use super::egraph_api::{AuSnapshot, ClassOf};
@@ -31,7 +31,7 @@ pub enum TermOp<O: DenseId, V: DenseId> {
 }
 
 /// Hash-consed term pool. Structurally equal terms get the same term id.
-/// All fields are semi-persistent (AppendOnlyVec/Map); mark/restore truncates.
+/// All fields are semi-persistent (AppendOnlyVec/SpMap); mark/restore truncates.
 /// The id family `A` defaults to the 31-bit family; a Config64 session
 /// instantiates `TermPool<O, V, AuIds64>` through `Cfg::Au`.
 pub struct TermPool<O: DenseId, V: DenseId, A: AuIds = AuIds31> {
@@ -40,7 +40,7 @@ pub struct TermPool<O: DenseId, V: DenseId, A: AuIds = AuIds31> {
     child_pool: AppendOnlyVec<A::Term>,
     sizes: AppendOnlyVec<u32>,
     vmasses: AppendOnlyVec<u32>,
-    by_structure: Map<(TermOp<O, V>, Vec<A::Term>), A::Term>,
+    by_structure: SpMap<(TermOp<O, V>, Vec<A::Term>), A::Term>,
 }
 
 /// Token for restoring a `TermPool` to a previous state.
@@ -62,7 +62,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             child_pool: AppendOnlyVec::new(),
             sizes: AppendOnlyVec::new(),
             vmasses: AppendOnlyVec::new(),
-            by_structure: Map::new(),
+            by_structure: SpMap::new(),
         }
     }
 
@@ -79,7 +79,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     pub fn intern(&mut self, op: TermOp<O, V>, children: &[A::Term]) -> A::Term {
         let key = (op.clone(), children.to_vec());
         if let Some(log_idx) = self.by_structure.id_of(&key) {
-            return *self.by_structure.get(log_idx);
+            return *self.by_structure.get_val(log_idx);
         }
 
         let id = A::Term::from_usize(self.ops.len());
@@ -224,13 +224,10 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     pub fn children(&self, id: A::Term) -> &[A::Term] {
         let span = *self.child_spans.get(id.to_usize());
         let (start, len) = (span.start_usize(), span.len_usize());
-        if len == 0 {
-            return &[];
-        }
-        unsafe {
-            let ptr = self.child_pool.get(start) as *const A::Term;
-            std::slice::from_raw_parts(ptr, len)
-        }
+        // Verified `as_slice()` instead of `from_raw_parts` — see the twin in
+        // `space.rs::ContextStore::get`. The children of a term are pushed
+        // consecutively when it is interned, so the span is in bounds.
+        &self.child_pool.as_slice()[start..start + len]
     }
 
     pub fn mark(&mut self) -> TermPoolToken {

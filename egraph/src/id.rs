@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Concrete e-graph identifier types.
 
-pub use semi_persistent_containers::id::{SparseSetId, UseListId, UseNodeId};
+pub use semi_persistent_containers::{SparseSetId, UseListId, UseNodeId};
 
 semi_persistent_containers::define_id31! {
     /// A 31-bit e-node identifier.

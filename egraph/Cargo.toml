@@ -15,7 +15,8 @@ name = "semi-persistent"
 path = "src/main.rs"
 
 [dependencies]
-semi-persistent-containers = { path = "../containers", version = "0.1.0" }
+semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.1.0" }
+vstd = "=0.0.0-2026-04-12-0118"
 clap = { version = "4.6.0", features = ["derive"] }
 num-bigint.workspace = true
 num-rational.workspace = true

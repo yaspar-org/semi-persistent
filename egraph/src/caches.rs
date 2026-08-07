@@ -10,6 +10,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::canon::{FixedCanon, VarCanon};
 use crate::containers::DenseId;
+use crate::containers::IndexLike; // prod-parity: L::min() (was L::MIN)
 use crate::containers::Tagged;
 use crate::containers::{InlineStore, ShrinkPolicy, VecI, VecToken};
 use crate::node_types::{FixedArityNode, LitNode, VariableArityNode};
@@ -136,7 +137,7 @@ impl<
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.len() == L::MIN
+        self.nodes.len() == <L as IndexLike>::min()
     }
 
     pub fn get(&self, id: L) -> FixedArityNode<G, O, K> {
@@ -369,7 +370,7 @@ impl<
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.len() == L::MIN
+        self.nodes.len() == <L as IndexLike>::min()
     }
 
     pub fn get(&self, id: L) -> VariableArityNode<G, O> {
@@ -651,7 +652,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.len() == L::MIN
+        self.nodes.len() == <L as IndexLike>::min()
     }
 
     pub fn get(&self, id: L) -> LitNode<G, O, V> {
@@ -935,14 +936,14 @@ mod tests {
 
     #[test]
     fn recanonize_ac_merges_mult() {
-        type MSetChild = (ENodeId, Multiplicity);
+        type MSetChild = crate::containers::Pair<ENodeId, Multiplicity>;
+        let pair = |g, m| crate::containers::Pair {
+            a: g,
+            b: Multiplicity(m),
+        };
         let mut c = VariableArityCache::<ENodeId, OpId, MSetChild, MSetNodeId, false>::new();
         let op = OpId::new(0);
-        let elems: &[MSetChild] = &[
-            (id(1), Multiplicity(1)),
-            (id(2), Multiplicity(1)),
-            (id(3), Multiplicity(1)),
-        ];
+        let elems: &[MSetChild] = &[pair(id(1), 1), pair(id(2), 1), pair(id(3), 1)];
         c.probe_or_insert(id(10), op, elems);
         let mut buf = Vec::new();
         let mut collisions = Vec::new();
@@ -957,7 +958,7 @@ mod tests {
             crate::canon::CanonMode::PLAIN,
         );
         assert!(collisions.is_empty());
-        let expected: &[MSetChild] = &[(id(1), Multiplicity(2)), (id(3), Multiplicity(1))];
+        let expected: &[MSetChild] = &[pair(id(1), 2), pair(id(3), 1)];
         assert!(c.probe(op, expected).is_some());
     }
 }

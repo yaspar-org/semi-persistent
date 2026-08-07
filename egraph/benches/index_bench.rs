@@ -1,7 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use criterion::{Criterion, criterion_group, criterion_main};
-use semi_persistent_containers::DenseId;
 use semi_persistent_containers::bplus::{BPlusTreeSet, BinarySearch, Layout64};
 use semi_persistent_egraph::id::ENodeId;
 use std::collections::{BTreeSet, HashSet};

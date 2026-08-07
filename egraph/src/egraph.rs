@@ -99,13 +99,13 @@ pub struct EGraph<
     /// here rather than on `OpKind<S>` because a node id is `Cfg::G`, which `OpKind<S>` cannot
     /// carry. Semi-persistent (its own token), so it rolls back with the op declarations that
     /// created the units. Absent key = the op has no declared identity.
-    unit_node: crate::containers::Map<Cfg::O, Cfg::G, TRACK>,
+    unit_node: crate::containers::SpMap<Cfg::O, Cfg::G, TRACK>,
     /// Per-op group inverse operator, for AC ops declared with `:inverse neg`
     /// (`x ∘ neg(x) = e`). Resolved to a real op id at registration (sortcheck validates
     /// the unary signature). Same persistence story as `unit_node`. Absent key = no
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
-    inverse_op: crate::containers::Map<Cfg::O, Cfg::O, TRACK>,
+    inverse_op: crate::containers::SpMap<Cfg::O, Cfg::O, TRACK>,
     /// Outcome of the most recent `rebuild` when `cc` is enabled. Lets callers distinguish
     /// convergence from a growth-budget abort. `None` if completion hasn't run yet.
     completion_outcome: Option<CompletionOutcome>,
@@ -179,8 +179,8 @@ where
             cmp_buf_a: Vec::new(),
             cmp_buf_b: Vec::new(),
             flatten_buf: Vec::new(),
-            unit_node: crate::containers::Map::new(),
-            inverse_op: crate::containers::Map::new(),
+            unit_node: crate::containers::SpMap::new(),
+            inverse_op: crate::containers::SpMap::new(),
             completion_outcome: None,
             completion_node_budget: DEFAULT_COMPLETION_NODE_BUDGET,
         }
@@ -565,14 +565,14 @@ where
                 // the conversion never touches the common plain-AC / idempotent build.
                 if let crate::registry::Clamp::Nilpotent { order } = self.op_clamp_kind(op) {
                     use crate::multiplicity::Multiplicity;
-                    let mut tuples: Vec<(Cfg::G, Multiplicity)> = self
+                    // prod-parity: `clamp_multiset` operates on `Pair<G, Mult>`
+                    // (was `(G, Mult)`; Verus can't impl `Tagged` for a tuple).
+                    let mut tuples: Vec<crate::containers::Pair<Cfg::G, Multiplicity>> = self
                         .mset_buf
                         .iter()
-                        .map(|c| {
-                            (
-                                Cfg::mset_child_id(c),
-                                Multiplicity(Cfg::mset_child_mult(c).into()),
-                            )
+                        .map(|c| crate::containers::Pair {
+                            a: Cfg::mset_child_id(c),
+                            b: Multiplicity(Cfg::mset_child_mult(c).into()),
                         })
                         .collect();
                     MSetCanon::clamp_multiset(&mut tuples, MSetClamp::Nilpotent { order });
@@ -580,7 +580,7 @@ where
                     self.mset_buf.extend(
                         tuples
                             .iter()
-                            .map(|(g, m)| Cfg::mset_child_with_mult(*g, Cfg::M::from(m.0))),
+                            .map(|p| Cfg::mset_child_with_mult(p.a, Cfg::M::from(p.b.0))),
                     );
                 }
                 // Group inverse-pair cancellation (`x ∘ inv(x) = e`): summand pairs related

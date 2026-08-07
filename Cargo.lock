@@ -868,7 +868,7 @@ dependencies = [
 name = "semi-persistent"
 version = "0.1.0"
 dependencies = [
- "semi-persistent-containers",
+ "semi-persistent-containers-verus",
  "semi-persistent-egraph",
  "semi-persistent-traversals",
 ]
@@ -918,7 +918,8 @@ dependencies = [
  "ordered-float",
  "proptest",
  "rapidhash",
- "semi-persistent-containers",
+ "semi-persistent-containers-verus",
+ "vstd",
  "winnow",
 ]
 
