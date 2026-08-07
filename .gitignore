@@ -29,3 +29,9 @@ CLAUDE.md
 
 # sdd run evidence (ephemeral; distilled into <crate>/doc/verification/)
 runs/
+
+# bare `verus` invocations emit this into cwd
+liblib.rlib
+
+# Verus SMT solver traces (local debugging artifact, machine-specific)
+.verus-solver-log/
