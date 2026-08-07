@@ -19,13 +19,19 @@ produces perfectly sorted arrays with no tombstones or stale entries.
 ## `IndexStore`
 
 ```rust
+// FastMap = HashMap<K, V, foldhash::fast::RandomState>
 pub struct IndexStore<Cfg: EGraphConfig> {
-    pub by_op: HashMap<Cfg::O, SortedVec<Cfg::G>>,
-    pub by_repr: HashMap<Cfg::G, SortedVec<Cfg::G>>,
-    pub by_child_pos: HashMap<(Cfg::G, u32), SortedVec<Cfg::G>>,
-    pub by_contains: HashMap<Cfg::G, SortedVec<Cfg::G>>,
+    pub by_op: FastMap<Cfg::O, SortedVec<Cfg::G>>,
+    pub by_repr: FastMap<Cfg::G, SortedVec<Cfg::G>>,
+    pub by_child_pos: FastMap<(Cfg::G, u32), SortedVec<Cfg::G>>,
+    pub by_contains: FastMap<Cfg::G, SortedVec<Cfg::G>>,
 }
 ```
+
+The maps are keyed by dense ids, where SipHash's DoS resistance buys nothing —
+the keys are internal, never attacker-supplied. Swapping in foldhash is 4.5-10%
+end-to-end, with twice the gain on semi-naive as on naive evaluation
+(`doc/perf-results/E3-index-hasher.md`).
 
 Four index families, each answering a different query:
 

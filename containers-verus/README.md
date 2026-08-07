@@ -60,7 +60,7 @@ and are verified (see "Verification status" below).
 
 ## Verification status
 
-**938 facts verified across 21 modules, 0 errors, 0 `admit`s/`assume`s**
+**1383 facts verified across 31 module entries, 0 errors, 0 `admit`s/`assume`s**
 (run `./verify-all.sh` from the package root for the live per-module tally).
 The whole container family is verified:
 
@@ -75,11 +75,16 @@ The whole container family is verified:
   sorted set, never skipping a present key); the arena provably never overflows
   (so `insert` needs no caller capacity precondition); and `mark`/`restore`.
   Insert-only; production has no `remove`.
+- **`SortedVecCursor`**: not a container — the galloping seek the e-graph's
+  leapfrog joins run on, verified against the *same* `seek_target_idx` spec as
+  the B+tree cursor, so the two are substitutable at the `SortedCursor`
+  boundary. See [`doc/design/12-sorted-vec-cursor.md`](doc/design/12-sorted-vec-cursor.md).
 
-Trusted boundary: 7 `#[verifier::external_body]` items, all enumerated in
+Trusted boundary: 21 `#[verifier::external_body]` items (26 with `literal-types`),
+only three of them carrying load-bearing contracts, all enumerated in
 [`doc/design/02-trust-boundary.md`](doc/design/02-trust-boundary.md). Runtime
-property tests (82 across 6 files) exercise the executable code against plain-`std`
-oracles. The skeptical, method-by-method coverage accounting vs. the production
+property tests (131 across 20 files) exercise the executable code against
+plain-`std` oracles. The skeptical, method-by-method coverage accounting vs. the production
 crate is [`doc/future/parity-audit-and-plan.md`](doc/future/parity-audit-and-plan.md).
 
 ## Prerequisites
