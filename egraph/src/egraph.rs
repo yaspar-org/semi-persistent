@@ -1415,7 +1415,7 @@ where
     fn cc_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
         use crate::multiplicity::Multiplicity;
         use crate::multiset::{
-            NfRuleRef, multiset_disjoint, multiset_lcm_into, multiset_subset,
+            NfIndex, NfRuleRef, NfRules, multiset_disjoint, multiset_lcm_into, multiset_subset,
             multiset_subtract_into, multiset_union, normalize_ms_into, normalize_nilpotent_into,
             normalize_set_into,
         };
@@ -1926,15 +1926,20 @@ where
             );
             // Normalize in the op's count domain: idempotent → set (clamp to 1); nilpotent →
             // mod-n; plain AC (MSet) → ℕ.
+            // Linear, not indexed: this rule slice is refilled per target (each target is
+            // normalized by every rule but its own), so there is no reuse to amortize an
+            // index over — and inter-reduction is a few percent of completion time against
+            // the critical-pair loop's two thirds.
+            let nf = NfRules::linear(&nf_refs);
             match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
-                    normalize_set_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs)
+                    normalize_set_into(&mut nf_out, &mut nf_ping, &mset, nf)
                 }
                 CompletionClamp::Nilpotent { order } => {
-                    normalize_nilpotent_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs, order)
+                    normalize_nilpotent_into(&mut nf_out, &mut nf_ping, &mset, nf, order)
                 }
                 CompletionClamp::Multiset => {
-                    normalize_ms_into(&mut nf_out, &mut nf_ping, &mset, &nf_refs)
+                    normalize_ms_into(&mut nf_out, &mut nf_ping, &mset, nf)
                 }
             }
             // Inverse-pair cancellation on the normal form (group ops): normalization can
@@ -2005,6 +2010,12 @@ where
                 rhs: &r.rhs,
             });
         }
+        // Index each op's table by LHS-minimum class, hoisted with the table itself. This
+        // loop is where completion spends 61-72% of its time, normalizing thousands of
+        // reducts against hundreds of rules of which 94-98% cannot apply (perf doc E13), so
+        // the index is amortized over every one of those normalizations.
+        let nf_index_by_op: Vec<NfIndex<Cfg::G>> =
+            nf_by_op.iter().map(|(_, v)| NfIndex::build(v)).collect();
         let empty_nf: Vec<NfRuleRef<'_, Cfg::G>> = Vec::new();
         let crit_generated = crit.len();
         let mut n1_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
@@ -2017,10 +2028,10 @@ where
                 trivial += 1;
                 continue;
             }
-            let nf_rules = nf_by_op
-                .iter()
-                .find(|(o, _)| *o == op.to_usize())
-                .map_or(&empty_nf, |(_, v)| v);
+            let nf_rules = match nf_by_op.iter().position(|(o, _)| *o == op.to_usize()) {
+                Some(i) => NfRules::indexed(&nf_by_op[i].1, &nf_index_by_op[i]),
+                None => NfRules::linear(&empty_nf),
+            };
             // Normalize both reducts in the op's count domain (idempotent → set, nilpotent →
             // mod-n, plain AC → ℕ) before comparing/merging.
             match self.op_clamp(op) {
