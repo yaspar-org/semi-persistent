@@ -5,8 +5,6 @@
 //! Implements the unary leapfrog join from:
 //! Veldhuizen, "Leapfrog Triejoin: A Simple, Worst-Case Optimal Join Algorithm" (ICDT 2014)
 
-use crate::containers::DenseId;
-use crate::index::SortedVecCursor;
 pub use semi_persistent_containers::SortedCursor;
 use smallvec::SmallVec;
 
@@ -19,25 +17,11 @@ use smallvec::SmallVec;
 /// common case off the heap while staying spillable for wide variadic atoms.
 pub type CursorVec<C> = SmallVec<[C; 4]>;
 
-impl<'a, G: DenseId> SortedCursor for SortedVecCursor<'a, G> {
-    type Key = G;
-    #[inline]
-    fn key(&self) -> Option<G> {
-        if SortedVecCursor::is_valid(self) {
-            Some(SortedVecCursor::key(self))
-        } else {
-            None
-        }
-    }
-    #[inline]
-    fn step(&mut self) {
-        SortedVecCursor::step(self);
-    }
-    #[inline]
-    fn seek(&mut self, target: G) {
-        SortedVecCursor::seek(self, target);
-    }
-}
+// `SortedCursor for SortedVecCursor` is not implemented here: both the trait and
+// the cursor now live in `containers-verus`, which supplies the impl alongside
+// the verified methods it delegates to (and the orphan rule would reject a
+// second one). The delegation is the same three one-line bodies this module
+// carried before the swap, guard included.
 
 /// Cursor combinator yielding `full ∖ delta`: every key from `full` that is
 /// absent from `delta`. Generic over any two `SortedCursor`s with the same
@@ -208,7 +192,8 @@ impl<C: SortedCursor> LeapfrogJoin<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::SortedVec;
+    use crate::containers::DenseId;
+    use crate::index::{SortedVec, SortedVecCursor};
 
     fn svec<G: DenseId>(vals: &[usize]) -> SortedVec<G> {
         SortedVec {

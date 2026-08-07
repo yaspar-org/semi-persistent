@@ -22,10 +22,15 @@ Leapfrog maintains a vector of sorted iterators (cursors), all
 seeking to agree on the same key.
 
 ```rust
-pub struct LeapfrogJoin<'a, G: DenseId> {
-    iters: Vec<SortedVecIter<'a, G>>,
+pub struct LeapfrogJoin<C: SortedCursor> {
+    iters: CursorVec<C>,  // SmallVec<[C; 4]>
+    p: usize,
+    at_end: bool,
 }
 ```
+
+Generic over the cursor, not tied to `SortedVec`: the same join drives a
+`SortedVecCursor`, a `BPlusCursor`, or a `Difference` combinator.
 
 ### Initialization
 
@@ -68,9 +73,14 @@ paid 5-8 probes to move one position
 output size times log *n*, which is worst-case optimal for the AGM bound on join
 output; galloping improves the constant, not that bound.
 
-The seek is verified: `containers-verus`'s `SortedVecCursor` proves it lands on
-the first key ≥ the target and skips no present key, for every list and target
-([containers-verus Ch. 12](../../../containers-verus/doc/design/12-sorted-vec-cursor.md)).
+The seek is verified, and it is the verified code that runs: `index.rs`
+re-exports `containers-verus`'s `SortedVecCursor` rather than defining one, so
+the proof — it lands on the first key ≥ the target and skips no present key, for
+every list and every target — covers what ships. The swap was measured
+performance-neutral end-to-end
+([containers-verus Ch. 12](../../../containers-verus/doc/design/12-sorted-vec-cursor.md) §7a).
+`SortedCursor for SortedVecCursor` is therefore implemented in that crate, not
+here; `leapfrog.rs` carries no cursor impl of its own.
 
 ### Usage in Pattern Matching
 

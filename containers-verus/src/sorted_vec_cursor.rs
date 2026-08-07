@@ -245,6 +245,20 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
     /// `seek_target_idx(model, target)` — the count of model keys strictly below
     /// the target, the same spec function `BPlusCursor::seek` lands on — except
     /// where the cursor was already beyond it, in which case it stays.
+    ///
+    /// `#[inline]` because this is the join layer's hot path — called once per
+    /// leapfrog step through a generic cursor, where a missed inline also costs
+    /// the devirtualization. Not cosmetic: the parity audit found a single
+    /// missing inline hint costing 12% (Chapter 11).
+    ///
+    /// The bisection below is written as an explicit loop rather than
+    /// `data[lo+1..hi].partition_point(..)` (which is what `egraph` called before
+    /// it adopted this cursor) because there is no way to state a loop invariant
+    /// through std's `partition_point`. That constraint turned out to be free and
+    /// then some: the hand-written loop is the larger half of a 2-3x seek
+    /// speedup, measured in Chapter 12 §7a. Identical probe counts either way —
+    /// the difference is codegen, so don't "simplify" it back.
+    #[inline]
     pub fn seek(&mut self, target: K)
         requires
             old(self).cursor_wf(),
