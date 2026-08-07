@@ -111,3 +111,4 @@ protocol in the plan assumed.
 | [E8](E8-union-find-compression.md) | path-compression policy: on-the-fly vs systematic sweep vs threshold | **closed on its gate** — mean hops 0.000-0.433, deepest chain 2; nothing to compress |
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |
 | [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |
+| [E10](E10-update-multiset-branch.md) | branchless duplicate merge in `update_multiset` | **closed on its gate** — 0 calls on every bench, 118 across all 90 fixtures, duplicate branch taken 8 times |
