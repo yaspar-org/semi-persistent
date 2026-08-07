@@ -98,10 +98,20 @@ where
 
     let mut children = Vec::new();
     eg.for_each_child(id, |child, mult| {
+        if mult == 0 {
+            return;
+        }
         let t = reconstruct(eg, best_node, eg.find_const(child));
-        for _ in 0..mult {
+        // `mult - 1` clones and then move the original in, rather than `mult`
+        // clones followed by dropping it. At the overwhelmingly common `mult == 1`
+        // that is one deep copy saved per child, and deep copies compound: the
+        // previous form made extraction of a depth-`d` chain O(d^2) node copies
+        // for a `d`-node result, because each level copied the whole subterm its
+        // recursive call had just built and then threw the original away.
+        for _ in 1..mult {
             children.push(t.clone());
         }
+        children.push(t);
     });
 
     Term::App {
