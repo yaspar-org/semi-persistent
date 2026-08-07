@@ -351,8 +351,8 @@ real boundary.
 
 ## 3.5. Groups D and E: migration-parity trusted surfaces
 
-The production-parity work adds two trusted surfaces of a different kind,
-enumerated here so the ledger stays complete.
+The production-parity work (see `doc/migration/README.md`) adds two trusted
+surfaces of a different kind, enumerated here so the ledger stays complete.
 
 ### Group D: external key-model facts — 1 `external_body` item + planned specs
 
@@ -490,7 +490,7 @@ method with the converted argument":
 | std `Iterator` impls for `VecViewIter` / `ListIter` | verified inherent `next` | trait impls for unmodeled std traits (each is one delegation line) |
 | `white_box_*` read accessors (bplus.rs, list.rs, circular_list.rs) | immutable field borrows | `#[doc(hidden)]` oracle access for the runtime property tests (Phase 9.1 privacy closeout); read-only, cannot violate any invariant |
 | `next_id_from` (container_id.rs) | (atomic allocator) | the trusted allocator behind Group A's `new`; plain `fetch_add`, no-reuse resting on `u64` width; optional trap behind `strict-id-exhaustion`, exhaustion unit-tested |
-| consumer `Tagged` impls + macro expansions in egraph | verified witness instantiations | consumer crate is not run under Verus. Mitigated by the canary's shape fixtures; the per-type contract fuzzers this row assumes do **not** exist yet |
+| consumer `Tagged` impls + macro expansions in egraph | verified witness instantiations | consumer crate is not run under Verus. Mitigated by the canary's shape fixtures; the per-type contract fuzzers this row assumes do **not** exist yet — see `doc/migration/README.md` follow-ups |
 
 Every safety property behind the glue (bounds panics, capture protocol,
 snapshot fidelity) is enforced by the verified core it calls; the glue cannot

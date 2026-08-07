@@ -112,7 +112,7 @@ jobs:
 
       # The literal-types feature adds the group-D key-model axioms; the
       # migration validation matrix requires the sweep green with AND
-      # without it (trust ledger §3.5).
+      # without it (doc/migration/README.md; trust ledger §3.5).
       - name: Verify containers-verus (literal-types)
         working-directory: containers-verus
         run: cargo verus verify --features literal-types -- --trace

@@ -8068,8 +8068,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
 // (`containers/src/lib.rs:39`) — including the search kinds (verus keeps them in
 // `bplus_search`) and default-width layout aliases (`Layout64 = Layout64U32`,
 // etc., `bplus.rs:328`). The B+tree is unwired in the consumer (descoped on
-// measurement: rebuild beats incremental 6-11x for the e-graph's arrival
-// pattern, and identically so for `std::BTreeSet`), but its benches (`egraph/benches/index_bench.rs`
+// measurement -- see `doc/migration/README.md`), but its benches (`egraph/benches/index_bench.rs`
 // etc.) import these production names, so re-export/alias them here. Dropped at
 // step 3 in favor of the width-suffixed names.
 #[doc(hidden)]
