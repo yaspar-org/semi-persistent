@@ -146,6 +146,29 @@ transition; in-order traversal and `seek` are proven sound; the arena provably
 never overflows; `mark`/`restore` work. Insert-only, matching production (no
 `remove`).
 
+**Two performance gaps, no soundness gap.** Both latent — `egraph` never calls
+`from_sorted` and never instantiates `BPlusTreeSet` outside benches — but both are
+places where a *verified* method is materially worse than its production
+counterpart. Measured at 176x combined
+([Design Ch. 10 §5](../design/10-bplus-tree.md), harness at
+`containers-conformance/examples/bulkload.rs`):
+
+- **`from_sorted` is not a bulk load** (~36x): it loops `insert` where production
+  fills leaves from chunks of the sorted input.
+- **`insert` has no append fast path** (4.8-7.5x, growing with `n`): production
+  caches `last_leaf` and appends in O(1) when the key extends the rightmost leaf,
+  skipping the descent entirely. This one is not specific to bulk building — it
+  costs on *any* ascending insertion, which is the common case for id-keyed
+  indexes.
+
+**The audit's question was too narrow.** This table asks "is this method
+verified?" — `from_sorted` answers yes while being asymptotically worse, and the
+missing fast path is invisible to both the proof and the property tests, since
+neither observes how many nodes were touched. Checking parity properly means
+diffing the production *body* for fast paths and cached state, not just matching
+signatures and contracts. The other containers' constructors and hot methods
+deserve that pass.
+
 The complete design and proof-status accounting is its own chapter:
 [Design Ch. 10: The B+Tree Set](../design/10-bplus-tree.md). It is not repeated
 here.
