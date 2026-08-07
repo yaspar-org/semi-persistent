@@ -291,8 +291,59 @@ oracle).
 `external_body`. The crate-wide trusted items (`ContainerId`, byte-accounting
 diagnostics) are enumerated in [Chapter 2](02-trust-boundary.md).
 
-**Scope:** insert-only, matching production (no `remove`). A bulk `from_sorted`
-constructor is not implemented.
+**Scope:** insert-only, matching production (no `remove`).
+
+**`from_sorted` is not a bulk load — known gap.** The constructor *exists* and is
+verified, but its body is `Self::new()` plus a loop of `insert` calls. Production
+bulk-loads: it chunks the sorted keys into filled leaves
+(`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above them,
+which is O(n) with no split propagation and no per-key descent.
+
+Measured in one binary (`containers-conformance/examples/bulkload.rs`), verus
+`from_sorted` tracks a plain insert loop at every size:
+
+| n | prod `from_sorted` | verus `from_sorted` | ratio | prod insert asc | verus insert asc | ratio | prod insert rand | verus insert rand | ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 000 | 1.8 µs | 165.3 µs | 92x | 35.0 µs | 167.3 µs | 4.8x | 88.2 µs | 123.6 µs | 1.4x |
+| 10 000 | 13.2 µs | 2 089 µs | 158x | 352 µs | 2 106 µs | 6.0x | 1 068 µs | 1 516 µs | 1.4x |
+| 100 000 | 152.0 µs | 26 678 µs | 176x | 3 607 µs | 26 877 µs | 7.5x | 13 380 µs | 19 637 µs | 1.5x |
+
+`verus_sorted ≈ verus_insert` on every row identifies the missing bulk load. But
+the total decomposes into **two** stacked gaps, and the insert columns separate
+them:
+
+**(a) No bulk load — ~36x.** As above: an insert loop where production fills
+leaves directly.
+
+**(b) `insert` has no append fast path — 4.8x to 7.5x, growing with `n`.**
+Production's header caches `last_leaf`, and `insert` checks it first
+(`containers/src/bplus.rs:626`): if the key exceeds the rightmost leaf's last key
+and that leaf has room, it appends in O(1) with **no root-to-leaf descent**. The
+verified tree has no `last_leaf` field, so every key pays a full descent. Under
+ascending keys — exactly what `from_sorted` and `IndexStore` bulk builds produce —
+production's fast path hits essentially every time, which is why this ratio grows
+with tree depth while the bulk-load factor stays flat.
+
+The **shuffled-insertion control** is what isolates (b) from a codegen artifact:
+inserting the same keys in random order, where the fast path cannot fire, collapses
+the ratio to a flat **1.4-1.5x** across all three decades. Flat across decades is a
+constant factor; a ratio that *grows* is structural. (This is the discriminator
+[Chapter 11](11-layout-parity.md) was written about, applied in the direction that
+confirms a regression rather than dismissing one.)
+
+**Not currently a shipping cost:** `egraph` never calls `from_sorted` and never
+instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its indexes
+are `SortedVec`. Both gaps are latent.
+
+**Closing them.** (b) is the better investment and the smaller proof: add
+`last_leaf` to the struct with a `wf` clause binding it to the rightmost leaf of
+the ghost tree, then the fast path's precondition is a local fact about one leaf.
+The crate already has the leaf-chain machinery this needs — `leaf_links_ok`,
+`tree_leaf_ids`, `forest_links_to` — because the cursor's leaf-link invariant
+required the same reasoning. It also pays off beyond bulk build, since ascending
+insertion is the common case for id-keyed indexes. (a) is more work: building a
+tree that satisfies `wf()` *directly* rather than inductively needs a fresh
+invariant for the leaf-fill loop and another for the level-build loop.
 
 ## 6. Reused machinery
 
