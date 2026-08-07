@@ -64,6 +64,17 @@ Protocol, in order:
    Before implementing a stated fix, count the sub-parts of the thing it targets;
    if the fix does not address the largest, look for the one that does.
 
+10. **Confirm the site is on the path before optimizing it, and confirm the
+    counter fires before trusting a zero.** A7 named the AC decompose *frames*,
+    which sit in a second matcher engine (`MatchIterator`) that nothing outside
+    `ematch.rs`'s own tests constructs — real code, zero executions in any
+    benchmark. The cost was one level away, in the recursive engine everything
+    actually uses. Symmetrically, a probe that reads zero is only evidence once
+    it has been shown to be capable of reading non-zero: the first two zeros here
+    were an atomic read from the wrong test binary and a reporter that ran before
+    the tests it summarized. Drive the site deliberately, see the counter move,
+    *then* believe the zeros.
+
 `examples/` holds the standalone sites protocol items 6 and 7 require:
 `complsite.rs` (completion), `acsite.rs` (AC rewrite, either width and driver),
 `allocprobe.rs` (allocation counts), `extractprobe.rs` (extraction structure and
@@ -96,6 +107,7 @@ protocol in the plan assumed.
 | [E11a](E11a-reconstruct-redundant-clone.md) | `reconstruct` deep-cloned each child term then dropped the original | **accepted** — 91-98% on every extraction row; removes an O(depth²) term |
 | [E11b](E11b-reconstruct-memo.md) | memoize `reconstruct` per class, so a shared class is built once | **rejected** — a memo hit still deep-copies the subterm, so it trades a graph walk for a copy of the same size; 4 variants, all regress the tree rows |
 | [E13](E13-rule-lhs-index.md) | index the AC rule table by LHS-minimum class, so a normalize step tests only the rules a present class could match | **accepted** — 30-47% on the completion rows, 80-85% fewer subset tests, both rising with problem size |
+| [E14](E14-decompose-child-buffers.md) | recycle the `ExpandA`/`DecomposeAC`/`DecomposeACI` child buffers through `MatchPool` instead of allocating one per match step | **accepted** — 13.5% on `ac10`, 6-7% on `ac6`, 30-41% fewer allocations; the site A7 actually named is dead code |
 | [E8](E8-union-find-compression.md) | path-compression policy: on-the-fly vs systematic sweep vs threshold | **closed on its gate** — mean hops 0.000-0.433, deepest chain 2; nothing to compress |
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |
 | [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |

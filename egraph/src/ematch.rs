@@ -259,9 +259,18 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
 /// Correctness note: [`Self::matches_mut`] hands out only `&mut [Match]` of
 /// length `len`, so a stale slot beyond `len` is unreachable — its contents are
 /// overwritten before ever being read.
+/// Correctness note 2: the two scratch free-lists ([`Self::take_id_buf`] and
+/// friends) are deliberately *not* touched by [`Self::clear`]. They hold no
+/// query state — every borrower fills them from scratch before reading, since
+/// `seq_children`/`set_children`/`mset_children` all begin with `buf.clear()` —
+/// so surviving a `clear` is the whole point of them.
 pub struct MatchPool<Cfg: EGraphConfig> {
     slots: Vec<Match<Cfg>>,
     len: usize,
+    /// Retired child-id buffers, lent to the `ExpandA`/`DecomposeACI` steps.
+    id_bufs: Vec<Vec<Cfg::G>>,
+    /// Retired `(id, multiplicity)` buffers, lent to the `DecomposeAC` step.
+    mset_bufs: Vec<Vec<(Cfg::G, Cfg::M)>>,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -275,7 +284,35 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
         Self {
             slots: Vec::new(),
             len: 0,
+            id_bufs: Vec::new(),
+            mset_bufs: Vec::new(),
         }
+    }
+
+    /// Borrow a child-id buffer, by move.
+    ///
+    /// By move rather than by reference because the borrower passes `&mut self`
+    /// down the same call it uses the buffer in, so a `&mut` into the pool could
+    /// not coexist with it. The caller must return it via [`Self::give_id_buf`];
+    /// failing to is a leak of one allocation, not a correctness bug.
+    #[inline]
+    fn take_id_buf(&mut self) -> Vec<Cfg::G> {
+        self.id_bufs.pop().unwrap_or_default()
+    }
+
+    #[inline]
+    fn give_id_buf(&mut self, buf: Vec<Cfg::G>) {
+        self.id_bufs.push(buf);
+    }
+
+    #[inline]
+    fn take_mset_buf(&mut self) -> Vec<(Cfg::G, Cfg::M)> {
+        self.mset_bufs.pop().unwrap_or_default()
+    }
+
+    #[inline]
+    fn give_mset_buf(&mut self, buf: Vec<(Cfg::G, Cfg::M)>) {
+        self.mset_bufs.push(buf);
     }
 
     /// Drop the previous query's results without releasing their storage.
@@ -569,11 +606,14 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             suf,
         } => {
             let node_id = env.get(*node);
-            let mut buf = Vec::new();
+            // Recycled through the pool: this step runs once per candidate node, so a
+            // fresh `Vec` here was one allocation per match step (E14).
+            let mut buf = results.take_id_buf();
             eg.seq_children(node_id, &mut buf);
             run_expand_a(
                 plan, step_idx, children, *pre, *suf, &buf, eg, index, globals, env, results,
             );
+            results.give_id_buf(buf);
         }
         Step::DecomposeAC {
             node,
@@ -582,7 +622,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             idempotent: _,
         } => {
             let node_id = env.get(*node);
-            let mut residual = Vec::new();
+            let mut residual = results.take_mset_buf();
             eg.mset_children(node_id, &mut residual);
             for entry in &mut residual {
                 entry.0 = eg.find_const(entry.0);
@@ -599,10 +639,11 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 env,
                 results,
             );
+            results.give_mset_buf(residual);
         }
         Step::DecomposeACI { node, elems, rest } => {
             let node_id = env.get(*node);
-            let mut residual = Vec::new();
+            let mut residual = results.take_id_buf();
             eg.set_children(node_id, &mut residual);
             for entry in &mut residual {
                 *entry = eg.find_const(*entry);
@@ -610,6 +651,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             run_decompose_aci(
                 plan, step_idx, elems, *rest, &residual, eg, index, globals, env, results,
             );
+            results.give_id_buf(residual);
         }
         Step::ExtractLitVal { node, val } => {
             let node_id = env.get(*node);
@@ -2248,6 +2290,72 @@ mod tests {
         let eg = make_eg();
         let matches = query(&eg, eg.ops(), eg.sorts(), &["(f x y)"]);
         assert!(matches.is_empty());
+    }
+
+    /// A pool reused across queries yields the same matches as a fresh one.
+    ///
+    /// This is the property the pool's recycled storage could break and nothing
+    /// else would catch: the match slots and the decompose child buffers both
+    /// survive `clear()`, so a query that reads a buffer before filling it, or
+    /// reads a match slot past `len`, would see the *previous* query's data.
+    /// Every pattern shape that owns recycled storage is driven twice, in an
+    /// order that guarantees each second run inherits a non-empty pool.
+    #[test]
+    fn reused_pool_matches_a_fresh_pool() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("f").unwrap(), &[a, b]);
+        eg.add(eg.ops().id_by_name("add").unwrap(), &[a, b, c]);
+        eg.add(eg.ops().id_by_name("union").unwrap(), &[a, b, c]);
+        eg.add(eg.ops().id_by_name("concat").unwrap(), &[a, b, c]);
+        eg.rebuild();
+
+        // ExpandA (`concat`), DecomposeAC (`add`), DecomposeACI (`union`) and a
+        // plain join — one per recycled-storage kind.
+        let shapes = [
+            "(f x y)",
+            "(add x:1 ..rest)",
+            "(union x ..rest)",
+            "(concat x y ..rest)",
+        ];
+
+        let index = IndexStore::build(&eg);
+        let index = VariantIndex::naive(&index);
+        let ng = crate::resolve::GlobalCtx::<(), _>::new();
+
+        let plans: Vec<_> = shapes
+            .iter()
+            .map(|src| {
+                let pats = [parse_pattern(src)];
+                let fq = flatten(&pats, eg.ops()).unwrap();
+                let rq = resolve(
+                    &fq,
+                    eg.ops(),
+                    eg.sorts(),
+                    &NiraModel,
+                    &crate::resolve::GlobalCtx::<_, ()>::new(),
+                )
+                .unwrap();
+                schedule(&rq)
+            })
+            .collect();
+
+        let mut shared = MatchPool::new();
+        // Two passes, so the second sees a pool warmed by all four shapes.
+        for _ in 0..2 {
+            for plan in &plans {
+                let mut fresh = MatchPool::new();
+                run_query_into(plan, &eg, &index, &ng, &mut fresh);
+                run_query_into(plan, &eg, &index, &ng, &mut shared);
+
+                assert_eq!(shared.len(), fresh.len(), "match count diverged");
+                let expect: Vec<_> = fresh.matches().iter().map(|m| env_key(m, &eg)).collect();
+                let got: Vec<_> = shared.matches().iter().map(|m| env_key(m, &eg)).collect();
+                assert_eq!(got, expect, "reused pool produced different bindings");
+            }
+        }
     }
 
     #[test]
