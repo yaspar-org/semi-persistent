@@ -1,0 +1,18 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 60a336158624ce010c03420ab8e5de43df43b936261c98c4862019533e33b9f2 # shrinks to vals = [0, 5], ts = [5]
+cc 0267e498c75fcfdd860ec68cd01b7429db4da41e297b8717f2f05980fac3af7d # shrinks to vals = [151, 185], ts = [185]
+cc 84e82d27a65aa1147df8d26c897ff1d7ab4bad286572a19477112c62e8812075 # shrinks to vals = [0, 40, 65], ops = [(false, 0), (true, 65)]
+cc ee9807edf8605ab0e281ca3c10b9ed86c20224cae90b04421de7f59ef440995a # shrinks to vals = [0, 1, 2, 3, 5, 6, 7, 23], ts = [23]
+cc 404e91ee467720ed9cf391f8f2d2eed51849a02a60120bc137a14c475f607bfd # shrinks to vals = [0, 21, 25, 50], ts = [21]
+cc 1a0ec9ac556f7e6853f2b4c09c3bbee2a4a07b471c0766cbcf824b8549409bd9 # shrinks to vals = [0, 47, 75], ops = [(true, 47)]
+cc 300900a588646e54dcc8b5f4449ca29fb929e0ed5559cd5e0cbf1a3c05862f4e # shrinks to vals = [3], ts = [3]
+cc ee7cb4fe337a873db360f1af587f0cd50fe09695a565e1f2f8f0b68ce2b9a782 # shrinks to vals = [1], ts = [1]
+cc 7cc2656fd0f9e94f924ea0c5be45619fc1a629d662382fd8fea775186945971b # shrinks to vals = [1], ts = [1]
+cc 7b3e604bf31ba485ebda1758efddc8e541316dfe6ee988a8613cde1cd896ed35 # shrinks to vals = [23, 193], ops = [(true, 23)]
+cc 8d1d05eaac0915fa2e5a69512e61a5362fad4f1ced3127080ac240dc61636136 # shrinks to vals = [173], ts = [173]
+cc 774f397369577999dd8afaf1da7af15f703d98ceeb53cca097a174b6dd58fbbf # shrinks to vals = [0, 1, 2, 3, 4, 7, 8, 41], ops = [(false, 0), (false, 0), (false, 0), (false, 0), (false, 0), (false, 0), (false, 0), (true, 41)]
