@@ -39,6 +39,19 @@ Protocol, in order:
    a standalone single-site binary (`egraph/examples/complsite.rs` is the one
    for the completion path) before recording it. E1's apparent 4% completion
    regression vanished at this step.
+7. **A win too large for its mechanism is a measurement error.** E4b's two halves
+   each read −4 to −5% on the AC rows in criterion, and so did both together —
+   three changes cannot each cause the same 4% and then fail to compound. The
+   standalone site put all three inside the noise band. The rule that follows:
+   before recording an AC-row delta, reproduce it through
+   `egraph/examples/acsite.rs`, and check the delta against what the mechanism
+   can pay for (an allocation count, a probe count). E1/E2's accepted rows had
+   16-23% allocation reductions behind them; E4b's had 0.2%.
+
+`examples/` holds the standalone sites protocol items 6 and 7 require:
+`complsite.rs` (completion), `acsite.rs` (AC rewrite, either width and driver),
+`allocprobe.rs` (allocation counts), `extractprobe.rs` (extraction structure and
+fixpoint pass counts).
 
 ## Machine and toolchain
 
@@ -59,4 +72,7 @@ protocol in the plan assumed.
 | [E0](E0-release-profile.md) | `[profile.release]`: `lto = "fat"`, `codegen-units = 1` | **accepted** — 6-9% end-to-end, zero code change |
 | [E1](E1-join-cursor-allocation.md) | `SmallVec` cursor vector; allocation-free `LeapfrogJoin::new` | **accepted** — 2-6% on join-driven rows, 16-19% fewer allocations |
 | [E2](E2-match-recycling.md) | `MatchPool`: recycle match buffers across queries instead of cloning nine `Vec`s per match | **accepted** — 22-33% on rewrite rows, 60% fewer bytes allocated |
-| [E3](E3-index-hasher.md) | foldhash instead of SipHash for the dense-id index maps | **accepted** — 4.5-10%, twice the gain on semi-naive as on naive |
+| [E3](E3-index-hasher.md) | foldhash instead of SipHash for the dense-id index maps | **accepted** — 4.5-10%, twice the gain on semi-naive as on naive; AC rows re-verified standalone |
+| [E4a](E4-extract-dense-tables.md) | dense-id `Vec`s instead of maps for the extraction cost tables | **accepted** — 22-29% where the fixpoint dominates; DAG rows unaffected (they are 99.97% `reconstruct`) |
+| [E4b](E4b-index-build-scratch.md) | hoist `build_from`'s scratch `Vec`; stop `finalize` rehashing every key | **rejected, both halves** — the hoist is inside the noise band (0.2% of allocations); the in-place `finalize` regresses completion 8% |
+| [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |
