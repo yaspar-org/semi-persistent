@@ -82,6 +82,7 @@ protocol in the plan assumed.
 | [E3](E3-index-hasher.md) | foldhash instead of SipHash for the dense-id index maps | **accepted** — 4.5-10%, twice the gain on semi-naive as on naive; AC rows re-verified standalone |
 | [E4a](E4-extract-dense-tables.md) | dense-id `Vec`s instead of maps for the extraction cost tables | **accepted** — 22-29% where the fixpoint dominates; DAG rows unaffected (they are 99.97% `reconstruct`) |
 | [E4b](E4b-index-build-scratch.md) | hoist `build_from`'s scratch `Vec`; stop `finalize` rehashing every key | **rejected, both halves** — the hoist is inside the noise band (0.2% of allocations); the in-place `finalize` regresses completion 8% |
+| [E6](E6-rhs-instantiation-allocation.md) | `SmallVec` child and prim-arg lists in `apply::eval`, inline capacity swept | **accepted** — 5-11% on every rewrite row, 37-82% fewer allocations |
 | [E11a](E11a-reconstruct-redundant-clone.md) | `reconstruct` deep-cloned each child term then dropped the original | **accepted** — 91-98% on every extraction row; removes an O(depth²) term |
 | [E11b](E11b-reconstruct-memo.md) | memoize `reconstruct` per class, so a shared class is built once | **rejected** — a memo hit still deep-copies the subterm, so it trades a graph walk for a copy of the same size; 4 variants, all regress the tree rows |
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |

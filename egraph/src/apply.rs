@@ -292,6 +292,31 @@ use crate::egraph::EGraph;
 use crate::ematch::{Match, MatchPool, run_query_into};
 use crate::index::IndexStore;
 use crate::literal::LitVal;
+use smallvec::SmallVec;
+
+/// Inline capacity for a node's child list during RHS instantiation.
+///
+/// 16 rather than the 4 of `leapfrog::CursorVec`, because the two lists have
+/// different length distributions. A cursor vector holds one entry per query
+/// atom; a child list holds one per *child*, and a variadic RHS that splices a
+/// rest variable (`(add (mul y x) ..r)`) produces as many children as the
+/// matched node had. Swept on the AC workload, min-reduced:
+///
+/// | inline capacity | `ac10/naive` | allocations |
+/// |---|---|---|
+/// |  4 | 84.9 ms | 1 199 399 |
+/// |  8 | 82.5 ms | — |
+/// | 16 | 79.7 ms | 1 070 299 |
+/// | 32 | 79.6 ms | — |
+///
+/// 16 is the knee: 32 buys 0.1% for twice the stack. Beyond the inline capacity
+/// the list spills to the heap, which is the single allocation the plain `Vec`
+/// made unconditionally.
+type ChildVec<Cfg> = SmallVec<[<Cfg as EGraphConfig>::G; 16]>;
+
+/// Inline capacity for a primitive application's argument list. Primitives here
+/// are arithmetic and comparison, so two covers all of them.
+const PRIM_ARGS: usize = 2;
 
 pub fn eval<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
@@ -318,7 +343,7 @@ where
             eg.add_lit(*op, val_id)
         }
         RhsOp::App { op: o, args } => {
-            let mut children = Vec::new();
+            let mut children = ChildVec::<Cfg>::new();
             for arg in args {
                 eval_arg(arg, m, eg, model, globals, &mut children);
             }
@@ -326,14 +351,14 @@ where
         }
         RhsOp::PrimApp { op, args } => {
             // Gather bound lit values from the match
-            let raw_vals: Vec<L> = args
+            let raw_vals: SmallVec<[L; PRIM_ARGS]> = args
                 .iter()
                 .map(|vid| {
                     let lit_val_id = m.get_lit_val(*vid);
                     eg.lits().get(lit_val_id).clone()
                 })
                 .collect();
-            let refs: Vec<&L> = raw_vals.iter().collect();
+            let refs: SmallVec<[&L; PRIM_ARGS]> = raw_vals.iter().collect();
             let prim = &model.ops()[op.to_usize()];
             let result = (prim.eval)(&refs);
             let result_id = eg.lits_mut().intern(result);
@@ -353,7 +378,7 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
-    out: &mut Vec<Cfg::G>,
+    out: &mut ChildVec<Cfg>,
 ) where
     Cfg: EGraphConfig,
     L: LitVal,
