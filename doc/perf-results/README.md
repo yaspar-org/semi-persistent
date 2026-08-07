@@ -55,6 +55,15 @@ Protocol, in order:
    an initially-empty map wins when they are large and sparse. Which one applies is
    a measurement, not an inference from E4a.
 
+9. **Decompose the cost before accepting the stated mechanism.** A plan names the
+   mechanism it noticed, which need not be the one that dominates. C4 was written
+   up as "the rule scan restarts from index 0 after every rewrite"; splitting the
+   count showed restarts were 23% of the tests and the final *failing* scan was
+   77%, so the proposed fix addressed the minority — and was unsound anyway.
+   Indexing, which shrinks every scan instead of skipping some, took 30-47%.
+   Before implementing a stated fix, count the sub-parts of the thing it targets;
+   if the fix does not address the largest, look for the one that does.
+
 `examples/` holds the standalone sites protocol items 6 and 7 require:
 `complsite.rs` (completion), `acsite.rs` (AC rewrite, either width and driver),
 `allocprobe.rs` (allocation counts), `extractprobe.rs` (extraction structure and
@@ -86,6 +95,7 @@ protocol in the plan assumed.
 | [E6](E6-rhs-instantiation-allocation.md) | `SmallVec` child and prim-arg lists in `apply::eval`, inline capacity swept | **accepted** — 5-11% on every rewrite row, 37-82% fewer allocations |
 | [E11a](E11a-reconstruct-redundant-clone.md) | `reconstruct` deep-cloned each child term then dropped the original | **accepted** — 91-98% on every extraction row; removes an O(depth²) term |
 | [E11b](E11b-reconstruct-memo.md) | memoize `reconstruct` per class, so a shared class is built once | **rejected** — a memo hit still deep-copies the subterm, so it trades a graph walk for a copy of the same size; 4 variants, all regress the tree rows |
+| [E13](E13-rule-lhs-index.md) | index the AC rule table by LHS-minimum class, so a normalize step tests only the rules a present class could match | **accepted** — 30-47% on the completion rows, 80-85% fewer subset tests, both rising with problem size |
 | [E8](E8-union-find-compression.md) | path-compression policy: on-the-fly vs systematic sweep vs threshold | **closed on its gate** — mean hops 0.000-0.433, deepest chain 2; nothing to compress |
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |
 | [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |

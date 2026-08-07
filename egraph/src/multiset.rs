@@ -272,6 +272,195 @@ impl<'a, G> From<&'a NfRule<G>> for NfRuleRef<'a, G> {
     }
 }
 
+/// A rule set as the normalizers consume it: the rules themselves, plus an optional
+/// [`NfIndex`] over them.
+///
+/// Two shapes rather than one because the two completion call sites amortize differently.
+/// The critical-pair loop normalizes thousands of reducts against one rule table already
+/// hoisted outside the loop, so an index built alongside it is paid for once — use
+/// [`indexed`](Self::indexed). Inter-reduction refills a *different* rule slice per target
+/// (each target is normalized by all rules but its own), so there is nothing to amortize
+/// over and indexing would cost more than the scan it replaces — use
+/// [`linear`](Self::linear).
+#[derive(Clone, Copy)]
+pub struct NfRules<'r, 'i, G> {
+    rules: &'i [NfRuleRef<'r, G>],
+    index: Option<&'i NfIndex<G>>,
+}
+
+impl<'r, 'i, G: Copy + Ord> NfRules<'r, 'i, G> {
+    /// Scan every rule on every step. Correct for any rule set; the right choice when the
+    /// set is not reused across enough normalizations to pay for an index.
+    pub fn linear(rules: &'i [NfRuleRef<'r, G>]) -> Self {
+        Self { rules, index: None }
+    }
+
+    /// Consult `index` to narrow the rules tested. `index` must have been built from
+    /// exactly this `rules` slice ([`NfIndex::rebuild`] stores positions into it).
+    pub fn indexed(rules: &'i [NfRuleRef<'r, G>], index: &'i NfIndex<G>) -> Self {
+        debug_assert_eq!(
+            index.n_rules,
+            rules.len(),
+            "NfIndex was built from a different rule slice"
+        );
+        Self {
+            rules,
+            index: Some(index),
+        }
+    }
+
+    /// The lowest-indexed rule whose LHS is contained in `out`, or `None` if the monomial
+    /// is irreducible. `cands` is caller-owned scratch, reused across steps.
+    ///
+    /// **Both paths return the same rule.** A rule applies only if its whole LHS is
+    /// contained in `out`, so in particular the LHS's smallest class is present — which is
+    /// exactly the key it is indexed under. The index therefore admits every applicable
+    /// rule (it can only over-admit), and the candidates are visited in ascending position,
+    /// so the first hit is the one the linear scan's `find` would have stopped at.
+    #[inline]
+    fn find_applicable(&self, out: &[Pair<G>], cands: &mut CandVec) -> Option<NfRuleRef<'r, G>> {
+        match self.index {
+            None => self
+                .rules
+                .iter()
+                .copied()
+                .find(|r| rule_applies_linear(r, out)),
+            Some(ix) => {
+                ix.candidates(out, cands);
+                cands.iter().find_map(|&i| {
+                    let r = self.rules[i as usize];
+                    multiset_subset(r.lhs, out).then_some(r)
+                })
+            }
+        }
+    }
+}
+
+/// Applicability test for the unindexed path, with the orientation check the indexed path
+/// performs once at [`NfIndex::rebuild`] time instead.
+#[inline]
+fn rule_applies_linear<G: Copy + Ord>(r: &NfRuleRef<'_, G>, out: &[Pair<G>]) -> bool {
+    // Orientation is only meaningful for a rule the normalizers can apply: `monomial_cmp`
+    // reports Equal for an empty pair, so the emptiness guard has to come first.
+    if r.lhs.is_empty() {
+        return false;
+    }
+    debug_assert!(monomial_cmp(r.lhs, r.rhs) == std::cmp::Ordering::Greater);
+    multiset_subset(r.lhs, out)
+}
+
+/// Candidate rule positions for one index probe.
+///
+/// A monomial contributes one bucket per distinct class it contains, and completion
+/// monomials are tiny — mean 2.5 classes, max 5 over the AC completion workloads — so the
+/// candidate set stays small even against a 635-rule table. 32 inline covers the measured
+/// distribution without allocating; beyond it the list spills and stays correct.
+type CandVec = smallvec::SmallVec<[u32; 32]>;
+
+/// Inverted index over a rule table's left-hand sides, keyed by each LHS's **smallest
+/// class**.
+///
+/// The normalize loops are a linear scan over every rule per step, and completion runs them
+/// against a table of hundreds of rules whose LHSs are monomials over a large class space,
+/// so nearly every test fails on the first class compared. Measured over the AC completion
+/// workloads, **93.6% / 96.8% / 98.4%** of `multiset_subset` calls (at 32 / 64 / 128 pairs)
+/// are against a rule whose LHS-minimum is not even present in the host monomial — and the
+/// rate rises with table size, so the scan is the term that grows.
+///
+/// Soundness needs only that the key be *some* fixed member of the LHS: containment
+/// implies every LHS class is present in the host, so whichever member is chosen, a probe
+/// over the host's classes reaches the rule's bucket. The minimum is picked for balance
+/// rather than correctness — measured against keying on the LHS maximum, `accompl64` runs
+/// 2.507 ms vs 2.552 ms (1.8%), because completion's rules are minted in class-id order
+/// and their maxima cluster in the recently-added range while their minima spread, giving
+/// flatter buckets and shorter candidate lists.
+///
+/// CSR layout — `keys` ascending and distinct, `order[starts[i]..starts[i + 1]]` the rule
+/// positions for `keys[i]` in ascending order — so a probe is a binary search plus a slice
+/// copy, and the whole index is three allocations regardless of table size.
+pub struct NfIndex<G> {
+    /// Distinct LHS-minimum classes, ascending.
+    keys: Vec<G>,
+    /// `keys.len() + 1` offsets into `order`.
+    starts: Vec<u32>,
+    /// Rule positions grouped by key, ascending within each group.
+    order: Vec<u32>,
+    /// Length of the rule slice this was built from, to catch a mismatched pairing.
+    n_rules: usize,
+}
+
+impl<G: Copy + Ord> NfIndex<G> {
+    /// Build an index over `rules`.
+    pub fn build(rules: &[NfRuleRef<'_, G>]) -> Self {
+        let mut ix = Self {
+            keys: Vec::new(),
+            starts: Vec::new(),
+            order: Vec::new(),
+            n_rules: 0,
+        };
+        ix.rebuild(rules);
+        ix
+    }
+
+    /// Re-index `rules` in place, reusing the existing allocations. Rules with an empty LHS
+    /// are omitted: the normalizers never apply them, so leaving them out of the index is
+    /// the same filter the linear path's `!lhs.is_empty()` performs per visit.
+    pub fn rebuild(&mut self, rules: &[NfRuleRef<'_, G>]) {
+        self.keys.clear();
+        self.starts.clear();
+        self.order.clear();
+        self.n_rules = rules.len();
+
+        // (LHS-minimum, position) for every applicable rule, ordered by key then position —
+        // the latter is what makes each group ascending, hence the scan order-preserving.
+        let mut pairs: Vec<(G, u32)> = rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                // Empty-LHS rules are dropped before the orientation check: `monomial_cmp`
+                // reports Equal for an empty pair, and the normalizers never apply them.
+                if r.lhs.is_empty() {
+                    return false;
+                }
+                debug_assert!(monomial_cmp(r.lhs, r.rhs) == std::cmp::Ordering::Greater);
+                true
+            })
+            .map(|(i, r)| {
+                // A canonical monomial is sorted by class, so element 0 is the minimum.
+                debug_assert_canonical(r.lhs);
+                (r.lhs[0].0, i as u32)
+            })
+            .collect();
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+        self.starts.push(0);
+        for (k, i) in pairs {
+            if self.keys.last() != Some(&k) {
+                self.keys.push(k);
+                self.starts.push(self.order.len() as u32);
+            }
+            self.order.push(i);
+            *self.starts.last_mut().unwrap() = self.order.len() as u32;
+        }
+    }
+
+    /// Positions of every rule that could apply to `out`, ascending. Over-admits (a
+    /// candidate still needs the full containment test) but never under-admits.
+    #[inline]
+    fn candidates(&self, out: &[Pair<G>], buf: &mut CandVec) {
+        buf.clear();
+        for p in out {
+            if let Ok(k) = self.keys.binary_search(&p.0) {
+                let (s, e) = (self.starts[k] as usize, self.starts[k + 1] as usize);
+                buf.extend_from_slice(&self.order[s..e]);
+            }
+        }
+        // Each rule sits in exactly one bucket, so the gathered positions are distinct and
+        // sorting is all that is needed to recover the linear scan's visit order.
+        buf.sort_unstable();
+    }
+}
+
 /// Release-mode backstop for the normalize loops. With every rule oriented `lhs ≫ rhs`
 /// in the admissible order, each rewrite strictly lowers the host monomial, so the loop
 /// terminates unconditionally; legitimate chains are short in practice but have no small
@@ -295,7 +484,7 @@ pub fn normalize_ms_into<G: Copy + Ord>(
     out: &mut Vec<Pair<G>>,
     scratch: &mut Vec<Pair<G>>,
     ms: &[Pair<G>],
-    rules: &[NfRuleRef<'_, G>],
+    rules: NfRules<'_, '_, G>,
 ) {
     out.clear();
     out.extend_from_slice(ms);
@@ -303,34 +492,28 @@ pub fn normalize_ms_into<G: Copy + Ord>(
     // admissible [`monomial_cmp`] order, so each step strictly lowers `out` (compatibility)
     // in a well-founded order. The guard is a release-mode backstop against a caller
     // passing a mis-oriented rule; hitting it is always a bug (debug builds assert).
+    let mut cands = CandVec::new();
     let mut guard = GUARD_MAX_REWRITES;
-    'outer: loop {
-        for rule in rules {
-            debug_assert!(monomial_cmp(rule.lhs, rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(rule.lhs, out) {
-                #[cfg(debug_assertions)]
-                let before = out.clone();
-                // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
-                multiset_subtract_into(scratch, out, rule.lhs);
-                multiset_union_into(out, scratch, rule.rhs);
-                #[cfg(debug_assertions)]
-                debug_assert!(
-                    monomial_cmp(out, &before) == std::cmp::Ordering::Less,
-                    "rewrite step failed to lower the host monomial (order not admissible?)"
-                );
-                guard -= 1;
-                if guard == 0 {
-                    debug_assert!(
-                        false,
-                        "normalize_ms_into hit the rewrite guard: a rule set \
-                         oriented by monomial_cmp cannot loop, so a mis-oriented rule slipped in"
-                    );
-                    break 'outer;
-                }
-                continue 'outer;
-            }
+    while let Some(rule) = rules.find_applicable(out, &mut cands) {
+        #[cfg(debug_assertions)]
+        let before = out.clone();
+        // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
+        multiset_subtract_into(scratch, out, rule.lhs);
+        multiset_union_into(out, scratch, rule.rhs);
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            monomial_cmp(out, &before) == std::cmp::Ordering::Less,
+            "rewrite step failed to lower the host monomial (order not admissible?)"
+        );
+        guard -= 1;
+        if guard == 0 {
+            debug_assert!(
+                false,
+                "normalize_ms_into hit the rewrite guard: a rule set \
+                 oriented by monomial_cmp cannot loop, so a mis-oriented rule slipped in"
+            );
+            break;
         }
-        break;
     }
 }
 
@@ -339,7 +522,7 @@ pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<P
     let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
-    normalize_ms_into(&mut out, &mut scratch, ms, &refs);
+    normalize_ms_into(&mut out, &mut scratch, ms, NfRules::linear(&refs));
     out
 }
 
@@ -364,37 +547,32 @@ pub fn normalize_set_into<G: Copy + Ord>(
     out: &mut Vec<Pair<G>>,
     scratch: &mut Vec<Pair<G>>,
     ms: &[Pair<G>],
-    rules: &[NfRuleRef<'_, G>],
+    rules: NfRules<'_, '_, G>,
 ) {
     out.clear();
     out.extend_from_slice(ms);
     clamp_idempotent(out);
+    let mut cands = CandVec::new();
     let mut guard = GUARD_MAX_REWRITES;
-    'outer: loop {
-        for rule in rules {
-            debug_assert!(monomial_cmp(rule.lhs, rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(rule.lhs, out) {
-                #[cfg(debug_assertions)]
-                let before = out.clone();
-                multiset_subtract_into(scratch, out, rule.lhs);
-                multiset_union_into(out, scratch, rule.rhs);
-                clamp_idempotent(out);
-                // Strictness survives the clamp: the multiset step is strict (admissible
-                // order + lhs ≫ rhs) and the clamp only lowers counts (can(t) ≼ t).
-                #[cfg(debug_assertions)]
-                debug_assert!(
-                    monomial_cmp(out, &before) == std::cmp::Ordering::Less,
-                    "idempotent rewrite step failed to lower the host monomial"
-                );
-                guard -= 1;
-                if guard == 0 {
-                    debug_assert!(false, "normalize_set_into hit the rewrite guard");
-                    break 'outer;
-                }
-                continue 'outer;
-            }
+    while let Some(rule) = rules.find_applicable(out, &mut cands) {
+        #[cfg(debug_assertions)]
+        let before = out.clone();
+        // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
+        multiset_subtract_into(scratch, out, rule.lhs);
+        multiset_union_into(out, scratch, rule.rhs);
+        clamp_idempotent(out);
+        // Strictness survives the clamp: the multiset step is strict (admissible
+        // order + lhs ≫ rhs) and the clamp only lowers counts (can(t) ≼ t).
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            monomial_cmp(out, &before) == std::cmp::Ordering::Less,
+            "idempotent rewrite step failed to lower the host monomial"
+        );
+        guard -= 1;
+        if guard == 0 {
+            debug_assert!(false, "normalize_set_into hit the rewrite guard");
+            break;
         }
-        break;
     }
 }
 
@@ -403,7 +581,7 @@ pub fn normalize_set<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<
     let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
-    normalize_set_into(&mut out, &mut scratch, ms, &refs);
+    normalize_set_into(&mut out, &mut scratch, ms, NfRules::linear(&refs));
     out
 }
 
@@ -433,38 +611,33 @@ pub fn normalize_nilpotent_into<G: Copy + Ord>(
     out: &mut Vec<Pair<G>>,
     scratch: &mut Vec<Pair<G>>,
     ms: &[Pair<G>],
-    rules: &[NfRuleRef<'_, G>],
+    rules: NfRules<'_, '_, G>,
     order: u8,
 ) {
     out.clear();
     out.extend_from_slice(ms);
     clamp_nilpotent(out, order);
+    let mut cands = CandVec::new();
     let mut guard = GUARD_MAX_REWRITES;
-    'outer: loop {
-        for rule in rules {
-            debug_assert!(monomial_cmp(rule.lhs, rule.rhs) == std::cmp::Ordering::Greater);
-            if !rule.lhs.is_empty() && multiset_subset(rule.lhs, out) {
-                #[cfg(debug_assertions)]
-                let before = out.clone();
-                multiset_subtract_into(scratch, out, rule.lhs);
-                multiset_union_into(out, scratch, rule.rhs);
-                clamp_nilpotent(out, order);
-                // Strictness survives the clamp: the multiset step is strict (admissible
-                // order + lhs ≫ rhs) and the mod-n clamp only lowers counts (can(t) ≼ t).
-                #[cfg(debug_assertions)]
-                debug_assert!(
-                    monomial_cmp(out, &before) == std::cmp::Ordering::Less,
-                    "nilpotent rewrite step failed to lower the host monomial"
-                );
-                guard -= 1;
-                if guard == 0 {
-                    debug_assert!(false, "normalize_nilpotent_into hit the rewrite guard");
-                    break 'outer;
-                }
-                continue 'outer;
-            }
+    while let Some(rule) = rules.find_applicable(out, &mut cands) {
+        #[cfg(debug_assertions)]
+        let before = out.clone();
+        // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
+        multiset_subtract_into(scratch, out, rule.lhs);
+        multiset_union_into(out, scratch, rule.rhs);
+        clamp_nilpotent(out, order);
+        // Strictness survives the clamp: the multiset step is strict (admissible
+        // order + lhs ≫ rhs) and the mod-n clamp only lowers counts (can(t) ≼ t).
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            monomial_cmp(out, &before) == std::cmp::Ordering::Less,
+            "nilpotent rewrite step failed to lower the host monomial"
+        );
+        guard -= 1;
+        if guard == 0 {
+            debug_assert!(false, "normalize_nilpotent_into hit the rewrite guard");
+            break;
         }
-        break;
     }
 }
 
@@ -477,7 +650,7 @@ pub fn normalize_nilpotent<G: Copy + Ord>(
     let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
-    normalize_nilpotent_into(&mut out, &mut scratch, ms, &refs, order);
+    normalize_nilpotent_into(&mut out, &mut scratch, ms, NfRules::linear(&refs), order);
     out
 }
 
@@ -668,9 +841,212 @@ mod tests {
         let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
         let mut out = ms(&[(99, 3)]); // pre-dirtied
         let mut scratch = ms(&[(88, 2)]); // pre-dirtied
-        normalize_ms_into(&mut out, &mut scratch, &input, &refs);
+        normalize_ms_into(&mut out, &mut scratch, &input, NfRules::linear(&refs));
         assert_eq!(out, ms(&[(5, 1)]));
         assert_eq!(out, normalize_ms(&input, &rules));
+    }
+
+    /// The indexed path must pick the same rule the linear scan would, not merely *a*
+    /// rule that applies — the two differ whenever more than one rule is applicable, and
+    /// which one fires determines the normal form reached.
+    ///
+    /// The rules here are ordered so position and LHS-minimum *disagree*: rule 0 keys on
+    /// class 3, rule 1 on class 1. A host containing both is reducible by either, the
+    /// linear scan takes rule 0, and an index that returned candidates in key order rather
+    /// than position order would take rule 1.
+    #[test]
+    fn indexed_picks_the_same_rule_as_the_linear_scan() {
+        let rules = [
+            NfRule {
+                lhs: ms(&[(3, 1), (4, 1)]),
+                rhs: ms(&[(6, 1)]),
+            },
+            NfRule {
+                lhs: ms(&[(1, 1), (2, 1)]),
+                rhs: ms(&[(7, 1)]),
+            },
+        ];
+        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let index = NfIndex::build(&refs);
+        // Reducible by rule 0 and rule 1 both; the earlier rule must win either way.
+        let input = ms(&[(1, 1), (2, 1), (3, 1), (4, 1)]);
+
+        let mut lin = Vec::new();
+        let mut ixd = Vec::new();
+        let mut scratch = Vec::new();
+        normalize_ms_into(&mut lin, &mut scratch, &input, NfRules::linear(&refs));
+        normalize_ms_into(
+            &mut ixd,
+            &mut scratch,
+            &input,
+            NfRules::indexed(&refs, &index),
+        );
+        assert_eq!(lin, ixd, "indexed and linear normal forms diverged");
+        // Rule 0 fires first ({3,4}→{6}), leaving {1,2,6}, then rule 1 ({1,2}→{7}).
+        assert_eq!(lin, ms(&[(6, 1), (7, 1)]));
+    }
+
+    /// Exhaustive equivalence over a small space, for all three normalizers: every host
+    /// monomial over 6 classes against a fixed rule table, indexed vs linear. This is the
+    /// property the `Bclose` call site depends on, so it is checked over many shapes
+    /// rather than the one hand-picked above — including hosts no rule touches (the 94-98%
+    /// case the index exists to skip) and hosts reducible several steps deep.
+    #[test]
+    fn indexed_matches_linear_for_every_host_over_six_classes() {
+        // LHS-minima deliberately repeated (two rules key on class 1) and out of position
+        // order, so buckets hold multiple rules and key order ≠ position order.
+        let rules = vec![
+            NfRule {
+                lhs: ms(&[(2, 1), (3, 1)]),
+                rhs: ms(&[(1, 1)]),
+            },
+            NfRule {
+                lhs: ms(&[(1, 1), (4, 1)]),
+                rhs: ms(&[(2, 1)]),
+            },
+            NfRule {
+                lhs: ms(&[(1, 2)]),
+                rhs: ms(&[(3, 1)]),
+            },
+            NfRule {
+                lhs: ms(&[(4, 1), (5, 1)]),
+                rhs: ms(&[(1, 1)]),
+            },
+            NfRule {
+                lhs: ms(&[(1, 1), (2, 1), (3, 1)]),
+                rhs: ms(&[(5, 1)]),
+            },
+        ];
+        // Orientation is the normalizers' precondition (lhs ≫ rhs); assert it up front so a
+        // future edit to the table above fails here rather than in a debug_assert.
+        for r in &rules {
+            assert_eq!(
+                monomial_cmp(&r.lhs, &r.rhs),
+                std::cmp::Ordering::Greater,
+                "test rule table is mis-oriented"
+            );
+        }
+        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let index = NfIndex::build(&refs);
+
+        // Every multiplicity vector over classes 1..=6 with counts 0..=2: 3^6 = 729 hosts.
+        let mut checked = 0;
+        for code in 0..3usize.pow(6) {
+            let mut host: Vec<Pair<ENodeId>> = Vec::new();
+            let mut c = code;
+            for cls in 1..=6u32 {
+                let mult = (c % 3) as u32;
+                c /= 3;
+                if mult > 0 {
+                    host.push((id(cls), Multiplicity(mult)));
+                }
+            }
+            let (mut lin, mut ixd, mut scratch) = (Vec::new(), Vec::new(), Vec::new());
+
+            normalize_ms_into(&mut lin, &mut scratch, &host, NfRules::linear(&refs));
+            normalize_ms_into(
+                &mut ixd,
+                &mut scratch,
+                &host,
+                NfRules::indexed(&refs, &index),
+            );
+            assert_eq!(lin, ixd, "normalize_ms_into diverged on host {host:?}");
+
+            normalize_set_into(&mut lin, &mut scratch, &host, NfRules::linear(&refs));
+            normalize_set_into(
+                &mut ixd,
+                &mut scratch,
+                &host,
+                NfRules::indexed(&refs, &index),
+            );
+            assert_eq!(lin, ixd, "normalize_set_into diverged on host {host:?}");
+
+            for order in [2u8, 3] {
+                normalize_nilpotent_into(
+                    &mut lin,
+                    &mut scratch,
+                    &host,
+                    NfRules::linear(&refs),
+                    order,
+                );
+                normalize_nilpotent_into(
+                    &mut ixd,
+                    &mut scratch,
+                    &host,
+                    NfRules::indexed(&refs, &index),
+                    order,
+                );
+                assert_eq!(
+                    lin, ixd,
+                    "normalize_nilpotent_into (order {order}) diverged on host {host:?}"
+                );
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 729);
+    }
+
+    /// `rebuild` must leave the index equivalent to a fresh `build`, since it exists to
+    /// reuse one index's allocations across rounds.
+    #[test]
+    fn nf_index_rebuild_matches_fresh_build() {
+        let first = [NfRule {
+            lhs: ms(&[(5, 1), (6, 1)]),
+            rhs: ms(&[(2, 1)]),
+        }];
+        let second = [
+            NfRule {
+                lhs: ms(&[(1, 1), (9, 1)]),
+                rhs: ms(&[(4, 1)]),
+            },
+            NfRule {
+                lhs: ms(&[(1, 3)]),
+                rhs: ms(&[(2, 1)]),
+            },
+        ];
+        let r1: Vec<NfRuleRef<'_, ENodeId>> = first.iter().map(NfRuleRef::from).collect();
+        let r2: Vec<NfRuleRef<'_, ENodeId>> = second.iter().map(NfRuleRef::from).collect();
+
+        let mut reused = NfIndex::build(&r1);
+        reused.rebuild(&r2);
+        let fresh = NfIndex::build(&r2);
+        assert_eq!(reused.keys, fresh.keys);
+        assert_eq!(reused.starts, fresh.starts);
+        assert_eq!(reused.order, fresh.order);
+        assert_eq!(reused.n_rules, fresh.n_rules);
+    }
+
+    /// An empty-LHS rule is skipped by the linear path's `!lhs.is_empty()` guard and
+    /// omitted from the index; both must still agree, and the omission must not renumber
+    /// the rules around it.
+    #[test]
+    fn empty_lhs_rule_is_skipped_by_both_paths() {
+        let rules = [
+            NfRule {
+                lhs: Vec::new(),
+                rhs: Vec::new(),
+            },
+            NfRule {
+                lhs: ms(&[(1, 1), (2, 1)]),
+                rhs: ms(&[(3, 1)]),
+            },
+        ];
+        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let index = NfIndex::build(&refs);
+        // Rule 1 is at position 1 in `order`, not renumbered to 0 by the omission.
+        assert_eq!(index.order, vec![1]);
+
+        let input = ms(&[(1, 1), (2, 1)]);
+        let (mut lin, mut ixd, mut scratch) = (Vec::new(), Vec::new(), Vec::new());
+        normalize_ms_into(&mut lin, &mut scratch, &input, NfRules::linear(&refs));
+        normalize_ms_into(
+            &mut ixd,
+            &mut scratch,
+            &input,
+            NfRules::indexed(&refs, &index),
+        );
+        assert_eq!(lin, ms(&[(3, 1)]));
+        assert_eq!(lin, ixd);
     }
 
     #[test]
@@ -709,7 +1085,7 @@ mod tests {
         let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
         let mut out = ms(&[(99, 3)]);
         let mut scratch = ms(&[(88, 2)]);
-        normalize_nilpotent_into(&mut out, &mut scratch, &input, &refs, 2);
+        normalize_nilpotent_into(&mut out, &mut scratch, &input, NfRules::linear(&refs), 2);
         assert_eq!(out, normalize_nilpotent(&input, &rules, 2));
     }
 
