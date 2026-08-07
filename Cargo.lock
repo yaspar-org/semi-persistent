@@ -919,6 +919,7 @@ dependencies = [
  "proptest",
  "rapidhash",
  "semi-persistent-containers-verus",
+ "smallvec",
  "vstd",
  "winnow",
 ]
