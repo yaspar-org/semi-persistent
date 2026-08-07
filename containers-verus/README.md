@@ -60,7 +60,7 @@ and are verified (see "Verification status" below).
 
 ## Verification status
 
-**1378 facts verified across 31 module entries, 0 errors, 0 `admit`s/`assume`s**
+**1399 facts verified across 31 module entries, 0 errors, 0 `admit`s/`assume`s**
 (run `./verify-all.sh` from the package root for the live per-module tally).
 The whole container family is verified:
 
@@ -70,7 +70,8 @@ The whole container family is verified:
 - **`AppendOnlyVec`, `Map` (`SpMap`), `SparseSet`, `ListArena`, `CircularList`**:
   each verified for its core API, including `mark`/`restore`.
 - **`BPlusTreeSet`**: fully verified, not a scaffold: `insert` (with split
-  propagation and new-root growth) is *total* and carries its full model
+  propagation, new-root growth, and production's O(1) **append fast path** over a
+  `wf`-bound `last_leaf` cache) is *total* and carries its full model
   transition; sound in-order traversal and `seek` (the cursor enumerates the
   sorted set, never skipping a present key); the arena provably never overflows
   (so `insert` needs no caller capacity precondition); and `mark`/`restore`.

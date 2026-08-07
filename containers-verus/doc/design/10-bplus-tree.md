@@ -263,8 +263,8 @@ SparseSet, plus the tree-level rollback theorem.
 
 | Module | Facts | Content |
 |---|---|---|
-| `bplus` | 127 | the tree: `wf`, `new`/`contains`/`len`, insert (+ arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
-| `bplus_tree` | 109 | the ghost `Tree` model and its structural lemmas |
+| `bplus` | 136 | the tree: `wf`, `new`/`contains`/`len`, insert (+ the append fast path + arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
+| `bplus_tree` | 121 | the ghost `Tree` model and its structural lemmas |
 | `bplus_layout` | 311 | the `NodeLayout` trait + six packed layouts + verified mutators |
 | `bplus_search` | 9 | the `SearchKind` trait: binary search + `Branchless` |
 
@@ -326,7 +326,7 @@ no slice to hand it, since a packed node's keys and child pointers share one
 `NodeLayout` first; until then the tree is hardwired to binary search, which is
 production's default.
 
-### 5.2 `from_sorted` is not a bulk load — remaining gap
+### 5.2 The two body-level performance gaps: root cause and fixes
 
 The constructor *exists* and is verified, but its body is `Self::new()` plus a loop
 of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
@@ -352,37 +352,133 @@ After routing all five scans through the verified binary searches:
 
 **Random-order insertion is now at parity** (marginally ahead — same effect as
 [Chapter 12](12-sorted-vec-cursor.md)'s cursor, where the explicit verified
-bisection beat `partition_point`). What remains:
+bisection beat `partition_point`). Two gaps remained, and the parity of that third
+column is what let them be told apart.
 
-**(a) No bulk load — ~30-72x, still growing.** An insert loop where production
-fills leaves directly. Closing this means building a tree that satisfies `wf()`
-*directly* rather than inductively: a fresh invariant for the leaf-fill loop and
-another for the level-build loop.
+#### 5.2.1 Root cause: it is which path runs, not how fast it runs
 
-**(b) `insert` has no append fast path — 1.4x to 2.3x, growing with `n`.**
-Production's header caches `last_leaf`, and `insert` checks it first
-(`containers/src/bplus.rs:626`): if the key exceeds the rightmost leaf's last key
-and that leaf has room, it appends in O(1) with **no root-to-leaf descent**. The
-verified tree has no `last_leaf` field, so every key pays a full descent. Under
-ascending keys — exactly what `from_sorted` and id-keyed index builds produce —
-production's fast path hits essentially every time, which is why this ratio grows
-with tree depth. Closing it means a `last_leaf` field plus a `wf` clause binding it
-to the last element of `tree_leaf_ids(tree@)`, reusing the existing leaf-chain
-machinery (`leaf_links_ok`, `forest_links_to`, `lemma_forest_leaf_ids_*`), and a
-third element in `header_archive` so `restore` rolls it back.
+Ratios do not identify a cause. What does: **price each production feature against
+production's own baseline.** Production is the only implementation with *both* the
+bulk loader and the append fast path, so it can measure each one in isolation with
+no cross-crate confound at all — same binary, same heap, same codegen.
 
-**How the shuffled column earned its keep.** It was introduced to isolate (b) —
-in random order the fast path cannot fire, so the residual is everything *else*.
+Three production columns — **A** `from_sorted` (bulk load), **B** ascending
+`insert` (fast path + descent available), **C** shuffled `insert` (descent only) —
+plus verus against them, in nanoseconds *per key*:
+
+| n | A bulk | B fast+desc | C descent | B/A | C/B | V sorted | V ins rand | V/A | Vrand/C |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 000 | 4.75 | 40.25 | 84.22 | 8.5x | 2.1x | 50.40 | 67.27 | 10.6x | **0.80x** |
+| 10 000 | 3.02 | 34.70 | 106.49 | 11.5x | 3.1x | 69.50 | 102.32 | 23.0x | **0.96x** |
+| 100 000 | 0.74 | 35.45 | 129.79 | 48.0x | 3.7x | 84.18 | 128.45 | 114.0x | **0.99x** |
+| 1 000 000 | 0.93 | 36.89 | 162.50 | 39.8x | 4.4x | 100.71 | 167.32 | 108.6x | **1.03x** |
+
+**What is *not* the cause.** `Vrand/C` is 0.80-1.03: when neither side can take a
+fast path, verus's descent costs the *same* as production's. So recursion-vs-
+iteration (verus recurses, production walks an explicit `path[24]` array), bounds
+checks, and proof machinery cost nothing measurable. The entire gap is *which code
+path runs*.
+
+**Where the two features show up in the shape of the numbers, not just the size.**
+
+- Column B is **flat**: 34.70 ns/key at n=10k, 36.89 at n=1M. A hundredfold more
+  data and a deeper tree with no change in per-key cost is only possible if the
+  tree is **not being descended**. That flat line *is* the fast path.
+- Column A **falls** with n (4.75 → 0.74 ns/key) — a different complexity class.
+  O(n) sequential `copy_from_slice` gets *cheaper* per key as the loop amortizes,
+  where O(n log n) descend-and-split gets dearer.
+
+**The factorization closes the account.** V/A should be the product of the three
+independently-measured factors:
+
+```
+n=1M    :  0.62 (Vrand/C)  x  4.4 (C/B)  x  39.8 (B/A)  = 108.6   measured 108.6
+n=100k  :  0.65            x  3.7        x  48.0        = 115     measured 114.0
+```
+
+Three significant figures at two different `n`. Nothing is left over, which is
+what makes this a cause rather than a plausible story.
+
+#### 5.2.2 The append fast path — FIXED (ascending insert now 1.0-1.1x)
+
+`insert` now begins with `fast_append` (production `bplus.rs:625`): read the cached
+`last_leaf`, and if the leaf is non-empty, has room, and `key` exceeds its last
+key, write one slot and return. No descent, no separator comparisons.
+
+| n | prod insert asc | verus insert asc | ratio |
+|---|---|---|---|
+| 1 000 | 35.3 µs | 37.0 µs | **1.0x** |
+| 10 000 | 355 µs | 376 µs | **1.1x** |
+| 100 000 | 3 602 µs | 3 858 µs | **1.1x** |
+
+The proof rests on three pieces:
+
+1. **`last_leaf_ok`, a `wf` clause** (`last_leaf.as_nat() == last_leaf_id(tree@)`).
+   Making the cache's honesty part of `wf` is what lets the fast path *trust* the
+   field with no runtime check — the whole point of caching it.
+2. **`lemma_append_last_wf`**: `tree_append_last` preserves `tree_wf` at the same
+   height. The ordering obligation is where the fast path earns its keep — the
+   updated child sits at index `kids.len() - 1 == seps.len()`, and `tree_wf`'s
+   upper-bound clause `keys_all_lt(kids[i], seps[i])` only ranges over
+   `i < seps.len()`. **The rightmost child has no separator above it**, so growing
+   it upward cannot violate cross-node ordering. Its lower bound is met because
+   `key` exceeds every existing key, separators included.
+3. **`lemma_binds_append_last`**: writing the grown leaf into the single arena slot
+   `last_leaf_id(t)` re-establishes `binds` *and* the leaf-link chain, by recursion
+   down the rightmost spine only. `leaf_insert_at` preserves `link_view`, so the
+   one slot that differs holds the same link and the chain transfers verbatim.
+
+`key > the rightmost leaf's last key` implies `key > every key in the tree` because
+the model is `tree_keys`, which *ends* with the rightmost leaf's keys
+(`lemma_last_leaf_binds`) and is strictly sorted. That is exactly (2)'s hypothesis.
+
+**One deliberate divergence.** Production maintains `last_leaf` *incrementally* —
+its split does `if old_link == nil { set_last_leaf(new_right) }`
+(`containers/src/bplus.rs:706`). The verified tree instead **recomputes** it with an
+O(depth) rightmost-spine walk (`rightmost_leaf_of`) on the slow path. The reason:
+`insert_rec`'s contract preserves a subtree's *leftmost* leaf (a split always
+splices the fresh node to the **right**), not its rightmost, and strengthening it to
+track the last leaf would thread a new clause through ~1500 lines of split/absorb
+proof. Recomputing costs one extra descent on a path that already performed one —
+and only on the slow path, since the fast path returns before reaching it. The
+measured result is parity, so the incremental version buys nothing here.
+
+`restore` rolls the cache back through a third element in `header_archive`
+(`(root, nkeys, last_leaf)`), with `tree_archive_agrees` carrying
+`headers[k].2 as nat == last_leaf_id(trees[k])` — so `restore` re-establishes
+`last_leaf_ok` from the archive alone.
+
+**Runtime backing:** `differential_bplus_ascending_fast_path` drives ascending runs
+against the production tree while deliberately mixing in the cases where the path
+must *decline* (re-inserting the current maximum; a key below it) and
+`mark`/`restore` across ascending runs, where a `last_leaf` not rolled back with the
+arena would surface as a lost or duplicated key.
+
+#### 5.2.3 No bulk load — ~33-38x, remaining
+
+An insert loop where production fills leaves directly. Closing it means building a
+tree that satisfies `wf()` *directly* rather than inductively: a fresh invariant for
+the leaf-fill loop and another for the level-build loop.
+
+Note what the fast path did to this column: verus `from_sorted` improved (it goes
+through `insert`, which now takes the fast path on every key), but the ratio is
+still ~33x because A and V are in **different complexity classes** — the gap is
+`B/A`, sequential memcpy versus per-key work, not anything the fast path can reach.
+
+**How the shuffled column earned its keep.** It was introduced to isolate the fast
+path — in random order the path cannot fire, so the residual is everything *else*.
 Reading it as "flat across decades ⟹ constant-factor codegen artifact" was
 correct about the shape and wrong about the cause: the constant factor was a
 linear scan inside a fixed-capacity node, which is O(256) — bounded, therefore
 flat, therefore easy to mistake for codegen. **A flat ratio bounds where the
 problem is, not whether one exists.** Chapter 11's discriminator separates
-structural from constant; it does not license dismissing the constant.
+structural from constant; it does not license dismissing the constant. Having been
+driven to parity, that same column became the *baseline* §5.2.1's factorization is
+built on — it is what proves the descent itself is not the problem.
 
 **Not currently a shipping cost:** `egraph` never calls `from_sorted` and never
 instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its indexes
-are `SortedVec`. Both remaining gaps are latent.
+are `SortedVec`. The remaining gap is latent.
 
 ## 6. Reused machinery
 

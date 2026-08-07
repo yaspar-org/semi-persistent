@@ -3103,6 +3103,413 @@ pub proof fn lemma_parent_split_disjoint(
 }
 
 // ===========================================================================
+// The append fast path (production `insert`'s `last_leaf` shortcut).
+//
+// Production caches the rightmost leaf's arena id in its header and, when the
+// new key extends that leaf (`word > data[n-1]` and the leaf has room), writes
+// one slot and returns — no descent, no split, no separator comparison. Its
+// per-key cost is therefore FLAT in `n` where a descent's grows with depth,
+// which is the whole of the ascending-insert gap.
+//
+// The ghost counterpart is `tree_append_last`: push the key onto the rightmost
+// leaf's key sequence, leaving every id, every separator, and the shape alone.
+// It is sound for a reason worth naming: the rightmost child sits at index
+// `seps.len()`, and `tree_wf`'s upper-bound clause (`keys_all_lt(kids[i],
+// seps[i])`) only ranges over `i < seps.len()`. The last child has no separator
+// above it, so growing it upward cannot violate cross-node ordering — the
+// separators do not move, and no other subtree is touched.
+// ===========================================================================
+
+/// Push `k` onto the rightmost leaf's keys, recursing down the rightmost spine.
+/// Ids, separators, heights, and the leaf chain are all preserved; only the last
+/// leaf's key sequence grows. The ghost image of production's `last_leaf` append.
+/// (The `kids.len() == 0` arm is unreachable for a `wf` tree — `tree_wf` forces
+/// `kids.len() == seps.len() + 1 >= 1` — but a total spec fn must cover it, and
+/// leaving it implicit would put `kids[-1]` in the termination check.)
+pub open(crate) spec fn tree_append_last(t: Tree, k: nat) -> Tree
+    decreases t
+{
+    match t {
+        Tree::Leaf { id, keys } => Tree::Leaf { id, keys: keys.push(k) },
+        Tree::Inner { id, seps, kids } =>
+            if kids.len() == 0 {
+                t
+            } else {
+                Tree::Inner {
+                    id,
+                    seps,
+                    kids: kids.update(kids.len() - 1, tree_append_last(kids[kids.len() - 1], k)),
+                }
+            },
+    }
+}
+
+/// The rightmost leaf's key sequence — the one the append targets. `wf` bounds
+/// its length by `cap`, and the exec fast path checks `count < leaf_cap` against
+/// exactly this, via `last_leaf`'s binding.
+pub open(crate) spec fn last_leaf_keys(t: Tree) -> Seq<nat>
+    decreases t
+{
+    match t {
+        Tree::Leaf { keys, .. } => keys,
+        Tree::Inner { kids, .. } =>
+            if kids.len() == 0 { Seq::empty() } else { last_leaf_keys(kids[kids.len() - 1]) },
+    }
+}
+
+/// The rightmost leaf is the LAST entry of the in-order leaf chain, so the exec
+/// `last_leaf` header field (which `wf` pins to `tree_leaf_ids.last()`) names
+/// exactly the node `tree_append_last` writes to.
+pub proof fn lemma_last_leaf_id(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
+    requires
+        tree_wf(t, h, cap, key_cap, is_root),
+        cap >= 1,
+    ensures
+        tree_leaf_ids(t).len() >= 1,
+        tree_leaf_ids(t)[tree_leaf_ids(t).len() - 1] == last_leaf_id(t),
+    decreases t,
+{
+    lemma_tree_leaf_ids_nonempty(t, h, cap, key_cap, is_root);
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { kids, .. } => {
+            let m = kids.len() - 1;
+            lemma_forest_wf_at(kids, (h - 1) as nat, cap, key_cap, m);
+            lemma_last_leaf_id(kids[m], (h - 1) as nat, cap, key_cap, false);
+            lemma_forest_leaf_ids_last(kids, m);
+        }
+    }
+}
+
+/// Arena id of the rightmost leaf (the `last_leaf` header field's ghost value).
+pub open(crate) spec fn last_leaf_id(t: Tree) -> nat
+    decreases t
+{
+    match t {
+        Tree::Leaf { id, .. } => id,
+        Tree::Inner { id, kids, .. } =>
+            if kids.len() == 0 { id } else { last_leaf_id(kids[kids.len() - 1]) },
+    }
+}
+
+/// `forest_leaf_ids`' last entry comes from the last child (which must have at
+/// least one leaf). The companion of [`lemma_inner_first_leaf`] at the other end.
+pub proof fn lemma_forest_leaf_ids_last(kids: Seq<Tree>, m: int)
+    requires
+        m == kids.len() - 1,
+        m >= 0,
+        tree_leaf_ids(kids[m]).len() >= 1,
+    ensures
+        forest_leaf_ids(kids).len() >= 1,
+        forest_leaf_ids(kids)[forest_leaf_ids(kids).len() - 1]
+            == tree_leaf_ids(kids[m])[tree_leaf_ids(kids[m]).len() - 1],
+    decreases kids,
+{
+    lemma_forest_leaf_ids_cons(kids);
+    let df = kids.drop_first();
+    if kids.len() == 1 {
+        assert(df =~= Seq::<Tree>::empty());
+        assert(forest_leaf_ids(df) =~= Seq::<nat>::empty());
+        assert(forest_leaf_ids(kids) =~= tree_leaf_ids(kids[0]));
+    } else {
+        assert(df[df.len() - 1] == kids[m]);
+        lemma_forest_leaf_ids_last(df, df.len() - 1);
+        // forest_leaf_ids(kids) == tree_leaf_ids(kids[0]) ++ forest_leaf_ids(df),
+        // and the tail is non-empty, so the last entry is the tail's last.
+        let fl = forest_leaf_ids(kids);
+        assert(fl.len() == tree_leaf_ids(kids[0]).len() + forest_leaf_ids(df).len());
+        assert(fl[fl.len() - 1] == forest_leaf_ids(df)[forest_leaf_ids(df).len() - 1]);
+    }
+}
+
+/// **The append is sound.** If `k` is strictly above every key in the tree and
+/// the rightmost leaf has room, then `tree_append_last` preserves `tree_wf` at
+/// the same height and appends `k` to the model.
+///
+/// The ordering obligation is where the fast path earns its keep: the updated
+/// child is at index `kids.len() - 1 == seps.len()`, outside the range of
+/// `keys_all_lt` (`i < seps.len()`), so no upper bound applies to it; and its
+/// lower bound `seps[seps.len() - 1]` is met because `k` exceeds every existing
+/// key, separators included (they are keys of the tree by `tree_wf`'s ordering).
+pub proof fn lemma_append_last_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool, k: nat)
+    requires
+        tree_wf(t, h, cap, key_cap, is_root),
+        cap >= 1,
+        last_leaf_keys(t).len() < cap,
+        // k is strictly above every key already present.
+        forall|i: int| 0 <= i < tree_keys(t).len() ==> #[trigger] tree_keys(t)[i] < k,
+    ensures
+        tree_wf(tree_append_last(t, k), h, cap, key_cap, is_root),
+        tree_keys(tree_append_last(t, k)) == tree_keys(t).push(k),
+        tree_ids(tree_append_last(t, k)) == tree_ids(t),
+        tree_leaf_ids(tree_append_last(t, k)) == tree_leaf_ids(t),
+        tree_root_id(tree_append_last(t, k)) == tree_root_id(t),
+        node_count(tree_append_last(t, k)) == node_count(t),
+        tree_disjoint(tree_append_last(t, k)) == tree_disjoint(t),
+        last_leaf_keys(tree_append_last(t, k)) == last_leaf_keys(t).push(k),
+        // the target leaf is the SAME node, so the exec `last_leaf` cache needs no
+        // update on the fast path — which is the whole point of it being fast.
+        last_leaf_id(tree_append_last(t, k)) == last_leaf_id(t),
+    decreases t,
+{
+    let nt = tree_append_last(t, k);
+    match t {
+        Tree::Leaf { id, keys } => {
+            assert(nt == Tree::Leaf { id, keys: keys.push(k) });
+            // sorted: keys sorted and k above every element (in particular the last).
+            assert forall|a: int, b: int| 0 <= a < b < keys.push(k).len()
+                implies #[trigger] keys.push(k)[a] < #[trigger] keys.push(k)[b] by {
+                if b < keys.len() {
+                    assert(keys[a] < keys[b]);
+                } else {
+                    assert(keys.push(k)[b] == k);
+                    assert(tree_keys(t)[a] == keys[a]);
+                }
+            }
+            assert(tree_keys(nt) =~= tree_keys(t).push(k));
+            assert(tree_ids(nt) =~= tree_ids(t));
+            assert(tree_leaf_ids(nt) =~= tree_leaf_ids(t));
+        }
+        Tree::Inner { id, seps, kids } => {
+            let m = kids.len() - 1;
+            let nc = tree_append_last(kids[m], k);
+            let u = kids.update(m, nc);
+            assert(nt == Tree::Inner { id, seps, kids: u });
+            assert(m == seps.len());
+
+            // the last child is wf at h-1, and k is above all of ITS keys (a
+            // subsequence of the parent's, by forest_keys' split at m).
+            lemma_forest_wf_at(kids, (h - 1) as nat, cap, key_cap, m);
+            lemma_forest_keys_split(kids, m);
+            assert(kids.subrange(m, kids.len() as int) =~= seq![kids[m]]);
+            lemma_forest_keys_cons(seq![kids[m]]);
+            assert(seq![kids[m]].drop_first() =~= Seq::<Tree>::empty());
+            // forest_keys(kids) == forest_keys(kids[0..m]) ++ tree_keys(kids[m]),
+            // so kids[m]'s keys sit at the tail of the parent's key sequence.
+            let pre = forest_keys(kids.subrange(0, m));
+            assert(forest_keys(kids) =~= pre + tree_keys(kids[m]));
+            assert forall|i: int| 0 <= i < tree_keys(kids[m]).len()
+                implies #[trigger] tree_keys(kids[m])[i] < k by {
+                assert(tree_keys(t)[pre.len() + i] == tree_keys(kids[m])[i]);
+            }
+            assert(last_leaf_keys(t) == last_leaf_keys(kids[m]));
+            lemma_append_last_wf(kids[m], (h - 1) as nat, cap, key_cap, false, k);
+
+            // forest stays wf: only child m changed, and it is wf at h-1.
+            lemma_forest_wf_update(kids, (h - 1) as nat, cap, key_cap, m, nc);
+
+            // model: forest_keys(update(m, nc)) == pre ++ tree_keys(nc) ++ empty,
+            // and tree_keys(nc) == tree_keys(kids[m]).push(k).
+            lemma_forest_keys_update(kids, m, nc);
+            assert(kids.subrange(m + 1, kids.len() as int) =~= Seq::<Tree>::empty());
+            assert(forest_keys(Seq::<Tree>::empty()) =~= Seq::<nat>::empty());
+            assert(tree_keys(nt) =~= tree_keys(t).push(k));
+
+            // ids / leaf-ids / node_count: nc has the same footprint as kids[m].
+            lemma_forest_ids_update_eq(kids, m, nc);
+            lemma_forest_leaf_ids_update_eq(kids, m, nc);
+            lemma_forest_node_count_update(kids, m, nc);
+            lemma_forest_disjoint_update_eq(kids, m, nc);
+            // tree_disjoint(Inner) is forest_disjoint + `id ∉ forest_ids` + a
+            // pairwise clause. This is an EQUALITY postcondition — tree_disjoint(t)
+            // is not a precondition — so each clause must be shown equal rather
+            // than derived. Every child's id set is literally unchanged (only
+            // child m was replaced, by a same-footprint tree), so the pairwise
+            // clause is the same proposition on both sides, index by index.
+            assert forall|i: int| 0 <= i < u.len()
+                implies #[trigger] tree_ids(u[i]) == tree_ids(kids[i]) by {}
+            // Each direction separately: a biconditional between two quantified
+            // propositions does not go through as one assertion.
+            if forall|i: int, j: int| 0 <= i < j < kids.len() ==>
+                (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j])) {
+                assert forall|i: int, j: int| 0 <= i < j < u.len()
+                    implies (#[trigger] tree_ids(u[i])).disjoint(#[trigger] tree_ids(u[j])) by {
+                    assert(tree_ids(kids[i]).disjoint(tree_ids(kids[j])));
+                }
+            }
+            if forall|i: int, j: int| 0 <= i < j < u.len() ==>
+                (#[trigger] tree_ids(u[i])).disjoint(#[trigger] tree_ids(u[j])) {
+                assert forall|i: int, j: int| 0 <= i < j < kids.len()
+                    implies (#[trigger] tree_ids(kids[i])).disjoint(#[trigger] tree_ids(kids[j])) by {
+                    assert(tree_ids(u[i]).disjoint(tree_ids(u[j])));
+                }
+            }
+            assert(forest_ids(u) == forest_ids(kids));
+            assert(tree_disjoint(nt) == tree_disjoint(t));
+
+            // ordering, the crux. Upper bounds: i < seps.len() == m, so child i is
+            // untouched by update(m, _). Lower bounds: child m's new keys are the
+            // old ones (already >= seps[m-1]) plus k, and k exceeds every key of
+            // the tree — including tree_keys(kids[m]) whose first element is
+            // >= seps[m-1]. When m == 0 there is no lower bound to meet.
+            assert forall|i: int| 0 <= i < seps.len() implies keys_all_lt(#[trigger] u[i], seps[i]) by {
+                assert(u[i] == kids[i]);
+            }
+            assert forall|i: int| 0 < i < u.len() implies keys_all_ge(#[trigger] u[i], seps[i - 1]) by {
+                if i < m {
+                    assert(u[i] == kids[i]);
+                } else {
+                    assert(i == m);
+                    assert(u[m] == nc);
+                    assert(tree_keys(nc) =~= tree_keys(kids[m]).push(k));
+                    assert forall|j: int| 0 <= j < tree_keys(nc).len()
+                        implies seps[i - 1] <= #[trigger] tree_keys(nc)[j] by {
+                        if j < tree_keys(kids[m]).len() {
+                            // old key: the old child met the same lower bound.
+                            assert(keys_all_ge(kids[m], seps[m - 1]));
+                        } else {
+                            // the appended key: k exceeds every key of the tree, and
+                            // seps[m-1] is <= some key of child m (which is non-empty
+                            // by wf's min occupancy), hence < k.
+                            assert(tree_keys(nc)[j] == k);
+                            lemma_tree_keys_nonempty(kids[m], (h - 1) as nat, cap, key_cap);
+                            assert(keys_all_ge(kids[m], seps[m - 1]));
+                            assert(seps[m - 1] <= tree_keys(kids[m])[0]);
+                            assert(tree_keys(kids[m])[0] < k);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Forward direction of [`lemma_forest_id_in_some_child`]: a child's id is a
+/// forest id. (The `union` unfolds one child at a time, so this needs the same
+/// peel-and-recurse as its converse.)
+pub proof fn lemma_forest_id_at_child(kids: Seq<Tree>, m: int, id: nat)
+    requires
+        0 <= m < kids.len(),
+        tree_ids(kids[m]).contains(id),
+    ensures forest_ids(kids).contains(id),
+    decreases kids,
+{
+    lemma_forest_ids_cons(kids);
+    if m == 0 {
+    } else {
+        let df = kids.drop_first();
+        assert(df[m - 1] == kids[m]);
+        lemma_forest_id_at_child(df, m - 1, id);
+    }
+}
+
+/// The rightmost leaf is in the tree's footprint. What lets the arena bridge
+/// conclude, from `tree_disjoint`, that the appended-to slot is NOT the internal
+/// node's own slot and NOT in any sibling's region — so a single-slot arena
+/// update frames every untouched subtree.
+pub proof fn lemma_last_leaf_id_in_ids(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
+    requires
+        tree_wf(t, h, cap, key_cap, is_root),
+        cap >= 1,
+    ensures tree_ids(t).contains(last_leaf_id(t)),
+{
+    lemma_last_leaf_id(t, h, cap, key_cap, is_root);
+    let lids = tree_leaf_ids(t);
+    lemma_leaf_id_in_tree_ids(t, lids.len() - 1);
+}
+
+/// The *shape* half of [`lemma_append_last_wf`], with **no** hypotheses: an
+/// append creates and destroys no node, so every id-, count-, and shape-valued
+/// projection of the tree is literally unchanged. Split out because the arena
+/// bridge (`lemma_binds_append_last`) needs these equalities while walking the
+/// spine, where the key-ordering precondition of the full lemma is not yet in
+/// hand — and, being hypothesis-free, it holds even in the vacuous
+/// `kids.len() == 0` arm (where the append is the identity).
+pub proof fn lemma_append_last_shape(t: Tree, k: nat)
+    ensures
+        tree_root_id(tree_append_last(t, k)) == tree_root_id(t),
+        tree_ids(tree_append_last(t, k)) == tree_ids(t),
+        tree_leaf_ids(tree_append_last(t, k)) == tree_leaf_ids(t),
+        node_count(tree_append_last(t, k)) == node_count(t),
+        last_leaf_id(tree_append_last(t, k)) == last_leaf_id(t),
+    decreases t,
+{
+    match t {
+        Tree::Leaf { .. } => {}
+        Tree::Inner { seps, kids, .. } => {
+            if kids.len() == 0 {
+            } else {
+                let m = kids.len() - 1;
+                let nc = tree_append_last(kids[m], k);
+                lemma_append_last_shape(kids[m], k);
+                lemma_forest_ids_update_eq(kids, m, nc);
+                lemma_forest_leaf_ids_update_eq(kids, m, nc);
+                lemma_forest_node_count_update(kids, m, nc);
+                assert(kids.update(m, nc)[m] == nc);
+                assert(kids.update(m, nc).len() == kids.len());
+            }
+        }
+    }
+}
+
+/// `forest_ids` is unchanged when a child is replaced by one with the same
+/// footprint (the append case: no node is created or destroyed).
+pub proof fn lemma_forest_ids_update_eq(kids: Seq<Tree>, m: int, nc: Tree)
+    requires
+        0 <= m < kids.len(),
+        tree_ids(nc) == tree_ids(kids[m]),
+    ensures forest_ids(kids.update(m, nc)) == forest_ids(kids),
+    decreases kids,
+{
+    lemma_forest_ids_cons(kids);
+    let u = kids.update(m, nc);
+    lemma_forest_ids_cons(u);
+    if m == 0 {
+        assert(u.drop_first() =~= kids.drop_first());
+    } else {
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= kids.drop_first().update(m - 1, nc));
+        lemma_forest_ids_update_eq(kids.drop_first(), m - 1, nc);
+    }
+    assert(forest_ids(u) =~= forest_ids(kids));
+}
+
+/// `forest_leaf_ids` companion of [`lemma_forest_ids_update_eq`].
+pub proof fn lemma_forest_leaf_ids_update_eq(kids: Seq<Tree>, m: int, nc: Tree)
+    requires
+        0 <= m < kids.len(),
+        tree_leaf_ids(nc) == tree_leaf_ids(kids[m]),
+    ensures forest_leaf_ids(kids.update(m, nc)) == forest_leaf_ids(kids),
+    decreases kids,
+{
+    lemma_forest_leaf_ids_cons(kids);
+    let u = kids.update(m, nc);
+    lemma_forest_leaf_ids_cons(u);
+    if m == 0 {
+        assert(u.drop_first() =~= kids.drop_first());
+    } else {
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= kids.drop_first().update(m - 1, nc));
+        lemma_forest_leaf_ids_update_eq(kids.drop_first(), m - 1, nc);
+    }
+    assert(forest_leaf_ids(u) =~= forest_leaf_ids(kids));
+}
+
+/// `forest_disjoint` companion: a same-footprint replacement preserves it. The
+/// easy case of [`lemma_forest_disjoint_update`] (which handles a GROWN child);
+/// the append creates no ids, so the id sets are literally equal.
+pub proof fn lemma_forest_disjoint_update_eq(kids: Seq<Tree>, m: int, nc: Tree)
+    requires
+        0 <= m < kids.len(),
+        tree_ids(nc) == tree_ids(kids[m]),
+        tree_disjoint(nc) == tree_disjoint(kids[m]),
+    ensures forest_disjoint(kids.update(m, nc)) == forest_disjoint(kids),
+    decreases kids,
+{
+    let u = kids.update(m, nc);
+    lemma_forest_disjoint_cons(kids);
+    lemma_forest_disjoint_cons(u);
+    if m == 0 {
+        assert(u.drop_first() =~= kids.drop_first());
+    } else {
+        assert(u[0] == kids[0]);
+        assert(u.drop_first() =~= kids.drop_first().update(m - 1, nc));
+        lemma_forest_disjoint_update_eq(kids.drop_first(), m - 1, nc);
+        lemma_forest_ids_update_eq(kids.drop_first(), m - 1, nc);
+    }
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 
