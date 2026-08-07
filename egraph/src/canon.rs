@@ -134,23 +134,23 @@ impl MSetCanon {
     /// multiplicities. Produces a sorted, duplicate-free multiset with ℕ counts — the
     /// representation, before any algebraic clamp.
     pub fn update_multiset<G: DenseId + Ord>(
-        buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
+        buf: &mut Vec<crate::containers::Pair<G, crate::multiplicity::Multiplicity>>,
         start: usize,
         end: usize,
-        get: impl Fn(usize) -> (G, crate::multiplicity::Multiplicity),
+        get: impl Fn(usize) -> crate::containers::Pair<G, crate::multiplicity::Multiplicity>,
         find: impl Fn(G) -> G,
     ) {
         use crate::multiplicity::Multiplicity;
         for i in start..end {
-            let (g, m) = get(i);
-            buf.push((find(g), m));
+            let crate::containers::Pair { a: g, b: m } = get(i);
+            buf.push(crate::containers::Pair { a: find(g), b: m });
         }
-        buf.sort_by_key(|a| a.0);
+        buf.sort_by_key(|a| a.a);
         // merge adjacent duplicates
         let mut w = 0;
         for r in 1..buf.len() {
-            if buf[r].0 == buf[w].0 {
-                buf[w].1 = Multiplicity(buf[w].1.0 + buf[r].1.0);
+            if buf[r].a == buf[w].a {
+                buf[w].b = Multiplicity(buf[w].b.0 + buf[r].b.0);
             } else {
                 w += 1;
                 buf[w] = buf[r];
@@ -166,26 +166,28 @@ impl MSetCanon {
     /// that vanish, so `xor(a,a)` (`{a:2}`) becomes `{}`. Preserves sort order (`retain`), so the
     /// result stays canonical.
     pub fn clamp_multiset<G: DenseId>(
-        buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
+        buf: &mut Vec<crate::containers::Pair<G, crate::multiplicity::Multiplicity>>,
         mode: MSetClamp,
     ) {
         use crate::multiplicity::Multiplicity;
         if let MSetClamp::Nilpotent { order } = mode {
             let n = order as u32;
             for p in buf.iter_mut() {
-                p.1 = Multiplicity(p.1.0 % n);
+                p.b = Multiplicity(p.b.0 % n);
             }
-            buf.retain(|p| p.1.0 != 0);
+            buf.retain(|p| p.b.0 != 0);
         }
     }
 }
 
-impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for MSetCanon {
+impl<G: DenseId + Ord> VarCanon<G, crate::containers::Pair<G, crate::multiplicity::Multiplicity>>
+    for MSetCanon
+{
     fn canonize(
-        buf: &mut Vec<(G, crate::multiplicity::Multiplicity)>,
+        buf: &mut Vec<crate::containers::Pair<G, crate::multiplicity::Multiplicity>>,
         start: usize,
         end: usize,
-        get: impl Fn(usize) -> (G, crate::multiplicity::Multiplicity),
+        get: impl Fn(usize) -> crate::containers::Pair<G, crate::multiplicity::Multiplicity>,
         find: impl Fn(G) -> G,
         mode: CanonMode<G>,
     ) {
@@ -194,7 +196,7 @@ impl<G: DenseId + Ord> VarCanon<G, (G, crate::multiplicity::Multiplicity)> for M
         // path (`EGraph::add` drops the unit before the nilpotent clamp). `mode.unit` is
         // the unit's *class* as of this rebuild, resolved by the caller through `find`.
         if let Some(u) = mode.unit {
-            buf.retain(|p| p.0 != u);
+            buf.retain(|p| p.a != u);
         }
         Self::clamp_multiset(buf, mode.clamp);
     }
@@ -229,6 +231,13 @@ impl<G: DenseId + Ord> VarCanon<G, G> for SetCanon {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::containers::Pair;
+    fn mp(g: u32, m: u32) -> Pair<crate::id::ENodeId, Multiplicity> {
+        Pair {
+            a: id(g),
+            b: Multiplicity(m),
+        }
+    }
     use crate::id::ENodeId;
     use crate::multiplicity::Multiplicity;
 
@@ -261,28 +270,16 @@ mod tests {
 
     #[test]
     fn mset_canon_merges() {
-        let pool = [
-            (id(3), Multiplicity(1)),
-            (id(1), Multiplicity(2)),
-            (id(3), Multiplicity(1)),
-        ];
+        let pool = [mp(3, 1), mp(1, 2), mp(3, 1)];
         let mut buf = Vec::new();
         MSetCanon::canonize(&mut buf, 0, 3, |i| pool[i], |g| g, CanonMode::PLAIN);
-        assert_eq!(
-            buf,
-            vec![(id(1), Multiplicity(2)), (id(3), Multiplicity(2))]
-        );
+        assert_eq!(buf, vec![mp(1, 2), mp(3, 2)]);
     }
 
     #[test]
     fn mset_canon_nilpotent_clamps_mod_order() {
         // xor(a,a) → {a:2} → {} at order 2; xor(a,a,a,b) → {a:3,b:1} → {a:1,b:1}.
-        let pool = [
-            (id(1), Multiplicity(1)),
-            (id(1), Multiplicity(1)),
-            (id(1), Multiplicity(1)),
-            (id(2), Multiplicity(1)),
-        ];
+        let pool = [mp(1, 1), mp(1, 1), mp(1, 1), mp(2, 1)];
         let mut buf = Vec::new();
         MSetCanon::canonize(
             &mut buf,
@@ -295,12 +292,9 @@ mod tests {
                 unit: None,
             },
         );
-        assert_eq!(
-            buf,
-            vec![(id(1), Multiplicity(1)), (id(2), Multiplicity(1))]
-        );
+        assert_eq!(buf, vec![mp(1, 1), mp(2, 1)]);
         // A fully-even monomial empties to {}.
-        let even = [(id(1), Multiplicity(1)), (id(1), Multiplicity(1))];
+        let even = [mp(1, 1), mp(1, 1)];
         let mut b2 = Vec::new();
         MSetCanon::canonize(
             &mut b2,
@@ -319,11 +313,7 @@ mod tests {
     #[test]
     fn mset_canon_find_and_merge() {
         // find: 2→1, 3→1, 4→4
-        let pool = [
-            (id(2), Multiplicity(1)),
-            (id(3), Multiplicity(1)),
-            (id(4), Multiplicity(1)),
-        ];
+        let pool = [mp(2, 1), mp(3, 1), mp(4, 1)];
         let mut buf = Vec::new();
         MSetCanon::canonize(
             &mut buf,
@@ -335,10 +325,7 @@ mod tests {
             },
             CanonMode::PLAIN,
         );
-        assert_eq!(
-            buf,
-            vec![(id(1), Multiplicity(2)), (id(4), Multiplicity(1))]
-        );
+        assert_eq!(buf, vec![mp(1, 2), mp(4, 1)]);
     }
 
     #[test]
@@ -352,7 +339,7 @@ mod tests {
     #[test]
     fn mset_canon_drops_unit_class() {
         // add(a, u, u) after the unit resolves to class 7: {1:1, 7:2} → {1:1}.
-        let pool = [(id(1), Multiplicity(1)), (id(7), Multiplicity(2))];
+        let pool = [mp(1, 1), mp(7, 2)];
         let mut buf = Vec::new();
         MSetCanon::canonize(
             &mut buf,
@@ -365,13 +352,13 @@ mod tests {
                 unit: Some(id(7)),
             },
         );
-        assert_eq!(buf, vec![(id(1), Multiplicity(1))]);
+        assert_eq!(buf, vec![mp(1, 1)]);
     }
 
     #[test]
     fn mset_canon_unit_drop_before_nilpotent_clamp() {
         // xor(a, a, u) with unit class 7 at order 2: drop u, then {a:2} clamps to {}.
-        let pool = [(id(1), Multiplicity(2)), (id(7), Multiplicity(1))];
+        let pool = [mp(1, 2), mp(7, 1)];
         let mut buf = Vec::new();
         MSetCanon::canonize(
             &mut buf,

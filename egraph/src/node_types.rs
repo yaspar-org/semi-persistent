@@ -425,17 +425,20 @@ mod tests {
         assert_eq!(clean.children, [ENodeId::new(7)]);
     }
 
+    // prod-parity: production exposed `ENodeId::from_raw_unchecked` to fabricate
+    // an id with the stolen MSB set, then asserted `Eq`/`Ord`/`Hash` masked that
+    // bit off ("MSB-oblivious"). The verified crate takes a different, stronger
+    // route: a clean id carries a `#[verifier::type_invariant]` that the MSB is
+    // ALWAYS clear, so a dirty id cannot be constructed at all — there is no
+    // `from_raw_unchecked`, and the masking the test checked is unnecessary
+    // because the case it guards against is unrepresentable. The residual
+    // property (equal clean ids compare/ hash equal) is what remains testable.
     #[test]
-    fn dense_id_msb_oblivious() {
+    fn dense_id_clean_ids_compare_and_hash_by_value() {
         let a = ENodeId::new(42);
         let b = ENodeId::new(42);
         assert_eq!(a, b);
-
-        // Simulate MSB set (as capture/history flags do)
-        let a_dirty = ENodeId::from_raw_unchecked(42 | 0x8000_0000);
-
-        assert_eq!(a_dirty, b);
-        assert_eq!(a_dirty.cmp(&b), core::cmp::Ordering::Equal);
+        assert_eq!(a.cmp(&b), core::cmp::Ordering::Equal);
 
         use core::hash::{Hash, Hasher};
         let hash = |v: ENodeId| {
@@ -443,6 +446,6 @@ mod tests {
             v.hash(&mut h);
             h.finish()
         };
-        assert_eq!(hash(a_dirty), hash(b));
+        assert_eq!(hash(a), hash(b));
     }
 }

@@ -3,9 +3,9 @@
 //! Sort and operator registries.
 
 use crate::containers::DenseId;
-use crate::containers::Map;
 use crate::containers::MapToken;
 use crate::containers::ShrinkPolicy;
+use crate::containers::SpMap;
 use crate::id::ENodeKind;
 
 /// Opaque token for [`SortRegistry::mark`] / [`SortRegistry::restore`].
@@ -136,10 +136,10 @@ impl<S: DenseId> OpInfo<S> {
     }
 }
 
-/// Append-only sort registry backed by `Map`.
+/// Append-only sort registry backed by `SpMap`.
 #[derive(Debug)]
 pub struct SortRegistry<S: DenseId, const TRACK: bool> {
-    map: Map<String, (), TRACK>,
+    map: SpMap<String, (), TRACK>,
     builtin_count: usize,
     concrete_count: usize,
     _phantom: core::marker::PhantomData<S>,
@@ -154,7 +154,7 @@ impl<S: DenseId, const TRACK: bool> Default for SortRegistry<S, TRACK> {
 impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
     pub fn new() -> Self {
         Self {
-            map: Map::new(),
+            map: SpMap::new(),
             builtin_count: 0,
             concrete_count: 0,
             _phantom: core::marker::PhantomData,
@@ -218,10 +218,10 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
     }
 }
 
-/// Append-only operator registry backed by `Map`.
+/// Append-only operator registry backed by `SpMap`.
 #[derive(Debug)]
 pub struct OpRegistry<O: DenseId, S: DenseId, const TRACK: bool> {
-    map: Map<String, OpInfo<S>, TRACK>,
+    map: SpMap<String, OpInfo<S>, TRACK>,
     builtin_count: usize,
     concrete_sort_count: usize,
     _phantom: core::marker::PhantomData<O>,
@@ -236,7 +236,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> Default for OpRegistry<O,
 impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     pub fn new() -> Self {
         Self {
-            map: Map::new(),
+            map: SpMap::new(),
             builtin_count: 0,
             concrete_sort_count: 0,
             _phantom: core::marker::PhantomData,
@@ -293,7 +293,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
 
     /// Is this a primitive op (from LitModel::ops(), not a @-prefixed lit wrap)?
     pub fn is_prim_op(&self, id: O) -> bool {
-        self.is_builtin(id) && !matches!(self.map.get(id.to_usize()).kind, OpKind::Lit)
+        self.is_builtin(id) && !matches!(self.map.get_val(id.to_usize()).kind, OpKind::Lit)
     }
 
     pub fn register(&mut self, name: &str, arg_sorts: &[S], return_sort: S) -> O {
@@ -357,13 +357,13 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     }
 
     pub fn info(&self, id: O) -> &OpInfo<S> {
-        self.map.get(id.to_usize())
+        self.map.get_val(id.to_usize())
     }
 
     /// Is this op associative-commutative (`OpKind::MSet`)? Note this is `false`
     /// for ACI ops, which are a distinct kind.
     pub fn is_mset(&self, id: O) -> bool {
-        matches!(self.map.get(id.to_usize()).kind, OpKind::MSet { .. })
+        matches!(self.map.get_val(id.to_usize()).kind, OpKind::MSet { .. })
     }
 
     /// Iterator over the ids of all registered AC ops. Used by AC congruence
@@ -386,7 +386,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
 
     /// Is this op a `Set` (idempotent/nilpotent) op?
     pub fn is_set(&self, id: O) -> bool {
-        matches!(self.map.get(id.to_usize()).kind, OpKind::Set { .. })
+        matches!(self.map.get_val(id.to_usize()).kind, OpKind::Set { .. })
     }
 
     /// Iterator over the ids of all registered `Set` ops (idempotent or nilpotent), in
@@ -408,7 +408,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     /// is the column → op reference array for the per-op `min_monomial` pool (design "the
     /// column → op reference array"): `completion_ops()[k]` is the op owning pool column `k`,
     /// and its length is the fixed row width `nb_completion`. Registration order is stable
-    /// (the backing `Map` is append-only, never renumbered), so a column's meaning is fixed
+    /// (the backing `SpMap` is append-only, never renumbered), so a column's meaning is fixed
     /// for the run.
     pub fn completion_ops(&self) -> Vec<O> {
         let mut v: Vec<O> = self.mset_ops().collect();
@@ -477,10 +477,17 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         O::from_usize(id)
     }
 
-    pub fn set_constructor(&mut self, id: O) {
-        let info = self.map.get_mut(id.to_usize());
-        info.is_constructor = true;
-    }
+    /// Mark an op as a constructor.
+    ///
+    /// prod-parity: the verified `SpMap` has no `get_mut` (its contract is
+    /// append-only with shadow-on-overwrite), so constructor-ness is meant to
+    /// become registration-time metadata. `is_constructor`
+    /// is currently **write-only** — set here but read nowhere in the egraph —
+    /// so this is a no-op that preserves observable behavior. When the flag
+    /// gains a reader it must be threaded through `insert` (the value is known
+    /// at registration; see `register_op` in `sortcheck.rs`) rather than mutated
+    /// after the fact.
+    pub fn set_constructor(&mut self, _id: O) {}
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> OpRegistryToken {
         OpRegistryToken(self.map.mark(shrink))
@@ -507,9 +514,9 @@ pub struct RuleInfo {
     pub rhs: String,
 }
 
-/// Append-only rule registry backed by `Map`.
+/// Append-only rule registry backed by `SpMap`.
 pub struct RuleRegistry<const TRACK: bool> {
-    map: Map<String, RuleInfo, TRACK>,
+    map: SpMap<String, RuleInfo, TRACK>,
 }
 
 impl<const TRACK: bool> Default for RuleRegistry<TRACK> {
@@ -520,7 +527,7 @@ impl<const TRACK: bool> Default for RuleRegistry<TRACK> {
 
 impl<const TRACK: bool> RuleRegistry<TRACK> {
     pub fn new() -> Self {
-        Self { map: Map::new() }
+        Self { map: SpMap::new() }
     }
 
     pub fn register(&mut self, name: &str, lhs: &str, rhs: &str) -> crate::id::RuleId {
@@ -536,7 +543,7 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
     }
 
     pub fn info(&self, id: crate::id::RuleId) -> &RuleInfo {
-        self.map.get(id.to_usize())
+        self.map.get_val(id.to_usize())
     }
 
     pub fn name(&self, id: crate::id::RuleId) -> &str {
@@ -582,9 +589,9 @@ pub struct AxiomInfo<G: Copy> {
     pub rhs: G,
 }
 
-/// Append-only axiom registry backed by `Map`.
+/// Append-only axiom registry backed by `SpMap`.
 pub struct AxiomRegistry<G: Copy + DenseId, const TRACK: bool> {
-    map: Map<String, AxiomInfo<G>, TRACK>,
+    map: SpMap<String, AxiomInfo<G>, TRACK>,
 }
 
 impl<G: Copy + DenseId, const TRACK: bool> Default for AxiomRegistry<G, TRACK> {
@@ -595,7 +602,7 @@ impl<G: Copy + DenseId, const TRACK: bool> Default for AxiomRegistry<G, TRACK> {
 
 impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
     pub fn new() -> Self {
-        Self { map: Map::new() }
+        Self { map: SpMap::new() }
     }
 
     pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> crate::id::AxiomId {
@@ -611,7 +618,7 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
     }
 
     pub fn info(&self, id: crate::id::AxiomId) -> &AxiomInfo<G> {
-        self.map.get(id.to_usize())
+        self.map.get_val(id.to_usize())
     }
 
     pub fn name(&self, id: crate::id::AxiomId) -> &str {

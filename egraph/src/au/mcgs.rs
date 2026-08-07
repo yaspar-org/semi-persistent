@@ -19,7 +19,7 @@
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::{
-    AppendOnlyVec, DenseId, IndexLike, Map, MapToken, ShrinkPolicy, VecP, VecToken,
+    AppendOnlyVec, DenseId, IndexLike, MapToken, ShrinkPolicy, SpMap, VecP, VecToken,
 };
 use crate::literal::LitVal;
 
@@ -191,7 +191,13 @@ fn checked_pool_span<I: DenseId>(start: usize, len: usize, pool: &str) -> super:
         .unwrap_or_else(|| panic!("{pool} span end exceeds configured index width"));
     let span = super::Span::new(start, len);
     if len != 0 {
-        let _ = I::from_usize(end - 1);
+        // prod-parity: the last typed position must be a representable id. Verus's
+        // `DenseId::from_usize` MASKS out-of-range input (so the type invariant
+        // always holds) rather than panicking as production's did, so the
+        // id-range check moves to `try_new`, which returns `None` past the id
+        // bound (e.g. 128 for a 7-bit id, where `from_usize` would wrap to 0).
+        I::try_new(end - 1)
+            .unwrap_or_else(|| panic!("{pool} span end exceeds configured id width"));
     }
     span
 }
@@ -240,7 +246,11 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
 
         let edge_start = self.edge_visits.len().as_usize();
         assert_eq!(self.edge_and.len().as_usize(), edge_start);
-        let id = A::OrStats::from_usize(node_len);
+        // prod-parity: trap when the node id would exceed its width. Production's
+        // `from_usize` panicked on overflow; verus's masks, so the check is
+        // `try_new` (None past the id bound) before mutating any pool.
+        let id = A::OrStats::try_new(node_len)
+            .unwrap_or_else(|| panic!("OR-stats node id exceeds configured id width"));
         let edge_span = checked_pool_span::<A::OrEdgeStat>(
             edge_start,
             data.edge_visits.len(),
@@ -442,7 +452,10 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         assert_eq!(self.child_counts.len().as_usize(), child_start);
         assert_eq!(self.child_visits.len().as_usize(), child_start);
         let child_len = data.child_or_stats.len();
-        let id = A::AndStats::from_usize(node_len);
+        // prod-parity: trap on node-id overflow (verus `from_usize` masks; use
+        // `try_new`). See the OR-stats `push` for the rationale.
+        let id = A::AndStats::try_new(node_len)
+            .unwrap_or_else(|| panic!("AND-stats node id exceeds configured id width"));
         let child_span = checked_pool_span::<A::AndChildStat>(
             child_start,
             child_len,
@@ -603,7 +616,7 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
 pub(crate) struct McgsState<A: AuIds = AuIds31, O: DenseId = crate::id::OpId> {
     or_stats: OrStatsArena<A, O>,
     and_stats: AndStatsArena<A, O>,
-    or_stats_map: Map<A::Or, A::OrStats>,
+    or_stats_map: SpMap<A::Or, A::OrStats>,
 }
 
 /// Token for restoring `McgsState`. It bundles only arena and map tokens.
@@ -619,7 +632,7 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
         Self {
             or_stats: OrStatsArena::new(),
             and_stats: AndStatsArena::new(),
-            or_stats_map: Map::new(),
+            or_stats_map: SpMap::new(),
         }
     }
 
@@ -1049,7 +1062,7 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     if let Some(log_idx) = state.or_stats_map.id_of(&or_id) {
-        return *state.or_stats_map.get(log_idx);
+        return *state.or_stats_map.get_val(log_idx);
     }
 
     let l = *space.or_arena.left.get(or_id.to_usize());

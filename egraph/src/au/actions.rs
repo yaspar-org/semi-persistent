@@ -11,7 +11,7 @@
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
-use crate::containers::{DenseId, Map, MapToken, ShrinkPolicy};
+use crate::containers::{DenseId, MapToken, ShrinkPolicy, SpMap};
 use crate::egraph::EGraph;
 use crate::id::ENodeKind;
 use crate::literal::LitVal;
@@ -62,21 +62,21 @@ impl<A: AuIds> Eq for ActionPair<A> {}
 pub const DEFAULT_A_MAX: usize = 32;
 
 /// The action cache: maps class pair `(l, r)` to a list of actions.
-/// Semi-persistent: the `index` map (AppendOnlyVec + Map) is append-only and
+/// Semi-persistent: the `index` map (AppendOnlyVec + SpMap) is append-only and
 /// provides branch genealogy for tokens. The `values` vec grows in lockstep
 /// and is truncated on restore. Actions are deterministic from the immutable
 /// snapshot, so re-derivation after restore is cheap (cache is a performance
 /// optimization, not a correctness requirement).
 pub struct ActionCache<O: DenseId, A: AuIds = AuIds31> {
     /// Deduplication map: (l, r) -> typed action-list id into `values`.
-    index: Map<(A::Class, A::Class), A::Action>,
+    index: SpMap<(A::Class, A::Class), A::Action>,
     /// Action lists, indexed by the map's stored value.
     values: Vec<Vec<Action<O, A>>>,
     a_max: usize,
     include_ac: bool,
 }
 
-/// Token for restoring an `ActionCache`. Wraps the Map's token, which
+/// Token for restoring an `ActionCache`. Wraps the SpMap's token, which
 /// carries container identity and branch genealogy.
 #[derive(Clone, Copy, Debug)]
 pub struct ActionCacheToken {
@@ -87,7 +87,7 @@ pub struct ActionCacheToken {
 impl<O: DenseId, A: AuIds> ActionCache<O, A> {
     pub fn new(a_max: usize) -> Self {
         ActionCache {
-            index: Map::new(),
+            index: SpMap::new(),
             values: Vec::new(),
             a_max,
             include_ac: true,
@@ -98,7 +98,7 @@ impl<O: DenseId, A: AuIds> ActionCache<O, A> {
     /// Used by the exact solver, which handles those operators by transport.
     pub fn without_ac_actions(a_max: usize) -> Self {
         ActionCache {
-            index: Map::new(),
+            index: SpMap::new(),
             values: Vec::new(),
             a_max,
             include_ac: false,
@@ -112,7 +112,7 @@ impl<O: DenseId, A: AuIds> ActionCache<O, A> {
     pub fn get(&self, l: A::Class, r: A::Class) -> Option<&[Action<O, A>]> {
         let key = (l, r);
         self.index.id_of(&key).map(|log_idx| {
-            let &idx = self.index.get(log_idx);
+            let &idx = self.index.get_val(log_idx);
             self.values[idx.to_usize()].as_slice()
         })
     }

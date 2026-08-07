@@ -7,8 +7,8 @@
 use core::fmt;
 use core::hash::Hash;
 
+use crate::containers::IndexLike;
 use crate::containers::Tagged;
-use crate::containers::dense_id::IndexLike;
 use crate::containers::{AppendOnlyVec, ShrinkPolicy, VecI, VecToken};
 
 // ---------------------------------------------------------------------------

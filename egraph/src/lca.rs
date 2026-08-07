@@ -17,7 +17,7 @@
 //! `union_justified` / `rebuild` calls invalidate it — the caller must
 //! rebuild the table after mutations. This is not enforced by the type system.
 
-use crate::containers::dense_id::DenseId;
+use crate::containers::DenseId;
 
 // ---------------------------------------------------------------------------
 // Shared helpers

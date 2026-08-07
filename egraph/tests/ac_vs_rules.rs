@@ -193,8 +193,6 @@ fn run_program(src: &str, complete: bool, all_names: &[String]) -> RunStats {
     }
 }
 
-use semi_persistent_egraph::containers::DenseId;
-
 /// All term names an instance binds (constants + `add` terms), for the partition comparison.
 fn all_names(inst: &Instance) -> Vec<String> {
     let mut v: Vec<String> = (0..inst.n_leaves).map(|i| format!("c{i}")).collect();

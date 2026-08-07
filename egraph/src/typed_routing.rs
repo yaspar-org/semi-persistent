@@ -5,8 +5,10 @@
 //! Append-only with truncation on backtrack. Two-phase protocol:
 //! `reserve()` → probe cache → `finalize()` or `unreserve()`.
 
+use crate::containers::AppendOnlyVec;
 use crate::containers::DenseId;
 use crate::containers::ShrinkPolicy;
+use crate::containers::VecToken;
 
 /// Bundle of local DenseId types — one per node kind.
 pub trait NodeIds {
@@ -82,22 +84,28 @@ impl<I: NodeIds> core::fmt::Debug for NodeRef<I> {
     }
 }
 
-pub struct TypedRouting<G: DenseId, I: NodeIds> {
-    entries: Vec<NodeRef<I>>,
+/// Routing table: id `G` → `NodeRef<I>`, backed by the verified append-only
+/// semi-persistent vector. Entries are strictly append-only with never-reused
+/// ids and restored purely by length rollback — exactly `AppendOnlyVec`'s
+/// contract, so it carries the mark/restore proofs for free (no hand
+/// `truncate`). `TRACK` matches the owning `NodeStore` (mark/restore are
+/// caller errors when `TRACK == false`, container parity).
+pub struct TypedRouting<G: DenseId, I: NodeIds, const TRACK: bool = true> {
+    entries: AppendOnlyVec<NodeRef<I>, TRACK>,
     reserved: bool,
     _phantom: core::marker::PhantomData<G>,
 }
 
-impl<G: DenseId, I: NodeIds> Default for TypedRouting<G, I> {
+impl<G: DenseId, I: NodeIds, const TRACK: bool> Default for TypedRouting<G, I, TRACK> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<G: DenseId, I: NodeIds> TypedRouting<G, I> {
+impl<G: DenseId, I: NodeIds, const TRACK: bool> TypedRouting<G, I, TRACK> {
     pub fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: AppendOnlyVec::new(),
             reserved: false,
             _phantom: core::marker::PhantomData,
         }
@@ -122,7 +130,7 @@ impl<G: DenseId, I: NodeIds> TypedRouting<G, I> {
     }
 
     pub fn get(&self, id: G) -> NodeRef<I> {
-        self.entries[id.to_usize()]
+        *self.entries.get(id.to_usize())
     }
 
     pub fn len(&self) -> usize {
@@ -133,26 +141,21 @@ impl<G: DenseId, I: NodeIds> TypedRouting<G, I> {
         self.entries.is_empty()
     }
 
-    pub fn truncate(&mut self, len: usize) {
-        self.entries.truncate(len);
-        self.reserved = false;
-    }
-
-    pub fn mark(&mut self, _shrink: ShrinkPolicy) -> RoutingToken {
+    pub fn mark(&mut self, shrink: ShrinkPolicy) -> RoutingToken {
         RoutingToken {
-            len: self.entries.len(),
+            entries: self.entries.mark(shrink),
         }
     }
 
     pub fn restore(&mut self, token: RoutingToken) {
-        self.entries.truncate(token.len);
+        self.entries.restore(token.entries);
         self.reserved = false;
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct RoutingToken {
-    len: usize,
+    entries: VecToken,
 }
 
 #[cfg(test)]
@@ -176,7 +179,7 @@ mod tests {
         type LLit = LitNodeId;
     }
 
-    type RT = TypedRouting<ENodeId, TestIds>;
+    type RT = TypedRouting<ENodeId, TestIds, true>;
 
     #[test]
     fn reserve_finalize() {
@@ -202,13 +205,15 @@ mod tests {
     }
 
     #[test]
-    fn truncate() {
+    fn mark_restore_rolls_back() {
         let mut rt = RT::new();
         let id0 = rt.reserve();
         rt.finalize(id0, NodeRef::Plain1(Plain1Id::new(0)));
+        let token = rt.mark(ShrinkPolicy::Never);
         let id1 = rt.reserve();
         rt.finalize(id1, NodeRef::SPair(SPairNodeId::new(0)));
-        rt.truncate(1);
+        assert_eq!(rt.len(), 2);
+        rt.restore(token);
         assert_eq!(rt.len(), 1);
         assert_eq!(rt.get(id0), NodeRef::Plain1(Plain1Id::new(0)));
     }

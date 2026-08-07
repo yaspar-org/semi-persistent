@@ -74,20 +74,23 @@ impl crate::config::EGraphConfig for DefaultConfig {
     type Au = crate::au::AuIds31;
 
     fn mset_child_id(c: &Self::C) -> Self::G {
-        c.0
+        c.a
     }
     fn mset_child_mult(c: &Self::C) -> Self::M {
-        c.1
+        c.b
     }
     fn mset_child_single(g: Self::G) -> Self::C {
-        (g, crate::multiplicity::Multiplicity(1))
+        crate::containers::Pair {
+            a: g,
+            b: crate::multiplicity::Multiplicity(1),
+        }
     }
     fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
-        (g, mult)
+        crate::containers::Pair { a: g, b: mult }
     }
     fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
-        if existing.0 == new_g {
-            existing.1 = crate::multiplicity::Multiplicity(existing.1.0 + 1);
+        if existing.a == new_g {
+            existing.b = crate::multiplicity::Multiplicity(existing.b.0 + 1);
             true
         } else {
             false
@@ -147,20 +150,23 @@ impl crate::config::EGraphConfig for Config64 {
     type Au = crate::au::AuIds64;
 
     fn mset_child_id(c: &Self::C) -> Self::G {
-        c.0
+        c.a
     }
     fn mset_child_mult(c: &Self::C) -> Self::M {
-        c.1
+        c.b
     }
     fn mset_child_single(g: Self::G) -> Self::C {
-        (g, crate::multiplicity::Multiplicity(1))
+        crate::containers::Pair {
+            a: g,
+            b: crate::multiplicity::Multiplicity(1),
+        }
     }
     fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
-        (g, mult)
+        crate::containers::Pair { a: g, b: mult }
     }
     fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
-        if existing.0 == new_g {
-            existing.1 = crate::multiplicity::Multiplicity(existing.1.0 + 1);
+        if existing.a == new_g {
+            existing.b = crate::multiplicity::Multiplicity(existing.b.0 + 1);
             true
         } else {
             false

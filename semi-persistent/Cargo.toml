@@ -7,6 +7,6 @@ description = "Semi-persistent data structures, e-graphs, and recursion schemes"
 repository = "https://github.com/yaspar-org/semi-persistent"
 
 [dependencies]
-semi-persistent-containers = { path = "../containers", version = "0.1.0" }
+semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.1.0" }
 semi-persistent-egraph = { path = "../egraph", version = "0.1.0" }
 semi-persistent-traversals = { path = "../traversals", version = "0.1.0" }
