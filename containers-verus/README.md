@@ -78,7 +78,11 @@ The whole container family is verified:
 - **`SortedVecCursor`**: not a container — the galloping seek the e-graph's
   leapfrog joins run on, verified against the *same* `seek_target_idx` spec as
   the B+tree cursor, so the two are substitutable at the `SortedCursor`
-  boundary. See [`doc/design/12-sorted-vec-cursor.md`](doc/design/12-sorted-vec-cursor.md).
+  boundary. `egraph` runs this one: it re-exports the type and no longer defines
+  a cursor of its own, so the proof covers the code that ships. Measured
+  performance-neutral end-to-end (seeks themselves got 2-3x faster, which the
+  saturation workloads barely notice).
+  See [`doc/design/12-sorted-vec-cursor.md`](doc/design/12-sorted-vec-cursor.md).
 
 Trusted boundary: 21 `#[verifier::external_body]` items (26 with `literal-types`),
 only three of them carrying load-bearing contracts, all enumerated in

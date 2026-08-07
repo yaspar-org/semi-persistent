@@ -24,6 +24,20 @@ use std::collections::HashMap;
 /// worth more than a marginal per-probe difference between the fast options.
 pub type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 
+/// Cursor into a `SortedVec<G>`: the **verified** galloping cursor from
+/// `containers-verus`, re-exported so this module's public surface is unchanged.
+///
+/// The seek is proven, not just tested: it lands on the first key `>= target`
+/// and skips no present key, for every slice and every target, with every slice
+/// index in bounds and no arithmetic overflow. The proof is stated against the
+/// same `seek_target_idx` spec function the verified B+tree cursor uses, which
+/// is what makes the two substitutable at the `SortedCursor` boundary.
+///
+/// See `containers-verus/doc/design/12-sorted-vec-cursor.md`. The algorithm and
+/// the `#[inline]` attributes match what this module previously defined inline;
+/// the erased build compiles the same doubling ladder and bounded bisection.
+pub use semi_persistent_containers::SortedVecCursor;
+
 /// Sorted index over node ids, backed by a contiguous `Vec<G>`.
 /// Supports O(log n) seek and O(1) step for leapfrog join.
 #[derive(Clone, Debug)]
@@ -40,77 +54,6 @@ impl<G: DenseId> SortedVec<G> {
     }
     pub fn iter(&self) -> SortedVecCursor<'_, G> {
         SortedVecCursor::new(&self.data)
-    }
-}
-
-/// Cursor into a `SortedVec<G>`. Implements seek/step for leapfrog.
-pub struct SortedVecCursor<'a, G> {
-    data: &'a [G],
-    pos: usize,
-}
-
-impl<'a, G: DenseId> SortedVecCursor<'a, G> {
-    pub fn new(data: &'a [G]) -> Self {
-        Self { data, pos: 0 }
-    }
-
-    #[inline]
-    pub fn is_valid(&self) -> bool {
-        self.pos < self.data.len()
-    }
-
-    #[inline]
-    pub fn key(&self) -> G {
-        self.data[self.pos]
-    }
-
-    #[inline]
-    pub fn step(&mut self) {
-        self.pos += 1;
-    }
-
-    /// Advance to the first element >= target.
-    ///
-    /// Galloping (exponential) search from the cursor, so the cost is
-    /// O(log *d*) in the distance actually advanced rather than O(log *rem*)
-    /// in the size of the remaining slice. Leapfrog seeks are overwhelmingly
-    /// short: measured over the saturation workloads, 56-67% of AC-row seeks
-    /// advance by at most one element and 83-86% by at most three, against a
-    /// remaining slice averaging 2^4.7 to 2^7.9 elements. A plain
-    /// `partition_point` over the whole remainder pays its full 5-8 probes for
-    /// each of those.
-    ///
-    /// The probe-then-bisect structure is what keeps the long-jump case from
-    /// regressing: the gallop overshoots by at most a factor of two, so the
-    /// bisection that follows runs over a window no larger than the distance
-    /// covered, and the total stays within one probe of a direct binary search.
-    #[inline]
-    pub fn seek(&mut self, target: G) {
-        let data = &self.data;
-        let n = data.len();
-
-        // The common case, checked before any bounding work: the cursor already
-        // satisfies the seek — 24.7% of `ac6/semi` and 30.6% of `plain7/semi`
-        // seeks, because the `Difference` combinator seeks both sides to the same
-        // key. Not universal among semi-naive rows: `ac10/semi` is 0.5% (see the
-        // stride table in `doc/perf-results/E7-galloping-seek.md`).
-        if self.pos >= n || data[self.pos] >= target {
-            return;
-        }
-
-        // Gallop: double the offset until it lands on or past the target, so
-        // `lo` stays strictly below it and `hi` is the first known bound.
-        let mut step = 1usize;
-        let mut lo = self.pos;
-        while lo + step < n && data[lo + step] < target {
-            lo += step;
-            step *= 2;
-        }
-        let hi = (lo + step).min(n);
-
-        // `lo` is known to be below the target and `hi` to be at or past it, so
-        // bisect the open interval between them.
-        self.pos = lo + 1 + data[lo + 1..hi].partition_point(|x| *x < target);
     }
 }
 
@@ -484,16 +427,16 @@ mod tests {
                 let mut c = SortedVecCursor::new(&data);
                 c.seek(G::from_usize(t));
                 assert_eq!(
-                    c.pos,
+                    c.pos(),
                     expected_pos(vals, 0, t),
                     "seek({t}) on {vals:?} landed at {}",
-                    c.pos
+                    c.pos()
                 );
                 if c.is_valid() {
                     assert!(c.key().to_usize() >= t, "landed below target");
                     // First such key: the predecessor must be strictly below.
-                    if c.pos > 0 {
-                        assert!(vals[c.pos - 1] < t, "skipped a key ≥ target");
+                    if c.pos() > 0 {
+                        assert!(vals[c.pos() - 1] < t, "skipped a key ≥ target");
                     }
                 }
             }
@@ -502,16 +445,20 @@ mod tests {
         fn run_seek_sequence_is_monotone<G: DenseId>(vals: &[usize], ts: &[usize]) {
             let data: Vec<G> = vals.iter().map(|&v| G::from_usize(v)).collect();
             let mut c = SortedVecCursor::new(&data);
-            let mut prev = c.pos;
+            let mut prev = c.pos();
             let mut from = 0usize;
             for &t in ts {
                 c.seek(G::from_usize(t));
-                assert!(c.pos >= prev, "pos went backwards: {prev} -> {}", c.pos);
-                assert!(c.pos <= data.len(), "pos {} out of bounds", c.pos);
+                assert!(c.pos() >= prev, "pos went backwards: {prev} -> {}", c.pos());
+                assert!(c.pos() <= data.len(), "pos {} out of bounds", c.pos());
                 // Against the linear reference, from wherever the cursor was.
-                assert_eq!(c.pos, expected_pos(vals, from, t), "seek({t}) mid-sequence");
-                prev = c.pos;
-                from = c.pos;
+                assert_eq!(
+                    c.pos(),
+                    expected_pos(vals, from, t),
+                    "seek({t}) mid-sequence"
+                );
+                prev = c.pos();
+                from = c.pos();
             }
         }
 
@@ -531,7 +478,7 @@ mod tests {
                     c.step();
                     model += 1;
                 }
-                assert_eq!(c.pos, model, "cursor diverged from the model");
+                assert_eq!(c.pos(), model, "cursor diverged from the model");
             }
 
             // Draining from here must yield exactly vals[model..].
@@ -594,7 +541,7 @@ mod tests {
             let mut c = SortedVecCursor::new(&data);
             // Target past every key: the ladder runs to the end and clamps.
             c.seek(crate::id::ENodeId::from_usize(100_000));
-            assert_eq!(c.pos, data.len());
+            assert_eq!(c.pos(), data.len());
             assert!(!c.is_valid());
 
             // And a target reachable only after a full-length gallop.
@@ -609,14 +556,14 @@ mod tests {
             let empty: [crate::id::ENodeId; 0] = [];
             let mut c = SortedVecCursor::new(&empty);
             c.seek(crate::id::ENodeId::from_usize(7));
-            assert_eq!(c.pos, 0);
+            assert_eq!(c.pos(), 0);
             assert!(!c.is_valid());
 
             let one = [crate::id::ENodeId::from_usize(5)];
             for (t, want) in [(0usize, 0usize), (5, 0), (6, 1)] {
                 let mut c = SortedVecCursor::new(&one);
                 c.seek(crate::id::ENodeId::from_usize(t));
-                assert_eq!(c.pos, want, "single-element seek({t})");
+                assert_eq!(c.pos(), want, "single-element seek({t})");
             }
 
             // Seeking on an already-exhausted cursor is a no-op, not a panic.
@@ -624,9 +571,9 @@ mod tests {
             c.step();
             assert!(!c.is_valid());
             c.seek(crate::id::ENodeId::from_usize(0));
-            assert_eq!(c.pos, 1);
+            assert_eq!(c.pos(), 1);
             c.seek(crate::id::ENodeId::from_usize(99));
-            assert_eq!(c.pos, 1);
+            assert_eq!(c.pos(), 1);
         }
 
         /// The largest id each width admits, seeked to and past. `from_usize` is
@@ -641,7 +588,7 @@ mod tests {
                     .collect();
                 let mut c = SortedVecCursor::new(&data);
                 c.seek(G::from_usize(max));
-                assert_eq!(c.pos, 2);
+                assert_eq!(c.pos(), 2);
                 assert_eq!(c.key().to_usize(), max);
                 c.step();
                 assert!(!c.is_valid());

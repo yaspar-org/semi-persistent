@@ -246,8 +246,58 @@ establishes that the gallop is *sound*, not that it is *fast*; if it were slow t
 proof would still go through, which is exactly why the perf ledger is a separate
 artifact from this one.
 
-**Also not claimed:** production's `SortedVecCursor` is not *replaced* by this
-one. `egraph` continues to run its own, and this module is a verified model of it
-plus a drop-in `SortedCursor` impl for consumers inside this crate. The
-correspondence is maintained by the shared oracle and generators in §5, not by
-compilation — a swap would be a separate, measured change.
+**In production:** `egraph` runs this cursor. `egraph/src/index.rs` re-exports it
+under the same name and `egraph/src/leapfrog.rs` no longer carries a local
+`SortedCursor` impl — both the trait and the type are foreign now, so this crate
+supplies the impl and the orphan rule forbids a second one. The correspondence
+between the verified cursor and the algorithm `egraph` used to define inline is
+therefore maintained *by compilation*, not just by the shared oracle of §5; the
+oracle and generators remain as the runtime guard on the erased build, where
+`requires`/`ensures` are gone.
+
+The swap was measured before it landed (§7a). Seeks got substantially faster and
+end-to-end was unchanged — both expected, and the reason the swap is justified on
+soundness rather than speed.
+
+## 7a. What the swap cost, measured
+
+Verification and performance pull in opposite directions often enough that "the
+verified one is faster" deserves evidence rather than a claim. The numbers below
+come from a **single binary** holding both algorithms, alternating which runs
+first, over 9 reps at 1M keys (medians). A cross-binary criterion A/B was tried
+first and discarded: a production-vs-production control run came back at ±0.2%,
+which established that run-to-run noise was *not* the explanation and sent the
+investigation to codegen instead.
+
+| shape | prod (ns) | verified | Ord→raw compare only | `partition_point`→loop only |
+|---|---|---|---|---|
+| stride/1 | 7 770 | −48% | −28% | −43% |
+| stride/16 | 60 930 | −65% | −9% | −71% |
+| stride/256 | 206 751 | −77% | −33% | −80% |
+| full sweep | 1 899 327 | −49% | −29% | −43% |
+
+Two independent differences, separated by holding one fixed and varying the other:
+
+1. **The bisection loop, which is the dominant factor.** Production called
+   `data[lo+1..hi].partition_point(|x| *x < target)`. The verified version cannot:
+   there is no way to state a loop invariant *through* std's `partition_point`, so
+   the proof forced an explicit `while a < b` bisection. That hand-written loop
+   compiles better than std's here — swapping only this, with the comparison held
+   at production's, accounts for −43% to −80%.
+2. **The comparison.** These ids steal the MSB as a capture tag, so `Ord::cmp`
+   masks *both* operands (`(raw & MASK).cmp(&(other.raw & MASK))`). The verified
+   code compares through `IndexLike::lt`, a bare `raw < raw`, sound because a
+   `SortedVec` holds clean ids. Worth a few points to −33%.
+
+A deterministic probe-count harness confirms the two do **identical work**:
+byte-for-byte equal slice-load counts and equal final positions on every shape
+above. The win is entirely codegen, not algorithm — which is also why it does not
+contradict [E7](../../../egraph/doc/perf-results/E7-galloping-seek.md), whose
+gallop-vs-binary-search comparison is about probe counts.
+
+**End-to-end: unchanged.** `acsite` 1.94–1.97 ms both sides; `complsite`
+2.415–2.435 ms verified vs 2.413–2.415 ms production, checksums identical
+(17400, 127200). This is the ratio E7 already established — a 70-97% seek win
+moved end-to-end 4-6%, because seek is a small share of saturation time, and a
+2-3x win on a small share is still a small share. The swap is a soundness change
+that happens not to cost anything, and it should be defended on that basis.
