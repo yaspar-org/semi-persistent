@@ -8,12 +8,17 @@
 //! read results back by walking the actual `next` pointers over the arena (the
 //! ghost `model` is erased), and check against plain-`Vec`/`Vec<Vec>` oracles.
 //! The `Ghost(..)` argument to `restore` is a compile-time-only marker
-//! (`Ghost::assume_new()`), erased here.
-
-use vstd::prelude::Ghost;
+//! restore is token-only (Phase 7).
 
 use semi_persistent_containers_verus::circular_list::CircularList;
 use semi_persistent_containers_verus::list::ListArena;
+// Packed next-pointers need an id with a spare tag bit: DenseId63 (63-bit
+// payload over u64) replaces the full-range DenseUsize the raw-usize surface
+// used before the niche packing (fix 1). DenseUsize has NO spare bit and
+// cannot instantiate the packed ListArena — by design.
+use semi_persistent_containers_verus::dense_id::DenseId63;
+use semi_persistent_containers_verus::index_like::IndexLike; // as_usize now lives here (prod-parity)
+use semi_persistent_containers_verus::opt::DenseId;
 use semi_persistent_containers_verus::vec::ShrinkPolicy;
 
 struct Lcg(u64);
@@ -37,23 +42,32 @@ impl Lcg {
 // ListArena: walk list `l` by following head -> next* over the arena.
 // --------------------------------------------------------------------------
 
-type Arena = ListArena<u32, false>;
+// Typed params (Phase 5.4): DenseUsize handles = the raw-usize surface.
+type Arena = ListArena<u32, DenseId63, DenseId63, false>;
+/// Tracked variant for the mark/restore tests: mark/restore on an untracked
+/// container now panics (production parity, migration plan 2.4).
+type ArenaT = ListArena<u32, DenseId63, DenseId63, true>;
 
-fn read_list(a: &Arena, l: usize) -> Vec<u32> {
+fn read_list<const TRACK: bool>(
+    a: &ListArena<u32, DenseId63, DenseId63, TRACK>,
+    l: usize,
+) -> Vec<u32> {
     let mut out = Vec::new();
-    let head = a.heads.get(l).head;
-    let mut cur = head;
+    // The columns are indexed by `L::Index`/`N::Index` (production parity), which
+    // is `u64` for the 63-bit id family, so the walk's `usize` positions widen at
+    // the accessor boundary.
+    let mut cur = a.white_box_heads().get(l as u64).white_box_head();
     // Guard against a corrupt cycle: never walk more than the arena size.
-    let mut budget = a.nodes.len() + 1;
-    while cur.some {
+    let mut budget = a.white_box_nodes().len() as usize + 1;
+    while let Some(idx) = cur {
         assert!(
             budget > 0,
             "list {l} walk exceeded arena size — cycle/corruption"
         );
         budget -= 1;
-        let node = a.nodes.get(cur.idx);
+        let node = a.white_box_nodes().get(idx as u64);
         out.push(node.payload);
-        cur = node.next;
+        cur = node.white_box_next();
     }
     out
 }
@@ -68,7 +82,7 @@ fn list_arena_prepend_append_match_oracle() {
         // a handful of lists.
         let nlists = 1 + rng.below(5);
         for _ in 0..nlists {
-            let l = a.new_list();
+            let l = a.new_list().as_usize();
             assert_eq!(l, oracle.len(), "seed={seed}: new_list index mismatch");
             oracle.push(Vec::new());
         }
@@ -77,16 +91,16 @@ fn list_arena_prepend_append_match_oracle() {
             let l = rng.below(oracle.len());
             let v = rng.next() as u32;
             if rng.below(2) == 0 {
-                a.prepend(l, v);
+                a.prepend(DenseId63::from_usize(l), v);
                 oracle[l].insert(0, v);
             } else {
-                a.append(l, v);
+                a.append(DenseId63::from_usize(l), v);
                 oracle[l].push(v);
             }
             // is_empty agrees, and a random list reads back exactly.
             let probe = rng.below(oracle.len());
             assert_eq!(
-                a.is_empty(probe),
+                a.is_empty(DenseId63::from_usize(probe)),
                 oracle[probe].is_empty(),
                 "seed={seed}: is_empty({probe})"
             );
@@ -97,7 +111,7 @@ fn list_arena_prepend_append_match_oracle() {
             );
             // O(1) cached len agrees with the oracle length.
             assert_eq!(
-                a.len(probe),
+                a.len(DenseId63::from_usize(probe)),
                 oracle[probe].len(),
                 "seed={seed}: len({probe})"
             );
@@ -105,7 +119,11 @@ fn list_arena_prepend_append_match_oracle() {
         // full sweep.
         for (l, expected) in oracle.iter().enumerate() {
             assert_eq!(read_list(&a, l), *expected, "seed={seed}: final list {l}");
-            assert_eq!(a.len(l), expected.len(), "seed={seed}: final len {l}");
+            assert_eq!(
+                a.len(DenseId63::from_usize(l)),
+                expected.len(),
+                "seed={seed}: final len {l}"
+            );
         }
         println!("list_arena prepend/append seed={seed}: OK ({nlists} lists)");
     }
@@ -127,7 +145,7 @@ fn list_arena_splice_match_oracle() {
         for (l, olist) in oracle.iter_mut().enumerate() {
             for _ in 0..rng.below(6) {
                 let v = rng.next() as u32;
-                a.append(l, v);
+                a.append(DenseId63::from_usize(l), v);
                 olist.push(v);
             }
         }
@@ -139,7 +157,7 @@ fn list_arena_splice_match_oracle() {
             if src == dst {
                 src = (src + 1) % nlists;
             }
-            a.splice(dst, src);
+            a.splice(DenseId63::from_usize(dst), DenseId63::from_usize(src));
             let tail = std::mem::take(&mut oracle[src]);
             oracle[dst].extend(tail);
 
@@ -147,7 +165,7 @@ fn list_arena_splice_match_oracle() {
             if rng.below(3) == 0 {
                 let l = rng.below(nlists);
                 let v = rng.next() as u32;
-                a.append(l, v);
+                a.append(DenseId63::from_usize(l), v);
                 oracle[l].push(v);
             }
 
@@ -158,7 +176,7 @@ fn list_arena_splice_match_oracle() {
                     "seed={seed}: list {l} after splice"
                 );
                 assert_eq!(
-                    a.len(l),
+                    a.len(DenseId63::from_usize(l)),
                     expected.len(),
                     "seed={seed}: len {l} after splice"
                 );
@@ -171,7 +189,7 @@ fn list_arena_splice_match_oracle() {
 #[test]
 fn list_arena_mark_restore() {
     for seed in 0..10u64 {
-        let mut a = Arena::new();
+        let mut a = ArenaT::new();
         let mut oracle: Vec<Vec<u32>> = Vec::new();
         let mut rng = Lcg::new(seed ^ 0x9988);
         let nlists = 2 + rng.below(4);
@@ -189,17 +207,17 @@ fn list_arena_mark_restore() {
                 }
                 1 if !frames.is_empty() => {
                     let (tok, snap) = frames.pop().unwrap();
-                    a.restore(tok, Ghost::assume_new());
+                    a.restore(tok); // token-only signature (Phase 7)
                     oracle = snap;
                 }
                 _ => {
                     let l = rng.below(nlists);
                     let v = rng.next() as u32;
                     if rng.below(2) == 0 {
-                        a.prepend(l, v);
+                        a.prepend(DenseId63::from_usize(l), v);
                         oracle[l].insert(0, v);
                     } else {
-                        a.append(l, v);
+                        a.append(DenseId63::from_usize(l), v);
                         oracle[l].push(v);
                     }
                 }
@@ -213,7 +231,7 @@ fn list_arena_mark_restore() {
         }
         // unwind fully.
         while let Some((tok, snap)) = frames.pop() {
-            a.restore(tok, Ghost::assume_new());
+            a.restore(tok); // token-only signature (Phase 7)
             for (l, expected) in snap.iter().enumerate() {
                 assert_eq!(
                     read_list(&a, l),
@@ -233,14 +251,16 @@ fn list_arena_mark_restore() {
 // next_of from a start node until we return to it.
 // --------------------------------------------------------------------------
 
-type Ring = CircularList<u32, false>;
+type Ring = CircularList<u32, DenseId63, false>;
+/// Tracked variant for the mark/restore tests (see ArenaT).
+type RingT = CircularList<u32, DenseId63, true>;
 
 /// The cyclic sequence of payloads starting at node `start`, walking `next_of`
 /// until we loop back. Rotation-invariant comparison is done by the caller.
-fn read_ring(c: &Ring, start: usize) -> Vec<u32> {
+fn read_ring<const TRACK: bool>(c: &CircularList<u32, DenseId63, TRACK>, start: usize) -> Vec<u32> {
     let mut out = Vec::new();
     let mut cur = start;
-    let mut budget = c.len() + 1;
+    let mut budget = c.len() as usize + 1;
     loop {
         assert!(
             budget > 0,
@@ -249,7 +269,7 @@ fn read_ring(c: &Ring, start: usize) -> Vec<u32> {
         budget -= 1;
         // payload of node `cur`.
         out.push(payload_of(c, cur));
-        cur = c.next_of(cur);
+        cur = c.next_of(DenseId63::from_usize(cur)).to_usize();
         if cur == start {
             break;
         }
@@ -257,8 +277,40 @@ fn read_ring(c: &Ring, start: usize) -> Vec<u32> {
     out
 }
 
-fn payload_of(c: &Ring, i: usize) -> u32 {
-    c.entries.get(i).payload
+fn payload_of<const TRACK: bool>(c: &CircularList<u32, DenseId63, TRACK>, i: usize) -> u32 {
+    c.payload_of(DenseId63::from_usize(i))
+}
+
+/// The node indices of `start`'s ring, in walk order, via the verified
+/// `iter_class` iterator (production's `ClassIter`).
+fn iter_ring_indices<const TRACK: bool>(
+    c: &CircularList<u32, DenseId63, TRACK>,
+    start: usize,
+) -> Vec<usize> {
+    c.iter_class(DenseId63::from_usize(start))
+        .map(|n: DenseId63| n.to_usize())
+        .collect()
+}
+
+/// The node indices of `start`'s ring, in walk order, via the manual `next_of`
+/// pointer-chase (the oracle for the iterator).
+fn walk_ring_indices<const TRACK: bool>(
+    c: &CircularList<u32, DenseId63, TRACK>,
+    start: usize,
+) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut cur = start;
+    let mut budget = c.len() as usize + 1;
+    loop {
+        assert!(budget > 0, "ring walk from {start} exceeded node count");
+        budget -= 1;
+        out.push(cur);
+        cur = c.next_of(DenseId63::from_usize(cur)).to_usize();
+        if cur == start {
+            break;
+        }
+    }
+    out
 }
 
 /// Are two sequences equal up to rotation (same ring, different start)?
@@ -292,7 +344,7 @@ fn circular_list_singleton_and_splice() {
             let make_new = rng.below(3) == 0 || node_payload.len() < 2;
             if make_new {
                 let p = rng.next() as u32;
-                let id = c.add_singleton(p);
+                let id = c.add_singleton(p).to_usize();
                 assert_eq!(
                     id,
                     node_payload.len(),
@@ -313,7 +365,7 @@ fn circular_list_singleton_and_splice() {
                 if ring_of[a] == ring_of[s] {
                     continue; // could not find a different ring this time
                 }
-                c.splice(s, a);
+                c.splice(DenseId63::from_usize(s), DenseId63::from_usize(a));
 
                 // Oracle merge mirroring the proven semantics: the new ring of s
                 // is rotate(ring_s, pos_s+1) ++ rotate(ring_a, pos_a+1), i.e.
@@ -361,6 +413,16 @@ fn circular_list_singleton_and_splice() {
                     "seed={seed}: ring of node {nd} pointer-walk != oracle"
                 );
                 assert!(eq_up_to_rotation(&walked, &oracle_ring));
+
+                // The verified `iter_class` iterator visits exactly the same
+                // node indices, in the same order, as the manual `next_of` walk.
+                let iter_nodes = iter_ring_indices(&c, nd);
+                let walk_nodes = walk_ring_indices(&c, nd);
+                assert_eq!(
+                    iter_nodes, walk_nodes,
+                    "seed={seed}: iter_class(node {nd}) != next_of pointer-walk"
+                );
+                assert_eq!(iter_nodes[0], nd, "iter_class must start at `start`");
             }
         }
         println!(
@@ -373,7 +435,7 @@ fn circular_list_singleton_and_splice() {
 #[test]
 fn circular_list_mark_restore() {
     for seed in 0..10u64 {
-        let mut c = Ring::new();
+        let mut c = RingT::new();
         let mut rng = Lcg::new(seed ^ 0x7A7A);
         let mut node_payload: Vec<u32> = Vec::new();
         let mut rings: Vec<Vec<usize>> = Vec::new();
@@ -394,14 +456,14 @@ fn circular_list_mark_restore() {
                 }
                 1 if !frames.is_empty() => {
                     let (tok, (np, rg, ro)) = frames.pop().unwrap();
-                    c.restore(tok, Ghost::assume_new());
+                    c.restore(tok); // token-only signature (Phase 7)
                     node_payload = np;
                     rings = rg;
                     ring_of = ro;
                 }
                 _ => {
                     let p = rng.next() as u32;
-                    let id = c.add_singleton(p);
+                    let id = c.add_singleton(p).to_usize();
                     node_payload.push(p);
                     ring_of.push(rings.len());
                     rings.push(vec![id]);

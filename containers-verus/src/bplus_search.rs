@@ -140,4 +140,93 @@ impl SearchKind for BinarySearch {
     }
 }
 
+/// Linear count search (production's `Branchless`): counts keys strictly
+/// below (`find_ge`) / at-or-below (`find_gt`) the target with a full scan.
+/// The name reflects production's intent (auto-vectorizable branch-free
+/// compare-accumulate); the verified body is the same linear scan with a
+/// counter — same result, same contracts as `BinarySearch`.
+pub struct Branchless;
+
+impl SearchKind for Branchless {
+    fn find_ge<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
+        let n = keys.len();
+        let mut count: usize = 0;
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                i <= n,
+                n == keys.len(),
+                sorted_le(keys@),
+                count <= i,
+                // count == number of keys in [0, i) below target; sortedness
+                // makes them exactly the PREFIX [0, count).
+                forall|j: int| 0 <= j < count ==> (#[trigger] keys@[j].as_nat()) < target.as_nat(),
+                forall|j: int| count <= j < i ==> target.as_nat() <= (#[trigger] keys@[j].as_nat()),
+            decreases n - i,
+        {
+            let ki = keys[i];
+            assert(ki == keys@[i as int]);
+            let is_lt = ki.lt(target);
+            proof { W::lemma_order_is_as_nat(ki, target); }
+            if is_lt {
+                proof {
+                    // sorted: keys[i] < target forces every j <= i below
+                    // target (keys[j] <= keys[i] < target)...
+                    assert forall|j: int| 0 <= j <= i implies
+                        (#[trigger] keys@[j].as_nat()) < target.as_nat() by {
+                        lemma_sorted_le_at(keys@, j, i as int);
+                    }
+                    // ...and the invariant's upper arm makes [count, i) keys
+                    // >= target, so that range must be empty: count == i.
+                    if count < i {
+                        assert(target.as_nat() <= keys@[count as int].as_nat());
+                        assert(keys@[count as int].as_nat() < target.as_nat());
+                        assert(false);
+                    }
+                }
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+        count
+    }
+
+    fn find_gt<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
+        let n = keys.len();
+        let mut count: usize = 0;
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                i <= n,
+                n == keys.len(),
+                sorted_le(keys@),
+                count <= i,
+                forall|j: int| 0 <= j < count ==> (#[trigger] keys@[j].as_nat()) <= target.as_nat(),
+                forall|j: int| count <= j < i ==> target.as_nat() < (#[trigger] keys@[j].as_nat()),
+            decreases n - i,
+        {
+            let ki = keys[i];
+            assert(ki == keys@[i as int]);
+            let is_le = ki.le(target);
+            proof { W::lemma_order_is_as_nat(ki, target); }
+            if is_le {
+                proof {
+                    assert forall|j: int| 0 <= j <= i implies
+                        (#[trigger] keys@[j].as_nat()) <= target.as_nat() by {
+                        lemma_sorted_le_at(keys@, j, i as int);
+                    }
+                    if count < i {
+                        assert(target.as_nat() < keys@[count as int].as_nat());
+                        assert(keys@[count as int].as_nat() <= target.as_nat());
+                        assert(false);
+                    }
+                }
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+        count
+    }
+}
+
 } // verus!

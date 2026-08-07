@@ -16,11 +16,11 @@ production [`semi-persistent-containers`](../../../containers) crate.
 | `list.rs` | `list` (+ `opt`) | **Verified** (prepend/append/splice) |
 | *(e-graph `classes.rs` ring)* | `circular_list` | **Verified** (not a production `containers` module; the class-membership ring, ported here) |
 | `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolTagged` + a real bit-stealer) |
-| `dense_id.rs` | `dense_id`, `index_like` | **Partial**: `DenseId31` + `IndexLike` trait verified; **`IdFactory` absent** |
-| `id.rs` (`define_id7/15/31/63!`) | - | **ABSENT**: no macro; `DenseId31` is one hand-written instance |
+| `dense_id.rs` | `dense_id`, `index_like`, `id_factory` | **Verified**: `DenseId31` + `IndexLike` trait, plus `IdFactory` sequential allocation |
+| `id.rs` (`define_id7/15/31/63!`) | `id_macros` | **Verified**: the `define_id7/15/31/63!` family with full proofs |
 | `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root, total), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
-| `bitset.rs` | *(internal use covered by `capture_bits`)* | **ABSENT as a public type** (see §3) |
-| `sorted_cursor.rs` | - | **ABSENT**: no `SortedCursor` trait / cursor iteration |
+| `bitset.rs` | `bitset` (`BitSet`) | **Present** as a public type; kept outside the container proofs (see §3) |
+| `sorted_cursor.rs` | `sorted_cursor`, `sorted_vec_cursor` | **Verified**: the `SortedCursor` trait and the galloping `SortedVecCursor` |
 
 ### 1.1 Public type-name mapping
 
@@ -111,21 +111,27 @@ explicit ghost ring-partition model. (This ports the e-graph's
 
 ## 3. Production features with NO verus counterpart
 
-These are **honest gaps** the PR must not imply are covered:
+Four items listed here as gaps in earlier revisions of this audit have since
+been closed; they are recorded below with their current home, because in-code
+comments and the design chapters still cite this section:
 
-1. **`id.rs`: the `define_id7/15/31/63!` macros + their generated id types.**
-   Verus has exactly one hand-written `DenseId31`; it does not generate the id
-   family, the 7/15/63-bit widths, or the `NodeId`/`StoredNodeId` clean-vs-repr
-   split the macro produces. `DenseId31` *demonstrates* that the niche encoding
-   verifies; it is not a drop-in for the macro.
-2. **`IdFactory`** (sequential id allocation): absent.
-3. **`bitset.rs`** as a public `BitSet` type: absent. The *internal* packed-bit
-   need is met by the verified `CaptureBits` (used inside `ParallelStore`), but
-   there is no standalone public bitset.
+1. **`id.rs`: the `define_id7/15/31/63!` macros + their generated id types** —
+   **closed**. `src/id_macros.rs` provides the family with full proofs, and
+   `src/lib.rs` re-exports the generated `SparseSetId`/`UseListId`/`UseNodeId`.
+   `DenseId31` remains the hand-written instance the niche proofs build on.
+2. **`IdFactory`** (sequential id allocation) — **closed**. `src/id_factory.rs`
+   provides `IdFactory` plus `IdRangeError` (`alloc`/`try_alloc`/`count`).
+3. **`bitset.rs`** as a public `BitSet` type — **closed**. `src/bitset.rs`
+   provides it, deliberately kept outside the container proofs; the *internal*
+   packed-bit need is still met by the verified `CaptureBits` inside
+   `ParallelStore`.
 4. **`sorted_cursor.rs`**: the `SortedCursor` trait and ordered cursor
-   iteration (`seek`/`step`/`key`) are absent. (`Vec`/`AppendOnlyVec` have
-   verified read iterators; the *sorted-cursor* abstraction the B+tree exposes
-   is not ported.)
+   iteration — **closed**. `src/sorted_cursor.rs` defines the trait and
+   `src/sorted_vec_cursor.rs` verifies the galloping `SortedVecCursor` the
+   e-graph's `seek` runs on.
+
+The one remaining gap:
+
 5. **`Default`/`Clone`/`Debug`/`Hash` derives and the broader trait surface** of
    the production id types, out of scope.
 
@@ -175,10 +181,14 @@ here.
 > MSB-stealing `DenseId31`/`DenseId63` ids exercise the niche obligations
 > non-vacuously.
 >
-> **Out of scope (documented gaps, §3):** the `define_id!` id-macro family and
-> `IdFactory`; a standalone public `BitSet`; the `SortedCursor` trait. A small
-> set of convenience methods (`iter`/`get_mut`/key-count `len`) are omitted from
-> otherwise-verified containers.
+> Also verified: the `define_id7/15/31/63!` id-macro family and `IdFactory`,
+> and the `SortedCursor` trait with the galloping `SortedVecCursor`. A public
+> `BitSet` ships, deliberately outside the container proofs.
+>
+> **Out of scope (§3):** the `Default`/`Clone`/`Debug`/`Hash` derives and
+> broader trait surface of the production id types. A small set of convenience
+> methods (`iter`/`get_mut`/key-count `len`) are omitted from otherwise-verified
+> containers.
 
 Per-module verified counts are in `verify-all.sh` output; the tally is 938
 verified, 0 errors, 0 `admit`s/`assume`s across 21 modules.

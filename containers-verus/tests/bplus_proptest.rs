@@ -17,8 +17,6 @@
 //! the proved properties observably hold, including the cursor enumeration and
 //! `mark`/`restore` rollback.
 
-use vstd::prelude::Ghost;
-
 use semi_persistent_containers_verus::bplus::BPlusTreeSet;
 use semi_persistent_containers_verus::bplus_layout::{Layout64U32, NodeLayout};
 use semi_persistent_containers_verus::bplus_search::BinarySearch;
@@ -70,7 +68,7 @@ fn check_node(
     hi: Option<u32>, // upper bound on every key (< hi)
     verbose: bool,
 ) -> (Vec<u32>, usize, u32, u32) {
-    let node = t.nodes.get(idx);
+    let node = t.white_box_nodes().get(idx);
     let count = L::count(&node);
     let is_leaf = L::is_leaf(&node);
     if verbose {
@@ -183,7 +181,7 @@ fn walk_leaf_chain(t: &Tree, start: u32, expected_leaves: usize, verbose: bool) 
             steps <= expected_leaves + 1,
             "leaf chain too long / cyclic at {cur}"
         );
-        let node = t.nodes.get(cur);
+        let node = t.white_box_nodes().get(cur);
         assert!(L::is_leaf(&node), "leaf chain hit non-leaf node {cur}");
         let count = L::count(&node);
         for i in 0..count {
@@ -209,7 +207,7 @@ fn walk_leaf_chain(t: &Tree, start: u32, expected_leaves: usize, verbose: bool) 
 /// the in-order model (the tree's keys, sorted).
 fn check_wf_and_model(t: &Tree, verbose: bool) -> Vec<u32> {
     // root index: read it via the public API surface. root is `pub`.
-    let root = t.root;
+    let root = t.white_box_root();
     if verbose {
         println!("wf-check: root={root} nkeys={}", t.len());
     }
@@ -261,7 +259,7 @@ fn min_key_preservation_trace() {
             for &x in &keys {
                 let before = check_wf_and_model(&t, false);
                 let old_min = before.first().copied();
-                t.insert_general(key(x));
+                t.insert(key(x));
                 let after = check_wf_and_model(&t, false);
                 let new_min = after.first().copied();
                 // the invariant: new_min == min(old_min, x).
@@ -313,7 +311,7 @@ use std::collections::BTreeSet;
 /// All arena indices in the subtree rooted at `idx` (the reified `tree_ids`).
 fn reachable_ids(t: &Tree, idx: u32) -> BTreeSet<u32> {
     let mut out = BTreeSet::new();
-    let node = t.nodes.get(idx);
+    let node = t.white_box_nodes().get(idx);
     out.insert(idx);
     if !L::is_leaf(&node) {
         let count = L::count(&node);
@@ -330,7 +328,7 @@ fn reachable_ids(t: &Tree, idx: u32) -> BTreeSet<u32> {
 /// the same subset+freshness as for `tree_ids`.
 fn reachable_leaf_ids(t: &Tree, idx: u32) -> BTreeSet<u32> {
     let mut out = BTreeSet::new();
-    let node = t.nodes.get(idx);
+    let node = t.white_box_nodes().get(idx);
     if L::is_leaf(&node) {
         out.insert(idx);
     } else {
@@ -352,7 +350,7 @@ struct InsertObservation {
 
 /// The leftmost leaf arena id of the subtree at `idx` (`tree_leaf_ids(_)[0]`).
 fn first_leaf_id(t: &Tree, idx: u32) -> u32 {
-    let node = t.nodes.get(idx);
+    let node = t.white_box_nodes().get(idx);
     if L::is_leaf(&node) {
         idx
     } else {
@@ -370,18 +368,18 @@ fn first_leaf_id(t: &Tree, idx: u32) -> u32 {
 /// (`ids_after == ids_before`) is genuinely violated by real inserts — i.e. the
 /// spec bug is real, not hypothetical.
 fn insert_checked(t: &mut Tree, k: u32) -> InsertObservation {
-    let ids_before = reachable_ids(t, t.root);
-    let leaf_ids_before = reachable_leaf_ids(t, t.root);
-    let arena_len_before = t.nodes.len().as_usize() as u32;
-    let height_before = check_node(t, t.root, true, None, None, false).1;
-    let root_before = t.root;
+    let ids_before = reachable_ids(t, t.white_box_root());
+    let leaf_ids_before = reachable_leaf_ids(t, t.white_box_root());
+    let arena_len_before = t.white_box_nodes().len().as_usize() as u32;
+    let height_before = check_node(t, t.white_box_root(), true, None, None, false).1;
+    let root_before = t.white_box_root();
     let first_leaf_before = first_leaf_id(t, root_before);
 
-    t.insert_general(key(k));
+    t.insert(key(k));
 
-    let ids_after = reachable_ids(t, t.root);
-    let leaf_ids_after = reachable_leaf_ids(t, t.root);
-    let height_after = check_node(t, t.root, true, None, None, false).1;
+    let ids_after = reachable_ids(t, t.white_box_root());
+    let leaf_ids_after = reachable_leaf_ids(t, t.white_box_root());
+    let height_after = check_node(t, t.white_box_root(), true, None, None, false).1;
 
     // First-leaf preservation: the leftmost leaf of a subtree NEVER moves on
     // insert (a split adds a leaf to the RIGHT). This is what the leaf-link
@@ -389,16 +387,16 @@ fn insert_checked(t: &mut Tree, k: u32) -> InsertObservation {
     // the proof can drop full leaf-id-sequence equality and keep just this.
     // (Only checkable when the root id is unchanged, i.e. no new-root growth;
     // new-root growth keeps the old root as child 0, so the leftmost leaf is
-    // still preserved, but `t.root` itself changed.)
-    if t.root == root_before {
-        let first_leaf_after = first_leaf_id(t, t.root);
+    // still preserved, but `t.white_box_root()` itself changed.)
+    if t.white_box_root() == root_before {
+        let first_leaf_after = first_leaf_id(t, t.white_box_root());
         assert!(
             first_leaf_after == first_leaf_before,
             "first-leaf moved inserting {k}: {first_leaf_before} -> {first_leaf_after}"
         );
     } else {
         // new root: the old leftmost leaf is still the global leftmost leaf.
-        let first_leaf_after = first_leaf_id(t, t.root);
+        let first_leaf_after = first_leaf_id(t, t.white_box_root());
         assert!(
             first_leaf_after == first_leaf_before,
             "first-leaf moved on root growth inserting {k}: {first_leaf_before} -> {first_leaf_after}"
@@ -511,13 +509,13 @@ fn insert_random_then_cursor_in_order() {
             assert!(t.is_empty());
 
             for (step, &x) in order.iter().enumerate() {
-                let added = t.insert_general(key(x));
+                let added = t.insert(key(x));
                 assert!(
                     added,
                     "N={n} seed={seed}: insert {x} (step {step}) reported not-added"
                 );
                 // re-insert is a no-op (root is still a leaf since N <= LEAF_CAP).
-                let again = t.insert_general(key(x));
+                let again = t.insert(key(x));
                 assert!(!again, "N={n} seed={seed}: re-insert {x} reported added");
 
                 // every key inserted so far must be present.
@@ -551,7 +549,7 @@ fn empty_and_singleton() {
     assert!(!t.contains(key(0)));
     assert_eq!(check_wf_and_model(&t, true), Vec::<u32>::new());
 
-    assert!(t.insert_general(key(42)));
+    assert!(t.insert(key(42)));
     assert!(!t.is_empty());
     assert_eq!(t.len(), 1);
     assert!(t.contains(key(42)));
@@ -567,14 +565,14 @@ fn the_one_split() {
     let mut t = Tree::new();
     // ascending insert fills the root leaf, then splits on the 15th.
     for x in 0..LEAF_CAP as u32 {
-        assert!(t.insert_general(key(x)));
+        assert!(t.insert(key(x)));
     }
     println!("after {LEAF_CAP} inserts (should be a single full leaf root):");
     let m1 = check_wf_and_model(&t, true);
     assert_eq!(m1, (0..LEAF_CAP as u32).collect::<Vec<_>>());
 
     // the split.
-    assert!(t.insert_general(key(LEAF_CAP as u32)));
+    assert!(t.insert(key(LEAF_CAP as u32)));
     println!("after the split (should be height 1: internal root + 2 leaves):");
     let m2 = check_wf_and_model(&t, true);
     assert_eq!(m2, (0..=LEAF_CAP as u32).collect::<Vec<_>>());
@@ -593,7 +591,7 @@ fn random_fill_then_split() {
         let mut t = Tree::new();
         for &x in &order {
             // only valid while the root is a leaf; the LAST insert does the split.
-            t.insert_general(key(x));
+            t.insert(key(x));
         }
         let model = check_wf_and_model(&t, false);
         let want: Vec<u32> = (0..n).collect();
@@ -618,15 +616,15 @@ fn reports_multilevel_shape() {
     for &n in &[15u32, 100, 1000, 5000] {
         let mut t = Tree::new();
         for x in shuffled(n, 1) {
-            t.insert_general(key(x));
+            t.insert(key(x));
         }
         // count nodes + height via a structural walk (reuse check_node's height).
-        let (_keys, height, _l, _r) = check_node(&t, t.root, true, None, None, false);
+        let (_keys, height, _l, _r) = check_node(&t, t.white_box_root(), true, None, None, false);
         let model = check_wf_and_model(&t, false);
         assert_eq!(model, (0..n).collect::<Vec<_>>());
         println!(
             "N={n}: height={height}, arena nodes={}",
-            t.nodes.len().as_usize()
+            t.white_box_nodes().len().as_usize()
         );
     }
     println!("reports_multilevel_shape: OK");
@@ -645,7 +643,7 @@ fn cursor_enumerates_in_order() {
         for seed in 0..4u64 {
             let mut t = Tree::new();
             for x in shuffled(n, seed) {
-                t.insert_general(key(x));
+                t.insert(key(x));
             }
             let mut c = BPlusCursor::new(&t);
             c.seek_first();
@@ -671,7 +669,7 @@ fn cursor_seek_lands_on_ge() {
     let n = 500u32;
     let mut t = Tree::new();
     for x in shuffled(n, 7) {
-        t.insert_general(key(x));
+        t.insert(key(x));
     }
     // set holds 0..n; seek(target) should land exactly on `target` for target<n,
     // and be exhausted for target==n.
@@ -736,7 +734,7 @@ fn oracle_arbitrary_values_vs_sorted_hashset() {
 
             for &x in &keys {
                 let was_new = !oracle.contains(&x);
-                let added = t.insert_general(key(x));
+                let added = t.insert(key(x));
                 oracle.insert(x);
                 assert_eq!(
                     added, was_new,
@@ -804,7 +802,7 @@ fn oracle_seek_arbitrary_targets() {
     let mut oracle: HashSet<u32> = HashSet::new();
     let mut t = Tree::new();
     for &x in &keys {
-        t.insert_general(key(x));
+        t.insert(key(x));
         oracle.insert(x);
     }
     let mut sorted: Vec<u32> = oracle.iter().copied().collect();
@@ -841,7 +839,7 @@ fn seek_from_arbitrary_positions() {
             let mut oracle: HashSet<u32> = HashSet::new();
             let mut t = Tree::new();
             for &x in &keys {
-                t.insert_general(key(x));
+                t.insert(key(x));
                 oracle.insert(x);
             }
             let mut sorted: Vec<u32> = oracle.iter().copied().collect();
@@ -910,10 +908,10 @@ fn seek_from_arbitrary_positions() {
 /// nodes a `seek` descends through; the work of a seek is `height + 1` node
 /// touches (plus an O(1) possible `link` step at the end).
 fn measured_height(t: &Tree) -> usize {
-    let mut idx = t.root;
+    let mut idx = t.white_box_root();
     let mut h = 0usize;
     loop {
-        let node = t.nodes.get(idx);
+        let node = t.white_box_nodes().get(idx);
         if L::is_leaf(&node) {
             break;
         }
@@ -943,7 +941,7 @@ fn seek_cost_is_logarithmic() {
         let keys = shuffled(n, 0xC057 ^ (n as u64));
         let mut t = Tree::new();
         for &k in &keys {
-            t.insert_general(key(k));
+            t.insert(key(k));
         }
         let h = measured_height(&t);
 
@@ -990,10 +988,10 @@ fn seek_cost_is_logarithmic() {
 /// verified code to expose a counter.
 fn seek_descent_visits(t: &Tree, target: DenseId31) -> usize {
     let tv = target.index() as u32;
-    let mut idx = t.root;
+    let mut idx = t.white_box_root();
     let mut visits = 0usize;
     loop {
-        let node = t.nodes.get(idx);
+        let node = t.white_box_nodes().get(idx);
         visits += 1;
         if L::is_leaf(&node) {
             break;
@@ -1020,7 +1018,7 @@ fn seek_descent_visits(t: &Tree, target: DenseId31) -> usize {
 // mark() snapshots the tree; we then insert past the mark and restore() back,
 // confirming the restored tree enumerates exactly the marked snapshot (via the
 // cursor, ascending) — the verified rollback theorem exercised at runtime. The
-// Ghost(snap_tree) restore argument is erased under cargo (Ghost::assume_new()).
+// restore is token-only (Phase 7): the ghost tree is archived internally.
 // ---------------------------------------------------------------------------
 
 fn sorted_keys_tracked(t: &TrackedTree) -> Vec<u32> {
@@ -1042,7 +1040,7 @@ fn tree_mark_restore_rollback() {
         let keys = arbitrary_keys(400, seed ^ 0xBEEF);
         // seed an initial tree.
         for &x in &keys[..200] {
-            t.insert_general(key(x));
+            t.insert(key(x));
             oracle.insert(x);
         }
 
@@ -1053,11 +1051,11 @@ fn tree_mark_restore_rollback() {
 
         // mutate past the mark.
         for &x in &keys[200..] {
-            t.insert_general(key(x));
+            t.insert(key(x));
         }
 
         // restore: the ghost tree arg is erased, so assume_new().
-        t.restore(token, Ghost::assume_new());
+        t.restore(token); // token-only signature (Phase 7)
 
         // the restored tree enumerates exactly the marked snapshot, in order.
         let got = sorted_keys_tracked(&t);
@@ -1068,7 +1066,7 @@ fn tree_mark_restore_rollback() {
 
         // and it is still usable: a fresh insert after restore works.
         let extra = 9_000_000 + seed as u32;
-        t.insert_general(key(extra));
+        t.insert(key(extra));
         let mut want = snap.clone();
         want.push(extra);
         want.sort_unstable();

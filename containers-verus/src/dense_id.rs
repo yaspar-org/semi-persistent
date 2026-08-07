@@ -41,10 +41,11 @@
 use vstd::prelude::*;
 
 use crate::diff_store::DiffStore;
-use crate::index_like::IndexLike;
 use crate::inline_store::InlineStore;
-use crate::opt::DenseId;
 use crate::tagged::Tagged;
+
+use crate::index_like::IndexLike;
+use crate::opt::DenseId;
 
 verus! {
 
@@ -185,10 +186,7 @@ impl DenseId for DenseId31 {
         self.raw
     }
 
-    fn as_usize(self) -> (r: usize) {
-        proof { use_type_invariant(&self); }
-        self.raw as usize
-    }
+    // `as_usize` is inherited from the `IndexLike` supertrait (prod-parity).
 
     fn from_usize(n: usize) -> (r: Self) {
         // Mask the stolen bit off so the type invariant (`raw < 2^31`) holds for
@@ -200,12 +198,29 @@ impl DenseId for DenseId31 {
         DenseId31 { raw: (n as u32) & 0x7fff_ffffu32 }
     }
 
+    fn try_new(n: usize) -> (r: Option<Self>) {
+        if n < 0x8000_0000usize {
+            Some(DenseId31 { raw: n as u32 })
+        } else {
+            None
+        }
+    }
+
     proof fn lemma_id_injective(a: Self, b: Self) {
         // id_nat is the View, which is `raw`; equal views force equal raws.
     }
 
+    proof fn lemma_as_nat_is_id_nat(self) {
+        // Both are `self@`.
+    }
+
     proof fn lemma_id_nat_bounded(tracked self) {
         use_type_invariant(&self);  // raw < 2^31 == DENSE31_BOUND == id_bound
+    }
+
+    proof fn lemma_id_bound_fits_usize() {
+        // 2^31 <= usize::MAX + 1 == 2^64 on the pinned 64-bit target.
+        crate::index_like::lemma_u64_usize_64bit();
     }
 
     open spec fn is_bit_stealing() -> bool { true }   // MSB stolen for the tag
@@ -469,12 +484,7 @@ impl DenseId for DenseId63 {
         self.raw
     }
 
-    fn as_usize(self) -> (r: usize) {
-        // raw is u64: on a 64-bit host usize == u64 width, so the cast is the
-        // identity on values (usize::MAX == u64::MAX). id_nat() == raw as nat.
-        proof { crate::index_like::lemma_u64_usize_64bit(); }
-        self.raw as usize
-    }
+    // `as_usize` is inherited from the `IndexLike` supertrait (prod-parity).
 
     fn from_usize(n: usize) -> (r: Self) {
         assert(((n as u64) & 0x7fff_ffff_ffff_ffffu64) < 0x8000_0000_0000_0000u64) by (bit_vector);
@@ -483,11 +493,29 @@ impl DenseId for DenseId63 {
         DenseId63 { raw: (n as u64) & 0x7fff_ffff_ffff_ffffu64 }
     }
 
+    fn try_new(n: usize) -> (r: Option<Self>) {
+        proof { crate::index_like::lemma_u64_usize_64bit(); }  // usize::MAX == u64::MAX
+        if (n as u64) < 0x8000_0000_0000_0000u64 {
+            Some(DenseId63 { raw: n as u64 })
+        } else {
+            None
+        }
+    }
+
     proof fn lemma_id_injective(a: Self, b: Self) {
+    }
+
+    proof fn lemma_as_nat_is_id_nat(self) {
+        // Both are `self@`.
     }
 
     proof fn lemma_id_nat_bounded(tracked self) {
         use_type_invariant(&self);  // raw < 2^63 == DENSE63_BOUND == id_bound
+    }
+
+    proof fn lemma_id_bound_fits_usize() {
+        // 2^63 <= usize::MAX + 1 == 2^64 on the pinned 64-bit target.
+        crate::index_like::lemma_u64_usize_64bit();
     }
 
     open spec fn is_bit_stealing() -> bool { true }   // MSB (bit 63) stolen for the tag
@@ -523,7 +551,89 @@ pub proof fn lemma_value_of_view(r: u32)
 pub fn lemma_dense_id31_indexes_and_stores_itself() -> (s: InlineStore<DenseId31, DenseId31>)
     ensures DiffStore::<DenseId31, DenseId31, true>::wf(&s),
 {
-    InlineStore::<DenseId31, DenseId31>::new::<true>()
+    InlineStore::<DenseId31, DenseId31>::new()
 }
 
 } // verus!
+
+// prod-parity: the production-parity supertrait bundle on `DenseId`
+// (`Default + Eq + Ord + Hash + Into<Index>`) requires these plain-Rust impls on
+// the hand-written ids. `DenseId31`/`DenseId63` are clean (MSB always clear by
+// type invariant), so ordering/equality/hash on the raw field is exactly the
+// dense-index order — the same identity the verified `lemma_order_is_as_nat`
+// establishes. Mirrors the macro ids' out-of-`verus!{}` convenience impls.
+impl PartialEq for DenseId31 {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+impl Eq for DenseId31 {}
+impl PartialOrd for DenseId31 {
+    #[inline(always)]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for DenseId31 {
+    #[inline(always)]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.raw.cmp(&other.raw)
+    }
+}
+impl core::hash::Hash for DenseId31 {
+    #[inline(always)]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.raw.hash(state);
+    }
+}
+impl From<DenseId31> for u32 {
+    #[inline(always)]
+    fn from(id: DenseId31) -> u32 {
+        id.raw
+    }
+}
+// prod-parity: `IndexLike: Debug` (production parity, dense_id.rs:69).
+impl core::fmt::Debug for DenseId31 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "DenseId31({})", self.raw)
+    }
+}
+
+impl PartialEq for DenseId63 {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+impl Eq for DenseId63 {}
+impl PartialOrd for DenseId63 {
+    #[inline(always)]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for DenseId63 {
+    #[inline(always)]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.raw.cmp(&other.raw)
+    }
+}
+impl core::hash::Hash for DenseId63 {
+    #[inline(always)]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.raw.hash(state);
+    }
+}
+impl From<DenseId63> for u64 {
+    #[inline(always)]
+    fn from(id: DenseId63) -> u64 {
+        id.raw
+    }
+}
+// prod-parity: `IndexLike: Debug` (production parity, dense_id.rs:69).
+impl core::fmt::Debug for DenseId63 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "DenseId63({})", self.raw)
+    }
+}

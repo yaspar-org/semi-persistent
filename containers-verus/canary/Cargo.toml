@@ -1,0 +1,31 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Egraph shape canary: instantiates the verus containers API with egraph's exact
+# shapes, so it compiling (and its smoke tests passing) pins the API surface the
+# consumer needs. Originally throwaway (it predated the consumer swap); retained
+# because it holds the only `Tagged`-laws fuzzer. See src/lib.rs.
+[package]
+name = "containers-verus-canary"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+semi-persistent-containers-verus = { path = ".." }
+# Production containers, for side-by-side shape comparison in fixtures.
+semi-persistent-containers = { path = "../../containers", version = "0.1.0" }
+vstd = "=0.0.0-2026-04-12-0118"
+
+[features]
+# Mirrors the parent crate's parity gates: fixtures for an API phase are
+# enabled once that phase lands.
+compat-core = []
+compat-composites = []
+compat-list = []
+compat-ids = []
+compat-bplus = []
+compat-all = ["compat-core", "compat-composites", "compat-list", "compat-ids", "compat-bplus"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)'] }

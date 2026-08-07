@@ -43,21 +43,21 @@ verus! {
 /// Token bundling one `VecToken` per inner vector.
 #[derive(Copy, Clone)]
 pub struct SparseSetToken {
-    pub dense: VecToken,
-    pub sparse: VecToken,
-    pub indices: VecToken,
+    pub(crate) dense: VecToken,
+    pub(crate) sparse: VecToken,
+    pub(crate) indices: VecToken,
 }
 
 /// Semi-persistent sparse set with stable IDs.
-pub struct SparseSet<T, Idx, S, const TRACK: bool>
+pub struct SparseSet<T, Idx, S, const TRACK: bool = true>
 where
     T: Sized + Copy,
     Idx: IndexLike + Tagged,
     S: DiffStore<T, Idx, TRACK>,
 {
-    pub dense: SpVec<T, Idx, S, TRACK>,
-    pub sparse: SpVec<Idx, Idx, InlineStore<Idx, Idx>, TRACK>,
-    pub indices: SpVec<Idx, Idx, InlineStore<Idx, Idx>, TRACK>,
+    pub(crate) dense: SpVec<T, Idx, S, TRACK>,
+    pub(crate) sparse: SpVec<Idx, Idx, InlineStore<Idx, Idx>, TRACK>,
+    pub(crate) indices: SpVec<Idx, Idx, InlineStore<Idx, Idx>, TRACK>,
 }
 
 impl<T, Idx, S, const TRACK: bool> SparseSet<T, Idx, S, TRACK>
@@ -67,21 +67,87 @@ where
     S: DiffStore<T, Idx, TRACK>,
 {
     /// The packed values currently in the set, in dense order.
-    pub open spec fn dense_view(&self) -> Seq<T> {
+    pub open(crate) spec fn dense_view(&self) -> Seq<T> {
         self.dense.view()
     }
 
-    pub open spec fn cap_spec(&self) -> nat {
+    pub open(crate) spec fn cap_spec(&self) -> nat {
         self.sparse.view().len()
     }
 
-    pub open spec fn n_spec(&self) -> nat {
+    /// Sparse column (spec twin; fields are `pub(crate)` — privacy closeout).
+    pub open(crate) spec fn sparse_view(&self) -> Seq<Idx> {
+        self.sparse.view()
+    }
+
+    /// Dense-column reference (spec twin, for `data()`'s ensures).
+    pub open(crate) spec fn dense_ref(&self) -> &SpVec<T, Idx, S, TRACK> {
+        &self.dense
+    }
+
+    /// Per-component restorability of the composite token — the atomic
+    /// prevalidation predicate `is_valid_token` answers.
+    pub open(crate) spec fn is_restorable_spec(&self, token: SparseSetToken) -> bool {
+        &&& self.dense.is_restorable_spec(token.dense)
+        &&& self.sparse.is_restorable_spec(token.sparse)
+        &&& self.indices.is_restorable_spec(token.indices)
+    }
+
+    /// Composite mark preconditions (headrooms on all three columns).
+    pub open(crate) spec fn can_mark_spec(&self) -> bool {
+        &&& self.dense.view().len() < Idx::max_nat()
+        &&& self.sparse.view().len() < Idx::max_nat()
+        &&& self.indices.view().len() < Idx::max_nat()
+        &&& self.dense.depth_spec() < u32::MAX
+        &&& self.sparse.depth_spec() < u32::MAX
+        &&& self.indices.depth_spec() < u32::MAX
+    }
+
+    /// Composite restore preconditions: per-component validity + structural
+    /// coordinates + headrooms (everything in `restore`'s requires except
+    /// the snapshot-wf clause, which quantifies over the actual snapshots).
+    pub open(crate) spec fn restore_pre_spec(&self, token: SparseSetToken) -> bool {
+        &&& self.dense.is_token_valid_spec(token.dense)
+        &&& token.dense.frame_idx_spec() < self.dense.depth_spec()
+        &&& self.dense.depth_spec() < u32::MAX
+        &&& self.dense.fork_count_spec() + 1 <= u32::MAX
+        &&& self.sparse.is_token_valid_spec(token.sparse)
+        &&& token.sparse.frame_idx_spec() < self.sparse.depth_spec()
+        &&& self.sparse.depth_spec() < u32::MAX
+        &&& self.sparse.fork_count_spec() + 1 <= u32::MAX
+        &&& self.indices.is_token_valid_spec(token.indices)
+        &&& token.indices.frame_idx_spec() < self.indices.depth_spec()
+        &&& self.indices.depth_spec() < u32::MAX
+        &&& self.indices.fork_count_spec() + 1 <= u32::MAX
+    }
+
+    /// The three column snapshots a token names (spec twin for restore's
+    /// contract).
+    pub open(crate) spec fn snap_at(&self, token: SparseSetToken) -> (Seq<T>, Seq<Idx>, Seq<Idx>) {
+        (self.dense.snapshots_view()[token.dense.frame_idx_spec() as int],
+         self.sparse.snapshots_view()[token.sparse.frame_idx_spec() as int],
+         self.indices.snapshots_view()[token.indices.frame_idx_spec() as int])
+    }
+
+    /// Dense snapshot stack (spec twin).
+    pub open(crate) spec fn dense_snapshots_view(&self) -> Seq<Seq<T>> {
+        self.dense.snapshots_view()
+    }
+
+    /// Add-capacity headroom (spec twin for `add`'s requires).
+    pub open(crate) spec fn can_add_spec(&self) -> bool {
+        &&& self.dense.view().len() + 1 < Idx::max_nat()
+        &&& self.sparse.view().len() + 1 < Idx::max_nat()
+        &&& self.indices.view().len() + 1 < Idx::max_nat()
+    }
+
+    pub open(crate) spec fn n_spec(&self) -> nat {
         self.dense.view().len()
     }
 
     /// The structural sparse-set invariant (permutation + inverse-on-live),
     /// on top of the three inner vectors' own well-formedness.
-    pub open spec fn wf(&self) -> bool {
+    pub open(crate) spec fn wf(&self) -> bool {
         let sparse = self.sparse.view();
         let indices = self.indices.view();
         let cap = self.cap_spec();
@@ -103,7 +169,7 @@ where
 
     /// `id` is live: allocated, its position is in `[0, n)`, and the position
     /// maps back to it. (Proved equivalent to "id == indices[p] for p < n".)
-    pub open spec fn contains_spec(&self, id: Idx) -> bool {
+    pub open(crate) spec fn contains_spec(&self, id: Idx) -> bool {
         let sparse = self.sparse.view();
         let indices = self.indices.view();
         let n = self.n_spec();
@@ -119,7 +185,7 @@ where
     // ===================================================================
 
     /// The abstract set of live ids: the image of `indices` over `[0, n)`.
-    pub open spec fn id_set(&self) -> Set<nat> {
+    pub open(crate) spec fn id_set(&self) -> Set<nat> {
         let indices = self.indices.view();
         Set::new(|id: nat| exists|p: int| 0 <= p < self.n_spec()
             && (#[trigger] indices[p]).as_nat() == id)
@@ -128,7 +194,7 @@ where
     /// The index pool of recycled-but-not-reallocated ids: `indices[n .. cap)`,
     /// as a sequence (the parking order; `add` reuses the slot at position `n`,
     /// `remove` parks at `n-1`). Its multiset is the free ids.
-    pub open spec fn free_pool(&self) -> Seq<nat> {
+    pub open(crate) spec fn free_pool(&self) -> Seq<nat> {
         let indices = self.indices.view();
         Seq::new((self.cap_spec() - self.n_spec()) as nat,
             |k: int| indices[self.n_spec() as int + k].as_nat())
@@ -136,7 +202,7 @@ where
 
     /// Membership refinement: the runtime liveness test decides exactly the
     /// abstract set. (⟸ uses inverse-on-live; ⟹ uses the round-trip test.)
-    pub proof fn lemma_contains_iff_id_set(&self, id: Idx)
+    pub(crate) proof fn lemma_contains_iff_id_set(&self, id: Idx)
         requires self.wf(),
         ensures self.contains_spec(id) <==> self.id_set().contains(id.as_nat()),
     {
@@ -162,7 +228,7 @@ where
     /// the permutation invariant: `indices` bijects positions to ids, the live
     /// positions `[0,n)` give the set, the free positions `[n,cap)` give the
     /// pool.)
-    pub proof fn lemma_set_pool_partition(&self)
+    pub(crate) proof fn lemma_set_pool_partition(&self)
         requires self.wf(),
         ensures
             // disjoint
@@ -227,22 +293,22 @@ where
         if id.as_usize() >= cap.as_usize() {
             return false;
         }
-        let pos = self.sparse.get(id);
+        let pos = self.sparse.get_index(id);
         let nlen = self.dense.len();
         if pos.as_usize() >= nlen.as_usize() {
             return false;
         }
-        let idx_at = self.indices.get(pos);
+        let idx_at = self.indices.get_index(pos);
         idx_at.as_usize() == id.as_usize()
     }
 
     /// Value of a live id (through the stable indirection).
     pub fn get(&self, id: Idx) -> (v: T)
         requires self.wf(), self.contains_spec(id),
-        ensures v == self.dense_view()[self.sparse.view()[id.as_nat() as int].as_nat() as int],
+        ensures v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
     {
-        let pos = self.sparse.get(id);
-        self.dense.get(pos)
+        let pos = self.sparse.get_index(id);
+        self.dense.get_index(pos)
     }
 
     /// Overwrite a live id's value in place (position and id unchanged).
@@ -253,8 +319,8 @@ where
             self.cap_spec() == old(self).cap_spec(),
             self.n_spec() == old(self).n_spec(),
     {
-        let pos = self.sparse.get(id);
-        self.dense.set(pos, value);
+        let pos = self.sparse.get_index(id);
+        self.dense.set_index(pos, value);
         proof {
             // dense.set changes only dense's values, not lengths; sparse and
             // indices are untouched, so the permutation + inverse carry.
@@ -270,9 +336,7 @@ where
     pub fn add(&mut self, value: T) -> (id: Idx)
         requires
             old(self).wf(),
-            old(self).dense.view().len() + 1 < Idx::max_nat(),
-            old(self).sparse.view().len() + 1 < Idx::max_nat(),
-            old(self).indices.view().len() + 1 < Idx::max_nat(),
+            old(self).can_add_spec(),
         ensures
             self.wf(),
             self.n_spec() == old(self).n_spec() + 1,
@@ -300,8 +364,8 @@ where
         let cap = self.sparse.len();
         if pos.as_usize() < cap.as_usize() {
             // Recycle: indices[pos] is the first free id (pos == old_n).
-            let recycled_id = self.indices.get(pos);
-            self.sparse.set(recycled_id, pos);
+            let recycled_id = self.indices.get_index(pos);
+            self.sparse.set_index(recycled_id, pos);
             proof {
                 let sparse = self.sparse.view();
                 let indices = self.indices.view();
@@ -478,7 +542,7 @@ where
         let ghost old_cap = self.sparse.view().len();
         let ghost old_sparse = self.sparse.view();
         let ghost old_indices = self.indices.view();
-        let pos = self.sparse.get(id);
+        let pos = self.sparse.get_index(id);
         let nlen = self.dense.len();
         // last_pos = n - 1 (n >= 1 since id is live ⇒ pos < n).
         proof { nlen.lemma_as_nat_bounded(); }
@@ -488,8 +552,8 @@ where
         };
 
         if pos.as_usize() != last_pos.as_usize() {
-            let last_id = self.indices.get(last_pos);
-            let last_val = self.dense.get(last_pos);
+            let last_id = self.indices.get_index(last_pos);
+            let last_val = self.dense.get_index(last_pos);
             proof {
                 // From inverse-on-live: indices[pos]==id and sparse[last_id]==last_pos.
                 assert(pos.as_nat() < old_n);          // id live
@@ -499,10 +563,10 @@ where
                     == (old_n - 1));  // inverse at last_pos
                 assert(last_id.as_nat() == old_indices[(old_n - 1) as int].as_nat());
             }
-            self.dense.set(pos, last_val);
-            self.indices.set(pos, last_id);
-            self.indices.set(last_pos, id);
-            self.sparse.set(last_id, pos);
+            self.dense.set_index(pos, last_val);
+            self.indices.set_index(pos, last_id);
+            self.indices.set_index(last_pos, id);
+            self.sparse.set_index(last_id, pos);
             self.dense.pop();
             proof {
                 let sparse = self.sparse.view();
@@ -675,22 +739,79 @@ where
         }
     }
 
+    /// Remove the first live entry whose VALUE equals `val` (production
+    /// `remove_value` parity: linear scan of the dense region, then the
+    /// verified `remove` on the id found at that position).
+    pub fn remove_value(&mut self, val: &T) -> (removed: bool)
+        where T: PartialEq
+        requires old(self).wf(),
+        ensures
+            self.wf(),
+            self.cap_spec() == old(self).cap_spec(),
+            removed ==> self.n_spec() == old(self).n_spec() - 1,
+            !removed ==> *self == *old(self),
+    {
+        let n = self.dense.len();
+        proof { n.lemma_as_nat_bounded(); }  // n.as_nat() < Idx::max_nat()
+        let n_u = n.as_usize();
+        let mut pos_u: usize = 0;
+        while pos_u < n_u
+            invariant
+                self.wf(),
+                *self == *old(self),
+                n_u == self.n_spec(),
+                self.n_spec() < Idx::max_nat(),
+                self.n_spec() <= self.cap_spec(),
+                pos_u <= n_u,
+            decreases n_u - pos_u,
+        {
+            let pos = match Idx::try_from_usize(pos_u) {
+                Some(p) => p,
+                None => {
+                    proof { assert(false); }  // pos_u < n_u < max_nat ⇒ Some
+                    return false;
+                }
+            };
+            let cur = self.dense.get_index(pos);
+            if values_equal(&cur, val) {
+                let id = self.indices.get_index(pos);
+                proof {
+                    // indices[pos] for pos < n is live: inverse-on-live gives
+                    // sparse[indices[pos]] == pos < n, and the round-trip
+                    // indices[sparse[id]] == id — exactly contains_spec.
+                    let indices = self.indices.view();
+                    let p = pos.as_nat() as int;
+                    assert(self.sparse.view()[indices[p].as_nat() as int].as_nat() == p);
+                    assert(self.contains_spec(id));
+                }
+                self.remove(id);
+                return true;
+            }
+            pos_u = pos_u + 1;
+        }
+        false
+    }
+
+    /// Read-only access to the dense value vector (production `data()`
+    /// parity: exposes the packed live values for iteration).
+    pub fn data(&self) -> (r: &SpVec<T, Idx, S, TRACK>)
+        ensures r == self.dense_ref(),
+    {
+        &self.dense
+    }
+
     // ---- semi-persistence: delegate to the three inner vectors ----
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: SparseSetToken)
         requires
             old(self).wf(),
-            old(self).dense.view().len() < Idx::max_nat(),
-            old(self).sparse.view().len() < Idx::max_nat(),
-            old(self).indices.view().len() < Idx::max_nat(),
-            old(self).dense.frames@.len() < u32::MAX,
-            old(self).sparse.frames@.len() < u32::MAX,
-            old(self).indices.frames@.len() < u32::MAX,
+            TRACK,
+            old(self).can_mark_spec(),
         ensures
             self.wf(),
             self.dense_view() == old(self).dense_view(),
-            self.dense.snapshots_view()
-                == old(self).dense.snapshots_view().push(old(self).dense.view()),
+            self.dense_snapshots_view()
+                == old(self).dense_snapshots_view().push(old(self).dense_view()),
     {
         let dense = self.dense.mark(shrink);
         let sparse = self.sparse.mark(shrink);
@@ -698,32 +819,41 @@ where
         SparseSetToken { dense, sparse, indices }
     }
 
+    /// "Restorable now" for the composite token (plan 2.2/2.3): every
+    /// constituent must be restorable — the aggregate-atomicity invariant's
+    /// validation half.
+    pub fn is_valid_token(&self, token: &SparseSetToken) -> (b: bool)
+        requires self.wf(),
+        ensures b == self.is_restorable_spec(*token),
+    {
+        self.dense.is_valid_token(&token.dense)
+            && self.sparse.is_valid_token(&token.sparse)
+            && self.indices.is_valid_token(&token.indices)
+    }
+
     pub fn restore(&mut self, token: SparseSetToken)
         where T: core::default::Default, Idx: core::default::Default
         requires
             old(self).wf(),
-            old(self).dense.is_token_valid_spec(token.dense),
-            token.dense.frame_idx < old(self).dense.frames@.len(),
-            old(self).dense.frames@.len() < u32::MAX,
-            old(self).dense.forks.origins@.len() + 1 <= u32::MAX,
-            old(self).sparse.is_token_valid_spec(token.sparse),
-            token.sparse.frame_idx < old(self).sparse.frames@.len(),
-            old(self).sparse.frames@.len() < u32::MAX,
-            old(self).sparse.forks.origins@.len() + 1 <= u32::MAX,
-            old(self).indices.is_token_valid_spec(token.indices),
-            token.indices.frame_idx < old(self).indices.frames@.len(),
-            old(self).indices.frames@.len() < u32::MAX,
-            old(self).indices.forks.origins@.len() + 1 <= u32::MAX,
+            TRACK,
+            old(self).restore_pre_spec(token),
             // the snapshots being restored form a valid sparse-set state
             sparse_set_snap_wf(
-                old(self).dense.snapshots_view()[token.dense.frame_idx as int],
-                old(self).sparse.snapshots_view()[token.sparse.frame_idx as int],
-                old(self).indices.snapshots_view()[token.indices.frame_idx as int]),
+                old(self).snap_at(token).0,
+                old(self).snap_at(token).1,
+                old(self).snap_at(token).2),
         ensures
             self.wf(),
-            self.dense_view()
-                == old(self).dense.snapshots_view()[token.dense.frame_idx as int],
+            self.dense_view() == old(self).snap_at(token).0,
     {
+        // Atomic compound restore (plan 2.3): prevalidate ALL constituent
+        // tokens before restoring ANY — a partially-restored sparse set
+        // (dense rolled back, sparse/indices not) violates the permutation
+        // invariant unrecoverably. Provably-true no-op for verified callers.
+        crate::guard::check_precondition(
+            self.is_valid_token(&token),
+            "SparseSet::restore: invalid, foreign, stale, consumed, or abandoned token component",
+        );
         self.dense.restore(token.dense);
         self.sparse.restore(token.sparse);
         self.indices.restore(token.indices);
@@ -733,7 +863,7 @@ where
 /// The sparse-set structural invariant stated over raw snapshot sequences (for
 /// `restore`: the three snapshots being restored must jointly form a valid
 /// state, so the restored set is `wf`). Mirrors `wf`'s clauses (2)/(1).
-pub open spec fn sparse_set_snap_wf<T, Idx: IndexLike>(
+pub open(crate) spec fn sparse_set_snap_wf<T, Idx: IndexLike>(
     dense: Seq<T>, sparse: Seq<Idx>, indices: Seq<Idx>,
 ) -> bool {
     let cap = sparse.len();
@@ -748,7 +878,7 @@ pub open spec fn sparse_set_snap_wf<T, Idx: IndexLike>(
 }
 
 /// The set of values `{ indices[p].as_nat() : 0 <= p < m }`.
-pub open spec fn image_prefix<Idx: IndexLike>(indices: Seq<Idx>, m: int) -> Set<nat> {
+pub open(crate) spec fn image_prefix<Idx: IndexLike>(indices: Seq<Idx>, m: int) -> Set<nat> {
     Set::new(|id: nat| exists|p: int| 0 <= p < m && (#[trigger] indices[p]).as_nat() == id)
 }
 
@@ -758,7 +888,7 @@ pub open spec fn image_prefix<Idx: IndexLike>(indices: Seq<Idx>, m: int) -> Set<
 /// proved via image cardinality: `|image_prefix(cap)| == cap` (each position
 /// contributes a fresh value, by injectivity), and a `cap`-sized subset of the
 /// `cap`-sized range `[0, cap)` must be the whole range.
-pub proof fn lemma_perm_surjective<Idx: IndexLike>(indices: Seq<Idx>, cap: int, id: nat)
+pub(crate) proof fn lemma_perm_surjective<Idx: IndexLike>(indices: Seq<Idx>, cap: int, id: nat)
     requires
         cap <= indices.len(),
         id < cap,
@@ -787,7 +917,7 @@ pub proof fn lemma_perm_surjective<Idx: IndexLike>(indices: Seq<Idx>, cap: int, 
 /// `|image_prefix(indices, m)| == m` for injective in-range `indices`, by
 /// induction on `m`: the value at position `m-1` is fresh (injectivity), so it
 /// extends the prefix image by exactly one.
-pub proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m: int)
+pub(crate) proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m: int)
     requires
         0 <= m <= indices.len(),
         forall|p: int, q: int| 0 <= p < m && 0 <= q < m && p != q ==>
@@ -825,7 +955,7 @@ pub proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m: int)
 }
 
 /// `{ v : v < cap }` is finite with size `cap`.
-pub proof fn lemma_nat_range_card(cap: int)
+pub(crate) proof fn lemma_nat_range_card(cap: int)
     requires cap >= 0,
     ensures
         Set::new(|v: nat| v < cap).finite(),
@@ -844,7 +974,7 @@ pub proof fn lemma_nat_range_card(cap: int)
 /// A transposition of two positions in an injective sequence is injective.
 /// `b` is `a` with values at `i` and `j` swapped (`a[i]==b[j]`, `a[j]==b[i]`,
 /// equal elsewhere); both same length `cap`.
-pub proof fn lemma_transposition_injective<Idx: IndexLike>(
+pub(crate) proof fn lemma_transposition_injective<Idx: IndexLike>(
     a: Seq<Idx>, b: Seq<Idx>, i: int, j: int, cap: int,
 )
     requires
@@ -875,4 +1005,93 @@ pub proof fn lemma_transposition_injective<Idx: IndexLike>(
     }
 }
 
+/// Value equality via `PartialEq`, usable from verified code without
+/// threading vstd's `obeys_eq_spec` plumbing: `external_body` with NO ensures
+/// — the result is an unconstrained bool as far as proofs are concerned, so
+/// nothing unsound can be derived from it; `remove_value`'s contract
+/// consequently promises which STRUCTURAL change happened (an element left),
+/// not which value matched. The scan behavior is pinned by the ported
+/// production proptests. Trust ledger: group E.
+#[verifier::external_body]
+fn values_equal<T: PartialEq>(a: &T, b: &T) -> bool {
+    a == b
+}
+
+// ---------------------------------------------------------------------------
+// Constructors (migration plan 5.3, production parity). Generic `with_store`
+// plus the two concrete instantiations production exposes; all establish the
+// empty `wf` (the permutation invariant is vacuous at cap == n == 0).
+// ---------------------------------------------------------------------------
+
+impl<T, Idx, S, const TRACK: bool> SparseSet<T, Idx, S, TRACK>
+where
+    T: Sized + Copy,
+    Idx: IndexLike + Tagged,
+    S: DiffStore<T, Idx, TRACK>,
+{
+    /// Empty sparse set over a caller-supplied (empty, well-formed) dense
+    /// store. Production `with_store` parity.
+    pub fn with_store(store: S) -> (s: Self)
+        requires
+            store.wf(),
+            store.data().len() == 0,
+        ensures
+            s.wf(),
+            s.n_spec() == 0,
+            s.cap_spec() == 0,
+    {
+        let s = SparseSet {
+            dense: SpVec::with_store(store),
+            sparse: SpVec::<Idx, Idx, InlineStore<Idx, Idx>, TRACK>::new(),
+            indices: SpVec::<Idx, Idx, InlineStore<Idx, Idx>, TRACK>::new(),
+        };
+        proof {
+            // Empty everything: every wf clause quantifies over [0, 0).
+            assert(s.cap_spec() == 0);
+            assert(s.n_spec() == 0);
+        }
+        s
+    }
+}
+
+impl<T, Idx, const TRACK: bool> SparseSet<T, Idx, crate::parallel_store::ParallelStore<T, Idx>, TRACK>
+where
+    T: Sized + Copy,
+    Idx: IndexLike + Tagged,
+{
+    /// Empty sparse set over a `ParallelStore` (any `T: Copy`; production
+    /// `SparseSet::new` parity).
+    pub fn new() -> (s: Self)
+        ensures s.wf(), s.n_spec() == 0, s.cap_spec() == 0,
+    {
+        Self::with_store(crate::parallel_store::ParallelStore::new())
+    }
+}
+
+impl<T, Idx, const TRACK: bool> SparseSet<T, Idx, crate::inline_store::InlineStore<T, Idx>, TRACK>
+where
+    T: Tagged + Sized + Copy,
+    Idx: IndexLike + Tagged,
+{
+    /// Empty sparse set over an `InlineStore` (`T: Tagged`; production
+    /// `SparseSet::new_inline` parity).
+    pub fn new_inline() -> (s: Self)
+        ensures s.wf(), s.n_spec() == 0, s.cap_spec() == 0,
+    {
+        Self::with_store(crate::inline_store::InlineStore::new())
+    }
+}
+
 } // verus!
+
+// prod-parity: production derives `Debug` on `SparseSetToken`; manual here
+// (composes three `VecToken`s, now `Debug`).
+impl core::fmt::Debug for SparseSetToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SparseSetToken")
+            .field("dense", &self.dense)
+            .field("sparse", &self.sparse)
+            .field("indices", &self.indices)
+            .finish()
+    }
+}

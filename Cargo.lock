@@ -228,6 +228,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "containers-verus-canary"
+version = "0.1.0"
+dependencies = [
+ "semi-persistent-containers",
+ "semi-persistent-containers-verus",
+ "vstd",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -873,6 +882,12 @@ dependencies = [
 name = "semi-persistent-containers-verus"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "foldhash",
+ "num-bigint",
+ "num-rational",
+ "ordered-float",
+ "proptest",
  "vstd",
 ]
 

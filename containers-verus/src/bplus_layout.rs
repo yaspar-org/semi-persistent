@@ -1388,9 +1388,26 @@ gen_layout_u32!(Layout64U32, Node64U32, NodeRepr64U32, 14, 14, 7);
 gen_layout_u32!(Layout128U32, Node128U32, NodeRepr128U32, 30, 30, 14);
 gen_layout_u32!(Layout256U32, Node256U32, NodeRepr256U32, 62, 62, 30);
 
+// Production back-compat aliases (Phase 8.3): the un-suffixed names default
+// to the u32 family, and the `BPlusNode*` value-struct names map to `Node*`.
+pub type Layout64 = Layout64U32;
+pub type Layout128 = Layout128U32;
+pub type Layout256 = Layout256U32;
+pub type BPlusNode = Node64U32;
+pub type BPlusNode64 = Node64U32;
+pub type BPlusNode64U32 = Node64U32;
+pub type BPlusNode128 = Node128U32;
+pub type BPlusNode128U32 = Node128U32;
+pub type BPlusNode256 = Node256U32;
+pub type BPlusNode256U32 = Node256U32;
+
 gen_layout_u64!(Layout128U64, Node128U64, NodeRepr128U64, 14, 14, 6);
 gen_layout_u64!(Layout256U64, Node256U64, NodeRepr256U64, 30, 30, 14);
 gen_layout_u64!(Layout512U64, Node512U64, NodeRepr512U64, 62, 62, 30);
+
+pub type BPlusNode128U64 = Node128U64;
+pub type BPlusNode256U64 = Node256U64;
+pub type BPlusNode512U64 = Node512U64;
 
 verus! {
 

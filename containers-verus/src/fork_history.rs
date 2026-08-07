@@ -25,21 +25,21 @@ verus! {
 /// `parent_branch_id` at depth `fork_depth`.
 #[derive(Clone, Copy)]
 pub struct ForkOrigin {
-    pub parent_branch_id: u32,
-    pub fork_depth: u32,
+    pub(crate) parent_branch_id: u32,
+    pub(crate) fork_depth: u32,
 }
 
 /// Branching genealogy. `current_branch_id` is the live branch; `origins[b-1]`
 /// describes branch `b`.
 pub struct ForkHistory {
-    pub current_branch_id: u32,
-    pub origins: Vec<ForkOrigin>,
+    pub(crate) current_branch_id: u32,
+    pub(crate) origins: Vec<ForkOrigin>,
 }
 
 /// Well-formedness: every branch's parent id is strictly smaller than the
 /// branch itself (so the validity walk strictly descends toward 0), and the
 /// current branch id is a real branch (`<= origins.len()`).
-pub open spec fn fh_wf(origins: Seq<ForkOrigin>, current_branch_id: nat) -> bool {
+pub open(crate) spec fn fh_wf(origins: Seq<ForkOrigin>, current_branch_id: nat) -> bool {
     &&& current_branch_id <= origins.len()
     &&& (forall|b: int| 1 <= b <= origins.len() ==>
             (#[trigger] origins[b - 1]).parent_branch_id < b)
@@ -61,7 +61,7 @@ pub open spec fn fh_wf(origins: Seq<ForkOrigin>, current_branch_id: nat) -> bool
 /// otherwise stops at the parent test). `decreases branch`; sound under
 /// `fh_wf` (`parent < branch`), kept total by the explicit `parent >= branch`
 /// guard below.
-pub open spec fn fork_walk(
+pub open(crate) spec fn fork_walk(
     origins: Seq<ForkOrigin>, branch: nat, current_depth: nat,
     token_branch: nat, token_depth: nat,
 ) -> bool
@@ -91,7 +91,7 @@ pub open spec fn fork_walk(
 }
 
 /// Top-level validity: start the walk at the current branch.
-pub open spec fn fork_valid(
+pub open(crate) spec fn fork_valid(
     origins: Seq<ForkOrigin>, current_branch_id: nat, current_depth: nat,
     token_branch: nat, token_depth: nat,
 ) -> bool {
@@ -110,7 +110,7 @@ pub open spec fn fork_valid(
 // (see `lemma_fork_walk_characterization`).
 
 /// `q` is reachable from `branch` by following parent edges (inclusive).
-pub open spec fn reaches(origins: Seq<ForkOrigin>, branch: nat, q: nat) -> bool
+pub open(crate) spec fn reaches(origins: Seq<ForkOrigin>, branch: nat, q: nat) -> bool
     decreases branch,
 {
     if branch == q {
@@ -132,7 +132,7 @@ pub open spec fn reaches(origins: Seq<ForkOrigin>, branch: nat, q: nat) -> bool
 /// The depth bound the walk from `branch` (live depth `current_depth`) assigns
 /// to `q`. Meaningful only when `reaches(origins, branch, q)`; returns 0
 /// otherwise (unreachable case is gated by `reaches` at the use site).
-pub open spec fn walk_bound(
+pub open(crate) spec fn walk_bound(
     origins: Seq<ForkOrigin>, branch: nat, current_depth: nat, q: nat,
 ) -> nat
     decreases branch,
@@ -163,7 +163,7 @@ pub open spec fn walk_bound(
 /// recursions. This covers every case — current branch, strict ancestors
 /// (parents, grandparents, …), and off-path branches (rejected because
 /// `reaches` is false). `lemma_branch_cut` is the single-cut instance of this.
-pub proof fn lemma_fork_walk_characterization(
+pub(crate) proof fn lemma_fork_walk_characterization(
     origins: Seq<ForkOrigin>, branch: nat, current_depth: nat,
     token_branch: nat, token_depth: nat,
 )
@@ -211,7 +211,7 @@ pub proof fn lemma_fork_walk_characterization(
 }
 
 /// Top-level form of the characterization, starting from `current_branch_id`.
-pub proof fn lemma_fork_valid_characterization(
+pub(crate) proof fn lemma_fork_valid_characterization(
     origins: Seq<ForkOrigin>, current_branch_id: nat, current_depth: nat,
     token_branch: nat, token_depth: nat,
 )
@@ -231,7 +231,7 @@ pub proof fn lemma_fork_valid_characterization(
 /// `Vec` level: `is_valid(token)` ⇒ `reaches(current, token.branch)` ⇒
 /// `token.branch <= origins.len()`, which discharges `fork`'s precondition
 /// when restoring a valid token. By induction on `branch` under `fh_wf`.
-pub proof fn lemma_reaches_in_range(origins: Seq<ForkOrigin>, branch: nat, q: nat)
+pub(crate) proof fn lemma_reaches_in_range(origins: Seq<ForkOrigin>, branch: nat, q: nat)
     requires
         fh_wf(origins, branch),
         reaches(origins, branch, q),
@@ -251,11 +251,11 @@ pub proof fn lemma_reaches_in_range(origins: Seq<ForkOrigin>, branch: nat, q: na
 }
 
 impl ForkHistory {
-    pub open spec fn wf(self) -> bool {
+    pub open(crate) spec fn wf(self) -> bool {
         fh_wf(self.origins@, self.current_branch_id as nat)
     }
 
-    pub fn new() -> (r: ForkHistory)
+    pub(crate) fn new() -> (r: ForkHistory)
         ensures
             r.wf(),
             r.current_branch_id == 0,
@@ -264,7 +264,7 @@ impl ForkHistory {
         ForkHistory { current_branch_id: 0, origins: Vec::new() }
     }
 
-    pub fn current_branch(&self) -> (b: u32)
+    pub(crate) fn current_branch(&self) -> (b: u32)
         ensures b == self.current_branch_id,
     {
         self.current_branch_id
@@ -272,7 +272,7 @@ impl ForkHistory {
 
     /// Record a fork: push origin `(token_branch, token_depth)` and advance the
     /// current branch to the new origin's index. Maintains `wf`.
-    pub fn fork(&mut self, token_branch: u32, token_depth: u32)
+    pub(crate) fn fork(&mut self, token_branch: u32, token_depth: u32)
         requires
             old(self).wf(),
             // The token's branch must be a real, smaller branch id so the new
@@ -298,7 +298,7 @@ impl ForkHistory {
     }
 
     /// Production validity walk. Proved to compute `fork_valid(...)`.
-    pub fn is_valid(&self, token_branch: u32, token_depth: u32, current_depth: u32) -> (r: bool)
+    pub(crate) fn is_valid(&self, token_branch: u32, token_depth: u32, current_depth: u32) -> (r: bool)
         requires self.wf(),
         ensures
             r == fork_valid(self.origins@, self.current_branch_id as nat,
@@ -342,9 +342,10 @@ impl ForkHistory {
     }
 
     /// Heap bytes used by the origins list (diagnostic; no spec content).
+    /// Production formula (containers/src/token.rs): CAPACITY-based.
     #[verifier::external_body]
     pub fn heap_bytes(&self) -> usize {
-        self.origins.len() * core::mem::size_of::<ForkOrigin>()
+        self.origins.capacity() * core::mem::size_of::<ForkOrigin>()
     }
 }
 
@@ -358,7 +359,7 @@ impl ForkHistory {
 /// Current-branch case: a token whose branch IS the current branch satisfies
 /// `fork_valid` iff its depth is `<= current_depth`. (The first arm of
 /// `fork_walk`.)
-pub proof fn lemma_fork_valid_current_branch(
+pub(crate) proof fn lemma_fork_valid_current_branch(
     origins: Seq<ForkOrigin>, current_branch_id: nat, current_depth: nat,
     token_depth: nat,
 )
@@ -388,7 +389,7 @@ pub proof fn lemma_fork_valid_current_branch(
 /// single-origin-appended state. It does NOT establish the general theorem
 /// (strict-grandparent branches, off-path rejection, multi-cut states); see
 /// §2.1.
-pub proof fn lemma_branch_cut(
+pub(crate) proof fn lemma_branch_cut(
     origins: Seq<ForkOrigin>, cut_branch: nat, cut_depth: nat,
     new_current_depth: nat, token_depth: nat,
 )

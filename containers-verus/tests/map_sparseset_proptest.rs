@@ -11,11 +11,10 @@
 use std::collections::HashMap;
 
 use semi_persistent_containers_verus::dense_id::DenseId31;
-use semi_persistent_containers_verus::inline_store::InlineStore;
 use semi_persistent_containers_verus::map::SpMap;
 use semi_persistent_containers_verus::parallel_store::ParallelStore;
 use semi_persistent_containers_verus::sparse_set::SparseSet;
-use semi_persistent_containers_verus::vec::{ShrinkPolicy, Vec as SpVec};
+use semi_persistent_containers_verus::vec::ShrinkPolicy;
 
 struct Lcg(u64);
 impl Lcg {
@@ -39,6 +38,9 @@ impl Lcg {
 // --------------------------------------------------------------------------
 
 type Map = SpMap<u32, u64, false>;
+/// Tracked variant for the mark/restore tests: mark/restore on an untracked
+/// container now panics (production parity, migration plan 2.4).
+type MapT = SpMap<u32, u64, true>;
 
 #[test]
 fn map_ops_match_oracle() {
@@ -84,7 +86,7 @@ fn map_ops_match_oracle() {
 #[test]
 fn map_mark_restore() {
     for seed in 0..10u64 {
-        let mut m = Map::new();
+        let mut m = MapT::new();
         let mut oracle: HashMap<u32, u64> = HashMap::new();
         let mut rng = Lcg::new(seed ^ 0x9F9F);
         // (token, oracle snapshot), LIFO.
@@ -138,19 +140,20 @@ fn map_mark_restore() {
 // --------------------------------------------------------------------------
 
 type Set = SparseSet<u32, DenseId31, ParallelStore<u32, DenseId31>, false>;
+/// Tracked variant for the mark/restore test (untracked mark now panics).
+type SetT = SparseSet<u32, DenseId31, ParallelStore<u32, DenseId31>, true>;
 
-fn empty_set() -> Set {
-    SparseSet {
-        dense: SpVec::<u32, DenseId31, ParallelStore<u32, DenseId31>, false>::new(),
-        sparse: SpVec::<DenseId31, DenseId31, InlineStore<DenseId31, DenseId31>, false>::new(),
-        indices: SpVec::<DenseId31, DenseId31, InlineStore<DenseId31, DenseId31>, false>::new(),
-    }
+fn empty_set<const TRACK: bool>() -> SparseSet<u32, DenseId31, ParallelStore<u32, DenseId31>, TRACK>
+{
+    // Privacy closeout: the public constructor (struct literal needs field
+    // visibility, now pub(crate)).
+    SparseSet::new()
 }
 
 #[test]
 fn sparse_set_ops_match_oracle() {
     for seed in 0..16u64 {
-        let mut s = empty_set();
+        let mut s: Set = empty_set();
         // oracle: live id (u32) -> value.
         let mut live: HashMap<u32, u32> = HashMap::new();
         let mut ids: Vec<u32> = Vec::new(); // live ids, for random pick
@@ -212,7 +215,7 @@ fn sparse_set_ops_match_oracle() {
 #[test]
 fn sparse_set_mark_restore() {
     for seed in 0..10u64 {
-        let mut s = empty_set();
+        let mut s: SetT = empty_set();
         let mut live: HashMap<u32, u32> = HashMap::new();
         let mut ids: Vec<u32> = Vec::new();
         let mut rng = Lcg::new(seed ^ 0x1234);

@@ -97,9 +97,17 @@ fn vec_ops_match_oracle() {
 // the tracked backend (the observational guarantee is identical — task #41).
 // --------------------------------------------------------------------------
 
+/// TRACK=false production parity (migration plan 2.4): `mark` is a caller
+/// error on an untracked vec and panics via the runtime guard — production's
+/// `assert!(TRACK, "mark() called on untracked vec")` behavior. (This test
+/// previously asserted the old semantics, where untracked mark/restore
+/// silently worked through the snapshot model.)
 #[test]
-fn vec_mark_restore_untracked() {
-    rollback_stress::<false>(0xBEEF);
+#[should_panic(expected = "mark() called on untracked vec")]
+fn vec_mark_untracked_panics() {
+    let mut v = SpVec::<u32, u32, ParallelStore<u32, u32>, false>::new();
+    v.push(1);
+    let _ = v.mark(ShrinkPolicy::Never);
 }
 
 #[test]
@@ -185,7 +193,7 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
 #[test]
 fn append_only_vec_ops_and_rollback() {
     for seed in 0..12u64 {
-        let mut a = AppendOnlyVec::<u64, false>::new();
+        let mut a = AppendOnlyVec::<u64, true>::new(); // mark/restore requires TRACK (plan 2.4)
         let mut oracle: Vec<u64> = Vec::new();
         let mut rng = Lcg::new(seed ^ 0x5151);
         let mut frames: Vec<(_, Vec<u64>)> = Vec::new();

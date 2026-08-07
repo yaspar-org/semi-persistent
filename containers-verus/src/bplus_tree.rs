@@ -49,7 +49,7 @@ pub enum Tree {
 
 /// In-order key sequence (the abstract sorted-set model). Leaf: its keys.
 /// Inner: the concatenation of its children's key sequences left to right.
-pub open spec fn tree_keys(t: Tree) -> Seq<nat>
+pub open(crate) spec fn tree_keys(t: Tree) -> Seq<nat>
     decreases t
 {
     match t {
@@ -58,7 +58,7 @@ pub open spec fn tree_keys(t: Tree) -> Seq<nat>
     }
 }
 
-pub open spec fn forest_keys(kids: Seq<Tree>) -> Seq<nat>
+pub open(crate) spec fn forest_keys(kids: Seq<Tree>) -> Seq<nat>
     decreases kids
 {
     if kids.len() == 0 {
@@ -72,7 +72,7 @@ pub open spec fn forest_keys(kids: Seq<Tree>) -> Seq<nat>
 /// measure for M6: `arena.len() == node_count(tree@)` for an insert-only tree
 /// (no orphaned slots), and `node_count` is bounded by `c * tree_keys.len()` via
 /// min-occupancy.
-pub open spec fn node_count(t: Tree) -> nat
+pub open(crate) spec fn node_count(t: Tree) -> nat
     decreases t
 {
     match t {
@@ -81,7 +81,7 @@ pub open spec fn node_count(t: Tree) -> nat
     }
 }
 
-pub open spec fn forest_node_count(kids: Seq<Tree>) -> nat
+pub open(crate) spec fn forest_node_count(kids: Seq<Tree>) -> nat
     decreases kids
 {
     if kids.len() == 0 {
@@ -92,7 +92,7 @@ pub open spec fn forest_node_count(kids: Seq<Tree>) -> nat
 }
 
 /// Number of leaf nodes in the tree (where all values live).
-pub open spec fn leaf_count(t: Tree) -> nat
+pub open(crate) spec fn leaf_count(t: Tree) -> nat
     decreases t
 {
     match t {
@@ -101,7 +101,7 @@ pub open spec fn leaf_count(t: Tree) -> nat
     }
 }
 
-pub open spec fn forest_leaf_count(kids: Seq<Tree>) -> nat
+pub open(crate) spec fn forest_leaf_count(kids: Seq<Tree>) -> nat
     decreases kids
 {
     if kids.len() == 0 {
@@ -112,7 +112,7 @@ pub open spec fn forest_leaf_count(kids: Seq<Tree>) -> nat
 }
 
 /// The set of arena ids occupied by the tree (its dynamic-frames region).
-pub open spec fn tree_ids(t: Tree) -> Set<nat>
+pub open(crate) spec fn tree_ids(t: Tree) -> Set<nat>
     decreases t
 {
     match t {
@@ -121,7 +121,7 @@ pub open spec fn tree_ids(t: Tree) -> Set<nat>
     }
 }
 
-pub open spec fn forest_ids(kids: Seq<Tree>) -> Set<nat>
+pub open(crate) spec fn forest_ids(kids: Seq<Tree>) -> Set<nat>
     decreases kids
 {
     if kids.len() == 0 {
@@ -134,7 +134,7 @@ pub open spec fn forest_ids(kids: Seq<Tree>) -> Set<nat>
 /// Height: a leaf is 0; an internal node is 1 + the max child height. (Balance,
 /// below, forces all children to the *same* height, but `tree_height` is the
 /// general max so it is well-defined before balance is assumed.)
-pub open spec fn tree_height(t: Tree) -> nat
+pub open(crate) spec fn tree_height(t: Tree) -> nat
     decreases t
 {
     match t {
@@ -143,7 +143,7 @@ pub open spec fn tree_height(t: Tree) -> nat
     }
 }
 
-pub open spec fn forest_max_height(kids: Seq<Tree>) -> nat
+pub open(crate) spec fn forest_max_height(kids: Seq<Tree>) -> nat
     decreases kids
 {
     if kids.len() == 0 {
@@ -156,7 +156,7 @@ pub open spec fn forest_max_height(kids: Seq<Tree>) -> nat
 }
 
 /// The id at a node's root (its own arena index).
-pub open spec fn tree_root_id(t: Tree) -> nat {
+pub open(crate) spec fn tree_root_id(t: Tree) -> nat {
     match t {
         Tree::Leaf { id, .. } => id,
         Tree::Inner { id, .. } => id,
@@ -183,7 +183,7 @@ pub proof fn lemma_forest_ids_cons(kids: Seq<Tree>)
 
 /// The leaf-id offset where child `m` begins in `forest_leaf_ids(kids)`: the
 /// summed leaf counts of the children before `m`.
-pub open spec fn leaf_id_offset(kids: Seq<Tree>, m: int) -> nat
+pub open(crate) spec fn leaf_id_offset(kids: Seq<Tree>, m: int) -> nat
     decreases m
 {
     if m <= 0 {
@@ -737,7 +737,7 @@ pub proof fn lemma_node_count_bound(t: Tree, h: nat, cap: nat, key_cap: nat)
 }
 
 /// A `nat` sequence is strictly increasing.
-pub open spec fn strictly_sorted(s: Seq<nat>) -> bool {
+pub open(crate) spec fn strictly_sorted(s: Seq<nat>) -> bool {
     forall|i: int, j: int| 0 <= i < j < s.len() ==> (#[trigger] s[i]) < (#[trigger] s[j])
 }
 
@@ -812,12 +812,12 @@ pub proof fn lemma_sorted_bounded_len(s: Seq<nat>, bound: nat)
 
 /// Every key in the tree is `< bound` (used to state the cross-node ordering:
 /// a child subtree's keys are bounded above by its right separator).
-pub open spec fn keys_all_lt(t: Tree, bound: nat) -> bool {
+pub open(crate) spec fn keys_all_lt(t: Tree, bound: nat) -> bool {
     forall|i: int| 0 <= i < tree_keys(t).len() ==> (#[trigger] tree_keys(t)[i]) < bound
 }
 
 /// Every key in the tree is `>= bound` (bounded below by the left separator).
-pub open spec fn keys_all_ge(t: Tree, bound: nat) -> bool {
+pub open(crate) spec fn keys_all_ge(t: Tree, bound: nat) -> bool {
     forall|i: int| 0 <= i < tree_keys(t).len() ==> bound <= (#[trigger] tree_keys(t)[i])
 }
 
@@ -1084,7 +1084,7 @@ pub proof fn lemma_forest_keys_sorted(kids: Seq<Tree>, seps: Seq<nat>, h: nat, c
 ///   - sortedness: leaf keys / inner separators strictly increasing;
 ///   - cross-node ordering: child `i`'s keys are `< seps[i]` (for `i < count`)
 ///     and `>= seps[i-1]` (for `i > 0`).
-pub open spec fn tree_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool) -> bool
+pub open(crate) spec fn tree_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool) -> bool
     decreases t
 {
     match t {
@@ -1121,7 +1121,7 @@ pub open spec fn tree_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root: bool)
 }
 
 /// Every tree in the forest is `wf` at height `h` (children are never the root).
-pub open spec fn forest_wf(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat) -> bool
+pub open(crate) spec fn forest_wf(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat) -> bool
     decreases kids
 {
     if kids.len() == 0 {
@@ -1147,7 +1147,7 @@ pub proof fn lemma_forest_wf_cons(kids: Seq<Tree>, h: nat, cap: nat, key_cap: na
 // ===========================================================================
 
 /// Key membership in a tree's model (the spec `contains` decides).
-pub open spec fn tree_contains(t: Tree, k: nat) -> bool {
+pub open(crate) spec fn tree_contains(t: Tree, k: nat) -> bool {
     tree_keys(t).contains(k)
 }
 
@@ -1804,7 +1804,7 @@ pub proof fn lemma_descent_step(
 /// No id repeats anywhere in `t`. Leaf: trivially true. Inner: the node's id is
 /// not in any child's footprint, the children's footprints are pairwise
 /// disjoint, and each child is itself disjoint.
-pub open spec fn tree_disjoint(t: Tree) -> bool
+pub open(crate) spec fn tree_disjoint(t: Tree) -> bool
     decreases t
 {
     match t {
@@ -1818,7 +1818,7 @@ pub open spec fn tree_disjoint(t: Tree) -> bool
     }
 }
 
-pub open spec fn forest_disjoint(kids: Seq<Tree>) -> bool
+pub open(crate) spec fn forest_disjoint(kids: Seq<Tree>) -> bool
     decreases kids
 {
     if kids.len() == 0 {
@@ -1860,7 +1860,7 @@ pub proof fn lemma_forest_disjoint_at(kids: Seq<Tree>, m: int)
 
 /// In-order sequence of leaf arena ids. A leaf contributes its own id; an
 /// internal node concatenates its children's leaf-id sequences left to right.
-pub open spec fn tree_leaf_ids(t: Tree) -> Seq<nat>
+pub open(crate) spec fn tree_leaf_ids(t: Tree) -> Seq<nat>
     decreases t
 {
     match t {
@@ -1869,7 +1869,7 @@ pub open spec fn tree_leaf_ids(t: Tree) -> Seq<nat>
     }
 }
 
-pub open spec fn forest_leaf_ids(kids: Seq<Tree>) -> Seq<nat>
+pub open(crate) spec fn forest_leaf_ids(kids: Seq<Tree>) -> Seq<nat>
     decreases kids
 {
     if kids.len() == 0 {

@@ -166,6 +166,22 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         }
     }
 
+    /// Bytes consumed by diff tracking only, summed over the two inner vecs.
+    /// Diagnostic; forwards `Vec::tracking_bytes`. This is the production side
+    /// of the arena memory-parity assertion: the verus `ListArena` now uses
+    /// `InlineStore` over typed index columns exactly as this one does, and
+    /// `containers-conformance/tests/list_arena_differential.rs` compares the
+    /// two implementations through this pair against exact constants.
+    pub fn tracking_bytes(&self) -> usize {
+        self.heads.tracking_bytes() + self.nodes.tracking_bytes()
+    }
+
+    /// Total bytes: both inner vecs (struct + store backing + tracking).
+    /// Diagnostic; forwards `Vec::total_bytes`.
+    pub fn total_bytes(&self) -> usize {
+        self.heads.total_bytes() + self.nodes.total_bytes()
+    }
+
     /// Create a new empty list.
     pub fn new_list(&mut self) -> L {
         let id = L::from_usize(self.heads.len().as_usize());
