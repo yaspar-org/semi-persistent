@@ -238,6 +238,13 @@ path is `key()`'s `K::from_usize`, which round-trips exactly via `model_bounded`
 Cost is not *proved* logarithmic, but is validated empirically (a per-seek
 node-visit ≈ `log_B(n)` test).
 
+`seek_target_idx` and its two split lemmas turned out not to be B+tree-specific:
+they are about strictly-sorted sequences, and
+[Chapter 12](12-sorted-vec-cursor.md) reuses them verbatim to verify the
+e-graph's galloping slice cursor. Both cursors therefore prove seek against the
+*same* spec function, which is what makes them substitutable at the
+`SortedCursor` boundary.
+
 ## 4. Semi-persistence: mark / restore
 
 `mark` snapshots the tree (delegating to the arena `Vec`'s `mark`, recording the
@@ -256,10 +263,10 @@ SparseSet, plus the tree-level rollback theorem.
 
 | Module | Facts | Content |
 |---|---|---|
-| `bplus` | 127 | the tree: `wf`, `new`/`contains`/`len`, insert (+ arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
+| `bplus` | 132 | the tree: `wf`, `new`/`contains`/`len`, insert (+ arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
 | `bplus_tree` | 109 | the ghost `Tree` model and its structural lemmas |
 | `bplus_layout` | 311 | the `NodeLayout` trait + six packed layouts + verified mutators |
-| `bplus_search` | 5 | the `SearchKind` (binary search) trait |
+| `bplus_search` | 9 | the `SearchKind` trait: binary search + `Branchless` |
 
 What is guaranteed:
 

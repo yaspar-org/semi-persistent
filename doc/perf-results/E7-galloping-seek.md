@@ -30,9 +30,12 @@ saturation workloads:
 Two things fall out. **The strides are short** — on the AC rows a majority of
 seeks advance by at most one element and ~85% by at most three, while the slice
 being searched averages 2^4.7 to 2^7.9 elements, so binary search was paying 5-8
-probes to move one position. And **a quarter to a third of semi-naive seeks do not
-move at all** (*d* = 0), because the `Difference` combinator seeks both sides to
-the same key; those now cost a single compare and an early return.
+probes to move one position. And **on two of the three semi-naive rows, a quarter
+to a third of seeks do not move at all** (*d* = 0 — 24.7% on `ac6/semi`, 30.6% on
+`plain7/semi`), because the `Difference` combinator seeks both sides to the same
+key; those now cost a single compare and an early return. `ac10/semi` is the
+exception at 0.5%, so the early return is a real but row-dependent win, not a
+property of semi-naive evaluation as such.
 
 `plain7/naive` is the exception with median log₂*d* = 7, and it is the row that
 gains least below — consistent, and the reason the sweep in the next section
@@ -128,12 +131,20 @@ actually gates the new code:
 | `hi = lo + step` → `lo + step / 2` | **48 tests fail** |
 | early-return guard `<` → `<=` | **9 tests fail** |
 
+These counts are against the suite as it stood at E7. It has since grown property
+tests for `seek` (`mod seek_props`) and the same mutations now fail 36 / 57 / 16 of
+596 lib tests; the up-to-date table, extended with the out-of-bounds mutations and
+a proof-vs-tests column, is in
+[containers-verus chapter 12](../../containers-verus/doc/design/12-sorted-vec-cursor.md) §5.
+
 One rewrite that looked like an off-by-one — bisecting `data[lo..hi]` instead of
 `data[lo + 1..hi]` — left every test passing, and that is correct rather than a
 coverage gap: `data[lo] < target` holds by the loop invariant, so
 `partition_point` over the wider window returns at least 1 and both forms give the
 same index. The shipped form is the narrower one because it makes the invariant
-visible at the call.
+visible at the call. That reading is now settled rather than inferred — the
+equivalent mutation re-verifies clean in Verus once the invariant is relaxed to
+match (chapter 12 §5, M3′).
 
 ## Reproduce
 

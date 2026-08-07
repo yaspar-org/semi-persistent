@@ -22,7 +22,7 @@ FAIL=0
 # Modules are added here as their bodies land. Empty `verus! {}` blocks are
 # erased by the macro and become invisible to `--verify-module`, so listing a
 # stub-only module here would fail.
-for mod in guard tagged index_like dense_id diff_store capture_bits parallel_store inline_store frame opt container_id fork_history vec append_only_vec map sparse_set list circular_list bplus bplus_layout bplus_search bplus_tree id_factory id_macros::id_witnesses::StoredWitnessId7 id_macros::id_witnesses::StoredWitnessId15 id_macros::id_witnesses::StoredWitnessId31 id_macros::id_witnesses::StoredWitnessId63 id_macros::ids::StoredSparseSetId id_macros::ids::StoredUseListId id_macros::ids::StoredUseNodeId; do
+for mod in guard tagged index_like dense_id diff_store capture_bits parallel_store inline_store frame opt container_id fork_history vec append_only_vec map sparse_set list circular_list bplus bplus_layout bplus_search bplus_tree sorted_vec_cursor id_factory id_macros::id_witnesses::StoredWitnessId7 id_macros::id_witnesses::StoredWitnessId15 id_macros::id_witnesses::StoredWitnessId31 id_macros::id_witnesses::StoredWitnessId63 id_macros::ids::StoredSparseSetId id_macros::ids::StoredUseListId id_macros::ids::StoredUseNodeId; do
   printf "%-20s " "$mod:"
   output=$(run_verus src/lib.rs --crate-type=lib --verify-module "$mod" 2>&1)
   status=$?
