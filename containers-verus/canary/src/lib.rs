@@ -16,8 +16,8 @@
 //!    `Tagged` impls are trusted code (trust group E,
 //!    `doc/design/02-trust-boundary.md` §3.5) and the egraph's six impls
 //!    (`classes.rs`, `director.rs`, `union_find.rs`, `node_types.rs` ×3) do
-//!    NOT yet call it. Delete this crate only after those fuzzers exist
-//!    somewhere else.
+//!    NOT yet call it — see the follow-up in `doc/migration/README.md`. Delete
+//!    this crate only after those fuzzers exist somewhere else.
 //! 2. The fixtures pin API shapes at their *narrowest* usable form, so a
 //!    signature change that the egraph happens to tolerate still breaks here.
 //!
