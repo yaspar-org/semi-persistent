@@ -426,7 +426,7 @@ representation observable — the exact failure mode that sank the withdrawn
 axioms). Exercised end-to-end in `tests/key_model_macro.rs`.
 
 Feature-gated — `cargo verus verify` passes with and without
-`literal-types` (both **1383 verified, 0 errors** as of 2026-08-07, re-measured
+`literal-types` (both **1378 verified, 0 errors** as of 2026-08-07, re-measured
 for this audit; the axioms add obligations only to their users, so the two
 configurations agree fact-for-fact). Runtime validation (`tests/compat_map.rs::literal_keys`): an
 SpMap-vs-HashMap oracle trace, **plus fuzz tests of the key-model

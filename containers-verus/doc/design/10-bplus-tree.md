@@ -263,7 +263,7 @@ SparseSet, plus the tree-level rollback theorem.
 
 | Module | Facts | Content |
 |---|---|---|
-| `bplus` | 132 | the tree: `wf`, `new`/`contains`/`len`, insert (+ arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
+| `bplus` | 127 | the tree: `wf`, `new`/`contains`/`len`, insert (+ arena-overflow proof), cursor + seek + the two soundness theorems, mark/restore |
 | `bplus_tree` | 109 | the ghost `Tree` model and its structural lemmas |
 | `bplus_layout` | 311 | the `NodeLayout` trait + six packed layouts + verified mutators |
 | `bplus_search` | 9 | the `SearchKind` trait: binary search + `Branchless` |
@@ -293,14 +293,48 @@ diagnostics) are enumerated in [Chapter 2](02-trust-boundary.md).
 
 **Scope:** insert-only, matching production (no `remove`).
 
-**`from_sorted` is not a bulk load — known gap.** The constructor *exists* and is
-verified, but its body is `Self::new()` plus a loop of `insert` calls. Production
-bulk-loads: it chunks the sorted keys into filled leaves
-(`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above them,
-which is O(n) with no split propagation and no per-key descent.
+### 5.1 The in-node search: a decorative type parameter (fixed)
 
-Measured in one binary (`containers-conformance/examples/bulkload.rs`), verus
-`from_sorted` tracks a plain insert loop at every size:
+The tree is generic over `S: SearchKind` exactly as production is, and
+`bplus_search` verifies both impls (`BinarySearch`, `Branchless`) against
+production's contracts. It then **never called `S`**: `grep -c 'S::'` over
+`bplus.rs` returned **0**, against six call sites in production
+(`containers/src/bplus.rs:653,661,796,800,850,858`). Five hand-written **linear**
+scans stood in its place — the child pick in `insert_rec`, the leaf position in
+`insert_rec_leaf` and `insert_root_leaf`, and both scans in `contains`.
+
+Worse, `bplus.rs` *already contained* two verified binary searches whose `ensures`
+clauses are verbatim the postconditions those linear loops hand-proved:
+`leaf_find_ge` and `find_child`. Only `seek_leaf` called them.
+
+Each linear scan existed because its loop invariant sits inside the surrounding
+proof context — it threads `binds`, the ghost key sequence, and the arena frame,
+all of which a call to a separate function must re-derive (via
+`lemma_tree_wf_sorted_seps_view` plus `lemma_inner_facts` /
+`lemma_binds_leaf_facts`). Locally that is the cheaper proof. Globally it is
+O(cap) per node visited, on a 256-key layout.
+
+All five now dispatch to the verified binary searches. The proofs got *smaller* —
+each ~35-line scan-plus-invariant became a call plus a ~6-line postcondition lift,
+and the whole-crate count fell from 1383 to 1378 (exactly one retired loop each).
+
+**Why the type parameter is still not `S`.** `SearchKind::find_ge` takes `&[W]`,
+and `NodeLayout` exposes keys only one at a time through `L::key(n, i)` — there is
+no slice to hand it, since a packed node's keys and child pointers share one
+`data` array. `leaf_find_ge`/`find_child` are the same algorithm against the
+`L::key` accessor. Making `S` genuinely pluggable needs a slice accessor on
+`NodeLayout` first; until then the tree is hardwired to binary search, which is
+production's default.
+
+### 5.2 `from_sorted` is not a bulk load — remaining gap
+
+The constructor *exists* and is verified, but its body is `Self::new()` plus a loop
+of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
+leaves (`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above
+them, which is O(n) with no split propagation and no per-key descent.
+
+Measured in one binary (`containers-conformance/examples/bulkload.rs`), before and
+after the §5.1 fix:
 
 | n | prod `from_sorted` | verus `from_sorted` | ratio | prod insert asc | verus insert asc | ratio | prod insert rand | verus insert rand | ratio |
 |---|---|---|---|---|---|---|---|---|---|
@@ -308,42 +342,47 @@ Measured in one binary (`containers-conformance/examples/bulkload.rs`), verus
 | 10 000 | 13.2 µs | 2 089 µs | 158x | 352 µs | 2 106 µs | 6.0x | 1 068 µs | 1 516 µs | 1.4x |
 | 100 000 | 152.0 µs | 26 678 µs | 176x | 3 607 µs | 26 877 µs | 7.5x | 13 380 µs | 19 637 µs | 1.5x |
 
-`verus_sorted ≈ verus_insert` on every row identifies the missing bulk load. But
-the total decomposes into **two** stacked gaps, and the insert columns separate
-them:
+After routing all five scans through the verified binary searches:
 
-**(a) No bulk load — ~36x.** As above: an insert loop where production fills
-leaves directly.
+| n | prod `from_sorted` | verus `from_sorted` | ratio | prod insert asc | verus insert asc | ratio | prod insert rand | verus insert rand | ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 000 | 1.6 µs | 49.3 µs | 30x | 34.7 µs | 49.7 µs | 1.4x | 89.3 µs | 82.1 µs | **0.9x** |
+| 10 000 | 9.9 µs | 642 µs | 65x | 349 µs | 644 µs | 1.8x | 1 073 µs | 1 002 µs | **0.9x** |
+| 100 000 | 113.5 µs | 8 223 µs | 72x | 3 577 µs | 8 257 µs | 2.3x | 13 359 µs | 12 817 µs | **1.0x** |
 
-**(b) `insert` has no append fast path — 4.8x to 7.5x, growing with `n`.**
+**Random-order insertion is now at parity** (marginally ahead — same effect as
+[Chapter 12](12-sorted-vec-cursor.md)'s cursor, where the explicit verified
+bisection beat `partition_point`). What remains:
+
+**(a) No bulk load — ~30-72x, still growing.** An insert loop where production
+fills leaves directly. Closing this means building a tree that satisfies `wf()`
+*directly* rather than inductively: a fresh invariant for the leaf-fill loop and
+another for the level-build loop.
+
+**(b) `insert` has no append fast path — 1.4x to 2.3x, growing with `n`.**
 Production's header caches `last_leaf`, and `insert` checks it first
 (`containers/src/bplus.rs:626`): if the key exceeds the rightmost leaf's last key
 and that leaf has room, it appends in O(1) with **no root-to-leaf descent**. The
 verified tree has no `last_leaf` field, so every key pays a full descent. Under
-ascending keys — exactly what `from_sorted` and `IndexStore` bulk builds produce —
+ascending keys — exactly what `from_sorted` and id-keyed index builds produce —
 production's fast path hits essentially every time, which is why this ratio grows
-with tree depth while the bulk-load factor stays flat.
+with tree depth. Closing it means a `last_leaf` field plus a `wf` clause binding it
+to the last element of `tree_leaf_ids(tree@)`, reusing the existing leaf-chain
+machinery (`leaf_links_ok`, `forest_links_to`, `lemma_forest_leaf_ids_*`), and a
+third element in `header_archive` so `restore` rolls it back.
 
-The **shuffled-insertion control** is what isolates (b) from a codegen artifact:
-inserting the same keys in random order, where the fast path cannot fire, collapses
-the ratio to a flat **1.4-1.5x** across all three decades. Flat across decades is a
-constant factor; a ratio that *grows* is structural. (This is the discriminator
-[Chapter 11](11-layout-parity.md) was written about, applied in the direction that
-confirms a regression rather than dismissing one.)
+**How the shuffled column earned its keep.** It was introduced to isolate (b) —
+in random order the fast path cannot fire, so the residual is everything *else*.
+Reading it as "flat across decades ⟹ constant-factor codegen artifact" was
+correct about the shape and wrong about the cause: the constant factor was a
+linear scan inside a fixed-capacity node, which is O(256) — bounded, therefore
+flat, therefore easy to mistake for codegen. **A flat ratio bounds where the
+problem is, not whether one exists.** Chapter 11's discriminator separates
+structural from constant; it does not license dismissing the constant.
 
 **Not currently a shipping cost:** `egraph` never calls `from_sorted` and never
 instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its indexes
-are `SortedVec`. Both gaps are latent.
-
-**Closing them.** (b) is the better investment and the smaller proof: add
-`last_leaf` to the struct with a `wf` clause binding it to the rightmost leaf of
-the ghost tree, then the fast path's precondition is a local fact about one leaf.
-The crate already has the leaf-chain machinery this needs — `leaf_links_ok`,
-`tree_leaf_ids`, `forest_links_to` — because the cursor's leaf-link invariant
-required the same reasoning. It also pays off beyond bulk build, since ascending
-insertion is the common case for id-keyed indexes. (a) is more work: building a
-tree that satisfies `wf()` *directly* rather than inductively needs a fresh
-invariant for the leaf-fill loop and another for the level-build loop.
+are `SortedVec`. Both remaining gaps are latent.
 
 ## 6. Reused machinery
 

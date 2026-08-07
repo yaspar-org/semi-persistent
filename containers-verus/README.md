@@ -60,7 +60,7 @@ and are verified (see "Verification status" below).
 
 ## Verification status
 
-**1383 facts verified across 31 module entries, 0 errors, 0 `admit`s/`assume`s**
+**1378 facts verified across 31 module entries, 0 errors, 0 `admit`s/`assume`s**
 (run `./verify-all.sh` from the package root for the live per-module tally).
 The whole container family is verified:
 
