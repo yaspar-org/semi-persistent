@@ -15,7 +15,7 @@ publish = false
 semi-persistent-containers-verus = { path = ".." }
 # Production containers, for side-by-side shape comparison in fixtures.
 semi-persistent-containers = { path = "../../containers", version = "0.1.0" }
-vstd = "=0.0.0-2026-04-12-0118"
+vstd = "=0.0.0-2026-07-27-0206"
 
 [features]
 # Mirrors the parent crate's parity gates: fixtures for an API phase are

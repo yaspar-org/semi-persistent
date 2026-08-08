@@ -8,7 +8,7 @@ repository = "https://github.com/yaspar-org/semi-persistent"
 autobins = false
 
 [dependencies]
-vstd = "=0.0.0-2026-04-12-0118"
+vstd = "=0.0.0-2026-07-27-0206"
 # SpMap's transient key index uses production's exact hasher (hashbrown 0.17's
 # default = foldhash) via std::HashMap<K, usize, foldhash::fast::RandomState>.
 # std's HashMap is what vstd models (generic over any S: BuildHasher, gated on
