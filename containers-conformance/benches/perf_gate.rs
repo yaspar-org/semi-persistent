@@ -62,8 +62,12 @@ use std::hint::black_box;
 // The pre-swap hand-rolled ring, shared by every class-ring parity harness so
 // they all measure the same baseline (see the module's own doc).
 use containers_conformance::prod_class_ring::{self as pring, PNodeId};
-// `DenseId` for `from_usize` on the verus id (the production arm constructs its
-// ids through `PNodeId::new`).
+// `DenseId::from_usize`/`to_index` on both sides: node ids and the class-key index
+// word are always derived from the id type, never cast to a literal width
+// (`egraph/src/config.rs` pins every capacity-coupled id to one `Index`, so that a
+// wider config gets wider arenas without overflow risk). The production side is
+// called fully qualified (`prod::DenseId::from_usize`) because both crates' traits
+// would otherwise collide in scope.
 use verus::opt::DenseId as _;
 
 const VEC_N: usize = 100_000;
@@ -251,26 +255,51 @@ fn row_nested_mark(depth: usize, name: &'static str) -> Row {
 
 verus::define_id31! { pub struct VNodeId / StoredVNodeId, "n"; }
 
-type VerusRing<const TRACK: bool> = verus::CircularList<verus::Opt<u32>, VNodeId, TRACK>;
+/// The ring under test, parameterized exactly as the consumer's is: the payload is
+/// `Opt<VNodeId::Index>` derived from the id, not a spelled-out `Opt<u32>`. The
+/// index word is what `EGraphConfig::Index` pins (`egraph/src/config.rs`) so a wide
+/// e-graph gets wide arenas; a harness that hard-codes it would silently stop
+/// measuring the configuration the consumer is actually built for.
+type VerusRing<const TRACK: bool> =
+    verus::CircularList<verus::Opt<<VNodeId as verus::opt::DenseId>::Index>, VNodeId, TRACK>;
 
-/// The post-swap `splice_classes`: the verified `splice` (which swaps the two
-/// `next` words and provably leaves both payloads in place) plus one payload
-/// write to clear the absorbed key's presence bit.
+/// The post-swap `splice_classes` (`egraph/src/classes.rs`): the verified
+/// `splice_absorb`, which swaps the two `next` words and carries the absorbed
+/// class's presence-bit clear through the store the surgery already performs.
+///
+/// The write count is the whole point of this shape, so the harness has to mirror
+/// it exactly: `splice` + a separate `set_payload` writes the absorbed cell twice,
+/// and on a tracked ring each `set_index` runs the capture protocol. Two writes
+/// per merge is what the pre-swap hand-rolled ring did and what `prod_class_ring`
+/// still does.
 fn verus_splice<const TRACK: bool>(
     ring: &mut VerusRing<TRACK>,
     survivor: VNodeId,
     absorbed: VNodeId,
 ) {
-    ring.splice(survivor, absorbed);
     let mut absorbed_payload = ring.payload_of(absorbed);
     absorbed_payload.set_none();
-    ring.set_payload(absorbed, absorbed_payload);
+    ring.splice_absorb(survivor, absorbed, absorbed_payload);
 }
 
 const RING_N: usize = 20_000;
 /// Merges performed per timed unit. `RING_N / 2` merges over `RING_N` singletons
 /// leaves `RING_N / 2` two-node rings — a shape the walk row then reuses.
 const RING_MERGES: usize = RING_N / 2;
+
+/// The `i`th merge's (survivor, absorbed) pair, on each side. Both go through the
+/// id's `DenseId::from_usize` rather than casting an index to a fixed width, so the
+/// two arms address the same nodes at any id family.
+fn pids(i: usize) -> (PNodeId, PNodeId) {
+    (
+        prod::DenseId::from_usize(2 * i),
+        prod::DenseId::from_usize(2 * i + 1),
+    )
+}
+
+fn vids(i: usize) -> (VNodeId, VNodeId) {
+    (VNodeId::from_usize(2 * i), VNodeId::from_usize(2 * i + 1))
+}
 
 fn prod_ring_build<const TRACK: bool>() -> pring::ProdRing<TRACK> {
     pring::build(RING_N)
@@ -279,7 +308,8 @@ fn prod_ring_build<const TRACK: bool>() -> pring::ProdRing<TRACK> {
 fn verus_ring_build<const TRACK: bool>() -> VerusRing<TRACK> {
     let mut ring: VerusRing<TRACK> = VerusRing::new();
     for i in 0..RING_N {
-        ring.add_singleton(verus::Opt::some(i as u32));
+        // Class key = the node's own index word, via the id.
+        ring.add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()));
     }
     ring
 }
@@ -297,22 +327,16 @@ fn row_class_splice() -> Row {
         prod_ring_build::<false>,
         |ring| {
             for i in 0..RING_MERGES {
-                pring::splice(
-                    ring,
-                    PNodeId::new(2 * i as u32),
-                    PNodeId::new(2 * i as u32 + 1),
-                );
+                let (s, a) = pids(i);
+                pring::splice(ring, s, a);
             }
             ring.len()
         },
         verus_ring_build::<false>,
         |ring| {
             for i in 0..RING_MERGES {
-                verus_splice(
-                    ring,
-                    VNodeId::from_usize(2 * i),
-                    VNodeId::from_usize(2 * i + 1),
-                );
+                let (s, a) = vids(i);
+                verus_splice(ring, s, a);
             }
             ring.len()
         },
@@ -332,48 +356,52 @@ fn row_class_splice() -> Row {
 /// `PartialEq` (needed because a generic `N`'s `==` has no spec contract). Both
 /// are a mask-and-compare on a clean word, so parity is expected — measured
 /// rather than argued.
+///
+/// Both arms must walk the ring the *same way* for that comparison to mean
+/// anything: the prod arm goes through `prod_class_ring::ClassIter`, the
+/// `Iterator` `origin/main` shipped.
 fn row_class_walk() -> Row {
     let (p, v) = perf::compare_batched(
         || {
             let mut ring = prod_ring_build::<false>();
             for i in 0..RING_MERGES {
-                pring::splice(
-                    &mut ring,
-                    PNodeId::new(2 * i as u32),
-                    PNodeId::new(2 * i as u32 + 1),
-                );
+                let (s, a) = pids(i);
+                pring::splice(&mut ring, s, a);
             }
             ring
         },
         |ring| {
             let mut total = 0usize;
             for i in 0..RING_MERGES {
-                total += pring::walk(ring, PNodeId::new(2 * i as u32));
+                total += pring::walk(ring, pids(i).0);
             }
             total
         },
         || {
             let mut ring = verus_ring_build::<false>();
             for i in 0..RING_MERGES {
-                verus_splice(
-                    &mut ring,
-                    VNodeId::from_usize(2 * i),
-                    VNodeId::from_usize(2 * i + 1),
-                );
+                let (s, a) = vids(i);
+                verus_splice(&mut ring, s, a);
             }
             ring
         },
         |ring| {
             let mut total = 0usize;
             for i in 0..RING_MERGES {
-                total += ring.iter_class(VNodeId::from_usize(2 * i)).count();
+                total += ring.iter_class(vids(i).0).count();
             }
             total
         },
     );
-    // Recorded −0.6% … +0.3% over seven runs: parity, as the disassembly argues
-    // (`RingIter`'s `to_usize()` compare and `ClassIter`'s `PartialEq` are both a
-    // mask-and-compare on a clean word).
+    // Recorded −0.6% … +0.3%: parity, once both arms walk the ring the same way.
+    // The prod arm is `origin/main`'s `ClassIter` (an `Iterator`), not a plain
+    // counting loop — see `prod_class_ring::ClassIter`. Measured with a plain
+    // loop instead, this row read +16…+31% under `lto = "fat"`, all of it the
+    // loop-preamble difference between the two walk styles (a hand loop hoists
+    // the vec's ptr+len into one `ldp`; an `Iterator` reloads per `next`). The
+    // loop bodies themselves are 9 insns prod / 8 insns verus with the same
+    // 3-op loop-carried chain (`mul` → `ldr` → `and`), so the container is not
+    // the variable — the harness's walk style was.
     Row::gated("class_walk", p, v, 0.5)
 }
 
@@ -388,11 +416,8 @@ fn row_class_merge_restore() -> Row {
         |ring| {
             let tok = ring.mark(prod::ShrinkPolicy::Never);
             for i in 0..RING_MERGES {
-                pring::splice(
-                    ring,
-                    PNodeId::new(2 * i as u32),
-                    PNodeId::new(2 * i as u32 + 1),
-                );
+                let (s, a) = pids(i);
+                pring::splice(ring, s, a);
             }
             ring.restore(tok);
             ring.len()
@@ -401,11 +426,8 @@ fn row_class_merge_restore() -> Row {
         |ring| {
             let tok = ring.mark(verus::vec::ShrinkPolicy::Never);
             for i in 0..RING_MERGES {
-                verus_splice(
-                    ring,
-                    VNodeId::from_usize(2 * i),
-                    VNodeId::from_usize(2 * i + 1),
-                );
+                let (s, a) = vids(i);
+                verus_splice(ring, s, a);
             }
             ring.restore(tok);
             ring.len()
