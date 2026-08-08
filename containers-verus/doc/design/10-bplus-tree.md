@@ -215,8 +215,9 @@ split in three layers:
 {k}`, `added == !contains`): for an insert-only set, full functional correctness.
 A new-root split increases `height` by one. The recursion's split/absorb
 reconstruction (`reconstruct_*`, the `forest_binds`/`forest_links` machinery) is
-proven with **zero `external_body`** (`bplus.rs` has none; the three in
-`bplus_layout` are the unchecked accessors and the `cmov` select, §5).
+proven with **zero `external_body`** (`bplus.rs` has none; the four in
+`bplus_layout` are the unchecked accessors, the `cmov` select, and the
+length-dispatched shift, §5).
 
 ### 3b. contains
 
@@ -288,11 +289,13 @@ seek / step / key / tree mark-restore, plus the empirical log-cost check) and
 `bplus_contract_fuzz` (the `NodeLayout` primitive postconditions against a hand
 oracle).
 
-**Trust boundary:** three `external_body` functions in `bplus_layout`, all
+**Trust boundary:** four `external_body` functions in `bplus_layout`, all
 introduced to make a *proved* fact reach the machine code rather than to assume a
 new one — `arr_get`/`arr_set` (the bounds check is dead: `i < N` is a verified
-precondition at every call site) and `sel_usize` (the `cmov` lowering, §5.1.1;
-`unsafe`-free). `bplus`, `bplus_tree`, and `bplus_search` have zero. All three
+precondition at every call site), `sel_usize` (the `cmov` lowering, §5.1.1;
+`unsafe`-free), and `arr_shift_up` (one `memmove` where Verus's invariant rules
+force an element loop; also `unsafe`-free). `bplus`, `bplus_tree`, and
+`bplus_search` have zero. All four
 contracts are also checked at runtime by
 `tests/external_body_contract_fuzz.rs`. They and the crate-wide trusted items
 (`ContainerId`, byte-accounting diagnostics) are enumerated in

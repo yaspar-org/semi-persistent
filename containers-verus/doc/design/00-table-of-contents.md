@@ -42,8 +42,8 @@ will accept: each `mark` opens a branch in a fork history, each `restore` cuts t
 branches it discards, and a token naming a discarded state is rejected. The
 development uses no `admit`s or `assume`s; run `./verify-all.sh` for the
 per-module tally. (That does not mean nothing is trusted; the trust boundary is
-21 `external_body` items in the default build, enumerated in
-[Chapter 2](02-trust-boundary.md), of which only three carry load-bearing
+25 `external_body` items in the default build, enumerated in
+[Chapter 2](02-trust-boundary.md), of which only four carry load-bearing
 contracts.)
 
 ## Reference: what is in the crate (chapters 01–02, 09–10)

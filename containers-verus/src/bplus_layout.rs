@@ -187,6 +187,64 @@ pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
     }
 }
 
+/// Open a hole at `pos` by moving `a[pos..cnt]` up one slot, i.e.
+/// `a.copy_within(pos..cnt, pos + 1)`.
+///
+/// This exists because the shift is where the verified leaf/internal insert last
+/// differed from production *in cost*, and the difference is not the one an
+/// earlier measurement suggested. Verus can only carry a loop invariant through
+/// an explicit element loop, so `leaf_insert_at` walked the tail down one `u32`
+/// at a time while production called `copy_within` (one `memmove`). Priced at a
+/// single short length the scalar loop is genuinely *faster* — which is what an
+/// earlier probe found and recorded as a reason not to change it. Priced across
+/// the length distribution a real insert produces, that conclusion inverts:
+///
+/// ```text
+///   shift length:      1      4     16     31     48     61   uniform(0..62)
+///   scalar:         0.99   2.35   8.65  17.57  26.77  35.02   21.39 ns
+///   memmove:        3.24   8.38   9.80   9.02  10.36  10.23    8.35 ns
+/// ```
+///
+/// The crossover is near 18 elements: below it the scalar loop wins (no call, no
+/// vector setup), above it `memmove` wins outright, and a shuffled insert into a
+/// 62-slot leaf averages a 30-element shift — so the scalar loop cost +156% on
+/// the distribution that actually occurs. That was the whole remaining mutation
+/// gap. Dispatching on the length gets *both* ends: the short-shift advantage the
+/// old measurement correctly identified, and `memmove`'s throughput on long ones,
+/// which is why this is faster than production rather than merely equal to it.
+///
+/// Trusted (`external_body`) for the same reason as [`arr_get`]: the postcondition
+/// below is the whole contract, `copy_within`'s own documented behavior supplies
+/// it for the long arm, and the short arm is the loop it replaces. `pos <= cnt <
+/// N` is a verified precondition at every call site (`cnt` is strictly below `N`
+/// because the moved window's top element lands at `cnt`). `unsafe`-free.
+/// `#[inline(always)]` is load-bearing, not cosmetic: an `external_body` function
+/// is a real call boundary, and left out-of-line this cost more than the scalar
+/// loop it replaced — the length dispatch only pays off if the constant-length
+/// call sites can fold it away and `memmove` can be reached without a `callq`.
+#[inline(always)]
+#[verifier::external_body]
+pub fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, cnt: usize)
+    requires pos <= cnt, cnt < N,
+    ensures
+        a@.len() == old(a)@.len(),
+        forall|k: int| 0 <= k < pos ==> a@[k] == old(a)@[k],
+        forall|k: int| pos < k <= cnt ==> a@[k] == old(a)@[k - 1],
+        forall|k: int| cnt < k < N ==> a@[k] == old(a)@[k],
+{
+    // The crossover measured on this layout (see the table above). Below it the
+    // element loop is cheaper than entering `memmove` at all.
+    if cnt - pos < 18 {
+        let mut j = cnt;
+        while j > pos {
+            a[j] = a[j - 1];
+            j -= 1;
+        }
+    } else {
+        a.copy_within(pos..cnt, pos + 1);
+    }
+}
+
 /// Compile-time node geometry, generic over word/arena width. Mirrors
 /// production's `NodeLayout`. The node value is [`Tagged`] (capture bit stolen
 /// into its packed repr's `flags` byte), so an `InlineStore`-backed arena makes
@@ -744,7 +802,9 @@ macro_rules! gen_layout_u32 {
             open spec fn key_cap_spec() -> nat { $key_cap }
             open spec fn data_len_spec() -> nat { $data_len }
 
+            #[inline(always)]
             fn leaf_cap() -> (c: usize) { $leaf_cap }
+            #[inline(always)]
             fn key_cap() -> (c: usize) { $key_cap }
 
             open spec fn is_leaf_spec(n: $node) -> bool { n.is_leaf }
@@ -761,49 +821,45 @@ macro_rules! gen_layout_u32 {
                 if n.is_leaf { n.count <= $leaf_cap } else { n.count <= $key_cap }
             }
 
+            #[inline(always)]
             fn is_leaf(n: &$node) -> (b: bool) { n.is_leaf }
+            #[inline(always)]
             fn count(n: &$node) -> (c: usize) { n.count as usize }
             // `node_wf` bounds `count` by `leaf_cap`/`key_cap`, both `<= data_len`,
             // so the precondition `i < count` already proves `i < data_len`: the
             // bounds check `rustc` would emit on `n.data[i]` is dead. These two
             // are the hottest reads in the crate (one per binary-search probe),
             // so they take the unchecked path — see `arr_get`.
+            #[inline(always)]
             fn key(n: &$node, i: usize) -> (k: u32) { arr_get(&n.data, i) }
+            #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: u32) {
                 if i < $key_cap { arr_get(&n.data, $key_cap + i) } else { n.link }
             }
+            #[inline(always)]
             fn link(n: &$node) -> (l: u32) { n.link }
+            #[inline(always)]
             fn new_leaf() -> (n: $node) {
                 $node { is_leaf: true, count: 0, _pad: 0, data: [0; $data_len], link: u32::MAX }
             }
 
+            #[inline(always)]
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u32) {
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
-                let mut j = cnt;
-                while j > pos
-                    invariant
-                        pos <= j <= cnt,
-                        cnt < $leaf_cap,
-                        n.count == cnt,
-                        n.is_leaf == old_n.is_leaf,
-                        n.link == old_n.link,
-                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
-                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
-                    decreases j - pos,
-                {
-                    let prev = arr_get(&n.data, j - 1);
-                    arr_set(&mut n.data, j, prev);
-                    j = j - 1;
-                }
+                // one call, length-dispatched: the scalar walk for short tails,
+                // `memmove` for long ones (see `arr_shift_up`).
+                arr_shift_up(&mut n.data, pos, cnt);
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
             }
 
             open spec fn split_mid_spec() -> nat { (($leaf_cap + 1) / 2) as nat }
+            #[inline(always)]
             fn split_mid() -> (m: usize) { ($leaf_cap + 1) / 2 }
 
+            #[inline(always)]
             fn leaf_split_at(n: &$node, pos: usize, w: u32) -> (res: ($node, $node)) {
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
@@ -858,6 +914,7 @@ macro_rules! gen_layout_u32 {
                 (left, right)
             }
 
+            #[inline(always)]
             fn new_internal2(sep: u32, left: u32, right: u32) -> (nn: $node) {
                 let mut data = [0; $data_len];
                 data[0] = sep;
@@ -868,34 +925,27 @@ macro_rules! gen_layout_u32 {
                 nn
             }
 
+            #[inline(always)]
             fn set_link(n: &mut $node, l: u32) {
                 let ghost old_n = *n;
                 n.link = l;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
             }
+            #[inline(always)]
             fn internal_key_insert(n: &mut $node, pos: usize, w: u32) {
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
-                let mut j = cnt;
-                while j > pos
-                    invariant
-                        pos <= j <= cnt, cnt < $key_cap, n.count == cnt,
-                        n.is_leaf == old_n.is_leaf, n.link == old_n.link,
-                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
-                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
-                        forall|k: int| $key_cap <= k < $data_len ==> n.data[k] == old_n.data[k],
-                    decreases j - pos,
-                {
-                    let prev = arr_get(&n.data, j - 1);
-                    arr_set(&mut n.data, j, prev);
-                    j = j - 1;
-                }
+                // see `arr_shift_up`: length-dispatched, and its postcondition
+                // frames data[key_cap..] (the child slots) as untouched because
+                // `cnt < key_cap` bounds the moved range below them.
+                arr_shift_up(&mut n.data, pos, cnt);
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
                 assert forall|jj: int| 0 <= jj <= $key_cap implies
                     Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
             }
+            #[inline(always)]
             fn set_internal_child(n: &mut $node, i: usize, v: u32) {
                 let ghost old_n = *n;
                 if i < $key_cap {
@@ -914,10 +964,12 @@ macro_rules! gen_layout_u32 {
                     Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
+            #[inline(always)]
             fn isplit_mid() -> (m: usize) { $key_cap / 2 }
             proof fn lemma_isplit_mid() {}
             proof fn lemma_isplit_cchild(n: Self::Node, cp: int, new_child: Self::ArenaIdx, j: int) {}
 
+            #[inline(always)]
             fn internal_split_at(n: &$node, cp: usize, new_sep: u32, new_child: u32)
                 -> (res: ($node, $node, u32))
             {
@@ -1144,7 +1196,9 @@ macro_rules! gen_layout_u64 {
             open spec fn key_cap_spec() -> nat { $key_cap }
             open spec fn data_len_spec() -> nat { $data_len }
 
+            #[inline(always)]
             fn leaf_cap() -> (c: usize) { $leaf_cap }
+            #[inline(always)]
             fn key_cap() -> (c: usize) { $key_cap }
 
             open spec fn is_leaf_spec(n: $node) -> bool { n.is_leaf }
@@ -1161,10 +1215,13 @@ macro_rules! gen_layout_u64 {
                 if n.is_leaf { n.count <= $leaf_cap } else { n.count <= $key_cap }
             }
 
+            #[inline(always)]
             fn is_leaf(n: &$node) -> (b: bool) { n.is_leaf }
+            #[inline(always)]
             fn count(n: &$node) -> (c: usize) { n.count as usize }
             // See the u32 `key` above: `i < count <= data_len` is a proven
             // precondition, so the bounds check is dead. `arr_get`.
+            #[inline(always)]
             fn key(n: &$node, i: usize) -> (k: u64) { arr_get(&n.data, i) }
 
             // u64 word -> usize arena index: the narrowing cast, lossless on a
@@ -1173,6 +1230,7 @@ macro_rules! gen_layout_u64 {
             // the `link`-held last child (already a usize, no cast). The trait's
             // requires/ensures (node_wf, !is_leaf, i <= count; c == child_view) are
             // inherited.
+            #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: usize) {
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
@@ -1183,38 +1241,30 @@ macro_rules! gen_layout_u64 {
                     n.link
                 }
             }
+            #[inline(always)]
             fn link(n: &$node) -> (l: usize) { n.link }
+            #[inline(always)]
             fn new_leaf() -> (n: $node) {
                 $node { is_leaf: true, count: 0, _pad: 0, data: [0; $data_len], link: usize::MAX }
             }
 
+            #[inline(always)]
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u64) {
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
-                let mut j = cnt;
-                while j > pos
-                    invariant
-                        pos <= j <= cnt,
-                        cnt < $leaf_cap,
-                        n.count == cnt,
-                        n.is_leaf == old_n.is_leaf,
-                        n.link == old_n.link,
-                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
-                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
-                    decreases j - pos,
-                {
-                    let prev = arr_get(&n.data, j - 1);
-                    arr_set(&mut n.data, j, prev);
-                    j = j - 1;
-                }
+                // one call, length-dispatched: the scalar walk for short tails,
+                // `memmove` for long ones (see `arr_shift_up`).
+                arr_shift_up(&mut n.data, pos, cnt);
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
             }
 
             open spec fn split_mid_spec() -> nat { (($leaf_cap + 1) / 2) as nat }
+            #[inline(always)]
             fn split_mid() -> (m: usize) { ($leaf_cap + 1) / 2 }
 
+            #[inline(always)]
             fn leaf_split_at(n: &$node, pos: usize, w: u64) -> (res: ($node, $node)) {
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
@@ -1273,6 +1323,7 @@ macro_rules! gen_layout_u64 {
             // them back as nat. The two stores' value-preservation is the same
             // `usize as u64 as nat == usize as nat` cast as set_internal_child,
             // discharged by `lemma_usize_u64_roundtrip` (no longer external_body).
+            #[inline(always)]
             fn new_internal2(sep: u64, left: usize, right: usize) -> (nn: $node)
                 ensures
                     !Self::is_leaf_spec(nn),
@@ -1299,28 +1350,20 @@ macro_rules! gen_layout_u64 {
                 nn
             }
 
+            #[inline(always)]
             fn set_link(n: &mut $node, l: usize) {
                 let ghost old_n = *n;
                 n.link = l;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
             }
+            #[inline(always)]
             fn internal_key_insert(n: &mut $node, pos: usize, w: u64) {
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
-                let mut j = cnt;
-                while j > pos
-                    invariant
-                        pos <= j <= cnt, cnt < $key_cap, n.count == cnt,
-                        n.is_leaf == old_n.is_leaf, n.link == old_n.link,
-                        forall|k: int| 0 <= k < j ==> n.data[k] == old_n.data[k],
-                        forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
-                        forall|k: int| $key_cap <= k < $data_len ==> n.data[k] == old_n.data[k],
-                    decreases j - pos,
-                {
-                    let prev = arr_get(&n.data, j - 1);
-                    arr_set(&mut n.data, j, prev);
-                    j = j - 1;
-                }
+                // see `arr_shift_up`: length-dispatched, and its postcondition
+                // frames data[key_cap..] (the child slots) as untouched because
+                // `cnt < key_cap` bounds the moved range below them.
+                arr_shift_up(&mut n.data, pos, cnt);
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
@@ -1331,6 +1374,7 @@ macro_rules! gen_layout_u64 {
             // link). The store goes through `v as u64`; child_view reads it back
             // as nat, so the obligation is the value-preserving `usize as u64 as
             // nat == usize as nat` cast, discharged by `lemma_usize_u64_roundtrip`.
+            #[inline(always)]
             fn set_internal_child(n: &mut $node, i: usize, v: usize)
                 ensures
                     Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
@@ -1356,10 +1400,12 @@ macro_rules! gen_layout_u64 {
                     Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
+            #[inline(always)]
             fn isplit_mid() -> (m: usize) { $key_cap / 2 }
             proof fn lemma_isplit_mid() {}
             proof fn lemma_isplit_cchild(n: Self::Node, cp: int, new_child: Self::ArenaIdx, j: int) {}
 
+            #[inline(always)]
             fn internal_split_at(n: &$node, cp: usize, new_sep: u64, new_child: usize)
                 -> (res: ($node, $node, u64))
             {

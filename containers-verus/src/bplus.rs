@@ -5357,6 +5357,13 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     fn insert_rec_leaf(
         &mut self,
         idx: L::ArenaIdx,
+        // The node at `idx`, already read by the caller to test `is_leaf`. Passed
+        // in rather than re-read: the caller (`insert_rec`) holds it, and reading
+        // it again copies the whole 248-byte node a second time for no new
+        // information. The `requires` below ties it to the arena slot, so every
+        // proof that spoke about the removed local read speaks about this instead,
+        // with no weakening.
+        node: &L::Node,
         key: K,
         kw: L::Word,
         cur: Ghost<Tree>,
@@ -5372,6 +5379,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             Self::subtree_wf(old(self).arena(), cur@, h@, succ@, is_root@),
             idx.as_nat() == crate::bplus_tree::tree_root_id(cur@),
             L::is_leaf_spec(old(self).arena()[idx.as_nat() as int]),
+            // `node` IS the arena slot: the caller read it and has not mutated
+            // since, so this is the same fact the removed local read established.
+            *node == old(self).arena()[idx.as_nat() as int],
             kw.as_nat() == key.id_nat(),
             h@ == 0,
             old(self).arena().len() + 2 < <L::ArenaIdx as IndexLike>::max_nat(),
@@ -5496,19 +5506,23 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         // per-key binds projection and the sortedness fact.
         proof { assert(cur@ == Tree::Leaf { id: lid, keys: gkeys }); }
 
-        let leaf = self.nodes.get_index(idx);
-        let n = L::count(&leaf);
+        // `leaf` is the node the CALLER already read to test `is_leaf`; binding it
+        // by reference makes the leaf level read the 248-byte node once instead of
+        // twice (measured ~6 ns/insert on this layout -- the largest single item
+        // left in the mutation path once frame size was falsified).
+        let leaf: &L::Node = node;
+        let n = L::count(leaf);
         proof {
-            assert(self.arena()[lid as int] == leaf);
+            assert(self.arena()[lid as int] == *leaf);
             assert(gkeys.len() == n as nat);
-            assert(L::node_wf(leaf));
+            assert(L::node_wf(*leaf));
         }
 
         // pos = find_ge(keys, key): the O(log cap) verified binary search.
         // Production: `S::find_ge` at bplus.rs:661. Its postcondition gives the
         // two-sided split directly, so presence reduces to one probe at `pos`.
-        proof { lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur@, lid, leaf); }
-        let pos = self.leaf_find_ge(&leaf, kw);
+        proof { lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur@, lid, *leaf); }
+        let pos = self.leaf_find_ge(leaf, kw);
         proof {
             assert(pos as nat <= gkeys.len());
             assert forall|j: int| 0 <= j < pos implies gkeys[j] < key.id_nat() by {
@@ -5525,12 +5539,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         // larger (sortedness + the >= arm).
         let mut present = false;
         if pos < n {
-            let ki: L::Word = L::key(&leaf, pos);
+            let ki: L::Word = L::key(leaf, pos);
             let le = ki.le(kw);
             proof {
                 <L::Word as IndexLike>::lemma_order_is_as_nat(ki, kw);
                 lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, pos as int);
-                assert(ki == L::keys_view(leaf)[pos as int]);
+                assert(ki == L::keys_view(*leaf)[pos as int]);
                 assert(ki.as_nat() == gkeys[pos as int]);
             }
             if le {
@@ -5555,9 +5569,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         }
 
         // capture old key view + the NIL/successor link before mutating.
-        let ghost old_kview = L::keys_view(leaf);
+        let ghost old_kview = L::keys_view(*leaf);
         proof {
-            L::lemma_keys_view_len(leaf);
+            L::lemma_keys_view_len(*leaf);
             assert forall|j: int| 0 <= j < gkeys.len() implies old_kview[j].as_nat() == #[trigger] gkeys[j] by {
                 lemma_leaf_binds_key_at::<K, L, S, TRACK>(self.arena(), cur@, lid, j);
             }
@@ -5573,7 +5587,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         let leaf_cap = L::leaf_cap();
         if n < leaf_cap {
             // -- absorb: shift-insert, write back, return None --------------
-            let mut nleaf = leaf;
+            let mut nleaf = *leaf;
             L::leaf_insert_at(&mut nleaf, pos, kw);
             proof {
                 assert(L::count_spec(nleaf) == n as nat + 1);
@@ -5620,10 +5634,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
 
         // -- split: full leaf, allocate a right sibling, return Some ---------
         let ghost combined = old_kview.insert(pos as int, kw);
-        let (mut nleft, right) = L::leaf_split_at(&leaf, pos, kw);
+        let (mut nleft, right) = L::leaf_split_at(leaf, pos, kw);
         let ghost mid = L::split_mid_spec();
         proof {
-            assert(combined == L::keys_view(leaf).insert(pos as int, kw));
+            assert(combined == L::keys_view(*leaf).insert(pos as int, kw));
             assert(combined.len() == L::leaf_cap_spec() + 1);
             assert(L::keys_view(nleft) == combined.subrange(0, mid as int));
             assert(L::keys_view(right) == combined.subrange(mid as int, combined.len() as int));
@@ -5913,7 +5927,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 }
                 assert(h@ == 0);  // tree_height(Leaf) == 0
             }
-            return self.insert_rec_leaf(idx, key, kw, cur, h, succ, is_root);
+            return self.insert_rec_leaf(idx, &node, key, kw, cur, h, succ, is_root);
         }
 
         // -- internal node: descend, recurse, absorb/split ------------------
