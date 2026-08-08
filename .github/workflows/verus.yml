@@ -131,7 +131,7 @@ jobs:
       - name: Trust-surface size (external_body markers)
         run: |
           set -euo pipefail
-          EXPECTED_DEFAULT=21
+          EXPECTED_DEFAULT=26
           EXPECTED_GATED=5   # literal-types only, all in external_specs.rs
           gated=$(grep -c '#\[verifier::external_body\]' \
             containers-verus/src/external_specs.rs || true)

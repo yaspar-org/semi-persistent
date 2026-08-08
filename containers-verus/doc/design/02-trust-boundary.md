@@ -12,8 +12,8 @@ for each, why it is trusted rather than proved.*
 
 | configuration | `external_body` markers | axiom fns |
 |---|---|---|
-| default features | **25** (3 structs + 22 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
-| `literal-types` | **30** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
+| default features | **26** (3 structs + 23 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
+| `literal-types` | **31** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
 
 *Counts re-derived 2026-08-08 by grepping `#[verifier::external_body]` and
 splitting on the `literal-types` gate (`external_specs.rs` is the only gated
@@ -86,11 +86,12 @@ signature its callers are checked against, and where it carries an `ensures`
 that contract is the *only* thing trusted.
 
 A healthy verified crate drives `external_body` down to the irreducible
-boundary. This crate has 21 default-build markers: 3 ContainerId + 11
-capacity/byte diagnostics and shrink helpers + `check_precondition` +
+boundary. This crate has 26 default-build markers: 3 ContainerId + 11
+capacity/byte diagnostics and shrink helpers + the 5 `bplus_layout`
+bounds-elided array/slice primitives + `check_precondition` +
 `clone_key_exact` + `values_equal` + the debug ring-walk +
 `white_box_head` + the `ExIndexHasher` and `ExFoldHasher` registrations
-(5 more behind `literal-types`, for 26). The casts that were *eliminated* (the
+(5 more behind `literal-types`, for 31). The casts that were *eliminated* (the
 `IndexLike`/`DenseId` integer casts) are described in §3.
 
 The groups differ in kind, and the distinction is the point of this chapter:
@@ -100,10 +101,13 @@ The groups differ in kind, and the distinction is the point of this chapter:
   in principle we do not want to "prove" them; doing so would either be
   meaningless (no spec) or would expose an abstraction we deliberately keep
   closed. These are permanent.
-- **Group B is trusted by *unmodeled capacity*.** `Vec::capacity` /
-  `shrink_to` / `size_of` have no vstd specs. The byte reporters are spec-free
-  diagnostics; the shrink helpers carry a data-preservation contract. Partly
-  provable when vstd grows capacity specs; the
+- **Group B is trusted by *unmodeled std behavior*.** `Vec::capacity` /
+  `shrink_to` / `size_of` have no vstd specs, and neither do `get_unchecked`,
+  `select_unpredictable`, or `copy_within` (verified against vstd
+  0.0.0-2026-04-12-0118). The byte reporters are spec-free diagnostics; the
+  shrink helpers, `data_capacity_bits`, and the five `bplus_layout` primitives
+  carry contracts that restate the documented std behavior. Partly provable
+  when vstd grows the specs; the
   [byte-accounting feature request](../future/verify-byte-accounting.md)
   scopes the reporter half.
 - **Group C is one trusted runtime-trap primitive** (`check_precondition`). It
@@ -211,11 +215,14 @@ and `cross_container_token_rejected` in
 mint thousands of ids and check end-to-end that one container rejects another's
 token.
 
-## 2. Group B: capacity introspection (trusted by unmodeled capacity) — 11 items
+## 2. Group B: unmodeled std behavior — 16 items
 
 Verus/vstd model a `Vec`'s element sequence (`@`) but not its **allocation**:
 `capacity()`, `shrink_to`, and `size_of::<T>()` have no specs. Everything that
-reads or manages capacity is therefore `external_body`. Three sub-kinds:
+reads or manages capacity is therefore `external_body`. The B+tree hot-path
+primitives (§2d) are the same kind of trust over three other unspecced std
+operations (`get_unchecked`, `select_unpredictable`, `copy_within`). Four
+sub-kinds:
 
 ### 2a. Byte reporters (no `ensures`; diagnostic) — 8 items
 
@@ -333,6 +340,35 @@ The trusted statement is the std-guaranteed `Vec` invariant `capacity() >= len()
 which is about as safe as an unmodeled-capacity assumption gets — it is weaker
 than §2b's, since it asserts an inequality rather than preservation of contents.
 Provable when vstd specs capacity ops.
+
+### 2d. Bounds-elided array/slice primitives (contract-carrying) — 5 items (`bplus_layout.rs`)
+
+`arr_get`, `arr_set`, `slice_get`, `sel_usize`, `arr_shift_up` — added by the
+B+tree hot-path work so that facts Verus already **proved** at the call sites
+reach the machine code: the elided bounds check (`i < N` is a verified
+precondition, so the `cmp/jae panic` `rustc` emits is provably dead), the
+`cmov` lowering of the bisection's data-dependent update, and one `memmove`
+where Verus's invariant rules force an element loop. The per-item argument,
+including why each contract adds nothing a proof could exploit, is in this
+file's preamble and in each function's own doc comment; the performance each
+one pays for is in [10-bplus-tree](10-bplus-tree.md) and
+[11-layout-parity](11-layout-parity.md).
+
+**Why not proved:** `get_unchecked`, `select_unpredictable`, and `copy_within`
+have no vstd specs (checked against the pinned vstd). Each contract restates
+the operation's documented behavior — checked indexing for
+`arr_get`/`arr_set`/`slice_get`, the replaced `if`/`else` for `sel_usize`,
+`copy_within(pos..cnt, pos+1)` stated element-wise for `arr_shift_up`.
+Provable when vstd specs those operations; the verified alternatives that
+exist today were measured and rejected (checked indexing re-emits the per-key
+bounds check, plain `if`/`else` re-emits the mispredicting branch, the element
+loop costs +156% on the real shift-length distribution — see the function
+docs). Runtime validation is two-layered: hand-rolled agreement fuzzes in
+`external_body_contract_fuzz.rs`, and the property suite
+`tests/bplus_layout_proptest.rs`, which checks each contract against its
+checked std form with shrinking, at the `(T, N)` instantiations the trees use,
+including both sides of `arr_shift_up`'s length-18 scalar/`memmove` dispatch
+at every admissible `pos`.
 
 ## 2.5. Group C: the runtime-guard primitive (`check_precondition`) — 1 item
 
@@ -532,7 +568,7 @@ bypass it.
 
 ## 4. Summary table
 
-All 21 default-build `external_body` markers plus the 1 default-build axiom
+All 26 default-build `external_body` markers plus the 1 default-build axiom
 (the `literal-types` additions are listed after):
 
 | # | Item | Group | Trusted because | Provable? |
@@ -551,6 +587,11 @@ All 21 default-build `external_body` markers plus the 1 default-build axiom
 | 11a | `ListArena::tracking_bytes` | B | capacity + `size_of` unmodeled; no `ensures`; forwards to the two inner vecs | partially |
 | 11b | `ListArena::total_bytes` | B | same | partially |
 | 11c | `data_capacity_bits` | B | `Vec::capacity` unmodeled; **contract-carrying** — `n >= len` is what makes capture-word truncation unobservable (§2c) | when vstd specs capacity ops |
+| 11d | `arr_get` (bplus_layout) | B | `get_unchecked` unspecced; contract = checked indexing, `i < N` verified at every call site (§2d) | when vstd specs unchecked indexing |
+| 11e | `arr_set` (bplus_layout) | B | same, for the write (`update(i, v)` over the whole array) | same |
+| 11f | `slice_get` (bplus_layout) | B | same, with a runtime-length bound (`i < s.len()`) | same |
+| 11g | `sel_usize` (bplus_layout) | B | `select_unpredictable` unspecced (a codegen hint); contract = the `if`/`else` it replaces; **no `unsafe`** | when vstd specs the intrinsic |
+| 11h | `arr_shift_up` (bplus_layout) | B | `copy_within` unspecced; four-clause shift postcondition; **no `unsafe`** (short arm is the element loop it replaces) | when vstd specs `copy_within` |
 | 12 | `guard::check_precondition` | C | body `panic!` uses unmodeled format machinery (`requires cond` is checked) | no (same reason as `vstd::runtime_assert`) |
 | 13 | `clone_key_exact` | D | projects key-model requirement (3) out of vstd's prose-stated `obeys_key_model`; no new assumption | no (vstd provides no lemma) |
 | 14 | `values_equal` | E | no ensures — unconstrained bool, nothing derivable; avoids `obeys_eq_spec` plumbing | by threading vstd eq specs; declined for production shape |
@@ -586,7 +627,9 @@ permanent; uniqueness by checked non-wrapping allocation, distinctness
 runtime-fuzzed), 11 capacity-introspection items (8 spec-free byte reporters
 — production-formula parity; `tracking_bytes` differential-tested exactly,
 store reporters formula-level only — 2 contract-carrying shrink
-helpers, and `data_capacity_bits`), 1 runtime-trap primitive (`check_precondition`, load-bearing,
+helpers, and `data_capacity_bits`), 5 bounds-elided array/slice primitives
+(§2d — each contract restates a documented std behavior, fuzzed and
+property-tested against the checked form), 1 runtime-trap primitive (`check_precondition`, load-bearing,
 body is a one-line panic), 1 key-model projection (`clone_key_exact`, no
 new assumption beyond the `obeys_key_model` precondition SpMap already
 carries), 2 glue items (`values_equal` unconstrained, the debug
@@ -604,11 +647,15 @@ CanonicalF64's fold is a pinned production-parity decision, see
 key-model-tcb.md §float-semantics). Future key types must go through
 `declare_key_model_assumption!` (justified + auto-fuzzed axioms). The assumed-fact inventory of the default
 crate is therefore: `ContainerId::eq`'s equality reflection, the two shrink
-helpers' data preservation, `data_capacity_bits`'s `capacity >= len`, and
-`clone_key_exact`'s clone identity — **five** contract-carrying trusted
-statements, each one line of exec code. No
+helpers' data preservation, `data_capacity_bits`'s `capacity >= len`,
+`clone_key_exact`'s clone identity, and the five `bplus_layout` primitives'
+agreement with their checked std forms — **ten** contract-carrying trusted
+statements. Each is either one line of exec code or (`arr_shift_up`) a length
+dispatch between the element loop and the `copy_within` its postcondition
+pins. No
 `assume`/`admit` anywhere in the verified modules. No algorithmic logic is
-hidden behind any `external_body`.
+hidden behind any `external_body` — `arr_shift_up`'s length dispatch is the
+largest trusted body, and both of its arms restate the same postcondition.
 
 **Scope note.** "No `assume`/`admit`" is a claim about *this crate*. The
 sibling verified crate `abstract-domains`, verified by the same CI workflow, does
