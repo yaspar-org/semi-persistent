@@ -348,6 +348,10 @@ fn shrink_preserves_aov_contents() {
 // --------------------------------------------------------------------------
 // bplus_layout::arr_get / arr_set / sel_usize / arr_shift_up.
 //
+// (`slice_get`, the fifth bplus_layout trusted primitive, is covered by the
+// property suite `tests/bplus_layout_proptest.rs`, which also re-checks these
+// four with shrinking and the tree's actual `(T, N)` instantiations.)
+//
 // These four are `external_body` so that a fact Verus already PROVED reaches
 // the machine code: the elided bounds check (`arr_get`/`arr_set`, whose `i < N`
 // is a verified precondition at every call site), the `cmov` lowering of the

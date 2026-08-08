@@ -99,8 +99,8 @@ narrates the retracted bisection.
 
 ## What is trusted, and why that number is gated
 
-21 `external_body` markers by default, 5 more under `literal-types` (26 total).
-Exactly five carry contracts; the rest are contract-free, meaning nothing can be
+26 `external_body` markers by default, 5 more under `literal-types` (31 total).
+Exactly ten carry contracts; the rest are contract-free, meaning nothing can be
 assumed from them. The per-item argument is
 `containers-verus/doc/design/02-trust-boundary.md`.
 
@@ -109,8 +109,12 @@ on any change and names the four places in the trust doc that must be updated in
 the same commit. That gate exists because the count *does* move under ordinary
 work: the `ListArena` `InlineStore` port took it 18 → 21, and one of those three
 was contract-carrying (`data_capacity_bits`, whose `n >= len` is what makes
-capture-word truncation unobservable). A trusted-surface count that isn't
-mechanically enforced drifts.
+capture-word truncation unobservable); the B+tree hot-path work took it 21 → 26,
+all five contract-carrying bounds-elision primitives in `bplus_layout.rs`,
+each buying back a measured cost (trust doc §2d) and each property-tested
+against the checked std form it replaces
+(`containers-verus/tests/bplus_layout_proptest.rs`). A trusted-surface count
+that isn't mechanically enforced drifts.
 
 `external_body` means "hide the body, believe the signature and its `ensures`",
 which is strictly weaker than `admit`. The crate contains no `admit`/`assume`,
