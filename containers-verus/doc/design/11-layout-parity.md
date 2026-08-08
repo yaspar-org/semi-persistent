@@ -402,15 +402,23 @@ its accumulate is branch-free by construction.
 **Cost in trust and proof:** one `external_body` wrapper (`sel_usize`, a total
 expression with no `unsafe`, whose postcondition *is* `if c { b } else { a }` —
 `select_unpredictable` is a codegen hint, not a semantic one) and **zero** proof
-debt. `bplus` 139, `bplus_layout` 311, `bplus_search` 9, whole crate **1405
-verified / 0 errors** (`./verify-all.sh`, exit 0) — unchanged counts.
+debt. `bplus` 185, `bplus_layout` 305, `bplus_search` 9, whole crate **1471
+verified / 0 errors** (`./verify-all.sh`, exit 0) — the layout work itself added no
+obligations; the `bplus`/`bplus_tree` growth is the bulk loader of
+[Ch. 10 §5.2.4](10-bplus-tree.md).
 
 **One cost, recorded honestly:** the `cmov` is a small pessimization where the
 branch genuinely *is* predictable. `insert asc` moved −0.9% → **+1.7%** and
 `from_sorted` +843% → **+965%**, both ascending workloads where the compare
 always falls the same way. This is the right trade — shuffled descent is the
-common case and worth ~14 points against ~2 — but it is a trade, not a free win,
-and `from_sorted`'s real problem is the missing bulk loader, not this.
+common case and worth ~14 points against ~2 — but it is a trade, not a free win.
+Those `from_sorted` figures were dominated by something else entirely: it had no
+bulk loader and looped `insert`. With the loader in place
+([Ch. 10 §5.2.4](10-bplus-tree.md)) `from_sorted` is **−14.6%** — faster than
+production — and never enters the descent this section is about, so the `cmov` no
+longer prices into it at all. That section is also this chapter's rule applied to a
+*favorable* reading for once: `bulkload.rs` scored the loader at 1.0x, the one-call-site
+harness at +29%, and the disassembly settled it.
 
 ### Three hypotheses that died, and what killed them
 

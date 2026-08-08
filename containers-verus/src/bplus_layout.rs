@@ -144,6 +144,25 @@ pub fn arr_get<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
     unsafe { *a.get_unchecked(i) }
 }
 
+/// `s[i]` with the bounds check elided. The slice analogue of [`arr_get`], for
+/// the one place the index bound comes from a *runtime* length rather than a
+/// const-generic one: the bulk loader reads its input `&[K]` at `at + j`, having
+/// proved `at + take <= keys.len()` and `j < take` in the enclosing invariant.
+///
+/// Worth its own helper because that read is the loader's innermost operation —
+/// `objdump` showed `cmp %r12,%rdi; jae <panic>` once per key, against
+/// production's zero (it bulk-copies a pre-materialized word vector). Same trust
+/// as [`arr_get`]: `external_body`, contract is `get_unchecked`'s own documented
+/// one, and the precondition is checked by Verus at every call site.
+#[verifier::external_body]
+pub fn slice_get<T: Copy>(s: &[T], i: usize) -> (r: T)
+    requires i < s@.len(),
+    ensures r == s@[i as int],
+{
+    // SAFETY: `i < s.len()` is a verified precondition at every call site.
+    unsafe { *s.get_unchecked(i) }
+}
+
 /// `if c { b } else { a }`, lowered to `cmov` instead of a branch.
 ///
 /// The bisection loops in `bplus.rs` shrink their window unconditionally, so the
@@ -356,6 +375,32 @@ pub trait NodeLayout: Sized {
             Self::node_wf(*n),
             Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
             Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w),
+            Self::link_view(*n) == Self::link_view(*old(n));
+
+    /// Append `w` to a leaf: `leaf_insert_at(n, count, w)` with the shift gone.
+    ///
+    /// Exists for codegen, not for expressiveness — the postcondition is
+    /// `leaf_insert_at`'s specialized to `pos == count`, which is `Seq::push`.
+    /// `leaf_insert_at` reaches the same *result* here (its shift window is empty
+    /// when `pos == count`), but not the same *code*: it re-loads `count`, then
+    /// runs [`arr_shift_up`]'s length dispatch, which `objdump` shows as
+    /// `movzbl %bl,%edi; lea; cmp $0x12; jb` per key inside the bulk loader's
+    /// innermost loop. The dispatch is provably dead there (`count - pos == 0`, so
+    /// the scalar arm always wins) but LLVM cannot fold it away: `pos` and `count`
+    /// arrive as separate runtime values through a trait method it will not prove
+    /// equal. Making the equality part of the *signature* removes the branch by
+    /// construction. Production pays neither cost — it fills a whole leaf with one
+    /// `copy_from_slice` — so this is the primitive that closes that per-key gap.
+    fn leaf_push(n: &mut Self::Node, w: Self::Word)
+        requires
+            Self::node_wf(*old(n)),
+            Self::is_leaf_spec(*old(n)),
+            Self::count_spec(*old(n)) < Self::leaf_cap_spec(),
+        ensures
+            Self::is_leaf_spec(*n),
+            Self::node_wf(*n),
+            Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
+            Self::keys_view(*n) == Self::keys_view(*old(n)).push(w),
             Self::link_view(*n) == Self::link_view(*old(n));
 
     /// The leaf-split median: `ceil(leaf_cap / 2) = (leaf_cap + 1) / 2`. The
@@ -855,6 +900,16 @@ macro_rules! gen_layout_u32 {
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
             }
 
+            #[inline(always)]
+            fn leaf_push(n: &mut $node, w: u32) {
+                let ghost old_n = *n;
+                let cnt = n.count as usize;
+                // No shift and no length dispatch: the hole is already at `cnt`.
+                arr_set(&mut n.data, cnt, w);
+                n.count = (cnt + 1) as u8;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n).push(w));
+            }
+
             open spec fn split_mid_spec() -> nat { (($leaf_cap + 1) / 2) as nat }
             #[inline(always)]
             fn split_mid() -> (m: usize) { ($leaf_cap + 1) / 2 }
@@ -1258,6 +1313,16 @@ macro_rules! gen_layout_u64 {
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
+            }
+
+            #[inline(always)]
+            fn leaf_push(n: &mut $node, w: u64) {
+                let ghost old_n = *n;
+                let cnt = n.count as usize;
+                // No shift and no length dispatch: the hole is already at `cnt`.
+                arr_set(&mut n.data, cnt, w);
+                n.count = (cnt + 1) as u8;
+                assert(Self::keys_view(*n) =~= Self::keys_view(old_n).push(w));
             }
 
             open spec fn split_mid_spec() -> nat { (($leaf_cap + 1) / 2) as nat }

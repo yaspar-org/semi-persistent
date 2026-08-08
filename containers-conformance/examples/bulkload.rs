@@ -17,6 +17,15 @@
 //! The `insert` columns are the control: if `from_sorted` tracks a plain insert
 //! loop, it *is* an insert loop.
 //!
+//! **This probe answers only that question — do NOT read its ratios as parity.**
+//! It has the fixed-order confound it warns about above, and once `from_sorted`
+//! became a real bulk loader that confound dominated the row: this harness scored
+//! the loader at 1.0x while `onesite_bplus.rs` (one call site, both orders) scored
+//! the same build at +29%, and the disassembly confirmed the +29%. Its production
+//! column swings 0.72-4.5 ns/key across runs of one binary. The scaling sweep is
+//! still a valid *shape* test — a ratio growing across decades means an insert
+//! loop — but for a level in the 10-30% band use `onesite_bplus.rs`.
+//!
 //! Run: `cargo run --release --example bulkload -p containers-conformance`.
 use semi_persistent_containers as prod;
 use semi_persistent_containers_verus as verus;
@@ -130,6 +139,8 @@ fn main() {
     }
     println!(
         "\nRead: verus_sorted ~= verus_insert, and ratio growing with n, means\n\
-         from_sorted loops inserts instead of bulk-loading leaves."
+         from_sorted loops inserts instead of bulk-loading leaves.\n\
+         Do NOT read the ratio itself as parity -- fixed build order confounds it\n\
+         by 10-30%. For a level, use `--example onesite_bplus`."
     );
 }
