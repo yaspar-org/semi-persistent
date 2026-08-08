@@ -3743,6 +3743,171 @@ pub proof fn lemma_forest_disjoint_update_eq(kids: Seq<Tree>, m: int, nc: Tree)
 }
 
 // ===========================================================================
+// BULK-LOAD GROUPING: turn an ordered wf forest at height `h` into a wf Inner
+// node at height `h + 1`.
+//
+// This is the ghost half of `from_sorted`'s bottom-up loader. The exec side
+// builds one arena level at a time, bottom to top; this side certifies that
+// grouping `kids` under a fresh `id`, with separators taken as each child's
+// first key, yields a `tree_wf` node -- and that the grouping preserves every
+// view the tree invariant is stated over (keys, ids, leaf ids, node count).
+//
+// Why the loader cannot simply mirror production. Production chunks by
+// `LEAF_CAP` and accepts a possibly-tiny final node; `tree_wf` clause 6
+// (min-occupancy: `>= (cap+1)/2` keys for a non-root leaf, `>= key_cap/2`
+// separators for a non-root internal) forbids that, and five lemma sites
+// genuinely depend on the clause. So the exec side must partition *balanced*:
+// with `m = ceil(n / cap)` nodes, giving `n % m` of them `n/m + 1` keys and the
+// rest `n/m` keeps every node at `>= (cap+1)/2` for `m >= 2`. Nothing about
+// that arithmetic appears here -- this lemma takes the occupancy bounds as
+// hypotheses, so the exec side proves them once against whatever partition it
+// picks.
+// ===========================================================================
+
+/// Every key of `a` is strictly below every key of `b` -- the "these two
+/// subtrees are in order" relation. Factored into a named spec fn rather than
+/// written inline because it appears under an outer `forall|m|` (the adjacency
+/// hypothesis below), and Verus cannot infer triggers for a nested quantifier.
+pub open(crate) spec fn keys_all_below(a: Tree, b: Tree) -> bool {
+    forall|i: int, j: int| 0 <= i < tree_keys(a).len() && 0 <= j < tree_keys(b).len()
+        ==> (#[trigger] tree_keys(a)[i]) < (#[trigger] tree_keys(b)[j])
+}
+
+/// The separator sequence a bulk load assigns to `kids`: `seps[i]` is the first
+/// key of `kids[i + 1]`, so `kids[i]` sits strictly below `seps[i]` and
+/// `kids[i+1]` starts exactly at it. That choice makes the two `tree_wf`
+/// ordering clauses follow from the *pairwise* ordering of adjacent children
+/// (every key of `kids[i]` < every key of `kids[i+1]`) with no separator search.
+pub open(crate) spec fn bulk_seps(kids: Seq<Tree>) -> Seq<nat> {
+    Seq::new((kids.len() - 1) as nat, |i: int| tree_keys(kids[i + 1])[0])
+}
+
+/// Adjacent-pairwise ordering lifts to all-pairs ordering across a forest:
+/// if every child's keys are below the next child's, then child `i`'s keys are
+/// below child `j`'s for every `i < j`. Proved by induction on the gap `j - i`
+/// through the intervening child, which is non-empty (min-occupancy) so it
+/// actually carries the inequality.
+pub proof fn lemma_forest_pairwise_lt(kids: Seq<Tree>, h: nat, cap: nat, key_cap: nat, i: int, j: int)
+    requires
+        forest_wf(kids, h, cap, key_cap),
+        cap >= 1,
+        0 <= i < j < kids.len(),
+        forall|m: int| 0 <= m < kids.len() - 1 ==> keys_all_below(#[trigger] kids[m], kids[m + 1]),
+    ensures keys_all_below(kids[i], kids[j]),
+    decreases j - i,
+{
+    if j == i + 1 {
+        // exactly the hypothesis at m == i.
+        assert(keys_all_below(kids[i], kids[i + 1]));
+    } else {
+        // step through j - 1: kids[i] < kids[j-1] (IH) and kids[j-1] < kids[j]
+        // (hypothesis). The middle child is NON-EMPTY -- every child of a wf
+        // forest is non-root, so min-occupancy gives it >= 1 key -- which is
+        // what lets the two bounds compose.
+        lemma_forest_pairwise_lt(kids, h, cap, key_cap, i, j - 1);
+        lemma_forest_wf_at(kids, h, cap, key_cap, j - 1);
+        lemma_tree_keys_nonempty(kids[j - 1], h, cap, key_cap);
+        let mid = tree_keys(kids[j - 1]);
+        assert(mid.len() >= 1);
+        assert(keys_all_below(kids[i], kids[j - 1]));
+        assert(keys_all_below(kids[j - 1], kids[j]));
+        assert forall|a: int, b: int| 0 <= a < tree_keys(kids[i]).len()
+            && 0 <= b < tree_keys(kids[j]).len()
+            implies (#[trigger] tree_keys(kids[i])[a]) < (#[trigger] tree_keys(kids[j])[b]) by {
+            // kids[i][a] < mid[0] (IH) and mid[0] < kids[j][b] (hypothesis at j-1).
+            assert(tree_keys(kids[i])[a] < mid[0]);
+            assert(mid[0] < tree_keys(kids[j])[b]);
+        }
+    }
+}
+
+/// THE GROUPING KEYSTONE: an ordered, occupancy-respecting wf forest at height
+/// `h` becomes a wf tree at height `h + 1` under `bulk_seps`.
+///
+/// "Ordered" is stated as adjacent-pairwise key ordering, which is what the exec
+/// builder maintains for free (it consumes a globally sorted key slice
+/// left-to-right). Everything else the `Inner` arm of `tree_wf` demands --
+/// separator sortedness, the `kids.len() == seps.len() + 1` shape, and both
+/// cross-node ordering clauses -- is derived here.
+pub proof fn lemma_bulk_group_wf(
+    kids: Seq<Tree>, id: nat, h: nat, cap: nat, key_cap: nat, is_root: bool,
+)
+    requires
+        forest_wf(kids, h, cap, key_cap),
+        cap >= 1,
+        // shape: at least one separator (>= 2 children), at most `key_cap`.
+        2 <= kids.len() <= key_cap + 1,
+        // min-occupancy for this level, unless it is the root (a root internal
+        // may have as few as 2 children).
+        is_root || kids.len() - 1 >= key_cap / 2,
+        // ordered: each child's keys lie strictly below the next child's.
+        forall|m: int| 0 <= m < kids.len() - 1 ==> keys_all_below(#[trigger] kids[m], kids[m + 1]),
+    ensures
+        tree_wf(Tree::Inner { id, seps: bulk_seps(kids), kids }, h + 1, cap, key_cap, is_root),
+        tree_keys(Tree::Inner { id, seps: bulk_seps(kids), kids }) == forest_keys(kids),
+        tree_height(Tree::Inner { id, seps: bulk_seps(kids), kids }) == h + 1,
+        node_count(Tree::Inner { id, seps: bulk_seps(kids), kids }) == 1 + forest_node_count(kids),
+        tree_leaf_ids(Tree::Inner { id, seps: bulk_seps(kids), kids }) == forest_leaf_ids(kids),
+{
+    let seps = bulk_seps(kids);
+    let t = Tree::Inner { id, seps, kids };
+
+    // Every child is non-empty (non-root ⟹ min-occupancy ⟹ >= 1 key), so
+    // `tree_keys(kids[i+1])[0]` -- the separator -- genuinely exists.
+    assert forall|i: int| 0 <= i < kids.len() implies tree_keys(#[trigger] kids[i]).len() >= 1 by {
+        lemma_forest_wf_at(kids, h, cap, key_cap, i);
+        lemma_tree_keys_nonempty(kids[i], h, cap, key_cap);
+    }
+
+    // seps sorted: seps[i] is kids[i+1]'s first key and seps[j] is kids[j+1]'s,
+    // and for i < j the whole of kids[i+1] precedes the whole of kids[j+1].
+    assert forall|i: int, j: int| 0 <= i < j < seps.len()
+        implies (#[trigger] seps[i]) < (#[trigger] seps[j]) by {
+        lemma_forest_pairwise_lt(kids, h, cap, key_cap, i + 1, j + 1);
+        assert(keys_all_below(kids[i + 1], kids[j + 1]));
+        assert(seps[i] == tree_keys(kids[i + 1])[0]);
+        assert(seps[j] == tree_keys(kids[j + 1])[0]);
+    }
+    assert(strictly_sorted(seps));
+
+    // clause: kids[i]'s keys are all < seps[i] == kids[i+1]'s first key.
+    assert forall|i: int| 0 <= i < seps.len() implies keys_all_lt(#[trigger] kids[i], seps[i]) by {
+        assert forall|a: int| 0 <= a < tree_keys(kids[i]).len()
+            implies (#[trigger] tree_keys(kids[i])[a]) < seps[i] by {
+            lemma_forest_pairwise_lt(kids, h, cap, key_cap, i, i + 1);
+            assert(keys_all_below(kids[i], kids[i + 1]));
+            assert(seps[i] == tree_keys(kids[i + 1])[0]);
+        }
+    }
+
+    // clause: kids[i]'s keys are all >= seps[i-1] == kids[i]'s OWN first key,
+    // which holds because each child is internally sorted.
+    assert forall|i: int| 0 < i < kids.len() implies keys_all_ge(#[trigger] kids[i], seps[i - 1]) by {
+        lemma_forest_wf_at(kids, h, cap, key_cap, i);
+        lemma_tree_wf_sorted(kids[i], h, cap, key_cap, false);
+        assert(seps[i - 1] == tree_keys(kids[i])[0]);
+        assert forall|a: int| 0 <= a < tree_keys(kids[i]).len()
+            implies seps[i - 1] <= (#[trigger] tree_keys(kids[i])[a]) by {
+            if a > 0 { assert(tree_keys(kids[i])[0] < tree_keys(kids[i])[a]); }
+        }
+    }
+
+    assert(seps.len() == kids.len() - 1);
+    assert(tree_wf(t, h + 1, cap, key_cap, is_root));
+
+    // the view equalities: all four are `Inner`-arm definitional unfoldings.
+    assert(tree_keys(t) == forest_keys(kids));
+    lemma_forest_max_height_at(kids, 0);
+    assert(tree_height(t) == h + 1) by {
+        // forest_max_height(kids) == h: every child is wf at h, hence has
+        // height h, and max over a non-empty forest of equal heights is h.
+        lemma_forest_wf_height(kids, h, cap, key_cap);
+    }
+    assert(node_count(t) == 1 + forest_node_count(kids));
+    assert(tree_leaf_ids(t) == forest_leaf_ids(kids));
+}
+
+// ===========================================================================
 // Sanity: a concrete two-level tree computes its views and is wf.
 // ===========================================================================
 
