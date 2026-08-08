@@ -520,23 +520,25 @@ fn differential_bplus_ascending_fast_path() {
     }
 }
 
-/// The **batched bulk append** differential: `from_sorted` now fills the whole
-/// rightmost leaf per arena write (`fast_append_run`) instead of inserting key by
-/// key. Every case where the batch must stop or decline is a boundary a proof
-/// obligation sits on, and every one is a possible off-by-one:
+/// The **bulk loader** differential: `from_sorted` builds bottom-up (`bulk_load`) —
+/// one pass per level into a fresh arena — instead of inserting key by key. Every
+/// group boundary is a place a proof obligation sits, and every one is a possible
+/// off-by-one:
 ///
 /// - `n` straddling a leaf boundary (`leaf_cap` = 14 here): `13..=15`, `27..=29`,
-///   and the level-2 boundaries around 14·8 — where the batch fills exactly, or
-///   stops one short, or must decline into a split,
-/// - `n = 0` and `n = 1`: the empty tree, where the leaf has no last key to
-///   compare against and the batch must decline outright,
+///   and the level-2 boundaries around 14·8 — where the *balanced* partition
+///   `k = ceil(n/cap)` groups of `floor(n/k)` or `ceil(n/k)` either divides evenly
+///   or has to hand the last groups one key fewer than the first,
+/// - `n = 0` and `n = 1`: the empty tree, and the single-leaf tree the driver builds
+///   directly because `tree_wf` exempts only the *root* from min-occupancy,
 /// - a **prefix sweep** over one size: every `n` in `0..=200` compared against
-///   production, so a wrong `take` at any single boundary surfaces,
+///   production, so a wrong group size at any single boundary surfaces,
 /// - the full contents read back through the cursor, in order, not just `len()` —
-///   a batch that wrote the right *count* into the wrong slots passes a length
-///   check and fails this one,
-/// - **all six layouts**, since `take` is bounded by `leaf_cap`, which differs per
-///   layout (14/30/62), so a boundary bug can hide in the one layout not tested.
+///   a loader that wrote the right *count* into the wrong slots, or threaded the leaf
+///   chain wrong, passes a length check and fails this one,
+/// - **all six layouts**, since group size is bounded by `leaf_cap` at the leaf level
+///   and `key_cap + 1` above it, both of which differ per layout (14/30/62), so a
+///   boundary bug can hide in the one layout not tested.
 fn bplus_from_sorted_check<PL, VL>(n: usize, label: &str)
 where
     PL: prod::bplus::NodeLayout<Word = u32, ArenaIdx = u32>,

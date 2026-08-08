@@ -18,7 +18,7 @@ production [`semi-persistent-containers`](../../../containers) crate.
 | `tagged.rs` | `tagged` (+ `dense_id`, `opt`) | **Verified** (trait + `BoolTagged` + a real bit-stealer) |
 | `dense_id.rs` | `dense_id`, `index_like`, `id_factory` | **Verified**: `DenseId31` + `IndexLike` trait, plus `IdFactory` sequential allocation |
 | `id.rs` (`define_id7/15/31/63!`) | `id_macros` | **Verified**: the `define_id7/15/31/63!` family with full proofs |
-| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root + O(1) append fast path, total), batched `from_sorted` (one arena write per leaf), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
+| `bplus.rs` | `bplus`, `bplus_tree`, `bplus_layout`, `bplus_search` | **Verified**: insert (split + new root + O(1) append fast path, total), bottom-up `from_sorted` (`bulk_load`: one pass per level, balanced partition), in-order traversal + `seek`, arena-never-overflows, `mark`/`restore`; insert-only (see §4) |
 | `bitset.rs` | `bitset` (`BitSet`) | **Present** as a public type; kept outside the container proofs (see §3) |
 | `sorted_cursor.rs` | `sorted_cursor`, `sorted_vec_cursor` | **Verified**: the `SortedCursor` trait and the galloping `SortedVecCursor` |
 
@@ -139,8 +139,8 @@ The one remaining gap:
 
 **Fully verified**: generic `BPlusTreeSet<K: DenseId, L: NodeLayout, S:
 SearchKind, const TRACK>` over the real bit-stealing ids (`DenseId31`/`DenseId63`)
-and all six packed node layouts; `bplus` 139, `bplus_tree` 124, `bplus_layout`
-311, `bplus_search` 9 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
+and all six packed node layouts; `bplus` 185, `bplus_tree` 150, `bplus_layout`
+305, `bplus_search` 9 facts, 0 `external_body`, 0 `admit`/`assume`. Insert (with
 split propagation, new-root growth, and the O(1) append fast path) is total and
 carries its full model transition; in-order traversal and `seek` are proven sound;
 the arena provably never overflows; `mark`/`restore` work. Insert-only, matching
@@ -171,14 +171,22 @@ body diff because it lives below the source, was found later and fixed too:
   / `lemma_binds_append_last`; sound because the rightmost child has no separator
   above it, so growing it upward cannot break cross-node ordering.
 - **`from_sorted` looped `insert` instead of bulk loading — FIXED** (was 30-72x, now
-  **3.7-6.6x**). It now calls `fast_append_run`, which fills the *entire* rightmost
-  leaf with one arena read and one arena write, falling through to `insert` only at
-  the leaf-full boundary (once per `leaf_cap` keys). Verified by generalizing the
-  single-key fast path from a key to a run: `lemma_append_run_wf` +
-  `lemma_binds_append_run`, which inherit the same soundness argument (the rightmost
-  child has no separator above it). The residual is entirely the boundary split; see
-  [Design Ch. 10 §5.2.3](../design/10-bplus-tree.md) for the measurement that
-  isolates it and for what a fully verified level-builder would still need.
+  **−14.6%**, i.e. ~15% *faster* than production on `onesite_bplus`). It is a thin wrapper
+  over `bulk_load`, a verified bottom-up loader: one pass per level into a fresh
+  arena, no per-key `insert` and therefore no split cycle. Two intermediate steps got
+  it to 6.3x — the append fast path, then a batched whole-leaf append — and the
+  residual after those was entirely the split that min-occupancy forces at every leaf
+  boundary, which building the levels directly removes. The loader partitions
+  *balanced* rather than by `chunks(cap)`, because `tree_wf`'s non-root minimum
+  `(cap+1)/2` forbids production's underfull remainder; the resulting tree is strictly
+  better-formed than production's. The last 0.3 ns/key was pure codegen, found by
+  `objdump` and invisible to any body diff: a dead slice bounds check and a dead
+  shift-length dispatch, both per key, removed by `slice_get` and a new `leaf_push`
+  (`pos == count` in the *signature*). See
+  [Design Ch. 10 §5.2.4](../design/10-bplus-tree.md) for the measurements, the three
+  places the verified loader does *less* work than production, the proof structure
+  (one flat chain fact, the root/non-root invariant split) — and for why `bulkload.rs`
+  read this same code at a flattering 1.0x while the confound-free harness read +29%.
 - **The bisections had production's *shape* but not its *lowering* — FIXED** (pure
   descent was +15…+21%, now **~20% faster** than production). Production calls
   `slice::partition_point`, which uses `core::hint::select_unpredictable` internally
@@ -295,7 +303,7 @@ here.
 > methods (`iter`/`get_mut`/key-count `len`) are omitted from otherwise-verified
 > containers.
 
-Per-module verified counts are in `verify-all.sh` output; the tally is 1405
+Per-module verified counts are in `verify-all.sh` output; the tally is 1471
 verified, 0 errors, 0 `admit`s/`assume`s across 31 module entries.
 
 ---

@@ -265,9 +265,9 @@ SparseSet, plus the tree-level rollback theorem.
 
 | Module | Facts | Content |
 |---|---|---|
-| `bplus` | 139 | the tree: `wf`, `new`/`contains`/`len`, insert (+ the append fast path + arena-overflow proof), the batched `from_sorted` append, cursor + seek + the two soundness theorems, mark/restore |
-| `bplus_tree` | 124 | the ghost `Tree` model and its structural lemmas |
-| `bplus_layout` | 311 | the `NodeLayout` trait + six packed layouts + verified mutators |
+| `bplus` | 185 | the tree: `wf`, `new`/`contains`/`len`, insert (+ the append fast path + arena-overflow proof), the bottom-up `bulk_load` behind `from_sorted`, cursor + seek + the two soundness theorems, mark/restore |
+| `bplus_tree` | 150 | the ghost `Tree` model and its structural lemmas, incl. the forest/level layer the loader builds on |
+| `bplus_layout` | 305 | the `NodeLayout` trait + six packed layouts + verified mutators |
 | `bplus_search` | 9 | the `SearchKind` trait: binary search + `Branchless` |
 
 What is guaranteed:
@@ -388,14 +388,16 @@ false negative.
 ### 5.2 The two body-level performance gaps: root cause and fixes
 
 (Both are now fixed. §5.2.1 records how the cause was pinned down, §5.2.2 the append
-fast path, §5.2.3 the batched bulk append — which also corrects §5.2.1's account.)
+fast path, §5.2.3 the batched bulk append — which also corrects §5.2.1's account —
+and §5.2.4 the bottom-up loader that closed the last of it.)
 
 The constructor *exists* and is verified, but its body began as `Self::new()` plus a
 loop of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
 leaves (`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above
-them, which is O(n) with no split propagation and no per-key descent. §5.2.3 closes
+them, which is O(n) with no split propagation and no per-key descent. §5.2.3 closed
 most of that gap and — importantly — corrects the account of its cause given in
-§5.2.1 below, which the append fast path invalidated.
+§5.2.1 below, which the append fast path invalidated. §5.2.4 replaced the insert
+loop outright and reached parity.
 
 Measured in one binary (`containers-conformance/examples/bulkload.rs`), before and
 after the §5.1 fix:
@@ -523,11 +525,14 @@ must *decline* (re-inserting the current maximum; a key below it) and
 `mark`/`restore` across ascending runs, where a `last_leaf` not rolled back with the
 arena would surface as a lost or duplicated key.
 
-#### 5.2.3 The batched append — FIXED (`from_sorted` 72x → 6.3x)
+#### 5.2.3 The batched append — an intermediate step (`from_sorted` 72x → 6.3x)
 
-`from_sorted` now calls `fast_append_run`, which fills the **entire** rightmost leaf
-with one arena read and one arena write, and falls through to `insert` only at the
-leaf-full boundary (once per `leaf_cap` keys):
+This step is **superseded** by §5.2.4, which deleted the insert loop entirely; it is
+kept because its measurements are what identified the per-key node copy, and because
+its residual is what motivated the loader. At this stage `from_sorted` called a
+`fast_append_run` helper, which filled the **entire** rightmost leaf with one arena
+read and one arena write, and fell through to `insert` only at the leaf-full boundary
+(once per `leaf_cap` keys):
 
 | n | prod `from_sorted` | verus `from_sorted` | ratio |
 |---|---|---|---|
@@ -559,9 +564,9 @@ whole gap. It is flat in node size because a 64 B and a 256 B memcpy both cost a
 handful of cycles — what is paid is *fixed overhead per copy*, not bytes moved.
 
 That mechanism dictates the fix directly: not "do fewer descents" but **amortize the
-copy across every key bound for the same leaf**. `fast_append_run` reads the leaf
-once, writes the whole run of ascending keys that fits into the local copy, and
-stores it back once.
+copy across every key bound for the same leaf**. `fast_append_run` read the leaf
+once, wrote the whole run of ascending keys that fit into the local copy, and stored
+it back once.
 
 **A methodological correction worth recording.** The first probe of this hypothesis
 swept node size across layouts, found append cost flat (41/31/36 ns/key), and read
@@ -586,19 +591,9 @@ boundary key pays a full root-to-leaf descent plus a split plus (per §5.2.2's
 divergence) a rightmost-spine recompute, where production's loader pays none of the
 three. Closing it means building the levels above the leaves directly — a tree that
 satisfies `wf()` *by construction* rather than inductively, which needs a fresh
-invariant for the leaf-fill loop and another for the level-build loop.
-
-That path also has a verification-only obstacle worth stating, because it forces a
-divergence from production's code rather than a port of it: `words.chunks(LEAF_CAP)`
-leaves an **underfull remainder** leaf (for n=63 on Layout256, one key), and
-`tree_wf` requires non-root leaves to hold `>= (cap+1)/2`. The same problem recurs
-at every internal level. Production gets away with it because its search never
-relies on occupancy; our invariant does. A **balanced** partition fixes it —
-`k = ceil(m/c)` groups of `floor(m/k)` or `ceil(m/k)` — and the bound is provably
-tight: the smallest group `floor(m/ceil(m/c))` exactly equals the required minimum,
-with zero slack, for all six layouts at both the leaf level (`c = leaf_cap`) and the
-internal level (`c = key_cap+1`). So the verified loader would be *strictly
-better-formed* than production's, not a shortcut around it.
+invariant for the leaf-fill loop and another for the level-build loop. That is
+§5.2.4, and this prediction is what it confirmed: with the split cycle gone, so is
+the whole 6.3x.
 
 **How the shuffled column earned its keep.** It was introduced to isolate the fast
 path — in random order the path cannot fire, so the residual is everything *else*.
@@ -611,9 +606,124 @@ structural from constant; it does not license dismissing the constant. Having be
 driven to parity, that same column became the *baseline* §5.2.1's factorization is
 built on — it is what proves the descent itself is not the problem.
 
-**Not currently a shipping cost:** `egraph` never calls `from_sorted` and never
-instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its indexes
-are `SortedVec`. The remaining gap is latent.
+#### 5.2.4 The bottom-up loader — FIXED (`from_sorted` 6.3x → **0.85x**)
+
+`from_sorted` is now a thin wrapper over `bulk_load`: one pass per level into a fresh
+arena, no per-key `insert`, therefore no split cycle.
+
+Measured on `onesite_bplus.rs` (Layout256, n = 100k, one call site, both orders,
+best-of-5 after 20 warmups), **not** `bulkload.rs` — see the methodology note below,
+because the two harnesses disagreed by 40 points and only one of them was right:
+
+| row | before the loader | after |
+|---|---|---|
+| `from_sorted` | +29.1% (93.1 µs vs 72.2) | **−14.6%** (62.2 µs vs 72.9) |
+
+Reproducible across runs at −14.0/−14.2/−15.1%. The verified loader is not merely at
+parity, it is **~15% faster than production**, and that is not noise or a better
+algorithm: it is three places where the loader does *strictly less work*, each a
+consequence of how the proof is structured rather than an optimization bolted on.
+
+1. **No index vector per level.** A fresh push-only arena makes every level's ids
+   contiguous, so a level is addressed by one base offset `lo` and a count. Production
+   keeps a `Vec<ArenaIdx>` per level, allocated and walked.
+2. **No separate link pass.** Each leaf's successor id is known *before* the leaf is
+   filled (ids are handed out in order), so `bulk_fill_leaf` writes the chain pointer
+   inline. Production fills the leaves, then re-reads and rewrites every one of them
+   to thread the chain.
+3. **No `first_key_word` descent.** Each level hands the level above one word per
+   node — its smallest key — so a separator is a single array read. Production
+   recovers each separator by walking child-0 pointers down to a leftmost leaf,
+   O(height) node reads per separator.
+
+**The balanced partition is mandatory, not an optimization.** Production's
+`chunks(cap)` leaves an underfull remainder (for n = 63 on Layout256, a one-key
+leaf), and `tree_wf` requires non-root nodes to hold `>= (cap+1)/2`; the same recurs
+at every internal level. Production gets away with it because its search never relies
+on occupancy — ours does, and five lemmas downstream depend on the floor. So the
+loader partitions into `k = ceil(m/c)` groups of `floor(m/k)` or `ceil(m/k)`
+(`lemma_balanced_group_min`), and the bound is provably tight: the smallest group
+`floor(m/ceil(m/c))` exactly equals the required minimum, zero slack, for all six
+layouts at both the leaf level (`c = leaf_cap`) and the internal level
+(`c = key_cap+1`). The verified tree is *strictly better-formed* than production's.
+
+**The proof structure that made it tractable**, since a bottom-up build inverts the
+direction every existing lemma runs in:
+
+- **One flat chain fact, not a recursive one.** Every level of a tree has the same
+  in-order leaf sequence, and the links live in leaf slots that internal levels never
+  touch — so `chain_links_to` is proved once at the leaf level and reused verbatim by
+  every level above. Threading a recursive `forest_links_to` up level by level would
+  need each level's successor-of-the-last-group *before that group exists*.
+- **The root form is strictly weaker, and cannot be re-derived.** At the top of the
+  build `bulk_build_level` proves `tree_wf(..., is_root = true)`, which exempts
+  min-occupancy, so `lemma_forest_wf_from_pointwise` (non-root) does not apply there.
+  The driver's loop invariant therefore splits on the level width: `c >= 2 ==>
+  forest_wf(...)` and `c == 1 ==> tree_wf(level[0], h, cap, key_cap, true)`.
+- **`m == 1` is the root case.** `bulk_build_leaves` requires `m >= 2`; `bulk_load`
+  builds the single-leaf tree directly.
+- **`last_leaf` needs no descent.** Leaf ids are `0..m` in order, so the rightmost
+  leaf is `m - 1` (`lemma_last_leaf_id`), where the insert path pays an O(depth) walk.
+- **Two currencies for the arena budget.** `push` needs `< max_nat`; the exec `lo + c`
+  additions need `<= usize::MAX`. For a `usize` arena `max_nat == usize::MAX + 1` —
+  one too many to serve both — so the driver carries `lo + 2*c <= 2*m`,
+  `2*m <= n`, and `n < usize::MAX` instead of trying to spend one bound twice.
+
+**Two per-key costs the first loader still paid, both found by `objdump`.** The
+loader landed at +29.1% and the structure above does not explain that — one pass per
+level cannot be a third slower than one pass per level. Disassembling
+`bulk_fill_leaf` showed its innermost loop, and the answer was two instructions
+production does not execute, once per key:
+
+```text
+  f319:  lea  (%rcx,%rbx,1),%rdi
+  f31d:  cmp  %r12,%rdi
+  f320:  jae  f435            <-- slice bounds check + panic edge, per key
+  f326:  movzbl %bl,%edi
+  f329:  lea  (%r15,%rdi,1),%rdx
+  f332:  cmp  $0x12,%rdx
+  f336:  jb   f300            <-- arr_shift_up's length dispatch, per key
+```
+
+1. **A bounds check on `keys[at + j]`** — dead code: `at + take <= keys.len()` and
+   `j < take` are both loop invariants. `slice_get` (the slice analogue of the
+   existing `arr_get`) removes it, same trust and same shape.
+2. **`arr_shift_up`'s length dispatch** — also dead: this loop always appends
+   (`pos == count`), so the shift window is empty and the scalar arm always wins.
+   LLVM cannot fold it, because `pos` and `count` arrive as separate runtime values
+   through a trait method. `leaf_push` puts `pos == count` in the *signature*, which
+   removes the branch by construction. Its postcondition is `leaf_insert_at`'s
+   specialized to `Seq::push`.
+
+Together: **+29.1% → −14.6%**, i.e. ~0.3 ns/key, which for a loop whose useful work
+is one 4-byte store is most of the loop. Production pays neither because it fills a
+whole leaf with one `copy_from_slice`.
+
+**A methodological correction, and it is the important part of this section.**
+`bulkload.rs` read this same code at **1.0x** — parity — while `onesite_bplus.rs` read
+it at +29.1%. `bulkload` was wrong, and it was wrong in the flattering direction: it
+builds prod then verus in a fixed order inside one iteration, which
+[Chapter 11](11-layout-parity.md) documents as worth ~18% to whichever arm runs second
+(glibc heap reuse) plus ~18% from hot-loop alignment. Its production column swung
+0.72 → 4.5 ns/key across sweeps of the *same* build while verus stayed at 0.9 — the
+tell that the harness, not the code, was moving. A fine-grained `n` sweep also
+produced a 2.4x spike at exactly n = 10 000 that *moved to n = 8 000* when the sweep
+list changed: positional, not algorithmic. The rule this chapter and Chapter 11 share
+is now load-bearing twice over: **a cross-arm ratio in the 10-30% band is not evidence
+until it is measured through one call site in both orders**, and a "we reached parity"
+reading is exactly as suspect as a "we regressed" one.
+
+**One Verus trap worth recording, because it cost four verify cycles.** A
+`let ghost mx = <L::ArenaIdx as IndexLike>::max_nat()` is **havoc'd by the loop**
+unless the invariant re-pins it (`mx == <L::ArenaIdx as IndexLike>::max_nat()`).
+Without that line the budget invariant `2*m + 3 < mx` constrains an *arbitrary* nat,
+and a callee precondition fails at the call site even though an `assert` of the same
+inequality succeeds one line earlier. The technique that isolated it: enumerate every
+callee precondition as an explicit `assert` immediately before the call.
+
+**Not currently a shipping cost either way:** `egraph` never calls `from_sorted` and
+never instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its
+indexes are `SortedVec`. The gap was latent; it is now closed regardless.
 
 ## 6. Reused machinery
 

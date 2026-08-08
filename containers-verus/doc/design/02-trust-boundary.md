@@ -22,8 +22,8 @@ three: `ListArena::tracking_bytes`, `ListArena::total_bytes` (both group B, both
 spec-free), and `data_capacity_bits` (group B, contract-carrying — see §2c).
 Only the last of the three changes the assumed-fact inventory.*
 
-*The B+tree hot-path work added the four markers in `bplus_layout.rs`
-(21 → 25), all group B (contract-carrying) and all there to make a **proved**
+*The B+tree hot-path work added the five markers in `bplus_layout.rs`
+(21 → 26), all group B (contract-carrying) and all there to make a **proved**
 fact reach the machine code:*
 
 - *`arr_get` / `arr_set` — fixed-size-array access with the bounds check elided.
@@ -44,11 +44,17 @@ fact reach the machine code:*
   window, tail, length) is the whole contract; `copy_within`'s own documented
   behaviour supplies it for the long arm, and the short arm is literally the loop
   it replaces. `pos <= cnt < N` is verified at every call site. **No `unsafe`.***
+- *`slice_get` — the slice analogue of `arr_get`, for the one place the index bound
+  is a runtime length rather than a const-generic one: the bulk loader reads its
+  input `&[K]`, having proved `at + take <= keys.len()` and `j < take` in the
+  enclosing invariant. Same trusted contract (`get_unchecked`'s own), and the
+  emitted `cmp/jae panic` it removes was once per key in the loader's innermost
+  loop (see [10-bplus-tree §5.2.4](10-bplus-tree.md)).*
 
-*None of the four widens the assumed-fact inventory in a way a proof could
-exploit: `arr_get`/`arr_set` restate indexing that vstd already specs for the
-checked form, `sel_usize` restates a conditional, and `arr_shift_up` restates a
-slice copy whose effect its postcondition pins element-by-element.*
+*None of the five widens the assumed-fact inventory in a way a proof could
+exploit: `arr_get`/`arr_set`/`slice_get` restate indexing that vstd already specs
+for the checked form, `sel_usize` restates a conditional, and `arr_shift_up`
+restates a slice copy whose effect its postcondition pins element-by-element.*
 
 *For the migration reviewer, the delta against the pre-migration merge
 base (7 markers: `struct ContainerId` + `new` + `eq`, `check_precondition`,
@@ -454,7 +460,7 @@ representation observable — the exact failure mode that sank the withdrawn
 axioms). Exercised end-to-end in `tests/key_model_macro.rs`.
 
 Feature-gated — `cargo verus verify` passes with and without
-`literal-types` (both **1405 verified, 0 errors** as of 2026-08-07, re-measured
+`literal-types` (both **1471 verified, 0 errors** as of 2026-08-08, re-measured
 for this audit; the axioms add obligations only to their users, so the two
 configurations agree fact-for-fact). Runtime validation (`tests/compat_map.rs::literal_keys`): an
 SpMap-vs-HashMap oracle trace, **plus fuzz tests of the key-model
