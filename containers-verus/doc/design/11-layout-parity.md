@@ -360,6 +360,108 @@ The automated gate that this warning argues for now exists:
 `containers-conformance/benches/perf_gate.rs`, with its recorded per-row
 ceilings and their measured spreads in `containers-conformance/BASELINE.md`.
 
+## Closed: the B+tree descent gap was the *lowering* of the bisection, not its shape
+
+The verified `BPlusTreeSet` descent measured **+15…+21% slower** than production
+on out-of-cache trees (100k/400k keys) and drove `insert shuffled` to +27%. It is
+now **~20% faster** than production, and the cause was one instruction.
+
+**The mechanism.** Production searches a node with `slice::partition_point`, which
+internally uses `core::hint::select_unpredictable`. That lowers the loop's
+`base` update to `cmovbe`. Our hand-written bisection had already been rewritten
+into `partition_point`'s *shape* — `size` shrinks by `half` unconditionally, so
+the trip count is exactly `log2(n)` and only `base` is data-dependent — and it
+*read* branchless:
+
+```rust
+base = if lt { mid } else { base };
+```
+
+LLVM does not lower that to `cmov`. Its if-conversion heuristic judged the
+compare predictable and emitted `ja`/`jmp`; an arithmetic mask
+(`(a & !m) | (b & m)`) gets folded straight back to the same branch. On shuffled
+keys that compare is a coin flip, so it mispredicted at roughly half the levels
+of every descent. `bplus_layout::sel_usize` now routes the choice through
+`select_unpredictable`, and the descent matches production's codegen rather than
+only its source shape.
+
+| row (Layout256, n=100k, `onesite_bplus`) | before | after |
+|---|---|---|
+| `descent (iter)` | +23.5% | **−2.3%** |
+| `sm descent` (L1-resident) | +2.2% | **−10.1%** |
+| `redescent (dup)` (descent, no mutation) | +29.0% | **+7.0%** |
+| `insert shuffled` | +27.6% | **+12.3%** |
+| pure descent @400k (both build orders) | +20.9% | **−19.1%** |
+
+The tail step deliberately keeps the plain `if`: it lowers to `adc` on the
+compare's own flag, which is cheaper than a forced `cmov`, and is what
+`partition_point`'s tail compiles to. `bplus_search.rs`'s `SearchKind::find_ge`/
+`find_gt` got the same treatment. `Branchless` (the counting scan) needs none —
+its accumulate is branch-free by construction.
+
+**Cost in trust and proof:** one `external_body` wrapper (`sel_usize`, a total
+expression with no `unsafe`, whose postcondition *is* `if c { b } else { a }` —
+`select_unpredictable` is a codegen hint, not a semantic one) and **zero** proof
+debt. `bplus` 139, `bplus_layout` 311, `bplus_search` 9, whole crate **1405
+verified / 0 errors** (`./verify-all.sh`, exit 0) — unchanged counts.
+
+**One cost, recorded honestly:** the `cmov` is a small pessimization where the
+branch genuinely *is* predictable. `insert asc` moved −0.9% → **+1.7%** and
+`from_sorted` +843% → **+965%**, both ascending workloads where the compare
+always falls the same way. This is the right trade — shuffled descent is the
+common case and worth ~14 points against ~2 — but it is a trade, not a free win,
+and `from_sorted`'s real problem is the missing bulk loader, not this.
+
+### Three hypotheses that died, and what killed them
+
+Recorded because each was plausible from *reading* the code, and each was
+falsified by measurement. Per this chapter's standing rule, none of them should
+have been written down as a cause without the measurement.
+
+1. **Node read shape.** Production's `Node` *is* its `Repr` (`type Repr = $name`,
+   `from_repr` = `*r` + a flag mask), so it reads a node as one aligned 256-byte
+   block. Ours has `is_leaf: bool` where the repr has `flags: u8`, making them
+   different types, so `from_repr` rebuilds field-by-field: 4 scalar loads, a
+   `memcpy(248)` from the unaligned `base+4`, and 4 scalar stores. Visible in the
+   disassembly, and it looks decisive. It is worth **±1%**: a probe bisecting a
+   random arena through both shapes across 32 KB / 1 MB / 64 MB measured +1.8% /
+   +1.1% / −0.6%. LLVM forwards neither copy into the arena, so both arms pay the
+   same materialization. (In-place search — bisecting the arena slot without
+   copying at all — *is* 28–35% faster than either, so there is a real
+   optimization here; it is just not a prod-vs-verus difference.)
+2. **Arena node ordering.** Production unwinds splits bottom-up from a
+   `path: [(ArenaIdx, usize); 24]` array; ours unwinds a recursive `insert_rec`,
+   so a parent and its new sibling can land in a different relative order, and
+   equal node counts say nothing about parent→child index deltas. Killed by
+   building the same key set ascending (where both arms take the append fast path
+   and split left-to-right, forcing identical ordering) and shuffled, then timing
+   the same probe against each: the gap was +15.3% and +15.5%. Ordering is
+   innocent.
+3. **Footprint.** A counting global allocator gives prod 1048640 bytes / 4096
+   nodes / 24.4 keys-per-node against verus 1048576 / 4096 / 24.4 — ratio
+   **1.000x**. Identical node count, heap size, and split policy.
+
+### The process lesson: "branchless in source" is not a measurement
+
+An earlier revision of this work concluded that the branchless rewrite "verified
+clean but did not move the benchmark, so branch prediction is not the cause."
+That conclusion was **wrong**, and the error is worth naming: the *source* was
+branchless and the *machine code* never was, so the hypothesis had not been
+tested at all. Priced standalone, the branchy bisection cost +137% on 31-key
+nodes with random targets — the signal was there; the tree run simply never
+exercised the branchless version.
+
+What finally found it was diffing the two arms' disassembly of the *same*
+function and reading the branch instructions: `cmovbe` at production's bisection
+against `ja` at ours. That is this chapter's rule 3 ("if attributing to codegen,
+disassemble the bench binary") applied to a *negative* result — and the general
+form is the addition:
+
+**When a source-level optimization measures as no-change, verify it was
+compiled before concluding the mechanism is absent.** A no-op result has two
+readings — the mechanism is innocent, or the change never happened — and they are
+distinguished by reading the asm, not by re-running the benchmark.
+
 ## The honest new bounds (verified surfaces production's silent wraps)
 
 Two places the verified crate REFUSES what production silently corrupts:

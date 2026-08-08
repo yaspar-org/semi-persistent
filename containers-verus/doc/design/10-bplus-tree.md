@@ -215,7 +215,8 @@ split in three layers:
 {k}`, `added == !contains`): for an insert-only set, full functional correctness.
 A new-root split increases `height` by one. The recursion's split/absorb
 reconstruction (`reconstruct_*`, the `forest_binds`/`forest_links` machinery) is
-proven with **zero `external_body`**.
+proven with **zero `external_body`** (`bplus.rs` has none; the three in
+`bplus_layout` are the unchecked accessors and the `cmov` select, §5).
 
 ### 3b. contains
 
@@ -258,8 +259,8 @@ SparseSet, plus the tree-level rollback theorem.
 
 ## 5. Proof status
 
-**Fully verified, zero `external_body` in the B+tree modules, zero `admit`/
-`assume`.** Per-module verified-fact counts (run `./verify-all.sh`):
+**Fully verified, zero `admit`/`assume`.** Per-module verified-fact counts (run
+`./verify-all.sh`):
 
 | Module | Facts | Content |
 |---|---|---|
@@ -287,9 +288,15 @@ seek / step / key / tree mark-restore, plus the empirical log-cost check) and
 `bplus_contract_fuzz` (the `NodeLayout` primitive postconditions against a hand
 oracle).
 
-**Trust boundary:** none specific to the B+tree; its modules have zero
-`external_body`. The crate-wide trusted items (`ContainerId`, byte-accounting
-diagnostics) are enumerated in [Chapter 2](02-trust-boundary.md).
+**Trust boundary:** three `external_body` functions in `bplus_layout`, all
+introduced to make a *proved* fact reach the machine code rather than to assume a
+new one — `arr_get`/`arr_set` (the bounds check is dead: `i < N` is a verified
+precondition at every call site) and `sel_usize` (the `cmov` lowering, §5.1.1;
+`unsafe`-free). `bplus`, `bplus_tree`, and `bplus_search` have zero. All three
+contracts are also checked at runtime by
+`tests/external_body_contract_fuzz.rs`. They and the crate-wide trusted items
+(`ContainerId`, byte-accounting diagnostics) are enumerated in
+[Chapter 2](02-trust-boundary.md).
 
 **Scope:** insert-only, matching production (no `remove`).
 
@@ -325,6 +332,55 @@ no slice to hand it, since a packed node's keys and child pointers share one
 `L::key` accessor. Making `S` genuinely pluggable needs a slice accessor on
 `NodeLayout` first; until then the tree is hardwired to binary search, which is
 production's default.
+
+#### 5.1.1 Matching the search's *lowering*, not just its algorithm
+
+Hardwiring to binary search was necessary and not sufficient. Production does not
+write a bisection — it calls `slice::partition_point`, and inheriting that
+function's **machine code**, not merely its asymptotics, turned out to be worth
+~20% of every descent.
+
+Two properties have to match, and only the first is about the algorithm:
+
+1. **Trip count.** `partition_point` shrinks its window by `half`
+   *unconditionally*, so it always runs exactly `log2(n)` iterations. The textbook
+   `while lo < hi` assigns `hi = mid` on one side only, making the trip count
+   data-dependent. Our loops were already in this shape.
+2. **Lowering of the base update.** `partition_point` routes
+   `base = if lt { mid } else { base }` through `core::hint::select_unpredictable`,
+   which forces `cmovbe`. Written as a plain `if`, the same expression *reads*
+   branchless but LLVM's if-conversion heuristic judges the compare predictable and
+   emits `ja`/`jmp` — and an arithmetic mask (`(a & !m) | (b & m)`) gets folded
+   straight back to that same branch. On shuffled keys the compare is a coin flip,
+   so it mispredicts at about half the levels of every descent.
+
+Property 2 is the entire effect. Shape alone, with the `if` form, measured under
+1%; adding the `cmov` took the verified descent from **+15…+21% slower** than
+production to about **19-21% faster** (100k/400k keys, Layout256, both build
+orders). All four bisections — `bplus.rs`'s `leaf_find_ge` and `find_child`, and
+`bplus_search.rs`'s `BinarySearch::find_ge`/`find_gt` — now go through
+`bplus_layout::sel_usize`, an `external_body` wrapper over the intrinsic
+(chapter 2 accounts for the marker; it contains no `unsafe`, and
+`select_unpredictable` is a codegen hint whose documented semantics are exactly
+`if c { b } else { a }`).
+
+The bisection **tail** step deliberately keeps a plain `if`: it lowers to `adc` on
+the compare's own flag, which is cheaper than a forced `cmov` and is what
+`partition_point`'s tail compiles to. Routing it through `sel_usize` was measured
+and reverted.
+
+`Branchless` needs no change — its compare-accumulate is branch-free by
+construction.
+
+**Honest cost.** `cmov` is a small pessimization where the branch genuinely *is*
+predictable: ascending insert moved -0.9% → +1.7%, and `from_sorted` +843% →
++965%. Trading ~2 points on ascending workloads for ~14 on shuffled ones is the
+right call, but it is a trade.
+
+The process lesson — *a source-level optimization that measures as no-change has
+two readings, and only disassembly tells them apart* — is recorded in
+chapter 11, because an earlier pass wrote off branch prediction on exactly that
+false negative.
 
 ### 5.2 The two body-level performance gaps: root cause and fixes
 

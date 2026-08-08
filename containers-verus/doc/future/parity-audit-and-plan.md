@@ -151,14 +151,18 @@ production (no `remove`).
 place where a *verified* method is materially worse than its production
 counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
 ([Design Ch. 10 §5](../design/10-bplus-tree.md), harness at
-`containers-conformance/examples/bulkload.rs`); all three are now fixed:
+`containers-conformance/examples/onesite_bplus.rs` — *not* `bulkload.rs`, which
+understates gaps; see Ch. 11); all three are fixed, and a fourth, invisible to any
+body diff because it lives below the source, was found later and fixed too:
 
 - **The `S: SearchKind` parameter was never called — FIXED.** `grep -c 'S::'` over
   the verified tree returned 0, against six production call sites. Five
   hand-written linear scans stood in for it, while two verified binary searches
   (`leaf_find_ge`, `find_child`) sat in the same file used only by `seek`. All five
   now dispatch to them. Random-order insertion went from 1.4-1.5x to **0.9-1.0x**
-  (parity), and the proofs got smaller.
+  on `bulkload.rs`, and the proofs got smaller. (That 0.9-1.0x reading was the
+  harness flattering us — on `onesite_bplus.rs` the same build was still ~1.3x,
+  which is what the fourth item below fixes.)
 - **`insert` had no append fast path — FIXED** (was 1.4-2.3x and growing with `n`,
   now **1.0-1.1x**). Production caches `last_leaf` and appends in O(1) when the key
   extends the rightmost leaf, skipping the descent entirely. Not specific to bulk
@@ -175,6 +179,18 @@ counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
   child has no separator above it). The residual is entirely the boundary split; see
   [Design Ch. 10 §5.2.3](../design/10-bplus-tree.md) for the measurement that
   isolates it and for what a fully verified level-builder would still need.
+- **The bisections had production's *shape* but not its *lowering* — FIXED** (pure
+  descent was +15…+21%, now **~20% faster** than production). Production calls
+  `slice::partition_point`, which uses `core::hint::select_unpredictable` internally
+  and therefore compiles its base update to `cmovbe`. Our hand-written loop had the
+  same unconditional-`size -= half` shape and *read* branchless as
+  `base = if lt { mid } else { base }` — but LLVM's if-conversion heuristic judged
+  the compare predictable and emitted `ja`/`jmp`; an arithmetic mask folds back to
+  the same branch. On shuffled keys that compare is a coin flip, mispredicting at
+  ~half the levels of every descent. All four bisections now route the base update
+  through `bplus_layout::sel_usize` (an `external_body`, `unsafe`-free wrapper over
+  the intrinsic); the tail step keeps a plain `if`, which lowers to `adc`. See
+  [Design Ch. 10 §5.1.1](../design/10-bplus-tree.md).
 
 **How the root cause was pinned down — and first got wrong.** Not by comparing verus
 to production, which only yields ratios. By pricing each production feature against
@@ -184,10 +200,15 @@ binary* isolates each with zero cross-crate confound. Two shapes did the work �
 production's ascending-insert cost is **flat** in `n` (34.70 → 36.89 ns/key from 10k
 to 1M, which is only possible if no descent is happening), and its bulk-load cost
 *falls* with `n`. The three independently-measured factors multiply back to the
-observed total to three significant figures at two different `n`. And the shuffled
-column showed the descent itself was never the problem: at 0.80-1.03x, verus's
-recursive descent costs the same as production's iterative one, so recursion, bounds
-checks, and proof machinery cost nothing measurable.
+observed total to three significant figures at two different `n`.
+
+The shuffled column was then over-read. At 0.80-1.03x on `bulkload.rs` it was taken
+to prove "the descent itself was never the problem, so recursion, bounds checks, and
+proof machinery cost nothing measurable" — a conclusion about *three* mechanisms
+drawn from *one* aggregate number, on the harness that understates gaps. On
+`onesite_bplus.rs` the descent was +15…+21%, and it was a real mechanism (the
+bisection's lowering, fourth item above). **A ratio near 1.0 bounds a sum, not each
+addend** — and only if you trust the harness that produced it.
 
 **But the *explanation* attached to that decomposition was wrong**, and it stayed
 wrong in these docs for a while: the bulk-vs-append column was called a
@@ -209,7 +230,7 @@ The `SearchKind` case is sharper still: the *signature* matched production exact
 generic parameter and all, and the trait behind it was fully verified. Only the call
 graph was wrong.
 
-Three habits follow, and the other containers deserve all three:
+Four habits follow, and the other containers deserve all four:
 
 1. **Diff the production body**, for fast paths and cached state, not just the
    signature and the contract.
@@ -222,6 +243,13 @@ Three habits follow, and the other containers deserve all three:
    but split proportionally *less* often, so the effects cancel and manufacture
    flatness. Never vary a geometry parameter that other costs also depend on — the
    same failure mode as Ch. 11's positional confound, in a different disguise.
+4. **When a source-level optimization measures as no-change, check that it was
+   compiled.** A null result has two readings — the mechanism is innocent, or the
+   change never reached the machine code — and only disassembly separates them. A
+   branchless rewrite of the bisection was written, verified, benchmarked, measured
+   at ±1%, and used to acquit branch prediction; the source was branchless and the
+   object code never was. Diffing the two arms' asm for the *same* function
+   (`cmovbe` in production, `ja` in ours) found it.
 
 The complete design and proof-status accounting is its own chapter:
 [Design Ch. 10: The B+Tree Set](../design/10-bplus-tree.md). It is not repeated

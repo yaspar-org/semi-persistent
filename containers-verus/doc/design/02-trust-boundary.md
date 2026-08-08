@@ -12,15 +12,35 @@ for each, why it is trusted rather than proved.*
 
 | configuration | `external_body` markers | axiom fns |
 |---|---|---|
-| default features | **21** (3 structs + 18 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
-| `literal-types` | **26** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
+| default features | **24** (3 structs + 21 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
+| `literal-types` | **29** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
 
-*Counts re-derived 2026-08-06 by grepping `#[verifier::external_body]` and
+*Counts re-derived 2026-08-08 by grepping `#[verifier::external_body]` and
 splitting on the `literal-types` gate (`external_specs.rs` is the only gated
 module). They were 18/23 before the `ListArena` `InlineStore` port, which added
 three: `ListArena::tracking_bytes`, `ListArena::total_bytes` (both group B, both
 spec-free), and `data_capacity_bits` (group B, contract-carrying — see §2c).
 Only the last of the three changes the assumed-fact inventory.*
+
+*The B+tree hot-path work added the three markers in `bplus_layout.rs`
+(21 → 24), all group B (contract-carrying) and all there to make a **proved**
+fact reach the machine code:*
+
+- *`arr_get` / `arr_set` — fixed-size-array access with the bounds check elided.
+  Trusted contract is `get_unchecked`'s own (`i < N` ⟹ in bounds), and `N` is the
+  array's own const-generic length, so no arithmetic relates bound to index.
+  Verus checks `i < N` at every call site; the check `rustc` would emit is
+  provably dead, and eliding it is the point of having proved the bound.*
+- *`sel_usize` — `if c { b } else { a }` via `core::hint::select_unpredictable`,
+  so the bisection's data-dependent update lowers to `cmov` rather than a
+  mispredicting branch (see [11-layout-parity](11-layout-parity.md)). The body is
+  a total expression containing **no `unsafe`**; `select_unpredictable` is a
+  codegen hint whose documented semantics are exactly the stated postcondition.
+  It is `external_body` only because the intrinsic carries no Verus spec.*
+
+*None of the three widens the assumed-fact inventory in a way a proof could
+exploit: `arr_get`/`arr_set` restate indexing that vstd already specs for the
+checked form, and `sel_usize` restates a conditional.*
 
 *For the migration reviewer, the delta against the pre-migration merge
 base (7 markers: `struct ContainerId` + `new` + `eq`, `check_precondition`,

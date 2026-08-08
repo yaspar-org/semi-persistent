@@ -77,7 +77,7 @@ macro_rules! fuzz_layout {
 
             // --- shadow views recomputed from the node's PUBLIC fields ---
             fn shadow_keys(n: &$Node) -> Vec<$W> {
-                (0..n.count).map(|i| n.data[i]).collect()
+                (0..(n.count as usize)).map(|i| n.data[i]).collect()
             }
             // child_view as a u128 so u32/u64 compare uniformly with the
             // exec result widened the same way.
@@ -105,7 +105,7 @@ macro_rules! fuzz_layout {
                 let link = lcg.next() as usize; // last child / arena id
                 let mut n: $Node = L::new_leaf();
                 n.is_leaf = false;
-                n.count = count;
+                n.count = (count) as u8;
                 n.data = data;
                 n.link = link as _;
                 n
@@ -122,7 +122,7 @@ macro_rules! fuzz_layout {
                 }
                 let mut n: $Node = L::new_leaf();
                 n.is_leaf = true;
-                n.count = count;
+                n.count = (count) as u8;
                 n.data = data;
                 n
             }
@@ -140,7 +140,7 @@ macro_rules! fuzz_layout {
 
                     // is_leaf / count
                     assert_eq!(L::is_leaf(&n), n.is_leaf, "is_leaf mismatch");
-                    assert_eq!(L::count(&n), n.count, "count mismatch");
+                    assert_eq!(L::count(&n), (n.count as usize), "count mismatch");
                     // link_view
                     assert_eq!(
                         L::link(&n).as_usize() as u128,
@@ -150,13 +150,13 @@ macro_rules! fuzz_layout {
 
                     // key(i) == keys_view[i]  (the data[0..count] projection)
                     let keys = shadow_keys(&n);
-                    for i in 0..n.count {
+                    for i in 0..(n.count as usize) {
                         assert_eq!(L::key(&n, i), keys[i], "key[{i}] mismatch");
                     }
                     // child(i) == child_view(i) for internal nodes, i in 0..=count.
                     // THIS is the u64->usize cast under test for the u64 layouts.
                     if !n.is_leaf {
-                        for i in 0..=n.count {
+                        for i in 0..=(n.count as usize) {
                             let got = L::child(&n, i).as_usize() as u128;
                             assert_eq!(
                                 got,
@@ -208,10 +208,10 @@ macro_rules! fuzz_layout {
                 for _ in 0..20_000 {
                     let mut n = rand_internal(&mut lcg);
                     if n.count == 0 {
-                        n.count = 1;
+                        n.count = (1) as u8;
                         n.data[0] = word(&mut lcg);
                     } // need >= 1 child slot
-                    let i = lcg.upto(n.count + 1); // 0..=count
+                    let i = lcg.upto((n.count as usize) + 1); // 0..=count
                     let v = lcg.next() as usize;
                     let v_idx = <<L as NodeLayout>::ArenaIdx as IndexLike>::try_from_usize(v)
                         .unwrap_or(<<L as NodeLayout>::ArenaIdx as IndexLike>::max());
@@ -229,11 +229,11 @@ macro_rules! fuzz_layout {
                     );
                     assert_eq!(
                         L::count(&n),
-                        before.count,
+                        (before.count as usize),
                         "set_internal_child changed count"
                     );
                     // keys_view unchanged
-                    for j in 0..before.count {
+                    for j in 0..(before.count as usize) {
                         assert_eq!(
                             L::key(&n, j),
                             L::key(&before, j),
@@ -245,7 +245,7 @@ macro_rules! fuzz_layout {
                         vw,
                         "set_internal_child target child[{i}] != v"
                     );
-                    for j in 0..=before.count {
+                    for j in 0..=(before.count as usize) {
                         if j != i {
                             assert_eq!(
                                 L::child(&n, j).as_usize(),
@@ -269,8 +269,8 @@ macro_rules! fuzz_layout {
                     L::set_link(&mut n, v_idx);
                     // ensures: only the link changes.
                     assert_eq!(L::is_leaf(&n), L::is_leaf(&before));
-                    assert_eq!(L::count(&n), before.count);
-                    for j in 0..before.count {
+                    assert_eq!(L::count(&n), (before.count as usize));
+                    for j in 0..(before.count as usize) {
                         assert_eq!(
                             L::key(&n, j),
                             L::key(&before, j),
@@ -290,10 +290,10 @@ macro_rules! fuzz_layout {
                 let mut lcg = Lcg::new(0x1EAF_1227 ^ (KEY_CAP as u64));
                 for _ in 0..20_000 {
                     let mut n = rand_leaf(&mut lcg, false);
-                    if n.count >= LEAF_CAP {
+                    if (n.count as usize) >= LEAF_CAP {
                         continue;
                     } // requires count < leaf_cap
-                    let pos = lcg.upto(n.count + 1); // 0..=count
+                    let pos = lcg.upto((n.count as usize) + 1); // 0..=count
                     let w = word(&mut lcg);
                     let before_keys = shadow_keys(&n);
                     let old_link = n.link;
@@ -315,7 +315,7 @@ macro_rules! fuzz_layout {
                 let mid = L::split_mid();
                 for _ in 0..20_000 {
                     let n = rand_leaf(&mut lcg, true); // FULL leaf (count == leaf_cap)
-                    assert_eq!(n.count, LEAF_CAP);
+                    assert_eq!((n.count as usize), LEAF_CAP);
                     let pos = lcg.upto(LEAF_CAP + 1); // 0..=leaf_cap
                     let w = word(&mut lcg);
                     // combined = keys_view.insert(pos, w)
@@ -347,7 +347,7 @@ macro_rules! fuzz_layout {
                 for _ in 0..20_000 {
                     // FULL internal node: count == key_cap.
                     let mut n = rand_internal(&mut lcg);
-                    n.count = KEY_CAP;
+                    n.count = (KEY_CAP) as u8;
                     for i in 0..KEY_CAP {
                         n.data[i] = word(&mut lcg);
                     }
@@ -426,19 +426,23 @@ macro_rules! fuzz_layout {
                 let mut lcg = Lcg::new(0x142E_0001 ^ (LEAF_CAP as u64));
                 for _ in 0..20_000 {
                     let mut n = rand_internal(&mut lcg);
-                    if n.count >= KEY_CAP {
+                    if (n.count as usize) >= KEY_CAP {
                         continue;
                     } // requires count < key_cap
-                    let pos = lcg.upto(n.count + 1);
+                    let pos = lcg.upto((n.count as usize) + 1);
                     let w = word(&mut lcg);
-                    let before = (0..n.count).map(|i| n.data[i]).collect::<Vec<$W>>();
+                    let before = (0..(n.count as usize))
+                        .map(|i| n.data[i])
+                        .collect::<Vec<$W>>();
                     L::internal_key_insert(&mut n, pos, w);
                     // ensures: count+1, keys == before.insert(pos, w), still internal.
                     assert!(!L::is_leaf(&n));
                     assert_eq!(L::count(&n), before.len() + 1, "internal_key_insert count");
                     let mut want = before.clone();
                     want.insert(pos, w);
-                    let got = (0..n.count).map(|i| n.data[i]).collect::<Vec<$W>>();
+                    let got = (0..(n.count as usize))
+                        .map(|i| n.data[i])
+                        .collect::<Vec<$W>>();
                     assert_eq!(got, want, "internal_key_insert keys pos={pos}");
                 }
             }

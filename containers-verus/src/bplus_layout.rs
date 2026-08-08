@@ -118,6 +118,75 @@ pub proof fn lemma_u64_usize_roundtrip(x: u64)
         requires x <= usize::MAX as int;
 }
 
+/// `a[i]` with the bounds check elided, since `i < N` is a *precondition*.
+///
+/// Every `NodeLayout` accessor already carries the in-range obligation its
+/// caller must discharge — `key` requires `i < count_spec(*n)` and `node_wf`
+/// gives `count <= leaf_cap == data_len`, so `i < N` is a proven fact at each
+/// call site, not a runtime possibility. `rustc` cannot see that, so it emits a
+/// `cmp $N; jae panic_bounds_check` per access: measurably, ~6 per binary-search
+/// descent level plus one per shifted element in a node insert. Routing the
+/// proven-in-range accesses through this pair removes the dead compare and the
+/// unreachable panic edge, which is the whole point of having proved the bound.
+///
+/// This is the *only* new trust in the layout module: `external_body`, so the
+/// `unsafe` body is assumed to meet the contract rather than verified. The
+/// contract is `get_unchecked`'s own documented one (`i < N` ⟹ in-bounds read of
+/// `a[i]`), and `N` here is the array's own const-generic length, so no
+/// arithmetic relates the bound to the index — there is nothing to get wrong
+/// beyond the precondition Verus checks at every call site.
+#[verifier::external_body]
+pub fn arr_get<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
+    requires i < N,
+    ensures r == a[i as int],
+{
+    // SAFETY: `i < N` is a verified precondition at every call site.
+    unsafe { *a.get_unchecked(i) }
+}
+
+/// `if c { b } else { a }`, lowered to `cmov` instead of a branch.
+///
+/// The bisection loops in `bplus.rs` shrink their window unconditionally, so the
+/// trip count is exactly `log2(n)` and the *only* data-dependent value is the
+/// base — which makes the whole search branchless in principle. In practice a
+/// plain `if c { b } else { a }` does not get there: LLVM's if-conversion
+/// heuristic decides the compare is predictable and emits `jb`/`jmp`, and an
+/// arithmetic mask (`(a & !m) | (b & m)`) gets folded straight back to the same
+/// branch. On shuffled keys that compare is a coin flip, so it mispredicts about
+/// half the time, once per level per descent.
+///
+/// `core::hint::select_unpredictable` is the documented way to overrule that
+/// heuristic, and it is precisely what `slice::partition_point` uses internally —
+/// which is why production, calling `partition_point`, compiled to `cmovbe`
+/// while our hand-written loop compiled to a branch. Routing the choice through
+/// it is what makes our bisection match production's lowering rather than merely
+/// its shape.
+///
+/// Trusted (`external_body`) only because the intrinsic has no Verus spec; the
+/// body is a total, `unsafe`-free expression whose contract is the postcondition
+/// stated here, and `select_unpredictable`'s own documented semantics are exactly
+/// `if c { b } else { a }` — it is a codegen hint, not a semantic one.
+#[verifier::external_body]
+pub fn sel_usize(c: bool, a: usize, b: usize) -> (r: usize)
+    requires true,
+    ensures r == if c { b } else { a },
+{
+    core::hint::select_unpredictable(c, b, a)
+}
+
+/// `a[i] = v` with the bounds check elided. See [`arr_get`] for why the check
+/// is provably dead and what is trusted here.
+#[verifier::external_body]
+pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
+    requires i < N,
+    ensures a@ =~= old(a)@.update(i as int, v),
+{
+    // SAFETY: `i < N` is a verified precondition at every call site.
+    unsafe {
+        *a.get_unchecked_mut(i) = v;
+    }
+}
+
 /// Compile-time node geometry, generic over word/arena width. Mirrors
 /// production's `NodeLayout`. The node value is [`Tagged`] (capture bit stolen
 /// into its packed repr's `flags` byte), so an `InlineStore`-backed arena makes
@@ -561,13 +630,24 @@ pub const FLAG_LEAF_EXEC: u8 = 0x01;
 // ===========================================================================
 
 macro_rules! gen_layout_u32 {
-    ($layout:ident, $node:ident, $repr:ident, $data_len:literal, $leaf_cap:literal, $key_cap:literal) => {
+    ($layout:ident, $node:ident, $repr:ident, $align:literal, $data_len:literal, $leaf_cap:literal, $key_cap:literal) => {
         verus! {
 
         #[derive(Copy)]
+        #[repr(C, align($align))]
         pub struct $node {
             pub is_leaf: bool,
-            pub count: usize,
+            pub count: u8,
+            /// Production's explicit `_pad: u16` (`containers/src/bplus.rs`'s
+            /// `define_node!`). Not padding we could leave implicit: with the field
+            /// spelled out, LLVM moves the node as one aligned `align`-byte block;
+            /// without it, it splits every arena read/write into a scalar
+            /// `flags`/`count` pair plus a `data`+`link` memcpy, which measured
+            /// +27% on ascending insert. It is threaded through `value_of` /
+            /// `into_repr` / `from_repr` verbatim rather than pinned to 0, so the
+            /// `Tagged` round-trip `value_of(into_repr(n)) == n` holds for any
+            /// padding bits and no `wf` clause has to mention it.
+            pub _pad: u16,
             pub data: [u32; $data_len],
             pub link: u32,
         }
@@ -581,14 +661,16 @@ macro_rules! gen_layout_u32 {
         // path). Needed for `BPlusTreeSet::restore` (`where L::Node: Default`).
         impl core::default::Default for $node {
             fn default() -> $node {
-                $node { is_leaf: true, count: 0, data: [0; $data_len], link: 0 }
+                $node { is_leaf: true, count: 0, _pad: 0, data: [0; $data_len], link: 0 }
             }
         }
 
         #[derive(Copy)]
+        #[repr(C, align($align))]
         pub struct $repr {
             pub flags: u8,
-            pub count: usize,
+            pub count: u8,
+            pub _pad: u16,
             pub data: [u32; $data_len],
             pub link: u32,
         }
@@ -601,7 +683,7 @@ macro_rules! gen_layout_u32 {
             type Repr = $repr;
 
             closed spec fn value_of(r: $repr) -> $node {
-                $node { is_leaf: (r.flags & FLAG_LEAF) != 0, count: r.count, data: r.data, link: r.link }
+                $node { is_leaf: (r.flags & FLAG_LEAF) != 0, count: r.count, _pad: r._pad, data: r.data, link: r.link }
             }
             open spec fn tag_of(r: $repr) -> bool { (r.flags & FLAG_TAG) != 0 }
             open spec fn repr_wf(r: $repr) -> bool { (r.flags & 0xfcu8) == 0 }
@@ -617,6 +699,9 @@ macro_rules! gen_layout_u32 {
                         ==> x == y) by (bit_vector);
                 assert(r1.flags == r2.flags);
                 assert(r1.data == r2.data);
+                // `_pad` rides through `value_of` verbatim, so equal values force
+                // equal padding — no `repr_wf` clause needed to pin it.
+                assert(r1._pad == r2._pad);
             }
 
             fn into_repr(self) -> (r: $repr) {
@@ -624,11 +709,11 @@ macro_rules! gen_layout_u32 {
                 assert((0x01u8 & 0xfcu8) == 0 && (0u8 & 0xfcu8) == 0) by (bit_vector);
                 assert((0x01u8 & 0x01u8) != 0 && (0u8 & 0x01u8) == 0) by (bit_vector);
                 assert((0x01u8 & 0x02u8) == 0 && (0u8 & 0x02u8) == 0) by (bit_vector);
-                $repr { flags, count: self.count, data: self.data, link: self.link }
+                $repr { flags, count: self.count, _pad: self._pad, data: self.data, link: self.link }
             }
 
             fn from_repr(r: &$repr) -> (v: $node) {
-                $node { is_leaf: (r.flags & 0x01u8) != 0, count: r.count, data: r.data, link: r.link }
+                $node { is_leaf: (r.flags & 0x01u8) != 0, count: r.count, _pad: r._pad, data: r.data, link: r.link }
             }
 
             fn tag(r: &$repr) -> (b: bool) { (r.flags & 0x02u8) != 0 }
@@ -677,19 +762,24 @@ macro_rules! gen_layout_u32 {
             }
 
             fn is_leaf(n: &$node) -> (b: bool) { n.is_leaf }
-            fn count(n: &$node) -> (c: usize) { n.count }
-            fn key(n: &$node, i: usize) -> (k: u32) { n.data[i] }
+            fn count(n: &$node) -> (c: usize) { n.count as usize }
+            // `node_wf` bounds `count` by `leaf_cap`/`key_cap`, both `<= data_len`,
+            // so the precondition `i < count` already proves `i < data_len`: the
+            // bounds check `rustc` would emit on `n.data[i]` is dead. These two
+            // are the hottest reads in the crate (one per binary-search probe),
+            // so they take the unchecked path — see `arr_get`.
+            fn key(n: &$node, i: usize) -> (k: u32) { arr_get(&n.data, i) }
             fn child(n: &$node, i: usize) -> (c: u32) {
-                if i < $key_cap { n.data[$key_cap + i] } else { n.link }
+                if i < $key_cap { arr_get(&n.data, $key_cap + i) } else { n.link }
             }
             fn link(n: &$node) -> (l: u32) { n.link }
             fn new_leaf() -> (n: $node) {
-                $node { is_leaf: true, count: 0, data: [0; $data_len], link: u32::MAX }
+                $node { is_leaf: true, count: 0, _pad: 0, data: [0; $data_len], link: u32::MAX }
             }
 
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u32) {
                 let ghost old_n = *n;
-                let cnt = n.count;
+                let cnt = n.count as usize;
                 let mut j = cnt;
                 while j > pos
                     invariant
@@ -702,11 +792,12 @@ macro_rules! gen_layout_u32 {
                         forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
                     decreases j - pos,
                 {
-                    n.data[j] = n.data[j - 1];
+                    let prev = arr_get(&n.data, j - 1);
+                    arr_set(&mut n.data, j, prev);
                     j = j - 1;
                 }
-                n.data[pos] = w;
-                n.count = cnt + 1;
+                arr_set(&mut n.data, pos, w);
+                n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
             }
 
@@ -717,8 +808,8 @@ macro_rules! gen_layout_u32 {
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
                 let rc: usize = $leaf_cap + 1 - mid;
-                let mut left = $node { is_leaf: true, count: mid, data: [0; $data_len], link: n.link };
-                let mut right = $node { is_leaf: true, count: rc, data: [0; $data_len], link: n.link };
+                let mut left = $node { is_leaf: true, count: mid as u8, _pad: 0, data: [0; $data_len], link: n.link };
+                let mut right = $node { is_leaf: true, count: rc as u8, _pad: 0, data: [0; $data_len], link: n.link };
                 let mut j: usize = 0;
                 while j < mid
                     invariant
@@ -729,8 +820,8 @@ macro_rules! gen_layout_u32 {
                             == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }),
                     decreases mid - j,
                 {
-                    let v: u32 = if j < pos { n.data[j] } else if j == pos { w } else { n.data[j - 1] };
-                    left.data[j] = v;
+                    let v: u32 = if j < pos { arr_get(&n.data, j) } else if j == pos { w } else { arr_get(&n.data, j - 1) };
+                    arr_set(&mut left.data, j, v);
                     j = j + 1;
                 }
                 let mut k: usize = 0;
@@ -744,8 +835,8 @@ macro_rules! gen_layout_u32 {
                     decreases rc - k,
                 {
                     let idx: usize = mid + k;
-                    let v: u32 = if idx < pos { n.data[idx] } else if idx == pos { w } else { n.data[idx - 1] };
-                    right.data[k] = v;
+                    let v: u32 = if idx < pos { arr_get(&n.data, idx) } else if idx == pos { w } else { arr_get(&n.data, idx - 1) };
+                    arr_set(&mut right.data, k, v);
                     k = k + 1;
                 }
                 proof {
@@ -772,7 +863,7 @@ macro_rules! gen_layout_u32 {
                 data[0] = sep;
                 data[$key_cap] = left;
                 data[$key_cap + 1] = right;
-                let nn = $node { is_leaf: false, count: 1, data, link: 0u32 };
+                let nn = $node { is_leaf: false, count: 1, _pad: 0, data, link: 0u32 };
                 assert(Self::keys_view(nn) =~= seq![sep]);
                 nn
             }
@@ -784,7 +875,7 @@ macro_rules! gen_layout_u32 {
             }
             fn internal_key_insert(n: &mut $node, pos: usize, w: u32) {
                 let ghost old_n = *n;
-                let cnt = n.count;
+                let cnt = n.count as usize;
                 let mut j = cnt;
                 while j > pos
                     invariant
@@ -795,11 +886,12 @@ macro_rules! gen_layout_u32 {
                         forall|k: int| $key_cap <= k < $data_len ==> n.data[k] == old_n.data[k],
                     decreases j - pos,
                 {
-                    n.data[j] = n.data[j - 1];
+                    let prev = arr_get(&n.data, j - 1);
+                    arr_set(&mut n.data, j, prev);
                     j = j - 1;
                 }
-                n.data[pos] = w;
-                n.count = cnt + 1;
+                arr_set(&mut n.data, pos, w);
+                n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
                 assert forall|jj: int| 0 <= jj <= $key_cap implies
                     Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
@@ -809,7 +901,7 @@ macro_rules! gen_layout_u32 {
                 if i < $key_cap {
                     // i < key_cap and 2*key_cap <= data_len ⟹ key_cap + i in bounds.
                     assert($key_cap + i < $data_len);
-                    n.data[$key_cap + i] = v;
+                    arr_set(&mut n.data, $key_cap + i, v);
                 } else {
                     n.link = v;
                 }
@@ -836,8 +928,8 @@ macro_rules! gen_layout_u32 {
                 // filled prefix. is_leaf=false; link is a child slot, set via children loop.
                 let mut left = *n;
                 let mut right = *n;
-                left.count = imid;
-                right.count = kc - imid;
+                left.count = imid as u8;
+                right.count = (kc - imid) as u8;
                 // left separators [0..imid) = cseps[0..imid].
                 let mut j: usize = 0;
                 while j < imid
@@ -939,13 +1031,24 @@ macro_rules! gen_layout_u32 {
 }
 
 macro_rules! gen_layout_u64 {
-    ($layout:ident, $node:ident, $repr:ident, $data_len:literal, $leaf_cap:literal, $key_cap:literal) => {
+    ($layout:ident, $node:ident, $repr:ident, $align:literal, $data_len:literal, $leaf_cap:literal, $key_cap:literal) => {
         verus! {
 
         #[derive(Copy)]
+        #[repr(C, align($align))]
         pub struct $node {
             pub is_leaf: bool,
-            pub count: usize,
+            pub count: u8,
+            /// Production's explicit `_pad: u16` (`containers/src/bplus.rs`'s
+            /// `define_node!`). Not padding we could leave implicit: with the field
+            /// spelled out, LLVM moves the node as one aligned `align`-byte block;
+            /// without it, it splits every arena read/write into a scalar
+            /// `flags`/`count` pair plus a `data`+`link` memcpy, which measured
+            /// +27% on ascending insert. It is threaded through `value_of` /
+            /// `into_repr` / `from_repr` verbatim rather than pinned to 0, so the
+            /// `Tagged` round-trip `value_of(into_repr(n)) == n` holds for any
+            /// padding bits and no `wf` clause has to mention it.
+            pub _pad: u16,
             pub data: [u64; $data_len],
             pub link: usize,
         }
@@ -958,14 +1061,16 @@ macro_rules! gen_layout_u64 {
         // `restore`. See the u32 macro's note.
         impl core::default::Default for $node {
             fn default() -> $node {
-                $node { is_leaf: true, count: 0, data: [0; $data_len], link: 0 }
+                $node { is_leaf: true, count: 0, _pad: 0, data: [0; $data_len], link: 0 }
             }
         }
 
         #[derive(Copy)]
+        #[repr(C, align($align))]
         pub struct $repr {
             pub flags: u8,
-            pub count: usize,
+            pub count: u8,
+            pub _pad: u16,
             pub data: [u64; $data_len],
             pub link: usize,
         }
@@ -978,7 +1083,7 @@ macro_rules! gen_layout_u64 {
             type Repr = $repr;
 
             closed spec fn value_of(r: $repr) -> $node {
-                $node { is_leaf: (r.flags & FLAG_LEAF) != 0, count: r.count, data: r.data, link: r.link }
+                $node { is_leaf: (r.flags & FLAG_LEAF) != 0, count: r.count, _pad: r._pad, data: r.data, link: r.link }
             }
             open spec fn tag_of(r: $repr) -> bool { (r.flags & FLAG_TAG) != 0 }
             open spec fn repr_wf(r: $repr) -> bool { (r.flags & 0xfcu8) == 0 }
@@ -994,6 +1099,9 @@ macro_rules! gen_layout_u64 {
                         ==> x == y) by (bit_vector);
                 assert(r1.flags == r2.flags);
                 assert(r1.data == r2.data);
+                // `_pad` rides through `value_of` verbatim, so equal values force
+                // equal padding — no `repr_wf` clause needed to pin it.
+                assert(r1._pad == r2._pad);
             }
 
             fn into_repr(self) -> (r: $repr) {
@@ -1001,11 +1109,11 @@ macro_rules! gen_layout_u64 {
                 assert((0x01u8 & 0xfcu8) == 0 && (0u8 & 0xfcu8) == 0) by (bit_vector);
                 assert((0x01u8 & 0x01u8) != 0 && (0u8 & 0x01u8) == 0) by (bit_vector);
                 assert((0x01u8 & 0x02u8) == 0 && (0u8 & 0x02u8) == 0) by (bit_vector);
-                $repr { flags, count: self.count, data: self.data, link: self.link }
+                $repr { flags, count: self.count, _pad: self._pad, data: self.data, link: self.link }
             }
 
             fn from_repr(r: &$repr) -> (v: $node) {
-                $node { is_leaf: (r.flags & 0x01u8) != 0, count: r.count, data: r.data, link: r.link }
+                $node { is_leaf: (r.flags & 0x01u8) != 0, count: r.count, _pad: r._pad, data: r.data, link: r.link }
             }
 
             fn tag(r: &$repr) -> (b: bool) { (r.flags & 0x02u8) != 0 }
@@ -1054,8 +1162,10 @@ macro_rules! gen_layout_u64 {
             }
 
             fn is_leaf(n: &$node) -> (b: bool) { n.is_leaf }
-            fn count(n: &$node) -> (c: usize) { n.count }
-            fn key(n: &$node, i: usize) -> (k: u64) { n.data[i] }
+            fn count(n: &$node) -> (c: usize) { n.count as usize }
+            // See the u32 `key` above: `i < count <= data_len` is a proven
+            // precondition, so the bounds check is dead. `arr_get`.
+            fn key(n: &$node, i: usize) -> (k: u64) { arr_get(&n.data, i) }
 
             // u64 word -> usize arena index: the narrowing cast, lossless on a
             // 64-bit usize (the u64 layouts' declared target), proven via
@@ -1066,7 +1176,7 @@ macro_rules! gen_layout_u64 {
             fn child(n: &$node, i: usize) -> (c: usize) {
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
-                    let c = n.data[$key_cap + i] as usize;
+                    let c = arr_get(&n.data, $key_cap + i) as usize;
                     proof { lemma_u64_usize_roundtrip(n.data[$key_cap as int + i as int]); }
                     c
                 } else {
@@ -1075,12 +1185,12 @@ macro_rules! gen_layout_u64 {
             }
             fn link(n: &$node) -> (l: usize) { n.link }
             fn new_leaf() -> (n: $node) {
-                $node { is_leaf: true, count: 0, data: [0; $data_len], link: usize::MAX }
+                $node { is_leaf: true, count: 0, _pad: 0, data: [0; $data_len], link: usize::MAX }
             }
 
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u64) {
                 let ghost old_n = *n;
-                let cnt = n.count;
+                let cnt = n.count as usize;
                 let mut j = cnt;
                 while j > pos
                     invariant
@@ -1093,11 +1203,12 @@ macro_rules! gen_layout_u64 {
                         forall|k: int| j < k <= cnt ==> n.data[k] == old_n.data[k - 1],
                     decreases j - pos,
                 {
-                    n.data[j] = n.data[j - 1];
+                    let prev = arr_get(&n.data, j - 1);
+                    arr_set(&mut n.data, j, prev);
                     j = j - 1;
                 }
-                n.data[pos] = w;
-                n.count = cnt + 1;
+                arr_set(&mut n.data, pos, w);
+                n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
             }
 
@@ -1108,8 +1219,8 @@ macro_rules! gen_layout_u64 {
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
                 let rc: usize = $leaf_cap + 1 - mid;
-                let mut left = $node { is_leaf: true, count: mid, data: [0; $data_len], link: n.link };
-                let mut right = $node { is_leaf: true, count: rc, data: [0; $data_len], link: n.link };
+                let mut left = $node { is_leaf: true, count: mid as u8, _pad: 0, data: [0; $data_len], link: n.link };
+                let mut right = $node { is_leaf: true, count: rc as u8, _pad: 0, data: [0; $data_len], link: n.link };
                 let mut j: usize = 0;
                 while j < mid
                     invariant
@@ -1120,8 +1231,8 @@ macro_rules! gen_layout_u64 {
                             == (if t < pos { n.data[t] } else if t == pos { w } else { n.data[t - 1] }),
                     decreases mid - j,
                 {
-                    let v: u64 = if j < pos { n.data[j] } else if j == pos { w } else { n.data[j - 1] };
-                    left.data[j] = v;
+                    let v: u64 = if j < pos { arr_get(&n.data, j) } else if j == pos { w } else { arr_get(&n.data, j - 1) };
+                    arr_set(&mut left.data, j, v);
                     j = j + 1;
                 }
                 let mut k: usize = 0;
@@ -1135,8 +1246,8 @@ macro_rules! gen_layout_u64 {
                     decreases rc - k,
                 {
                     let idx: usize = mid + k;
-                    let v: u64 = if idx < pos { n.data[idx] } else if idx == pos { w } else { n.data[idx - 1] };
-                    right.data[k] = v;
+                    let v: u64 = if idx < pos { arr_get(&n.data, idx) } else if idx == pos { w } else { arr_get(&n.data, idx - 1) };
+                    arr_set(&mut right.data, k, v);
                     k = k + 1;
                 }
                 proof {
@@ -1175,7 +1286,7 @@ macro_rules! gen_layout_u64 {
                 data[0] = sep;
                 data[$key_cap] = left as u64;
                 data[$key_cap + 1] = right as u64;
-                let nn = $node { is_leaf: false, count: 1, data, link: 0usize };
+                let nn = $node { is_leaf: false, count: 1, _pad: 0, data, link: 0usize };
                 proof {
                     lemma_usize_u64_roundtrip(left);   // (left as u64) as nat == left as nat
                     lemma_usize_u64_roundtrip(right);
@@ -1195,7 +1306,7 @@ macro_rules! gen_layout_u64 {
             }
             fn internal_key_insert(n: &mut $node, pos: usize, w: u64) {
                 let ghost old_n = *n;
-                let cnt = n.count;
+                let cnt = n.count as usize;
                 let mut j = cnt;
                 while j > pos
                     invariant
@@ -1206,11 +1317,12 @@ macro_rules! gen_layout_u64 {
                         forall|k: int| $key_cap <= k < $data_len ==> n.data[k] == old_n.data[k],
                     decreases j - pos,
                 {
-                    n.data[j] = n.data[j - 1];
+                    let prev = arr_get(&n.data, j - 1);
+                    arr_set(&mut n.data, j, prev);
                     j = j - 1;
                 }
-                n.data[pos] = w;
-                n.count = cnt + 1;
+                arr_set(&mut n.data, pos, w);
+                n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
                 assert forall|jj: int| 0 <= jj <= $key_cap implies
                     Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
@@ -1232,7 +1344,7 @@ macro_rules! gen_layout_u64 {
                 let ghost old_n = *n;
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
-                    n.data[$key_cap + i] = v as u64;
+                    arr_set(&mut n.data, $key_cap + i, v as u64);
                     proof { lemma_usize_u64_roundtrip(v); }  // (v as u64) as nat == v as nat
                 } else {
                     n.link = v;
@@ -1258,8 +1370,8 @@ macro_rules! gen_layout_u64 {
                 // filled prefix. is_leaf=false; link is a child slot, set via children loop.
                 let mut left = *n;
                 let mut right = *n;
-                left.count = imid;
-                right.count = kc - imid;
+                left.count = imid as u8;
+                right.count = (kc - imid) as u8;
                 // left separators [0..imid) = cseps[0..imid].
                 let mut j: usize = 0;
                 while j < imid
@@ -1384,9 +1496,9 @@ macro_rules! gen_layout_u64 {
 
 // -- the six production layouts (bit-exact with `impl_layout!`) --
 
-gen_layout_u32!(Layout64U32, Node64U32, NodeRepr64U32, 14, 14, 7);
-gen_layout_u32!(Layout128U32, Node128U32, NodeRepr128U32, 30, 30, 14);
-gen_layout_u32!(Layout256U32, Node256U32, NodeRepr256U32, 62, 62, 30);
+gen_layout_u32!(Layout64U32, Node64U32, NodeRepr64U32, 64, 14, 14, 7);
+gen_layout_u32!(Layout128U32, Node128U32, NodeRepr128U32, 128, 30, 30, 14);
+gen_layout_u32!(Layout256U32, Node256U32, NodeRepr256U32, 256, 62, 62, 30);
 
 // Production back-compat aliases (Phase 8.3): the un-suffixed names default
 // to the u32 family, and the `BPlusNode*` value-struct names map to `Node*`.
@@ -1401,9 +1513,9 @@ pub type BPlusNode128U32 = Node128U32;
 pub type BPlusNode256 = Node256U32;
 pub type BPlusNode256U32 = Node256U32;
 
-gen_layout_u64!(Layout128U64, Node128U64, NodeRepr128U64, 14, 14, 6);
-gen_layout_u64!(Layout256U64, Node256U64, NodeRepr256U64, 30, 30, 14);
-gen_layout_u64!(Layout512U64, Node512U64, NodeRepr512U64, 62, 62, 30);
+gen_layout_u64!(Layout128U64, Node128U64, NodeRepr128U64, 128, 14, 14, 6);
+gen_layout_u64!(Layout256U64, Node256U64, NodeRepr256U64, 256, 30, 30, 14);
+gen_layout_u64!(Layout512U64, Node512U64, NodeRepr512U64, 512, 62, 62, 30);
 
 pub type BPlusNode128U64 = Node128U64;
 pub type BPlusNode256U64 = Node256U64;
