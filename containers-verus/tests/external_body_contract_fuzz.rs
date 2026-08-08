@@ -344,3 +344,107 @@ fn shrink_preserves_aov_contents() {
     }
     println!("shrink_preserves_aov_contents: OK (200 rounds)");
 }
+
+// --------------------------------------------------------------------------
+// bplus_layout::arr_get / arr_set / sel_usize.
+//
+// These three are `external_body` so that a fact Verus already PROVED reaches
+// the machine code: the elided bounds check (`arr_get`/`arr_set`, whose `i < N`
+// is a verified precondition at every call site) and the `cmov` lowering of the
+// bisection's data-dependent update (`sel_usize`). Their contracts are trivial
+// to state and therefore trivial to check at runtime, which is exactly why they
+// are fuzzed rather than argued about: `arr_get`/`arr_set` must agree with
+// checked indexing on every in-range index, and `sel_usize` must agree with the
+// `if`/`else` it replaces on both boolean values.
+//
+// `arr_get`/`arr_set` are only called OUT of range by a caller that violated a
+// verified precondition, so the out-of-range case is deliberately not exercised
+// (it is UB, not a testable branch).
+// --------------------------------------------------------------------------
+
+#[test]
+fn arr_get_set_agree_with_checked_indexing() {
+    use semi_persistent_containers_verus::bplus_layout::{arr_get, arr_set};
+
+    const N: usize = 62;
+    let mut lcg: u64 = 0x5EED_1234_ABCD_0001;
+    let mut next = move || {
+        lcg = lcg
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lcg >> 1
+    };
+
+    for round in 0..500 {
+        // A fresh array and a mirror the test indexes the ordinary, checked way.
+        let mut a = [0u32; N];
+        let mut mirror = [0u32; N];
+        for (i, m) in mirror.iter_mut().enumerate() {
+            let v = next() as u32;
+            arr_set(&mut a, i, v);
+            *m = v;
+        }
+        // reads agree at every in-range index
+        for (i, &m) in mirror.iter().enumerate() {
+            assert_eq!(
+                arr_get(&a, i),
+                m,
+                "round {round}: arr_get disagrees with checked read at {i}"
+            );
+        }
+        // an overwrite touches exactly the one slot it names
+        let pos = (next() as usize) % N;
+        let w = next() as u32;
+        arr_set(&mut a, pos, w);
+        mirror[pos] = w;
+        for (i, &m) in mirror.iter().enumerate() {
+            assert_eq!(
+                arr_get(&a, i),
+                m,
+                "round {round}: arr_set perturbed slot {i} while writing {pos}"
+            );
+        }
+    }
+    println!("arr_get_set_agree_with_checked_indexing: OK (500 rounds x 62 slots)");
+}
+
+#[test]
+fn sel_usize_agrees_with_if_else() {
+    use semi_persistent_containers_verus::bplus_layout::sel_usize;
+
+    let mut lcg: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        lcg = lcg
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lcg >> 1
+    };
+
+    // Edge values plus random ones: the postcondition is `if c { b } else { a }`,
+    // so both arms must be reproduced exactly, including at the type's extremes.
+    let mut cases: Vec<(usize, usize)> = vec![
+        (0, 0),
+        (0, usize::MAX),
+        (usize::MAX, 0),
+        (usize::MAX, usize::MAX),
+        (1, usize::MAX - 1),
+    ];
+    for _ in 0..500 {
+        cases.push((next() as usize, next() as usize));
+    }
+
+    for (i, &(a, b)) in cases.iter().enumerate() {
+        for c in [false, true] {
+            let expect = if c { b } else { a };
+            assert_eq!(
+                sel_usize(c, a, b),
+                expect,
+                "case {i}: sel_usize({c}, {a}, {b}) != if/else"
+            );
+        }
+    }
+    println!(
+        "sel_usize_agrees_with_if_else: OK ({} cases x 2)",
+        cases.len()
+    );
+}

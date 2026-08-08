@@ -69,74 +69,137 @@ pub struct BinarySearch;
 impl SearchKind for BinarySearch {
     fn find_ge<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
         let n = keys.len();
-        let mut lo: usize = 0;
-        let mut hi: usize = n;
-        while lo < hi
+        if n == 0 {
+            return 0;
+        }
+        // `partition_point`'s shape, not the textbook `while lo < hi`: `size`
+        // shrinks unconditionally so the trip count is `log2(n)` regardless of the
+        // data, and the only data-dependent value — `base` — is chosen by
+        // `sel_usize`, which lowers to `cmov`. Both halves matter; see
+        // `bplus_layout::sel_usize` for why the plain `if` form silently keeps the
+        // mispredicting branch, and `bplus.rs`'s `leaf_find_ge` for the measurement
+        // (the same change took the B+tree descent from +21% to -19% vs production).
+        let mut base: usize = 0;
+        let mut size: usize = n;
+        while size > 1
             invariant
-                lo <= hi <= n,
+                1 <= size,
+                base + size <= n,
                 n == keys.len(),
                 sorted_le(keys@),
-                forall|i: int| 0 <= i < lo ==> (#[trigger] keys@[i].as_nat()) < target.as_nat(),
-                forall|i: int| hi <= i < n ==> target.as_nat() <= (#[trigger] keys@[i].as_nat()),
-            decreases hi - lo,
+                forall|i: int| 0 <= i < base ==> (#[trigger] keys@[i].as_nat()) < target.as_nat(),
+                forall|i: int| base + size <= i < n ==> target.as_nat() <= (#[trigger] keys@[i].as_nat()),
+            decreases size,
         {
-            let mid = lo + (hi - lo) / 2;
+            let half = size / 2;
+            let mid = base + half;
             let km = keys[mid];
             assert(km == keys@[mid as int]);
             let is_lt = km.lt(target);
-            proof { W::lemma_order_is_as_nat(km, target); }  // is_lt == (km.as_nat() < target.as_nat())
+            // The case split lives INSIDE `proof` (rather than being an exec
+            // `if`/`else` with a proof block per arm) so that clippy does not see
+            // two exec branches that erase to the same empty block —
+            // `clippy::if_same_then_else`. Same reason in `find_gt` and in
+            // `bplus.rs`'s two bisections.
+            proof {
+                W::lemma_order_is_as_nat(km, target);  // is_lt == (km.as_nat() < target.as_nat())
+                if is_lt {
+                    // every i <= mid: keys[i] <= km < target.
+                    assert forall|i: int| 0 <= i < mid implies
+                        (#[trigger] keys@[i].as_nat()) < target.as_nat() by {
+                        lemma_sorted_le_at(keys@, i, mid as int);
+                    }
+                } else {
+                    // every i >= mid: target <= km <= keys[i].
+                    assert forall|i: int| mid <= i < n implies
+                        target.as_nat() <= (#[trigger] keys@[i].as_nat()) by {
+                        lemma_sorted_le_at(keys@, mid as int, i);
+                    }
+                }
+            }
+            base = crate::bplus_layout::sel_usize(is_lt, base, mid);
+            size = size - half;
+        }
+        let kb = keys[base];
+        assert(kb == keys@[base as int]);
+        let is_lt = kb.lt(target);
+        proof {
+            W::lemma_order_is_as_nat(kb, target);
             if is_lt {
-                // every i <= mid: keys[i] <= km < target.
-                assert forall|i: int| 0 <= i <= mid implies
+                assert forall|i: int| 0 <= i < base + 1 implies
                     (#[trigger] keys@[i].as_nat()) < target.as_nat() by {
-                    lemma_sorted_le_at(keys@, i, mid as int);
+                    lemma_sorted_le_at(keys@, i, base as int);
                 }
-                lo = mid + 1;
             } else {
-                // every i >= mid: target <= km <= keys[i].
-                assert forall|i: int| mid <= i < n implies
+                assert forall|i: int| base <= i < n implies
                     target.as_nat() <= (#[trigger] keys@[i].as_nat()) by {
-                    lemma_sorted_le_at(keys@, mid as int, i);
+                    lemma_sorted_le_at(keys@, base as int, i);
                 }
-                hi = mid;
             }
         }
-        lo
+        // Tail step stays a plain `if`: it lowers to `adc` on the compare's own
+        // flag, which is cheaper than forcing a `cmov` here.
+        base + if is_lt { 1usize } else { 0usize }
     }
 
     fn find_gt<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
         let n = keys.len();
-        let mut lo: usize = 0;
-        let mut hi: usize = n;
-        while lo < hi
+        if n == 0 {
+            return 0;
+        }
+        // Same shape and same reason as `find_ge`'s, with the `<=` boundary.
+        let mut base: usize = 0;
+        let mut size: usize = n;
+        while size > 1
             invariant
-                lo <= hi <= n,
+                1 <= size,
+                base + size <= n,
                 n == keys.len(),
                 sorted_le(keys@),
-                forall|i: int| 0 <= i < lo ==> (#[trigger] keys@[i].as_nat()) <= target.as_nat(),
-                forall|i: int| hi <= i < n ==> target.as_nat() < (#[trigger] keys@[i].as_nat()),
-            decreases hi - lo,
+                forall|i: int| 0 <= i < base ==> (#[trigger] keys@[i].as_nat()) <= target.as_nat(),
+                forall|i: int| base + size <= i < n ==> target.as_nat() < (#[trigger] keys@[i].as_nat()),
+            decreases size,
         {
-            let mid = lo + (hi - lo) / 2;
+            let half = size / 2;
+            let mid = base + half;
             let km = keys[mid];
             assert(km == keys@[mid as int]);
             let is_le = km.le(target);
-            proof { W::lemma_order_is_as_nat(km, target); }  // is_le == (km.as_nat() <= target.as_nat())
+            proof {
+                W::lemma_order_is_as_nat(km, target);  // is_le == (km.as_nat() <= target.as_nat())
+                if is_le {
+                    assert forall|i: int| 0 <= i < mid implies
+                        (#[trigger] keys@[i].as_nat()) <= target.as_nat() by {
+                        lemma_sorted_le_at(keys@, i, mid as int);
+                    }
+                } else {
+                    assert forall|i: int| mid <= i < n implies
+                        target.as_nat() < (#[trigger] keys@[i].as_nat()) by {
+                        lemma_sorted_le_at(keys@, mid as int, i);
+                    }
+                }
+            }
+            base = crate::bplus_layout::sel_usize(is_le, base, mid);
+            size = size - half;
+        }
+        let kb = keys[base];
+        assert(kb == keys@[base as int]);
+        let is_le = kb.le(target);
+        proof {
+            W::lemma_order_is_as_nat(kb, target);
             if is_le {
-                assert forall|i: int| 0 <= i <= mid implies
+                assert forall|i: int| 0 <= i < base + 1 implies
                     (#[trigger] keys@[i].as_nat()) <= target.as_nat() by {
-                    lemma_sorted_le_at(keys@, i, mid as int);
+                    lemma_sorted_le_at(keys@, i, base as int);
                 }
-                lo = mid + 1;
             } else {
-                assert forall|i: int| mid <= i < n implies
+                assert forall|i: int| base <= i < n implies
                     target.as_nat() < (#[trigger] keys@[i].as_nat()) by {
-                    lemma_sorted_le_at(keys@, mid as int, i);
+                    lemma_sorted_le_at(keys@, base as int, i);
                 }
-                hi = mid;
             }
         }
-        lo
+        base + if is_le { 1usize } else { 0usize }
     }
 }
 
