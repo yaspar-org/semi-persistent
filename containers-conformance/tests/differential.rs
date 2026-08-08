@@ -914,9 +914,15 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
 
     const N: usize = 4_000;
     let mut p = pring::build::<true>(N);
-    let mut v: verus::CircularList<verus::Opt<u32>, VNodeId, true> = verus::CircularList::new();
+    // Payload type derived from the id (`Opt<VNodeId::Index>`), as the consumer's
+    // `ClassRing<T, TRACK>` is — not a spelled-out `Opt<u32>`.
+    let mut v: verus::CircularList<
+        verus::Opt<<VNodeId as verus::opt::DenseId>::Index>,
+        VNodeId,
+        true,
+    > = verus::CircularList::new();
     for i in 0..N {
-        v.add_singleton(verus::Opt::some(i as u32));
+        v.add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()));
     }
 
     // Both sides start with identically-grown backing vectors, so tracking
@@ -944,12 +950,22 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
                 if a == b {
                     continue;
                 }
-                pring::splice(&mut p, PNodeId::new(a as u32), PNodeId::new(b as u32));
+                pring::splice(
+                    &mut p,
+                    <PNodeId as prod::DenseId>::from_usize(a),
+                    <PNodeId as prod::DenseId>::from_usize(b),
+                );
                 let (vs, vb) = (VNodeId::from_usize(a), VNodeId::from_usize(b));
-                v.splice(vs, vb);
+                // `splice_absorb`, i.e. the consumer's shape (`splice_classes`):
+                // two cell writes per merge on both sides, so this trace compares
+                // equal write *counts*, not just equal bytes. With the payload
+                // clear as a separate `set_payload` the verus side wrote the
+                // absorbed cell three times; first-write-wins dedup hid that in the
+                // byte total, which is exactly why the write count needs its own
+                // baseline (`benches/perf_gate.rs`, `class_merge_restore`).
                 let mut payload = v.payload_of(vb);
                 payload.set_none();
-                v.set_payload(vb, payload);
+                v.splice_absorb(vs, vb, payload);
             }
             75..=89 => {
                 if marks.len() >= 12 {

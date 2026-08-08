@@ -625,11 +625,10 @@ where T: Sized + Copy + core::default::Default {
     /// use; splicing within one ring would split it).
     ///
     /// Payload-preserving. A caller that also rewrites a payload (the class
-    /// merge, which marks the absorbed class's key absent) follows this with
-    /// `set_payload`; folding the payload writes into the two stores this
-    /// performs was tried and measured no faster (LLVM already forwards the
-    /// redundant load), so the narrower signature stays —
-    /// `containers-conformance/examples/splicesplit.rs`.
+    /// merge, which marks the absorbed class's key absent) should use
+    /// [`Self::splice_absorb`] rather than following this with `set_payload`:
+    /// on a **tracked** ring the separate payload write is a third `set_index`,
+    /// and every `set_index` runs the capture protocol. See `splice_absorb`.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(800)]
     pub fn splice(&mut self, sid: N, aid: N)
@@ -729,6 +728,114 @@ where T: Sized + Copy + core::default::Default {
             // ensures), so the OPAQUE agreement predicate transfers by
             // congruence; no reveal needed, which keeps ring_snap_wf's nested
             // quantifiers out of this (rlimit-sensitive) proof's context.
+            lemma_splice_merge(*old(self), self, s as int, a as int, cs, ca, ps, pa);
+        }
+    }
+
+    /// [`Self::splice`] with the absorbed node's new payload folded into the
+    /// store the ring surgery already performs — the class merge's exact shape
+    /// (merge the rings, mark the absorbed class's key absent).
+    ///
+    /// This exists for a measured reason. `splice` + `set_payload` writes the
+    /// absorbed cell **twice**, and on a tracked ring every `set_index` runs the
+    /// capture protocol (tag test, and on a first write a diff-log push). Where
+    /// production's hand-rolled merge folded the presence-bit clear into the same
+    /// full-cell store as the `next` rewrite — 2 cell writes per merge — the
+    /// split form pays 3. Folding it back was previously tried and reverted as
+    /// "no faster", but that was measured **untracked**, where the third write is
+    /// a plain store and LLVM forwards the redundant load
+    /// (`containers-conformance/examples/splicesplit.rs`); the tracked path is
+    /// where the write count is load-bearing, and there it is worth ~15pp on
+    /// `class_merge_restore`.
+    ///
+    /// Payload-wise this is `set_payload(aid, a_payload)` composed with
+    /// `splice(sid, aid)`; `splice` provably preserves payloads, so the order is
+    /// observationally irrelevant and the ring postconditions are `splice`'s
+    /// verbatim.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(800)]
+    pub fn splice_absorb(&mut self, sid: N, aid: N, a_payload: T)
+        requires
+            old(self).wf(),
+            sid.id_nat() < old(self).n_spec(),
+            aid.id_nat() < old(self).n_spec(),
+            // different rings
+            old(self).locate(sid.id_nat() as int).0 != old(self).locate(aid.id_nat() as int).0,
+        ensures
+            self.wf(),
+            self.n_spec() == old(self).n_spec(),
+            // the ONLY difference from `splice`: the absorbed node's payload.
+            self.payload_seq()
+                == old(self).payload_seq().update(aid.id_nat() as int, a_payload),
+            self.model_view().len() == old(self).model_view().len(),
+            ({
+                let s = sid.id_nat() as int;
+                let a = aid.id_nat() as int;
+                let cs = old(self).locate(s).0;
+                let ca = old(self).locate(a).0;
+                let ps = old(self).locate(s).1;
+                let pa = old(self).locate(a).1;
+                &&& self.model_view()[cs]
+                        == rotate(old(self).model_view()[cs], ps + 1)
+                            + rotate(old(self).model_view()[ca], pa + 1)
+                &&& self.model_view()[ca] == Seq::<usize>::empty()
+                &&& (forall|c: int| 0 <= c < self.model_view().len() && c != cs && c != ca
+                        ==> #[trigger] self.model_view()[c] == old(self).model_view()[c])
+            }),
+    {
+        // Body is `splice`'s verbatim except for the absorbed cell's payload;
+        // see `splice` for the commentary on each step.
+        self.debug_check_different_rings(sid, aid);
+        proof {
+            crate::opt::lemma_id_nat_fits_usize(sid);
+            crate::opt::lemma_id_nat_fits_usize(aid);
+        }
+        let ghost s = sid.id_nat() as usize;
+        let ghost a = aid.id_nat() as usize;
+        let sw = sid.to_index();
+        let aw = aid.to_index();
+        proof {
+            assert(self.in_some_ring(s as int));
+            assert(self.in_some_ring(a as int));
+        }
+        let ghost cs = self.locate(s as int).0;
+        let ghost ca = self.locate(a as int).0;
+        let ghost ps = self.locate(s as int).1;
+        let ghost pa = self.locate(a as int).1;
+        let ghost old_m = self.model@;
+        proof {
+            assert(0 <= cs < old_m.len() && 0 <= ps < old_m[cs].len() && old_m[cs][ps] == s as int);
+            assert(0 <= ca < old_m.len() && 0 <= pa < old_m[ca].len() && old_m[ca][pa] == a as int);
+        }
+        assert(sw.as_nat() == s as nat);
+        assert(aw.as_nat() == a as nat);
+
+        let s_node = self.entries.get_index(sw);
+        let a_node = self.entries.get_index(aw);
+        let old_s_next = s_node.next;
+        let old_a_next = a_node.next;
+        self.entries.set_index(sw, CircularListNode { payload: s_node.payload, next: old_a_next });
+        // The fold: `a_payload` instead of `a_node.payload`, same single store.
+        self.entries.set_index(aw, CircularListNode { payload: a_payload, next: old_s_next });
+
+        let merged = Ghost(rotate(old_m[cs], ps + 1) + rotate(old_m[ca], pa + 1));
+        self.model = Ghost(self.model@.update(cs, merged@).update(ca, Seq::empty()));
+
+        proof {
+            // Payloads: `s`'s is unchanged, `a`'s is the new one, all others by
+            // congruence — the `update` in the ensures, extensionally.
+            assert(self.payload_seq()
+                =~= old(self).payload_seq().update(a as int, a_payload));
+            let ns = self.next_seq();
+            let old_ns = old(self).next_seq();
+            assert(ns[s as int] == old_ns[a as int]);
+            assert(ns[a as int] == old_ns[s as int]);
+            assert forall|k: int| 0 <= k < self.n_spec() && k != s as int && k != a as int implies
+                #[trigger] ns[k] == old_ns[k] by {}
+            assert(self.model@.len() == old_m.update(cs, merged@).update(ca, Seq::empty()).len());
+            assert(self.model@.len() == old(self).model@.len());
+            // `wf` does not constrain payloads, so the merge lemma applies
+            // unchanged — this is why the fold is proof-free.
             lemma_splice_merge(*old(self), self, s as int, a as int, cs, ca, ps, pa);
         }
     }

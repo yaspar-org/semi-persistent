@@ -303,10 +303,14 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     /// Number of parents in a representative's use-list, O(1) (cached in the list header).
     /// Used to choose the merge survivor by parent count (the larger list survives, so the
     /// smaller absorbed set is what gets recanonicalized).
-    pub fn use_list_len(&self, repr_id: T::Index) -> u32 {
-        // prod-parity: verus `ListArena::len` returns `usize` (production returned
-        // `u32`); the length is cached as `u32` internally so this never truncates.
-        self.uses.len(self.reprs.get(repr_id).use_list) as u32
+    /// Returns `usize`, not the id word. A use-list length is a **count**, not an id
+    /// or an index into an id-keyed arena, so it is not capacity-coupled and must not
+    /// be narrowed to one: `as u32` here would silently truncate on a config whose
+    /// `Index` is wider than `u32` (`egraph/src/config.rs`), which is the overflow
+    /// class the single-`Index` discipline exists to rule out. The verus
+    /// `ListArena::len` already returns `usize`; this is a pass-through.
+    pub fn use_list_len(&self, repr_id: T::Index) -> usize {
+        self.uses.len(self.reprs.get(repr_id).use_list)
     }
 
     /// The class's current minimum-monomial node for completion column `col` (the completion
@@ -487,28 +491,31 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     /// every payload untouched), so the survivor needs no payload write at all;
     /// only the absorbed cell's presence bit is cleared.
     ///
-    /// The presence-bit clear is a separate `set_payload` rather than a payload
-    /// carried through the splice. Folding it in was tried and measured no faster
-    /// (`containers-conformance/examples/splicesplit.rs`: 5.58 vs 5.59 µs over 10k
-    /// merges) — LLVM forwards the redundant load — so the container keeps the
-    /// narrower `splice` signature.
+    /// The presence-bit clear rides through the splice (`splice_absorb`) rather
+    /// than following it as a separate `set_payload`. Folding it in was once
+    /// measured as no faster (`examples/splicesplit.rs`: 5.58 vs 5.59 µs over 10k
+    /// merges) and the payload-carrying form was reverted — but that measurement
+    /// was **untracked**, where the third write is a plain store LLVM can forward.
+    /// This ring is tracked, and there every `set_index` runs the capture protocol,
+    /// so a third write is a third tag test (plus a diff-log push on the first
+    /// write to a cell). Given production's identical write count the verified ring
+    /// is ~16% faster; given one extra write it read +2.5% instead.
     fn splice_classes(&mut self, (survivor, absorbed): (T, T)) {
-        // Read before the splice; the payload survives it either way, but this
-        // is also the value `remove` needs and keeps the read off the hot path.
-        let abs_repr = self.repr_id_unchecked(absorbed);
-
-        // Distinct rings is `splice`'s precondition. Union-find has just told us
-        // these are two different classes, which is exactly that — the same
-        // discipline the hand-rolled version relied on silently; debug builds
-        // now check it (`CircularList::debug_check_different_rings`).
-        self.entries.splice(survivor, absorbed);
-
-        // Mark the absorbed class absent, keeping the key readable through
-        // `repr_id_unchecked` (`Opt::set_none` preserves the value — it only
-        // sets the tag). One payload write, as before.
+        // One read of the absorbed cell serves both consumers: the sparse-set key
+        // `remove` needs, and the payload the splice stores back with the presence
+        // bit cleared. (`Opt::set_none` preserves the value, so the key also stays
+        // readable through `repr_id_unchecked` afterwards.)
         let mut absorbed_payload = self.entries.payload_of(absorbed);
+        let abs_repr = absorbed_payload.get_unchecked();
         absorbed_payload.set_none();
-        self.entries.set_payload(absorbed, absorbed_payload);
+
+        // Distinct rings is `splice_absorb`'s precondition. Union-find has just
+        // told us these are two different classes, which is exactly that — the
+        // same discipline the hand-rolled version relied on silently; debug
+        // builds now check it (`CircularList::debug_check_different_rings`).
+        // Two cell writes per merge, matching the pre-swap hand-rolled ring.
+        self.entries
+            .splice_absorb(survivor, absorbed, absorbed_payload);
 
         self.reprs.remove(abs_repr);
     }
@@ -574,10 +581,20 @@ pub type ClassIter<'a, T, const TRACK: bool> =
 // `next` word (capture bit in its spare MSB) plus an 8-byte `BoolTagged<u32>`
 // payload (repr key + presence bit). See the module doc; this is the memory
 // budget the verified ring had to match, so it is asserted, not assumed.
+//
+// The payload word is written `<ENodeId as DenseId>::Index`, not `u32`: the cell's
+// width follows the id family by construction (`ClassRing<T, TRACK>` above), and
+// spelling the word out here would leave an assertion that keeps passing while
+// silently describing a different type than the one `ClassRing` instantiates.
+// `ENodeId` is the 31-bit config, so the expected size is still 12.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
-    core::mem::size_of::<containers::circular_list::CircularNodeRepr<Opt<u32>, crate::id::ENodeId>>(
-    ) == 12,
+    core::mem::size_of::<
+        containers::circular_list::CircularNodeRepr<
+            Opt<<crate::id::ENodeId as DenseId>::Index>,
+            crate::id::ENodeId,
+        >,
+    >() == 12,
     "e-class ring cell must stay 12 bytes at 31-bit ids"
 );
 
@@ -736,7 +753,7 @@ mod tests {
         ec.add_use(rx, p1);
         ec.add_use(rx, p2);
         assert_eq!(ec.use_list_len(rx), 3);
-        assert_eq!(ec.use_list_len(rx) as usize, ec.iter_uses(rx).count());
+        assert_eq!(ec.use_list_len(rx), ec.iter_uses(rx).count());
     }
 
     #[test]
