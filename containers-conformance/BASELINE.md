@@ -22,6 +22,29 @@ is the least favourable delta in the table below; the ceiling is
 `recorded + perf::NOISE_MARGIN` (6pp), capped by `perf::MIGRATION_GATE` (the
 plan's absolute 10%).
 
+## Enforced on the machine they were measured on
+
+The recorded ceilings are a contract for the baseline machine below. The
+prod/verus ratio is itself machine-dependent, not merely noisy: one GitHub
+shared-runner run read `mark_set_restore` at +1.9% against a −12…−17% recorded
+range and, in the same run, `class_merge_restore` at −28.6% against −7.9…−8.2%
+recorded (0.3pp local spread) — ~14–20pp shifts in opposite directions. A
+`NOISE_MARGIN` wide enough to cover that collapses every ceiling to the blanket
+10% the per-row design exists to avoid.
+
+So the gate has two modes:
+
+- **default** — per-row recorded ceilings, for the baseline machine. This is
+  the mode any re-record must be measured in.
+- **absolute** (`PERF_GATE_ABSOLUTE=1`, set by the `perf-gate` CI job) — every
+  gated row is held to the one-sided `MIGRATION_GATE` (+10%) only. This is the
+  migration plan's own criterion, the strongest claim that transfers across
+  machines. The recorded ceilings are still printed for comparison.
+
+A failure in absolute mode is a real regression on any hardware; a failure in
+default mode on a machine other than the one below is measuring the CPU, not
+the code.
+
 Per-row pinning is the point. Under the blanket `pct <= 10` gate this file
 previously described, `mark_set_restore` — recorded at −12…−17% — could have
 degraded all the way to +9% and still printed `ok`: a 26pp regression behind a

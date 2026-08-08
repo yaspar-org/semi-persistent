@@ -27,6 +27,11 @@
 //! makes `BASELINE.md` enforced rather than documentary. The recorded values come
 //! from the measured spread over seven consecutive runs, quoted per row below.
 //!
+//! The per-row ceilings hold on the machine they were recorded on. On other
+//! hardware the ratio itself moves (see `perf::absolute_mode` and
+//! `BASELINE.md`), so CI's shared runners set `PERF_GATE_ABSOLUTE=1` and gate
+//! on `MIGRATION_GATE` alone.
+//!
 //! ## Why `push_only` is verified by disassembly, not timed here
 //!
 //! A tight allocate-and-push loop is the ONE workload no in-process A/B harness
@@ -471,19 +476,52 @@ fn main() {
         row_class_walk(),
         row_class_merge_restore(),
     ];
+    if perf::absolute_mode() {
+        println!(
+            "gate mode: absolute ({}={} in the environment) — every gated row's\n\
+             ceiling is the migration criterion, +{:.0}%. The per-row recorded\n\
+             ceilings from BASELINE.md are enforced only on the machine they\n\
+             were measured on; the prod/verus ratio is machine-dependent, so on\n\
+             other hardware they gate the CPU, not the code.\n",
+            perf::ABSOLUTE_MODE_ENV,
+            std::env::var(perf::ABSOLUTE_MODE_ENV).unwrap_or_default(),
+            perf::MIGRATION_GATE,
+        );
+    }
     perf::report(&ungated);
     let ok = perf::report(&rows);
     if !ok {
-        eprintln!(
-            "\nperf gate FAILED: a row is above its recorded ceiling (see the\n\
-             OVER rows above, and `BASELINE.md` for what each was recorded at).\n\
-             Note the ceiling is per-row, not a blanket 10%: a row recorded as\n\
-             verus-faster has to STAY verus-faster. If you believe the new number\n\
-             is legitimate, re-record it in BASELINE.md and in the `Row::gated`\n\
-             call with the measured spread that justifies it — do not just widen\n\
-             the margin, which would discard the signal this gate exists for."
-        );
+        if perf::absolute_mode() {
+            eprintln!(
+                "\nperf gate FAILED: a row is above the absolute migration\n\
+                 ceiling (+{:.0}%) even in absolute mode, which already ignores\n\
+                 the per-row recorded ceilings. This is not runner noise at any\n\
+                 plausible width; treat it as a real regression and reproduce it\n\
+                 on the baseline machine.",
+                perf::MIGRATION_GATE,
+            );
+        } else {
+            eprintln!(
+                "\nperf gate FAILED: a row is above its recorded ceiling (see the\n\
+                 OVER rows above, and `BASELINE.md` for what each was recorded at).\n\
+                 Note the ceiling is per-row, not a blanket 10%: a row recorded as\n\
+                 verus-faster has to STAY verus-faster. If you believe the new number\n\
+                 is legitimate, re-record it in BASELINE.md and in the `Row::gated`\n\
+                 call with the measured spread that justifies it — do not just widen\n\
+                 the margin, which would discard the signal this gate exists for.\n\
+                 If this machine is NOT the one BASELINE.md was recorded on, set\n\
+                 {}=1 and gate on the absolute criterion instead.",
+                perf::ABSOLUTE_MODE_ENV,
+            );
+        }
         std::process::exit(1);
     }
-    println!("\nperf gate: all rows within their recorded ceilings.");
+    println!(
+        "\nperf gate: all rows within their {} ceilings.",
+        if perf::absolute_mode() {
+            "absolute"
+        } else {
+            "recorded"
+        }
+    );
 }
