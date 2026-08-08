@@ -12,8 +12,8 @@ for each, why it is trusted rather than proved.*
 
 | configuration | `external_body` markers | axiom fns |
 |---|---|---|
-| default features | **24** (3 structs + 21 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
-| `literal-types` | **29** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
+| default features | **25** (3 structs + 22 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
+| `literal-types` | **30** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
 
 *Counts re-derived 2026-08-08 by grepping `#[verifier::external_body]` and
 splitting on the `literal-types` gate (`external_specs.rs` is the only gated
@@ -22,8 +22,8 @@ three: `ListArena::tracking_bytes`, `ListArena::total_bytes` (both group B, both
 spec-free), and `data_capacity_bits` (group B, contract-carrying — see §2c).
 Only the last of the three changes the assumed-fact inventory.*
 
-*The B+tree hot-path work added the three markers in `bplus_layout.rs`
-(21 → 24), all group B (contract-carrying) and all there to make a **proved**
+*The B+tree hot-path work added the four markers in `bplus_layout.rs`
+(21 → 25), all group B (contract-carrying) and all there to make a **proved**
 fact reach the machine code:*
 
 - *`arr_get` / `arr_set` — fixed-size-array access with the bounds check elided.
@@ -37,10 +37,18 @@ fact reach the machine code:*
   a total expression containing **no `unsafe`**; `select_unpredictable` is a
   codegen hint whose documented semantics are exactly the stated postcondition.
   It is `external_body` only because the intrinsic carries no Verus spec.*
+- *`arr_shift_up` — opens a hole at `pos` by moving `a[pos..cnt]` up one slot.
+  Verus can only carry a loop invariant through an explicit element loop, so the
+  verified leaf/internal insert walked the tail down one word at a time where
+  production issues one `memmove`. The four-clause postcondition (prefix, shifted
+  window, tail, length) is the whole contract; `copy_within`'s own documented
+  behaviour supplies it for the long arm, and the short arm is literally the loop
+  it replaces. `pos <= cnt < N` is verified at every call site. **No `unsafe`.***
 
-*None of the three widens the assumed-fact inventory in a way a proof could
+*None of the four widens the assumed-fact inventory in a way a proof could
 exploit: `arr_get`/`arr_set` restate indexing that vstd already specs for the
-checked form, and `sel_usize` restates a conditional.*
+checked form, `sel_usize` restates a conditional, and `arr_shift_up` restates a
+slice copy whose effect its postcondition pins element-by-element.*
 
 *For the migration reviewer, the delta against the pre-migration merge
 base (7 markers: `struct ContainerId` + `new` + `eq`, `check_precondition`,

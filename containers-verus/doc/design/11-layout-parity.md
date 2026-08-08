@@ -462,6 +462,74 @@ compiled before concluding the mechanism is absent.** A no-op result has two
 readings — the mechanism is innocent, or the change never happened — and they are
 distinguished by reading the asm, not by re-running the benchmark.
 
+## Closed: the mutation gap was one `memmove` and one redundant node read
+
+With the bisection lowered correctly (previous section), `insert shuffled` sat at
++12.3% while `descent (iter)` was already *faster* than production. Subtracting
+the rows separates the two halves of an insert, and the answer was unambiguous:
+
+|                                              | prod | verus | delta |
+|---|---|---|---|
+| descent (`redescent − insert shuffled`)      | 11874µs | 11992µs | **+1.0%** |
+| mutation (`insert shuffled − redescent`)     |  1084µs |  2615µs | **+141%** |
+
+The descent was done; the whole residual lived in the ~10% of an insert that
+mutates. Two mechanisms, both closed:
+
+**1. The scalar shift (`arr_shift_up`).** `leaf_insert_at` walked the tail down one
+word at a time, because a loop is the only form Verus can carry an invariant
+through, where production calls `copy_within` (one `memmove`). Priced across the
+shift lengths a real insert produces:
+
+```text
+  shift length:      1      4     16     31     48     61   uniform(0..62)
+  scalar:         0.99   2.35   8.65  17.57  26.77  35.02   21.39 ns
+  memmove:        3.24   8.38   9.80   9.02  10.36  10.23    8.35 ns
+```
+
+The crossover is ~18 elements and a shuffled insert into a 62-slot leaf averages a
+30-element shift, so the scalar loop cost **+156%** on the distribution that
+occurs. `arr_shift_up` dispatches on length and takes *both* ends — the scalar
+walk's short-tail advantage and `memmove`'s throughput — so it is faster than
+production rather than merely equal. Its `#[inline(always)]` is load-bearing: an
+`external_body` fn is a real call boundary, and left out of line the change cost
+*more* than the loop it replaced.
+
+**2. The double node read.** `insert_rec` copies the whole node by value to test
+`is_leaf`, then `insert_rec_leaf` re-read the *same* arena slot — 248 bytes copied
+twice for no new information. `insert_rec_leaf` now takes `node: &L::Node` with
+`*node == old(self).arena()[idx]` as a precondition, so every proof that spoke
+about the removed local read speaks about the parameter instead, with no
+weakening. Worth **1.4pp** on `insert shuffled` (A/B'd against a restored
+baseline, three runs each, non-overlapping: 11.0/10.5/11.2% → 9.7/9.6/9.6%).
+
+### A fourth hypothesis that died: the per-level stack frame
+
+`insert_rec` compiles to `sub $0x600,%rsp` — 1536 bytes **per level**, because
+Verus allocates the split-arm locals unconditionally even though a split fires at
+most once per ~30 inserts, where production keeps one frame for the whole descent.
+A probe allocating 1536 bytes/level measured +146%/+74%/+57%/+41% at heights 1–4,
+and this chapter's first draft of this section recorded frame size as the dominant
+remaining mechanism.
+
+It was an artifact of the probe. That arm wrote `let mut scratch = [0u64; 160]`,
+whose initializer is a real memset — so it priced 1280 bytes of **stores** per
+level, a cost the real code (whose split locals go unwritten on the common path)
+never pays. Reserving the same frame via `MaybeUninit` and only keeping it alive
+measures **−3.9% / −0.6% / −0.2% / −1.4%**: reserving stack is free, initializing
+it is not.
+
+The wrong reading also produced a wrong fix. Marking `leaf_split_at` /
+`internal_split_at` `#[inline(never)]` — to keep the split's two by-value nodes out
+of the descent frame — made the frame *grow* (0x600 → 0x900, since out-of-line
+returns need caller-side return slots) and `insert shuffled` went +11.3% → +13.0%.
+Reverting recovered it.
+
+**Rule added:** when a probe is meant to isolate stack *size*, reserve with
+`MaybeUninit` and keep it alive with `black_box(ptr)`. If the arm has an
+initializer, it is measuring stores, not the frame. And `sub $N,%rsp` is not a
+mechanism — chase what the code reads and writes.
+
 ## The honest new bounds (verified surfaces production's silent wraps)
 
 Two places the verified crate REFUSES what production silently corrupts:

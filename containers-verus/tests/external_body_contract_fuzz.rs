@@ -346,16 +346,20 @@ fn shrink_preserves_aov_contents() {
 }
 
 // --------------------------------------------------------------------------
-// bplus_layout::arr_get / arr_set / sel_usize.
+// bplus_layout::arr_get / arr_set / sel_usize / arr_shift_up.
 //
-// These three are `external_body` so that a fact Verus already PROVED reaches
+// These four are `external_body` so that a fact Verus already PROVED reaches
 // the machine code: the elided bounds check (`arr_get`/`arr_set`, whose `i < N`
-// is a verified precondition at every call site) and the `cmov` lowering of the
-// bisection's data-dependent update (`sel_usize`). Their contracts are trivial
-// to state and therefore trivial to check at runtime, which is exactly why they
-// are fuzzed rather than argued about: `arr_get`/`arr_set` must agree with
-// checked indexing on every in-range index, and `sel_usize` must agree with the
-// `if`/`else` it replaces on both boolean values.
+// is a verified precondition at every call site), the `cmov` lowering of the
+// bisection's data-dependent update (`sel_usize`), and one `memmove` where
+// Verus's invariant rules force an element loop (`arr_shift_up`). Their
+// contracts are trivial to state and therefore trivial to check at runtime,
+// which is exactly why they are fuzzed rather than argued about:
+// `arr_get`/`arr_set` must agree with checked indexing on every in-range index,
+// `sel_usize` must agree with the `if`/`else` it replaces on both boolean
+// values, and `arr_shift_up` must agree with `copy_within` at every
+// `(pos, cnt)` -- including across its internal length dispatch, which is the
+// one place a hand-written fast path could disagree with the slow one.
 //
 // `arr_get`/`arr_set` are only called OUT of range by a caller that violated a
 // verified precondition, so the out-of-range case is deliberately not exercised
@@ -447,4 +451,42 @@ fn sel_usize_agrees_with_if_else() {
         "sel_usize_agrees_with_if_else: OK ({} cases x 2)",
         cases.len()
     );
+}
+
+#[test]
+fn arr_shift_up_agrees_with_copy_within() {
+    use semi_persistent_containers_verus::bplus_layout::arr_shift_up;
+
+    const N: usize = 62;
+    let mut lcg: u64 = 0xD1B5_4A32_D192_ED03;
+    let mut next = move || {
+        lcg = lcg
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lcg >> 11
+    };
+
+    // Every (pos, cnt) with pos <= cnt < N is exercised exhaustively, so both
+    // arms of the internal length dispatch (scalar below the measured crossover,
+    // `memmove` above it) are covered, as is the boundary between them -- the
+    // only place the optimization could introduce a disagreement.
+    let mut checked = 0usize;
+    for cnt in 0..N {
+        for pos in 0..=cnt {
+            let mut a = [0u32; N];
+            for slot in a.iter_mut() {
+                *slot = next() as u32;
+            }
+            let mut want = a;
+            want.copy_within(pos..cnt, pos + 1);
+
+            arr_shift_up(&mut a, pos, cnt);
+            assert_eq!(
+                a, want,
+                "arr_shift_up(pos={pos}, cnt={cnt}) disagrees with copy_within"
+            );
+            checked += 1;
+        }
+    }
+    println!("arr_shift_up_agrees_with_copy_within: OK ({checked} (pos, cnt) pairs)");
 }
