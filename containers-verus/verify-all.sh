@@ -10,11 +10,27 @@ else
   TIMEOUT=""
 fi
 
+# `hasher_spec` names `foldhash` (the production hasher `Map` is specified
+# against), so `verus src/lib.rs` has to be told where that crate's artifacts
+# are — cargo normally supplies `--extern`, and without it every module fails at
+# resolution with "unresolved module or unlinked crate `foldhash`", which reads
+# like a proof failure but is a link-path failure. Build the lib first so the
+# artifacts exist, then point Verus at the newest `rlib` (cargo also emits
+# `.rmeta`-only entries for check builds, which Verus cannot use).
+DEPS=$(cd "$(dirname "$0")/.." && pwd)/target/release/deps
+cargo build --release -p semi-persistent-containers-verus --lib >/dev/null 2>&1
+FOLDHASH=$(ls -t "$DEPS"/libfoldhash-*.rlib 2>/dev/null | head -1)
+if [ -z "$FOLDHASH" ]; then
+  echo "no libfoldhash-*.rlib under $DEPS — run 'cargo build --release' first" >&2
+  exit 1
+fi
+EXTERNS=(--extern "foldhash=$FOLDHASH" -L "dependency=$DEPS")
+
 run_verus() {
   if [ -n "$TIMEOUT" ]; then
-    $TIMEOUT 600 verus --trace "$@"
+    $TIMEOUT 600 verus --trace "$@" "${EXTERNS[@]}"
   else
-    verus --trace "$@"
+    verus --trace "$@" "${EXTERNS[@]}"
   fi
 }
 
