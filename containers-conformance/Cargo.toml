@@ -15,7 +15,7 @@ semi-persistent-containers-verus = { path = "../containers-verus", version = "0.
 # The verus define_id*! macros expand `::vstd` paths (ghost specs, erased at
 # runtime), so any crate invoking them needs vstd in scope. The e-graph will
 # carry the same dependency after the consumer switch.
-vstd = "=0.0.0-2026-04-12-0118"
+vstd = "=0.0.0-2026-08-02-0125"
 
 
 [dev-dependencies]

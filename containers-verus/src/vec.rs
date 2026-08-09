@@ -1048,9 +1048,9 @@ where
             old(self).wf(), old(self).untracked(),
             old(self).view().len() + 1 < I::max_nat(),
         ensures
-            self.wf(), self.untracked(),
-            self.view() == old(self).view().push(value),   // std::Vec::push
-            self.diff_log_len_spec() == 0,                   // no overhead
+            final(self).wf(), final(self).untracked(),
+            final(self).view() == old(self).view().push(value),   // std::Vec::push
+            final(self).diff_log_len_spec() == 0,                   // no overhead
     {
         self.push(value);
         proof { self.lemma_untracked_no_overhead(); }
@@ -1059,11 +1059,11 @@ where
     pub fn pop_untracked(&mut self) -> (r: Option<T>)
         requires old(self).wf(), old(self).untracked(),
         ensures
-            self.wf(), self.untracked(),
-            old(self).view().len() == 0 ==> r is None && self.view() == old(self).view(),
+            final(self).wf(), final(self).untracked(),
+            old(self).view().len() == 0 ==> r is None && final(self).view() == old(self).view(),
             old(self).view().len() > 0 ==> r == Some(old(self).view().last())
-                && self.view() == old(self).view().drop_last(),   // std::Vec::pop
-            self.diff_log_len_spec() == 0,                         // no overhead
+                && final(self).view() == old(self).view().drop_last(),   // std::Vec::pop
+            final(self).diff_log_len_spec() == 0,                         // no overhead
     {
         let r = self.pop();
         proof { self.lemma_untracked_no_overhead(); }
@@ -1075,9 +1075,9 @@ where
             old(self).wf(), old(self).untracked(),
             i.as_nat() < old(self).view().len(),
         ensures
-            self.wf(), self.untracked(),
-            self.view() == old(self).view().update(i.as_nat() as int, value),  // std update
-            self.diff_log_len_spec() == 0,                                      // no overhead
+            final(self).wf(), final(self).untracked(),
+            final(self).view() == old(self).view().update(i.as_nat() as int, value),  // std update
+            final(self).diff_log_len_spec() == 0,                                      // no overhead
     {
         self.set_index(i, value);
         proof { self.lemma_untracked_no_overhead(); }
@@ -1151,13 +1151,13 @@ where
     fn maybe_shrink(&mut self, policy: ShrinkPolicy)
         requires old(self).wf(),
         ensures
-            self.wf(),
-            self.view() == old(self).view(),
-            self.diff_log@ == old(self).diff_log@,
-            self.frames@ == old(self).frames@,
-            self.snapshots@ == old(self).snapshots@,
-            self.active_saved_len == old(self).active_saved_len,
-            self.forks == old(self).forks,
+            final(self).wf(),
+            final(self).view() == old(self).view(),
+            final(self).diff_log@ == old(self).diff_log@,
+            final(self).frames@ == old(self).frames@,
+            final(self).snapshots@ == old(self).snapshots@,
+            final(self).active_saved_len == old(self).active_saved_len,
+            final(self).forks == old(self).forks,
     {
         match policy {
             ShrinkPolicy::Never => {}
@@ -1335,9 +1335,9 @@ where
             old(self).wf(),
             old(self).view().len() + 1 < I::max_nat(),
         ensures
-            self.wf(),
-            self.view() == old(self).view().push(value),
-            self.snapshots_view() == old(self).snapshots_view(),
+            final(self).wf(),
+            final(self).view() == old(self).view().push(value),
+            final(self).snapshots_view() == old(self).snapshots_view(),
     {
         let ghost old_view = self.view();
         let ghost old_self = *self;
@@ -1580,14 +1580,14 @@ where
         requires
             old(self).wf(),
         ensures
-            self.wf(),
-            old(self).view().len() == 0 ==> r is None && self.view() == old(self).view(),
+            final(self).wf(),
+            old(self).view().len() == 0 ==> r is None && final(self).view() == old(self).view(),
             old(self).view().len() > 0 ==> {
                 &&& r is Some
                 &&& r->Some_0 == old(self).view()[old(self).view().len() - 1]
-                &&& self.view() == old(self).view().drop_last()
+                &&& final(self).view() == old(self).view().drop_last()
             },
-            self.snapshots_view() == old(self).snapshots_view(),
+            final(self).snapshots_view() == old(self).snapshots_view(),
     {
         let ghost old_view = self.view();
         let ghost old_diffs = self.diff_log@;
@@ -1915,9 +1915,9 @@ where
             old(self).wf(),
             i.as_nat() < old(self).view().len(),
         ensures
-            self.wf(),
-            self.view() == old(self).view().update(i.as_nat() as int, value),
-            self.snapshots_view() == old(self).snapshots_view(),
+            final(self).wf(),
+            final(self).view() == old(self).view().update(i.as_nat() as int, value),
+            final(self).snapshots_view() == old(self).snapshots_view(),
     {
         let ghost old_view = self.view();
         let ghost old_diffs = self.diff_log@;
@@ -2256,11 +2256,11 @@ where
             old(self).depth_spec() < u32::MAX,
             old(self).view().len() < I::max_nat(),
         ensures
-            self.wf(),
-            self.view() == old(self).view(),
+            final(self).wf(),
+            final(self).view() == old(self).view(),
             token.frame_idx_spec() == old(self).depth_spec(),
-            self.depth_spec() == old(self).depth_spec() + 1,
-            self.snapshots_view() == old(self).snapshots_view().push(old(self).view()),
+            final(self).depth_spec() == old(self).depth_spec() + 1,
+            final(self).snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
         // Runtime guards (plan 2.3/2.4), BEFORE maybe_shrink so a rejected
         // mark does not change capacity: TRACK parity, and the u32 depth cast.
@@ -2503,10 +2503,10 @@ where
             old(self).depth_spec() < u32::MAX,
             old(self).fork_count_spec() + 1 <= u32::MAX,
         ensures
-            self.wf(),
-            self.view() == old(self).snapshots_view()[token.frame_idx_spec() as int],
-            self.depth_spec() == token.frame_idx_spec(),
-            self.snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            final(self).wf(),
+            final(self).view() == old(self).snapshots_view()[token.frame_idx_spec() as int],
+            final(self).depth_spec() == token.frame_idx_spec(),
+            final(self).snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
         // Runtime guards (plan 2.3): a verified caller has proven every
         // `requires` clause, so these are provably-true no-ops for them. An
@@ -3140,14 +3140,14 @@ where
             old(self).pos_spec() <= old(self).vec_ref().view().len(),
             old(self).vec_ref().view().len() < I::max_nat(),
         ensures
-            self.vec_ref() == old(self).vec_ref(),
+            final(self).vec_ref() == old(self).vec_ref(),
             old(self).pos_spec() < old(self).vec_ref().view().len() ==> {
                 &&& r == Some(old(self).vec_ref().view()[old(self).pos_spec() as int])
-                &&& self.pos_spec() == old(self).pos_spec() + 1
+                &&& final(self).pos_spec() == old(self).pos_spec() + 1
             },
             old(self).pos_spec() >= old(self).vec_ref().view().len() ==> {
                 &&& r is None
-                &&& self.pos_spec() == old(self).pos_spec()
+                &&& final(self).pos_spec() == old(self).pos_spec()
             },
     {
         let len = self.vec.len();

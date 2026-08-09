@@ -175,9 +175,9 @@ impl<T, N: DenseId + Tagged + core::default::Default> ListNode<T, N> {
     pub(crate) fn set_next(&mut self, r: NodeRef)
         requires !r.is_null() ==> (r.idx as nat) < N::id_bound(),
         ensures
-            self.next_wf(),
-            self.next_ref() == r || (r.is_null() && self.next_ref() == NodeRef { some: false, idx: 0 }),
-            self.payload == old(self).payload,
+            final(self).next_wf(),
+            final(self).next_ref() == r || (r.is_null() && final(self).next_ref() == NodeRef { some: false, idx: 0 }),
+            final(self).payload == old(self).payload,
     {
         if r.some {
             let id = N::from_usize(r.idx);
@@ -358,11 +358,11 @@ impl<N: DenseId + Tagged + core::default::Default> ListHead<N> {
     pub(crate) fn set_head(&mut self, r: NodeRef)
         requires !r.is_null() ==> (r.idx as nat) < N::id_bound(),
         ensures
-            N::repr_wf(self.head_repr),
-            self.tail == old(self).tail,
-            self.len == old(self).len,
-            self.head_ref() == r
-                || (r.is_null() && self.head_ref() == NodeRef { some: false, idx: 0 }),
+            N::repr_wf(final(self).head_repr),
+            final(self).tail == old(self).tail,
+            final(self).len == old(self).len,
+            final(self).head_ref() == r
+                || (r.is_null() && final(self).head_ref() == NodeRef { some: false, idx: 0 }),
     {
         if r.some {
             let id = N::from_usize(r.idx);
@@ -384,9 +384,9 @@ impl<N: DenseId + Tagged + core::default::Default> ListHead<N> {
     pub(crate) fn set_tail(&mut self, t: usize)
         requires (t as nat) < N::id_bound(),
         ensures
-            self.head_repr == old(self).head_repr,
-            self.len == old(self).len,
-            self.tail_spec() == t,
+            final(self).head_repr == old(self).head_repr,
+            final(self).len == old(self).len,
+            final(self).tail_spec() == t,
     {
         let id = N::from_usize(t);
         self.tail = id;
@@ -971,14 +971,14 @@ where
             // which is the bound the typed `new_list` already demands.
             old(self).heads_view().len() + 1 < L::id_bound(),
         ensures
-            self.wf(),
+            final(self).wf(),
             l == old(self).heads_view().len(),
-            self.nodes_view() == old(self).nodes_view(),
-            self.model_view() == old(self).model_view().push(Seq::<usize>::empty()),
-            self.list_seq(l as int) == Seq::<T>::empty(),
+            final(self).nodes_view() == old(self).nodes_view(),
+            final(self).model_view() == old(self).model_view().push(Seq::<usize>::empty()),
+            final(self).list_seq(l as int) == Seq::<T>::empty(),
             // existing lists unchanged.
             forall|m: int| 0 <= m < old(self).model_view().len()
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         let l = self.heads_len();
         proof { Self::lemma_head_push_fits(self.heads_view().len()); }
@@ -1019,11 +1019,11 @@ where
             // silently wraps past 2^32-1; we surface the bound instead).
             old(self).model_view()[l as int].len() + 1 < 0x1_0000_0000,
         ensures
-            self.wf(),
-            self.model_view().len() == old(self).model_view().len(),
-            self.list_seq(l as int) == seq![payload] + old(self).list_seq(l as int),
-            forall|m: int| 0 <= m < self.model_view().len() && m != l as int
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+            final(self).wf(),
+            final(self).model_view().len() == old(self).model_view().len(),
+            final(self).list_seq(l as int) == seq![payload] + old(self).list_seq(l as int),
+            forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Bound the old list length (<= arena size < usize::MAX) BEFORE mutating, so
         // the `h.len + 1` below cannot overflow. Old cache_len ties h.len to it.
@@ -1223,11 +1223,11 @@ where
             // silently wraps past 2^32-1; we surface the bound instead).
             old(self).model_view()[l as int].len() + 1 < 0x1_0000_0000,
         ensures
-            self.wf(),
-            self.model_view().len() == old(self).model_view().len(),
-            self.list_seq(l as int) == old(self).list_seq(l as int).push(payload),
-            forall|m: int| 0 <= m < self.model_view().len() && m != l as int
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+            final(self).wf(),
+            final(self).model_view().len() == old(self).model_view().len(),
+            final(self).list_seq(l as int) == old(self).list_seq(l as int).push(payload),
+            forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Bound the old list length before mutating so `h.len + 1` cannot overflow.
         proof { self.lemma_len_bounded(l as int); }
@@ -1449,7 +1449,7 @@ where
     /// models. Disjointness (the two lists share no node) is what makes the
     /// concatenation a valid list and lets `src` clear without dangling.
     #[verifier::spinoff_prover]
-    #[verifier::rlimit(400)]
+    #[verifier::rlimit(800)]
     pub(crate) fn splice_raw(&mut self, dst: usize, src: usize)
         requires
             old(self).wf(),
@@ -1460,14 +1460,14 @@ where
             old(self).model_view()[dst as int].len()
                 + old(self).model_view()[src as int].len() < 0x1_0000_0000,
         ensures
-            self.wf(),
-            self.model_view().len() == old(self).model_view().len(),
-            self.list_seq(dst as int)
+            final(self).wf(),
+            final(self).model_view().len() == old(self).model_view().len(),
+            final(self).list_seq(dst as int)
                 == old(self).list_seq(dst as int) + old(self).list_seq(src as int),
-            self.list_seq(src as int) == Seq::<T>::empty(),
-            forall|m: int| 0 <= m < self.model_view().len()
+            final(self).list_seq(src as int) == Seq::<T>::empty(),
+            forall|m: int| 0 <= m < final(self).model_view().len()
                 && m != dst as int && m != src as int
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Bound dst.len + src.len (disjoint lists) before mutating, so the sum below
         // cannot overflow. Old cache_len ties each header len to its model length.
@@ -1678,10 +1678,10 @@ where
             old(self).heads_depth_spec() < u32::MAX,
             old(self).nodes_depth_spec() < u32::MAX,
         ensures
-            self.wf(),
-            self.heads_view() == old(self).heads_view(),
-            self.nodes_view() == old(self).nodes_view(),
-            self.model_view() == old(self).model_view(),
+            final(self).wf(),
+            final(self).heads_view() == old(self).heads_view(),
+            final(self).nodes_view() == old(self).nodes_view(),
+            final(self).model_view() == old(self).model_view(),
             token.heads_frame_idx_spec() == old(self).heads_depth_spec(),
             token.nodes_frame_idx_spec() == old(self).nodes_depth_spec(),
     {
@@ -1744,14 +1744,14 @@ where
             // frankentoken does not.
             token.heads_frame_idx_spec() == token.nodes_frame_idx_spec(),
         ensures
-            self.wf(),
-            self.heads_view()
+            final(self).wf(),
+            final(self).heads_view()
                 == old(self).heads_snapshots_view()[token.heads_frame_idx_spec() as int],
-            self.nodes_view()
+            final(self).nodes_view()
                 == old(self).nodes_snapshots_view()[token.nodes_frame_idx_spec() as int],
             // The restored model is the one archived at that mark (Phase 7:
             // recovered internally, no caller-supplied ghost).
-            self.model_view() == old(self).model_snapshots_view()[token.heads_frame_idx_spec() as int],
+            final(self).model_view() == old(self).model_snapshots_view()[token.heads_frame_idx_spec() as int],
     {
         // Atomic compound restore (plan 2.3): prevalidate BOTH constituent
         // tokens before restoring either — heads rolled back without nodes
@@ -1822,13 +1822,13 @@ where
             old(self).heads_view().len() + 1 < usize::MAX,
             old(self).heads_view().len() + 1 < L::id_bound(),
         ensures
-            self.wf(),
+            final(self).wf(),
             l.id_nat() == old(self).heads_view().len(),
-            self.nodes_view() == old(self).nodes_view(),
-            self.model_view() == old(self).model_view().push(Seq::<usize>::empty()),
-            self.list_seq(l.id_nat() as int) == Seq::<T>::empty(),
+            final(self).nodes_view() == old(self).nodes_view(),
+            final(self).model_view() == old(self).model_view().push(Seq::<usize>::empty()),
+            final(self).list_seq(l.id_nat() as int) == Seq::<T>::empty(),
             forall|m: int| 0 <= m < old(self).model_view().len()
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Mint the typed handle for the WOULD-BE fresh row BEFORE any
         // mutation (plan 2.3: reject-before-mutate) — id-range exhaustion
@@ -1873,12 +1873,12 @@ where
             // lemma_len_bounded; surfaced for 63-bit; runtime-guarded).
             old(self).model_view()[l.id_nat() as int].len() + 1 < 0x1_0000_0000,
         ensures
-            self.wf(),
-            self.model_view().len() == old(self).model_view().len(),
-            self.list_seq(l.id_nat() as int)
+            final(self).wf(),
+            final(self).model_view().len() == old(self).model_view().len(),
+            final(self).list_seq(l.id_nat() as int)
                 == seq![payload] + old(self).list_seq(l.id_nat() as int),
-            forall|m: int| 0 <= m < self.model_view().len() && m != l.id_nat() as int
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+            forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Runtime guard: node-id headroom before allocating (N::try_new on
         // the would-be node row; reject-before-mutate).
@@ -1914,12 +1914,12 @@ where
             // discharge it via lemma_len_bounded. Runtime-guarded regardless.
             old(self).model_view()[l.id_nat() as int].len() + 1 < 0x1_0000_0000,
         ensures
-            self.wf(),
-            self.model_view().len() == old(self).model_view().len(),
-            self.list_seq(l.id_nat() as int)
+            final(self).wf(),
+            final(self).model_view().len() == old(self).model_view().len(),
+            final(self).list_seq(l.id_nat() as int)
                 == old(self).list_seq(l.id_nat() as int).push(payload),
-            forall|m: int| 0 <= m < self.model_view().len() && m != l.id_nat() as int
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+            forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Runtime guard: node-id headroom before allocating.
         crate::guard::check_precondition(
@@ -1992,15 +1992,15 @@ where
             old(self).model_view()[dst.id_nat() as int].len()
                 + old(self).model_view()[src.id_nat() as int].len() < 0x1_0000_0000,
         ensures
-            self.wf(),
-            self.model_view().len() == old(self).model_view().len(),
-            self.list_seq(dst.id_nat() as int)
+            final(self).wf(),
+            final(self).model_view().len() == old(self).model_view().len(),
+            final(self).list_seq(dst.id_nat() as int)
                 == old(self).list_seq(dst.id_nat() as int)
                     + old(self).list_seq(src.id_nat() as int),
-            self.list_seq(src.id_nat() as int) == Seq::<T>::empty(),
-            forall|m: int| 0 <= m < self.model_view().len()
+            final(self).list_seq(src.id_nat() as int) == Seq::<T>::empty(),
+            forall|m: int| 0 <= m < final(self).model_view().len()
                 && m != dst.id_nat() as int && m != src.id_nat() as int
-                ==> #[trigger] self.list_seq(m) == old(self).list_seq(m),
+                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         proof { dst.lemma_as_nat_is_id_nat(); src.lemma_as_nat_is_id_nat(); }  // prod-parity
         let du = dst.as_usize();
@@ -2105,16 +2105,16 @@ where
             (old(self).list_spec() as int) < old(self).arena_ref().model_view().len(),
             old(self).cursor_ok(),
         ensures
-            self.arena_ref() == old(self).arena_ref(),
-            self.list_spec() == old(self).list_spec(),
-            self.cursor_ok(),
+            final(self).arena_ref() == old(self).arena_ref(),
+            final(self).list_spec() == old(self).list_spec(),
+            final(self).cursor_ok(),
             old(self).pos_spec() < old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
                 &&& r == Some(old(self).arena_ref().list_seq(old(self).list_spec() as int)[old(self).pos_spec() as int])
-                &&& self.pos_spec() == old(self).pos_spec() + 1
+                &&& final(self).pos_spec() == old(self).pos_spec() + 1
             },
             old(self).pos_spec() >= old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
                 &&& r is None
-                &&& self.pos_spec() == old(self).pos_spec()
+                &&& final(self).pos_spec() == old(self).pos_spec()
             },
     {
         let ghost m = self.arena.model_view()[self.list as int];

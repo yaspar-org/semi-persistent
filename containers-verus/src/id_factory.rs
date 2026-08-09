@@ -46,7 +46,7 @@ impl<T: DenseId> IdFactory<T> {
                 Some(id) => {
                     &&& old(self).count_spec() < T::id_bound()
                     &&& id.id_nat() == old(self).count_spec()
-                    &&& self.count_spec() == old(self).count_spec() + 1
+                    &&& final(self).count_spec() == old(self).count_spec() + 1
                 },
                 None => {
                     // Exhausted: the id range is done, OR (full-range ids
@@ -54,7 +54,7 @@ impl<T: DenseId> IdFactory<T> {
                     // itself saturated one id early — see the body comment.
                     &&& (old(self).count_spec() >= T::id_bound()
                             || old(self).count_spec() == usize::MAX as nat)
-                    &&& self.count_spec() == old(self).count_spec()
+                    &&& final(self).count_spec() == old(self).count_spec()
                 },
             },
     {
@@ -85,7 +85,7 @@ impl<T: DenseId> IdFactory<T> {
         requires old(self).count_spec() < T::id_bound(), old(self).count_spec() < usize::MAX,
         ensures
             id.id_nat() == old(self).count_spec(),
-            self.count_spec() == old(self).count_spec() + 1,
+            final(self).count_spec() == old(self).count_spec() + 1,
     {
         let r = self.try_alloc();
         crate::guard::check_precondition(r.is_some(), "DenseId range exhausted");

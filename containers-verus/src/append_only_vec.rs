@@ -142,10 +142,10 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
     pub fn push(&mut self, val: T) -> (idx: usize)
         requires old(self).wf(),
         ensures
-            self.wf(),
+            final(self).wf(),
             idx == old(self).view().len(),
-            self.view() == old(self).view().push(val),
-            self.snapshots_view() == old(self).snapshots_view(),
+            final(self).view() == old(self).view().push(val),
+            final(self).snapshots_view() == old(self).snapshots_view(),
     {
         let idx = self.data.len();
         self.data.push(val);
@@ -198,11 +198,11 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             TRACK,
             old(self).depth_spec() < u32::MAX,
         ensures
-            self.wf(),
-            self.view() == old(self).view(),
+            final(self).wf(),
+            final(self).view() == old(self).view(),
             token.frame_idx_spec() == old(self).depth_spec(),
-            self.depth_spec() == old(self).depth_spec() + 1,
-            self.snapshots_view() == old(self).snapshots_view().push(old(self).view()),
+            final(self).depth_spec() == old(self).depth_spec() + 1,
+            final(self).snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
         crate::guard::check_precondition(TRACK, "mark() called on untracked AppendOnlyVec");
         crate::guard::check_precondition(
@@ -311,10 +311,10 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             old(self).depth_spec() < u32::MAX,
             old(self).fork_count_spec() + 1 <= u32::MAX,
         ensures
-            self.wf(),
-            self.view() == old(self).snapshots_view()[token.frame_idx_spec() as int],
-            self.depth_spec() == token.frame_idx_spec(),
-            self.snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            final(self).wf(),
+            final(self).view() == old(self).snapshots_view()[token.frame_idx_spec() as int],
+            final(self).depth_spec() == token.frame_idx_spec(),
+            final(self).snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
         // Runtime guards (plan 2.3): the FULL restorable predicate, mirroring
         // the proven requires for unverified callers, BEFORE reading
@@ -439,7 +439,7 @@ pub(crate) proof fn lemma_aov_frames_le(frames: Seq<usize>, k: int, j: int)
 /// = element sequence unchanged. Trust ledger: group B.
 #[verifier::external_body]
 fn shrink_aov_capacity<T>(data: &mut Vec<T>, factor: usize, headroom: usize)
-    ensures data@ == old(data)@,
+    ensures final(data)@ == old(data)@,
 {
     if data.capacity() > data.len().saturating_mul(factor).saturating_add(headroom) {
         data.shrink_to(data.len().saturating_add(headroom));

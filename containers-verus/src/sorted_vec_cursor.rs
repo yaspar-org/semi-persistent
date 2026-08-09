@@ -216,9 +216,9 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
             old(self).cursor_wf(),
             old(self).idx() < old(self).model().len(),
         ensures
-            self.cursor_wf(),
-            self.model() == old(self).model(),
-            self.idx() == old(self).idx() + 1,
+            final(self).cursor_wf(),
+            final(self).model() == old(self).model(),
+            final(self).idx() == old(self).idx() + 1,
     {
         // `pos < model.len() == data@.len()`, and a slice's length is a `usize`,
         // so the increment cannot overflow. The bridge is the only content.
@@ -263,11 +263,11 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
         requires
             old(self).cursor_wf(),
         ensures
-            self.cursor_wf(),
-            self.model() == old(self).model(),
+            final(self).cursor_wf(),
+            final(self).model() == old(self).model(),
             ({
                 let ti = crate::bplus::seek_target_idx(old(self).model(), target.id_nat());
-                self.idx() == if old(self).idx() >= ti { old(self).idx() } else { ti }
+                final(self).idx() == if old(self).idx() >= ti { old(self).idx() } else { ti }
             }),
     {
         let ghost model = self.model();

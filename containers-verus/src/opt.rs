@@ -126,9 +126,9 @@ impl<T: Tagged> Opt<T> {
     pub fn set_none(&mut self)
         requires old(self).wf(),
         ensures
-            self.wf(),
-            self.get_spec() is None,
-            self.value_spec() == old(self).value_spec(),
+            final(self).wf(),
+            final(self).get_spec() is None,
+            final(self).value_spec() == old(self).value_spec(),
     {
         T::set_tag(&mut self.repr);
     }

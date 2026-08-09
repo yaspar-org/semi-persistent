@@ -574,21 +574,53 @@ macro_rules! abstract_domain {
                             self.has_eq_uint(c1);
                             t.has_eq_uint(c2);
                             r.has_eq_uint(c1.wrapping_add(c2));
-                            // No overflow: max1+max2 fits, so c1+c2 fits (c1<=max1, c2<=max2)
+                            // The soundness fact is decomposed into four
+                            // single-purpose bit-vector queries. As one query
+                            // (11 variables, 13 hypotheses, conjunction goal)
+                            // it diverges on the z3 4.16 bundled with Verus
+                            // 0.2026.08.02 — z3 4.12 proved it in ~20s — and a
+                            // by(bit_vector) assert sends the solver exactly
+                            // the requires written on it, so the split is also
+                            // what keeps every query's hypothesis set minimal.
+                            let dd1 = (c1 - b1) as $uint;
+                            let dd2 = (c2 - b2) as $uint;
+                            // (1) Interval lower bound, mask-free: on the
+                            // guarded no-overflow path, c1+c2 does not wrap
+                            // and lands at or above v.
                             assert(
-                                max_sum >= max1 && max_sum >= max2 &&
-                                max1 >= b1 && max2 >= b2 && v >= b1 && sm >= s1 &&
-                                c1 >= b1 && c1 <= max1 && (((c1 - b1) as $uint) & !s1 == (0 as $uint)) &&
-                                c2 >= b2 && c2 <= max2 && (((c2 - b2) as $uint) & !s2 == (0 as $uint))
-                                ==>
-                                c1.wrapping_add(c2) >= v &&
-                                (((c1.wrapping_add(c2) - v) as $uint) & !sm == (0 as $uint))
+                                max_sum >= max1 && max1 >= b1 && max2 >= b2 && v >= b1 &&
+                                c1 >= b1 && c1 <= max1 && c2 >= b2 && c2 <= max2
+                                ==> c1.wrapping_add(c2) >= v
                             ) by(bit_vector)
                                 requires v == b1.wrapping_add(b2),
-                                         sm == (s1.wrapping_add(s2) | s1 | s2),
-                                         max1 == b1.wrapping_add(s1),
+                                         max_sum == max1.wrapping_add(max2);
+                            // (2) Offset identity, a ring fact over Z/2^N:
+                            // (c1+c2) - (b1+b2) == (c1-b1) + (c2-b2).
+                            assert(
+                                ((c1.wrapping_add(c2) - v) as $uint) == ((dd1 + dd2) as $uint)
+                            ) by(bit_vector)
+                                requires v == b1.wrapping_add(b2),
+                                         dd1 == (c1 - b1) as $uint,
+                                         dd2 == (c2 - b2) as $uint;
+                            // (3) The span sum does not wrap: each span fits
+                            // under its max, and the max sum fits.
+                            assert(
+                                max_sum >= max1 && max_sum >= max2 && max1 >= b1 && max2 >= b2
+                                ==> s1.wrapping_add(s2) >= s1
+                            ) by(bit_vector)
+                                requires max1 == b1.wrapping_add(s1),
                                          max2 == b2.wrapping_add(s2),
                                          max_sum == max1.wrapping_add(max2);
+                            // (4) The stride-closure core — the one hard fact,
+                            // over exactly four unconstrained variables: bits
+                            // of dd1 lie in s1 and bits of dd2 in s2, so bits
+                            // of dd1+dd2 lie in (s1+s2)|s1|s2.
+                            assert(
+                                dd1 & !s1 == (0 as $uint) && dd2 & !s2 == (0 as $uint) &&
+                                s1.wrapping_add(s2) >= s1
+                                ==>
+                                ((dd1 + dd2) as $uint) & !(s1.wrapping_add(s2) | s1 | s2) == (0 as $uint)
+                            ) by(bit_vector);
                             // c1 <= max1: from has, c1 = b1 + d1 where d1 <= s1
                             assert(c1 >= b1 && (((c1 - b1) as $uint) & !s1 == (0 as $uint)) && max1 >= b1
                                 ==> c1 <= max1) by(bit_vector)
