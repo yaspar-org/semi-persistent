@@ -185,9 +185,16 @@ where
     // ===================================================================
 
     /// The abstract set of live ids: the image of `indices` over `[0, n)`.
-    pub open(crate) spec fn id_set(&self) -> Set<nat> {
+    ///
+    /// `ISet`, not `Set`: since vstd made `Set` inherently finite, its
+    /// comprehension constructor returns `Option<Set>` (`None` on an infinite
+    /// predicate). `ISet::new` is total with the same membership axiom the old
+    /// `Set::new` had, so the comprehension layer uses `ISet` and finiteness
+    /// stays where it always was — a proved property (`lemma_image_prefix_card`),
+    /// not a construction obligation.
+    pub open(crate) spec fn id_set(&self) -> ISet<nat> {
         let indices = self.indices.view();
-        Set::new(|id: nat| exists|p: int| 0 <= p < self.n_spec()
+        ISet::new(|id: nat| exists|p: int| 0 <= p < self.n_spec()
             && (#[trigger] indices[p]).as_nat() == id)
     }
 
@@ -315,9 +322,9 @@ where
     pub fn set(&mut self, id: Idx, value: T)
         requires old(self).wf(), old(self).contains_spec(id),
         ensures
-            self.wf(),
-            self.cap_spec() == old(self).cap_spec(),
-            self.n_spec() == old(self).n_spec(),
+            final(self).wf(),
+            final(self).cap_spec() == old(self).cap_spec(),
+            final(self).n_spec() == old(self).n_spec(),
     {
         let pos = self.sparse.get_index(id);
         self.dense.set_index(pos, value);
@@ -338,23 +345,23 @@ where
             old(self).wf(),
             old(self).can_add_spec(),
         ensures
-            self.wf(),
-            self.n_spec() == old(self).n_spec() + 1,
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec() + 1,
             // the returned id is now live
-            self.contains_spec(id),
+            final(self).contains_spec(id),
             // ABSTRACT EFFECT: the live set gains exactly `id`, which was not
             // live before.
             !old(self).id_set().contains(id.as_nat()),
-            self.id_set() =~= old(self).id_set().insert(id.as_nat()),
+            final(self).id_set() =~= old(self).id_set().insert(id.as_nat()),
             // INDEX-POOL REUSE: if a free id was available, `add` recycles the
             // one parked at the pool front (LIFO with `remove`), and the pool
             // shrinks by that element; otherwise a fresh id `== old cap` is
             // allocated and the (empty) pool stays empty.
             old(self).free_pool().len() > 0 ==>
                 (id.as_nat() == old(self).free_pool()[0]
-                 && self.free_pool() =~= old(self).free_pool().drop_first()),
+                 && final(self).free_pool() =~= old(self).free_pool().drop_first()),
             old(self).free_pool().len() == 0 ==>
-                (id.as_nat() == old(self).cap_spec() && self.free_pool().len() == 0),
+                (id.as_nat() == old(self).cap_spec() && final(self).free_pool().len() == 0),
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -528,15 +535,15 @@ where
     pub fn remove(&mut self, id: Idx)
         requires old(self).wf(), old(self).contains_spec(id),
         ensures
-            self.wf(),
-            self.n_spec() == old(self).n_spec() - 1,
-            self.cap_spec() == old(self).cap_spec(),
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec() - 1,
+            final(self).cap_spec() == old(self).cap_spec(),
             // ABSTRACT EFFECT: the live set loses exactly `id`.
-            self.id_set() =~= old(self).id_set().remove(id.as_nat()),
+            final(self).id_set() =~= old(self).id_set().remove(id.as_nat()),
             // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
             // (so the next `add` recycles it — LIFO), the rest of the pool
             // shifts back by one.
-            self.free_pool() =~= old(self).free_pool().insert(0, id.as_nat()),
+            final(self).free_pool() =~= old(self).free_pool().insert(0, id.as_nat()),
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -746,10 +753,10 @@ where
         where T: PartialEq
         requires old(self).wf(),
         ensures
-            self.wf(),
-            self.cap_spec() == old(self).cap_spec(),
-            removed ==> self.n_spec() == old(self).n_spec() - 1,
-            !removed ==> *self == *old(self),
+            final(self).wf(),
+            final(self).cap_spec() == old(self).cap_spec(),
+            removed ==> final(self).n_spec() == old(self).n_spec() - 1,
+            !removed ==> *final(self) == *old(self),
     {
         let n = self.dense.len();
         proof { n.lemma_as_nat_bounded(); }  // n.as_nat() < Idx::max_nat()
@@ -808,9 +815,9 @@ where
             TRACK,
             old(self).can_mark_spec(),
         ensures
-            self.wf(),
-            self.dense_view() == old(self).dense_view(),
-            self.dense_snapshots_view()
+            final(self).wf(),
+            final(self).dense_view() == old(self).dense_view(),
+            final(self).dense_snapshots_view()
                 == old(self).dense_snapshots_view().push(old(self).dense_view()),
     {
         let dense = self.dense.mark(shrink);
@@ -843,8 +850,8 @@ where
                 old(self).snap_at(token).1,
                 old(self).snap_at(token).2),
         ensures
-            self.wf(),
-            self.dense_view() == old(self).snap_at(token).0,
+            final(self).wf(),
+            final(self).dense_view() == old(self).snap_at(token).0,
     {
         // Atomic compound restore (plan 2.3): prevalidate ALL constituent
         // tokens before restoring ANY — a partially-restored sparse set
@@ -877,9 +884,10 @@ pub open(crate) spec fn sparse_set_snap_wf<T, Idx: IndexLike>(
             sparse[(#[trigger] indices[p]).as_nat() as int].as_nat() == p)
 }
 
-/// The set of values `{ indices[p].as_nat() : 0 <= p < m }`.
-pub open(crate) spec fn image_prefix<Idx: IndexLike>(indices: Seq<Idx>, m: int) -> Set<nat> {
-    Set::new(|id: nat| exists|p: int| 0 <= p < m && (#[trigger] indices[p]).as_nat() == id)
+/// The set of values `{ indices[p].as_nat() : 0 <= p < m }`. (`ISet` for the
+/// same reason as `id_set`: total comprehension, finiteness proved below.)
+pub open(crate) spec fn image_prefix<Idx: IndexLike>(indices: Seq<Idx>, m: int) -> ISet<nat> {
+    ISet::new(|id: nat| exists|p: int| 0 <= p < m && (#[trigger] indices[p]).as_nat() == id)
 }
 
 /// An injective, in-range `indices` (over `[0, cap)`) hits every value in
@@ -900,7 +908,7 @@ pub(crate) proof fn lemma_perm_surjective<Idx: IndexLike>(indices: Seq<Idx>, cap
 {
     lemma_image_prefix_card(indices, cap);
     let img = image_prefix(indices, cap);
-    let rng = Set::new(|v: nat| v < cap);
+    let rng = ISet::new(|v: nat| v < cap);
     // img subset of rng (in-range), both size cap ⇒ equal ⇒ id in img.
     assert(img.subset_of(rng)) by {
         assert forall|v: nat| img.contains(v) implies rng.contains(v) by {
@@ -908,8 +916,8 @@ pub(crate) proof fn lemma_perm_surjective<Idx: IndexLike>(indices: Seq<Idx>, cap
         }
     }
     lemma_nat_range_card(cap);
-    vstd::set_lib::lemma_len_subset(img, rng);
-    vstd::set_lib::lemma_subset_equality(img, rng);
+    vstd::iset_lib::lemma_len_subset(img, rng);
+    vstd::iset_lib::lemma_subset_equality(img, rng);
     assert(rng.contains(id));
     assert(img.contains(id));
 }
@@ -928,7 +936,7 @@ pub(crate) proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m
     decreases m,
 {
     if m == 0 {
-        assert(image_prefix(indices, 0) =~= Set::<nat>::empty());
+        assert(image_prefix(indices, 0) =~= ISet::<nat>::empty());
     } else {
         lemma_image_prefix_card(indices, m - 1);
         let prev = image_prefix(indices, m - 1);
@@ -958,16 +966,16 @@ pub(crate) proof fn lemma_image_prefix_card<Idx: IndexLike>(indices: Seq<Idx>, m
 pub(crate) proof fn lemma_nat_range_card(cap: int)
     requires cap >= 0,
     ensures
-        Set::new(|v: nat| v < cap).finite(),
-        Set::new(|v: nat| v < cap).len() == cap,
+        ISet::new(|v: nat| v < cap).finite(),
+        ISet::new(|v: nat| v < cap).len() == cap,
     decreases cap,
 {
     if cap == 0 {
-        assert(Set::new(|v: nat| v < 0) =~= Set::<nat>::empty());
+        assert(ISet::new(|v: nat| v < 0) =~= ISet::<nat>::empty());
     } else {
         lemma_nat_range_card(cap - 1);
-        assert(Set::new(|v: nat| v < cap)
-            =~= Set::new(|v: nat| v < cap - 1).insert((cap - 1) as nat));
+        assert(ISet::new(|v: nat| v < cap)
+            =~= ISet::new(|v: nat| v < cap - 1).insert((cap - 1) as nat));
     }
 }
 

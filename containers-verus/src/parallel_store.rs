@@ -493,7 +493,7 @@ where
 /// std-documented behavior of `shrink_to`). Trust ledger: group B.
 #[verifier::external_body]
 pub(crate) fn shrink_vec_capacity<T>(data: &mut Vec<T>, factor: usize, headroom: usize)
-    ensures data@ == old(data)@,
+    ensures final(data)@ == old(data)@,
 {
     if data.capacity() > factor.saturating_mul(data.len()) {
         data.shrink_to(headroom.saturating_mul(data.len()));

@@ -798,28 +798,24 @@ pub proof fn chop_is_mod(n: nat, i: nat)
         vstd::arithmetic::mul::lemma_mul_is_commutative(2 as int, q as int);
         vstd::arithmetic::mul::lemma_mul_is_associative(q as int, 2 as int, e as int);
         let d = (2 * e) as int;
-        assert(n as int == (q as int) * d + ((h + 2 * r) as int));
+        // Isolated nonlinear query (z3 4.16 no longer assembles this product
+        // shuffle in the ambient context; 4.12 did): n = 2*tl + h and
+        // tl = e*q + r give n = q*(2e) + (h + 2r).
+        assert(n as int == (q as int) * d + ((h + 2 * r) as int)) by(nonlinear_arith)
+            requires
+                n as int == 2 * (tl(n) as int) + (h as int),
+                tl(n) as int == (e as int) * (q as int) + (r as int),
+                d == 2 * (e as int);
         assert(h + 2 * r < 2 * e) by {
             assert(h <= 1);
             assert(r < e);
             vstd::arithmetic::mul::lemma_mul_inequality(r as int, (e - 1) as int, 2);
         };
-        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, d);
-        assert(n % (2 * e) == h + 2 * r) by {
-            let nd = (n as int) / d;
-            let nr = (n as int) % d;
-            assert((nd - q as int) * d == (h + 2 * r) as int - nr) by {
-                vstd::arithmetic::mul::lemma_mul_is_distributive_sub(d, nd, q as int);
-            };
-            if nd != q as int {
-                if nd > q as int {
-                    vstd::arithmetic::mul::lemma_mul_inequality(1, nd - q as int, d);
-                } else {
-                    vstd::arithmetic::mul::lemma_mul_inequality(1, q as int - nd, d);
-                    vstd::arithmetic::mul::lemma_mul_is_distributive_sub(d, q as int, nd);
-                }
-            }
-        };
+        // Div/mod uniqueness is a vstd lemma; the hand-rolled contradiction
+        // argument this replaces stopped closing under z3 4.16.
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+            n as int, d, q as int, (h + 2 * r) as int);
+        assert(n % (2 * e) == h + 2 * r);
     }
 }
 

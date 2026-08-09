@@ -83,26 +83,26 @@ where
             old(self).wf(),
             old(self).data().len() + 1 < I::max_nat(),
         ensures
-            self.wf(),
-            self.data() == old(self).data().push(value),
+            final(self).wf(),
+            final(self).data() == old(self).data().push(value),
             // Flag maintenance is TRACK-conditional: an untracked store may
             // skip it wholesale (production parity — its flags are dead).
-            TRACK ==> self.captured() == old(self).captured().push(false);
+            TRACK ==> final(self).captured() == old(self).captured().push(false);
 
     fn pop(&mut self) -> (r: Option<T>)
         requires old(self).wf(),
         ensures
-            self.wf(),
+            final(self).wf(),
             old(self).data().len() == 0 ==> {
                 &&& r is None
-                &&& self.data() == old(self).data()
-                &&& TRACK ==> self.captured() == old(self).captured()
+                &&& final(self).data() == old(self).data()
+                &&& TRACK ==> final(self).captured() == old(self).captured()
             },
             old(self).data().len() > 0 ==> {
                 &&& r is Some
                 &&& r->Some_0 == old(self).data()[old(self).data().len() - 1]
-                &&& self.data() == old(self).data().drop_last()
-                &&& TRACK ==> self.captured() == old(self).captured().drop_last()
+                &&& final(self).data() == old(self).data().drop_last()
+                &&& TRACK ==> final(self).captured() == old(self).captured().drop_last()
             };
 
     fn set_raw(&mut self, i: I, value: T)
@@ -110,8 +110,8 @@ where
             old(self).wf(),
             i.as_nat() < old(self).data().len(),
         ensures
-            self.wf(),
-            self.data() == old(self).data().update(i.as_nat() as int, value),
+            final(self).wf(),
+            final(self).data() == old(self).data().update(i.as_nat() as int, value),
             // TRACK-conditional for the same reason as `push`/`pop` above, and
             // it is a PERFORMANCE contract, not just a modelling nicety.
             // Preserving an inline store's flag across a write costs a read and
@@ -123,16 +123,16 @@ where
             // e-class ring splice (two full-cell writes per merge) —
             // `containers-conformance/examples/splicesplit.rs`. Untracked flags
             // are dead: nothing reads `captured()` when `!TRACK`.
-            TRACK ==> self.captured() == old(self).captured();
+            TRACK ==> final(self).captured() == old(self).captured();
 
     fn truncate(&mut self, len: I)
         requires
             old(self).wf(),
             len.as_nat() <= old(self).data().len(),
         ensures
-            self.wf(),
-            self.data() == old(self).data().subrange(0, len.as_nat() as int),
-            TRACK ==> self.captured() == old(self).captured().subrange(0, len.as_nat() as int);
+            final(self).wf(),
+            final(self).data() == old(self).data().subrange(0, len.as_nat() as int),
+            TRACK ==> final(self).captured() == old(self).captured().subrange(0, len.as_nat() as int);
 
     /// Mark slot `i` as captured without logging or changing `data`. Used by
     /// `Vec::push` when a previously-popped marked index is re-added: the
@@ -143,9 +143,9 @@ where
             old(self).wf(),
             i.as_nat() < old(self).data().len(),
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
-            TRACK ==> self.captured()
+            final(self).wf(),
+            final(self).data() == old(self).data(),
+            TRACK ==> final(self).captured()
                 == old(self).captured().update(i.as_nat() as int, true);
 
     /// Resize `data` to `len`: truncate if longer, or extend with
@@ -159,16 +159,16 @@ where
             old(self).wf(),
             len.as_nat() < I::max_nat(),
         ensures
-            self.wf(),
-            self.data().len() == len.as_nat(),
+            final(self).wf(),
+            final(self).data().len() == len.as_nat(),
             // existing prefix preserved
             forall|j: int| 0 <= j < len.as_nat() && j < old(self).data().len()
-                ==> #[trigger] self.data()[j] == old(self).data()[j],
-            self.captured().len() == len.as_nat(),  // definitional (padded view at data len)
+                ==> #[trigger] final(self).data()[j] == old(self).data()[j],
+            final(self).captured().len() == len.as_nat(),  // definitional (padded view at data len)
             // Flags: shared prefix preserved, grown region clear (both
             // stores: truncate retires, growth extends with clear tags).
             TRACK ==> forall|j: int| 0 <= j < len.as_nat()
-                ==> #[trigger] self.captured()[j]
+                ==> #[trigger] final(self).captured()[j]
                     == (j < old(self).captured().len() && old(self).captured()[j]);
 
     // -- capture protocol ----------------------------------------------------
@@ -192,10 +192,10 @@ where
                 ==> exists|k: int| 0 <= k < prev_diffs@.len()
                         && (#[trigger] prev_diffs@[k]).1.as_nat() == j as nat,
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
+            final(self).wf(),
+            final(self).data() == old(self).data(),
             TRACK ==> forall|i: int| 0 <= i < saved_len.as_nat() ==>
-                #[trigger] self.captured()[i] == false;
+                #[trigger] final(self).captured()[i] == false;
 
     /// First-write-wins capture. If the slot is in-frame and not yet captured,
     /// log `(old.data()[i], i)` and flip `captured[i]`.
@@ -204,25 +204,25 @@ where
             old(self).wf(),
             i.as_nat() < old(self).data().len(),
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
+            final(self).wf(),
+            final(self).data() == old(self).data(),
             // First-write-wins (all TRACK-conditional; an untracked store's
             // flags are dead and its capture is a no-op — production parity):
             (TRACK && i.as_nat() < saved_len.as_nat()
                 && !old(self).captured()[i.as_nat() as int])
                 ==> {
-                    &&& diff_log@ == old(diff_log)@.push(
+                    &&& final(diff_log)@ == old(diff_log)@.push(
                             (old(self).data()[i.as_nat() as int], i))
-                    &&& self.captured()[i.as_nat() as int] == true
-                    &&& forall|j: int| 0 <= j < self.captured().len() && j != i.as_nat()
-                            ==> #[trigger] self.captured()[j] == old(self).captured()[j]
+                    &&& final(self).captured()[i.as_nat() as int] == true
+                    &&& forall|j: int| 0 <= j < final(self).captured().len() && j != i.as_nat()
+                            ==> #[trigger] final(self).captured()[j] == old(self).captured()[j]
                 },
             // Already captured, out of frame, or untracked: no-op.
             !(TRACK && i.as_nat() < saved_len.as_nat()
                 && !old(self).captured()[i.as_nat() as int])
                 ==> {
-                    &&& diff_log@ == old(diff_log)@
-                    &&& (TRACK ==> self.captured() == old(self).captured())
+                    &&& final(diff_log)@ == old(diff_log)@
+                    &&& (TRACK ==> final(self).captured() == old(self).captured())
                 };
 
     /// Unconditional capture (used by `pop` so the about-to-vanish slot is
@@ -232,18 +232,18 @@ where
             old(self).wf(),
             i.as_nat() < old(self).data().len(),
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
+            final(self).wf(),
+            final(self).data() == old(self).data(),
             (TRACK && i.as_nat() < saved_len.as_nat()) ==> {
-                &&& diff_log@ == old(diff_log)@.push(
+                &&& final(diff_log)@ == old(diff_log)@.push(
                         (old(self).data()[i.as_nat() as int], i))
-                &&& self.captured()[i.as_nat() as int] == true
-                &&& forall|j: int| 0 <= j < self.captured().len() && j != i.as_nat()
-                        ==> #[trigger] self.captured()[j] == old(self).captured()[j]
+                &&& final(self).captured()[i.as_nat() as int] == true
+                &&& forall|j: int| 0 <= j < final(self).captured().len() && j != i.as_nat()
+                        ==> #[trigger] final(self).captured()[j] == old(self).captured()[j]
             },
             !(TRACK && i.as_nat() < saved_len.as_nat()) ==> {
-                &&& diff_log@ == old(diff_log)@
-                &&& (TRACK ==> self.captured() == old(self).captured())
+                &&& final(diff_log)@ == old(diff_log)@
+                &&& (TRACK ==> final(self).captured() == old(self).captured())
             };
 
     /// Pre-replay flag reset: clear EVERY capture flag, given that each set
@@ -261,10 +261,10 @@ where
                 ==> exists|k: int| 0 <= k < replayed_diffs@.len()
                         && (#[trigger] replayed_diffs@[k]).1.as_nat() == j as nat,
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
-            TRACK ==> forall|j: int| 0 <= j < self.captured().len()
-                ==> !(#[trigger] self.captured()[j]);
+            final(self).wf(),
+            final(self).data() == old(self).data(),
+            TRACK ==> forall|j: int| 0 <= j < final(self).captured().len()
+                ==> !(#[trigger] final(self).captured()[j]);
 
     /// Rewind a single slot to `old_value`. Within `[0, target_saved_len)`,
     /// either overwrites the existing slot (`index < data.len()`) or pushes
@@ -282,26 +282,26 @@ where
                 && index.as_nat() == old(self).data().len())
                 ==> old(self).data().len() + 1 < I::max_nat(),
         ensures
-            self.wf(),
+            final(self).wf(),
             // In-frame, in-bounds: overwrite.
             (index.as_nat() < target_saved_len.as_nat()
                 && index.as_nat() < old(self).data().len())
-                ==> self.data() ==
+                ==> final(self).data() ==
                     old(self).data().update(index.as_nat() as int, *old_value),
             // In-frame, at end: push.
             (index.as_nat() < target_saved_len.as_nat()
                 && index.as_nat() == old(self).data().len())
-                ==> self.data() == old(self).data().push(*old_value),
+                ==> final(self).data() == old(self).data().push(*old_value),
             // Out-of-frame: no-op on data.
             (index.as_nat() >= target_saved_len.as_nat())
-                ==> self.data() == old(self).data(),
+                ==> final(self).data() == old(self).data(),
             // Flags decrease-only: a replay write never SETS a flag
             // (InlineStore writes tag-clear reprs; ParallelStore leaves its
             // pre-zeroed bitmap untouched). From `begin_restore`'s all-clear
             // start this keeps every flag clear through the replay — the
             // sparse set-only `finish_restore` needs exactly that.
-            TRACK ==> forall|j: int| 0 <= j < self.captured().len()
-                && #[trigger] self.captured()[j]
+            TRACK ==> forall|j: int| 0 <= j < final(self).captured().len()
+                && #[trigger] final(self).captured()[j]
                 ==> j < old(self).captured().len() && old(self).captured()[j];
 
     /// Rebuild `captured` from the surviving diff suffix. After restore, a
@@ -318,13 +318,13 @@ where
             TRACK ==> forall|j: int| 0 <= j < old(self).captured().len()
                 ==> !(#[trigger] old(self).captured()[j]),
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
+            final(self).wf(),
+            final(self).data() == old(self).data(),
             // Within `[0, saved_len)`, captured iff some surviving diff entry
             // points at this index. Above `saved_len`, unspecified (those
             // slots are about to be truncated by `Vec::restore`).
             TRACK ==> forall|i: int| 0 <= i < saved_len.as_nat() ==>
-                #[trigger] self.captured()[i] == exists|k: int|
+                #[trigger] final(self).captured()[i] == exists|k: int|
                     0 <= k < current_frame_diffs@.len()
                         && (#[trigger] current_frame_diffs@[k]).1.as_nat() == i;
 
@@ -333,9 +333,9 @@ where
     fn shrink_if(&mut self, factor: usize, headroom: usize)
         requires old(self).wf(),
         ensures
-            self.wf(),
-            self.data() == old(self).data(),
-            TRACK ==> self.captured() == old(self).captured();
+            final(self).wf(),
+            final(self).data() == old(self).data(),
+            TRACK ==> final(self).captured() == old(self).captured();
 
     /// Heap bytes used by the backing storage (diagnostic; no spec content —
     /// it's a capacity measurement, not part of the semi-persistent contract).

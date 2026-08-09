@@ -198,7 +198,7 @@ pub fn sel_usize(c: bool, a: usize, b: usize) -> (r: usize)
 #[verifier::external_body]
 pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
     requires i < N,
-    ensures a@ =~= old(a)@.update(i as int, v),
+    ensures final(a)@ =~= old(a)@.update(i as int, v),
 {
     // SAFETY: `i < N` is a verified precondition at every call site.
     unsafe {
@@ -246,10 +246,10 @@ pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
 pub fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, cnt: usize)
     requires pos <= cnt, cnt < N,
     ensures
-        a@.len() == old(a)@.len(),
-        forall|k: int| 0 <= k < pos ==> a@[k] == old(a)@[k],
-        forall|k: int| pos < k <= cnt ==> a@[k] == old(a)@[k - 1],
-        forall|k: int| cnt < k < N ==> a@[k] == old(a)@[k],
+        final(a)@.len() == old(a)@.len(),
+        forall|k: int| 0 <= k < pos ==> final(a)@[k] == old(a)@[k],
+        forall|k: int| pos < k <= cnt ==> final(a)@[k] == old(a)@[k - 1],
+        forall|k: int| cnt < k < N ==> final(a)@[k] == old(a)@[k],
 {
     // The crossover measured on this layout (see the table above). Below it the
     // element loop is cheaper than entering `memmove` at all.
@@ -371,11 +371,11 @@ pub trait NodeLayout: Sized {
             Self::count_spec(*old(n)) < Self::leaf_cap_spec(),
             pos <= Self::count_spec(*old(n)),
         ensures
-            Self::is_leaf_spec(*n),
-            Self::node_wf(*n),
-            Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
-            Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w),
-            Self::link_view(*n) == Self::link_view(*old(n));
+            Self::is_leaf_spec(*final(n)),
+            Self::node_wf(*final(n)),
+            Self::count_spec(*final(n)) == Self::count_spec(*old(n)) + 1,
+            Self::keys_view(*final(n)) == Self::keys_view(*old(n)).insert(pos as int, w),
+            Self::link_view(*final(n)) == Self::link_view(*old(n));
 
     /// Append `w` to a leaf: `leaf_insert_at(n, count, w)` with the shift gone.
     ///
@@ -397,11 +397,11 @@ pub trait NodeLayout: Sized {
             Self::is_leaf_spec(*old(n)),
             Self::count_spec(*old(n)) < Self::leaf_cap_spec(),
         ensures
-            Self::is_leaf_spec(*n),
-            Self::node_wf(*n),
-            Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
-            Self::keys_view(*n) == Self::keys_view(*old(n)).push(w),
-            Self::link_view(*n) == Self::link_view(*old(n));
+            Self::is_leaf_spec(*final(n)),
+            Self::node_wf(*final(n)),
+            Self::count_spec(*final(n)) == Self::count_spec(*old(n)) + 1,
+            Self::keys_view(*final(n)) == Self::keys_view(*old(n)).push(w),
+            Self::link_view(*final(n)) == Self::link_view(*old(n));
 
     /// The leaf-split median: `ceil(leaf_cap / 2) = (leaf_cap + 1) / 2`. The
     /// left half keeps `split_mid` keys, the right half gets `leaf_cap + 1 -
@@ -540,11 +540,11 @@ pub trait NodeLayout: Sized {
     /// right leaf into the chain. Only the link changes.
     fn set_link(n: &mut Self::Node, l: Self::ArenaIdx)
         ensures
-            Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
-            Self::count_spec(*n) == Self::count_spec(*old(n)),
-            Self::keys_view(*n) == Self::keys_view(*old(n)),
-            Self::node_wf(*n) == Self::node_wf(*old(n)),
-            Self::link_view(*n) == l.as_nat();
+            Self::is_leaf_spec(*final(n)) == Self::is_leaf_spec(*old(n)),
+            Self::count_spec(*final(n)) == Self::count_spec(*old(n)),
+            Self::keys_view(*final(n)) == Self::keys_view(*old(n)),
+            Self::node_wf(*final(n)) == Self::node_wf(*old(n)),
+            Self::link_view(*final(n)) == l.as_nat();
 
     /// Set internal child `i` (`0 <= i <= key_cap`) to arena id `v`. Production's
     /// `set_internal_child`: writes `data[key_cap + i]` for `i < key_cap`, else
@@ -557,13 +557,13 @@ pub trait NodeLayout: Sized {
             Self::node_wf(*old(n)),
             i <= Self::key_cap_spec(),
         ensures
-            Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
-            Self::node_wf(*n),
-            Self::count_spec(*n) == Self::count_spec(*old(n)),
-            Self::keys_view(*n) == Self::keys_view(*old(n)),
-            Self::child_view(*n, i as int) == v.as_nat(),
+            Self::is_leaf_spec(*final(n)) == Self::is_leaf_spec(*old(n)),
+            Self::node_wf(*final(n)),
+            Self::count_spec(*final(n)) == Self::count_spec(*old(n)),
+            Self::keys_view(*final(n)) == Self::keys_view(*old(n)),
+            Self::child_view(*final(n), i as int) == v.as_nat(),
             forall|j: int| 0 <= j <= Self::key_cap_spec() && j != i ==>
-                Self::child_view(*n, j) == Self::child_view(*old(n), j);
+                Self::child_view(*final(n), j) == Self::child_view(*old(n), j);
 
     /// Insert separator `w` into an internal node at key-position `pos`,
     /// shifting `[pos..count)` up. The node must have separator room (`count <
@@ -579,12 +579,12 @@ pub trait NodeLayout: Sized {
             Self::count_spec(*old(n)) < Self::key_cap_spec(),
             pos <= Self::count_spec(*old(n)),
         ensures
-            Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
-            Self::node_wf(*n),
-            Self::count_spec(*n) == Self::count_spec(*old(n)) + 1,
-            Self::keys_view(*n) == Self::keys_view(*old(n)).insert(pos as int, w),
+            Self::is_leaf_spec(*final(n)) == Self::is_leaf_spec(*old(n)),
+            Self::node_wf(*final(n)),
+            Self::count_spec(*final(n)) == Self::count_spec(*old(n)) + 1,
+            Self::keys_view(*final(n)) == Self::keys_view(*old(n)).insert(pos as int, w),
             forall|j: int| 0 <= j <= Self::key_cap_spec() ==>
-                Self::child_view(*n, j) == Self::child_view(*old(n), j);
+                Self::child_view(*final(n), j) == Self::child_view(*old(n), j);
 
     // -- proof glue --
 
@@ -678,14 +678,14 @@ pub fn internal_insert_at<L: NodeLayout>(n: &mut L::Node, cp: usize, sep: L::Wor
         L::count_spec(*old(n)) < L::key_cap_spec(),
         cp <= L::count_spec(*old(n)),
     ensures
-        !L::is_leaf_spec(*n),
-        L::node_wf(*n),
-        L::count_spec(*n) == L::count_spec(*old(n)) + 1,
-        L::keys_view(*n) == L::keys_view(*old(n)).insert(cp as int, sep),
-        forall|j: int| 0 <= j <= cp ==> L::child_view(*n, j) == L::child_view(*old(n), j),
-        L::child_view(*n, cp + 1) == child.as_nat(),
+        !L::is_leaf_spec(*final(n)),
+        L::node_wf(*final(n)),
+        L::count_spec(*final(n)) == L::count_spec(*old(n)) + 1,
+        L::keys_view(*final(n)) == L::keys_view(*old(n)).insert(cp as int, sep),
+        forall|j: int| 0 <= j <= cp ==> L::child_view(*final(n), j) == L::child_view(*old(n), j),
+        L::child_view(*final(n), cp + 1) == child.as_nat(),
         forall|j: int| cp + 1 < j <= L::count_spec(*old(n)) + 1 ==>
-            L::child_view(*n, j) == L::child_view(*old(n), (j - 1)),
+            L::child_view(*final(n), j) == L::child_view(*old(n), (j - 1)),
 {
     let ghost old_n = *n;
     let cnt = L::count(n);
@@ -1442,13 +1442,13 @@ macro_rules! gen_layout_u64 {
             #[inline(always)]
             fn set_internal_child(n: &mut $node, i: usize, v: usize)
                 ensures
-                    Self::is_leaf_spec(*n) == Self::is_leaf_spec(*old(n)),
-                    Self::node_wf(*n),
-                    Self::count_spec(*n) == Self::count_spec(*old(n)),
-                    Self::keys_view(*n) == Self::keys_view(*old(n)),
-                    Self::child_view(*n, i as int) == v.as_nat(),
+                    Self::is_leaf_spec(*final(n)) == Self::is_leaf_spec(*old(n)),
+                    Self::node_wf(*final(n)),
+                    Self::count_spec(*final(n)) == Self::count_spec(*old(n)),
+                    Self::keys_view(*final(n)) == Self::keys_view(*old(n)),
+                    Self::child_view(*final(n), i as int) == v.as_nat(),
                     forall|j: int| 0 <= j <= Self::key_cap_spec() && j != i ==>
-                        Self::child_view(*n, j) == Self::child_view(*old(n), j),
+                        Self::child_view(*final(n), j) == Self::child_view(*old(n), j),
             {
                 let ghost old_n = *n;
                 if i < $key_cap {

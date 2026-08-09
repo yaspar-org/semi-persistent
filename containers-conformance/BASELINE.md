@@ -92,7 +92,7 @@ pinned in `perf_gate.rs` — and `ceiling` is what the build actually fails abov
 | `mark_set_restore`    | −12.1% … −17.0% | 4.9pp  | −12.0%   | −6.0%   | tracked mark / 50k set / restore; verus faster. Noisiest row: the timed unit includes the 50k-set phase |
 | `restore_replay`      | −1.1% … +1.4%   | 2.5pp  | +1.5%    | +7.5%   | restore phase ALONE; see "gate on phases" below |
 | `class_splice`        | +3.9% … +4.7%   | 0.8pp  | +4.7%    | +10.0%  | ceiling is `MIGRATION_GATE`-capped (4.7+6 > 10). Residual is the extra payload write clearing the absorbed key's presence bit |
-| `class_walk`          | −0.6% … +0.3%   | 0.9pp  | +0.5%    | +6.5%   | parity, as the disassembly argues |
+| `class_walk`          | −0.6% … +0.3%   | 0.9pp  | +0.5%    | +6.5%   | parity, as the disassembly argues. Timed unit is 8 walk passes (`WALK_PASSES`): at one pass (~11 µs on a shared runner) a per-build binary-layout artifact breached even the absolute gate (+12.9% on ubuntu-latest under Rust 1.97) while the two walk loops were instruction-identical in the same binary — 8 insns each, both 16-aligned. The ratio is dimensionless, so the recorded range carries over; re-measure on the baseline machine at the next re-record |
 | `class_merge_restore` | −7.9% … −8.2%   | 0.3pp  | −7.8%    | −1.8%   | tightest row; the e-graph's real rebuild/backtrack shape |
 | `nested_mark/depth2`  | +2.6% … +8.1%   | 5.5pp  | ungated  | n/a     | 0.38 µs — below the layout-noise floor |
 | `nested_mark/depth32` | +0.0% … +5.1%   | 5.1pp  | ungated  | n/a     | 2.6 µs — layout floor |

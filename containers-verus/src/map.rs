@@ -295,10 +295,10 @@ where
     pub fn insert(&mut self, key: K, val: V) -> (id: usize)
         requires old(self).wf(),
         ensures
-            self.wf(),
+            final(self).wf(),
             id == old(self).log_view().len(),
-            self.log_view() == old(self).log_view().push((key, val)),
-            self.index_view() == old(self).index_view().insert(key, id),
+            final(self).log_view() == old(self).log_view().push((key, val)),
+            final(self).index_view() == old(self).index_view().insert(key, id),
     {
         broadcast use vstd::std_specs::hash::group_hash_axioms;
         broadcast use crate::hasher_spec::axiom_index_hasher_builds_valid_hashers;
@@ -371,9 +371,9 @@ where
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: MapToken)
         requires old(self).wf(), TRACK, old(self).depth_spec() < u32::MAX,
         ensures
-            self.wf(),
-            self.log_view() == old(self).log_view(),
-            self.index_view() == old(self).index_view(),
+            final(self).wf(),
+            final(self).log_view() == old(self).log_view(),
+            final(self).index_view() == old(self).index_view(),
             token.frame_idx_spec() == old(self).depth_spec(),
     {
         broadcast use vstd::std_specs::hash::group_hash_axioms;
@@ -408,8 +408,8 @@ where
             old(self).depth_spec() < u32::MAX,
             old(self).fork_count_spec() + 1 <= u32::MAX,
         ensures
-            self.wf(),
-            self.log_view() == old(self).log_snapshots_view()[token.frame_idx_spec() as int],
+            final(self).wf(),
+            final(self).log_view() == old(self).log_snapshots_view()[token.frame_idx_spec() as int],
     {
         self.log.restore(token.inner);
         self.rebuild_index();
@@ -421,9 +421,9 @@ where
     fn rebuild_index(&mut self)
         requires old(self).log.wf(), obeys_key_model::<K>(),
         ensures
-            self.wf(),
-            self.log_view() == old(self).log_view(),
-            self.log == old(self).log,
+            final(self).wf(),
+            final(self).log_view() == old(self).log_view(),
+            final(self).log == old(self).log,
     {
         broadcast use vstd::std_specs::hash::group_hash_axioms;
         broadcast use crate::hasher_spec::axiom_index_hasher_builds_valid_hashers;

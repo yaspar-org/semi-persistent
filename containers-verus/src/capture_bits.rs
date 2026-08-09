@@ -103,12 +103,12 @@ impl CaptureBits {
     #[inline(never)]
     fn grow_to(&mut self, need: usize)
         ensures
-            old(self).words_view().len() <= self.words_view().len(),
-            need <= self.words_view().len(),
+            old(self).words_view().len() <= final(self).words_view().len(),
+            need <= final(self).words_view().len(),
             forall|k: int| 0 <= k < old(self).words_view().len()
-                ==> #[trigger] self.words_view()[k] == old(self).words_view()[k],
-            forall|k: int| old(self).words_view().len() <= k < self.words_view().len()
-                ==> #[trigger] self.words_view()[k] == 0u64,
+                ==> #[trigger] final(self).words_view()[k] == old(self).words_view()[k],
+            forall|k: int| old(self).words_view().len() <= k < final(self).words_view().len()
+                ==> #[trigger] final(self).words_view()[k] == 0u64,
     {
         let ghost pre_grow = self.words@;
         while self.words.len() < need
@@ -138,8 +138,8 @@ impl CaptureBits {
             (i as int) < len,
             tail_clear(old(self).words_view(), len),
         ensures
-            tail_clear(self.words_view(), len),
-            forall|j: int| 0 <= j ==> padded_bit(self.words_view(), j)
+            tail_clear(final(self).words_view(), len),
+            forall|j: int| 0 <= j ==> padded_bit(final(self).words_view(), j)
                 == if j == i as int { true } else { padded_bit(old(self).words_view(), j) },
     {
         let wi = i / 64;
@@ -206,7 +206,7 @@ impl CaptureBits {
     #[inline(always)]
     pub fn clear_bit(&mut self, i: usize)
         ensures
-            forall|j: int| 0 <= j ==> padded_bit(self.words_view(), j)
+            forall|j: int| 0 <= j ==> padded_bit(final(self).words_view(), j)
                 == if j == i as int { false } else { padded_bit(old(self).words_view(), j) },
     {
         let wi = i / 64;
@@ -239,14 +239,14 @@ impl CaptureBits {
     /// mark-churn regression the conformance sweep caught).
     pub fn zero_all(&mut self)
         ensures
-            forall|j: int| 0 <= j ==> !padded_bit(self.words_view(), j),
-            forall|len: int| 0 <= len ==> tail_clear(self.words_view(), len),
+            forall|j: int| 0 <= j ==> !padded_bit(final(self).words_view(), j),
+            forall|len: int| 0 <= len ==> tail_clear(final(self).words_view(), len),
             // Word-level, not just bit-level: `zero_and_materialize` needs to
             // know the surviving words are literally zero so that appending
             // more zeros keeps the whole vector zero.
-            self.words_view().len() == old(self).words_view().len(),
-            forall|k: int| 0 <= k < self.words_view().len()
-                ==> #[trigger] self.words_view()[k] == 0u64,
+            final(self).words_view().len() == old(self).words_view().len(),
+            forall|k: int| 0 <= k < final(self).words_view().len()
+                ==> #[trigger] final(self).words_view()[k] == 0u64,
     {
         let n = self.words.len();
         let mut i: usize = 0;
@@ -297,8 +297,8 @@ impl CaptureBits {
     /// zeroing of any words it appends.
     pub fn zero_and_materialize(&mut self, data_len: usize)
         ensures
-            forall|j: int| 0 <= j ==> !padded_bit(self.words_view(), j),
-            forall|len: int| 0 <= len ==> tail_clear(self.words_view(), len),
+            forall|j: int| 0 <= j ==> !padded_bit(final(self).words_view(), j),
+            forall|len: int| 0 <= len ==> tail_clear(final(self).words_view(), len),
     {
         self.zero_all();
         let ghost zeroed = self.words@;
@@ -346,10 +346,10 @@ impl CaptureBits {
     /// flag retirement; also serves `truncate`'s `subrange` contract.)
     pub fn retire_from(&mut self, len: usize)
         ensures
-            forall|j: int| 0 <= j < len as int ==> padded_bit(self.words_view(), j)
+            forall|j: int| 0 <= j < len as int ==> padded_bit(final(self).words_view(), j)
                 == padded_bit(old(self).words_view(), j),
-            forall|j: int| len as int <= j ==> !padded_bit(self.words_view(), j),
-            tail_clear(self.words_view(), len as int),
+            forall|j: int| len as int <= j ==> !padded_bit(final(self).words_view(), j),
+            tail_clear(final(self).words_view(), len as int),
     {
         let ghost final_check: bool = true;
         let full_words = len / 64;
@@ -513,15 +513,15 @@ impl CaptureBits {
     /// never grows the vector and never materializes a word.
     pub fn truncate_words_for(&mut self, keep_bits: usize)
         ensures
-            forall|j: int| 0 <= j < keep_bits as int ==> padded_bit(self.words_view(), j)
+            forall|j: int| 0 <= j < keep_bits as int ==> padded_bit(final(self).words_view(), j)
                 == padded_bit(old(self).words_view(), j),
-            self.words_view().len() <= old(self).words_view().len(),
+            final(self).words_view().len() <= old(self).words_view().len(),
             // `tail_clear` survives for every length the caller could still be
             // holding: dropping words only shrinks the `i / 64 < words.len()`
             // domain of its quantifier, so a store whose `wf` held at `len`
             // before still has it after. This is the clause `shrink_if` needs.
             forall|len: int| 0 <= len && tail_clear(old(self).words_view(), len)
-                ==> tail_clear(self.words_view(), len),
+                ==> tail_clear(final(self).words_view(), len),
     {
         // Number of words needed to cover `keep_bits` positions.
         let need = keep_bits / 64 + if keep_bits % 64 == 0 { 0 } else { 1 };

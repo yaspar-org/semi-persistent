@@ -282,9 +282,9 @@ impl ForkHistory {
             (token_branch as nat) <= old(self).origins@.len(),
             old(self).origins@.len() + 1 <= u32::MAX,
         ensures
-            self.wf(),
-            self.current_branch_id == self.origins@.len(),
-            self.origins@.len() == old(self).origins@.len() + 1,
+            final(self).wf(),
+            final(self).current_branch_id == final(self).origins@.len(),
+            final(self).origins@.len() == old(self).origins@.len() + 1,
     {
         self.origins.push(ForkOrigin { parent_branch_id: token_branch, fork_depth: token_depth });
         self.current_branch_id = self.origins.len() as u32;

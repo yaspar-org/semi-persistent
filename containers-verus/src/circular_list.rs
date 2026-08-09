@@ -415,12 +415,12 @@ where T: Sized + Copy + core::default::Default {
     pub fn set_payload(&mut self, i: N, payload: T)
         requires old(self).wf(), i.id_nat() < old(self).n_spec(),
         ensures
-            self.wf(),
-            self.n_spec() == old(self).n_spec(),
-            self.next_seq() == old(self).next_seq(),
-            self.model_view() == old(self).model_view(),
-            self.payload_seq() == old(self).payload_seq().update(i.id_nat() as int, payload),
-            self.entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).next_seq() == old(self).next_seq(),
+            final(self).model_view() == old(self).model_view(),
+            final(self).payload_seq() == old(self).payload_seq().update(i.id_nat() as int, payload),
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
     {
         proof { i.lemma_as_nat_is_id_nat(); }
         let iw = i.to_index();
@@ -461,11 +461,11 @@ where T: Sized + Copy + core::default::Default {
             old(self).n_spec() + 1 < <N as DenseId>::Index::max_nat(),
             old(self).n_spec() + 1 < N::id_bound(),
         ensures
-            self.wf(),
+            final(self).wf(),
             nid.id_nat() == old(self).n_spec(),
-            self.n_spec() == old(self).n_spec() + 1,
-            self.model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
-            self.payload_seq()[nid.id_nat() as int] == payload,
+            final(self).n_spec() == old(self).n_spec() + 1,
+            final(self).model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
+            final(self).payload_seq()[nid.id_nat() as int] == payload,
     {
         // The new node's dense index is the pre-push length. It is representable
         // in `N` (precondition `n_spec + 1 < id_bound`), so `from_usize`
@@ -639,10 +639,10 @@ where T: Sized + Copy + core::default::Default {
             // different rings
             old(self).locate(sid.id_nat() as int).0 != old(self).locate(aid.id_nat() as int).0,
         ensures
-            self.wf(),
-            self.n_spec() == old(self).n_spec(),
-            self.payload_seq() == old(self).payload_seq(),
-            self.model_view().len() == old(self).model_view().len(),
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).payload_seq() == old(self).payload_seq(),
+            final(self).model_view().len() == old(self).model_view().len(),
             // the two old rings: cs gets the merged ring, ca emptied.
             ({
                 let s = sid.id_nat() as int;
@@ -651,12 +651,12 @@ where T: Sized + Copy + core::default::Default {
                 let ca = old(self).locate(a).0;
                 let ps = old(self).locate(s).1;
                 let pa = old(self).locate(a).1;
-                &&& self.model_view()[cs]
+                &&& final(self).model_view()[cs]
                         == rotate(old(self).model_view()[cs], ps + 1)
                             + rotate(old(self).model_view()[ca], pa + 1)
-                &&& self.model_view()[ca] == Seq::<usize>::empty()
-                &&& (forall|c: int| 0 <= c < self.model_view().len() && c != cs && c != ca
-                        ==> #[trigger] self.model_view()[c] == old(self).model_view()[c])
+                &&& final(self).model_view()[ca] == Seq::<usize>::empty()
+                &&& (forall|c: int| 0 <= c < final(self).model_view().len() && c != cs && c != ca
+                        ==> #[trigger] final(self).model_view()[c] == old(self).model_view()[c])
             }),
     {
         // Runtime guard (plan 2.3, debug builds only): the different-rings
@@ -762,12 +762,12 @@ where T: Sized + Copy + core::default::Default {
             // different rings
             old(self).locate(sid.id_nat() as int).0 != old(self).locate(aid.id_nat() as int).0,
         ensures
-            self.wf(),
-            self.n_spec() == old(self).n_spec(),
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
             // the ONLY difference from `splice`: the absorbed node's payload.
-            self.payload_seq()
+            final(self).payload_seq()
                 == old(self).payload_seq().update(aid.id_nat() as int, a_payload),
-            self.model_view().len() == old(self).model_view().len(),
+            final(self).model_view().len() == old(self).model_view().len(),
             ({
                 let s = sid.id_nat() as int;
                 let a = aid.id_nat() as int;
@@ -775,12 +775,12 @@ where T: Sized + Copy + core::default::Default {
                 let ca = old(self).locate(a).0;
                 let ps = old(self).locate(s).1;
                 let pa = old(self).locate(a).1;
-                &&& self.model_view()[cs]
+                &&& final(self).model_view()[cs]
                         == rotate(old(self).model_view()[cs], ps + 1)
                             + rotate(old(self).model_view()[ca], pa + 1)
-                &&& self.model_view()[ca] == Seq::<usize>::empty()
-                &&& (forall|c: int| 0 <= c < self.model_view().len() && c != cs && c != ca
-                        ==> #[trigger] self.model_view()[c] == old(self).model_view()[c])
+                &&& final(self).model_view()[ca] == Seq::<usize>::empty()
+                &&& (forall|c: int| 0 <= c < final(self).model_view().len() && c != cs && c != ca
+                        ==> #[trigger] final(self).model_view()[c] == old(self).model_view()[c])
             }),
     {
         // Body is `splice`'s verbatim except for the absorbed cell's payload;
@@ -850,11 +850,11 @@ where T: Sized + Copy + core::default::Default {
             // inner Vec's u32 depth-cast bound (propagated; guarded there).
             old(self).depth_spec() < u32::MAX,
         ensures
-            self.wf(),
-            self.next_seq() == old(self).next_seq(),
-            self.n_spec() == old(self).n_spec(),
-            self.model_view() == old(self).model_view(),
-            self.entries_snapshots_view()
+            final(self).wf(),
+            final(self).next_seq() == old(self).next_seq(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).model_view() == old(self).model_view(),
+            final(self).entries_snapshots_view()
                 == old(self).entries_snapshots_view().push(old(self).entries_view()),
     {
         let entries = self.entries.mark(shrink);
@@ -929,11 +929,11 @@ where T: Sized + Copy + core::default::Default {
             old(self).depth_spec() < u32::MAX,
             old(self).fork_count_spec() + 1 <= u32::MAX,
         ensures
-            self.wf(),
-            self.entries_view()
+            final(self).wf(),
+            final(self).entries_view()
                 == old(self).entries_snapshots_view()[token.frame_idx_spec() as int],
             // Restored to the ring partition archived at that mark (Phase 7).
-            self.model_view() == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
+            final(self).model_view() == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
     {
         // Runtime guard (plan 2.3): full restorable predicate before mutation.
         crate::guard::check_precondition(
@@ -1754,21 +1754,21 @@ where T: Sized + Copy + core::default::Default {
             old(self).list_ref().wf(),
             old(self).cursor_ok(),
         ensures
-            self.list_ref() == old(self).list_ref(),
-            self.start_spec() == old(self).start_spec(),
-            self.c_spec() == old(self).c_spec(),
-            self.p0_spec() == old(self).p0_spec(),
-            self.cursor_ok(),
+            final(self).list_ref() == old(self).list_ref(),
+            final(self).start_spec() == old(self).start_spec(),
+            final(self).c_spec() == old(self).c_spec(),
+            final(self).p0_spec() == old(self).p0_spec(),
+            final(self).cursor_ok(),
             !old(self).done_spec() ==> {
                 &&& r is Some
                 // The yielded id's dense index is the walk position's node —
                 // stated through `id_nat` because the model is width-agnostic.
                 &&& r->Some_0.id_nat() == old(self).walk_seq()[old(self).pos_spec() as int] as nat
-                &&& self.pos_spec() == old(self).pos_spec() + 1
+                &&& final(self).pos_spec() == old(self).pos_spec() + 1
             },
             old(self).done_spec() ==> {
                 &&& r is None
-                &&& self.pos_spec() == old(self).pos_spec()
+                &&& final(self).pos_spec() == old(self).pos_spec()
             },
     {
         if self.done {

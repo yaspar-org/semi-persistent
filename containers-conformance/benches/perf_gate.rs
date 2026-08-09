@@ -291,6 +291,10 @@ const RING_N: usize = 20_000;
 /// Merges performed per timed unit. `RING_N / 2` merges over `RING_N` singletons
 /// leaves `RING_N / 2` two-node rings — a shape the walk row then reuses.
 const RING_MERGES: usize = RING_N / 2;
+/// Walk passes per timed unit in `class_walk` — see that row's comment: the
+/// ratio is layout-noise-limited, not work-limited, so the timed unit is
+/// scaled until a constant per-build layout artifact cannot reach the gate.
+const WALK_PASSES: usize = 8;
 
 /// The `i`th merge's (survivor, absorbed) pair, on each side. Both go through the
 /// id's `DenseId::from_usize` rather than casting an index to a fixed width, so the
@@ -377,8 +381,10 @@ fn row_class_walk() -> Row {
         },
         |ring| {
             let mut total = 0usize;
-            for i in 0..RING_MERGES {
-                total += pring::walk(ring, pids(i).0);
+            for _ in 0..WALK_PASSES {
+                for i in 0..RING_MERGES {
+                    total += pring::walk(ring, pids(i).0);
+                }
             }
             total
         },
@@ -392,8 +398,10 @@ fn row_class_walk() -> Row {
         },
         |ring| {
             let mut total = 0usize;
-            for i in 0..RING_MERGES {
-                total += ring.iter_class(vids(i).0).count();
+            for _ in 0..WALK_PASSES {
+                for i in 0..RING_MERGES {
+                    total += ring.iter_class(vids(i).0).count();
+                }
             }
             total
         },
@@ -407,6 +415,16 @@ fn row_class_walk() -> Row {
     // loop bodies themselves are 9 insns prod / 8 insns verus with the same
     // 3-op loop-carried chain (`mul` → `ldr` → `and`), so the container is not
     // the variable — the harness's walk style was.
+    //
+    // WALK_PASSES exists because a single pass (~11 µs on a shared runner) is
+    // small enough for BINARY-LAYOUT effects to breach even the absolute gate:
+    // the Rust 1.97 toolchain bump read +12.9% on ubuntu-latest while the two
+    // walk loops were INSTRUCTION-IDENTICAL in the same binary (x86_64, fat
+    // LTO — 8 insns each, both 16-aligned, differing only in equality-compare
+    // operand order). A layout artifact is constant per build, so per-sample
+    // interleave + min cannot remove it; scaling the timed unit shrinks its
+    // relative weight instead. Same evidence class as `push_only`'s
+    // parity-by-disassembly above.
     Row::gated("class_walk", p, v, 0.5)
 }
 

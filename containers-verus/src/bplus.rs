@@ -1041,12 +1041,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|q: int| 0 <= q < c - 1 ==>
                 crate::bplus_tree::keys_all_below(#[trigger] ckids[q], ckids[q + 1]),
         ensures
-            self.nodes.wf(),
-            self.arena().len() == lo + c + im,
-            self.nodes.snapshots_view() == old(self).nodes.snapshots_view(),
+            final(self).nodes.wf(),
+            final(self).arena().len() == lo + c + im,
+            final(self).nodes.snapshots_view() == old(self).nodes.snapshots_view(),
             // the level below is untouched (pushes only), so its chain and its
             // `binds` survive verbatim.
-            forall|i: int| 0 <= i < lo + c ==> self.arena()[i] == old(self).arena()[i],
+            forall|i: int| 0 <= i < lo + c ==> final(self).arena()[i] == old(self).arena()[i],
             r.1@.len() == im,
             r.0@.len() == im,
             forall|g: int| 0 <= g < im ==>
@@ -1054,7 +1054,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                     == crate::bplus_tree::tree_keys(r.1@[g])[0],
             forall|g: int| 0 <= g < im ==>
                 crate::bplus_tree::tree_root_id(#[trigger] r.1@[g]) == (lo + c + g) as nat,
-            forest_binds_l::<L>(self.arena(), r.1@),
+            forest_binds_l::<L>(final(self).arena(), r.1@),
             forall|g: int| 0 <= g < im ==>
                 crate::bplus_tree::tree_wf(#[trigger] r.1@[g], (h + 1) as nat,
                     L::leaf_cap_spec(), L::key_cap_spec(), is_root),
@@ -1440,6 +1440,12 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     /// is what makes every leaf meet `tree_wf`'s non-root minimum of `(cap+1)/2`
     /// keys — see `lemma_balanced_group_min`. Production's `chunks(LEAF_CAP)`
     /// cannot: its last chunk may hold a single key.
+    ///
+    /// rlimit matches `bulk_build_level`'s: the group loop passes at the
+    /// default limit under the arm64 z3 4.16 build but exceeds it under the
+    /// x86 build of the same z3 version (platform builds explore in different
+    /// orders), so the limit is sized for the noisier of the two.
+    #[verifier::rlimit(200)]
     fn bulk_build_leaves(
         &mut self,
         keys: &[K],
@@ -1465,14 +1471,14 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|i: int, j: int| 0 <= i < j < keys@.len()
                 ==> (#[trigger] keys@[i]).id_nat() < (#[trigger] keys@[j]).id_nat(),
         ensures
-            self.nodes.wf(),
-            self.nodes.view().len() == m,
-            self.nodes.snapshots_view() == old(self).nodes.snapshots_view(),
+            final(self).nodes.wf(),
+            final(self).nodes.view().len() == m,
+            final(self).nodes.snapshots_view() == old(self).nodes.snapshots_view(),
             r.1@.len() == m,
             // ids are contiguous from 0 (a fresh arena, pushes only).
             forall|g: int| 0 <= g < m ==>
                 crate::bplus_tree::tree_root_id(#[trigger] r.1@[g]) == g as nat,
-            forest_binds_l::<L>(self.arena(), r.1@),
+            forest_binds_l::<L>(final(self).arena(), r.1@),
             crate::bplus_tree::forest_wf(r.1@, 0, cap, L::key_cap_spec()),
             crate::bplus_tree::forest_disjoint(r.1@),
             forall|a: int, b: int| 0 <= a < b < m ==>
@@ -1489,8 +1495,8 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // forms -- the recursive one for this level's `subtree_wf`, and the
             // flat one because every level above shares this same leaf sequence
             // and inherits the chain unchanged (see `chain_links_to`).
-            forest_links_to::<L>(self.arena(), r.1@, nil_link::<L>()),
-            chain_links_to::<L>(self.arena(),
+            forest_links_to::<L>(final(self).arena(), r.1@, nil_link::<L>()),
+            chain_links_to::<L>(final(self).arena(),
                 crate::bplus_tree::forest_leaf_ids(r.1@), nil_link::<L>()),
             // adjacent ordering, `lemma_bulk_group_wf`'s ordering hypothesis.
             forall|g: int| 0 <= g < m - 1 ==>
@@ -5876,9 +5882,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // fact is required of the caller.
             K::is_bit_stealing(),
         ensures
-            self.wf(),
+            final(self).wf(),
             added == !old(self).model().contains(key.id_nat()),
-            self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
+            final(self).model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
         // Runtime guard (overflow): a verified caller proves `nkeys < usize::MAX`;
         // an unverified one is trapped before the `nkeys + 1` count would wrap.
@@ -6092,14 +6098,14 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             old(self).nkeys_spec() < usize::MAX,
             kw.as_nat() == key.id_nat(),
         ensures
-            self.wf(),
+            final(self).wf(),
             // taken: the key was strictly above every existing key, so it is
             // genuinely new and lands at the end of the model.
-            did ==> self.model() == old(self).model().push(key.id_nat()),
+            did ==> final(self).model() == old(self).model().push(key.id_nat()),
             did ==> !old(self).model().contains(key.id_nat()),
             // declined: nothing was touched at all (the caller's `old(self)` facts
             // all still hold of `self`).
-            !did ==> *self == *old(self),
+            !did ==> *final(self) == *old(self),
     {
         let ll = self.last_leaf;
         proof {
@@ -6240,9 +6246,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // value count. So `insert_general` is now TOTAL for any reachable state.
             K::is_bit_stealing(),
         ensures
-            self.wf(),
+            final(self).wf(),
             added == !old(self).model().contains(key.id_nat()),
-            self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
+            final(self).model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
         // Runtime guard (overflow): a verified caller proves `nkeys < usize::MAX`;
         // an unverified one is trapped before the `nkeys + 1` count would wrap.
@@ -6488,9 +6494,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             !crate::bplus_tree::tree_keys(old(self).tree@).contains(key.id_nat()),
             L::link_view(leaf) == nil_link::<L>(),
         ensures
-            self.wf(),
+            final(self).wf(),
             added == !old(self).model().contains(key.id_nat()),
-            self.model().to_set() == old(self).model().to_set().insert(key.id_nat()),
+            final(self).model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
         let ghost root_id = self.root.as_nat();
         let ghost gkeys = crate::bplus_tree::tree_keys(self.tree@);
@@ -6900,23 +6906,23 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             h@ == 0,
             old(self).arena().len() + 2 < <L::ArenaIdx as IndexLike>::max_nat(),
         ensures
-            self.nodes.wf(),
+            final(self).nodes.wf(),
             // only the arena (self.nodes) is touched; the cached count, root index,
             // and ghost tree are unchanged (the caller frames its bookkeeping).
-            self.nkeys == old(self).nkeys,
-            self.root == old(self).root,
-            self.tree@ == old(self).tree@,
+            final(self).nkeys == old(self).nkeys,
+            final(self).root == old(self).root,
+            final(self).tree@ == old(self).tree@,
             // Phase 7 frame: push/set never touch the snapshot stack or the
             // archives, so the (opaque) archive agreement transfers upward.
-            self.header_archive@ == old(self).header_archive@,
-            self.tree_snapshots@ == old(self).tree_snapshots@,
-            self.nodes.snapshots_view() == old(self).nodes.snapshots_view(),
-            old(self).arena().len() <= self.arena().len(),
+            final(self).header_archive@ == old(self).header_archive@,
+            final(self).tree_snapshots@ == old(self).tree_snapshots@,
+            final(self).nodes.snapshots_view() == old(self).nodes.snapshots_view(),
+            old(self).arena().len() <= final(self).arena().len(),
             // a leaf insert allocates at most one node (the split's right leaf).
-            self.arena().len() <= old(self).arena().len() + h@ + 1,
+            final(self).arena().len() <= old(self).arena().len() + h@ + 1,
             forall|i: int| 0 <= i < old(self).arena().len()
                 && !crate::bplus_tree::tree_ids(cur@).contains(i as nat)
-                ==> #[trigger] self.arena()[i] == old(self).arena()[i],
+                ==> #[trigger] final(self).arena()[i] == old(self).arena()[i],
             // (M6) ARENA/NODE-COUNT DELTA: the arena grows by exactly the increase
             // in total node count. For a leaf both cur and the result(s) are leaves
             // (node_count 1 each), so None is +0 and a split is +1 == 1+1-1.
@@ -6924,10 +6930,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let (added, split, nl, nr) = res;
                 match split {
                     Option::None =>
-                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                        final(self).arena().len() + crate::bplus_tree::node_count(cur@)
                             == old(self).arena().len() + crate::bplus_tree::node_count(nl@),
                     Option::Some(_) =>
-                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                        final(self).arena().len() + crate::bplus_tree::node_count(cur@)
                             == old(self).arena().len()
                                 + crate::bplus_tree::node_count(nl@)
                                 + crate::bplus_tree::node_count(nr@),
@@ -6937,7 +6943,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let (added, split, nl, nr) = res;
                 match split {
                     Option::None => {
-                        &&& Self::subtree_wf(self.arena(), nl@, h@, succ@, is_root@)
+                        &&& Self::subtree_wf(final(self).arena(), nl@, h@, succ@, is_root@)
                         &&& crate::bplus_tree::tree_root_id(nl@) == idx.as_nat()
                         &&& crate::bplus_tree::tree_ids(nl@) == crate::bplus_tree::tree_ids(cur@)
                         &&& crate::bplus_tree::tree_leaf_ids(nl@) == crate::bplus_tree::tree_leaf_ids(cur@)
@@ -6952,9 +6958,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         // characterization as the None arm — the caller needs it
                         // to discharge `added == !contains` uniformly.
                         &&& added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat())
-                        &&& Self::subtree_wf(self.arena(), nl@, h@,
+                        &&& Self::subtree_wf(final(self).arena(), nl@, h@,
                                 crate::bplus_tree::tree_leaf_ids(nr@)[0], false)
-                        &&& Self::subtree_wf(self.arena(), nr@, h@, succ@, false)
+                        &&& Self::subtree_wf(final(self).arena(), nr@, h@, succ@, false)
                         &&& crate::bplus_tree::tree_root_id(nl@) == idx.as_nat()
                         &&& crate::bplus_tree::tree_root_id(nr@) == rid.as_nat()
                         &&& crate::bplus_tree::tree_keys(nr@).len() >= 1
@@ -7300,26 +7306,26 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // grown past `old + 2`.)
             old(self).arena().len() + h@ + 2 < <L::ArenaIdx as IndexLike>::max_nat(),
         ensures
-            self.nodes.wf(),
+            final(self).nodes.wf(),
             // only the arena (self.nodes) is touched; the cached count, root index,
             // and ghost tree are unchanged (the caller frames its bookkeeping).
-            self.nkeys == old(self).nkeys,
-            self.root == old(self).root,
-            self.tree@ == old(self).tree@,
+            final(self).nkeys == old(self).nkeys,
+            final(self).root == old(self).root,
+            final(self).tree@ == old(self).tree@,
             // Phase 7 frame: push/set never touch the snapshot stack or the
             // archives, so the (opaque) archive agreement transfers upward.
-            self.header_archive@ == old(self).header_archive@,
-            self.tree_snapshots@ == old(self).tree_snapshots@,
-            self.nodes.snapshots_view() == old(self).nodes.snapshots_view(),
+            final(self).header_archive@ == old(self).header_archive@,
+            final(self).tree_snapshots@ == old(self).tree_snapshots@,
+            final(self).nodes.snapshots_view() == old(self).nodes.snapshots_view(),
             // arena grows by at most h + 1 (one allocation per level + new root
             // is the caller's; here, at most one per level of this subtree).
-            old(self).arena().len() <= self.arena().len(),
-            self.arena().len() <= old(self).arena().len() + h@ + 1,
+            old(self).arena().len() <= final(self).arena().len(),
+            final(self).arena().len() <= old(self).arena().len() + h@ + 1,
             // FRAME: every arena slot outside cur's footprint is unchanged. Lets
             // the caller (the level above) frame this subtree's siblings.
             forall|i: int| 0 <= i < old(self).arena().len()
                 && !crate::bplus_tree::tree_ids(cur@).contains(i as nat)
-                ==> #[trigger] self.arena()[i] == old(self).arena()[i],
+                ==> #[trigger] final(self).arena()[i] == old(self).arena()[i],
             // (M6) ARENA/NODE-COUNT DELTA: arena growth == total node-count increase.
             // None: new subtree nl replaces cur (delta == nc(nl) - nc(cur)); Some: cur
             // becomes the two halves nl+nr (delta == nc(nl)+nc(nr) - nc(cur)). This is
@@ -7329,10 +7335,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let (added, split, nl, nr) = res;
                 match split {
                     Option::None =>
-                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                        final(self).arena().len() + crate::bplus_tree::node_count(cur@)
                             == old(self).arena().len() + crate::bplus_tree::node_count(nl@),
                     Option::Some(_) =>
-                        self.arena().len() + crate::bplus_tree::node_count(cur@)
+                        final(self).arena().len() + crate::bplus_tree::node_count(cur@)
                             == old(self).arena().len()
                                 + crate::bplus_tree::node_count(nl@)
                                 + crate::bplus_tree::node_count(nr@),
@@ -7342,7 +7348,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let (added, split, nl, nr) = res;
                 match split {
                     Option::None => {
-                        &&& Self::subtree_wf(self.arena(), nl@, h@, succ@, is_root@)
+                        &&& Self::subtree_wf(final(self).arena(), nl@, h@, succ@, is_root@)
                         &&& crate::bplus_tree::tree_root_id(nl@) == idx.as_nat()
                         // (F0) footprint: `None` means "this node's root id is
                         // unchanged", NOT "the footprint is unchanged" — a node
@@ -7380,9 +7386,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                         // characterization as the None arm — the caller needs it
                         // to discharge `added == !contains` uniformly.
                         &&& added == !crate::bplus_tree::tree_keys(cur@).contains(key.id_nat())
-                        &&& Self::subtree_wf(self.arena(), nl@, h@,
+                        &&& Self::subtree_wf(final(self).arena(), nl@, h@,
                                 crate::bplus_tree::tree_leaf_ids(nr@)[0], false)
-                        &&& Self::subtree_wf(self.arena(), nr@, h@, succ@, false)
+                        &&& Self::subtree_wf(final(self).arena(), nr@, h@, succ@, false)
                         &&& crate::bplus_tree::tree_root_id(nl@) == idx.as_nat()
                         &&& crate::bplus_tree::tree_root_id(nr@) == rid.as_nat()
                         &&& crate::bplus_tree::tree_keys(nr@).len() >= 1
@@ -9745,9 +9751,9 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
     pub fn seek(&mut self, target: K)
         requires old(self).cursor_wf(),
         ensures
-            self.cursor_wf(),
-            self.tree_ref() == old(self).tree_ref(),
-            self.idx() == seek_target_idx(self.model(), target.id_nat()),
+            final(self).cursor_wf(),
+            final(self).tree_ref() == old(self).tree_ref(),
+            final(self).idx() == seek_target_idx(final(self).model(), target.id_nat()),
     {
         let word: L::Word = target.to_index();    // word.as_nat() == target.id_nat()
         let ghost lids = crate::bplus_tree::tree_leaf_ids(self.tree.tree@);
@@ -9797,9 +9803,9 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
     pub fn seek_first(&mut self)
         requires old(self).tree_ref().wf(),
         ensures
-            self.cursor_wf(),
-            self.tree_ref() == old(self).tree_ref(),
-            self.idx() == 0,
+            final(self).cursor_wf(),
+            final(self).tree_ref() == old(self).tree_ref(),
+            final(self).idx() == 0,
     {
         let mut idx = self.tree.root;
         let ghost cur = self.tree.tree@;
@@ -10010,10 +10016,10 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
     pub fn step(&mut self)
         requires old(self).cursor_wf(),
         ensures
-            self.cursor_wf(),
-            self.tree_ref() == old(self).tree_ref(),
+            final(self).cursor_wf(),
+            final(self).tree_ref() == old(self).tree_ref(),
             // advance by one, clamped at the exhausted end (idx == |model|).
-            self.idx() == if old(self).idx() < old(self).model().len() {
+            final(self).idx() == if old(self).idx() < old(self).model().len() {
                 old(self).idx() + 1
             } else {
                 old(self).idx()
@@ -10326,17 +10332,17 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // inner Vec's u32 depth-cast bound (propagated; guarded there).
             old(self).arena_depth_spec() < u32::MAX,
         ensures
-            self.wf(),
-            self.tree_spec() == old(self).tree_spec(),
-            self.model() == old(self).model(),
-            self.root_spec() == old(self).root_spec(),
-            self.nkeys_spec() == old(self).nkeys_spec(),
+            final(self).wf(),
+            final(self).tree_spec() == old(self).tree_spec(),
+            final(self).model() == old(self).model(),
+            final(self).root_spec() == old(self).root_spec(),
+            final(self).nkeys_spec() == old(self).nkeys_spec(),
             // the snapshot just pushed is the current arena; restore can return here.
             token.frame_idx_spec() == old(self).arena_depth_spec(),
-            self.arena_snapshots_view()
+            final(self).arena_snapshots_view()
                 == old(self).arena_snapshots_view().push(old(self).arena()),
-            token.root_spec() == self.root_spec().as_nat(),
-            token.nkeys_spec() == self.nkeys_spec(),
+            token.root_spec() == final(self).root_spec().as_nat(),
+            token.nkeys_spec() == final(self).nkeys_spec(),
         {
             let nodes_token = self.nodes.mark(shrink);
             // Phase 7: archive the header + ghost tree alongside the arena
@@ -10432,13 +10438,13 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             old(self).arena_depth_spec() < u32::MAX,
             old(self).arena_fork_count_spec() + 1 <= u32::MAX,
         ensures
-            self.wf(),
+            final(self).wf(),
             // Restored to the state archived at that mark (Phase 7: header
             // and ghost tree recovered internally — the token's header copies
             // are NOT consulted; forged header fields are inert).
-            self.tree_spec() == old(self).tree_snapshots_spec()[token.frame_idx_spec() as int],
-            self.arena() == old(self).arena_snapshots_view()[token.frame_idx_spec() as int],
-            self.model() == crate::bplus_tree::tree_keys(
+            final(self).tree_spec() == old(self).tree_snapshots_spec()[token.frame_idx_spec() as int],
+            final(self).arena() == old(self).arena_snapshots_view()[token.frame_idx_spec() as int],
+            final(self).model() == crate::bplus_tree::tree_keys(
                 old(self).tree_snapshots_spec()[token.frame_idx_spec() as int]),
         {
             // Runtime guards (plan 2.3), all BEFORE `self.nodes.restore`
