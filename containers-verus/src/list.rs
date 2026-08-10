@@ -1544,33 +1544,12 @@ where
             // old src (p - |dst|).
             let dlen = old_model[dst as int].len();
 
-            // --- in_range: all indices are old indices (no node pushed).
-            assert forall|l2: int, p: int|
-                0 <= l2 < model.len() && 0 <= p < model[l2].len() implies
-                #[trigger] model[l2][p] < nodes.len() by {
-                if l2 == dst as int {
-                    if p < dlen { assert(model[l2][p] == old_model[dst as int][p]); }
-                    else { assert(model[l2][p] == old_model[src as int][p - dlen]); }
-                } else {
-                    assert(model[l2][p] == old_model[l2][p]);
-                }
-            }
-
-            // --- disjoint: dst++src concatenates two OLD-disjoint lists; every
-            // entry still maps to a distinct old (list,pos), and src is now empty.
-            assert forall|l1: int, p1: int, l2: int, p2: int|
-                0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
-                    && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
-                    && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
-                implies l1 == l2 && p1 == p2 by {
-                // source-position maps into the OLD model (which was disjoint).
-                let src1 = splice_src(old_model, dst as int, src as int, l1, p1);
-                let src2 = splice_src(old_model, dst as int, src as int, l2, p2);
-                assert(model[l1][p1] == old_model[src1.0][src1.1]);
-                assert(model[l2][p2] == old_model[src2.0][src2.1]);
-                // old disjointness ⇒ same old source; map back to (l,p).
-                assert(src1.0 == src2.0 && src1.1 == src2.1);
-            }
+            // --- in_range and disjointness: pure model dimensions, discharged
+            // in context-separated lemmas (each query sees its own hypotheses,
+            // not this body's).
+            lemma_splice_in_range(old_model, model, dst as int, src as int,
+                nodes.len() as int);
+            lemma_splice_disjoint(old_model, model, dst as int, src as int);
 
             // --- cache_ok nexts: only dst's old tail node was relinked
             // (its next -> src's head); every other node-next is unchanged.
@@ -2209,6 +2188,86 @@ pub open(crate) spec fn splice_src(
         if px < old_model[dst].len() { (dst, px) } else { (src, px - old_model[dst].len()) }
     } else {
         (lx, px)
+    }
+}
+
+/// in_range of the spliced model, from the old model's in_range alone. One
+/// dimension of `splice_raw`'s wf re-establishment, context-separated so the
+/// query carries exactly these hypotheses and none of the function body's —
+/// the same discipline the `RingIter` proofs follow.
+pub(crate) proof fn lemma_splice_in_range(
+    old_model: Seq<Seq<usize>>, model: Seq<Seq<usize>>, dst: int, src: int, n: int,
+)
+    requires
+        0 <= dst < old_model.len(),
+        0 <= src < old_model.len(),
+        dst != src,
+        model.len() == old_model.len(),
+        model[dst] == old_model[dst] + old_model[src],
+        model[src] == Seq::<usize>::empty(),
+        forall|m: int| 0 <= m < model.len() && m != dst && m != src
+            ==> #[trigger] model[m] == old_model[m],
+        forall|l: int, p: int|
+            0 <= l < old_model.len() && 0 <= p < (#[trigger] old_model[l]).len()
+                ==> #[trigger] old_model[l][p] < n,
+    ensures
+        forall|l: int, p: int|
+            0 <= l < model.len() && 0 <= p < (#[trigger] model[l]).len()
+                ==> #[trigger] model[l][p] < n,
+{
+    assert forall|l: int, p: int|
+        0 <= l < model.len() && 0 <= p < (#[trigger] model[l]).len()
+            implies #[trigger] model[l][p] < n by {
+        if l == dst {
+            if p < old_model[dst].len() {
+                assert(model[l][p] == old_model[dst][p]);
+            } else {
+                assert(model[l][p] == old_model[src][p - old_model[dst].len()]);
+            }
+        } else {
+            assert(model[l][p] == old_model[l][p]);
+        }
+    }
+}
+
+/// Disjointness of the spliced model, from the old model's disjointness alone
+/// — `splice_raw`'s heaviest quantifier (four bound variables), separated for
+/// the same reason as `lemma_splice_in_range`.
+pub(crate) proof fn lemma_splice_disjoint(
+    old_model: Seq<Seq<usize>>, model: Seq<Seq<usize>>, dst: int, src: int,
+)
+    requires
+        0 <= dst < old_model.len(),
+        0 <= src < old_model.len(),
+        dst != src,
+        model.len() == old_model.len(),
+        model[dst] == old_model[dst] + old_model[src],
+        model[src] == Seq::<usize>::empty(),
+        forall|m: int| 0 <= m < model.len() && m != dst && m != src
+            ==> #[trigger] model[m] == old_model[m],
+        forall|l1: int, p1: int, l2: int, p2: int|
+            0 <= l1 < old_model.len() && 0 <= p1 < old_model[l1].len()
+                && 0 <= l2 < old_model.len() && 0 <= p2 < old_model[l2].len()
+                && (#[trigger] old_model[l1][p1]) == (#[trigger] old_model[l2][p2])
+                    ==> l1 == l2 && p1 == p2,
+    ensures
+        forall|l1: int, p1: int, l2: int, p2: int|
+            0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
+                && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
+                && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
+                    ==> l1 == l2 && p1 == p2,
+{
+    let dlen = old_model[dst].len();
+    assert forall|l1: int, p1: int, l2: int, p2: int|
+        0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
+            && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
+            && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
+            implies l1 == l2 && p1 == p2 by {
+        let src1 = splice_src(old_model, dst, src, l1, p1);
+        let src2 = splice_src(old_model, dst, src, l2, p2);
+        assert(model[l1][p1] == old_model[src1.0][src1.1]);
+        assert(model[l2][p2] == old_model[src2.0][src2.1]);
+        assert(src1.0 == src2.0 && src1.1 == src2.1);
     }
 }
 

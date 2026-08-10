@@ -342,24 +342,44 @@ pub proof fn exp_pos(i: nat)
     if i > 0 { exp_pos((i - 1) as nat); }
 }
 
-/// Bridge: exp(W) == 2^W for the specific widths we use
+/// `lshi` splits over shift-count addition: shifting by `i + j` is shifting
+/// by `i`, then by `j`. Induction on `j` — the explicit ranking — so no call
+/// site ever needs more than the default one-step unfold. This is what lets
+/// the width bridges below run on doubling instead of `reveal_with_fuel`
+/// unrolling a 65-deep recursion into one query.
+pub proof fn lshi_add(n: nat, i: nat, j: nat)
+    ensures lshi(n, i + j) == lshi(lshi(n, i), j)
+    decreases j
+{
+    if j > 0 {
+        lshi_add(n, i, (j - 1) as nat);
+        assert(i + j - 1 == i + (j - 1) as nat);
+    }
+}
+
+/// Bridge: exp(W) == 2^W for the specific widths we use. Each width is one
+/// doubling of the previous (`lshi_add` + `lsh_exp`); only the 8-bit base
+/// case unfolds the recursion, and 8 steps is within the trivial range.
 pub proof fn exp_8()  ensures exp(8)  == 256   { reveal_with_fuel(lshi, 9);  }
-pub proof fn exp_16() ensures exp(16) == 65536  { reveal_with_fuel(lshi, 17); }
-pub proof fn exp_32() ensures exp(32) == 0x1_0000_0000 { reveal_with_fuel(lshi, 33); }
+pub proof fn exp_16() ensures exp(16) == 65536 {
+    exp_8();
+    lshi_add(1, 8, 8);
+    lsh_exp(exp(8), 8);
+}
+pub proof fn exp_32() ensures exp(32) == 0x1_0000_0000 {
+    exp_16();
+    lshi_add(1, 16, 16);
+    lsh_exp(exp(16), 16);
+}
 pub proof fn exp_64() ensures exp(64) == 0x1_0000_0000_0000_0000 {
     exp_32();
-    assert(lshi(1nat, 32nat) == exp(32nat)) by { reveal_with_fuel(lshi, 33); }
+    lshi_add(1, 32, 32);
     lsh_exp(exp(32), 32);
-    assert(prod(exp(32), exp(32)) == 0x1_0000_0000_0000_0000nat);
-    assert(lshi(1nat, 64nat) == lshi(lshi(1nat, 32nat), 32nat)) by { reveal_with_fuel(lshi, 33); }
 }
-#[verifier::rlimit(10000)]
 pub proof fn exp_128() ensures exp(128) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000 {
     exp_64();
-    assert(lshi(1nat, 64nat) == exp(64nat)) by { reveal_with_fuel(lshi, 65); }
+    lshi_add(1, 64, 64);
     lsh_exp(exp(64), 64);
-    assert(prod(exp(64), exp(64)) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000nat);
-    assert(lshi(1nat, 128nat) == lshi(lshi(1nat, 64nat), 64nat)) by { reveal_with_fuel(lshi, 65); }
 }
 
 /// Dispatch: exp(W) == 2^W for W in {8, 16, 32, 64, 128}
