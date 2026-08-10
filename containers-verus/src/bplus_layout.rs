@@ -140,7 +140,11 @@ pub fn arr_get<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
     requires i < N,
     ensures r == a[i as int],
 {
-    // SAFETY: `i < N` is a verified precondition at every call site.
+    // SAFETY: `i < N` is a verified precondition at every call site. The
+    // debug_assert is a runtime monitor on that assumption for UNVERIFIED
+    // callers (get_unchecked skips the bounds check even in debug builds):
+    // a violation panics cleanly instead of reading out of bounds.
+    debug_assert!(i < N);
     unsafe { *a.get_unchecked(i) }
 }
 
@@ -160,6 +164,8 @@ pub fn slice_get<T: Copy>(s: &[T], i: usize) -> (r: T)
     ensures r == s@[i as int],
 {
     // SAFETY: `i < s.len()` is a verified precondition at every call site.
+    // debug_assert: runtime monitor for unverified callers (see `arr_get`).
+    debug_assert!(i < s.len());
     unsafe { *s.get_unchecked(i) }
 }
 
@@ -201,6 +207,8 @@ pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
     ensures final(a)@ =~= old(a)@.update(i as int, v),
 {
     // SAFETY: `i < N` is a verified precondition at every call site.
+    // debug_assert: runtime monitor for unverified callers (see `arr_get`).
+    debug_assert!(i < N);
     unsafe {
         *a.get_unchecked_mut(i) = v;
     }
@@ -251,6 +259,9 @@ pub fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, cnt: us
         forall|k: int| pos < k <= cnt ==> final(a)@[k] == old(a)@[k - 1],
         forall|k: int| cnt < k < N ==> final(a)@[k] == old(a)@[k],
 {
+    // Runtime monitor on the verified precondition, for unverified callers:
+    // a violated bound here corrupts the node silently rather than faulting.
+    debug_assert!(pos <= cnt && cnt < N);
     // The crossover measured on this layout (see the table above). Below it the
     // element loop is cheaper than entering `memmove` at all.
     if cnt - pos < 18 {

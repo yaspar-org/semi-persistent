@@ -509,6 +509,9 @@ pub(crate) fn shrink_vec_capacity<T>(data: &mut Vec<T>, factor: usize, headroom:
 pub(crate) fn data_capacity_bits<T>(data: &Vec<T>) -> (n: usize)
     ensures n >= data@.len(),
 {
+    // Runtime monitor on the one assumed std invariant (`capacity >= len`);
+    // free in release, and a failed monitor here would mean a broken `Vec`.
+    debug_assert!(data.capacity() >= data.len());
     data.capacity()
 }
 
