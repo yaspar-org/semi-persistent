@@ -237,7 +237,7 @@ contract is written to license only the forward-only reading.
 
 **Verified:** the cursor's full surface — `new`, `pos`, `is_valid`, `key`, `step`,
 `seek` — with the four soundness theorems. 14 facts, no trusted items, no
-`admit`/`assume`. Registered in `verify-all.sh`.
+`admit`/`assume`. Verified as part of `cargo verus verify`.
 
 **Not claimed:** the `O(log d)` cost bound is not proven, only measured
 (`doc/perf-results/E7-galloping-seek.md`) — the same position as the B+tree's

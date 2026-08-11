@@ -3650,7 +3650,7 @@ pub proof fn lemma_forest_disjoint_push(kids: Seq<Tree>, x: Tree, bound: nat)
             assert(ks[j] == x);
             assert(ks[i] == kids[i]);
             assert(tree_ids(kids[i]).disjoint(tree_ids(x))) by {
-                assert forall|id: nat| tree_ids(kids[i]).contains(id) implies
+                assert forall|id: nat| #![trigger tree_ids(x).contains(id)] tree_ids(kids[i]).contains(id) implies
                     !tree_ids(x).contains(id) by {
                     assert(id < bound);
                 }

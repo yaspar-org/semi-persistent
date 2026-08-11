@@ -2329,7 +2329,7 @@ where
                         self.frames@[top].diff_start as int,
                         self.diff_log@.len() as int, j as nat));
                     // captured_in_range == exists entry in [ds, |diffs|) naming j.
-                    let k0 = choose|k: int|
+                    let k0 = choose|k: int| #![trigger (self.diff_log@[k])]
                         self.frames@[top].diff_start as int <= k < self.diff_log@.len()
                         && (self.diff_log@[k]).1.as_nat() == j as nat;
                     // prev_suffix == diffs[parent_diff_start..]; parent_diff_start
@@ -2640,7 +2640,7 @@ where
                         pre_diffs.len() as int, j as nat));
                     old(self).lemma_diff_start_monotone(
                         target_index as int, old_top);
-                    let k0 = choose|k: int|
+                    let k0 = choose|k: int| #![trigger (pre_diffs[k])]
                         old(self).frames@[old_top].diff_start as int <= k
                             < pre_diffs.len() as int
                         && (pre_diffs[k]).1.as_nat() == j as nat;

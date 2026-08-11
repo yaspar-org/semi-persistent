@@ -261,7 +261,7 @@ SparseSet, plus the tree-level rollback theorem.
 ## 5. Proof status
 
 **Fully verified, zero `admit`/`assume`.** Per-module verified-fact counts (run
-`./verify-all.sh`):
+`cargo verus verify`):
 
 | Module | Facts | Content |
 |---|---|---|

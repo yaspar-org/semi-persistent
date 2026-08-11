@@ -547,7 +547,14 @@ macro_rules! abstract_domain {
                 }
                 #[inline] pub fn constant(n: $uint) -> ExecAnum { ExecAnum { base: n, span: 0 } }
                 #[inline] pub fn top() -> ExecAnum { ExecAnum { base: 0, span: !(0 as $uint) } }
-                #[verifier::rlimit(2000)]
+                // No `rlimit` here, deliberately. This carried `rlimit(2000)` while
+                // the soundness fact below was one 11-variable bit-vector query;
+                // splitting it into the four single-purpose queries brought the
+                // whole function under the *default* limit at every width, so the
+                // annotation became a stale ceiling rather than a live requirement.
+                // Measured at d64: 0.7s, and it still verifies with `--rlimit 1`.
+                // Keeping it would have hidden a future regression -- an annotated
+                // limit only reports the budget it was given, never the headroom.
                 #[inline] pub fn add(&self, t: &ExecAnum) -> (r: ExecAnum)
                     ensures forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_add(c2))
                 {

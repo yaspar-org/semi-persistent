@@ -11,7 +11,7 @@ This crate provides **tristate numbers (Tnums)**, **additive tristate numbers (A
 with bitwise uncertainty.
 
 Every operation is verified in two ways:
-1. **Formal proofs** (Verus): 754 verified lemmas, 0 admits, proving soundness of the
+1. **Formal proofs** (Verus): 952 verified lemmas, 0 admits, proving soundness of the
    abstract domain theory on unbounded natural numbers.
 2. **Fuzz tests**: 29 randomized tests, 1M iterations each, checking that the executable
    u64 implementations match the expected concrete semantics.
@@ -98,11 +98,14 @@ The **reduced product** propagates information across domains:
 ## Running
 
 ```bash
-# Verify all proofs (754 lemmas)
+# Verify all proofs (952 lemmas, ~8s)
 cargo verus verify
 
-# Verify only the Unum module (fast, ~5s)
-verus --crate-type lib src/lib.rs --verify-module unum
+# Verify only the Unum module (the slowest one, ~7s)
+cargo verus verify -- --verify-only-module unum
+
+# Per-module timing breakdown
+cargo verus verify -- --time-expanded
 
 # Run fuzz tests (29 tests, ~12s)
 cargo test --test fuzz --release
@@ -113,7 +116,7 @@ cargo run --features bin
 
 ## Verification status
 
-- 754 Verus proofs, 0 admits, 0 errors
+- 952 Verus proofs, 0 admits, 0 errors
 - 29 fuzz tests, all passing
 - 5 bit-widths: u8, u16, u32, u64, u128
 - 4-bit exhaustive: 0 unsound / 1,183,744 Unum addition pairs

@@ -343,23 +343,14 @@ pub proof fn exp_pos(i: nat)
 }
 
 /// Bridge: exp(W) == 2^W for the specific widths we use
-pub proof fn exp_8()  ensures exp(8)  == 256   { reveal_with_fuel(lshi, 9);  }
-pub proof fn exp_16() ensures exp(16) == 65536  { reveal_with_fuel(lshi, 17); }
-pub proof fn exp_32() ensures exp(32) == 0x1_0000_0000 { reveal_with_fuel(lshi, 33); }
+pub proof fn exp_8()  ensures exp(8)  == 256 { assert(exp(8) == 256nat) by(compute_only); }
+pub proof fn exp_16() ensures exp(16) == 65536 { assert(exp(16) == 65536nat) by(compute_only); }
+pub proof fn exp_32() ensures exp(32) == 0x1_0000_0000 { assert(exp(32) == 0x1_0000_0000nat) by(compute_only); }
 pub proof fn exp_64() ensures exp(64) == 0x1_0000_0000_0000_0000 {
-    exp_32();
-    assert(lshi(1nat, 32nat) == exp(32nat)) by { reveal_with_fuel(lshi, 33); }
-    lsh_exp(exp(32), 32);
-    assert(prod(exp(32), exp(32)) == 0x1_0000_0000_0000_0000nat);
-    assert(lshi(1nat, 64nat) == lshi(lshi(1nat, 32nat), 32nat)) by { reveal_with_fuel(lshi, 33); }
+    assert(exp(64) == 0x1_0000_0000_0000_0000nat) by(compute_only);
 }
-#[verifier::rlimit(10000)]
 pub proof fn exp_128() ensures exp(128) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000 {
-    exp_64();
-    assert(lshi(1nat, 64nat) == exp(64nat)) by { reveal_with_fuel(lshi, 65); }
-    lsh_exp(exp(64), 64);
-    assert(prod(exp(64), exp(64)) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000nat);
-    assert(lshi(1nat, 128nat) == lshi(lshi(1nat, 64nat), 64nat)) by { reveal_with_fuel(lshi, 65); }
+    assert(exp(128) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000nat) by(compute_only);
 }
 
 /// Dispatch: exp(W) == 2^W for W in {8, 16, 32, 64, 128}
@@ -777,7 +768,6 @@ pub proof fn rsh_div(n: nat, i: nat)
 // chop == mod exp(i) linking
 // ============================================================
 
-#[verifier::rlimit(100)]
 pub proof fn chop_is_mod(n: nat, i: nat)
     ensures chop(n, i) == n % exp(i)
     decreases i

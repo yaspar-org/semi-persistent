@@ -122,8 +122,6 @@ impl ContainerId {
     /// Marked so each call site sees an opaque, independent id.
     #[verifier::external_body]
     pub fn new() -> ContainerId {
-        use core::sync::atomic::AtomicU64;
-        static NEXT: AtomicU64 = AtomicU64::new(1);
         ContainerId { raw: next_id_from(&NEXT) }
     }
 }
@@ -142,6 +140,16 @@ impl core::fmt::Debug for ContainerId {
 /// One past the last id the allocator may hand out. `u64::MAX` is reserved so
 /// the boundary can be observed without the counter having to actually wrap.
 pub(crate) const ID_LIMIT: u64 = u64::MAX;
+
+/// The process-global counter behind `ContainerId::new`.
+///
+/// Outside `verus!{}` deliberately. Declared inside the `external_body` `new`,
+/// the `verus!` macro still walks the body and tries to annotate the `static`,
+/// which warns "verus-related attribute has no effect because item is already
+/// marked external" — the annotation is redundant, not wrong, but it is noise on
+/// every build. Verus has no ghost view of a `static` either way; the id's
+/// uniqueness rests on the `u64` width, not on proof (see `next_id_from`).
+static NEXT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 /// Allocation from a shared counter: returns the current value and advances it.
 ///
