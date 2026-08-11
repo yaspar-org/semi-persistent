@@ -60,8 +60,8 @@ and are verified (see "Verification status" below).
 
 ## Verification status
 
-**1399 facts verified across 31 module entries, 0 errors, 0 `admit`s/`assume`s**
-(run `./verify-all.sh` from the package root for the live per-module tally).
+**1474 facts verified, 0 errors, 0 `admit`s/`assume`s** (run `cargo verus verify`
+from the package root; add `-- --time-expanded` for the per-module tally).
 The whole container family is verified:
 
 - **`Vec`** (the semi-persistent core): the headline reconstruction theorem at
@@ -101,11 +101,15 @@ crate is [`doc/future/parity-audit-and-plan.md`](doc/future/parity-audit-and-pla
 ## Running
 
 ```bash
-# Verify everything via cargo
+# Verify everything
 cargo verus verify
 
-# Per-module driver (mirrors abstract-domains)
-./verify-all.sh
+# Per-module timing breakdown (finds the hot modules)
+cargo verus verify -- --time-expanded
+
+# One module, or one function within it
+cargo verus verify -- --verify-only-module list
+cargo verus verify -- --verify-only-module list --verify-function splice_raw
 ```
 
 Excluded from the default `cargo build` and `cargo test --workspace`. Built

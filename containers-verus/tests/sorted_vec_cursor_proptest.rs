@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Defense-in-depth for the verified `SortedVecCursor`.
 //!
-//! `seek`'s soundness is machine-checked — `verify-all.sh`'s `sorted_vec_cursor`
-//! row proves it lands on `seek_target_idx`, never skips a key, is monotone, and
+//! `seek`'s soundness is machine-checked — `cargo verus verify -- --verify-only-module
+//! sorted_vec_cursor` proves it lands on `seek_target_idx`, never skips a key, is monotone, and
 //! cannot index out of bounds or overflow the doubling ladder, for *every* sorted
 //! slice and target. So what is this file for?
 //!

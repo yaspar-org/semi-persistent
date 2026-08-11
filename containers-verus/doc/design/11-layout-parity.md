@@ -403,7 +403,7 @@ its accumulate is branch-free by construction.
 expression with no `unsafe`, whose postcondition *is* `if c { b } else { a }` —
 `select_unpredictable` is a codegen hint, not a semantic one) and **zero** proof
 debt. `bplus` 185, `bplus_layout` 305, `bplus_search` 9, whole crate **1471
-verified / 0 errors** (`./verify-all.sh`, exit 0) — the layout work itself added no
+verified / 0 errors** (`cargo verus verify`, exit 0) — the layout work itself added no
 obligations; the `bplus`/`bplus_tree` growth is the bulk loader of
 [Ch. 10 §5.2.4](10-bplus-tree.md).
 

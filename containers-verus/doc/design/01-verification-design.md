@@ -56,7 +56,7 @@ separation, and shape are proved as predicates over those ids
 ([§10](#10-why-these-proofs-arenas-integers-as-pointers-and-explicit-aliasing),
 [Chapter 9](09-arena-aliasing-dynamic-frames.md)).
 
-The whole development carries no `admit`s or `assume`s; run `./verify-all.sh` for
+The whole development carries no `admit`s or `assume`s; run `cargo verus verify` for
 the per-module tally. ("No `admit`s/`assume`s" does not mean nothing is trusted:
 the trust boundary is 21 `external_body` items, enumerated and justified in
 [Chapter 2](02-trust-boundary.md). Read it to know exactly what is guaranteed.)
@@ -628,7 +628,7 @@ the B+tree, the one recursive case, is [Chapter 10](10-bplus-tree.md).
 ## 11. What is verified
 
 Everything below is proved with no `admit`s or `assume`s, at arbitrary
-mark-nesting depth. Run `./verify-all.sh` for the live per-module count. For the
+mark-nesting depth. Run `cargo verus verify -- --time-expanded` for the live per-module count. For the
 dual, what is taken on trust (the 21 `external_body` items), see
 [Chapter 2](02-trust-boundary.md).
 

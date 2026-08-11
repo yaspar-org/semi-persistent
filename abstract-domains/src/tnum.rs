@@ -374,7 +374,7 @@ impl Tnum {
         };
     }
 
-    #[verifier::rlimit(200)]
+
     proof fn add_carry_sound1(self, t: Tnum, carry: TBit, xc: nat, tc: nat, bc: Bit)
         requires self.has(xc), t.has(tc), carry.has(bc)
         ensures self.add_carry(t, carry).has(nat_add_carry(xc, tc, bc))
@@ -720,7 +720,10 @@ impl Tnum {
     ///
     /// The key step is add_carry_bitwise_tl, which shows that the head and tail of
     /// add_carry_bitwise match the Tb.plus_c head and add_carry_bitwise on tails.
-    #[verifier::rlimit(20000)]
+
+    /// Measured ~6.3M rlimit (0.9s), 63% of the default budget. 30 is ~5x measured
+    /// need. It was 20000.
+    #[verifier::rlimit(30)]
     proof fn add_carry_bitwise_has_eq(self, t: Tnum, cv: Bit, cm: Bit)
         requires self.inv(), t.inv(), !(cv.b() && cm.b())
         ensures forall|n: nat| #![auto] self.add_carry_bitwise(t, cv, cm).has(n) <==> self.add_carry(t, TBit::mk(cv, cm)).has(n)

@@ -79,7 +79,14 @@ impl Unum {
 
     /// Core inductive lemma. Invariant: cd + br <= cx + b1 + b2.
     /// Ensures first=TRUE always (leader check at bit 0 skipped).
-    #[verifier::rlimit(10000)]
+    ///
+    /// `rlimit(30)`, not the 10000 this once carried. It measures ~14M rlimit
+    /// (2.6s) against a *default budget of 10*, so it passes the default only
+    /// barely -- `--rlimit 10` fails it, and it is the single tightest proof in
+    /// the crate. 30 is ~2x its measured need: enough that the arm64/x86 z3
+    /// exploration-order split (see the 0.2026.08.02 bump) cannot flip it,
+    /// without restoring a ceiling 700x above what it uses.
+    #[verifier::rlimit(30)]
     proof fn field_admits_add_carry(
         w1: nat, x1: nat, d1: nat, b1: Bit, first1: bool,
         w2: nat, x2: nat, d2: nat, b2: Bit, first2: bool,
@@ -132,7 +139,9 @@ impl Unum {
     }
 
     /// Connection step: given IH on tails, derive field_admits on the full result.
-    #[verifier::rlimit(500)]
+    /// Measured ~7.9M rlimit (1.1s), 79% of the default budget. 30 is ~4x measured
+    /// need. It was 500.
+    #[verifier::rlimit(30)]
     proof fn connect_induction(
         w1: nat, x1: nat, d1: nat, w2: nat, x2: nat, d2: nat,
         cx: Bit, cd: Bit, br: Bit,

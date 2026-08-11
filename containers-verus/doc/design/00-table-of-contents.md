@@ -40,7 +40,7 @@ This holds per cell, at arbitrary mark-nesting depth, under any interleaving of
 `push`, `set`, and `pop`. A companion result constrains which tokens `restore`
 will accept: each `mark` opens a branch in a fork history, each `restore` cuts the
 branches it discards, and a token naming a discarded state is rejected. The
-development uses no `admit`s or `assume`s; run `./verify-all.sh` for the
+development uses no `admit`s or `assume`s; run `cargo verus verify` for the
 per-module tally. (That does not mean nothing is trusted; the trust boundary is
 25 `external_body` items in the default build, enumerated in
 [Chapter 2](02-trust-boundary.md), of which only four carry load-bearing

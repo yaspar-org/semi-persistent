@@ -139,8 +139,10 @@ impl CaptureBits {
             tail_clear(old(self).words_view(), len),
         ensures
             tail_clear(final(self).words_view(), len),
-            forall|j: int| 0 <= j ==> padded_bit(final(self).words_view(), j)
-                == if j == i as int { true } else { padded_bit(old(self).words_view(), j) },
+            forall|j: int|
+                #![trigger padded_bit(final(self).words_view(), j)]
+                0 <= j ==> padded_bit(final(self).words_view(), j)
+                    == if j == i as int { true } else { padded_bit(old(self).words_view(), j) },
     {
         let wi = i / 64;
         proof {
@@ -162,7 +164,9 @@ impl CaptureBits {
             // steady-state `set_true` finds its word already present.
             self.grow_to(wi + 1);
             proof {
-                assert forall|j: int| 0 <= j implies padded_bit(self.words@, j)
+                assert forall|j: int|
+                    #![trigger padded_bit(pre_grow, j)]
+                    0 <= j implies padded_bit(self.words@, j)
                     == padded_bit(pre_grow, j) by {
                     if j / 64 < pre_grow.len() {
                         assert(self.words@[j / 64] == pre_grow[j / 64]);
@@ -188,7 +192,9 @@ impl CaptureBits {
         self.words.set(wi, new_word);
         proof {
             assert(wi < grown.len());
-            assert forall|j: int| 0 <= j implies padded_bit(self.words@, j)
+            assert forall|j: int|
+                #![trigger padded_bit(self.words@, j)]
+                0 <= j implies padded_bit(self.words@, j)
                 == if j == i as int { true } else { padded_bit(grown, j) } by {
                 lemma_or_bit_pointwise(grown, self.words@, i as int, j, bit, wi as int, new_word);
             }
@@ -206,8 +212,10 @@ impl CaptureBits {
     #[inline(always)]
     pub fn clear_bit(&mut self, i: usize)
         ensures
-            forall|j: int| 0 <= j ==> padded_bit(final(self).words_view(), j)
-                == if j == i as int { false } else { padded_bit(old(self).words_view(), j) },
+            forall|j: int|
+                #![trigger padded_bit(final(self).words_view(), j)]
+                0 <= j ==> padded_bit(final(self).words_view(), j)
+                    == if j == i as int { false } else { padded_bit(old(self).words_view(), j) },
     {
         let wi = i / 64;
         if wi < self.words.len() {
@@ -216,7 +224,9 @@ impl CaptureBits {
             let new_word = old_word & !(1u64 << bit);
             self.words.set(wi, new_word);
             proof {
-                assert forall|j: int| 0 <= j implies padded_bit(self.words@, j)
+                assert forall|j: int|
+                    #![trigger padded_bit(self.words@, j)]
+                    0 <= j implies padded_bit(self.words@, j)
                     == if j == i as int { false } else { padded_bit(old(self).words@, j) } by {
                     lemma_andnot_bit_pointwise(
                         old(self).words@, self.words@, i as int, j, bit, wi as int, new_word);
@@ -362,7 +372,7 @@ impl CaptureBits {
             }
             proof {
                 assert(self.words@.len() <= full_words as int);
-                assert forall|j: int| 0 <= j < len as int implies
+                assert forall|j: int| #![trigger padded_bit(pre, j)] 0 <= j < len as int implies
                     padded_bit(self.words@, j) == padded_bit(pre, j) by {
                     if j / 64 < self.words@.len() {
                         assert(self.words@[j / 64] == pre[j / 64]);
@@ -407,7 +417,7 @@ impl CaptureBits {
                 let w = self.words[full_words];
                 self.words.set(full_words, w & mask);
                 proof {
-                    assert forall|j: int| 0 <= j < len as int implies
+                    assert forall|j: int| #![trigger padded_bit(pre, j)] 0 <= j < len as int implies
                         padded_bit(self.words@, j) == padded_bit(pre, j) by {
                         if j / 64 < self.words@.len() {
                             if j / 64 == full_words as int {
@@ -458,7 +468,7 @@ impl CaptureBits {
                             assert(false);
                         }
                     }
-                    assert forall|j: int| 0 <= j < len as int implies
+                    assert forall|j: int| #![trigger padded_bit(pre, j)] 0 <= j < len as int implies
                         padded_bit(self.words@, j) == padded_bit(pre, j) by {
                         if j / 64 < self.words@.len() {
                             assert(self.words@[j / 64] == pre[j / 64]);
@@ -534,7 +544,7 @@ impl CaptureBits {
             // either lives in a kept word (same value) or in no word at all
             // both before and after (padding reads false on both sides).
             assert(self.words@.len() <= pre.len());
-            assert forall|j: int| 0 <= j < keep_bits as int implies
+            assert forall|j: int| #![trigger padded_bit(pre, j)] 0 <= j < keep_bits as int implies
                 padded_bit(self.words@, j) == padded_bit(pre, j) by {
                 if j / 64 < self.words@.len() {
                     assert(self.words@[j / 64] == pre[j / 64]);
@@ -552,7 +562,9 @@ impl CaptureBits {
             // tail_clear transfer: its body is guarded by `i / 64 < words.len()`,
             // and the word vector only shrank, so every instance that has to be
             // discharged after is an instance that already held before.
-            assert forall|len: int| 0 <= len && tail_clear(pre, len) implies
+            assert forall|len: int|
+                #![trigger tail_clear(pre, len)]
+                0 <= len && tail_clear(pre, len) implies
                 tail_clear(self.words@, len) by {
                 assert forall|i: int| len <= i && i / 64 < self.words@.len() implies
                     !spec_bit(self.words@, i) by {

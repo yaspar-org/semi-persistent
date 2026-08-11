@@ -138,7 +138,7 @@ impl Tnum {
     }
 
     pub proof fn lsh_or_tb_sound(self, b: TBit)
-        ensures forall|r: nat, bv: Bit| #![auto]
+        ensures forall|r: nat, bv: Bit| #![trigger self.has(r), b.has(bv)]
             self.has(r) && b.has(bv) ==>
             self.lsh_or_tb(b).has(cons(r, bv))
     {
@@ -196,7 +196,10 @@ impl Tnum {
         };
     }
 
-    #[verifier::rlimit(5000)]
+
+    /// Measured ~6.7M rlimit (0.5s) -- 67% of the default budget, too tight to leave
+    /// bare across solver-version changes. 30 is ~4.5x measured need. It was 5000.
+    #[verifier::rlimit(30)]
     proof fn div_const_loop_sound(n: Tnum, d: nat, w: nat, i: nat, q: Tnum, r: Tnum)
         requires n.inv(), d > 0, d <= exp(w), q.inv(), r.inv(),
                  forall|j: nat| #![auto] j < i ==> bit(q.val, j) == Bit::f() && bit(q.mask, j) == Bit::f()
@@ -536,7 +539,10 @@ impl Tnum {
         };
     }
 
-    #[verifier::rlimit(5000)]
+
+    /// Measured ~10.4M rlimit (0.9s), i.e. ~1.04x the default budget of 10, so this
+    /// still does not pass bare. 30 is ~3x measured need. It was 5000.
+    #[verifier::rlimit(30)]
     proof fn div_loop_sound(n: Tnum, d: Tnum, w: nat, i: nat, q: Tnum, r: Tnum)
         requires n.inv(), d.inv(), d.min() > 0, d.max() < exp(w), q.inv(), r.inv(),
                  forall|j: nat| #![auto] j < i ==> bit(q.val, j) == Bit::f() && bit(q.mask, j) == Bit::f()

@@ -276,6 +276,15 @@ impl<T: Tagged, N: DenseId + Tagged> Tagged for ListNode<T, N> {
 /// so `ListArena::len` is O(1) and *verified* to return the true list length, not
 /// merely trusted. Maintained on `prepend`/`append` (+1) and `splice` (dst gains
 /// src's count, src resets to 0).
+// `Clone` here is a copy: `N: Tagged` and `Tagged: Copy`, so every field is
+// `Copy` and the derived body is a bitwise move. Verus cannot see that through
+// the derive, which emits an `N: Clone` bound rather than `N: Copy`, so it warns
+// that it is deriving `Clone` without a specification. The two non-generic
+// `#[derive(Copy, Clone)]` structs in this module (`NodeRef`, `ListArenaToken`)
+// do not warn for exactly that reason. Nothing in the crate calls
+// `ListHead::clone` — the type is used by value — so the missing `Clone` spec
+// costs nothing.
+#[verifier::allow(autoderive_clone_without_spec)]
 #[derive(Copy, Clone)]
 pub struct ListHead<N: DenseId + Tagged> {
     // `pub` for the same reason as `ListNode::next_repr`: the `Tagged` impl's
@@ -864,7 +873,7 @@ where
         // 3. to_set() ⊆ set_int_range(0, n): every element is in-range.
         let range = vstd::set_lib::set_int_range(0, n as int);
         assert(si.to_set().subset_of(range)) by {
-            assert forall|x: int| si.to_set().contains(x) implies range.contains(x) by {
+            assert forall|x: int| #![trigger range.contains(x)] si.to_set().contains(x) implies range.contains(x) by {
                 // x is some si[p] == s[p] as int, which model_in_range bounds to [0, n).
                 let p = choose|p: int| 0 <= p < si.len() && si[p] == x;
                 assert(0 <= p < si.len() && si[p] == x);
@@ -880,8 +889,10 @@ where
     /// concatenated index sequence has no duplicates (each is internally
     /// duplicate-free and they share no index, both from `model_disjoint`) and
     /// every index is in `[0, nodes.len())`. Bounds `splice`'s `dst.len + src.len`.
+    /// Measured ~53.1M rlimit (3.0s) -- 5.3x the default budget of 10, so this
+    /// genuinely needs a raise; 120 is ~2.3x measured need. It was 400.
     #[verifier::spinoff_prover]
-    #[verifier::rlimit(400)]
+    #[verifier::rlimit(120)]
     pub(crate) proof fn lemma_concat_len_bounded(&self, a: int, b: int)
         requires
             self.wf(),
@@ -921,7 +932,7 @@ where
         ci.unique_seq_to_set();
         let range = vstd::set_lib::set_int_range(0, n as int);
         assert(ci.to_set().subset_of(range)) by {
-            assert forall|x: int| ci.to_set().contains(x) implies range.contains(x) by {
+            assert forall|x: int| #![trigger range.contains(x)] ci.to_set().contains(x) implies range.contains(x) by {
                 let p = choose|p: int| 0 <= p < ci.len() && ci[p] == x;
                 assert(0 <= p < ci.len() && ci[p] == x);
                 let lp = if p < sa.len() { a } else { b };
@@ -1005,7 +1016,6 @@ where
     /// arena's end — a *larger* index than anything in the list, which the old
     /// index-ordering crutch forbade and is now simply fine), links it to the
     /// old head, and makes it the new model[l][0].
-    #[verifier::rlimit(50)]
     pub(crate) fn prepend_raw(&mut self, l: usize, payload: T)
         requires
             old(self).wf(),
@@ -1093,28 +1103,8 @@ where
 
             // --- disjoint: every entry except (l,0) maps to a distinct old entry
             // (< slot); (l,0) holds the fresh slot, present nowhere old.
-            assert forall|l1: int, p1: int, l2: int, p2: int|
-                0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
-                    && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
-                    && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
-                implies l1 == l2 && p1 == p2 by {
-                let fresh1 = l1 == l as int && p1 == 0;
-                let fresh2 = l2 == l as int && p2 == 0;
-                if fresh1 && fresh2 {
-                } else if fresh1 {
-                    // model[l1][p1]==slot but model[l2][p2] is an old index < slot.
-                    assert(model[l2][p2] < slot);
-                } else if fresh2 {
-                    assert(model[l1][p1] < slot);
-                } else {
-                    // both old: source positions, then old disjointness.
-                    let s1 = if l1 == l as int { p1 - 1 } else { p1 };
-                    let s2 = if l2 == l as int { p2 - 1 } else { p2 };
-                    assert(model[l1][p1] == old_model[l1][s1]);
-                    assert(model[l2][p2] == old_model[l2][s2]);
-                    assert(l1 == l2 && s1 == s2);  // old_disjoint
-                }
-            }
+            // Delegated: this quantifier e-matches combinatorially if left here.
+            lemma_insert_fresh_disjoint(old_model, model, l as int, 0, slot);
 
             // --- cache_ok nexts
             assert(heads[l as int].head_ref().target() == slot);
@@ -1209,7 +1199,11 @@ where
     /// relinks the OLD TAIL node's `next` *forward* to the new (larger-index)
     /// node. This forward link is exactly what the old index-ordering crutch
     /// could not represent; the ghost model makes it routine.
-    #[verifier::rlimit(50)]
+    /// Measured ~11.7M rlimit (2.4s) once the disjointness quantifier is
+    /// delegated to `lemma_insert_fresh_disjoint`, i.e. ~1.17x the default
+    /// budget of 10, so this still does not pass bare. 30 is ~2.5x measured
+    /// need. It was 50.
+    #[verifier::rlimit(30)]
     pub(crate) fn append_raw(&mut self, l: usize, payload: T)
         requires
             old(self).wf(),
@@ -1295,24 +1289,9 @@ where
             }
 
             // --- disjoint: fresh slot only at (l, last); others map to old.
-            assert forall|l1: int, p1: int, l2: int, p2: int|
-                0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
-                    && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
-                    && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
-                implies l1 == l2 && p1 == p2 by {
-                let last = model[l as int].len() - 1;
-                let fresh1 = l1 == l as int && p1 == last;
-                let fresh2 = l2 == l as int && p2 == last;
-                if fresh1 && fresh2 {
-                } else if fresh1 {
-                    assert(model[l2][p2] < slot);
-                } else if fresh2 {
-                    assert(model[l1][p1] < slot);
-                } else {
-                    assert(model[l1][p1] == old_model[l1][p1]);
-                    assert(model[l2][p2] == old_model[l2][p2]);
-                }
-            }
+            // Delegated: this quantifier e-matches combinatorially if left here.
+            lemma_insert_fresh_disjoint(
+                old_model, model, l as int, model[l as int].len() - 1, slot);
 
             // --- cache_ok nexts. The only mutated node-next is the old tail
             // (now -> slot) and the new node slot (null). All others unchanged.
@@ -1448,8 +1427,15 @@ where
     /// general case the old invariant could not model), then concatenate the
     /// models. Disjointness (the two lists share no node) is what makes the
     /// concatenation a valid list and lets `src` clear without dangling.
+    /// `spinoff_prover` is load-bearing, not padding: without it this fails even
+    /// at `rlimit(100)` (10x its measured need), because the disjointness
+    /// quantifier below shares a solver context with the rest of the module.
+    /// Measured ~75.9M rlimit (17.6s) once the quad-nested disjointness goal is
+    /// delegated to `lemma_splice_disjoint`; 150 is ~2x that. It was 800, sized
+    /// for the 1.56-BILLION-rlimit (223s) version where that goal was proved
+    /// inline here -- see the lemma's header for why that was so expensive.
     #[verifier::spinoff_prover]
-    #[verifier::rlimit(800)]
+    #[verifier::rlimit(150)]
     pub(crate) fn splice_raw(&mut self, dst: usize, src: usize)
         requires
             old(self).wf(),
@@ -1558,19 +1544,9 @@ where
 
             // --- disjoint: dst++src concatenates two OLD-disjoint lists; every
             // entry still maps to a distinct old (list,pos), and src is now empty.
-            assert forall|l1: int, p1: int, l2: int, p2: int|
-                0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
-                    && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
-                    && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
-                implies l1 == l2 && p1 == p2 by {
-                // source-position maps into the OLD model (which was disjoint).
-                let src1 = splice_src(old_model, dst as int, src as int, l1, p1);
-                let src2 = splice_src(old_model, dst as int, src as int, l2, p2);
-                assert(model[l1][p1] == old_model[src1.0][src1.1]);
-                assert(model[l2][p2] == old_model[src2.0][src2.1]);
-                // old disjointness ⇒ same old source; map back to (l,p).
-                assert(src1.0 == src2.0 && src1.1 == src2.1);
-            }
+            // Delegated: proved here, with both states' `wf()` in scope, this
+            // one quantifier e-matched its way to 17.6M instantiations.
+            lemma_splice_disjoint(old_model, model, dst as int, src as int);
 
             // --- cache_ok nexts: only dst's old tail node was relinked
             // (its next -> src's head); every other node-next is unchanged.
@@ -2209,6 +2185,134 @@ pub open(crate) spec fn splice_src(
         if px < old_model[dst].len() { (dst, px) } else { (src, px - old_model[dst].len()) }
     } else {
         (lx, px)
+    }
+}
+
+/// `splice_src` is injective, so `splice`'s post-model stays disjoint.
+///
+/// Stated over bare `Seq<Seq<usize>>` rather than over `&ListArena`, and taking
+/// only the old disjointness rather than a full `wf()`: the goal here is
+/// `model_disjoint`'s quad-nested
+/// `forall|l1,p1,l2,p2| m[l1][p1] == m[l2][p2] ==> ...`, whose trigger matches
+/// two *independent* nested accesses. Proved inside `splice_raw`'s body it
+/// e-matched against every sequence access reachable from both states' `wf()`
+/// and blew up to 17.6M instantiations on its own (see that function's header).
+/// With nothing else in scope there is almost nothing for it to match.
+///
+/// Mirrors `circular_list::lemma_splice_disjoint` / `lemma_ring_same_pos`, which
+/// isolate the same quantifier for the same reason.
+pub(crate) proof fn lemma_splice_disjoint(
+    old_model: Seq<Seq<usize>>, model: Seq<Seq<usize>>, dst: int, src: int,
+)
+    requires
+        0 <= dst < old_model.len(),
+        0 <= src < old_model.len(),
+        dst != src,
+        // old disjointness, the only hypothesis the body needs.
+        forall|l1: int, p1: int, l2: int, p2: int|
+            0 <= l1 < old_model.len() && 0 <= p1 < old_model[l1].len()
+                && 0 <= l2 < old_model.len() && 0 <= p2 < old_model[l2].len()
+                && (#[trigger] old_model[l1][p1]) == (#[trigger] old_model[l2][p2])
+                    ==> l1 == l2 && p1 == p2,
+        // how splice rewrote the model.
+        model.len() == old_model.len(),
+        model[dst] == old_model[dst] + old_model[src],
+        model[src] == Seq::<usize>::empty(),
+        forall|m: int| 0 <= m < model.len() && m != dst && m != src
+            ==> #[trigger] model[m] == old_model[m],
+    ensures
+        forall|l1: int, p1: int, l2: int, p2: int|
+            0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
+                && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
+                && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
+                    ==> l1 == l2 && p1 == p2,
+{
+    let dlen = old_model[dst].len();
+    assert forall|l1: int, p1: int, l2: int, p2: int|
+        0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
+            && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
+            && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
+        implies l1 == l2 && p1 == p2 by {
+        // each post entry is an old entry, at splice_src's coordinates.
+        let s1 = splice_src(old_model, dst, src, l1, p1);
+        let s2 = splice_src(old_model, dst, src, l2, p2);
+        assert(model[l1][p1] == old_model[s1.0][s1.1]);
+        assert(model[l2][p2] == old_model[s2.0][s2.1]);
+        // old disjointness collapses the two sources...
+        assert(s1.0 == s2.0 && s1.1 == s2.1);
+        // ...and splice_src is injective: within dst the p < dlen split is
+        // decided by which side each landed on, and src is empty so no
+        // position of it is ever in range.
+        assert(l1 == l2 && p1 == p2);
+    }
+}
+
+/// Inserting one fresh index into list `l` at position `fp` keeps the model
+/// disjoint. Serves both `prepend_raw` (`fp == 0`) and `append_raw`
+/// (`fp == |model[l]| - 1`): in both the new entry holds `slot`, an index no old
+/// list contained (`slot` is the arena's fresh end, and every old entry is
+/// `< slot`), and every other entry maps injectively back to an old one via
+/// `shift` -- identity off `l`, and off-by-one past `fp` within `l`.
+///
+/// Extracted for the same reason as `lemma_splice_disjoint` (see its header):
+/// the goal is `model_disjoint`'s quad-nested quantifier, whose trigger matches
+/// two independent nested accesses, so leaving it in an exec body makes it
+/// e-match against everything both states' `wf()` puts in scope.
+pub(crate) proof fn lemma_insert_fresh_disjoint(
+    old_model: Seq<Seq<usize>>, model: Seq<Seq<usize>>, l: int, fp: int, slot: usize,
+)
+    requires
+        0 <= l < old_model.len(),
+        0 <= fp < model[l].len(),
+        // old disjointness.
+        forall|l1: int, p1: int, l2: int, p2: int|
+            0 <= l1 < old_model.len() && 0 <= p1 < old_model[l1].len()
+                && 0 <= l2 < old_model.len() && 0 <= p2 < old_model[l2].len()
+                && (#[trigger] old_model[l1][p1]) == (#[trigger] old_model[l2][p2])
+                    ==> l1 == l2 && p1 == p2,
+        // `slot` is fresh: strictly above every old index.
+        forall|lx: int, px: int|
+            0 <= lx < old_model.len() && 0 <= px < old_model[lx].len()
+                ==> #[trigger] old_model[lx][px] < slot,
+        // shape of the insertion.
+        model.len() == old_model.len(),
+        model[l].len() == old_model[l].len() + 1,
+        model[l][fp] == slot,
+        forall|px: int| 0 <= px < model[l].len() && px != fp
+            ==> #[trigger] model[l][px]
+                == old_model[l][if px < fp { px } else { px - 1 }],
+        forall|lx: int| 0 <= lx < model.len() && lx != l
+            ==> #[trigger] model[lx] == old_model[lx],
+    ensures
+        forall|l1: int, p1: int, l2: int, p2: int|
+            0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
+                && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
+                && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
+                    ==> l1 == l2 && p1 == p2,
+{
+    assert forall|l1: int, p1: int, l2: int, p2: int|
+        0 <= l1 < model.len() && 0 <= p1 < model[l1].len()
+            && 0 <= l2 < model.len() && 0 <= p2 < model[l2].len()
+            && (#[trigger] model[l1][p1]) == (#[trigger] model[l2][p2])
+        implies l1 == l2 && p1 == p2 by {
+        let fresh1 = l1 == l && p1 == fp;
+        let fresh2 = l2 == l && p2 == fp;
+        if fresh1 && fresh2 {
+        } else if fresh1 {
+            // one side is `slot`, the other an old index, which is < slot.
+            assert(model[l2][p2] < slot);
+        } else if fresh2 {
+            assert(model[l1][p1] < slot);
+        } else {
+            // both old: pull back through `shift`, apply old disjointness, and
+            // note the shift is injective (it is monotone on each side of fp).
+            let s1 = if l1 == l && p1 > fp { p1 - 1 } else { p1 };
+            let s2 = if l2 == l && p2 > fp { p2 - 1 } else { p2 };
+            assert(model[l1][p1] == old_model[l1][s1]);
+            assert(model[l2][p2] == old_model[l2][s2]);
+            assert(l1 == l2 && s1 == s2);
+            assert(p1 == p2);
+        }
     }
 }
 

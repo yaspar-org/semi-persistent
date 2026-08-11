@@ -947,7 +947,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let want = Seq::new(k as nat, |i: int| firsts@[ci + 1 + i]);
                 assert(L::keys_view(node) == pre_keys.insert((k - 1) as int, firsts@[ci + k]));
                 assert(L::keys_view(node) =~= want) by {
-                    assert forall|i: int| 0 <= i < k implies
+                    assert forall|i: int| #![trigger want[i]] 0 <= i < k implies
                         L::keys_view(node)[i] == want[i] by {
                         if i < k - 1 { assert(L::keys_view(node)[i] == pre_keys[i]); }
                     }
@@ -1125,7 +1125,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 self.arena().len() == lo + c + g,
                 old_arena == old(self).arena(),
                 old_arena.len() == lo + c,
-                forall|i: int| 0 <= i < lo + c ==> self.arena()[i] == old_arena[i],
+                forall|i: int| #![trigger old_arena[i]] 0 <= i < lo + c ==> self.arena()[i] == old_arena[i],
                 0 <= g <= im,
                 cap == L::leaf_cap_spec(),
                 key_cap == L::key_cap_spec(),
@@ -1243,7 +1243,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 parents = old_parents.push(parent);
                 assert(self.arena() =~= prev_arena.push(node));
                 assert(self.arena()[pid as int] == node);
-                assert(forall|i: int| 0 <= i < prev_arena.len()
+                assert(forall|i: int| #![trigger prev_arena[i]] 0 <= i < prev_arena.len()
                     ==> self.arena()[i] == prev_arena[i]);
 
                 // ---- the group, read off the child level ----
@@ -1325,7 +1325,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 assert forall|q: int| 0 <= q < g implies
                     (#[trigger] crate::bplus_tree::tree_ids(old_parents[q]))
                         .disjoint(crate::bplus_tree::tree_ids(parent)) by {
-                    assert forall|id: nat|
+                    assert forall|id: nat| #![trigger crate::bplus_tree::tree_ids(parent).contains(id)]
                         crate::bplus_tree::tree_ids(old_parents[q]).contains(id)
                         implies !crate::bplus_tree::tree_ids(parent).contains(id) by {
                         if crate::bplus_tree::tree_ids(parent).contains(id) {
@@ -2493,13 +2493,13 @@ pub(crate) proof fn lemma_push_to_set(m: Seq<nat>, v: nat)
     ensures m.push(v).to_set() == m.to_set().insert(v),
 {
     let p = m.push(v);
-    assert forall|x: nat| p.to_set().contains(x) implies m.to_set().insert(v).contains(x) by {
+    assert forall|x: nat| #![trigger p.to_set().contains(x)] p.to_set().contains(x) implies m.to_set().insert(v).contains(x) by {
         let i = choose|i: int| 0 <= i < p.len() && p[i] == x;
         if i < m.len() {
             assert(m[i] == x);
         }
     }
-    assert forall|x: nat| m.to_set().insert(v).contains(x) implies p.to_set().contains(x) by {
+    assert forall|x: nat| #![trigger p.to_set().contains(x)] m.to_set().insert(v).contains(x) implies p.to_set().contains(x) by {
         if x == v {
             assert(p[m.len() as int] == v);
         } else {
@@ -2687,11 +2687,11 @@ pub(crate) proof fn lemma_insert_new_root<K, L, S, const TRACK: bool>(
     // all < a1.len() == nri, so the new slot doesn't touch their footprints).
     assert(a2s == a1s.push(new_root@));
     assert(a1s.len() <= a2s.len());
-    assert forall|id: nat| crate::bplus_tree::tree_ids(nl@).contains(id) implies a1s[id as int] == a2s[id as int] by {
+    assert forall|id: nat| #![trigger a1s[id as int]] #![trigger a2s[id as int]] crate::bplus_tree::tree_ids(nl@).contains(id) implies a1s[id as int] == a2s[id as int] by {
         assert(id < a1s.len());            // precondition
         assert(a2s[id as int] == a1s[id as int]);  // push leaves old slots unchanged
     }
-    assert forall|id: nat| crate::bplus_tree::tree_ids(nr@).contains(id) implies a1s[id as int] == a2s[id as int] by {
+    assert forall|id: nat| #![trigger a1s[id as int]] #![trigger a2s[id as int]] crate::bplus_tree::tree_ids(nr@).contains(id) implies a1s[id as int] == a2s[id as int] by {
         assert(id < a1s.len());
         assert(a2s[id as int] == a1s[id as int]);
     }
@@ -3241,7 +3241,7 @@ pub(crate) proof fn lemma_splice_children_bind<K, L, S, const TRACK: bool>(
     assert(forest_binds_l::<L>(a1, kids));  // binds(a1, cur) Inner arm
     lemma_forest_binds_subrange::<L>(a1, kids, 0, cp);
     lemma_forest_binds_subrange::<L>(a1, kids, cp + 1, kids.len() as int);
-    assert forall|id: nat| crate::bplus_tree::forest_ids(left).contains(id)
+    assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(left).contains(id)
         implies a1[id as int] == a2[id as int] by {
         lemma_forest_ids_subrange_in::<L>(kids, 0, cp, id);
         assert(crate::bplus_tree::tree_ids(cur).contains(id));
@@ -3250,7 +3250,7 @@ pub(crate) proof fn lemma_splice_children_bind<K, L, S, const TRACK: bool>(
         assert(!crate::bplus_tree::tree_ids(gkids[cp]).contains(id));
         assert(id != gid);
     }
-    assert forall|id: nat| crate::bplus_tree::forest_ids(right).contains(id)
+    assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(right).contains(id)
         implies a1[id as int] == a2[id as int] by {
         lemma_forest_ids_subrange_in::<L>(kids, cp + 1, kids.len() as int, id);
         assert(crate::bplus_tree::tree_ids(cur).contains(id));
@@ -4083,13 +4083,13 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool>(
     // ncl/ncr bind in a2: frame from ar across the single set(gid,pl) (gid ∉ their
     // footprints) and the push (a tail extension preserves binds). Discharge the
     // agreement (ar == a2 on each footprint) BEFORE the frame lemma call.
-    assert forall|id: nat| crate::bplus_tree::tree_ids(ncl@).contains(id)
+    assert forall|id: nat| #![trigger ar[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(ncl@).contains(id)
         implies ar[id as int] == a2[id as int] by {
         lemma_tree_id_in_range::<L>(ar, ncl@, id);  // id < ar.len()
         assert(id != gid@);  // gid ∉ tree_ids(ncl)
     }
     lemma_binds_frame::<L>(ar, a2, ncl@);
-    assert forall|id: nat| crate::bplus_tree::tree_ids(ncr@).contains(id)
+    assert forall|id: nat| #![trigger ar[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(ncr@).contains(id)
         implies ar[id as int] == a2[id as int] by {
         lemma_tree_id_in_range::<L>(ar, ncr@, id);
         assert(id != gid@);  // gid ∉ tree_ids(ncr)
@@ -4623,7 +4623,7 @@ pub(crate) proof fn lemma_forest_links_update<L: NodeLayout>(
         assert(child_succ == s0a);
         assert(nkids.drop_first() =~= df);
         // df footprints disjoint from kids[0]==kids[cp]; agreement on forest_ids(df).
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
             // id in some df[m]==kids[m+1]; disjoint from kids[0]==kids[cp].
@@ -4657,7 +4657,7 @@ pub(crate) proof fn lemma_forest_links_update<L: NodeLayout>(
         } else { succ })) by {
             if cp + 1 < kids.len() { assert(df[cp] == kids[cp + 1]); }
         }
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             && !crate::bplus_tree::tree_ids(df[cp - 1]).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
@@ -4964,7 +4964,7 @@ pub(crate) proof fn lemma_forest_links_splice<L: NodeLayout>(
         assert(nkids.drop_first().drop_first() =~= df);
         assert(child_succ == s0a);
         // df's chain is unchanged (framed): its footprints are disjoint from kids[0].
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
             crate::bplus_tree::lemma_forest_id_in_some_child(df, id);
@@ -5009,7 +5009,7 @@ pub(crate) proof fn lemma_forest_links_splice<L: NodeLayout>(
         } else { succ })) by {
             if cp + 1 < kids.len() { assert(df[cp] == kids[cp + 1]); }
         }
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             && !crate::bplus_tree::tree_ids(df[cp - 1]).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
@@ -5066,7 +5066,7 @@ pub(crate) proof fn lemma_forest_links_frame_ids<L: NodeLayout>(
             crate::bplus_tree::lemma_child_ids_in_forest(kids, 0, id);
         }
         lemma_leaf_links_frame::<L>(a1, a2, kids[0], s0);
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
         }
@@ -5261,7 +5261,7 @@ pub(crate) proof fn lemma_binds_frame<L: NodeLayout>(a1: Seq<L::Node>, a2: Seq<L
     requires
         binds::<L>(a1, t),
         a1.len() <= a2.len(),
-        forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
+        forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
     ensures
         binds::<L>(a2, t),
     decreases t,
@@ -5295,7 +5295,7 @@ pub(crate) proof fn lemma_forest_binds_frame<L: NodeLayout>(
         a1.len() <= a2.len(),
         parent is Inner,
         parent->Inner_kids == kids,
-        forall|id: nat| crate::bplus_tree::tree_ids(parent).contains(id)
+        forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(parent).contains(id)
             ==> a1[id as int] == a2[id as int],
     ensures
         forest_binds_l::<L>(a2, kids),
@@ -5320,7 +5320,7 @@ pub(crate) proof fn lemma_forest_binds_frame<L: NodeLayout>(
             seps: parent->Inner_seps,
             kids: df,
         };
-        assert forall|id: nat| crate::bplus_tree::tree_ids(dparent).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(dparent).contains(id)
             implies a1[id as int] == a2[id as int] by {
             // tree_ids(dparent) = {pid} ∪ forest_ids(df) ⊆ {pid} ∪ forest_ids(kids)
             //                   ⊆ tree_ids(parent).
@@ -5348,7 +5348,7 @@ pub(crate) proof fn lemma_leaf_links_frame<L: NodeLayout>(
 )
     requires
         leaf_links_to::<L>(a1, t, succ),
-        forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
+        forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
     ensures
         leaf_links_to::<L>(a2, t, succ),
 {
@@ -5382,7 +5382,7 @@ pub(crate) proof fn lemma_subtree_wf_frame<K, L, S, const TRACK: bool>(
     requires
         BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a1, t, h, succ, is_root),
         a1.len() <= a2.len(),
-        forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
+        forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(t).contains(id) ==> a1[id as int] == a2[id as int],
     ensures
         BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a2, t, h, succ, is_root),
 {
@@ -5417,7 +5417,7 @@ pub(crate) proof fn lemma_subtree_wf_frame_update<K, L, S, const TRACK: bool>(
 {
     let a2 = arena.update(id_slot as int, v);
     assert(arena.len() <= a2.len());
-    assert forall|id: nat| crate::bplus_tree::tree_ids(t).contains(id)
+    assert forall|id: nat| #![trigger arena[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(t).contains(id)
         implies arena[id as int] == a2[id as int] by {
         // id < arena.len() (binds in-range), and id != id_slot (id ∈ tree_ids(t),
         // id_slot ∉), so the update at id_slot doesn't touch slot id.
@@ -5485,7 +5485,7 @@ pub(crate) proof fn lemma_forest_binds_update<L: NodeLayout>(
     if cp == 0 {
         assert(u[0] == nc);
         assert(u.drop_first() =~= df);
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
             assert(!crate::bplus_tree::tree_ids(kids[0]).contains(id));
@@ -5509,7 +5509,7 @@ pub(crate) proof fn lemma_forest_binds_update<L: NodeLayout>(
                 .disjoint(#[trigger] crate::bplus_tree::tree_ids(df[j])) by {
             assert(df[i] == kids[i + 1]); assert(df[j] == kids[j + 1]);
         }
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             && !crate::bplus_tree::tree_ids(df[cp - 1]).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
@@ -5546,7 +5546,7 @@ pub(crate) proof fn lemma_forest_binds_frame_tail<L: NodeLayout>(
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
         }
         lemma_binds_frame::<L>(a1, a2, kids[0]);
-        assert forall|id: nat| crate::bplus_tree::forest_ids(df).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(df).contains(id)
             implies a1[id as int] == a2[id as int] by {
             assert(crate::bplus_tree::forest_ids(kids).contains(id));
         }
@@ -5590,7 +5590,7 @@ pub(crate) proof fn lemma_forest_binds_frame_push<L: NodeLayout>(
         // `push` agrees with the original on every old index, which is all
         // `binds` reads (its ids are `< a1.len()` by `binds` itself).
         assert(a1.len() <= a2.len());
-        assert forall|id: nat| crate::bplus_tree::tree_ids(kids[0]).contains(id)
+        assert forall|id: nat| #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::tree_ids(kids[0]).contains(id)
             implies a1[id as int] == a2[id as int] by {
             lemma_binds_ids_in_range::<L>(a1, kids[0], id);
             assert(a2[id as int] == a1.push(node)[id as int]);
@@ -6178,7 +6178,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 let w1 = leaf_word_keys::<L>(old_arena, lid);
                 let w2 = leaf_word_keys::<L>(self.arena(), lid);
                 assert(w2.len() == w1.len() + 1);
-                assert forall|i: int| 0 <= i < w2.len() implies w2[i] == w1.push(key.id_nat())[i] by {
+                assert forall|i: int| #![trigger w2[i]] 0 <= i < w2.len() implies w2[i] == w1.push(key.id_nat())[i] by {
                     // Seq::insert at the END is a push: index i < n reads the old
                     // slot, i == n reads kw.
                     if i < n as int {

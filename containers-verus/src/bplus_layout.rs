@@ -701,7 +701,7 @@ pub fn internal_insert_at<L: NodeLayout>(n: &mut L::Node, cp: usize, sep: L::Wor
             L::node_wf(*n),
             L::count_spec(*n) == cnt as nat,
             L::keys_view(*n) == L::keys_view(old_n),
-            forall|j: int| 0 <= j <= m ==> L::child_view(*n, j) == L::child_view(old_n, j),
+            forall|j: int| #![trigger L::child_view(old_n, j)] 0 <= j <= m ==> L::child_view(*n, j) == L::child_view(old_n, j),
             forall|j: int| m + 1 < j <= cnt + 1 ==>
                 L::child_view(*n, j) == L::child_view(old_n, (j - 1)),
         decreases m - cp,
@@ -997,7 +997,7 @@ macro_rules! gen_layout_u32 {
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
-                assert forall|jj: int| 0 <= jj <= $key_cap implies
+                assert forall|jj: int| #![trigger Self::child_view(old_n, jj)] 0 <= jj <= $key_cap implies
                     Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
             }
             #[inline(always)]
@@ -1015,7 +1015,7 @@ macro_rules! gen_layout_u32 {
                 // children: writing data[key_cap+i] (or link) leaves data[key_cap+j]
                 // (j != i) and the other of data/link untouched.
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
-                assert forall|j: int| 0 <= j <= $key_cap && j != i implies
+                assert forall|j: int| #![trigger Self::child_view(old_n, j)] 0 <= j <= $key_cap && j != i implies
                     Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }
@@ -1432,7 +1432,7 @@ macro_rules! gen_layout_u64 {
                 arr_set(&mut n.data, pos, w);
                 n.count = (cnt + 1) as u8;
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n).insert(pos as int, w));
-                assert forall|jj: int| 0 <= jj <= $key_cap implies
+                assert forall|jj: int| #![trigger Self::child_view(old_n, jj)] 0 <= jj <= $key_cap implies
                     Self::child_view(*n, jj) == Self::child_view(old_n, jj) by {}
             }
             // Stores a `usize` arena id into the `u64` data slot (or the `usize`
@@ -1461,7 +1461,7 @@ macro_rules! gen_layout_u64 {
                 // keys_view (data[0..count]) untouched; other children unchanged.
                 assert(Self::keys_view(*n) =~= Self::keys_view(old_n));
                 assert(Self::child_view(*n, i as int) == v.as_nat());
-                assert forall|j: int| 0 <= j <= $key_cap && j != i implies
+                assert forall|j: int| #![trigger Self::child_view(old_n, j)] 0 <= j <= $key_cap && j != i implies
                     Self::child_view(*n, j) == Self::child_view(old_n, j) by {}
             }
             open spec fn isplit_mid_spec() -> nat { Self::key_cap_spec() / 2 }

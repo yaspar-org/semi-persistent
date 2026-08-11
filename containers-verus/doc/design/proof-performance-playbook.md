@@ -5,7 +5,7 @@ proof hangs, diverges, or flakes, these are the concrete recipes we converged on
 what the symptom means and what actually unblocks it. Companion to the
 [Proof Attempts Log](proof-attempts-log.md) (the chronological narrative) and
 the [Trust Boundary](02-trust-boundary.md) (what is `external_body` and why).
-Verus `0.2026.04.12.f1166c4`.*
+Verus `0.2026.08.02.b677dd5`, z3 4.16.0.*
 
 [Design Table of Contents](00-table-of-contents.md)
 
@@ -102,11 +102,16 @@ To silence a note **and** pin the choice for stability, annotate the quantifier
 with the trigger Verus reported: `#[trigger]` on the chosen subexpression for a
 single trigger, or `#![trigger e1, e2]` / multiple `#![trigger ...]` clauses for a
 multi-trigger set. Match exactly what the note printed; a single `#[trigger]`
-where Verus wanted a *set* can change solver behavior. `#![auto]` confirms the
-auto-choice with zero risk if an explicit pick destabilizes the proof. To suppress
-the notes wholesale during iteration, pass `--triggers-mode silent` (what
-`verify-all.sh` does, which is also why a proof can look "clean" under one
-invocation and noisy under another).
+where Verus wanted a *set* can change solver behavior. `#![auto]` records the
+auto-choice explicitly, but it is **not** risk-free — it accepts whatever Verus
+picked, and Verus sometimes picks the quantifier's *conclusion* (see §9). To
+suppress the notes wholesale during iteration, pass `--triggers-mode silent`, which
+is also why a proof can look "clean" under one invocation and noisy under another.
+
+Also note the *absence* of a note means nothing about cost. The most expensive
+quantifier we ever hit (§9, 223 s in one function) was selected **silently**, with
+full confidence and no diagnostic at all. Low-confidence notes are about syntactic
+ambiguity, not expense; `capture_bits` carries four of them and verifies in 76 ms.
 
 ## 7. Cast / target-width facts are usually provable
 
@@ -126,7 +131,7 @@ see [Trust Boundary §3](02-trust-boundary.md).
 ## 8. Process & commit hygiene that paid off
 
 - **One milestone per commit; never commit a broken half-migration.** Always leave
-  `verify-all.sh` green.
+  `cargo verus verify` green.
 - **Measure blast radius before committing to an approach.** For a risky spec
   change (e.g. strengthening a `wf` clause), add it and immediately see *which*
   functions break; Verus's failure set is your bi-abduction oracle. We used this
@@ -140,3 +145,78 @@ see [Trust Boundary §3](02-trust-boundary.md).
 
 ---
 [← Table of Contents](00-table-of-contents.md)
+
+## 9. Quadratic triggers: two independent matches in one trigger set
+
+The single most expensive pathology in this crate. A trigger set containing two
+terms whose **bound variables are disjoint** lets the solver instantiate over
+every *pair* of matching terms — cost quadratic in the term set, and the term set
+is everything in scope.
+
+The canonical instance is the arena disjointness invariant, which is idiomatic
+and looks innocent:
+
+```rust
+forall|l1: int, p1: int, l2: int, p2: int|
+    0 <= l1 < m.len() && 0 <= p1 < m[l1].len()
+        && 0 <= l2 < m.len() && 0 <= p2 < m[l2].len()
+        && (#[trigger] m[l1][p1]) == (#[trigger] m[l2][p2])
+            ==> l1 == l2 && p1 == p2
+```
+
+Proved **inline in an exec body**, where both pre- and post-state `wf()` plus every
+exec local are in scope, `list::splice_raw` measured **223,553 ms / 1.56 B rlimit /
+26.5 M instantiations** — 94% of the whole crate's verification cost, in one
+function, hidden behind an `rlimit(800)`.
+
+The fix is not a trigger annotation (there is no better trigger — the shape is
+inherently pairwise). It is to **move the goal somewhere nothing else is in
+scope**: a lemma over the bare `Seq<Seq<usize>>`, requiring only the old
+disjointness rather than a `wf()`:
+
+```
+splice_raw       223,553 ms -> 17,543 ms   1.56B -> 75.9M rlimit
+the lemma alone       11 ms,  140,854 rlimit
+whole crate           3m54s -> 26s
+```
+
+**The 11 ms is the lesson.** The goal was nearly free all along; the 223 seconds
+were e-matching against irrelevant context, not proof work. Whenever a proof is
+expensive, ask what the solver can *see*, not just what it must prove.
+
+Recipes:
+- Grep for the shape: a `forall` with 4+ bound variables whose `#[trigger]`s are
+  two nested accesses with disjoint variable sets. We found 11 sites this way; all
+  were in `list` / `circular_list`, and the three sitting inline in exec bodies
+  were the ones worth fixing (`lemma_splice_disjoint`,
+  `lemma_insert_fresh_disjoint`).
+- Cost scales with the *ambient* context, not the goal. The same quantifier costs
+  48 ms in `circular_list::add_singleton` (one fresh ring in scope) and 223 s in
+  `splice_raw`. Do not assume every instance needs extracting; measure first.
+- A related, cheaper pathology: `#![auto]` picking the quantifier's **conclusion**
+  as trigger, so the axiom re-fires on facts it just derived. In
+  `abstract-domains::div::lsh_or_tb_sound` that was 14,635 instantiations, 80% of
+  the module's total; naming the *hypotheses* instead
+  (`#![trigger self.has(r), b.has(bv)]`) cut the module 18,154 -> 3,262
+  instantiations and 3690 -> 2089 ms.
+
+## 10. Closed ground terms: skip the solver with `by(compute_only)`
+
+If an `assert` is a closed term over concrete values — no free variables, no
+quantifiers — Verus can *evaluate* it in its interpreter instead of asking z3 to
+prove it. `abstract-domains::nats` had a ladder of `exp(n) == 2^n` lemmas built
+from iterated `cons`, each proved by unfolding chains with
+`reveal_with_fuel(lshi, 33)` and a hand-rolled `rlimit(10000)`. Replaced by
+
+```rust
+pub proof fn exp_128() ensures exp(128) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000 {
+    assert(exp(128) == 0x1_0000_0000_0000_0000_0000_0000_0000_0000nat) by(compute_only);
+}
+```
+
+`exp_128` went **27,452,387 rlimit -> 2** (989 ms -> 0 ms) and the module 5370 ms
+-> 157 ms (34x), deleting the fuel chains and the `rlimit` attribute with it. Check
+for this before writing any unfolding ladder over concrete constants.
+
+Note `by(nonlinear_arith)` is *not* a speed tool and is irrelevant to bit-blasted
+(`by(bit_vector)`) goals; upstream used it to stop a divergence, not to gain speed.

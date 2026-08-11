@@ -303,7 +303,7 @@ here.
 > methods (`iter`/`get_mut`/key-count `len`) are omitted from otherwise-verified
 > containers.
 
-Per-module verified counts are in `verify-all.sh` output; the tally is 1471
+Per-module verified counts are in `cargo verus verify -- --time-expanded` output; the tally is 1471
 verified, 0 errors, 0 `admit`s/`assume`s across 31 module entries.
 
 ---
