@@ -24,6 +24,34 @@ pub(crate) struct Frame<I: IndexLike> {
     pub diff_start: usize,
 }
 
+/// Narrow a frame-stack or fork-history length into the `u32` a [`VecToken`] field
+/// holds. Panics rather than wrapping.
+///
+/// The token is a by-value handle and its `depth`/`frame_index` are `u32` on purpose:
+/// they count *nested* marks and forks, a quantity bounded by control-flow depth rather
+/// than by data size, so the ceiling is nowhere near any real workload and widening the
+/// fields would grow every copied token for nothing.
+///
+/// Reaching that ceiling silently is a different matter, and is why this is checked. A
+/// wrapped `depth` compares as *shallower* than it truly is, so
+/// [`ForkHistory::is_valid`] would accept a token belonging to an abandoned future and
+/// `restore` would replay a diff range that no longer describes the store — a stale
+/// token validating as fresh, which is the one failure this whole module exists to
+/// prevent. A wrapped `branch_id` aliases two branches onto one identity, with the same
+/// consequence.
+#[inline]
+pub(crate) fn narrow_count(n: usize, what: &'static str) -> u32 {
+    #[cold]
+    #[inline(never)]
+    fn exceeded(n: usize, what: &'static str) -> ! {
+        panic!("{what} reached {n}, which a u32 token field cannot address");
+    }
+    match u32::try_from(n) {
+        Ok(v) => v,
+        Err(_) => exceeded(n, what),
+    }
+}
+
 /// Unique identity for a `Vec` instance. Prevents using a token from one
 /// vec on a different vec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,7 +95,7 @@ impl ForkHistory {
             parent_branch_id: token.branch_id,
             fork_depth: token.depth,
         });
-        self.current_branch_id = self.origins.len() as u32;
+        self.current_branch_id = narrow_count(self.origins.len(), "fork history depth");
         let _ = current_depth;
     }
 

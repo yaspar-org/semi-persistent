@@ -141,6 +141,11 @@ impl IndexLike for DenseId31 {
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
+    // 2^31 <= usize::MAX + 1 once `usize` is known to be 64 bits wide.
+    proof fn lemma_max_nat_fits_usize() {
+        crate::index_like::lemma_u64_usize_64bit();
+    }
+
     fn min() -> Self { DenseId31 { raw: 0 } }
 
     fn max() -> Self { DenseId31 { raw: 0x7fff_ffff } }
@@ -381,6 +386,12 @@ impl IndexLike for DenseId63 {
 
     proof fn lemma_max_nat_positive() {}
     proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
+
+    // 2^63 <= usize::MAX + 1 == 2^64. The 63-bit family is the reason this obligation
+    // is on the trait at all: it is the widest id whose `Index` still fits a pointer.
+    proof fn lemma_max_nat_fits_usize() {
+        crate::index_like::lemma_u64_usize_64bit();
+    }
 
     fn min() -> Self { DenseId63 { raw: 0 } }
 

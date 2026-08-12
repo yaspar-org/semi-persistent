@@ -361,6 +361,8 @@ impl crate::index_like::IndexLike for DenseUsize {
         assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
         assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
     }
+    // `max_nat()` is defined as `usize::MAX + 1` — the obligation is that definition.
+    proof fn lemma_max_nat_fits_usize() {}
 
     fn min() -> Self { DenseUsize { raw: 0 } }
     fn max() -> Self { DenseUsize { raw: usize::MAX } }
