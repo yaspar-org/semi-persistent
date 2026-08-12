@@ -73,29 +73,7 @@ impl crate::config::EGraphConfig for DefaultConfig {
     type Ids = DefaultNodeIds;
     type Au = crate::au::AuIds31;
 
-    fn mset_child_id(c: &Self::C) -> Self::G {
-        c.a
-    }
-    fn mset_child_mult(c: &Self::C) -> Self::M {
-        c.b
-    }
-    fn mset_child_single(g: Self::G) -> Self::C {
-        crate::containers::Pair {
-            a: g,
-            b: crate::multiplicity::Multiplicity(1),
-        }
-    }
-    fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
-        crate::containers::Pair { a: g, b: mult }
-    }
-    fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
-        if existing.a == new_g {
-            existing.b = crate::multiplicity::Multiplicity(existing.b.0 + 1);
-            true
-        } else {
-            false
-        }
-    }
+    crate::impl_mset_child_pair!();
 }
 
 // ---------------------------------------------------------------------------
@@ -144,32 +122,46 @@ impl crate::config::EGraphConfig for Config64 {
     type V = LitValId64;
     type UL = UseListId64;
     type UN = UseNodeId64;
-    type C = crate::node_store::MSetChild<ENodeId64>;
-    type M = crate::multiplicity::Multiplicity;
+    type C = crate::node_store::MSetChild<ENodeId64, crate::multiplicity::Multiplicity64>;
+    // A 64-bit multiplicity, because at this id width it is free: an AC child pairs an
+    // 8-byte id with the count, and the pair is 16 bytes whether the count is 2, 4, or 8
+    // bytes wide — the alignment of the id decides. Anything narrower would leave a
+    // reachable ceiling in place for nothing: a 63-bit e-graph admits up to 2^63 nodes, so
+    // `for_each_child`'s 64·N bound on a single multiplicity runs far past `u32`.
+    type M = crate::multiplicity::Multiplicity64;
     type Ids = NodeIds64;
     type Au = crate::au::AuIds64;
 
-    fn mset_child_id(c: &Self::C) -> Self::G {
-        c.a
-    }
-    fn mset_child_mult(c: &Self::C) -> Self::M {
-        c.b
-    }
-    fn mset_child_single(g: Self::G) -> Self::C {
-        crate::containers::Pair {
-            a: g,
-            b: crate::multiplicity::Multiplicity(1),
-        }
-    }
-    fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
-        crate::containers::Pair { a: g, b: mult }
-    }
-    fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
-        if existing.a == new_g {
-            existing.b = crate::multiplicity::Multiplicity(existing.b.0 + 1);
-            true
-        } else {
-            false
-        }
-    }
+    crate::impl_mset_child_pair!();
+}
+
+/// 31-bit ids with a **16-bit** multiplicity: the low-ceiling witness for the width axis.
+///
+/// This is the same 31-bit e-graph as [`DefaultConfig`] with a deliberately small
+/// multiplicity ceiling (65535 occurrences of one child in one AC node). Its purpose is to
+/// keep `EGraphConfig::M` honest, in two ways a second *wide* config cannot:
+///
+/// * it does not compile against a hardcoded `Multiplicity` anywhere on the generic paths,
+///   so the parameterization cannot silently rot back to a fixed `u32`;
+/// * its ceiling is reachable by a test. The checked narrowing and overflow paths are the
+///   whole point of the design, and at 32 bits provoking them needs four billion children.
+///
+/// It is not a space optimization: an AC child pairs a 4-byte id with the count and pads to
+/// 8 bytes at both 16 and 32 bits. Pick it when a low ceiling is *wanted* as a guard, not to
+/// save memory.
+pub struct ConfigM16;
+impl crate::config::EGraphConfig for ConfigM16 {
+    type Index = u32;
+    type G = crate::id::ENodeId;
+    type O = crate::id::OpId;
+    type S = crate::id::SortId;
+    type V = LitValId;
+    type UL = crate::id::UseListId;
+    type UN = crate::id::UseNodeId;
+    type C = crate::node_store::MSetChild<crate::id::ENodeId, crate::multiplicity::Multiplicity16>;
+    type M = crate::multiplicity::Multiplicity16;
+    type Ids = DefaultNodeIds;
+    type Au = crate::au::AuIds31;
+
+    crate::impl_mset_child_pair!();
 }

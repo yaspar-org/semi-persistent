@@ -17,11 +17,33 @@
 //! `union_justified` / `rebuild` calls invalidate it — the caller must
 //! rebuild the table after mutations. This is not enforced by the type system.
 
-use crate::containers::DenseId;
+use crate::containers::{DenseId, IndexLike};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/// A tour position in `T`'s index word.
+///
+/// # Why `T::Index` is exactly wide enough
+///
+/// The tour has `2*(n + 1) - 1` entries for `n` nodes, so the largest position is `2n`.
+/// For the bit-stealing id families (`Id31`/`Id63`, the only ones a session configures),
+/// the word holds twice the ids: `Index::max_nat() == 2 * id_bound()`. Every node id is
+/// below `id_bound`, so `n <= id_bound` and the largest position `2n` is at most
+/// `Index::max_nat()` — representable, with the stolen bit paying for the doubling. The
+/// tour of a full-capacity proof forest fits in the id's own word and needs nothing
+/// wider, which is why these positions are not `usize`.
+///
+/// Checked rather than cast because that argument is about the id family, and a `T` with
+/// a full-range `Index` (no stolen bit) would not satisfy it. Such a `T` cannot reach
+/// half capacity in memory anyway, so the check never fires; it just refuses to be
+/// silently wrong if one appears.
+#[inline]
+fn tour_pos<T: DenseId>(pos: usize) -> T::Index {
+    <T::Index as IndexLike>::try_from_usize(pos)
+        .expect("Euler tour position exceeds T::Index; configure a wider index word")
+}
 
 /// Virtual-root Euler tour from a proof-parent array.
 /// Returns `(euler, depth, first, tree_id)`.
@@ -32,17 +54,40 @@ use crate::containers::DenseId;
 /// bounded by the number of union operations (at most n), and with
 /// union-by-rank the depth is O(log n). Even without rank optimization,
 /// depths in practice stay well below 65535. A debug assertion checks this.
+///
+/// # The unvisited marker in `first`
+///
+/// `first[i] == Index::min()` (zero) means "node `i` has no tour entry yet". Zero is
+/// available as a marker rather than a position because tour position 0 is always the
+/// virtual root's own entry, so no real node's first occurrence can be there — every
+/// `first[i]` this function writes is `>= 1`. The previous marker was `u32::MAX`, which
+/// **is** a reachable position: at full 31-bit capacity the largest position is
+/// `2 * 2^31 == u32::MAX + 1`, so a tour long enough would have written the marker value
+/// into `first` and `lca` would have reported "no such node" for a node that has one.
 fn euler_tour<T: DenseId, const TRACK: bool>(
     pp: &crate::containers::VecI<T, T::Index, TRACK>,
     n: usize,
-) -> (Vec<T>, Vec<u16>, Vec<u32>, Vec<u32>) {
+) -> (Vec<T>, Vec<u16>, Vec<T::Index>, Vec<T::Index>) {
     let vroot = n;
+    // The virtual root gets its own id, one past the real nodes, so that `lca` can
+    // recognize it in the tour and report "different trees". It used to be *aliased onto
+    // node 0* (`euler.push(T::from_usize(0))` as a "placeholder"), which made the
+    // `result >= n` guard in both `lca` bodies unreachable: a query whose LCA is the
+    // virtual root read back as `Some(node_0)`. Today that range is unreachable for a
+    // second reason — `tree_id` rejects cross-tree pairs before the RMQ runs — so the
+    // guard was a dead fallback that looked live. It is live now.
+    // This also bounds every `T::from_usize` below: `IndexLike::try_from_usize` on a dense
+    // id rejects anything at or past `id_bound()`, so surviving it proves `n` — and therefore
+    // every real node index `< n` — is inside the id space. The masking mint is then exact,
+    // and the check is paid once per tour rather than once per node.
+    let vroot_id = <T as IndexLike>::try_from_usize(n).expect(
+        "proof forest fills the id range, leaving nothing to name the LCA virtual root; \
+         configure a wider id family",
+    );
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n + 1];
-    let mut roots = Vec::new();
     for i in 0..n {
         let p = pp.get(T::from_usize(i)).to_usize();
         if p == i {
-            roots.push(i);
             children[vroot].push(i);
         } else {
             children[p].push(i);
@@ -52,45 +97,55 @@ fn euler_tour<T: DenseId, const TRACK: bool>(
     let cap = 2 * (n + 1);
     let mut euler = Vec::with_capacity(cap);
     let mut depth: Vec<u16> = Vec::with_capacity(cap);
-    let mut first = vec![u32::MAX; n + 1];
-    let mut tree_id = vec![0u32; n + 1];
+    let unvisited = <T::Index as IndexLike>::min();
+    let mut first = vec![unvisited; n + 1];
+    let mut tree_id = vec![unvisited; n + 1];
 
     // Single DFS from virtual root
     // Stack: (node, child_index, depth)
     let mut stack: Vec<(usize, usize, u16)> = Vec::new();
     stack.push((vroot, 0, 0));
-    euler.push(T::from_usize(0)); // placeholder for vroot
+    euler.push(vroot_id);
     depth.push(0);
-    first[vroot] = 0;
+    // `first[vroot]` stays at the unvisited marker, which is also its true position (0).
+    // Both readings are unused: `lca` rejects `ai >= n` before touching `first`.
 
-    let mut current_tree: u32 = 0;
+    let mut current_tree = unvisited;
 
     while let Some((node, ci, d)) = stack.last_mut() {
         if *ci < children[*node].len() {
+            // The cursor before the bump: `children[vroot]` is filled in ascending node
+            // order, so the k-th descent from the virtual root enters the k-th root and
+            // this ordinal *is* the tree number. The old code recovered it by scanning a
+            // `roots` vector with `position()` — O(roots²) over the build, and an
+            // unchecked `as u32` on the result.
+            let child_ordinal = *ci;
             let child = children[*node][*ci];
             *ci += 1;
             let child_depth = d.checked_add(1).expect(
                 "proof tree depth exceeds u16::MAX (65535); this should never happen \
                  with union-by-rank (max depth = log₂(n) ≈ 31)",
             );
-            euler.push(T::from_usize(child.min(n.saturating_sub(1))));
+            // Every entry of `children` is a real node index below `n` (the parent array
+            // has `n` rows), so this is in range without clamping.
+            euler.push(T::from_usize(child));
             depth.push(child_depth);
-            if first[child] == u32::MAX {
-                first[child] =
-                    u32::try_from(euler.len() - 1).expect("Euler tour length exceeds u32::MAX");
+            if first[child] == unvisited {
+                first[child] = tour_pos::<T>(euler.len() - 1);
             }
             if *node == vroot {
-                current_tree = roots.iter().position(|&r| r == child).unwrap_or(0) as u32;
+                current_tree = tour_pos::<T>(child_ordinal);
             }
-            if child < n {
-                tree_id[child] = current_tree;
-            }
+            tree_id[child] = current_tree;
             stack.push((child, 0, child_depth));
         } else {
             stack.pop();
             if let Some(&(parent, _, pd)) = stack.last() {
-                let id = if parent < n { parent } else { 0 };
-                euler.push(T::from_usize(id));
+                euler.push(if parent == vroot {
+                    vroot_id
+                } else {
+                    T::from_usize(parent)
+                });
                 depth.push(pd);
             }
         }
@@ -99,21 +154,21 @@ fn euler_tour<T: DenseId, const TRACK: bool>(
     (euler, depth, first, tree_id)
 }
 
-/// Block decomposition shared state.
-struct BlockDecomp {
+/// Block decomposition shared state. `I` is the tour-position word (see [`tour_pos`]).
+struct BlockDecomp<I> {
     block_size: usize,
     num_blocks: usize,
     /// Tour position of the minimum-depth entry in each block.
-    block_min: Vec<u32>,
+    block_min: Vec<I>,
     /// ±1 pattern for each block.
     block_type: Vec<u16>,
 }
 
-fn block_decompose(depth: &[u16], m: usize) -> BlockDecomp {
+fn block_decompose<T: DenseId>(depth: &[u16], m: usize) -> BlockDecomp<T::Index> {
     let block_size = ((usize::BITS - m.leading_zeros()) as usize / 2).max(1);
     let num_blocks = m.div_ceil(block_size);
 
-    let mut block_min = vec![0u32; num_blocks];
+    let mut block_min = vec![<T::Index as IndexLike>::min(); num_blocks];
     let mut block_type = vec![0u16; num_blocks];
 
     for b in 0..num_blocks {
@@ -131,7 +186,7 @@ fn block_decompose(depth: &[u16], m: usize) -> BlockDecomp {
                 pattern |= 1 << (i - start - 1);
             }
         }
-        block_min[b] = u32::try_from(min_idx).expect("Euler tour length exceeds u32::MAX");
+        block_min[b] = tour_pos::<T>(min_idx);
         block_type[b] = pattern;
     }
 
@@ -143,14 +198,14 @@ fn block_decompose(depth: &[u16], m: usize) -> BlockDecomp {
     }
 }
 
-fn build_sparse_table(depth: &[u16], bd: &BlockDecomp) -> Vec<Vec<u32>> {
+fn build_sparse_table<T: DenseId>(depth: &[u16], bd: &BlockDecomp<T::Index>) -> Vec<Vec<T::Index>> {
     let num_blocks = bd.num_blocks;
     let log_blocks = if num_blocks > 1 {
         (usize::BITS - (num_blocks - 1).leading_zeros()) as usize
     } else {
         1
     };
-    let mut sparse: Vec<Vec<u32>> = Vec::with_capacity(log_blocks);
+    let mut sparse: Vec<Vec<T::Index>> = Vec::with_capacity(log_blocks);
     sparse.push(bd.block_min.clone());
 
     for k in 1..log_blocks {
@@ -161,7 +216,7 @@ fn build_sparse_table(depth: &[u16], bd: &BlockDecomp) -> Vec<Vec<u32>> {
         for i in 0..len {
             let left = prev[i];
             let right = prev[i + half];
-            level.push(if depth[left as usize] <= depth[right as usize] {
+            level.push(if depth[left.as_usize()] <= depth[right.as_usize()] {
                 left
             } else {
                 right
@@ -172,7 +227,7 @@ fn build_sparse_table(depth: &[u16], bd: &BlockDecomp) -> Vec<Vec<u32>> {
     sparse
 }
 
-fn build_block_lookup(depth: &[u16], bd: &BlockDecomp, m: usize) -> Vec<Vec<u16>> {
+fn build_block_lookup<I>(depth: &[u16], bd: &BlockDecomp<I>, m: usize) -> Vec<Vec<u16>> {
     let block_size = bd.block_size;
     let num_patterns = 1u16 << block_size.saturating_sub(1);
     let mut block_lookup: Vec<Vec<u16>> = vec![Vec::new(); num_patterns as usize];
@@ -218,11 +273,12 @@ fn build_block_lookup(depth: &[u16], bd: &BlockDecomp, m: usize) -> Vec<Vec<u16>
 pub struct LcaTable<T: DenseId> {
     euler: Vec<T>,
     depth: Vec<u16>,
-    first: Vec<u32>,
-    tree_id: Vec<u32>,
+    /// First tour position of each node, or [`IndexLike::min`] if it has none.
+    first: Vec<T::Index>,
+    tree_id: Vec<T::Index>,
     n: usize,
     block_size: usize,
-    sparse: Vec<Vec<u32>>,
+    sparse: Vec<Vec<T::Index>>,
     block_lookup: Vec<Vec<u16>>,
     block_type: Vec<u16>,
 }
@@ -249,8 +305,8 @@ impl<T: DenseId> LcaTable<T> {
         let (euler, depth, first, tree_id) = euler_tour(pp, n);
         let m = euler.len();
 
-        let bd = block_decompose(&depth, m);
-        let sparse = build_sparse_table(&depth, &bd);
+        let bd = block_decompose::<T>(&depth, m);
+        let sparse = build_sparse_table::<T>(&depth, &bd);
         let block_lookup = build_block_lookup(&depth, &bd, m);
 
         Self {
@@ -274,16 +330,19 @@ impl<T: DenseId> LcaTable<T> {
         }
         let fa = self.first[ai];
         let fb = self.first[bi];
-        if fa == u32::MAX || fb == u32::MAX {
+        // `min()` is the "no tour entry" marker, never a real node's first position —
+        // position 0 belongs to the virtual root. See `euler_tour`.
+        let unvisited = <T::Index as IndexLike>::min();
+        if fa == unvisited || fb == unvisited {
             return None;
         }
         if self.tree_id[ai] != self.tree_id[bi] {
             return None;
         }
         let (i, j) = if fa <= fb {
-            (fa as usize, fb as usize)
+            (fa.as_usize(), fb.as_usize())
         } else {
-            (fb as usize, fa as usize)
+            (fb.as_usize(), fa.as_usize())
         };
         let idx = self.rmq(i, j);
         let result = self.euler[idx];
@@ -324,8 +383,8 @@ impl<T: DenseId> LcaTable<T> {
     fn sparse_query(&self, bl: usize, br: usize) -> usize {
         let len = br - bl + 1;
         let k = (usize::BITS - len.leading_zeros()) as usize - 1;
-        let left = self.sparse[k][bl] as usize;
-        let right = self.sparse[k][br - (1 << k) + 1] as usize;
+        let left = self.sparse[k][bl].as_usize();
+        let right = self.sparse[k][br - (1 << k) + 1].as_usize();
         if self.depth[left] <= self.depth[right] {
             left
         } else {
@@ -355,12 +414,13 @@ pub struct LcaTableCompact<T: DenseId> {
     delta: Vec<i8>,
     /// Absolute depth at the start of each block.
     block_depth: Vec<u16>,
-    first: Vec<u32>,
-    tree_id: Vec<u32>,
+    /// First tour position of each node, or [`IndexLike::min`] if it has none.
+    first: Vec<T::Index>,
+    tree_id: Vec<T::Index>,
     n: usize,
     block_size: usize,
     /// Sparse table entries: (tour_position, absolute_depth).
-    sparse: Vec<Vec<(u32, u16)>>,
+    sparse: Vec<Vec<(T::Index, u16)>>,
     block_lookup: Vec<Vec<u16>>,
     block_type: Vec<u16>,
 }
@@ -399,7 +459,7 @@ impl<T: DenseId> LcaTableCompact<T> {
             delta.push(d as i8);
         }
 
-        let bd = block_decompose(&depth, m);
+        let bd = block_decompose::<T>(&depth, m);
 
         // Block-start absolute depths
         let mut block_depth = Vec::with_capacity(bd.num_blocks);
@@ -415,12 +475,12 @@ impl<T: DenseId> LcaTableCompact<T> {
             } else {
                 1
             };
-            let mut sparse: Vec<Vec<(u32, u16)>> = Vec::with_capacity(log_blocks);
+            let mut sparse: Vec<Vec<(T::Index, u16)>> = Vec::with_capacity(log_blocks);
             // Level 0
-            let level0: Vec<(u32, u16)> = bd
+            let level0: Vec<(T::Index, u16)> = bd
                 .block_min
                 .iter()
-                .map(|&pos| (pos, depth[pos as usize]))
+                .map(|&pos| (pos, depth[pos.as_usize()]))
                 .collect();
             sparse.push(level0);
 
@@ -463,16 +523,19 @@ impl<T: DenseId> LcaTableCompact<T> {
         }
         let fa = self.first[ai];
         let fb = self.first[bi];
-        if fa == u32::MAX || fb == u32::MAX {
+        // `min()` is the "no tour entry" marker, never a real node's first position —
+        // position 0 belongs to the virtual root. See `euler_tour`.
+        let unvisited = <T::Index as IndexLike>::min();
+        if fa == unvisited || fb == unvisited {
             return None;
         }
         if self.tree_id[ai] != self.tree_id[bi] {
             return None;
         }
         let (i, j) = if fa <= fb {
-            (fa as usize, fb as usize)
+            (fa.as_usize(), fb.as_usize())
         } else {
-            (fb as usize, fa as usize)
+            (fb.as_usize(), fa.as_usize())
         };
         let idx = self.rmq(i, j);
         let result = self.euler[idx];
@@ -534,9 +597,9 @@ impl<T: DenseId> LcaTableCompact<T> {
         let left = self.sparse[k][bl];
         let right = self.sparse[k][br - (1 << k) + 1];
         if left.1 <= right.1 {
-            (left.0 as usize, left.1)
+            (left.0.as_usize(), left.1)
         } else {
-            (right.0 as usize, right.1)
+            (right.0.as_usize(), right.1)
         }
     }
 

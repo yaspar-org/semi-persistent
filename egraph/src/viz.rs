@@ -7,6 +7,7 @@ use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 use std::fmt::Write;
 
 impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
@@ -16,21 +17,21 @@ where
 {
     /// Emit GraphViz DOT representation.
     pub fn to_dot(&self) -> String {
-        let n = self.node_count();
         let mut out = String::from("digraph egraph {\n  compound=true\n  clusterrank=local\n\n");
 
-        let mut classes: std::collections::BTreeMap<usize, Vec<usize>> =
+        // Typed ids on both sides of the grouping. Holding raw `usize` copies here meant
+        // re-minting each member with the masking `DenseId::from_usize` twice below — once
+        // per pass — to recover an id the scan had already produced.
+        let mut classes: std::collections::BTreeMap<Cfg::G, Vec<Cfg::G>> =
             std::collections::BTreeMap::new();
-        for i in 0..n {
-            let gid = Cfg::G::from_usize(i);
-            let repr = self.class_repr(gid).to_usize();
-            classes.entry(repr).or_default().push(i);
+        for gid in self.node_ids() {
+            classes.entry(self.class_repr(gid)).or_default().push(gid);
         }
 
-        for (&repr, members) in &classes {
+        for (repr, members) in &classes {
+            let repr = repr.to_usize();
             let _ = write!(out, "  subgraph cluster_{repr} {{\n    style=dotted\n");
-            for (idx, &gid_raw) in members.iter().enumerate() {
-                let gid = Cfg::G::from_usize(gid_raw);
+            for (idx, &gid) in members.iter().enumerate() {
                 let op = self.node_op_name(gid);
                 let label = match self.node_lit(gid) {
                     Some(lit) => format!("{op}({v})", v = self.lits().get(lit)),
@@ -41,16 +42,17 @@ where
             let _ = writeln!(out, "  }}");
         }
 
-        for (&class_repr, members) in &classes {
-            for (idx, &gid_raw) in members.iter().enumerate() {
-                let gid = Cfg::G::from_usize(gid_raw);
+        for (&class_id, members) in &classes {
+            let class_repr = class_id.to_usize();
+            for (idx, &gid) in members.iter().enumerate() {
                 let mut arg_i = 0usize;
                 let arity = self.node_arity(gid);
                 self.for_each_child(gid, |child, mult| {
                     let anchor = Self::anchor(arg_i, arity);
-                    let child_repr = self.class_repr(child).to_usize();
-                    let ml = if mult > 1 { format!(", label=\"×{mult}\"") } else { String::new() };
-                    if child_repr == class_repr {
+                    let child_id = self.class_repr(child);
+                    let child_repr = child_id.to_usize();
+                    let ml = if mult > Cfg::M::ONE { format!(", label=\"×{mult}\"") } else { String::new() };
+                    if child_id == class_id {
                         // self-edge: point to self with lhead
                         let _ = writeln!(out, "  {class_repr}.{idx}{anchor} -> {class_repr}.{idx}:n [lhead=cluster_{class_repr}{ml}]");
                     } else {

@@ -7,7 +7,7 @@
 //! and `doc/design/ac-congruence-completeness.md` §6–§7.
 //!
 //! All functions operate on the *canonical* AC child form produced by
-//! [`crate::canon::MSetCanon`]: a slice `&[(G, Multiplicity)]` that is
+//! [`crate::canon::MSetCanon`]: a slice `&[(G, M)]` that is
 //!
 //! - **sorted ascending by `G`**,
 //! - **duplicate-free in `G`** (multiplicities of equal `G` already summed), and
@@ -16,28 +16,47 @@
 //! Inputs are assumed canonical; outputs are canonical by construction. The
 //! invariant is checked under `debug_assert!`. Every function is a single
 //! sorted-merge walk, `O(|a| + |b|)`.
+//!
+//! ## Width
+//!
+//! The multiplicity type `M` is the caller's — in practice
+//! [`EGraphConfig::M`](crate::config::EGraphConfig::M) — not a fixed `u32`, so
+//! these operations neither cap nor narrow the configured width. Of the per-class
+//! combinators only [`multiset_union_into`] increases a multiplicity; the rest
+//! take a max, min, or clamped difference and so cannot overflow. That one, and
+//! the cross-class sum in [`multiset_size`], are checked.
 
-use crate::multiplicity::Multiplicity;
+use crate::multiplicity::MultiplicityLike;
+
+/// Raised where a multiset operation would exceed the caller's multiplicity
+/// width. The positivity invariant above makes wrapping actively dangerous: a sum
+/// that wraps to zero produces an entry the canonical form says cannot exist, and
+/// the `retain`-based clamps would then silently delete the summand — turning an
+/// overflow into a wrong equality rather than a failure.
+const SUM_OVERFLOW: &str = "AC multiset multiplicity overflowed its configured width";
 
 /// An AC child: a class id paired with its multiplicity in the multiset.
-type Pair<G> = (G, Multiplicity);
+type Pair<G, M> = (G, M);
 
 /// Debug-only check that a slice is in canonical AC child form.
 #[inline]
-fn debug_assert_canonical<G: Copy + Ord>(m: &[Pair<G>]) {
+fn debug_assert_canonical<G: Copy + Ord, M: MultiplicityLike>(m: &[Pair<G, M>]) {
     debug_assert!(
         m.windows(2).all(|w| w[0].0 < w[1].0),
         "AC multiset not strictly sorted / duplicate-free by class id"
     );
     debug_assert!(
-        m.iter().all(|(_, mult)| mult.0 >= 1),
+        m.iter().all(|(_, mult)| *mult >= M::ONE),
         "AC multiset has a zero (or absent) multiplicity entry"
     );
 }
 
 /// Do `a` and `b` share no class id? Disjoint multisets have a trivial critical
 /// pair (their rules commute), so the completion search skips them (spec §6).
-pub fn multiset_disjoint<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> bool {
+pub fn multiset_disjoint<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> bool {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
     let (mut i, mut j) = (0, 0);
@@ -54,7 +73,10 @@ pub fn multiset_disjoint<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> bool {
 /// Is `a` a sub-multiset of `b` (`a ⊆ b`)? True iff every class in `a` occurs in
 /// `b` with at least the same multiplicity. This is the (A) inter-reduction test:
 /// the sub-sum `+a` is virtually contained in `+b`.
-pub fn multiset_subset<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> bool {
+pub fn multiset_subset<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> bool {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
     let mut j = 0;
@@ -64,7 +86,7 @@ pub fn multiset_subset<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> bool {
         while j < b.len() && b[j].0 < ag {
             j += 1;
         }
-        if j >= b.len() || b[j].0 != ag || b[j].1.0 < am.0 {
+        if j >= b.len() || b[j].0 != ag || b[j].1 < am {
             return false;
         }
         j += 1;
@@ -78,7 +100,11 @@ pub fn multiset_subset<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> bool {
 ///
 /// Destination-passing form for the completion hot loop (design §9a). Computes the
 /// residual `M − A` when substituting a known sub-sum.
-pub fn multiset_subtract_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b: &[Pair<G>]) {
+pub fn multiset_subtract_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
     out.clear();
@@ -90,9 +116,9 @@ pub fn multiset_subtract_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G
         }
         if j < b.len() && b[j].0 == a[i].0 {
             let rem = a[i].0; // class id
-            let mult = a[i].1.0.saturating_sub(b[j].1.0);
-            if mult > 0 {
-                out.push((rem, Multiplicity(mult)));
+            let mult = a[i].1.saturating_sub(b[j].1);
+            if mult > M::ZERO {
+                out.push((rem, mult));
             }
             i += 1;
             j += 1;
@@ -104,7 +130,10 @@ pub fn multiset_subtract_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G
 }
 
 /// Allocating wrapper over [`multiset_subtract_into`].
-pub fn multiset_subtract<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+pub fn multiset_subtract<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> Vec<Pair<G, M>> {
     let mut out = Vec::with_capacity(a.len());
     multiset_subtract_into(&mut out, a, b);
     out
@@ -112,7 +141,11 @@ pub fn multiset_subtract<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pai
 
 /// Multiset union (sum) `a ⊎ b` into `out` (cleared first): multiplicities of shared
 /// classes add. `out` must not alias `a` or `b`.
-pub fn multiset_union_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b: &[Pair<G>]) {
+pub fn multiset_union_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
     out.clear();
@@ -128,7 +161,7 @@ pub fn multiset_union_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>],
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
-                out.push((a[i].0, Multiplicity(a[i].1.0 + b[j].1.0)));
+                out.push((a[i].0, a[i].1.checked_add(b[j].1).expect(SUM_OVERFLOW)));
                 i += 1;
                 j += 1;
             }
@@ -139,7 +172,10 @@ pub fn multiset_union_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>],
 }
 
 /// Allocating wrapper over [`multiset_union_into`].
-pub fn multiset_union<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+pub fn multiset_union<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> Vec<Pair<G, M>> {
     let mut out = Vec::with_capacity(a.len() + b.len());
     multiset_union_into(&mut out, a, b);
     out
@@ -148,7 +184,11 @@ pub fn multiset_union<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G
 /// Multiset lcm (least common multiple) `(a ⊎ b) − (a ∩ b)` into `out` (cleared first):
 /// per-class **maximum** multiplicity, the superposition multiset `AB` (spec §6 fix (B)),
 /// the smallest multiset containing both `a` and `b`. `out` must not alias `a` or `b`.
-pub fn multiset_lcm_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b: &[Pair<G>]) {
+pub fn multiset_lcm_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
     out.clear();
@@ -164,7 +204,7 @@ pub fn multiset_lcm_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
-                out.push((a[i].0, Multiplicity(a[i].1.0.max(b[j].1.0))));
+                out.push((a[i].0, a[i].1.max(b[j].1)));
                 i += 1;
                 j += 1;
             }
@@ -175,7 +215,10 @@ pub fn multiset_lcm_into<G: Copy + Ord>(out: &mut Vec<Pair<G>>, a: &[Pair<G>], b
 }
 
 /// Allocating wrapper over [`multiset_lcm_into`].
-pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+pub fn multiset_lcm<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> Vec<Pair<G, M>> {
     let mut out = Vec::with_capacity(a.len() + b.len());
     multiset_lcm_into(&mut out, a, b);
     out
@@ -184,10 +227,10 @@ pub fn multiset_lcm<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>>
 /// Multiset intersection `a ∩ b` into `out` (cleared first): per-class **minimum**
 /// multiplicity, the common part canceled by a cancelative op (Kapur §5.1's `A ∩ B`).
 /// `out` must not alias `a` or `b`.
-pub fn multiset_intersect_into<G: Copy + Ord>(
-    out: &mut Vec<Pair<G>>,
-    a: &[Pair<G>],
-    b: &[Pair<G>],
+pub fn multiset_intersect_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
 ) {
     debug_assert_canonical(a);
     debug_assert_canonical(b);
@@ -198,7 +241,7 @@ pub fn multiset_intersect_into<G: Copy + Ord>(
             std::cmp::Ordering::Less => i += 1,
             std::cmp::Ordering::Greater => j += 1,
             std::cmp::Ordering::Equal => {
-                out.push((a[i].0, Multiplicity(a[i].1.0.min(b[j].1.0))));
+                out.push((a[i].0, a[i].1.min(b[j].1)));
                 i += 1;
                 j += 1;
             }
@@ -207,15 +250,20 @@ pub fn multiset_intersect_into<G: Copy + Ord>(
 }
 
 /// Allocating wrapper over [`multiset_intersect_into`].
-pub fn multiset_intersect<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> Vec<Pair<G>> {
+pub fn multiset_intersect<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> Vec<Pair<G, M>> {
     let mut out = Vec::new();
     multiset_intersect_into(&mut out, a, b);
     out
 }
 
 /// Total size of a monomial: the sum of its multiplicities.
-pub fn multiset_size<G: Copy>(m: &[Pair<G>]) -> u64 {
-    m.iter().map(|(_, mult)| mult.0 as u64).sum()
+pub fn multiset_size<G: Copy, M: MultiplicityLike>(m: &[Pair<G, M>]) -> u64 {
+    m.iter()
+        .try_fold(0u64, |acc, (_, mult)| acc.checked_add(mult.to_u64()))
+        .expect(SUM_OVERFLOW)
 }
 
 /// Degree-lexicographic order on monomials — a *total admissible* monomial order
@@ -237,7 +285,10 @@ pub fn multiset_size<G: Copy>(m: &[Pair<G>]) -> u64 {
 /// "more copies wins" when both sides carry the id but "absence wins" when one lacks it,
 /// and those two branches disagree — `{b:2} ≫ {a,c}` yet `{a,b:2} ≺ {a:2,c}`, breaking
 /// compatibility and with it the termination of [`normalize_ms_into`].
-pub fn monomial_cmp<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> std::cmp::Ordering {
+pub fn monomial_cmp<G: Copy + Ord, M: MultiplicityLike>(
+    a: &[Pair<G, M>],
+    b: &[Pair<G, M>],
+) -> std::cmp::Ordering {
     multiset_size(a)
         .cmp(&multiset_size(b))
         .then_with(|| a.iter().rev().cmp(b.iter().rev()))
@@ -247,9 +298,9 @@ pub fn monomial_cmp<G: Copy + Ord>(a: &[Pair<G>], b: &[Pair<G>]) -> std::cmp::Or
 /// [`monomial_cmp`]. `rhs` is the **minimal monomial** of `lhs`'s e-class (its
 /// normal-form representative) — *not* a bare fresh class id, which would reintroduce
 /// an atom every critical pair and diverge (design doc §6b).
-pub struct NfRule<G> {
-    pub lhs: Vec<Pair<G>>,
-    pub rhs: Vec<Pair<G>>,
+pub struct NfRule<G, M> {
+    pub lhs: Vec<Pair<G, M>>,
+    pub rhs: Vec<Pair<G, M>>,
 }
 
 /// A borrowed view of a ground AC rewrite rule, the form the completion hot loop lends to
@@ -258,13 +309,13 @@ pub struct NfRule<G> {
 /// [`normalize_ms`]/[`normalize_set`]/[`normalize_nilpotent`] wrappers keep accepting owned
 /// [`NfRule`]s for tests and diagnostics and build the views internally.
 #[derive(Clone, Copy)]
-pub struct NfRuleRef<'a, G> {
-    pub lhs: &'a [Pair<G>],
-    pub rhs: &'a [Pair<G>],
+pub struct NfRuleRef<'a, G, M> {
+    pub lhs: &'a [Pair<G, M>],
+    pub rhs: &'a [Pair<G, M>],
 }
 
-impl<'a, G> From<&'a NfRule<G>> for NfRuleRef<'a, G> {
-    fn from(r: &'a NfRule<G>) -> Self {
+impl<'a, G, M> From<&'a NfRule<G, M>> for NfRuleRef<'a, G, M> {
+    fn from(r: &'a NfRule<G, M>) -> Self {
         Self {
             lhs: &r.lhs,
             rhs: &r.rhs,
@@ -283,21 +334,21 @@ impl<'a, G> From<&'a NfRule<G>> for NfRuleRef<'a, G> {
 /// over and indexing would cost more than the scan it replaces — use
 /// [`linear`](Self::linear).
 #[derive(Clone, Copy)]
-pub struct NfRules<'r, 'i, G> {
-    rules: &'i [NfRuleRef<'r, G>],
+pub struct NfRules<'r, 'i, G, M> {
+    rules: &'i [NfRuleRef<'r, G, M>],
     index: Option<&'i NfIndex<G>>,
 }
 
-impl<'r, 'i, G: Copy + Ord> NfRules<'r, 'i, G> {
+impl<'r, 'i, G: Copy + Ord, M: MultiplicityLike> NfRules<'r, 'i, G, M> {
     /// Scan every rule on every step. Correct for any rule set; the right choice when the
     /// set is not reused across enough normalizations to pay for an index.
-    pub fn linear(rules: &'i [NfRuleRef<'r, G>]) -> Self {
+    pub fn linear(rules: &'i [NfRuleRef<'r, G, M>]) -> Self {
         Self { rules, index: None }
     }
 
     /// Consult `index` to narrow the rules tested. `index` must have been built from
     /// exactly this `rules` slice ([`NfIndex::rebuild`] stores positions into it).
-    pub fn indexed(rules: &'i [NfRuleRef<'r, G>], index: &'i NfIndex<G>) -> Self {
+    pub fn indexed(rules: &'i [NfRuleRef<'r, G, M>], index: &'i NfIndex<G>) -> Self {
         debug_assert_eq!(
             index.n_rules,
             rules.len(),
@@ -318,7 +369,11 @@ impl<'r, 'i, G: Copy + Ord> NfRules<'r, 'i, G> {
     /// rule (it can only over-admit), and the candidates are visited in ascending position,
     /// so the first hit is the one the linear scan's `find` would have stopped at.
     #[inline]
-    fn find_applicable(&self, out: &[Pair<G>], cands: &mut CandVec) -> Option<NfRuleRef<'r, G>> {
+    fn find_applicable(
+        &self,
+        out: &[Pair<G, M>],
+        cands: &mut CandVec,
+    ) -> Option<NfRuleRef<'r, G, M>> {
         match self.index {
             None => self
                 .rules
@@ -339,7 +394,10 @@ impl<'r, 'i, G: Copy + Ord> NfRules<'r, 'i, G> {
 /// Applicability test for the unindexed path, with the orientation check the indexed path
 /// performs once at [`NfIndex::rebuild`] time instead.
 #[inline]
-fn rule_applies_linear<G: Copy + Ord>(r: &NfRuleRef<'_, G>, out: &[Pair<G>]) -> bool {
+fn rule_applies_linear<G: Copy + Ord, M: MultiplicityLike>(
+    r: &NfRuleRef<'_, G, M>,
+    out: &[Pair<G, M>],
+) -> bool {
     // Orientation is only meaningful for a rule the normalizers can apply: `monomial_cmp`
     // reports Equal for an empty pair, so the emptiness guard has to come first.
     if r.lhs.is_empty() {
@@ -378,6 +436,18 @@ type CandVec = smallvec::SmallVec<[u32; 32]>;
 /// CSR layout — `keys` ascending and distinct, `order[starts[i]..starts[i + 1]]` the rule
 /// positions for `keys[i]` in ascending order — so a probe is a binary search plus a slice
 /// copy, and the whole index is three allocations regardless of table size.
+///
+/// # Position width
+///
+/// `starts` and `order` are `u32` and stay `u32`: they index the *rule table*, which is
+/// a population unrelated to [`EGraphConfig::Index`](crate::config::EGraphConfig::Index)
+/// and not governed by it. Unlike an id, a rule position is an index into a slice that
+/// has been materialized — 2^32 rules is at least 137 GB of monomial storage before the
+/// index is built at all — so the width is a space decision (two words per bucket
+/// instead of four, over a table read on every normalize step) and not a capacity cap
+/// anyone can reach. [`rebuild`](Self::rebuild) still checks it once rather than
+/// trusting that, because the failure mode of the unchecked cast it replaces is
+/// aliasing rule 2^32 onto rule 0 and silently rewriting with the wrong rule.
 pub struct NfIndex<G> {
     /// Distinct LHS-minimum classes, ascending.
     keys: Vec<G>,
@@ -389,9 +459,13 @@ pub struct NfIndex<G> {
     n_rules: usize,
 }
 
+/// The index is generic over the class id only: it stores LHS-minimum classes and rule
+/// positions, never a multiplicity, so one index type serves every configured
+/// [`EGraphConfig::M`](crate::config::EGraphConfig::M). The multiplicity width appears
+/// only on the methods that read rules.
 impl<G: Copy + Ord> NfIndex<G> {
     /// Build an index over `rules`.
-    pub fn build(rules: &[NfRuleRef<'_, G>]) -> Self {
+    pub fn build<M: MultiplicityLike>(rules: &[NfRuleRef<'_, G, M>]) -> Self {
         let mut ix = Self {
             keys: Vec::new(),
             starts: Vec::new(),
@@ -405,11 +479,21 @@ impl<G: Copy + Ord> NfIndex<G> {
     /// Re-index `rules` in place, reusing the existing allocations. Rules with an empty LHS
     /// are omitted: the normalizers never apply them, so leaving them out of the index is
     /// the same filter the linear path's `!lhs.is_empty()` performs per visit.
-    pub fn rebuild(&mut self, rules: &[NfRuleRef<'_, G>]) {
+    pub fn rebuild<M: MultiplicityLike>(&mut self, rules: &[NfRuleRef<'_, G, M>]) {
         self.keys.clear();
         self.starts.clear();
         self.order.clear();
         self.n_rules = rules.len();
+
+        // One check covers every narrowing below. Positions are `< rules.len()` and
+        // `order.len() <= rules.len()` (each applicable rule is pushed exactly once), so
+        // bounding the table length bounds both the values stored in `order` and the
+        // offsets stored in `starts`. Checking here rather than per-cast also means the
+        // index is never half-built from truncated positions.
+        u32::try_from(rules.len()).expect(
+            "NfIndex holds rule positions as u32; a table of 2^32 or more rules needs a \
+             wider position word",
+        );
 
         // (LHS-minimum, position) for every applicable rule, ordered by key then position —
         // the latter is what makes each group ascending, hence the scan order-preserving.
@@ -428,6 +512,7 @@ impl<G: Copy + Ord> NfIndex<G> {
             .map(|(i, r)| {
                 // A canonical monomial is sorted by class, so element 0 is the minimum.
                 debug_assert_canonical(r.lhs);
+                // Exact: `i < rules.len()`, and `rules.len()` fits `u32` (checked above).
                 (r.lhs[0].0, i as u32)
             })
             .collect();
@@ -437,6 +522,8 @@ impl<G: Copy + Ord> NfIndex<G> {
         for (k, i) in pairs {
             if self.keys.last() != Some(&k) {
                 self.keys.push(k);
+                // Exact: one push per applicable rule, so `order.len() <= rules.len()`,
+                // which fits `u32` (checked above). Same for the offset written below.
                 self.starts.push(self.order.len() as u32);
             }
             self.order.push(i);
@@ -447,7 +534,7 @@ impl<G: Copy + Ord> NfIndex<G> {
     /// Positions of every rule that could apply to `out`, ascending. Over-admits (a
     /// candidate still needs the full containment test) but never under-admits.
     #[inline]
-    fn candidates(&self, out: &[Pair<G>], buf: &mut CandVec) {
+    fn candidates<M: MultiplicityLike>(&self, out: &[Pair<G, M>], buf: &mut CandVec) {
         buf.clear();
         for p in out {
             if let Ok(k) = self.keys.binary_search(&p.0) {
@@ -480,11 +567,11 @@ const GUARD_MAX_REWRITES: usize = 1_000_000;
 /// (design §9a). `rules` must already be filtered to the relevant AC op, and each must
 /// satisfy `monomial_cmp(lhs, rhs) == Greater` (the caller builds them that way). This is
 /// the "normalize the reduct before materializing" step whose omission diverges (§6b).
-pub fn normalize_ms_into<G: Copy + Ord>(
-    out: &mut Vec<Pair<G>>,
-    scratch: &mut Vec<Pair<G>>,
-    ms: &[Pair<G>],
-    rules: NfRules<'_, '_, G>,
+pub fn normalize_ms_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
 ) {
     out.clear();
     out.extend_from_slice(ms);
@@ -518,8 +605,11 @@ pub fn normalize_ms_into<G: Copy + Ord>(
 }
 
 /// Allocating wrapper over [`normalize_ms_into`].
-pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
-    let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
+pub fn normalize_ms<G: Copy + Ord, M: MultiplicityLike>(
+    ms: &[Pair<G, M>],
+    rules: &[NfRule<G, M>],
+) -> Vec<Pair<G, M>> {
+    let refs: Vec<NfRuleRef<'_, G, M>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
     normalize_ms_into(&mut out, &mut scratch, ms, NfRules::linear(&refs));
@@ -531,9 +621,9 @@ pub fn normalize_ms<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<P
 /// rewrites the counts, never the class set. Applied after each monomial operation for a Set
 /// (ACI) op, so its monomials stay {0,1}-valued (design "three independent axes": idempotent
 /// bounds counts to {0,1}).
-pub fn clamp_idempotent<G: Copy>(ms: &mut [Pair<G>]) {
+pub fn clamp_idempotent<G: Copy, M: MultiplicityLike>(ms: &mut [Pair<G, M>]) {
     for p in ms.iter_mut() {
-        p.1 = Multiplicity(1);
+        p.1 = M::ONE;
     }
 }
 
@@ -543,11 +633,11 @@ pub fn clamp_idempotent<G: Copy>(ms: &mut [Pair<G>]) {
 /// both the residual and `B`); the clamp collapses it back, which is exactly the ACI
 /// idempotence join. Termination still holds: each step strictly lowers the *set* in degree-lex
 /// (the clamp only ever lowers counts), so the guard bound from the multiset case still applies.
-pub fn normalize_set_into<G: Copy + Ord>(
-    out: &mut Vec<Pair<G>>,
-    scratch: &mut Vec<Pair<G>>,
-    ms: &[Pair<G>],
-    rules: NfRules<'_, '_, G>,
+pub fn normalize_set_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
 ) {
     out.clear();
     out.extend_from_slice(ms);
@@ -577,8 +667,11 @@ pub fn normalize_set_into<G: Copy + Ord>(
 }
 
 /// Allocating wrapper over [`normalize_set_into`].
-pub fn normalize_set<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<Pair<G>> {
-    let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
+pub fn normalize_set<G: Copy + Ord, M: MultiplicityLike>(
+    ms: &[Pair<G, M>],
+    rules: &[NfRule<G, M>],
+) -> Vec<Pair<G, M>> {
+    let refs: Vec<NfRuleRef<'_, G, M>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
     normalize_set_into(&mut out, &mut scratch, ms, NfRules::linear(&refs));
@@ -592,12 +685,11 @@ pub fn normalize_set<G: Copy + Ord>(ms: &[Pair<G>], rules: &[NfRule<G>]) -> Vec<
 /// operation for a nilpotent op, so its monomials stay {0,…,order−1}-valued and an emptied
 /// monomial becomes `{}` (which the caller maps to the unit). `retain` preserves order, so the
 /// result stays canonical.
-pub fn clamp_nilpotent<G: Copy>(ms: &mut Vec<Pair<G>>, order: u8) {
-    let n = order as u32;
+pub fn clamp_nilpotent<G: Copy, M: MultiplicityLike>(ms: &mut Vec<Pair<G, M>>, order: u8) {
     for p in ms.iter_mut() {
-        p.1 = Multiplicity(p.1.0 % n);
+        p.1 = p.1.rem_order(order);
     }
-    ms.retain(|p| p.1.0 != 0);
+    ms.retain(|p| p.1 != M::ZERO);
 }
 
 /// Nilpotent normalization: like [`normalize_ms`] but every intermediate and the final result is
@@ -607,11 +699,11 @@ pub fn clamp_nilpotent<G: Copy>(ms: &mut Vec<Pair<G>>, order: u8) {
 /// exactly the symmetric-difference join at order 2. Termination: each step's underlying multiset
 /// rewrite strictly lowers the monomial in degree-lex, and the clamp only ever lowers counts, so
 /// the guard bound from the multiset case still applies.
-pub fn normalize_nilpotent_into<G: Copy + Ord>(
-    out: &mut Vec<Pair<G>>,
-    scratch: &mut Vec<Pair<G>>,
-    ms: &[Pair<G>],
-    rules: NfRules<'_, '_, G>,
+pub fn normalize_nilpotent_into<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
     order: u8,
 ) {
     out.clear();
@@ -642,12 +734,12 @@ pub fn normalize_nilpotent_into<G: Copy + Ord>(
 }
 
 /// Allocating wrapper over [`normalize_nilpotent_into`].
-pub fn normalize_nilpotent<G: Copy + Ord>(
-    ms: &[Pair<G>],
-    rules: &[NfRule<G>],
+pub fn normalize_nilpotent<G: Copy + Ord, M: MultiplicityLike>(
+    ms: &[Pair<G, M>],
+    rules: &[NfRule<G, M>],
     order: u8,
-) -> Vec<Pair<G>> {
-    let refs: Vec<NfRuleRef<'_, G>> = rules.iter().map(NfRuleRef::from).collect();
+) -> Vec<Pair<G, M>> {
+    let refs: Vec<NfRuleRef<'_, G, M>> = rules.iter().map(NfRuleRef::from).collect();
     let mut out = Vec::new();
     let mut scratch = Vec::new();
     normalize_nilpotent_into(&mut out, &mut scratch, ms, NfRules::linear(&refs), order);
@@ -658,14 +750,15 @@ pub fn normalize_nilpotent<G: Copy + Ord>(
 mod tests {
     use super::*;
     use crate::id::ENodeId;
+    use crate::multiplicity::Multiplicity;
 
     fn id(n: u32) -> ENodeId {
         ENodeId::new(n)
     }
 
     /// Build a canonical multiset from (id, mult) pairs given in any order.
-    fn ms(pairs: &[(u32, u32)]) -> Vec<Pair<ENodeId>> {
-        let mut v: Vec<Pair<ENodeId>> = pairs
+    fn ms(pairs: &[(u32, u32)]) -> Vec<Pair<ENodeId, Multiplicity>> {
+        let mut v: Vec<Pair<ENodeId, Multiplicity>> = pairs
             .iter()
             .map(|&(g, m)| (id(g), Multiplicity(m)))
             .collect();
@@ -684,8 +777,11 @@ mod tests {
             &ms(&[(2, 1), (5, 1)])
         ));
         // empty is disjoint from anything
-        assert!(multiset_disjoint::<ENodeId>(&[], &ms(&[(1, 1)])));
-        assert!(multiset_disjoint::<ENodeId>(&[], &[]));
+        assert!(multiset_disjoint::<ENodeId, Multiplicity>(
+            &[],
+            &ms(&[(1, 1)])
+        ));
+        assert!(multiset_disjoint::<ENodeId, Multiplicity>(&[], &[]));
     }
 
     #[test]
@@ -712,7 +808,10 @@ mod tests {
             &ms(&[(2, 1), (4, 1)])
         ));
         // empty ⊆ anything
-        assert!(multiset_subset::<ENodeId>(&[], &ms(&[(1, 1)])));
+        assert!(multiset_subset::<ENodeId, Multiplicity>(
+            &[],
+            &ms(&[(1, 1)])
+        ));
     }
 
     #[test]
@@ -751,7 +850,7 @@ mod tests {
             ms(&[(2, 1)])
         );
         // over-subtract clamps at zero, does not go negative
-        let empty: Vec<Pair<ENodeId>> = Vec::new();
+        let empty: Vec<Pair<ENodeId, Multiplicity>> = Vec::new();
         assert_eq!(multiset_subtract(&ms(&[(1, 1)]), &ms(&[(1, 5)])), empty);
     }
 
@@ -838,7 +937,8 @@ mod tests {
             },
         ];
         let input = ms(&[(1, 1), (2, 1), (4, 1)]);
-        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            rules.iter().map(NfRuleRef::from).collect();
         let mut out = ms(&[(99, 3)]); // pre-dirtied
         let mut scratch = ms(&[(88, 2)]); // pre-dirtied
         normalize_ms_into(&mut out, &mut scratch, &input, NfRules::linear(&refs));
@@ -866,7 +966,8 @@ mod tests {
                 rhs: ms(&[(7, 1)]),
             },
         ];
-        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            rules.iter().map(NfRuleRef::from).collect();
         let index = NfIndex::build(&refs);
         // Reducible by rule 0 and rule 1 both; the earlier rule must win either way.
         let input = ms(&[(1, 1), (2, 1), (3, 1), (4, 1)]);
@@ -926,13 +1027,14 @@ mod tests {
                 "test rule table is mis-oriented"
             );
         }
-        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            rules.iter().map(NfRuleRef::from).collect();
         let index = NfIndex::build(&refs);
 
         // Every multiplicity vector over classes 1..=6 with counts 0..=2: 3^6 = 729 hosts.
         let mut checked = 0;
         for code in 0..3usize.pow(6) {
-            let mut host: Vec<Pair<ENodeId>> = Vec::new();
+            let mut host: Vec<Pair<ENodeId, Multiplicity>> = Vec::new();
             let mut c = code;
             for cls in 1..=6u32 {
                 let mult = (c % 3) as u32;
@@ -1004,8 +1106,10 @@ mod tests {
                 rhs: ms(&[(2, 1)]),
             },
         ];
-        let r1: Vec<NfRuleRef<'_, ENodeId>> = first.iter().map(NfRuleRef::from).collect();
-        let r2: Vec<NfRuleRef<'_, ENodeId>> = second.iter().map(NfRuleRef::from).collect();
+        let r1: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            first.iter().map(NfRuleRef::from).collect();
+        let r2: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            second.iter().map(NfRuleRef::from).collect();
 
         let mut reused = NfIndex::build(&r1);
         reused.rebuild(&r2);
@@ -1031,7 +1135,8 @@ mod tests {
                 rhs: ms(&[(3, 1)]),
             },
         ];
-        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            rules.iter().map(NfRuleRef::from).collect();
         let index = NfIndex::build(&refs);
         // Rule 1 is at position 1 in `order`, not renumbered to 0 by the omission.
         assert_eq!(index.order, vec![1]);
@@ -1082,7 +1187,8 @@ mod tests {
         assert!(normalize_nilpotent(&ms(&[(1, 2)]), &[], 2).is_empty());
         // _into matches the wrapper and clears a dirty buffer.
         let input = ms(&[(1, 1), (2, 1), (3, 1)]);
-        let refs: Vec<NfRuleRef<'_, ENodeId>> = rules.iter().map(NfRuleRef::from).collect();
+        let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            rules.iter().map(NfRuleRef::from).collect();
         let mut out = ms(&[(99, 3)]);
         let mut scratch = ms(&[(88, 2)]);
         normalize_nilpotent_into(&mut out, &mut scratch, &input, NfRules::linear(&refs), 2);
@@ -1101,7 +1207,7 @@ mod tests {
     }
 
     /// Random canonical monomial over ids 1..=6 with counts 0..=3.
-    fn rand_ms(rng: &mut u64) -> Vec<Pair<ENodeId>> {
+    fn rand_ms(rng: &mut u64) -> Vec<Pair<ENodeId, Multiplicity>> {
         let mut v = Vec::new();
         for g in 1..=6u32 {
             let c = lcg(rng, 4);

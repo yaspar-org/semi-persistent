@@ -21,26 +21,30 @@ use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
-use crate::multiplicity::Multiplicity;
+use crate::multiplicity::MultiplicityLike;
 use crate::multiset::{NfRule, monomial_cmp, multiset_subset, normalize_ms};
 use crate::node_types::{FLAG_AC_COLLAPSED, FLAG_SUBSUMED};
 use crate::typed_routing::NodeRef;
 use std::collections::BTreeMap;
 
 /// One active AC rule, materialized for inspection.
-pub struct BasisRule<G> {
+pub struct BasisRule<G, O, M> {
     pub node: G,
-    pub op: usize,
-    pub lhs: Vec<(G, Multiplicity)>,
-    pub rhs: Vec<(G, Multiplicity)>,
+    /// The typed op id. This was a `usize` copy of one, which cost the checker a
+    /// masking `Cfg::O::from_usize` on every read to get back what it already had, and
+    /// widened the row past the configured op width for no gain — the field is only ever
+    /// compared for equality and printed.
+    pub op: O,
+    pub lhs: Vec<(G, M)>,
+    pub rhs: Vec<(G, M)>,
 }
 
 /// Result of checking the reduced-basis invariants on the current e-graph state.
-pub struct BasisReport<G> {
+pub struct BasisReport<G, O, M> {
     pub n_ac_nodes: usize,
     pub n_subsumed: usize,
     pub n_collapsed: usize,
-    pub rules: Vec<BasisRule<G>>,
+    pub rules: Vec<BasisRule<G, O, M>>,
     /// Pairs (i, j) of `rules` indices where `rules[i].lhs ⊊ rules[j].lhs` and same op:
     /// `rules[j]` is reducible by `rules[i]`, so it should have been collapsed (§6b).
     /// Non-empty ⟹ the antichain/irreducible invariant is violated (collapse bug).
@@ -60,7 +64,7 @@ where
     /// Canonical child monomial (class-repr, mult) of a completion node — MSet (coalesced
     /// counts) or Set (deduped, all counts 1). Delegates to the engine's own
     /// `node_monomial_into` so the checker cannot drift from what completion reads.
-    fn cc_invariant_monomial(&self, id: Cfg::G) -> Vec<(Cfg::G, Multiplicity)> {
+    fn cc_invariant_monomial(&self, id: Cfg::G) -> Vec<(Cfg::G, Cfg::M)> {
         let mut out = Vec::new();
         self.node_monomial_into(id, &mut out);
         out
@@ -69,7 +73,7 @@ where
     /// The class's canonical summand form (the rule RHS): the empty monomial if the class
     /// is the op's identity (Kapur's `f({}) = e`, see `class_rhs_into`), `{class}` if
     /// atomic, else the monomial of the stored `min_monomial`. Mirrors `class_rhs_into`.
-    fn cc_invariant_rhs(&self, id: Cfg::G) -> Vec<(Cfg::G, Multiplicity)> {
+    fn cc_invariant_rhs(&self, id: Cfg::G) -> Vec<(Cfg::G, Cfg::M)> {
         let cls = self.class_repr(id);
         if self
             .unit_node(self.node_op(id))
@@ -78,23 +82,22 @@ where
             return Vec::new();
         }
         if self.class_atomic(id) == Some(true) {
-            vec![(cls, Multiplicity(1))]
+            vec![(cls, Cfg::M::ONE)]
         } else if let Some(min_node) = self.class_min_monomial(id) {
             self.cc_invariant_monomial(min_node)
         } else {
-            vec![(cls, Multiplicity(1))]
+            vec![(cls, Cfg::M::ONE)]
         }
     }
 
     /// Compute the current active AC rule set and check the reduced-basis invariants.
     /// Pure read; safe to call any time. Investigation tool (rescans all nodes).
-    pub fn cc_basis_report(&self) -> BasisReport<Cfg::G> {
+    pub fn cc_basis_report(&self) -> BasisReport<Cfg::G, Cfg::O, Cfg::M> {
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
         let (mut n_ac_nodes, mut n_subsumed, mut n_collapsed) = (0usize, 0usize, 0usize);
-        let mut rules: Vec<BasisRule<Cfg::G>> = Vec::new();
+        let mut rules: Vec<BasisRule<Cfg::G, Cfg::O, Cfg::M>> = Vec::new();
 
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        for gid in self.node_ids() {
             // Both completion partitions: MSet (plain AC / nilpotent) and Set (ACI).
             if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_)) {
                 continue;
@@ -116,7 +119,7 @@ where
             if monomial_cmp(&lhs, &rhs) == std::cmp::Ordering::Greater {
                 rules.push(BasisRule {
                     node: gid,
-                    op: self.node_op(gid).to_usize(),
+                    op: self.node_op(gid),
                     lhs,
                     rhs,
                 });
@@ -161,18 +164,19 @@ where
     /// of use (the §1.4 best-effort gap, or, more seriously, the single-op-slot conflating two
     /// AC ops, §9b axis-1). Returns the count of rules whose used RHS is non-minimal, and the
     /// worst offenders. Op-aware: the true min is taken only over same-op nodes.
-    pub fn cc_min_used_nonminimal(&self) -> (usize, Vec<(Cfg::G, usize)>) {
+    pub fn cc_min_used_nonminimal(&self) -> (usize, Vec<(Cfg::G, Cfg::O)>) {
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
-        // Per (class repr, op): the true least same-op monomial among active AC nodes.
-        let mut truemin: BTreeMap<(Cfg::G, usize), Vec<(Cfg::G, Multiplicity)>> = BTreeMap::new();
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        // Per (class repr, op): the true least same-op monomial among active AC nodes. Both
+        // halves of the key are typed ids: dense ids are `Ord`, so widening the op to a
+        // `usize` bought the map nothing and cost the width.
+        let mut truemin: BTreeMap<(Cfg::G, Cfg::O), Vec<(Cfg::G, Cfg::M)>> = BTreeMap::new();
+        for gid in self.node_ids() {
             if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
                 || self.node_flags(gid) & inactive != 0
             {
                 continue;
             }
-            let key = (self.class_repr(gid), self.node_op(gid).to_usize());
+            let key = (self.class_repr(gid), self.node_op(gid));
             let m = self.cc_invariant_monomial(gid);
             truemin
                 .entry(key)
@@ -185,15 +189,14 @@ where
         }
         // For every active rule, compare the RHS it would *use* to the true min of its op.
         let mut nonminimal = 0usize;
-        let mut offenders: Vec<(Cfg::G, usize)> = Vec::new();
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        let mut offenders: Vec<(Cfg::G, Cfg::O)> = Vec::new();
+        for gid in self.node_ids() {
             if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
                 || self.node_flags(gid) & inactive != 0
             {
                 continue;
             }
-            let op = self.node_op(gid).to_usize();
+            let op = self.node_op(gid);
             let lhs = self.cc_invariant_monomial(gid);
             let rhs = self.cc_invariant_rhs(gid);
             if monomial_cmp(&lhs, &rhs) != std::cmp::Ordering::Greater {
@@ -232,7 +235,7 @@ where
         let mut n_rhs = 0usize;
         for k in 0..r.rules.len() {
             let op = r.rules[k].op;
-            let others: Vec<NfRule<Cfg::G>> = r
+            let others: Vec<NfRule<Cfg::G, Cfg::M>> = r
                 .rules
                 .iter()
                 .enumerate()
@@ -245,8 +248,8 @@ where
             // Normalize in the op's count domain (idempotent → set, nilpotent → mod-n,
             // plain AC → ℕ), matching cc_round — a Set rule checked in ℕ would miss
             // clamp-joins and report spurious reducibility.
-            let clamp = self.op_clamp(<Cfg::O as DenseId>::from_usize(op));
-            let nf = |m: &[(Cfg::G, Multiplicity)]| -> Vec<(Cfg::G, Multiplicity)> {
+            let clamp = self.op_clamp(op);
+            let nf = |m: &[(Cfg::G, Cfg::M)]| -> Vec<(Cfg::G, Cfg::M)> {
                 match clamp {
                     CompletionClamp::Idempotent => normalize_set(m, &others),
                     CompletionClamp::Nilpotent { order } => normalize_nilpotent(m, &others, order),
@@ -277,7 +280,7 @@ where
     /// matches nor resolves was never materialized — the completion missed the axiom
     /// superposition. Rules are read over BOTH completion partitions (MSet and Set).
     /// Returns the non-joinable pair count and up to 20 (rule node, op) witnesses.
-    pub fn cc_axiom_cps_nonjoinable(&self) -> (usize, Vec<(Cfg::G, usize)>) {
+    pub fn cc_axiom_cps_nonjoinable(&self) -> (usize, Vec<(Cfg::G, Cfg::O)>) {
         use crate::egraph::CompletionClamp;
         use crate::multiset::{
             clamp_idempotent, clamp_nilpotent, multiset_subtract, multiset_union,
@@ -286,17 +289,17 @@ where
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
 
         // Active rules over both partitions, exactly as cc_round reads them.
-        struct AxRule<G> {
+        struct AxRule<G, O, M> {
             node: G,
-            op: usize,
-            lhs: Vec<(G, Multiplicity)>,
-            rhs: Vec<(G, Multiplicity)>,
+            /// Typed, for the reason [`BasisRule::op`] gives.
+            op: O,
+            lhs: Vec<(G, M)>,
+            rhs: Vec<(G, M)>,
         }
-        let mut rules: Vec<AxRule<Cfg::G>> = Vec::new();
+        let mut rules: Vec<AxRule<Cfg::G, Cfg::O, Cfg::M>> = Vec::new();
         let mut lhs_buf = Vec::new();
         let mut rhs_buf = Vec::new();
-        for i in 0..self.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        for gid in self.node_ids() {
             if !matches!(self.node_ref(gid), NodeRef::MSet(_) | NodeRef::Set(_))
                 || self.node_flags(gid) & inactive != 0
             {
@@ -309,7 +312,7 @@ where
             if monomial_cmp(&lhs_buf, &rhs_buf) == std::cmp::Ordering::Greater {
                 rules.push(AxRule {
                     node: gid,
-                    op: self.node_op(gid).to_usize(),
+                    op: self.node_op(gid),
                     lhs: lhs_buf.clone(),
                     rhs: rhs_buf.clone(),
                 });
@@ -317,17 +320,17 @@ where
         }
 
         let mut nonjoin = 0usize;
-        let mut offenders: Vec<(Cfg::G, usize)> = Vec::new();
+        let mut offenders: Vec<(Cfg::G, Cfg::O)> = Vec::new();
         for k in 0..rules.len() {
-            let op = <Cfg::O as DenseId>::from_usize(rules[k].op);
+            let op = rules[k].op;
             let clamp = self.op_clamp(op);
-            type Pair<G> = (Vec<(G, Multiplicity)>, Vec<(G, Multiplicity)>);
-            let axiom_pairs: Vec<Pair<Cfg::G>> = match clamp {
+            type Pair<G, M> = (Vec<(G, M)>, Vec<(G, M)>);
+            let axiom_pairs: Vec<Pair<Cfg::G, Cfg::M>> = match clamp {
                 CompletionClamp::Idempotent => rules[k]
                     .lhs
                     .iter()
                     .map(|&(a, _)| {
-                        let mut r1 = multiset_union(&rules[k].rhs, &[(a, Multiplicity(1))]);
+                        let mut r1 = multiset_union(&rules[k].rhs, &[(a, Cfg::M::ONE)]);
                         clamp_idempotent(&mut r1);
                         (r1, rules[k].rhs.clone())
                     })
@@ -336,11 +339,15 @@ where
                     .lhs
                     .iter()
                     .filter_map(|&(a, m)| {
-                        let extra = (order as u32).saturating_sub(m.0);
-                        if extra == 0 {
+                        // `order` is a `u8`, so the deficit is below 256 and
+                        // representable at every supported multiplicity width.
+                        let ord = Cfg::M::try_from_u64(u64::from(order))
+                            .expect("a u8 nilpotent order fits every multiplicity width");
+                        let extra = ord.saturating_sub(m);
+                        if extra == Cfg::M::ZERO {
                             return None;
                         }
-                        let mut r1 = multiset_union(&rules[k].rhs, &[(a, Multiplicity(extra))]);
+                        let mut r1 = multiset_union(&rules[k].rhs, &[(a, extra)]);
                         clamp_nilpotent(&mut r1, order);
                         Some((r1, multiset_subtract(&rules[k].lhs, &[(a, m)])))
                     })
@@ -350,7 +357,7 @@ where
             if axiom_pairs.is_empty() {
                 continue;
             }
-            let nf_rules: Vec<NfRule<Cfg::G>> = rules
+            let nf_rules: Vec<NfRule<Cfg::G, Cfg::M>> = rules
                 .iter()
                 .filter(|r| r.op == rules[k].op)
                 .map(|r| NfRule {
@@ -404,13 +411,13 @@ where
             r.reducible_rule_count,
             r.rules.len() - r.reducible_rule_count,
         );
-        let show = |m: &[(Cfg::G, Multiplicity)]| -> String {
+        let show = |m: &[(Cfg::G, Cfg::M)]| -> String {
             let mut s = String::from("{");
             for (k, (g, mult)) in m.iter().enumerate() {
                 if k > 0 {
                     s.push(',');
                 }
-                s.push_str(&format!("{}:{}", g.to_usize(), mult.0));
+                s.push_str(&format!("{}:{}", g.to_usize(), mult));
             }
             s.push('}');
             s
@@ -419,7 +426,7 @@ where
             eprintln!(
                 "[basis {tag}]   rule[{k}] node={} op={} lhs={} -> rhs={}",
                 rule.node.to_usize(),
-                rule.op,
+                rule.op.to_usize(),
                 show(&rule.lhs),
                 show(&rule.rhs),
             );

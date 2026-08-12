@@ -6,7 +6,7 @@
 //! tells the execution engine which variable to bind next and how.
 
 use crate::ast::{GlobalVarId, LitValVarId, MsetVarId, SeqVarId, SetVarId, VarId};
-use crate::containers::DenseId;
+use crate::containers::{DenseId, IndexLike};
 use crate::resolve::{MatchShape, PatVar, RAtom, RMult, ResolvedQuery};
 use std::hash::Hash;
 
@@ -14,10 +14,21 @@ use std::hash::Hash;
 // Index lookups — each produces a SortedVec<G> for leapfrog
 // ---------------------------------------------------------------------------
 
+/// `I` is the child-position word: [`EGraphConfig::Index`], the same width the
+/// e-graph indexes its child pool with. A position is an offset into one node's
+/// children, so its range is the node's arity, and a variadic node's arity is a
+/// span in that pool — bounded by `I` and by nothing narrower. Hard-coding `u32`
+/// here would cap a 63-bit session's node arity at 2^32 children, and the cap
+/// would be reached silently: the counter in [`IndexStore::build`] wrapped, and
+/// the child at position 2^32 landed in bucket 0, where it would match patterns
+/// written for the first argument.
+///
+/// [`EGraphConfig::Index`]: crate::config::EGraphConfig::Index
+/// [`IndexStore::build`]: crate::index::IndexStore::build
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IndexLookup<O> {
+pub enum IndexLookup<O, I> {
     ByOp { op: O },
-    ByChildPos { child: PatVar, pos: u32 },
+    ByChildPos { child: PatVar, pos: I },
     ByRepr { repr: VarId },
     ByContains { child: PatVar },
 }
@@ -27,10 +38,10 @@ pub enum IndexLookup<O> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Step<O> {
+pub enum Step<O, I> {
     Join {
         target: VarId,
-        lookups: Vec<IndexLookup<O>>,
+        lookups: Vec<IndexLookup<O, I>>,
         /// Stable atom index in the compile-time numbering. Bridges the
         /// fixed atom order (which defines semi-naive variants) to the
         /// dynamic execution order chosen by the scheduler. Not used by
@@ -40,11 +51,14 @@ pub enum Step<O> {
     ExtractChild {
         target: VarId,
         parent: VarId,
-        pos: u32,
+        /// Child position, `I`-wide for the same reason as
+        /// [`IndexLookup::ByChildPos`]: it is read back through
+        /// `EGraph::child_at`, which offsets into the node's span in the child pool.
+        pos: I,
     },
     CheckChildEq {
         parent: VarId,
-        pos: u32,
+        pos: I,
         expected: PatVar,
     },
     CheckEq {
@@ -83,8 +97,8 @@ pub enum Step<O> {
 }
 
 #[derive(Clone, Debug)]
-pub struct QueryPlan<O> {
-    pub steps: Vec<Step<O>>,
+pub struct QueryPlan<O, I> {
+    pub steps: Vec<Step<O, I>>,
     pub shape: MatchShape,
 }
 
@@ -137,6 +151,21 @@ impl<O: Eq + Hash + Copy> IndexStats<O> {
 // ---------------------------------------------------------------------------
 // Scheduler
 // ---------------------------------------------------------------------------
+
+/// A child position in the plan's index word.
+///
+/// The argument is a *pattern's* arity, authored in a rewrite rule, so in practice a
+/// handful — but the value is compared against and used to offset into positions the
+/// e-graph assigns to real nodes ([`IndexStore::build`], [`EGraph::child_at`]), whose
+/// range is the child pool's. Narrowing it silently would probe or read the wrong
+/// argument, so it is checked rather than cast.
+///
+/// [`IndexStore::build`]: crate::index::IndexStore::build
+/// [`EGraph::child_at`]: crate::egraph::EGraph::child_at
+fn child_pos<I: IndexLike>(pos: usize) -> I {
+    I::try_from_usize(pos)
+        .expect("pattern child position exceeds EGraphConfig::Index; configure a wider index word")
+}
 
 fn pv_is_bound(pv: &PatVar, bound: &[bool]) -> bool {
     match pv {
@@ -208,16 +237,16 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
     }
 }
 
-pub fn schedule<O: DenseId + Hash + Copy, S: DenseId + Copy, V>(
+pub fn schedule<O: DenseId + Hash + Copy, S: DenseId + Copy, V, I: IndexLike>(
     rq: &ResolvedQuery<O, S, V>,
-) -> QueryPlan<O> {
+) -> QueryPlan<O, I> {
     schedule_with_stats(rq, &IndexStats::new())
 }
 
-pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V>(
+pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V, I: IndexLike>(
     rq: &ResolvedQuery<O, S, V>,
     stats: &IndexStats<O>,
-) -> QueryPlan<O> {
+) -> QueryPlan<O, I> {
     let mut bound = vec![false; rq.shape.num_vars()];
     let mut steps = Vec::new();
     let mut used = vec![false; rq.atoms.len()];
@@ -257,10 +286,10 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V>(
     }
 }
 
-fn emit_read_children<O: DenseId + Hash + Copy, S, V>(
+fn emit_read_children<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     bound: &mut [bool],
-    steps: &mut Vec<Step<O>>,
+    steps: &mut Vec<Step<O, I>>,
 ) {
     if let RAtom::Plain { node, children, .. } = atom {
         for (pos, &cv) in children.iter().enumerate() {
@@ -271,13 +300,13 @@ fn emit_read_children<O: DenseId + Hash + Copy, S, V>(
                 steps.push(Step::ExtractChild {
                     target: vid,
                     parent: *node,
-                    pos: pos as u32,
+                    pos: child_pos::<I>(pos),
                 });
                 pv_mark_bound(&cv, bound);
             } else {
                 steps.push(Step::CheckChildEq {
                     parent: *node,
-                    pos: pos as u32,
+                    pos: child_pos::<I>(pos),
                     expected: cv,
                 });
             }
@@ -285,11 +314,11 @@ fn emit_read_children<O: DenseId + Hash + Copy, S, V>(
     }
 }
 
-fn emit_atom<O: DenseId + Hash + Copy, S, V>(
+fn emit_atom<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
     bound: &mut [bool],
-    steps: &mut Vec<Step<O>>,
+    steps: &mut Vec<Step<O, I>>,
 ) {
     match atom {
         RAtom::Plain { node, op, children } => {
@@ -298,7 +327,7 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
                 if pv_is_bound(&cv, bound) {
                     lookups.push(IndexLookup::ByChildPos {
                         child: cv,
-                        pos: pos as u32,
+                        pos: child_pos::<I>(pos),
                     });
                 }
             }
@@ -316,13 +345,13 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
                     steps.push(Step::ExtractChild {
                         target: vid,
                         parent: *node,
-                        pos: pos as u32,
+                        pos: child_pos::<I>(pos),
                     });
                     pv_mark_bound(&cv, bound);
                 } else {
                     steps.push(Step::CheckChildEq {
                         parent: *node,
-                        pos: pos as u32,
+                        pos: child_pos::<I>(pos),
                         expected: cv,
                     });
                 }
@@ -486,11 +515,11 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V>(
 /// eagerly resolvable now; `None` if it must wait for cost-based selection
 /// (an unbound scanning atom). Single source of truth shared by the static
 /// scheduler's eager pass and the runtime-adaptive matcher.
-pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V>(
+pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
     bound: &mut [bool],
-) -> Option<Vec<Step<O>>> {
+) -> Option<Vec<Step<O, I>>> {
     let mut steps = Vec::new();
     match atom {
         RAtom::Eq(a, b) => {
@@ -558,13 +587,13 @@ pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V>(
     Some(steps)
 }
 
-fn emit_variadic_join<O: DenseId + Hash + Copy>(
+fn emit_variadic_join<O: DenseId + Hash + Copy, I: IndexLike>(
     node: &VarId,
     op: O,
     atom_id: usize,
     elems: &[PatVar],
     bound: &mut [bool],
-    steps: &mut Vec<Step<O>>,
+    steps: &mut Vec<Step<O, I>>,
 ) {
     if !bound[(*node).idx()] {
         // Drive from `by_op[op]`, intersected with `by_contains[e]` for every
@@ -642,7 +671,7 @@ mod tests {
         (ops, sorts, LitValStore::new())
     }
 
-    fn do_plan(src: &str) -> (QueryPlan<OpId>, MatchShape) {
+    fn do_plan(src: &str) -> (QueryPlan<OpId, u32>, MatchShape) {
         let (ops, sorts, _) = setup();
         let model = NiraModel;
         let pat = parse_pattern(src);
@@ -658,7 +687,7 @@ mod tests {
         (schedule(&rq), rq.shape)
     }
 
-    fn do_plan_multi(srcs: &[&str]) -> (QueryPlan<OpId>, MatchShape) {
+    fn do_plan_multi(srcs: &[&str]) -> (QueryPlan<OpId, u32>, MatchShape) {
         let (ops, sorts, _) = setup();
         let model = NiraModel;
         let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
@@ -674,7 +703,10 @@ mod tests {
         (schedule(&rq), rq.shape)
     }
 
-    fn do_plan_with_stats(srcs: &[&str], card: &[(&str, usize)]) -> (QueryPlan<OpId>, MatchShape) {
+    fn do_plan_with_stats(
+        srcs: &[&str],
+        card: &[(&str, usize)],
+    ) -> (QueryPlan<OpId, u32>, MatchShape) {
         let (ops, sorts, _) = setup();
         let model = NiraModel;
         let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();

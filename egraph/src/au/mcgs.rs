@@ -22,6 +22,7 @@ use crate::containers::{
     AppendOnlyVec, DenseId, IndexLike, MapToken, ShrinkPolicy, SpMap, VecP, VecToken,
 };
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 
 use super::AuIds31;
 use super::ac_repr;
@@ -116,7 +117,23 @@ struct AndStatsData<OS, O> {
     commutative: bool,
     value: f64,
     child_or_stats: Vec<OS>,
-    child_counts: Vec<u32>,
+    /// Per-child count, at the *surface* width — the seam between the two paths
+    /// that write it.
+    ///
+    /// A fixed action writes a structural multiplicity here ([`EGraphConfig::M`],
+    /// copied out of an [`ActionPair`]); a transport action writes a flow cell,
+    /// at the transport solver's own narrower capacity. `u64` holds both without
+    /// a fallible conversion — [`MultiplicityLike::to_u64`] is total and lossless
+    /// at every configured width — so neither path needs a cap of its own here.
+    /// Picking either contributor's width instead would impose that width on the
+    /// other: `Cfg::M` would need a narrowing check on flow at `Multiplicity16`,
+    /// and the solver's width would silently drop multiplicities the e-graph
+    /// represents fine at `Multiplicity64`.
+    ///
+    /// [`EGraphConfig::M`]: crate::config::EGraphConfig::M
+    /// [`ActionPair`]: super::actions::ActionPair
+    /// [`MultiplicityLike::to_u64`]: crate::multiplicity::MultiplicityLike::to_u64
+    child_counts: Vec<u64>,
     child_visits: Vec<u64>,
     round_robin: u64,
     transport_rows: Vec<u32>,
@@ -142,7 +159,8 @@ struct AndStatsRef<'a, OS, O, CS> {
     commutative: bool,
     value: f64,
     child_or_stats: &'a [OS],
-    child_counts: &'a [u32],
+    /// See [`AndStatsData::child_counts`] for why this is the surface width.
+    child_counts: &'a [u64],
     child_visits: &'a [u64],
     round_robin: u64,
     transport_rows: &'a [u32],
@@ -168,17 +186,20 @@ struct OrStatsToken {
 
 /// OR statistics stored in aligned semi-persistent arenas. Node structure is
 /// append-only; mutable values and flattened edge state use VecP.
+/// Every column is addressed by `A::OrStats`, so `A::Index` is the index word
+/// throughout — the append-only columns now match the `VecP` ones instead of holding
+/// `usize` frame lengths for positions that provably fit the config word.
 struct OrStatsArena<A: AuIds, O: DenseId> {
-    or_ids: AppendOnlyVec<A::Or>,
-    min_size: AppendOnlyVec<f64>,
-    max_size: AppendOnlyVec<f64>,
-    terminal: AppendOnlyVec<bool>,
-    edge_spans: AppendOnlyVec<super::Span<A::OrEdgeStat>>,
+    or_ids: AppendOnlyVec<A::Or, A::Index>,
+    min_size: AppendOnlyVec<f64, A::Index>,
+    max_size: AppendOnlyVec<f64, A::Index>,
+    terminal: AppendOnlyVec<bool, A::Index>,
+    edge_spans: AppendOnlyVec<super::Span<A::OrEdgeStat>, A::Index>,
     initial_value: VecP<f64, A::Index>,
     value: VecP<f64, A::Index>,
     edge_visits: VecP<u64, A::Index>,
     edge_and: VecP<Option<A::AndStats>, A::Index>,
-    transport_descs: AppendOnlyVec<Vec<TransportActionDesc<O, A::Class>>>,
+    transport_descs: AppendOnlyVec<Vec<TransportActionDesc<O, A::Class>>, A::Index>,
 }
 
 /// Preconstruct a typed span and validate its exclusive end and final typed
@@ -223,7 +244,9 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         A::Index::try_from_usize(id.to_usize()).expect("MCGS id exceeds configured index width")
     }
 
-    fn len(&self) -> usize {
+    /// Node count, in the configured index word: the next node lands at exactly
+    /// this index, and every aligned column agrees with it.
+    fn len(&self) -> A::Index {
         self.or_ids.len()
     }
 
@@ -240,8 +263,8 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         assert_eq!(self.max_size.len(), node_len);
         assert_eq!(self.terminal.len(), node_len);
         assert_eq!(self.edge_spans.len(), node_len);
-        assert_eq!(self.initial_value.len().as_usize(), node_len);
-        assert_eq!(self.value.len().as_usize(), node_len);
+        assert_eq!(self.initial_value.len(), node_len);
+        assert_eq!(self.value.len(), node_len);
         assert_eq!(self.transport_descs.len(), node_len);
 
         let edge_start = self.edge_visits.len().as_usize();
@@ -249,7 +272,7 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         // prod-parity: trap when the node id would exceed its width. Production's
         // `from_usize` panicked on overflow; verus's masks, so the check is
         // `try_new` (None past the id bound) before mutating any pool.
-        let id = A::OrStats::try_new(node_len)
+        let id = A::OrStats::try_new(node_len.as_usize())
             .unwrap_or_else(|| panic!("OR-stats node id exceeds configured id width"));
         let edge_span = checked_pool_span::<A::OrEdgeStat>(
             edge_start,
@@ -276,19 +299,19 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
 
     #[inline]
     fn or_id(&self, id: A::OrStats) -> A::Or {
-        *self.or_ids.get(id.to_usize())
+        *self.or_ids.get(id.to_index())
     }
 
     #[inline]
     fn edge_span(&self, id: A::OrStats) -> super::Span<A::OrEdgeStat> {
-        *self.edge_spans.get(id.to_usize())
+        *self.edge_spans.get(id.to_index())
     }
 
     #[inline]
     fn edge_id(&self, id: A::OrStats, action: usize) -> A::OrEdgeStat {
         let span = self.edge_span(id);
         assert!(action < span.len_usize(), "OR action index out of bounds");
-        A::OrEdgeStat::from_usize(span.start_usize() + action)
+        crate::id::id_at(span.start_usize() + action)
     }
 
     fn get(&self, id: A::OrStats) -> OrStatsRef<'_, A::AndStats> {
@@ -298,9 +321,9 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         OrStatsRef {
             initial_value: self.initial_value.get(node),
             value: self.value.get(node),
-            min_size: *self.min_size.get(id.to_usize()),
-            max_size: *self.max_size.get(id.to_usize()),
-            terminal: *self.terminal.get(id.to_usize()),
+            min_size: *self.min_size.get(id.to_index()),
+            max_size: *self.max_size.get(id.to_index()),
+            terminal: *self.terminal.get(id.to_index()),
             edge_visits: &self.edge_visits.as_slice().expect("VecP is contiguous")[range.clone()],
             edge_and: &self.edge_and.as_slice().expect("VecP is contiguous")[range],
         }
@@ -308,7 +331,7 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
 
     #[inline]
     fn transport_descs(&self, id: A::OrStats) -> &[TransportActionDesc<O, A::Class>] {
-        self.transport_descs.get(id.to_usize())
+        self.transport_descs.get(id.to_index())
     }
 
     fn set_initial_value(&mut self, id: A::OrStats, value: f64) {
@@ -392,19 +415,22 @@ struct AndStatsToken {
 
 /// AND statistics stored in aligned semi-persistent arenas. Child state is
 /// flattened and addressed by `A::AndChildStat` spans and IDs.
+/// Node columns are addressed by `A::AndStats` and the flattened child columns by
+/// `A::AndChildStat`; both words are `A::Index`, so that is the index type.
 struct AndStatsArena<A: AuIds, O: DenseId> {
-    parent: AppendOnlyVec<A::OrStats>,
-    op: AppendOnlyVec<O>,
-    commutative: AppendOnlyVec<bool>,
-    child_spans: AppendOnlyVec<super::Span<A::AndChildStat>>,
-    child_or_stats: AppendOnlyVec<A::OrStats>,
+    parent: AppendOnlyVec<A::OrStats, A::Index>,
+    op: AppendOnlyVec<O, A::Index>,
+    commutative: AppendOnlyVec<bool, A::Index>,
+    child_spans: AppendOnlyVec<super::Span<A::AndChildStat>, A::Index>,
+    child_or_stats: AppendOnlyVec<A::OrStats, A::Index>,
     value: VecP<f64, A::Index>,
-    child_counts: VecP<u32, A::Index>,
+    /// See [`AndStatsData::child_counts`] for why this is the surface width.
+    child_counts: VecP<u64, A::Index>,
     child_visits: VecP<u64, A::Index>,
     round_robin: VecP<u64, A::Index>,
-    transport_rows: AppendOnlyVec<Vec<u32>>,
-    transport_cols: AppendOnlyVec<Vec<u32>>,
-    transport_cell_map: AppendOnlyVec<Vec<Option<A::AndChildStat>>>,
+    transport_rows: AppendOnlyVec<Vec<u32>, A::Index>,
+    transport_cols: AppendOnlyVec<Vec<u32>, A::Index>,
+    transport_cell_map: AppendOnlyVec<Vec<Option<A::AndChildStat>>, A::Index>,
 }
 
 impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
@@ -430,7 +456,8 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         A::Index::try_from_usize(id.to_usize()).expect("MCGS id exceeds configured index width")
     }
 
-    fn len(&self) -> usize {
+    /// Node count, in the configured index word; see the OR-stats twin.
+    fn len(&self) -> A::Index {
         self.parent.len()
     }
 
@@ -442,19 +469,19 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         assert_eq!(self.op.len(), node_len);
         assert_eq!(self.commutative.len(), node_len);
         assert_eq!(self.child_spans.len(), node_len);
-        assert_eq!(self.value.len().as_usize(), node_len);
-        assert_eq!(self.round_robin.len().as_usize(), node_len);
+        assert_eq!(self.value.len(), node_len);
+        assert_eq!(self.round_robin.len(), node_len);
         assert_eq!(self.transport_rows.len(), node_len);
         assert_eq!(self.transport_cols.len(), node_len);
         assert_eq!(self.transport_cell_map.len(), node_len);
 
-        let child_start = self.child_or_stats.len();
+        let child_start = self.child_or_stats.len().as_usize();
         assert_eq!(self.child_counts.len().as_usize(), child_start);
         assert_eq!(self.child_visits.len().as_usize(), child_start);
         let child_len = data.child_or_stats.len();
         // prod-parity: trap on node-id overflow (verus `from_usize` masks; use
         // `try_new`). See the OR-stats `push` for the rationale.
-        let id = A::AndStats::try_new(node_len)
+        let id = A::AndStats::try_new(node_len.as_usize())
             .unwrap_or_else(|| panic!("AND-stats node id exceeds configured id width"));
         let child_span = checked_pool_span::<A::AndChildStat>(
             child_start,
@@ -473,7 +500,7 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
                     let absolute = child_start
                         .checked_add(position)
                         .expect("transport child position overflows usize");
-                    A::AndChildStat::from_usize(absolute)
+                    crate::id::id_at(absolute)
                 })
             })
             .collect();
@@ -501,19 +528,19 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
 
     #[inline]
     fn child_span(&self, id: A::AndStats) -> super::Span<A::AndChildStat> {
-        *self.child_spans.get(id.to_usize())
+        *self.child_spans.get(id.to_index())
     }
 
     #[inline]
     fn child_id(&self, id: A::AndStats, position: usize) -> A::AndChildStat {
         let span = self.child_span(id);
         assert!(position < span.len_usize(), "AND child index out of bounds");
-        A::AndChildStat::from_usize(span.start_usize() + position)
+        crate::id::id_at(span.start_usize() + position)
     }
 
     #[inline]
     fn child_or(&self, child: A::AndChildStat) -> A::OrStats {
-        *self.child_or_stats.get(child.to_usize())
+        *self.child_or_stats.get(child.to_index())
     }
 
     #[cfg(test)]
@@ -528,17 +555,17 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         let span = self.child_span(id);
         let range = span.start_usize()..span.end_usize();
         AndStatsRef {
-            parent: *self.parent.get(id.to_usize()),
-            op: *self.op.get(id.to_usize()),
-            commutative: *self.commutative.get(id.to_usize()),
+            parent: *self.parent.get(id.to_index()),
+            op: *self.op.get(id.to_index()),
+            commutative: *self.commutative.get(id.to_index()),
             value: self.value.get(node),
             child_or_stats: &self.child_or_stats.as_slice()[range.clone()],
             child_counts: &self.child_counts.as_slice().expect("VecP is contiguous")[range.clone()],
             child_visits: &self.child_visits.as_slice().expect("VecP is contiguous")[range],
             round_robin: self.round_robin.get(node),
-            transport_rows: self.transport_rows.get(id.to_usize()),
-            transport_cols: self.transport_cols.get(id.to_usize()),
-            transport_cell_map: self.transport_cell_map.get(id.to_usize()),
+            transport_rows: self.transport_rows.get(id.to_index()),
+            transport_cols: self.transport_cols.get(id.to_index()),
+            transport_cell_map: self.transport_cell_map.get(id.to_index()),
         }
     }
 
@@ -546,7 +573,7 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         self.value.set(Self::index(id), value);
     }
 
-    fn set_child_count(&mut self, child: A::AndChildStat, value: u32) {
+    fn set_child_count(&mut self, child: A::AndChildStat, value: u64) {
         self.child_counts.set(Self::index(child), value);
     }
 
@@ -616,7 +643,9 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
 pub(crate) struct McgsState<A: AuIds = AuIds31, O: DenseId = crate::id::OpId> {
     or_stats: OrStatsArena<A, O>,
     and_stats: AndStatsArena<A, O>,
-    or_stats_map: SpMap<A::Or, A::OrStats>,
+    /// `A::Or` -> its statistics node. Keyed by an id whose `Index` is `A::Index`, so
+    /// the hash index stores positions in that word rather than 8-byte `usize`.
+    or_stats_map: SpMap<A::Or, A::OrStats, A::Index>,
 }
 
 /// Token for restoring `McgsState`. It bundles only arena and map tokens.
@@ -710,7 +739,7 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
         self.and_stats.set_value(id, value);
     }
 
-    fn set_and_child_count(&mut self, child: A::AndChildStat, value: u32) {
+    fn set_and_child_count(&mut self, child: A::AndChildStat, value: u64) {
         self.and_stats.set_child_count(child, value);
     }
 
@@ -747,7 +776,7 @@ where
     let mut pool = TermPool::new();
     // MCGS skips AC/ACI matrix materialization; those operators use transport
     // AND-nodes instead (zero matrix enumeration, same as exact).
-    let mut action_cache: ActionCache<Cfg::O, Cfg::Au> =
+    let mut action_cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M> =
         ActionCache::without_ac_actions(usize::MAX);
     let mut results: BestResults<Cfg::Au> = BestResults::new();
     let mut state: McgsState<Cfg::Au, Cfg::O> = McgsState::new();
@@ -773,7 +802,7 @@ pub(crate) fn run_mcgs_in<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
-    action_cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    action_cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     results: &mut BestResults<Cfg::Au>,
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     l_root: ClassOf<Cfg>,
@@ -846,7 +875,7 @@ fn or_postorder<A: AuIds, O: DenseId>(
     root_idx: A::OrStats,
 ) -> Vec<A::OrStats> {
     let mut postorder: Vec<A::OrStats> = Vec::new();
-    let mut mark: Vec<u8> = vec![0; state.or_stats.len()]; // 0 unseen, 1 active, 2 done
+    let mut mark: Vec<u8> = vec![0; state.or_stats.len().as_usize()]; // 0 unseen, 1 active, 2 done
     let mut stack: Vec<(A::OrStats, usize)> = vec![(root_idx, 0)]; // (or id, child cursor)
     while let Some(&mut (or_idx, ref mut cursor)) = stack.last_mut() {
         if mark[or_idx.to_usize()] == 2 {
@@ -940,7 +969,7 @@ fn is_structurally_complete<A: AuIds, O: DenseId>(
     state: &McgsState<A, O>,
     or_idx: A::OrStats,
 ) -> bool {
-    let mut visited: Vec<u8> = vec![0; state.or_stats.len()];
+    let mut visited: Vec<u8> = vec![0; state.or_stats.len().as_usize()];
     // Frame: an OR node whose flattened child OR list (every expanded
     // AND-node's children, in edge then child order) is being verified.
     let mut stack: Vec<(A::OrStats, Vec<A::OrStats>, usize)> = Vec::new();
@@ -999,6 +1028,13 @@ struct TransportActionDesc<O, C> {
     right: ac_repr::Monomial<C>,
     /// Flat row-major r*c mask: true = cell is not cycle-blocked.
     legal_cells: Vec<bool>,
+    /// `left`/`right` multiplicities already narrowed to the transport solver's
+    /// width. Narrowing happens once, in the feasibility gate below: a pair
+    /// whose multiplicities the solver cannot represent never becomes a
+    /// descriptor, so every consumer of these vectors is free of a fallible
+    /// conversion and cannot disagree with the gate about what was solved.
+    row_supply: Vec<u32>,
+    col_demand: Vec<u32>,
 }
 
 /// Enumerate the feasible transport actions for `(l, r)` at `or_id`. Single
@@ -1027,18 +1063,24 @@ where
                     }
                 }
             }
-            let feasible = solve_transport(&TransportProblem {
-                row_supply: lm.iter().map(|(_, k)| *k).collect(),
-                col_demand: rm.iter().map(|(_, k)| *k).collect(),
-                cost,
-            })
-            .is_some();
-            if feasible {
+            let supply: Vec<u64> = lm.iter().map(|(_, k)| *k).collect();
+            let demand: Vec<u64> = rm.iter().map(|(_, k)| *k).collect();
+            // A pair whose multiplicities the solver cannot represent is
+            // reported infeasible, the same signal an unsolvable pair gives: it
+            // consumes no action slot.
+            let Some(problem) = TransportProblem::narrowed(&supply, &demand, cost) else {
+                continue;
+            };
+            if solve_transport(&problem).is_some() {
                 out.push(TransportActionDesc {
                     op,
                     left: lm,
                     right: rm,
                     legal_cells,
+                    // Moved out of the solved problem, so the descriptor carries
+                    // the very vectors the feasibility check ran on.
+                    row_supply: problem.row_supply,
+                    col_demand: problem.col_demand,
                 });
             }
         }
@@ -1053,7 +1095,7 @@ where
 fn ensure_or_stats<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
-    action_cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    action_cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     results: &mut BestResults<Cfg::Au>,
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     or_id: <Cfg::Au as AuIds>::Or,
@@ -1065,10 +1107,10 @@ where
         return *state.or_stats_map.get_val(log_idx);
     }
 
-    let l = *space.or_arena.left.get(or_id.to_usize());
-    let r = *space.or_arena.right.get(or_id.to_usize());
-    let l_best = *space.or_arena.left_best_size.get(or_id.to_usize()) as f64;
-    let r_best = *space.or_arena.right_best_size.get(or_id.to_usize()) as f64;
+    let l = *space.or_arena.left.get(or_id.to_index());
+    let r = *space.or_arena.right.get(or_id.to_index());
+    let l_best = *space.or_arena.left_best_size.get(or_id.to_index()) as f64;
+    let r_best = *space.or_arena.right_best_size.get(or_id.to_index()) as f64;
 
     let (num_actions, descs) = if l == r {
         (0, Vec::new())
@@ -1126,7 +1168,7 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
-    action_cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    action_cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     results: &mut BestResults<Cfg::Au>,
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     root_idx: <Cfg::Au as AuIds>::OrStats,
@@ -1342,6 +1384,9 @@ fn recompute_and_value<A: AuIds, O: DenseId>(state: &mut McgsState<A, O>, and_id
         let and = state.and_stat(and_idx);
         let mut q = 1.0;
         for (i, &child) in and.child_or_stats.iter().enumerate() {
+            // Counts above 2^53 round here. `q` is a search-ordering heuristic, not a
+            // reported quantity — the exact count stays in `child_counts` and is what
+            // the composed term is built from.
             q += and.child_counts[i] as f64 * state.or_stat(child).value;
         }
         state.set_and_value(and_idx, q);
@@ -1396,8 +1441,9 @@ fn recompute_transport_and_value<A: AuIds, O: DenseId>(
                 if x > 0
                     && let Some(child) = cell_map[flat]
                 {
-                    state.set_and_child_count(child, x);
-                    q += x as f64 * state.or_stat(state.and_stats.child_or(child)).value;
+                    // Widening a flow cell to the surface width `child_counts` keeps.
+                    state.set_and_child_count(child, u64::from(x));
+                    q += f64::from(x) * state.or_stat(state.and_stats.child_or(child)).value;
                 }
             }
             state.set_and_value(and_idx, q);
@@ -1445,7 +1491,7 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
     let and = state.and_stat(and_idx);
     let is_transport = !and.transport_rows.is_empty();
 
-    let children: Vec<(<Cfg::Au as AuIds>::Term, u32)> = if is_transport {
+    let children: Vec<(<Cfg::Au as AuIds>::Term, u64)> = if is_transport {
         // Solve transport over lexicographic best-result qualities for composition.
         let n_rows = and.transport_rows.len();
         let n_cols = and.transport_cols.len();
@@ -1479,7 +1525,7 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
             let x = solution.flow[i][j];
             if x > 0 {
                 if let Some(t) = term {
-                    out.push((*t, x));
+                    out.push((*t, u64::from(x)));
                 } else {
                     return;
                 }
@@ -1514,7 +1560,7 @@ fn expand_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
-    action_cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    action_cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     results: &mut BestResults<Cfg::Au>,
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     or_idx: <Cfg::Au as AuIds>::OrStats,
@@ -1524,10 +1570,10 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let or_id = state.or_id(or_idx);
-    let l = *space.or_arena.left.get(or_id.to_usize());
-    let r = *space.or_arena.right.get(or_id.to_usize());
-    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_usize());
-    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_usize());
+    let l = *space.or_arena.left.get(or_id.to_index());
+    let r = *space.or_arena.right.get(or_id.to_index());
+    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_index());
+    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_index());
 
     generate_actions(snap, action_cache, l, r);
     let actions = action_cache.get(l, r).unwrap().to_vec();
@@ -1555,7 +1601,7 @@ where
             .unwrap();
 
         let mut child_or_stats = Vec::with_capacity(action.pairs.len());
-        let mut child_counts = Vec::with_capacity(action.pairs.len());
+        let mut child_counts: Vec<u64> = Vec::with_capacity(action.pairs.len());
         for pair in &action.pairs {
             let child_ctx_l = space
                 .derive_child_context(ctx_l, l, |c| snap.reachability().is_reachable(pair.left, c));
@@ -1575,7 +1621,9 @@ where
             results.offer(child_or, child_seed, pool.quality(child_seed));
             let child_idx = ensure_or_stats(snap, space, action_cache, results, state, child_or);
             child_or_stats.push(child_idx);
-            child_counts.push(pair.count);
+            // Widening a structural multiplicity to the surface width `child_counts`
+            // keeps; see `AndStatsData::child_counts`.
+            child_counts.push(pair.count.to_u64());
         }
         let arity = child_or_stats.len();
         state.push_and_stat(AndStatsData {
@@ -1598,6 +1646,8 @@ where
         let desc = &state.or_stats.transport_descs(or_idx)[transport_idx];
         let (op, lm, rm) = (desc.op, desc.left.clone(), desc.right.clone());
         let legal_cells = desc.legal_cells.clone();
+        // Already at the transport solver's width; narrowed once in the gate.
+        let (row_supply, col_demand) = (desc.row_supply.clone(), desc.col_demand.clone());
         let (lm, rm) = (&lm, &rm);
         let n_rows = lm.len();
         let n_cols = rm.len();
@@ -1644,8 +1694,8 @@ where
             child_counts: vec![0; arity],
             child_visits: vec![0; arity],
             round_robin: 0,
-            transport_rows: lm.iter().map(|(_, k)| *k).collect(),
-            transport_cols: rm.iter().map(|(_, k)| *k).collect(),
+            transport_rows: row_supply,
+            transport_cols: col_demand,
             transport_cell_map: cell_map,
         })
     }
@@ -1706,7 +1756,7 @@ fn initial_rollout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
-    action_cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    action_cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     or_id: <Cfg::Au as AuIds>::Or,
 ) -> <Cfg::Au as AuIds>::Term
 where
@@ -1722,9 +1772,9 @@ where
         /// generalize action when no cell carries flow.
         transport: bool,
         /// Child pairs in evaluation order: `(left, right, count)`.
-        items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u32)>,
+        items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u64)>,
         cursor: usize,
-        child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)>,
+        child_terms: Vec<(<Cfg::Au as AuIds>::Term, u64)>,
     }
 
     let mut stack: Vec<Frame<Cfg>> = Vec::new();
@@ -1732,8 +1782,8 @@ where
     loop {
         // ── Enter: evaluate the selection for `pending` ──
         let current = pending;
-        let l = *space.or_arena.left.get(current.to_usize());
-        let r = *space.or_arena.right.get(current.to_usize());
+        let l = *space.or_arena.left.get(current.to_index());
+        let r = *space.or_arena.right.get(current.to_index());
 
         let mut done: Option<<Cfg::Au as AuIds>::Term> = None;
         if l == r {
@@ -1742,8 +1792,8 @@ where
             generate_actions(snap, action_cache, l, r);
             let actions = action_cache.get(l, r).unwrap().to_vec();
             let transport = transport_actions(snap, space, current, l, r);
-            let ctx_l = *space.or_arena.left_ctx.get(current.to_usize());
-            let ctx_r = *space.or_arena.right_ctx.get(current.to_usize());
+            let ctx_l = *space.or_arena.left_ctx.get(current.to_index());
+            let ctx_r = *space.or_arena.right_ctx.get(current.to_index());
 
             // Eager generalization is an explicit action and wins ties, so the
             // initializer can never return a result worse than this valid incumbent.
@@ -1765,11 +1815,11 @@ where
                         wide_quality(static_generalize_quality(snap, pair.left, pair.right));
                     estimate.0 = estimate
                         .0
-                        .checked_add(child.0 * u128::from(pair.count))
+                        .checked_add(child.0 * u128::from(pair.count.to_u64()))
                         .expect("structural rollout size estimate overflow");
                     estimate.1 = estimate
                         .1
-                        .checked_add(child.1 * u128::from(pair.count))
+                        .checked_add(child.1 * u128::from(pair.count.to_u64()))
                         .expect("structural rollout variant estimate overflow");
                 }
                 if estimate < best_estimate {
@@ -1790,8 +1840,9 @@ where
                     }
                 }
                 let Some(solution) = solve_transport(&TransportProblem {
-                    row_supply: desc.left.iter().map(|(_, count)| *count).collect(),
-                    col_demand: desc.right.iter().map(|(_, count)| *count).collect(),
+                    // Narrowed once in the feasibility gate that produced `desc`.
+                    row_supply: desc.row_supply.clone(),
+                    col_demand: desc.col_demand.clone(),
                     cost,
                 }) else {
                     continue;
@@ -1819,10 +1870,10 @@ where
                 }
                 InitialRolloutChoice::Structural(action_idx) => {
                     let action = &actions[action_idx];
-                    let items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u32)> = action
+                    let items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u64)> = action
                         .pairs
                         .iter()
-                        .map(|pair| (pair.left, pair.right, pair.count))
+                        .map(|pair| (pair.left, pair.right, pair.count.to_u64()))
                         .collect();
                     let capacity = items.len();
                     stack.push(Frame {
@@ -1845,7 +1896,7 @@ where
                     let n_cols = desc.right.len();
                     // Positive-flow cells in row-major order: the recursive
                     // evaluation order of the selected static flow.
-                    let mut items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u32)> = Vec::new();
+                    let mut items: Vec<(ClassOf<Cfg>, ClassOf<Cfg>, u64)> = Vec::new();
                     for (i, (lc, _)) in desc.left.iter().enumerate() {
                         for (j, (rc, _)) in desc.right.iter().enumerate() {
                             let count = flow[i][j];
@@ -1853,7 +1904,7 @@ where
                                 continue;
                             }
                             debug_assert!(desc.legal_cells[i * n_cols + j]);
-                            items.push((*lc, *rc, count));
+                            items.push((*lc, *rc, u64::from(count)));
                         }
                     }
                     stack.push(Frame {
@@ -1988,33 +2039,33 @@ mod tests {
 
     fn tiny_or_lengths(arena: &OrStatsArena<TinyAu, TinyId>) -> [usize; 10] {
         [
-            arena.or_ids.len(),
-            arena.min_size.len(),
-            arena.max_size.len(),
-            arena.terminal.len(),
-            arena.edge_spans.len(),
+            arena.or_ids.len().as_usize(),
+            arena.min_size.len().as_usize(),
+            arena.max_size.len().as_usize(),
+            arena.terminal.len().as_usize(),
+            arena.edge_spans.len().as_usize(),
             arena.initial_value.len().as_usize(),
             arena.value.len().as_usize(),
             arena.edge_visits.len().as_usize(),
             arena.edge_and.len().as_usize(),
-            arena.transport_descs.len(),
+            arena.transport_descs.len().as_usize(),
         ]
     }
 
     fn tiny_and_lengths(arena: &AndStatsArena<TinyAu, TinyId>) -> [usize; 12] {
         [
-            arena.parent.len(),
-            arena.op.len(),
-            arena.commutative.len(),
-            arena.child_spans.len(),
-            arena.child_or_stats.len(),
+            arena.parent.len().as_usize(),
+            arena.op.len().as_usize(),
+            arena.commutative.len().as_usize(),
+            arena.child_spans.len().as_usize(),
+            arena.child_or_stats.len().as_usize(),
             arena.value.len().as_usize(),
             arena.child_counts.len().as_usize(),
             arena.child_visits.len().as_usize(),
             arena.round_robin.len().as_usize(),
-            arena.transport_rows.len(),
-            arena.transport_cols.len(),
-            arena.transport_cell_map.len(),
+            arena.transport_rows.len().as_usize(),
+            arena.transport_cols.len().as_usize(),
+            arena.transport_cell_map.len().as_usize(),
         ]
     }
 
@@ -2071,7 +2122,7 @@ mod tests {
         AndChildStatId::from_usize(i)
     }
     fn push_or(state: &mut McgsState, data: OrStatsData<AndStatsId>) -> OrStatsId {
-        let or_id = OrId::from_usize(state.or_stats.len());
+        let or_id = OrId::from_usize(state.or_stats.len().as_usize());
         state.push_or_stat(or_id, data, Vec::new())
     }
     fn push_and(

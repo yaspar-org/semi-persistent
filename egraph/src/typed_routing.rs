@@ -7,6 +7,7 @@
 
 use crate::containers::AppendOnlyVec;
 use crate::containers::DenseId;
+use crate::containers::IndexLike;
 use crate::containers::ShrinkPolicy;
 use crate::containers::VecToken;
 
@@ -90,19 +91,24 @@ impl<I: NodeIds> core::fmt::Debug for NodeRef<I> {
 /// contract, so it carries the mark/restore proofs for free (no hand
 /// `truncate`). `TRACK` matches the owning `NodeStore` (mark/restore are
 /// caller errors when `TRACK == false`, container parity).
-pub struct TypedRouting<G: DenseId, I: NodeIds, const TRACK: bool = true> {
-    entries: AppendOnlyVec<NodeRef<I>, usize, TRACK>,
+pub struct TypedRouting<G: DenseId<Index = I::Index>, I: NodeIds, const TRACK: bool = true> {
+    /// The routing table's index word is the config's: an entry per node, addressed
+    /// by the same `G` whose `Index` this is, so position and id share a width and
+    /// `to_index()` bridges them without a conversion.
+    entries: AppendOnlyVec<NodeRef<I>, I::Index, TRACK>,
     reserved: bool,
     _phantom: core::marker::PhantomData<G>,
 }
 
-impl<G: DenseId, I: NodeIds, const TRACK: bool> Default for TypedRouting<G, I, TRACK> {
+impl<G: DenseId<Index = I::Index>, I: NodeIds, const TRACK: bool> Default
+    for TypedRouting<G, I, TRACK>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<G: DenseId, I: NodeIds, const TRACK: bool> TypedRouting<G, I, TRACK> {
+impl<G: DenseId<Index = I::Index>, I: NodeIds, const TRACK: bool> TypedRouting<G, I, TRACK> {
     pub fn new() -> Self {
         Self {
             entries: AppendOnlyVec::new(),
@@ -114,12 +120,16 @@ impl<G: DenseId, I: NodeIds, const TRACK: bool> TypedRouting<G, I, TRACK> {
     pub fn reserve(&mut self) -> G {
         assert!(!self.reserved, "already have a reserved id");
         self.reserved = true;
-        G::from_usize(self.entries.len())
+        // `try_new`, not `from_usize`: the table can hold more entries than the id
+        // space has ids (`I::Index` spans `2 * id_bound()` for a bit-stealing id), and
+        // `from_usize` would mask the excess and hand back an id that already names a
+        // different node.
+        G::try_new(self.entries.len().as_usize()).expect("routing table exceeds the id space")
     }
 
     pub fn finalize(&mut self, fresh_id: G, entry: NodeRef<I>) {
         assert!(self.reserved, "no reserved id to finalize");
-        assert_eq!(fresh_id.to_usize(), self.entries.len());
+        assert_eq!(fresh_id.to_index(), self.entries.len());
         self.entries.push(entry);
         self.reserved = false;
     }
@@ -130,11 +140,11 @@ impl<G: DenseId, I: NodeIds, const TRACK: bool> TypedRouting<G, I, TRACK> {
     }
 
     pub fn get(&self, id: G) -> NodeRef<I> {
-        *self.entries.get(id.to_usize())
+        *self.entries.get(id.to_index())
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len().as_usize()
     }
 
     pub fn is_empty(&self) -> bool {

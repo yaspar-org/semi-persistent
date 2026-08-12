@@ -168,6 +168,38 @@ impl DirectorBits for u64 {
 // Director<W> — inline or spilled director bitmatrix
 // ---------------------------------------------------------------------------
 
+/// Bit count of a k×n matrix, checked against the 64-bit ceiling [`ops`] imposes.
+///
+/// Every [`ops`] routine packs a whole matrix into one `u64`, so `k * n` must be at
+/// most 64. Nothing enforced that: `ops::identity(9, 9)` evaluates `1u64 << 80`, which
+/// panics in debug and — because Rust *masks* the shift amount in release — becomes
+/// `1u64 << 16` there, silently producing a matrix that is not the identity. Every
+/// dimension entering the typed `Director<W>` API now routes through here, so the cap
+/// fails loudly in both profiles.
+///
+/// The product itself cannot overflow: both factors are `u8`, so it is at most 65025.
+#[inline]
+fn matrix_bits(k: u8, n: u8) -> u32 {
+    let bits = (k as u32) * (n as u32);
+    assert!(
+        bits <= 64,
+        "director matrix {k}×{n} needs {bits} bits; the matrix ops pack a matrix into a \
+         single u64 and cannot exceed 64"
+    );
+    bits
+}
+
+/// The pool entry a spilled [`Director`] names, in the pool's own index word.
+///
+/// Infallible for an index the pool handed out, since it came from an `I`. Checked
+/// anyway because `Director::new_spilled` is public: a caller can name an entry the
+/// pool could not have created, and the read should refuse rather than wrap.
+#[inline]
+fn pool_start<I: IndexLike>(pool_index: usize) -> I {
+    <I as IndexLike>::try_from_usize(pool_index)
+        .expect("director spill index exceeds the pool's index word")
+}
+
 /// A k×n bit matrix stored inline (MSB=0) or as a spill pool reference (MSB=1).
 ///
 /// When `W = ()`, this is a ZST — all methods are no-ops.
@@ -206,11 +238,26 @@ impl<W: DirectorBits> Director<W> {
     }
 
     /// Spilled matrix referencing a pool entry.
+    ///
+    /// # Capacity
+    ///
+    /// The index shares the director word with the spill tag, so only `BITS - 1` bits
+    /// are available to name a pool entry — 32768 entries for `W = u16`, a size a real
+    /// pool reaches easily. The bound is a hard `assert!` because the old
+    /// `debug_assert!` was wrong twice over: it vanished in release, and it compared
+    /// against the tag bit alone, so `0x8000` was rejected while `0x10000` passed and
+    /// then truncated to `0` in `W::from_u64`, aliasing pool entry 0.
     #[inline]
     pub fn new_spilled(pool_index: usize) -> Self {
         assert!(W::BITS > 0, "cannot spill with DIRECTOR_BITS=0");
         let idx = pool_index as u64;
-        debug_assert!(idx & W::SPILL_TAG.to_u64() == 0, "pool index overflow");
+        let capacity = 1u64 << (W::BITS - 1);
+        assert!(
+            idx < capacity,
+            "director spill index {idx} does not fit the {} bits available beside the \
+             spill tag; configure a wider DirectorBits word",
+            W::BITS - 1
+        );
         Director(W::from_u64(idx | W::SPILL_TAG.to_u64()))
     }
 
@@ -221,16 +268,24 @@ impl<W: DirectorBits> Director<W> {
     }
 
     /// Raw inline bits. Panics if spilled.
+    ///
+    /// A hard `assert!`: as a `debug_assert!` this returned the *pool index* as if it
+    /// were matrix data in release builds — a silently wrong matrix, not a crash. The
+    /// hot path (`resolve`) reads the word directly inside its `is_inline()` branch, so
+    /// nothing pays for the check twice.
     #[inline]
     pub fn inline_bits(&self) -> u64 {
-        debug_assert!(self.is_inline(), "called inline_bits on spilled matrix");
+        assert!(self.is_inline(), "called inline_bits on spilled matrix");
         self.0.to_u64()
     }
 
     /// Pool start index. Panics if inline.
+    ///
+    /// A hard `assert!` for the mirror-image reason: in release this handed back matrix
+    /// bits as a pool index, reading an unrelated entry.
     #[inline]
     pub fn pool_index(&self) -> usize {
-        debug_assert!(!self.is_inline(), "called pool_index on inline matrix");
+        assert!(!self.is_inline(), "called pool_index on inline matrix");
         (self.0.to_u64() & !W::SPILL_TAG.to_u64()) as usize
     }
 
@@ -246,28 +301,42 @@ impl<W: DirectorBits> Director<W> {
     /// For spilled, reads from pool and packs into a single u64.
     /// Panics if spilled matrix exceeds 64 bits (caller must use
     /// `resolve_pooled` for large matrices).
-    fn resolve<const TRACK: bool, const PROOFS: bool>(
+    fn resolve<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
-        pool: &DirectorPool<TRACK, PROOFS>,
+        pool: &DirectorPool<I, TRACK, PROOFS>,
     ) -> u64 {
         if W::BITS == 0 {
             return 0;
         }
         if self.is_inline() {
-            self.inline_bits()
+            // The tag is already known clear, so read the word rather than paying for
+            // `inline_bits`'s assert again.
+            self.0.to_u64()
         } else {
-            let (bit_length, data) = pool.read(self.pool_index());
+            let spilled = (self.0.to_u64() & !W::SPILL_TAG.to_u64()) as usize;
+            let (bit_length, data) = pool.read(pool_start::<I>(spilled));
             assert!(bit_length <= 64, "spilled matrix too large for resolve()");
-            if data.is_empty() { 0 } else { data[0].bits() }
+            // Reassemble across pool words. A word carries 63 matrix bits — its MSB is
+            // the `Tagged` capture bit — so a 64-bit matrix occupies two of them. The
+            // old body read `data[0]` alone and silently dropped bit 63.
+            let mut bits = 0u64;
+            for (i, w) in data.iter().enumerate() {
+                let shift = (i as u32) * PoolDirector::USABLE_BITS;
+                bits |= w
+                    .bits()
+                    .checked_shl(shift)
+                    .expect("spilled matrix wider than 64 bits reached resolve()");
+            }
+            bits
         }
     }
 
     /// Pack raw u64 bits into a Director<W>. If the bits fit inline, store
     /// directly. Otherwise spill to pool.
-    fn pack<const TRACK: bool, const PROOFS: bool>(
+    fn pack<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         bits: u64,
         total_bits: u32,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
         if W::BITS == 0 {
             return Self::zero();
@@ -276,9 +345,24 @@ impl<W: DirectorBits> Director<W> {
         if total_bits <= inline_cap && (bits & W::SPILL_TAG.to_u64()) == 0 {
             Self::new_inline(bits)
         } else {
-            let data = [PoolDirector::new(bits)];
+            // Split across pool words. A word's MSB is the `Tagged` capture bit, so it
+            // carries 63 matrix bits and a 64-bit matrix needs two. The old body wrote
+            // the single word `PoolDirector::new(bits)`; for a 64-bit matrix
+            // (`identity(8, 8)` sets bit 63) that dropped the top bit *and* set the
+            // capture tag, corrupting rollback. Only a `debug_assert!` noticed.
+            let mut data = std::vec::Vec::with_capacity(2);
+            let mut rest = bits;
+            let mut remaining = total_bits;
+            loop {
+                data.push(PoolDirector::new(rest & PoolDirector::DATA_MASK));
+                if remaining <= PoolDirector::USABLE_BITS {
+                    break;
+                }
+                rest >>= PoolDirector::USABLE_BITS;
+                remaining -= PoolDirector::USABLE_BITS;
+            }
             let start = pool.append(total_bits, &data);
-            Self::new_spilled(start)
+            Self::new_spilled(start.as_usize())
         }
     }
 
@@ -287,33 +371,39 @@ impl<W: DirectorBits> Director<W> {
     /// Extract row `i` from a k×n matrix. Returns an n-bit value with
     /// at most one bit set (the parent port that child port `i` maps to).
     /// Zero means child port `i` is unbound (consumed by a binder).
-    pub fn row_extract<const TRACK: bool, const PROOFS: bool>(
+    pub fn row_extract<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         i: u8,
         n: u8,
-        pool: &DirectorPool<TRACK, PROOFS>,
+        pool: &DirectorPool<I, TRACK, PROOFS>,
     ) -> u64 {
+        // Row `i` occupies bits `i*n .. (i+1)*n`, so the row *past* it must still fit
+        // the single u64 `ops` works in — that is what bounds the `i*n` shift.
+        matrix_bits(i.checked_add(1).expect("row index 255 has no successor"), n);
         ops::row_extract(self.resolve(pool), i, n)
     }
 
     /// Does any child port map to parent port `j`?
-    pub fn col_present<const TRACK: bool, const PROOFS: bool>(
+    pub fn col_present<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         j: u8,
         k: u8,
         n: u8,
-        pool: &DirectorPool<TRACK, PROOFS>,
+        pool: &DirectorPool<I, TRACK, PROOFS>,
     ) -> bool {
+        matrix_bits(k, n);
+        assert!(j < n, "column {j} out of range for a matrix of width {n}");
         ops::col_present(self.resolve(pool), j, k, n)
     }
 
     /// OR of all rows: which parent ports are referenced by any child port?
-    pub fn embed_bitset<const TRACK: bool, const PROOFS: bool>(
+    pub fn embed_bitset<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         k: u8,
         n: u8,
-        pool: &DirectorPool<TRACK, PROOFS>,
+        pool: &DirectorPool<I, TRACK, PROOFS>,
     ) -> u64 {
+        matrix_bits(k, n);
         ops::embed_bitset(self.resolve(pool), k, n)
     }
 
@@ -321,95 +411,120 @@ impl<W: DirectorBits> Director<W> {
 
     /// Chain two edges: outer (k_mid × n_outer) ∘ inner (k_inner × k_mid).
     /// Result is k_inner × n_outer.
-    pub fn compose<const TRACK: bool, const PROOFS: bool>(
+    pub fn compose<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         outer: &Self,
         inner: &Self,
         k_inner: u8,
         k_mid: u8,
         n_outer: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        // All three matrices pass through `ops`, so each must fit its own u64.
+        matrix_bits(k_inner, k_mid);
+        matrix_bits(k_mid, n_outer);
+        let total = matrix_bits(k_inner, n_outer);
         let ob = outer.resolve(pool);
         let ib = inner.resolve(pool);
         let result = ops::compose(ob, ib, k_inner, k_mid, n_outer);
-        Self::pack(result, (k_inner as u32) * (n_outer as u32), pool)
+        Self::pack(result, total, pool)
     }
 
     /// Parent arity grew from old_n to new_n. Re-lay rows to wider width.
-    pub fn widen_columns<const TRACK: bool, const PROOFS: bool>(
+    pub fn widen_columns<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         k: u8,
         old_n: u8,
         new_n: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        // `new_n >= old_n`, so the wider result dominates: one check bounds both.
+        let total = matrix_bits(k, new_n);
         let bits = self.resolve(pool);
         let result = ops::widen_columns(bits, k, old_n, new_n);
-        Self::pack(result, (k as u32) * (new_n as u32), pool)
+        Self::pack(result, total, pool)
     }
 
     /// Child arity grew from old_k to new_k. New rows are zero.
-    pub fn add_zero_rows<const TRACK: bool, const PROOFS: bool>(
+    pub fn add_zero_rows<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         old_k: u8,
         new_k: u8,
         n: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        // `new_k >= old_k`, so the taller result dominates: one check bounds both.
+        let total = matrix_bits(new_k, n);
         let bits = self.resolve(pool);
         let result = ops::add_zero_rows(bits, old_k, new_k, n);
-        Self::pack(result, (new_k as u32) * (n as u32), pool)
+        Self::pack(result, total, pool)
     }
 
     /// Reorder rows according to a permutation (port reconciliation on merge).
-    pub fn permute_rows<const TRACK: bool, const PROOFS: bool>(
+    pub fn permute_rows<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         perm: &[u8],
         k: u8,
         n: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        let total = matrix_bits(k, n);
         let bits = self.resolve(pool);
         let result = ops::permute_rows(bits, perm, k, n);
-        Self::pack(result, (k as u32) * (n as u32), pool)
+        Self::pack(result, total, pool)
     }
 
     /// Introduce `d` bound variable ports. Input k×n → result (k+d)×(n+d).
-    pub fn shift<const TRACK: bool, const PROOFS: bool>(
+    pub fn shift<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         k: u8,
         n: u8,
         d: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        // `k + d` and `n + d` were unchecked `u8` adds. The grown matrix dominates the
+        // input, so checking it bounds both — including the `n + d` add `ops::shift`
+        // repeats internally.
+        let new_k = k.checked_add(d).expect("child arity overflow (max 255)");
+        let new_n = n.checked_add(d).expect("parent arity overflow (max 255)");
+        let total = matrix_bits(new_k, new_n);
         let bits = self.resolve(pool);
         let result = ops::shift(bits, k, n, d);
-        Self::pack(result, ((k + d) as u32) * ((n + d) as u32), pool)
+        Self::pack(result, total, pool)
     }
 
     /// Eliminate parent port `j` (substitution). Input k×n → result k×(n-1).
-    pub fn delete_column<const TRACK: bool, const PROOFS: bool>(
+    pub fn delete_column<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         &self,
         j: u8,
         k: u8,
         n: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        // `n - 1` was an unchecked `u8` sub: `n == 0` wrapped to 255 in release, and
+        // the `debug_assert!(n > 0)` inside `ops::delete_column` was gone by then.
+        let new_n = n
+            .checked_sub(1)
+            .expect("delete_column on a matrix with no columns");
+        assert!(j < n, "column {j} out of range for a matrix of width {n}");
+        // The input dominates the result (`k*n >= k*(n-1)`), so check it too.
+        matrix_bits(k, n);
+        let total = matrix_bits(k, new_n);
         let bits = self.resolve(pool);
         let result = ops::delete_column(bits, j, k, n);
-        Self::pack(result, (k as u32) * ((n - 1) as u32), pool)
+        Self::pack(result, total, pool)
     }
 
     // -- Constructors ---------------------------------------------------------
 
     /// k×n identity matrix. Spills if k*n exceeds inline capacity.
-    pub fn identity<const TRACK: bool, const PROOFS: bool>(
+    pub fn identity<I: IndexLike, const TRACK: bool, const PROOFS: bool>(
         k: u8,
         n: u8,
-        pool: &mut DirectorPool<TRACK, PROOFS>,
+        pool: &mut DirectorPool<I, TRACK, PROOFS>,
     ) -> Self {
+        let total = matrix_bits(k, n);
         let bits = ops::identity(k, n);
-        Self::pack(bits, (k as u32) * (n as u32), pool)
+        Self::pack(bits, total, pool)
     }
 }
 
@@ -474,6 +589,8 @@ impl Default for PoolDirector {
 impl PoolDirector {
     /// Usable bits per pool word (64 - 1 tag bit).
     pub const USABLE_BITS: u32 = 63;
+    /// Mask selecting the usable bits, i.e. everything but the tag.
+    pub const DATA_MASK: u64 = !Self::TAG_BIT;
     const TAG_BIT: u64 = 1 << 63;
 
     #[inline]
@@ -530,26 +647,38 @@ impl Tagged for PoolDirector {
 ///   `pool[start]`     = bit_length (as PoolDirector)
 ///   `pool[start+1..]` = matrix data, `ceil(bit_length / 63)` words
 ///
-/// The working pool is a `VecI<PoolDirector, u32, TRACK>` — supports in-place
+/// The working pool is a `VecI<PoolDirector, I, TRACK>` — supports in-place
 /// mutation (for re-canonization during rebuild) with capture tracking.
 ///
 /// When `PROOFS = true`, a separate append-only proof pool snapshots
 /// spilled matrices at copy-on-first-recanonicalization time. The proof
 /// pool is never truncated during working rollback.
-pub struct DirectorPool<const TRACK: bool = true, const PROOFS: bool = false> {
+///
+/// # Index width
+///
+/// `I` is the pool's index word. It was hard-coded to `u32`, capping the pool at 4 G
+/// words (32 GB) whatever id family the session configured — a ceiling a 63-bit
+/// configuration can reach. The word is also what the capture journal stores per
+/// touched entry, so it should be the narrowest type that spans the pool, not `usize`.
+/// A tighter bound applies from the other side: a `Director<W>` names an entry in
+/// `W::BITS - 1` bits (see [`Director::new_spilled`]), so an `I` wider than that buys
+/// nothing.
+pub struct DirectorPool<I: IndexLike = u32, const TRACK: bool = true, const PROOFS: bool = false> {
     /// Working pool: mutable, capture-tracked, rollback by restore.
-    work: VecI<PoolDirector, u32, TRACK>,
+    work: VecI<PoolDirector, I, TRACK>,
     /// Proof pool: append-only, survives working rollback.
-    proof: AppendOnlyVec<PoolDirector, usize, TRACK>,
+    proof: AppendOnlyVec<PoolDirector, I, TRACK>,
 }
 
-impl<const TRACK: bool, const PROOFS: bool> Default for DirectorPool<TRACK, PROOFS> {
+impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> Default
+    for DirectorPool<I, TRACK, PROOFS>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const TRACK: bool, const PROOFS: bool> DirectorPool<TRACK, PROOFS> {
+impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK, PROOFS> {
     pub fn new() -> Self {
         Self {
             work: VecI::with_store(Default::default()),
@@ -560,8 +689,12 @@ impl<const TRACK: bool, const PROOFS: bool> DirectorPool<TRACK, PROOFS> {
     // -- Working pool ---------------------------------------------------------
 
     /// Append a spilled matrix to the working pool. Returns the start index.
-    pub fn append(&mut self, bit_length: u32, data: &[PoolDirector]) -> usize {
-        let start = self.work.len().as_usize();
+    ///
+    /// Growth past `I`'s range is caught by the container's overflow protocol: `push`
+    /// carries no check of its own, and the next `len()` read — the one this method
+    /// starts with — traps.
+    pub fn append(&mut self, bit_length: u32, data: &[PoolDirector]) -> I {
+        let start = self.work.len();
         self.work.push(PoolDirector::new(bit_length as u64));
         for &w in data {
             self.work.push(w);
@@ -570,34 +703,38 @@ impl<const TRACK: bool, const PROOFS: bool> DirectorPool<TRACK, PROOFS> {
     }
 
     /// Read bit_length from a working pool entry.
-    pub fn bit_length(&self, start: usize) -> u32 {
-        self.work.get(start as u32).bits() as u32
+    pub fn bit_length(&self, start: I) -> u32 {
+        self.work.get(start).bits() as u32
     }
 
     /// Get a single working pool word by index.
-    pub fn get(&self, idx: u32) -> PoolDirector {
+    pub fn get(&self, idx: I) -> PoolDirector {
         self.work.get(idx)
     }
 
     /// Mutate a working pool word in place (for re-canonization).
-    pub fn set(&mut self, idx: u32, val: PoolDirector) {
+    pub fn set(&mut self, idx: I, val: PoolDirector) {
         self.work.set(idx, val);
     }
 
     /// Read a spilled matrix from the working pool.
-    pub fn read(&self, start: usize) -> (u32, std::vec::Vec<PoolDirector>) {
-        let bit_length = self.work.get(start as u32).bits() as u32;
+    pub fn read(&self, start: I) -> (u32, std::vec::Vec<PoolDirector>) {
+        let bit_length = self.work.get(start).bits() as u32;
         let word_count = ceil_div(bit_length, PoolDirector::USABLE_BITS);
         let mut data = std::vec::Vec::with_capacity(word_count);
         for i in 0..word_count {
-            data.push(self.work.get((start + 1 + i) as u32));
+            // `start + 1 + i` was `(start + 1 + i) as u32`, which wrapped silently and
+            // read an unrelated entry. Checked, so a forged `start` cannot alias.
+            let at = crate::containers::index_like::checked_add_usize(start, i + 1)
+                .expect("director pool entry extends past the pool's index word");
+            data.push(self.work.get(at));
         }
         (bit_length, data)
     }
 
-    /// Current working pool length.
-    pub fn len(&self) -> usize {
-        self.work.len().as_usize()
+    /// Current working pool length, in the pool's index word.
+    pub fn len(&self) -> I {
+        self.work.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -618,7 +755,11 @@ impl<const TRACK: bool, const PROOFS: bool> DirectorPool<TRACK, PROOFS> {
 
     /// Snapshot a spilled matrix into the proof pool (copy-on-first-recanon).
     /// Returns the start index in the proof pool.
-    pub fn snapshot_to_proof(&mut self, work_start: usize) -> usize {
+    ///
+    /// The proof pool shares the working pool's index word: both address the same
+    /// spilled matrices, one live and one archived, so a start index that fits `I` in
+    /// the working pool fits `I` here.
+    pub fn snapshot_to_proof(&mut self, work_start: I) -> I {
         assert!(PROOFS, "snapshot_to_proof called with PROOFS=false");
         let (bit_length, data) = self.read(work_start);
         let proof_start = self.proof.len();
@@ -630,18 +771,23 @@ impl<const TRACK: bool, const PROOFS: bool> DirectorPool<TRACK, PROOFS> {
     }
 
     /// Read a spilled matrix from the proof pool.
-    pub fn read_proof(&self, start: usize) -> (u32, std::vec::Vec<PoolDirector>) {
+    pub fn read_proof(&self, start: I) -> (u32, std::vec::Vec<PoolDirector>) {
         let bit_length = self.proof.get(start).bits() as u32;
         let word_count = ceil_div(bit_length, PoolDirector::USABLE_BITS);
         let mut data = std::vec::Vec::with_capacity(word_count);
         for i in 0..word_count {
-            data.push(*self.proof.get(start + 1 + i));
+            // Same protocol as `read`: the header sits at `start` and the payload
+            // follows, so the last word is `start + word_count` and the sum is
+            // checked rather than wrapped.
+            let at = crate::containers::index_like::checked_add_usize(start, i + 1)
+                .expect("proof pool entry extends past the pool's index word");
+            data.push(*self.proof.get(at));
         }
         (bit_length, data)
     }
 
     /// Proof pool length.
-    pub fn proof_len(&self) -> usize {
+    pub fn proof_len(&self) -> I {
         self.proof.len()
     }
 }
@@ -660,20 +806,41 @@ fn ceil_div(a: u32, b: u32) -> usize {
 /// Layout: row-major, k rows of n bits each. Bit (i,j) at position i*n + j.
 /// Row i represents child port i. At most one bit set per row (injection).
 /// Bit (i,j) = 1 means child port i maps to parent port j.
+///
+/// # Preconditions
+///
+/// The whole matrix lives in one `u64`, so every caller owes `k * n <= 64`, `i < k`,
+/// and `j < n`. These are not checked here — the shifts would be masked rather than
+/// trap in release, so a violation is silently wrong rather than loud. The typed
+/// [`Director<W>`](super::Director) API validates them (see `matrix_bits`) before it
+/// calls in; a direct caller of these functions is on its own.
 pub mod ops {
+    /// Mask of the low `n` bits — one row's width.
+    ///
+    /// `1u64 << n` overflows at `n == 64`, which a 1×64 matrix reaches. Release builds
+    /// mask the shift amount, so `n == 64` yielded the mask for `n == 0`: zero, making
+    /// every read of such a matrix come back empty.
+    #[inline]
+    fn row_mask(n: u8) -> u64 {
+        match 1u64.checked_shl(n as u32) {
+            Some(v) => v - 1,
+            // n >= 64: the whole word is a single row.
+            None => u64::MAX,
+        }
+    }
+
     /// Extract row `i` from a k×n matrix (n-bit value, at most one bit set).
     #[inline]
     pub fn row_extract(bits: u64, i: u8, n: u8) -> u64 {
         let shift = (i as u32) * (n as u32);
-        let mask = (1u64 << n) - 1;
-        (bits >> shift) & mask
+        (bits >> shift) & row_mask(n)
     }
 
     /// Set row `i` in a k×n matrix to `val`.
     #[inline]
     pub fn row_set(bits: u64, i: u8, n: u8, val: u64) -> u64 {
         let shift = (i as u32) * (n as u32);
-        let mask = (1u64 << n) - 1;
+        let mask = row_mask(n);
         (bits & !(mask << shift)) | ((val & mask) << shift)
     }
 
@@ -691,7 +858,7 @@ pub mod ops {
     /// Which parent ports are used? OR of all rows.
     #[inline]
     pub fn embed_bitset(bits: u64, k: u8, n: u8) -> u64 {
-        let mask = (1u64 << n) - 1;
+        let mask = row_mask(n);
         let mut result = 0u64;
         for i in 0..k {
             result |= row_extract(bits, i, n);
@@ -769,7 +936,7 @@ pub mod ops {
     /// Shift: introduce d bound ports. Input is k×n, result is (k+d)×(n+d).
     /// Rows 0..d are zero (bound ports). Row d+i = row i shifted right by d.
     pub fn shift(bits: u64, k: u8, n: u8, d: u8) -> u64 {
-        let new_n = n + d;
+        let new_n = n.checked_add(d).expect("parent arity overflow (max 255)");
         let mut result = 0u64;
         // rows 0..d are zero (implicit)
         for i in 0..k {
@@ -783,14 +950,18 @@ pub mod ops {
     /// Delete column j: input is k×n, result is k×(n-1).
     /// Bits above column j shift down by 1.
     pub fn delete_column(bits: u64, j: u8, k: u8, n: u8) -> u64 {
-        debug_assert!(n > 0);
-        let new_n = n - 1;
+        let new_n = n
+            .checked_sub(1)
+            .expect("delete_column on a matrix with no columns");
         let mut result = 0u64;
         for i in 0..k {
             let row = row_extract(bits, i, n);
-            // Remove bit j: keep low bits, shift high bits down
-            let lo = row & ((1u64 << j) - 1);
-            let hi = (row >> (j + 1)) << j;
+            // Remove bit j: keep low bits, shift high bits down.
+            let lo = row & row_mask(j);
+            // `j + 1` reaches 64 when j is the top column of a 1×64 matrix, and `>>` by
+            // 64 is masked to a no-op in release — which left `hi == row`, reinstating
+            // the column being deleted.
+            let hi = row.checked_shr(j as u32 + 1).unwrap_or(0) << j;
             result |= (lo | hi) << ((i as u32) * (new_n as u32));
         }
         result
@@ -902,7 +1073,7 @@ mod tests {
 
     #[test]
     fn dir_pool_append_read() {
-        let mut pool = DirectorPool::<false, false>::new();
+        let mut pool = DirectorPool::<u32, false, false>::new();
         let data = [PoolDirector::new(0b1010101), PoolDirector::new(0b1100110)];
         let start = pool.append(126, &data);
         let (len, words) = pool.read(start);
@@ -914,7 +1085,7 @@ mod tests {
 
     #[test]
     fn dir_pool_mark_restore() {
-        let mut pool = DirectorPool::<true, false>::new();
+        let mut pool = DirectorPool::<u32, true, false>::new();
         let token = pool.mark(crate::containers::ShrinkPolicy::Never);
         pool.append(63, &[PoolDirector::new(0xFF)]);
         pool.append(63, &[PoolDirector::new(0xAA)]);
@@ -925,20 +1096,20 @@ mod tests {
 
     #[test]
     fn dir_pool_mutate_in_place() {
-        let mut pool = DirectorPool::<false, false>::new();
+        let mut pool = DirectorPool::<u32, false, false>::new();
         let start = pool.append(63, &[PoolDirector::new(0xFF)]);
-        assert_eq!(pool.get((start + 1) as u32).bits(), 0xFF);
-        pool.set((start + 1) as u32, PoolDirector::new(0xAB));
-        assert_eq!(pool.get((start + 1) as u32).bits(), 0xAB);
+        assert_eq!(pool.get(start + 1).bits(), 0xFF);
+        pool.set(start + 1, PoolDirector::new(0xAB));
+        assert_eq!(pool.get(start + 1).bits(), 0xAB);
     }
 
     #[test]
     fn dir_pool_proof_snapshot() {
-        let mut pool = DirectorPool::<false, true>::new();
+        let mut pool = DirectorPool::<u32, false, true>::new();
         let start = pool.append(63, &[PoolDirector::new(0x42)]);
         let proof_start = pool.snapshot_to_proof(start);
         // mutate working copy
-        pool.set((start + 1) as u32, PoolDirector::new(0x99));
+        pool.set(start + 1, PoolDirector::new(0x99));
         // proof copy unchanged
         let (len, data) = pool.read_proof(proof_start);
         assert_eq!(len, 63);
@@ -948,11 +1119,102 @@ mod tests {
         assert_eq!(wdata[0].bits(), 0x99);
     }
 
+    // -- Width / overflow regressions ------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "does not fit")]
+    fn spill_index_past_word_capacity_panics() {
+        // `u16` leaves 15 bits beside the spill tag, so 32768 entries is the ceiling —
+        // a size a real pool reaches. The old `debug_assert!` compared against the tag
+        // bit alone, which this value passes, and then `W::from_u64` truncated it to 0.
+        Director::<u16>::new_spilled(1 << 15);
+    }
+
+    #[test]
+    fn spill_index_at_word_capacity_boundary() {
+        let m = Director::<u16>::new_spilled((1 << 15) - 1);
+        assert!(!m.is_inline());
+        assert_eq!(m.pool_index(), (1 << 15) - 1);
+    }
+
+    #[test]
+    fn full_64_bit_matrix_survives_the_pool() {
+        // 8×8 identity is exactly 64 bits and sets bit 63. A pool word has 63 usable
+        // bits (its MSB is the `Tagged` capture bit), so this needs two words. Packing
+        // it into one dropped bit 63 *and* set the capture tag on the word.
+        let mut pool = DirectorPool::<u32, false, false>::new();
+        let m = Director::<u64>::identity(8, 8, &mut pool);
+        assert!(!m.is_inline(), "64 bits exceed u64's 63 inline bits");
+        let (bit_length, words) = pool.read(pool_start::<u32>(m.pool_index()));
+        assert_eq!(bit_length, 64);
+        assert_eq!(words.len(), 2, "63 usable bits per pool word");
+        for w in &words {
+            assert!(!PoolDirector::tag(w), "capture tag must stay clear");
+        }
+        // Row 7 maps child port 7 to parent port 7 — bit 63, the one that was lost.
+        assert_eq!(m.row_extract(7, 8, &pool), 1 << 7);
+        assert_eq!(m.embed_bitset(8, 8, &pool), 0xFF);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot exceed 64")]
+    fn oversized_matrix_dimensions_panic() {
+        // 9×9 = 81 bits. `ops::identity` evaluated `1u64 << 80`, which release builds
+        // mask to `<< 16`, silently returning a matrix that is not the identity.
+        let mut pool = DirectorPool::<u32, false, false>::new();
+        Director::<u64>::identity(9, 9, &mut pool);
+    }
+
+    #[test]
+    fn single_row_64_columns() {
+        // n == 64 overflows `1u64 << n` in the row mask; release builds masked the
+        // shift to 0, so every read of such a matrix came back empty.
+        let mut pool = DirectorPool::<u32, false, false>::new();
+        let m = Director::<u64>::identity(1, 64, &mut pool);
+        assert_eq!(m.row_extract(0, 64, &pool), 1);
+        // Deleting the top column shifts by `j + 1 == 64` — masked to a no-op in
+        // release, which left the deleted column in place.
+        let d = m.delete_column(63, 1, 64, &mut pool);
+        assert_eq!(d.row_extract(0, 63, &pool), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "no columns")]
+    fn delete_column_on_empty_width_panics() {
+        // `n - 1` wrapped to 255 in release once the `debug_assert!(n > 0)` was gone.
+        let mut pool = DirectorPool::<u32, false, false>::new();
+        let m = Director::<u32>::zero();
+        m.delete_column(0, 1, 0, &mut pool);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn delete_nonexistent_column_panics() {
+        let mut pool = DirectorPool::<u32, false, false>::new();
+        let m = Director::<u32>::identity(2, 2, &mut pool);
+        m.delete_column(2, 2, 2, &mut pool);
+    }
+
+    #[test]
+    fn pool_index_word_narrower_than_u32() {
+        // The pool is generic over its index word, so a small pool can be addressed in
+        // a `u16` rather than paying 4 bytes per journal entry.
+        let mut pool = DirectorPool::<u16, true, false>::new();
+        let token = pool.mark(crate::containers::ShrinkPolicy::Never);
+        let start: u16 = pool.append(63, &[PoolDirector::new(0x5A)]);
+        assert_eq!(pool.len(), 2u16);
+        assert_eq!(pool.read(start).1[0].bits(), 0x5A);
+        pool.set(start + 1, PoolDirector::new(0xA5));
+        assert_eq!(pool.get(start + 1).bits(), 0xA5);
+        pool.restore(token);
+        assert!(pool.is_empty());
+    }
+
     // -- Typed Director<W> API tests -------------------------------------------
 
     #[test]
     fn typed_api_inline() {
-        let mut pool = DirectorPool::<false, false>::new();
+        let mut pool = DirectorPool::<u32, false, false>::new();
         // 2×3 identity via typed API
         let m = Director::<u32>::identity(2, 3, &mut pool);
         assert!(m.is_inline());
@@ -966,7 +1228,7 @@ mod tests {
 
     #[test]
     fn typed_api_compose() {
-        let mut pool = DirectorPool::<false, false>::new();
+        let mut pool = DirectorPool::<u32, false, false>::new();
         let id = Director::<u32>::identity(2, 2, &mut pool);
         let m = Director::<u32>::new_inline(0b10_01); // 2×2: row0=01, row1=10
         let c = Director::compose(&id, &m, 2, 2, 2, &mut pool);
@@ -975,7 +1237,7 @@ mod tests {
 
     #[test]
     fn typed_api_shift_delete_roundtrip() {
-        let mut pool = DirectorPool::<false, false>::new();
+        let mut pool = DirectorPool::<u32, false, false>::new();
         let m = Director::<u32>::identity(2, 2, &mut pool);
         let shifted = m.shift(2, 2, 1, &mut pool);
         // 3×3: row0=000, row1=010, row2=100
@@ -993,7 +1255,7 @@ mod tests {
     #[test]
     fn typed_api_spill_and_read() {
         // Use u16 (15 inline bits) and force a matrix that needs > 15 bits
-        let mut pool = DirectorPool::<false, false>::new();
+        let mut pool = DirectorPool::<u32, false, false>::new();
         // 4×4 identity = 16 bits, exceeds u16 inline (15 bits)
         let m = Director::<u16>::identity(4, 4, &mut pool);
         assert!(!m.is_inline(), "4×4 should spill with u16");

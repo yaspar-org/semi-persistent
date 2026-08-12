@@ -6,8 +6,10 @@ use crate::canon::{MSetCanon, MSetClamp, VarCanon};
 use crate::classes::EClasses;
 use crate::config::EGraphConfig;
 use crate::containers::DenseId;
+use crate::containers::IndexLike;
 use crate::containers::ShrinkPolicy;
 use crate::literal::{LitVal, LitValStore, LitValStoreToken};
+use crate::multiplicity::MultiplicityLike;
 use crate::node_store::{Added, NodeStore, NodeStoreToken};
 use crate::registry::{
     AxiomRegistry, AxiomRegistryToken, OpKind, OpRegistry, OpRegistryToken, RuleRegistry,
@@ -88,8 +90,8 @@ pub struct EGraph<
     /// Reusable scratch for comparing two nodes' AC monomials (`monomial_cmp` on the
     /// per-class `min_monomial`, §9a). Two buffers to hold both sides without aliasing;
     /// cleared and refilled per comparison, never grown per merge.
-    cmp_buf_a: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
-    cmp_buf_b: Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
+    cmp_buf_a: Vec<(Cfg::G, Cfg::M)>,
+    cmp_buf_b: Vec<(Cfg::G, Cfg::M)>,
     /// Reusable scratch for flattening nested same-op AC children (`WF_flat`,
     /// design §6c). Worklist of children still to expand; never grown per add.
     flatten_buf: Vec<Cfg::G>,
@@ -99,13 +101,13 @@ pub struct EGraph<
     /// here rather than on `OpKind<S>` because a node id is `Cfg::G`, which `OpKind<S>` cannot
     /// carry. Semi-persistent (its own token), so it rolls back with the op declarations that
     /// created the units. Absent key = the op has no declared identity.
-    unit_node: crate::containers::SpMap<Cfg::O, Cfg::G, usize, TRACK>,
+    unit_node: crate::containers::SpMap<Cfg::O, Cfg::G, <Cfg::O as DenseId>::Index, TRACK>,
     /// Per-op group inverse operator, for AC ops declared with `:inverse neg`
     /// (`x ∘ neg(x) = e`). Resolved to a real op id at registration (sortcheck validates
     /// the unary signature). Same persistence story as `unit_node`. Absent key = no
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
-    inverse_op: crate::containers::SpMap<Cfg::O, Cfg::O, usize, TRACK>,
+    inverse_op: crate::containers::SpMap<Cfg::O, Cfg::O, <Cfg::O as DenseId>::Index, TRACK>,
     /// Outcome of the most recent `rebuild` when `cc` is enabled. Lets callers distinguish
     /// convergence from a growth-budget abort. `None` if completion hasn't run yet.
     completion_outcome: Option<CompletionOutcome>,
@@ -144,6 +146,10 @@ pub type EGraph31<L, const TRACK: bool = true, const PROOFS: bool = false> =
 /// Type alias for the 63-bit configuration.
 pub type EGraph63<L, const TRACK: bool = true, const PROOFS: bool = false> =
     EGraph<crate::nodes::Config64, L, TRACK, PROOFS>;
+
+/// Type alias for 31-bit ids with a 16-bit multiplicity ([`crate::nodes::ConfigM16`]).
+pub type EGraphM16<L, const TRACK: bool = true, const PROOFS: bool = false> =
+    EGraph<crate::nodes::ConfigM16, L, TRACK, PROOFS>;
 
 impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool> Default
     for EGraph<Cfg, L, TRACK, PROOFS>
@@ -241,6 +247,23 @@ where
     }
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// Every node id in the store, ascending.
+    ///
+    /// The one place a full scan should get its ids from. The obvious spelling —
+    /// `for i in 0..eg.len() { Cfg::G::from_usize(i) }` — is sound but not *locally*
+    /// sound: `DenseId::from_usize` masks, and the routing table is indexed by
+    /// `Cfg::G::Index`, a word that spans twice the id space for a bit-stealing id. What
+    /// keeps the table inside the id space is that [`TypedRouting::reserve`] mints every
+    /// entry through `try_new`, three modules away. Stating that once here means a new
+    /// scan inherits the argument instead of re-deriving it — or, more likely, not
+    /// noticing it needed one.
+    ///
+    /// [`TypedRouting::reserve`]: crate::typed_routing::TypedRouting::reserve
+    pub fn node_ids(&self) -> impl Iterator<Item = Cfg::G> + '_ {
+        use crate::containers::DenseId;
+        (0..self.len()).map(Cfg::G::from_usize)
     }
     pub fn sorts(&self) -> &SortRegistry<Cfg::S, TRACK> {
         &self.sorts
@@ -354,16 +377,15 @@ where
     /// the unit, which canonical monomials do not carry (`f({}) = e`). Returns whether the
     /// monomial changed; zeroed entries are dropped. This is NOT full group completion —
     /// no Gaussian elimination, and pairs whose inverse node was never built are not seen.
-    pub(crate) fn group_cancel_pairs(
-        &self,
-        inv: Cfg::O,
-        m: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
-    ) -> bool {
-        use crate::multiplicity::Multiplicity;
+    /// Cancels `:inverse`-related summand pairs in place, at the configured
+    /// multiplicity width. Purely subtractive — `rem_order(2)` and pairwise
+    /// cancellation by the smaller of two counts — so no step can overflow.
+    pub(crate) fn group_cancel_pairs(&self, inv: Cfg::O, m: &mut Vec<(Cfg::G, Cfg::M)>) -> bool {
+        let zero = Cfg::M::ZERO;
         let mut changed = false;
         for i in 0..m.len() {
-            let (x, xc) = (m[i].0, m[i].1.0);
-            if xc == 0 {
+            let (x, xc) = (m[i].0, m[i].1);
+            if xc == zero {
                 continue;
             }
             let Some(inv_node) = self.nodes.plain1.probe(&inv, &[x]) else {
@@ -372,23 +394,27 @@ where
             let y = self.classes.find_const(inv_node);
             if y == x {
                 // x is its own inverse: copies cancel pairwise (x ∘ x = e here).
-                if xc >= 2 {
-                    m[i].1 = Multiplicity(xc % 2);
+                if xc
+                    >= Cfg::M::ONE
+                        .checked_add(Cfg::M::ONE)
+                        .expect("2 fits every width")
+                {
+                    m[i].1 = xc.rem_order(2);
                     changed = true;
                 }
             } else if let Ok(j) = m.binary_search_by(|p| p.0.cmp(&y)) {
                 // The probe is one-directional (inv(y)'s node may not exist), so cancel
                 // eagerly on first sight; the mirrored visit then finds a zeroed side.
-                let k = m[i].1.0.min(m[j].1.0);
-                if k > 0 {
-                    m[i].1 = Multiplicity(m[i].1.0 - k);
-                    m[j].1 = Multiplicity(m[j].1.0 - k);
+                let k = m[i].1.min(m[j].1);
+                if k > zero {
+                    m[i].1 = m[i].1.saturating_sub(k);
+                    m[j].1 = m[j].1.saturating_sub(k);
                     changed = true;
                 }
             }
         }
         if changed {
-            m.retain(|p| p.1.0 != 0);
+            m.retain(|p| p.1 != zero);
         }
         changed
     }
@@ -407,7 +433,7 @@ where
     /// Run a compiled query plan against this e-graph.
     pub fn run_query(
         &self,
-        plan: &crate::schedule::QueryPlan<Cfg::O>,
+        plan: &crate::schedule::QueryPlan<Cfg::O, Cfg::Index>,
     ) -> Vec<crate::ematch::Match<Cfg>> {
         let index = crate::index::IndexStore::build(self);
         let vindex = crate::index::VariantIndex::naive(&index);
@@ -564,46 +590,38 @@ where
                 // buffer through the config accessors around the shared call. Nilpotent-only, so
                 // the conversion never touches the common plain-AC / idempotent build.
                 if let crate::registry::Clamp::Nilpotent { order } = self.op_clamp_kind(op) {
-                    use crate::multiplicity::Multiplicity;
                     // prod-parity: `clamp_multiset` operates on `Pair<G, Mult>`
                     // (was `(G, Mult)`; Verus can't impl `Tagged` for a tuple).
-                    let mut tuples: Vec<crate::containers::Pair<Cfg::G, Multiplicity>> = self
+                    // The pair carries `Cfg::M` directly — no narrowing round trip
+                    // through a fixed width, which is what used to truncate here.
+                    let mut tuples: Vec<crate::containers::Pair<Cfg::G, Cfg::M>> = self
                         .mset_buf
                         .iter()
                         .map(|c| crate::containers::Pair {
                             a: Cfg::mset_child_id(c),
-                            b: Multiplicity(Cfg::mset_child_mult(c).into()),
+                            b: Cfg::mset_child_mult(c),
                         })
                         .collect();
                     MSetCanon::clamp_multiset(&mut tuples, MSetClamp::Nilpotent { order });
                     self.mset_buf.clear();
-                    self.mset_buf.extend(
-                        tuples
-                            .iter()
-                            .map(|p| Cfg::mset_child_with_mult(p.a, Cfg::M::from(p.b.0))),
-                    );
+                    self.mset_buf
+                        .extend(tuples.iter().map(|p| Cfg::mset_child_with_mult(p.a, p.b)));
                 }
                 // Group inverse-pair cancellation (`x ∘ inv(x) = e`): summand pairs related
                 // by the op's declared `:inverse` cancel at build, like the unit drop. Rare
                 // (inverse ops only), so the tuple conversion is off the common path.
                 if let Some(inv) = self.inverse_op(op) {
-                    use crate::multiplicity::Multiplicity;
-                    let mut tuples: Vec<(Cfg::G, Multiplicity)> = self
+                    let mut tuples: Vec<(Cfg::G, Cfg::M)> = self
                         .mset_buf
                         .iter()
-                        .map(|c| {
-                            (
-                                Cfg::mset_child_id(c),
-                                Multiplicity(Cfg::mset_child_mult(c).into()),
-                            )
-                        })
+                        .map(|c| (Cfg::mset_child_id(c), Cfg::mset_child_mult(c)))
                         .collect();
                     if self.group_cancel_pairs(inv, &mut tuples) {
                         self.mset_buf.clear();
                         self.mset_buf.extend(
                             tuples
                                 .iter()
-                                .map(|(g, m)| Cfg::mset_child_with_mult(*g, Cfg::M::from(m.0))),
+                                .map(|(g, m)| Cfg::mset_child_with_mult(*g, *m)),
                         );
                     }
                 }
@@ -621,7 +639,7 @@ where
                              the empty monomial has no algebraic meaning for a semigroup op"
                         ),
                     },
-                    1 if Cfg::mset_child_mult(&self.mset_buf[0]).into() == 1 => {
+                    1 if Cfg::mset_child_mult(&self.mset_buf[0]) == Cfg::M::ONE => {
                         return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
                     }
                     _ => self.nodes.add_mset(op, &self.mset_buf),
@@ -716,12 +734,7 @@ where
     /// Fill `buf` with `node`'s monomial for `monomial_cmp`: its canonical AC child
     /// multiset if it is an AC node, else the singleton `{node}` (a non-AC node is a
     /// size-1 monomial, §9b). Children are `find`-canonicalized and coalesced.
-    pub(crate) fn node_monomial_into(
-        &self,
-        node: Cfg::G,
-        buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
-    ) {
-        use crate::multiplicity::Multiplicity;
+    pub(crate) fn node_monomial_into(&self, node: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) {
         buf.clear();
         match self.node_ref(node) {
             NodeRef::MSet(_) => {
@@ -729,13 +742,22 @@ where
                 // destination (same form as MSetCanon) — no intermediate Vec (adversarial
                 // analysis A3: this `_into` used to allocate twice internally).
                 self.for_each_child(node, |g, mult| {
-                    buf.push((self.classes.find_const(g), Multiplicity(mult)));
+                    buf.push((self.classes.find_const(g), mult));
                 });
                 buf.sort_by_key(|p| p.0);
                 let mut w = 0usize;
                 for r in 1..buf.len() {
                     if buf[r].0 == buf[w].0 {
-                        buf[w].1 = Multiplicity(buf[w].1.0 + buf[r].1.0);
+                        // Coalescing after find-canonicalization is the one step here
+                        // that grows a multiplicity, so it is the one that can exceed
+                        // the configured width. Detected, not wrapped: a wrapped sum
+                        // would shrink the monomial — to zero at exactly the wrong
+                        // values — and the caller's clamps would then drop the summand,
+                        // making the e-graph assert an equality that does not hold.
+                        buf[w].1 = buf[w].1.checked_add(buf[r].1).expect(
+                            "monomial coalescing overflowed EGraphConfig::M; \
+                             the configured multiplicity width is too narrow for this e-graph",
+                        );
                     } else {
                         w += 1;
                         buf[w] = buf[r];
@@ -750,13 +772,13 @@ where
                 // (two summands whose classes merged count once, the idempotent join).
                 // This is the ACI monomial, same form as SetCanon.
                 self.for_each_child(node, |g, _| {
-                    buf.push((self.classes.find_const(g), Multiplicity(1)));
+                    buf.push((self.classes.find_const(g), Cfg::M::ONE));
                 });
                 buf.sort_by_key(|p| p.0);
                 buf.dedup_by_key(|p| p.0);
             }
             _ => {
-                buf.push((self.classes.find_const(node), Multiplicity(1)));
+                buf.push((self.classes.find_const(node), Cfg::M::ONE));
             }
         }
         // No clamp / unit-drop here: canonization (`add`, `recanonize_node`) already established
@@ -832,12 +854,7 @@ where
     /// (which has no `f(x,e) = x` law) can never remove and that no stored node matches
     /// (canonization unit-drops). The empty-monomial form folds the identity law into the
     /// representation, so rewriting can never insert a unit anywhere.
-    pub(crate) fn class_rhs_into(
-        &self,
-        node: Cfg::G,
-        buf: &mut Vec<(Cfg::G, crate::multiplicity::Multiplicity)>,
-    ) -> bool {
-        use crate::multiplicity::Multiplicity;
+    pub(crate) fn class_rhs_into(&self, node: Cfg::G, buf: &mut Vec<(Cfg::G, Cfg::M)>) -> bool {
         let cls = self.classes.find_const(node);
         let Some(repr) = self.classes.repr_id(cls) else {
             return false;
@@ -851,7 +868,7 @@ where
         }
         if self.classes.atomic(repr) {
             buf.clear();
-            buf.push((cls, Multiplicity(1)));
+            buf.push((cls, Cfg::M::ONE));
             return true;
         }
         let Some(col) = self.completion_column(node) else {
@@ -872,19 +889,19 @@ where
     pub(crate) fn resolve_monomial_class(
         &self,
         op: Cfg::O,
-        m: &[(Cfg::G, crate::multiplicity::Multiplicity)],
+        m: &[(Cfg::G, Cfg::M)],
     ) -> Option<Cfg::G> {
         if m.is_empty() {
             return self.unit_node(op).map(|u| self.classes.find_const(u));
         }
-        if m.len() == 1 && m[0].1.0 == 1 {
+        if m.len() == 1 && m[0].1 == Cfg::M::ONE {
             return Some(self.classes.find_const(m[0].0));
         }
         let node = match self.ops.info(op).kind {
             OpKind::MSet { .. } => {
                 let elems: Vec<Cfg::C> = m
                     .iter()
-                    .map(|&(g, mult)| Cfg::mset_child_with_mult(g, Cfg::M::from(mult.0)))
+                    .map(|&(g, mult)| Cfg::mset_child_with_mult(g, mult))
                     .collect();
                 self.nodes.mset.probe(op, &elems)
             }
@@ -906,7 +923,7 @@ where
     fn fold_min_monomial(
         &mut self,
         survivor: Cfg::G,
-        absorbed_min_row: Option<usize>,
+        absorbed_min_row: Option<<Cfg::G as DenseId>::Index>,
         absorbed_atomic: bool,
     ) {
         let surv_repr = match self.classes.repr_id(self.classes.find_const(survivor)) {
@@ -1233,7 +1250,7 @@ where
                         let c = self.nodes.mset.pool_get(s);
                         // Size-1 collapses to the child only at multiplicity 1 (`{a:2}` is not a
                         // degenerate `a`; for a nilpotent op it would already have clamped to `{}`).
-                        (Cfg::mset_child_mult(&c).into() == 1)
+                        (Cfg::mset_child_mult(&c) == Cfg::M::ONE)
                             .then(|| (node, Cfg::mset_child_id(&c)))
                     }
                     _ => None,
@@ -1413,7 +1430,6 @@ where
     /// collapse/normalize pass and the antichain `reducible` check stay full scans: a small
     /// new rule must still be able to collapse a large old one.
     fn cc_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
-        use crate::multiplicity::Multiplicity;
         use crate::multiset::{
             NfIndex, NfRuleRef, NfRules, multiset_disjoint, multiset_lcm_into, multiset_subset,
             multiset_subtract_into, multiset_union, normalize_ms_into, normalize_nilpotent_into,
@@ -1423,7 +1439,7 @@ where
         // Canonical monomial of a completion node as sorted (class-repr, mult): coalesced
         // multiplicities for an MSet op, deduped set (all mult 1) for a Set (ACI) op.
         // Delegates to `node_monomial_into`, which dispatches on the node's representation.
-        let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Multiplicity)> {
+        let multiset_of = |eg: &Self, id: Cfg::G| -> Vec<(Cfg::G, Cfg::M)> {
             let mut out = Vec::new();
             eg.node_monomial_into(id, &mut out);
             out
@@ -1442,14 +1458,19 @@ where
         // only nodes whose own monomial `M` is strictly `≫_f`-greater than that RHS: those
         // are the genuine rules (a node equal to its class's normal form is no rule, and a
         // mis-oriented `M ≺ rhs` is dropped, §9b axis-2a). `node` lets us collapse it.
-        struct Rule<G> {
-            op: usize,
-            lhs: Vec<(G, Multiplicity)>,
-            rhs: Vec<(G, Multiplicity)>,
+        struct Rule<G, O, M> {
+            /// The typed op id, not a widened `usize` copy of one. Storing the id itself
+            /// keeps the row at the config's op width and — more to the point — leaves
+            /// nothing to re-mint: the round used to spend a masking
+            /// `Cfg::O::from_usize` per rule to undo a `to_usize` performed a few lines
+            /// above, and only the op's own registration bound kept that honest.
+            op: O,
+            lhs: Vec<(G, M)>,
+            rhs: Vec<(G, M)>,
             node: G,
         }
-        let mut rules: Vec<Rule<Cfg::G>> = Vec::new();
-        let mut rhs_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut rules: Vec<Rule<Cfg::G, Cfg::O, Cfg::M>> = Vec::new();
+        let mut rhs_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         // Iterate the AC node partition directly (ascending global id), not all nodes: the
         // `is_mset` filter is implicit and the non-AC majority is never visited.
         for gid in self.completion_node_ids() {
@@ -1464,7 +1485,7 @@ where
             // Read-time orientation guard (§9b): only `M ≫ rhs` is a rule.
             if monomial_cmp(&lhs, &rhs_buf) == std::cmp::Ordering::Greater {
                 rules.push(Rule {
-                    op: op.to_usize(),
+                    op,
                     lhs,
                     rhs: rhs_buf.clone(),
                     node: gid,
@@ -1542,10 +1563,10 @@ where
         // remaining follow-up (adversarial analysis A5).
         let mut mat_buf: Vec<Cfg::G> = Vec::new();
         let materialize =
-            |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Multiplicity)], buf: &mut Vec<Cfg::G>| {
+            |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::G>| {
                 buf.clear();
                 for (g, mult) in ms {
-                    for _ in 0..mult.0 {
+                    for _ in 0..mult.to_usize() {
                         buf.push(*g);
                     }
                 }
@@ -1590,8 +1611,8 @@ where
         let mut crit: Vec<(
             Cfg::O,
             CpOrigin,
-            Vec<(Cfg::G, Multiplicity)>,
-            Vec<(Cfg::G, Multiplicity)>,
+            Vec<(Cfg::G, Cfg::M)>,
+            Vec<(Cfg::G, Cfg::M)>,
         )> = Vec::new();
 
         // (A′) Normalize every active monomial node against the rules and merge its
@@ -1601,8 +1622,7 @@ where
         // (design §5b). `(op, monomial, class, node, is_rule)`: a node that was itself a
         // rule (its own LHS reducible) is collapsed/subsumed after the merge (design §6b).
         let t_gen = std::time::Instant::now();
-        let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)> =
-            Vec::new();
+        let mut targets: Vec<(Cfg::O, Vec<(Cfg::G, Cfg::M)>, Cfg::G, Cfg::G, bool)> = Vec::new();
         // AC partition only, same as the rules scan (no full-graph walk, no `is_mset` filter).
         for gid in self.completion_node_ids() {
             if self.node_flags(gid) & inactive != 0 {
@@ -1629,8 +1649,8 @@ where
         // Reusable temporaries for the (B) reduct arithmetic (adversarial analysis A2): the
         // lcm and residual are per-pair scratch; only the stored reducts (`crit` entries)
         // allocate. Grown once, reused across every pair.
-        let mut ab_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
-        let mut sub_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut ab_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut sub_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut delta_skipped = 0usize;
         let delta_in_rules = rules.iter().filter(|r| in_delta(r.node)).count();
         for ti in 0..rules.len() {
@@ -1639,8 +1659,7 @@ where
             if reducible[ti] {
                 continue;
             }
-            let op_u = rules[ti].op;
-            let op = Cfg::O::from_usize(op_u);
+            let op = rules[ti].op;
             let m_node = rules[ti].node;
 
             // Per-rule AXIOM critical pairs (Kapur §4, Kapur-conformance fix W3 (spec §3 table)): superpose the
@@ -1659,7 +1678,7 @@ where
                         for &(a, _) in &rules[ti].lhs {
                             let mut r1 = crate::multiset::multiset_union(
                                 &rules[ti].rhs,
-                                &[(a, Multiplicity(1))],
+                                &[(a, Cfg::M::ONE)],
                             );
                             crate::multiset::clamp_idempotent(&mut r1);
                             if r1 != rules[ti].rhs {
@@ -1674,14 +1693,15 @@ where
                         // monomials never carry the unit). At n=2, m=1 this is literally
                         // Kapur's (f(N ∪ {a}), f((M − {a}) ∪ {e})).
                         for &(a, m) in &rules[ti].lhs {
-                            let k = (order as u32).saturating_sub(m.0);
-                            if k == 0 {
+                            // `order` is a `u8`, so the deficit is below 256 and
+                            // representable at every supported multiplicity width.
+                            let ord = Cfg::M::try_from_u64(u64::from(order))
+                                .expect("a u8 nilpotent order fits every multiplicity width");
+                            let k = ord.saturating_sub(m);
+                            if k == Cfg::M::ZERO {
                                 continue; // m ≡ 0 (mod n) never stored; defensive
                             }
-                            let mut r1 = crate::multiset::multiset_union(
-                                &rules[ti].rhs,
-                                &[(a, Multiplicity(k))],
-                            );
+                            let mut r1 = crate::multiset::multiset_union(&rules[ti].rhs, &[(a, k)]);
                             crate::multiset::clamp_nilpotent(&mut r1, order);
                             let r2 = crate::multiset::multiset_subtract(&rules[ti].lhs, &[(a, m)]);
                             crit.push((op, CpOrigin::AxiomCp, r1, r2));
@@ -1777,52 +1797,50 @@ where
         // distinct classes appearing in its active monomials) — a class that appears later
         // is covered by the full confirmation round that sees it, the same net that covers
         // every other delta miss.
-        let cancel_close =
-            |a: &[(Cfg::G, Multiplicity)],
-             b: &[(Cfg::G, Multiplicity)]|
-             -> Option<(Vec<(Cfg::G, Multiplicity)>, Vec<(Cfg::G, Multiplicity)>)> {
-                let c = crate::multiset::multiset_intersect(a, b);
-                if c.is_empty() {
-                    return None;
-                }
-                Some((
-                    crate::multiset::multiset_subtract(a, &c),
-                    crate::multiset::multiset_subtract(b, &c),
-                ))
-            };
+        let cancel_close = |a: &[(Cfg::G, Cfg::M)],
+                            b: &[(Cfg::G, Cfg::M)]|
+         -> Option<(Vec<(Cfg::G, Cfg::M)>, Vec<(Cfg::G, Cfg::M)>)> {
+            let c = crate::multiset::multiset_intersect(a, b);
+            if c.is_empty() {
+                return None;
+            }
+            Some((
+                crate::multiset::multiset_subtract(a, &c),
+                crate::multiset::multiset_subtract(b, &c),
+            ))
+        };
         // The op's summand pool, for the per-constant closure (computed only when an
         // empty-side cancelation actually occurs — rare).
-        let summand_pool =
-            |targets: &[(Cfg::O, Vec<(Cfg::G, Multiplicity)>, Cfg::G, Cfg::G, bool)],
-             op_u: usize|
-             -> Vec<Cfg::G> {
-                let mut pool: Vec<Cfg::G> = targets
-                    .iter()
-                    .filter(|t| t.0.to_usize() == op_u)
-                    .flat_map(|t| t.1.iter().map(|p| p.0))
-                    .collect();
-                pool.sort_unstable();
-                pool.dedup();
-                pool
-            };
+        let summand_pool = |targets: &[(Cfg::O, Vec<(Cfg::G, Cfg::M)>, Cfg::G, Cfg::G, bool)],
+                            want: Cfg::O|
+         -> Vec<Cfg::G> {
+            let mut pool: Vec<Cfg::G> = targets
+                .iter()
+                .filter(|t| t.0 == want)
+                .flat_map(|t| t.1.iter().map(|p| p.0))
+                .collect();
+            pool.sort_unstable();
+            pool.dedup();
+            pool
+        };
         let push_cancel = |crit: &mut Vec<(
             Cfg::O,
             CpOrigin,
-            Vec<(Cfg::G, Multiplicity)>,
-            Vec<(Cfg::G, Multiplicity)>,
+            Vec<(Cfg::G, Cfg::M)>,
+            Vec<(Cfg::G, Cfg::M)>,
         )>,
                            op: Cfg::O,
                            has_unit: bool,
                            pool: &[Cfg::G],
-                           m: Vec<(Cfg::G, Multiplicity)>,
-                           r: Vec<(Cfg::G, Multiplicity)>| {
+                           m: Vec<(Cfg::G, Cfg::M)>,
+                           r: Vec<(Cfg::G, Cfg::M)>| {
             if (!m.is_empty() && !r.is_empty()) || has_unit {
                 crit.push((op, CpOrigin::Cancellative, m, r));
             } else {
                 // §5.2(iii)(b): f(ne ∪ {c}) = f({c}) for every constant c in the pool.
                 let ne = if m.is_empty() { r } else { m };
                 for &g in pool {
-                    let one = [(g, Multiplicity(1))];
+                    let one = [(g, Cfg::M::ONE)];
                     crit.push((
                         op,
                         CpOrigin::Cancellative,
@@ -1836,16 +1854,15 @@ where
             if reducible[ti] {
                 continue;
             }
-            let op = Cfg::O::from_usize(rules[ti].op);
+            let op = rules[ti].op;
             if !self.op_cancellative(op) {
                 continue;
             }
             let has_unit = self.unit_node(op).is_some();
-            let op_u = rules[ti].op;
             // Lazily computed at most once per rule that needs it; empty-side cases are rare.
             let mut pool: Option<Vec<Cfg::G>> = None;
             let pool_ref = |pool: &mut Option<Vec<Cfg::G>>| -> Vec<Cfg::G> {
-                pool.get_or_insert_with(|| summand_pool(&targets, op_u))
+                pool.get_or_insert_with(|| summand_pool(&targets, op))
                     .clone()
             };
             // (C1) — regenerated when the rule is in the delta; the full confirmation
@@ -1910,15 +1927,15 @@ where
         // the per-target rule set is a `clear`+`extend` refill of `Copy` views into the
         // round's rule table — no deep clones — and the normal form lands in a reused
         // destination buffer. Zero steady-state allocation per target.
-        let mut nf_refs: Vec<NfRuleRef<'_, Cfg::G>> = Vec::with_capacity(rules.len());
-        let mut nf_out: Vec<(Cfg::G, Multiplicity)> = Vec::new();
-        let mut nf_ping: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut nf_refs: Vec<NfRuleRef<'_, Cfg::G, Cfg::M>> = Vec::with_capacity(rules.len());
+        let mut nf_out: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut nf_ping: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, mset, class, node, _is_rule) in targets {
             nf_refs.clear();
             nf_refs.extend(
                 rules
                     .iter()
-                    .filter(|r| r.op == op.to_usize() && r.node != node)
+                    .filter(|r| r.op == op && r.node != node)
                     .map(|r| NfRuleRef {
                         lhs: &r.lhs,
                         rhs: &r.rhs,
@@ -1995,8 +2012,9 @@ where
         // build the per-op rule sets ONCE (outside the loop), not per pair — the `Bclose` hoist
         // (perf doc §2). A reduct of op X must normalize ONLY against op-X rules: a different
         // op's LHS is a set of class ids that could spuriously match inside X's monomial. So
-        // group `nf_rules` by op. Keyed by op index; lookup is a small linear scan (few ops).
-        let mut nf_by_op: Vec<(usize, Vec<NfRuleRef<'_, Cfg::G>>)> = Vec::new();
+        // group `nf_rules` by op. Keyed by the typed op id (not a widened copy of one);
+        // lookup is a small linear scan (few ops).
+        let mut nf_by_op: Vec<(Cfg::O, Vec<NfRuleRef<'_, Cfg::G, Cfg::M>>)> = Vec::new();
         for r in &rules {
             let entry = match nf_by_op.iter_mut().find(|(o, _)| *o == r.op) {
                 Some(e) => &mut e.1,
@@ -2016,10 +2034,10 @@ where
         // the index is amortized over every one of those normalizations.
         let nf_index_by_op: Vec<NfIndex<Cfg::G>> =
             nf_by_op.iter().map(|(_, v)| NfIndex::build(v)).collect();
-        let empty_nf: Vec<NfRuleRef<'_, Cfg::G>> = Vec::new();
+        let empty_nf: Vec<NfRuleRef<'_, Cfg::G, Cfg::M>> = Vec::new();
         let crit_generated = crit.len();
-        let mut n1_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
-        let mut n2_buf: Vec<(Cfg::G, Multiplicity)> = Vec::new();
+        let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
+        let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, origin, r1, r2) in crit {
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
             // already coincide as multisets), so skip the two full normalizations entirely
@@ -2028,7 +2046,7 @@ where
                 trivial += 1;
                 continue;
             }
-            let nf_rules = match nf_by_op.iter().position(|(o, _)| *o == op.to_usize()) {
+            let nf_rules = match nf_by_op.iter().position(|(o, _)| *o == op) {
                 Some(i) => NfRules::indexed(&nf_by_op[i].1, &nf_index_by_op[i]),
                 None => NfRules::linear(&empty_nf),
             };
@@ -2245,6 +2263,12 @@ where
         use crate::containers::DenseId;
         use crate::typed_routing::NodeIds;
         // Both completion partitions: MSet (multiset, AC) and Set (idempotent/nilpotent, ACI).
+        //
+        // The bare `from_usize` mints below need no bound check, unlike the global-id scans
+        // (see [`node_ids`](Self::node_ids)): these arenas are indexed *by* the local id, so
+        // the container's own capacity guard IS the id bound — `IndexLike::max_nat()` for a
+        // dense id is its `id_bound()`. A position the arena can hold therefore always has a
+        // local id, and `len()` hands one back typed rather than as a raw count.
         let n_mset = self.nodes.mset.len().to_usize();
         let n_set = self.nodes.set.len().to_usize();
         let mset = (0..n_mset).map(move |i| {
@@ -2343,8 +2367,7 @@ where
     pub fn debug_check_sort_invariant(&self) {
         use std::collections::HashMap;
         let mut class_sort: HashMap<Cfg::G, Cfg::S> = HashMap::new();
-        for i in 0..self.len() {
-            let gid = Cfg::G::from_usize(i);
+        for gid in self.node_ids() {
             let repr = self.find_const(gid);
             let sort = self.node_sort(gid);
             if let Some(&existing) = class_sort.get(&repr) {
@@ -2363,30 +2386,30 @@ where
         }
     }
 
-    pub fn for_each_child(&self, id: Cfg::G, mut f: impl FnMut(Cfg::G, u32)) -> usize {
+    pub fn for_each_child(&self, id: Cfg::G, mut f: impl FnMut(Cfg::G, Cfg::M)) -> usize {
         match self.node_ref(id) {
             NodeRef::Plain0(_) => 0,
             NodeRef::Plain1(l) => {
                 for &c in &self.nodes.plain1.get(l).children {
-                    f(c, 1);
+                    f(c, Cfg::M::ONE);
                 }
                 1
             }
             NodeRef::Plain2(l) => {
                 for &c in &self.nodes.plain2.get(l).children {
-                    f(c, 1);
+                    f(c, Cfg::M::ONE);
                 }
                 2
             }
             NodeRef::Plain3(l) => {
                 for &c in &self.nodes.plain3.get(l).children {
-                    f(c, 1);
+                    f(c, Cfg::M::ONE);
                 }
                 3
             }
             NodeRef::SPair(l) => {
                 for &c in &self.nodes.spair.get(l).children {
-                    f(c, 1);
+                    f(c, Cfg::M::ONE);
                 }
                 2
             }
@@ -2394,7 +2417,7 @@ where
                 let n = self.nodes.plain_n.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    f(self.nodes.plain_n.pool_get(i), 1);
+                    f(self.nodes.plain_n.pool_get(i), Cfg::M::ONE);
                 }
                 e - s
             }
@@ -2402,7 +2425,7 @@ where
                 let n = self.nodes.seq.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    f(self.nodes.seq.pool_get(i), 1);
+                    f(self.nodes.seq.pool_get(i), Cfg::M::ONE);
                 }
                 e - s
             }
@@ -2411,7 +2434,7 @@ where
                 let (s, e) = n.span();
                 for i in s..e {
                     let c = self.nodes.mset.pool_get(i);
-                    f(Cfg::mset_child_id(&c), Cfg::mset_child_mult(&c).into());
+                    f(Cfg::mset_child_id(&c), Cfg::mset_child_mult(&c));
                 }
                 e - s
             }
@@ -2419,7 +2442,7 @@ where
                 let n = self.nodes.set.get(l);
                 let (s, e) = n.span();
                 for i in s..e {
-                    f(self.nodes.set.pool_get(i), 1);
+                    f(self.nodes.set.pool_get(i), Cfg::M::ONE);
                 }
                 e - s
             }
@@ -2429,8 +2452,12 @@ where
 
     /// Read the child at position `pos` from a fixed-arity node. O(1).
     /// Panics if `pos` is out of range or node is variadic/lit.
-    pub fn child_at(&self, id: Cfg::G, pos: u32) -> Cfg::G {
-        let p = pos as usize;
+    pub fn child_at(&self, id: Cfg::G, pos: Cfg::Index) -> Cfg::G {
+        // `Cfg::Index`-wide: a position offsets into the node's span in the child pool,
+        // which is sized by that word (see `IndexStore::by_child_pos`). `as_usize` is
+        // exact for every `IndexLike`, so no check is needed on the way in; an
+        // out-of-range position still lands on the arm's bounds check or the `panic!`.
+        let p = pos.as_usize();
         match self.node_ref(id) {
             NodeRef::Plain1(l) => self.nodes.plain1.get(l).children[p],
             NodeRef::Plain2(l) => self.nodes.plain2.get(l).children[p],
@@ -2489,10 +2516,17 @@ where
         work.extend(out.iter().rev().copied());
         out.clear();
 
-        // Safety cap on emitted children. Each splice replaces a child by a strictly
-        // smaller monomial, so a well-formed graph drains well under this bound; the cap
-        // only guards a degenerate cyclic class, which we must not loop on.
-        let cap = 1 + 64 * self.node_count();
+        // Safety cap on the children *splicing adds*, which is the only unbounded
+        // quantity here. Each splice replaces a child by a strictly smaller monomial, so
+        // a well-formed graph drains well under this bound; the cap only guards a
+        // degenerate cyclic class, which we must not loop on.
+        //
+        // Measured from the caller's own child count, not from zero: the seeded children
+        // are given, not generated, and a monomial may legitimately be far wider than the
+        // graph is deep. Anchoring at zero made a plain `f(a, a, …)` with more children
+        // than `1 + 64 * node_count()` trip the assertion below — a large-but-well-formed
+        // input diagnosed as a cyclic class.
+        let cap = work.len() + 1 + 64 * self.node_count();
         let op_col = self.ops.completion_column(op);
         while let Some(g) = work.pop() {
             let cls = self.classes.find_const(g);
@@ -2512,7 +2546,7 @@ where
                 // Expand the canonical summand form; `for_each_child` yields (class, count)
                 // for either representation (a Set member counts once).
                 self.for_each_child(min_node, |cg, times| {
-                    for _ in 0..times {
+                    for _ in 0..times.to_usize() {
                         work.push(cg);
                     }
                 });

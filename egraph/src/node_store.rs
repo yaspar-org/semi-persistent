@@ -33,7 +33,12 @@ fn mset_clamp_of<O: DenseId, S: DenseId, const TRACK: bool>(
 // prod-parity: a `Tagged` pair. Was `(G, Multiplicity)`, but Verus cannot impl
 // `Tagged` (a `: Copy` trait) for a tuple type, so the crate provides the named
 // `Pair<A, B>` (`containers::Pair`) instead. Field access is `.a`/`.b`.
-pub type MSetChild<G> = crate::containers::Pair<G, Multiplicity>;
+///
+/// The multiplicity width is a parameter, defaulted to [`Multiplicity`] (32 bits) so the
+/// common case stays a one-argument alias. It is what makes `EGraphConfig::M` a real
+/// choice rather than a declared-but-unusable one: a config's `C` must agree with its
+/// `M`, so pinning the pair's second field here would pin every config to 32 bits.
+pub type MSetChild<G, M = Multiplicity> = crate::containers::Pair<G, M>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Added<G> {
@@ -53,7 +58,10 @@ impl<G: Copy> Added<G> {
 }
 
 pub struct NodeStore<
-    G: DenseId,
+    // `G`'s index word is the routing table's: the table holds one entry per global
+    // id, so a `G` addresses it directly and no conversion sits between them. See
+    // [`TypedRouting`].
+    G: DenseId<Index = I::Index>,
     O: DenseId,
     V: DenseId,
     C: Tagged + Clone + Copy + Hash + Eq + core::fmt::Debug,
@@ -77,7 +85,7 @@ pub struct NodeStore<
 impl<G, O, V, C, I, const TRACK: bool, const PROOFS: bool> Default
     for NodeStore<G, O, V, C, I, TRACK, PROOFS>
 where
-    G: DenseId + Hash,
+    G: DenseId<Index = I::Index> + Hash,
     O: DenseId + Hash,
     V: DenseId + Hash,
     C: Tagged + Clone + Copy + Hash + Eq + core::fmt::Debug,
@@ -90,7 +98,7 @@ where
 
 impl<G, O, V, C, I, const TRACK: bool, const PROOFS: bool> NodeStore<G, O, V, C, I, TRACK, PROOFS>
 where
-    G: DenseId + Hash,
+    G: DenseId<Index = I::Index> + Hash,
     O: DenseId + Hash,
     V: DenseId + Hash,
     C: Tagged + Clone + Copy + Hash + Eq + core::fmt::Debug,

@@ -133,14 +133,13 @@ impl MSetCanon {
     /// Raw multiset maintenance: find each child, sort by class id, coalesce duplicates by summing
     /// multiplicities. Produces a sorted, duplicate-free multiset with ℕ counts — the
     /// representation, before any algebraic clamp.
-    pub fn update_multiset<G: DenseId + Ord>(
-        buf: &mut Vec<crate::containers::Pair<G, crate::multiplicity::Multiplicity>>,
+    pub fn update_multiset<G: DenseId + Ord, M: crate::multiplicity::MultiplicityLike>(
+        buf: &mut Vec<crate::containers::Pair<G, M>>,
         start: usize,
         end: usize,
-        get: impl Fn(usize) -> crate::containers::Pair<G, crate::multiplicity::Multiplicity>,
+        get: impl Fn(usize) -> crate::containers::Pair<G, M>,
         find: impl Fn(G) -> G,
     ) {
-        use crate::multiplicity::Multiplicity;
         for i in start..end {
             let crate::containers::Pair { a: g, b: m } = get(i);
             buf.push(crate::containers::Pair { a: find(g), b: m });
@@ -150,7 +149,16 @@ impl MSetCanon {
         let mut w = 0;
         for r in 1..buf.len() {
             if buf[r].a == buf[w].a {
-                buf[w].b = Multiplicity(buf[w].b.0 + buf[r].b.0);
+                // Coalescing is the one place the representation *grows* a
+                // multiplicity, so it is the one place a configured width can be
+                // exceeded. Detected rather than wrapped: a wrapped sum would
+                // shrink the monomial — to zero at exactly the wrong values —
+                // and `retain`-style clamps would then delete summands, making
+                // the e-graph assert equalities that do not hold.
+                buf[w].b = buf[w].b.checked_add(buf[r].b).expect(
+                    "multiset coalescing overflowed EGraphConfig::M; \
+                     the configured multiplicity width is too narrow for this e-graph",
+                );
             } else {
                 w += 1;
                 buf[w] = buf[r];
@@ -165,29 +173,27 @@ impl MSetCanon {
     /// no-op (plain AC). `Nilpotent { order: n }` reduces each count mod `n` and drops the summands
     /// that vanish, so `xor(a,a)` (`{a:2}`) becomes `{}`. Preserves sort order (`retain`), so the
     /// result stays canonical.
-    pub fn clamp_multiset<G: DenseId>(
-        buf: &mut Vec<crate::containers::Pair<G, crate::multiplicity::Multiplicity>>,
+    pub fn clamp_multiset<G: DenseId, M: crate::multiplicity::MultiplicityLike>(
+        buf: &mut Vec<crate::containers::Pair<G, M>>,
         mode: MSetClamp,
     ) {
-        use crate::multiplicity::Multiplicity;
         if let MSetClamp::Nilpotent { order } = mode {
-            let n = order as u32;
             for p in buf.iter_mut() {
-                p.b = Multiplicity(p.b.0 % n);
+                p.b = p.b.rem_order(order);
             }
-            buf.retain(|p| p.b.0 != 0);
+            buf.retain(|p| p.b != M::ZERO);
         }
     }
 }
 
-impl<G: DenseId + Ord> VarCanon<G, crate::containers::Pair<G, crate::multiplicity::Multiplicity>>
-    for MSetCanon
+impl<G: DenseId + Ord, M: crate::multiplicity::MultiplicityLike>
+    VarCanon<G, crate::containers::Pair<G, M>> for MSetCanon
 {
     fn canonize(
-        buf: &mut Vec<crate::containers::Pair<G, crate::multiplicity::Multiplicity>>,
+        buf: &mut Vec<crate::containers::Pair<G, M>>,
         start: usize,
         end: usize,
-        get: impl Fn(usize) -> crate::containers::Pair<G, crate::multiplicity::Multiplicity>,
+        get: impl Fn(usize) -> crate::containers::Pair<G, M>,
         find: impl Fn(G) -> G,
         mode: CanonMode<G>,
     ) {

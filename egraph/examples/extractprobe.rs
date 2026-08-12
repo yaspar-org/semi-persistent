@@ -16,6 +16,7 @@ use semi_persistent_egraph::containers::DenseId;
 use semi_persistent_egraph::extract::extract_best;
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::{NiraLitVal, NiraModel};
+use semi_persistent_egraph::multiplicity::MultiplicityLike;
 use semi_persistent_egraph::nodes::DefaultConfig;
 
 type EG = EGraph<DefaultConfig, NiraLitVal, false, false>;
@@ -108,7 +109,7 @@ fn passes(eg: &EG, _root: ENodeId) -> usize {
                 if c == usize::MAX {
                     ok = false;
                 } else {
-                    total = total.saturating_add(c * mult as usize);
+                    total = total.saturating_add(c.saturating_mul(mult.to_usize()));
                 }
             });
             if ok && total < best[repr.to_usize()] {

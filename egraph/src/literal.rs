@@ -21,7 +21,8 @@ pub struct LitValStoreToken(crate::containers::MapToken);
 /// Append-only intern table for literals, backed by `SpMap`.
 #[derive(Debug)]
 pub struct LitValStore<L: LitVal, V: DenseId, const TRACK: bool> {
-    map: crate::containers::SpMap<L, (), usize, TRACK>,
+    /// Positions in this log ARE literal-value ids, so the log's index word is `V`'s.
+    map: crate::containers::SpMap<L, (), V::Index, TRACK>,
     _phantom: core::marker::PhantomData<V>,
 }
 
@@ -41,23 +42,24 @@ impl<L: LitVal, V: DenseId, const TRACK: bool> LitValStore<L, V, TRACK> {
 
     pub fn intern(&mut self, value: L) -> V {
         if let Some(id) = self.map.id_of(&value) {
-            return V::from_usize(id);
+            return crate::id::id_at_index::<V>(id);
         }
         let id = self.map.insert(value, ());
-        V::from_usize(id)
+        crate::id::id_at_index::<V>(id)
     }
 
     pub fn get(&self, id: V) -> &L {
-        self.map.key(id.to_usize())
+        self.map.key(id.to_index())
     }
 
     /// Try to look up a value without interning it.
     pub fn try_lookup(&self, value: &L) -> Option<V> {
-        self.map.id_of(value).map(V::from_usize)
+        self.map.id_of(value).map(crate::id::id_at_index::<V>)
     }
 
     pub fn len(&self) -> usize {
-        self.map.log_len()
+        use crate::containers::IndexLike;
+        self.map.log_len().as_usize()
     }
 
     pub fn is_empty(&self) -> bool {

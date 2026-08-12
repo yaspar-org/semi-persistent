@@ -150,11 +150,19 @@ pub struct Span<I: containers::DenseId> {
 impl<I: containers::DenseId> Span<I> {
     /// Build a span from usize bounds, panicking if either exceeds the
     /// configured AU capacity.
+    ///
+    /// `start` goes through [`DenseId::try_new`], not `from_usize`: the latter is
+    /// documented as unchecked and masks, so a start past `I::id_bound()` would
+    /// silently become a position inside the pool and the span would read some other
+    /// entry's elements as its own. `I` spans twice the id space (the top bit is the
+    /// inline tag), so a pool that outgrows the id bound is representable as a length
+    /// but not as a start.
     #[inline]
     pub fn new(start: usize, len: usize) -> Self {
         use crate::containers::IndexLike;
         Span {
-            start: I::from_usize(start),
+            start: I::try_new(start)
+                .unwrap_or_else(|| panic!("span start {start} exceeds the configured AU capacity")),
             len: I::Index::try_from_usize(len).expect("span length exceeds configured AU capacity"),
         }
     }
@@ -184,8 +192,16 @@ pub enum AuError {
     /// class index, carried as `u64` for DIAGNOSTIC DISPLAY ONLY: it is not a
     /// typed id and must never flow back into AU indexing operations.
     NoFiniteRepresentative(u64),
-    /// A multiplicity did not fit in `u32` during snapshot construction.
-    MultiplicityOverflow,
+    // There is deliberately no `MultiplicityOverflow` variant. Snapshot construction
+    // used to narrow every multiplicity to a hardcoded `u32` and fail here; nothing
+    // narrows now. Multiplicities are read at [`EGraphConfig::M`] and widened losslessly
+    // to `u64` where the AU search needs a common width, so the read cannot overflow.
+    // What *can* still exceed a width is a *sum* of multiplicities, and that is not an
+    // error: [`actions::generate_actions`] answers a summation overflow by enumerating no
+    // actions from the offending member, which costs search completeness rather than
+    // soundness and so has no business aborting the caller's snapshot.
+    //
+    // [`EGraphConfig::M`]: crate::config::EGraphConfig::M
     /// A session method received a config whose cycle mode differs from the
     /// mode the session's search space was created with. The space's cycle
     /// contexts are derived under one mode; mixing modes would silently
@@ -199,7 +215,6 @@ impl core::fmt::Display for AuError {
             AuError::NoFiniteRepresentative(c) => {
                 write!(f, "class auc{c} has no admissible finite member")
             }
-            AuError::MultiplicityOverflow => write!(f, "multiplicity does not fit in u32"),
             AuError::CycleModeMismatch => write!(
                 f,
                 "config cycle mode differs from the session's search-space mode"

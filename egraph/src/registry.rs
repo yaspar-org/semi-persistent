@@ -3,10 +3,11 @@
 //! Sort and operator registries.
 
 use crate::containers::DenseId;
+use crate::containers::IndexLike;
 use crate::containers::MapToken;
 use crate::containers::ShrinkPolicy;
 use crate::containers::SpMap;
-use crate::id::ENodeKind;
+use crate::id::{ENodeKind, id_at};
 
 /// Opaque token for [`SortRegistry::mark`] / [`SortRegistry::restore`].
 #[derive(Clone, Copy, Debug)]
@@ -139,7 +140,8 @@ impl<S: DenseId> OpInfo<S> {
 /// Append-only sort registry backed by `SpMap`.
 #[derive(Debug)]
 pub struct SortRegistry<S: DenseId, const TRACK: bool> {
-    map: SpMap<String, (), usize, TRACK>,
+    /// Positions in this log ARE sort ids, so the log's index word is the id's.
+    map: SpMap<String, (), S::Index, TRACK>,
     builtin_count: usize,
     concrete_count: usize,
     _phantom: core::marker::PhantomData<S>,
@@ -175,14 +177,16 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
 
     pub fn intern(&mut self, name: &str) -> S {
         if let Some(id) = self.map.id_of(&name.to_owned()) {
-            return S::from_usize(id);
+            // A position already in the log came from `sort_id` below, so it is in
+            // range; re-checking costs nothing on this path and keeps one spelling.
+            return id_at::<S>(id.as_usize());
         }
         let id = self.map.insert(name.to_owned(), ());
-        S::from_usize(id)
+        id_at::<S>(id.as_usize())
     }
 
     pub fn name(&self, id: S) -> &str {
-        self.map.key(id.to_usize())
+        self.map.key(id.to_index())
     }
 
     pub fn is_builtin(&self, id: S) -> bool {
@@ -202,11 +206,13 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
     }
 
     pub fn len(&self) -> usize {
-        self.map.log_len()
+        self.map.log_len().as_usize()
     }
 
     pub fn id_by_name(&self, name: &str) -> Option<S> {
-        self.map.id_of(&name.to_owned()).map(S::from_usize)
+        self.map
+            .id_of(&name.to_owned())
+            .map(|id| id_at::<S>(id.as_usize()))
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> SortRegistryToken {
@@ -221,7 +227,8 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
 /// Append-only operator registry backed by `SpMap`.
 #[derive(Debug)]
 pub struct OpRegistry<O: DenseId, S: DenseId, const TRACK: bool> {
-    map: SpMap<String, OpInfo<S>, usize, TRACK>,
+    /// Positions in this log ARE op ids, so the log's index word is the id's.
+    map: SpMap<String, OpInfo<S>, O::Index, TRACK>,
     builtin_count: usize,
     concrete_sort_count: usize,
     _phantom: core::marker::PhantomData<O>,
@@ -282,7 +289,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             let lit_name = format!("@{}", sort_desc.name);
             self.insert(&lit_name, sort_id, OpKind::Lit);
         }
-        self.builtin_count = self.map.log_len();
+        self.builtin_count = self.map.log_len().as_usize();
         self.concrete_sort_count = sorts.concrete_count();
     }
 
@@ -293,7 +300,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
 
     /// Is this a primitive op (from LitModel::ops(), not a @-prefixed lit wrap)?
     pub fn is_prim_op(&self, id: O) -> bool {
-        self.is_builtin(id) && !matches!(self.map.get_val(id.to_usize()).kind, OpKind::Lit)
+        self.is_builtin(id) && !matches!(self.map.get_val(id.to_index()).kind, OpKind::Lit)
     }
 
     pub fn register(&mut self, name: &str, arg_sorts: &[S], return_sort: S) -> O {
@@ -357,13 +364,13 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     }
 
     pub fn info(&self, id: O) -> &OpInfo<S> {
-        self.map.get_val(id.to_usize())
+        self.map.get_val(id.to_index())
     }
 
     /// Is this op associative-commutative (`OpKind::MSet`)? Note this is `false`
     /// for ACI ops, which are a distinct kind.
     pub fn is_mset(&self, id: O) -> bool {
-        matches!(self.map.get_val(id.to_usize()).kind, OpKind::MSet { .. })
+        matches!(self.map.get_val(id.to_index()).kind, OpKind::MSet { .. })
     }
 
     /// Iterator over the ids of all registered AC ops. Used by AC congruence
@@ -374,7 +381,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             .iter()
             .enumerate()
             .filter(|(_, (_, info))| matches!(info.kind, OpKind::MSet { .. }))
-            .map(|(i, _)| O::from_usize(i))
+            .map(|(i, _)| id_at::<O>(i))
     }
 
     /// Number of registered `OpKind::MSet` ops (excludes Set). Until the per-op
@@ -386,7 +393,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
 
     /// Is this op a `Set` (idempotent/nilpotent) op?
     pub fn is_set(&self, id: O) -> bool {
-        matches!(self.map.get_val(id.to_usize()).kind, OpKind::Set { .. })
+        matches!(self.map.get_val(id.to_index()).kind, OpKind::Set { .. })
     }
 
     /// Iterator over the ids of all registered `Set` ops (idempotent or nilpotent), in
@@ -396,7 +403,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             .iter()
             .enumerate()
             .filter(|(_, (_, info))| matches!(info.kind, OpKind::Set { .. }))
-            .map(|(i, _)| O::from_usize(i))
+            .map(|(i, _)| id_at::<O>(i))
     }
 
     /// Number of registered `Set` ops.
@@ -431,7 +438,9 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     }
 
     pub fn id_by_name(&self, name: &str) -> Option<O> {
-        self.map.id_of(&name.to_owned()).map(O::from_usize)
+        self.map
+            .id_of(&name.to_owned())
+            .map(|id| id_at::<O>(id.as_usize()))
     }
 
     pub fn lit_op_for_sort(&self, sort: S) -> Option<O> {
@@ -439,7 +448,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             .iter()
             .enumerate()
             .find(|(_, (_, info))| matches!(info.kind, OpKind::Lit) && info.return_sort == sort)
-            .map(|(i, _)| O::from_usize(i))
+            .map(|(i, _)| id_at::<O>(i))
     }
 
     /// Find a unary op that takes `from` and returns `to` (e.g. ILit: IBig → IExpr).
@@ -451,7 +460,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 info.return_sort == to
                     && matches!(&info.kind, OpKind::Normal { arg_sorts } if arg_sorts.len() == 1 && arg_sorts[0] == from)
             })
-            .map(|(i, _)| O::from_usize(i))
+            .map(|(i, _)| id_at::<O>(i))
     }
 
     fn insert(&mut self, name: &str, return_sort: S, kind: OpKind<S>) -> O {
@@ -474,7 +483,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 is_constructor: false,
             },
         );
-        O::from_usize(id)
+        id_at::<O>(id.as_usize())
     }
 
     /// Mark an op as a constructor.
@@ -516,7 +525,9 @@ pub struct RuleInfo {
 
 /// Append-only rule registry backed by `SpMap`.
 pub struct RuleRegistry<const TRACK: bool> {
-    map: SpMap<String, RuleInfo, usize, TRACK>,
+    /// Positions in this log ARE rule ids, so the log's index word is `RuleId`'s — a
+    /// `u16`, since `RuleId` is 15-bit.
+    map: SpMap<String, RuleInfo, <crate::id::RuleId as DenseId>::Index, TRACK>,
 }
 
 impl<const TRACK: bool> Default for RuleRegistry<TRACK> {
@@ -539,19 +550,19 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
                 rhs: rhs.to_owned(),
             },
         );
-        crate::id::RuleId::from_usize(id)
+        id_at::<crate::id::RuleId>(id.as_usize())
     }
 
     pub fn info(&self, id: crate::id::RuleId) -> &RuleInfo {
-        self.map.get_val(id.to_usize())
+        self.map.get_val(id.to_index())
     }
 
     pub fn name(&self, id: crate::id::RuleId) -> &str {
-        self.map.key(id.to_usize())
+        self.map.key(id.to_index())
     }
 
     pub fn len(&self) -> usize {
-        self.map.log_len()
+        self.map.log_len().as_usize()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -561,7 +572,7 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
     pub fn id_by_name(&self, name: &str) -> Option<crate::id::RuleId> {
         self.map
             .id_of(&name.to_owned())
-            .map(crate::id::RuleId::from_usize)
+            .map(|id| id_at::<crate::id::RuleId>(id.as_usize()))
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> RuleRegistryToken {
@@ -591,7 +602,10 @@ pub struct AxiomInfo<G: Copy> {
 
 /// Append-only axiom registry backed by `SpMap`.
 pub struct AxiomRegistry<G: Copy + DenseId, const TRACK: bool> {
-    map: SpMap<String, AxiomInfo<G>, usize, TRACK>,
+    /// Positions in this log ARE axiom ids, so the log's index word is `AxiomId`'s — a
+    /// `u16`, since `AxiomId` is 15-bit. Note this is NOT `G::Index`: `G` is the id type
+    /// of the *terms* an axiom relates, not of the axiom.
+    map: SpMap<String, AxiomInfo<G>, <crate::id::AxiomId as DenseId>::Index, TRACK>,
 }
 
 impl<G: Copy + DenseId, const TRACK: bool> Default for AxiomRegistry<G, TRACK> {
@@ -614,19 +628,19 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
                 rhs,
             },
         );
-        crate::id::AxiomId::from_usize(id)
+        id_at::<crate::id::AxiomId>(id.as_usize())
     }
 
     pub fn info(&self, id: crate::id::AxiomId) -> &AxiomInfo<G> {
-        self.map.get_val(id.to_usize())
+        self.map.get_val(id.to_index())
     }
 
     pub fn name(&self, id: crate::id::AxiomId) -> &str {
-        self.map.key(id.to_usize())
+        self.map.key(id.to_index())
     }
 
     pub fn len(&self) -> usize {
-        self.map.log_len()
+        self.map.log_len().as_usize()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -645,10 +659,54 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::id::{OpId, SortId};
+    use crate::id::{OpId, RuleId, SortId};
 
     type SR = SortRegistry<SortId, false>;
     type OR = OpRegistry<OpId, SortId, false>;
+
+    // -- Id-space exhaustion --
+    //
+    // `RuleId` is 15-bit while its log's index word is `u16`, so the log can hold a
+    // position (up to 65534) that no `RuleId` can name. That gap is why the mint has
+    // to be checked: `DenseId::from_usize` masks, so position 32768 would come back
+    // as rule 0 and two distinct rule names would answer to one id.
+
+    /// `RuleId`'s id bound, asserted rather than assumed: `id_bound()` is a spec
+    /// function, so exec code reads the bound off `try_new`'s boundary.
+    fn rule_id_bound() -> usize {
+        let bound = 1usize << 15; // define_id15!
+        assert!(RuleId::try_new(bound - 1).is_some(), "bound is too high");
+        assert!(RuleId::try_new(bound).is_none(), "bound is too low");
+        bound
+    }
+
+    /// Every position below the id bound mints its own distinct id.
+    #[test]
+    fn rule_registry_fills_its_id_space_without_aliasing() {
+        let bound = rule_id_bound();
+        let mut r: RuleRegistry<false> = RuleRegistry::new();
+        for i in 0..bound {
+            assert_eq!(r.register(&format!("r{i}"), "l", "r").to_usize(), i);
+        }
+        assert_eq!(r.len(), bound);
+        // The last id round-trips, so no earlier entry was overwritten.
+        assert_eq!(
+            r.name(id_at::<RuleId>(bound - 1)),
+            format!("r{}", bound - 1)
+        );
+        assert_eq!(r.id_by_name("r0").unwrap().to_usize(), 0);
+    }
+
+    /// One past the bound panics rather than aliasing rule 0.
+    #[test]
+    #[should_panic(expected = "the id space is exhausted")]
+    fn rule_registry_past_its_id_space_panics() {
+        let bound = rule_id_bound();
+        let mut r: RuleRegistry<false> = RuleRegistry::new();
+        for i in 0..=bound {
+            r.register(&format!("r{i}"), "l", "r");
+        }
+    }
 
     #[test]
     fn builtin_sorts() {

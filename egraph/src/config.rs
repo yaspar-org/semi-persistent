@@ -37,22 +37,73 @@ pub trait EGraphConfig: 'static {
     type UN: DenseId<Index = Self::Index>;
     /// AC child type (e.g. `(G, Multiplicity)`).
     type C: Tagged + Clone + Copy + Hash + Eq + core::fmt::Debug;
-    /// Multiplicity type for AC nodes.
-    type M: Copy + Clone + Eq + Ord + Hash + core::fmt::Debug + From<u32> + Into<u32>;
+    /// Multiplicity width for AC multiset nodes: `Multiplicity16`,
+    /// `Multiplicity`, or `Multiplicity64`.
+    ///
+    /// Independent of `Index`. A multiplicity counts occurrences of one child
+    /// within one AC node, so its domain is that node's child count (bounded by
+    /// `for_each_child`'s `1 + 64 * node_count()` cap, i.e. 64·N) — a different
+    /// quantity from the id population, and one a caller may want to size
+    /// separately. Conversions to and from the `u64` surface width are checked;
+    /// see `MultiplicityLike`.
+    type M: crate::multiplicity::MultiplicityLike;
     /// Extract the global id from an AC child.
     fn mset_child_id(c: &Self::C) -> Self::G;
     /// Extract the multiplicity from an AC child.
     fn mset_child_mult(c: &Self::C) -> Self::M;
     /// Create an AC child with multiplicity 1.
-    fn mset_child_single(g: Self::G) -> Self::C;
+    fn mset_child_single(g: Self::G) -> Self::C {
+        Self::mset_child_with_mult(g, <Self::M as crate::multiplicity::MultiplicityLike>::ONE)
+    }
     /// Create an AC child with a given multiplicity.
     fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C;
     /// Increment the multiplicity of an AC child. Returns true if same group.
+    ///
+    /// Implementations must use [`MultiplicityLike::checked_add`] — the build path
+    /// has no error channel here, and a wrapped increment would silently produce a
+    /// multiplicity of zero, which the canonical form says cannot exist.
+    ///
+    /// [`MultiplicityLike::checked_add`]: crate::multiplicity::MultiplicityLike::checked_add
     fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool;
     /// Local id bundle for the node store.
     type Ids: NodeIds<Index = Self::Index>;
     /// AU search/snapshot/pool id bundle.
     type Au: AuIds<Index = Self::Index>;
+}
+
+/// The five `mset_child_*` bodies for a config whose `C` is
+/// [`MSetChild<G, M>`](crate::node_store::MSetChild) — i.e. any config that stores AC
+/// children as an id/multiplicity pair. Emitted rather than hand-written per config so the
+/// checked increment in `mset_child_merge` cannot drift between configs, which is precisely
+/// where an unchecked `+ 1` previously lived in duplicate.
+#[macro_export]
+macro_rules! impl_mset_child_pair {
+    () => {
+        fn mset_child_id(c: &Self::C) -> Self::G {
+            c.a
+        }
+        fn mset_child_mult(c: &Self::C) -> Self::M {
+            c.b
+        }
+        fn mset_child_with_mult(g: Self::G, mult: Self::M) -> Self::C {
+            $crate::containers::Pair { a: g, b: mult }
+        }
+        fn mset_child_merge(existing: &mut Self::C, new_g: Self::G) -> bool {
+            use $crate::multiplicity::MultiplicityLike;
+            if existing.a == new_g {
+                // Checked, not `+ 1`: the build path has no error channel, and a wrapped
+                // increment would produce a multiplicity of zero — an entry the canonical
+                // form says cannot exist, which the clamps would then silently delete.
+                existing.b = existing.b.checked_add(Self::M::ONE).expect(
+                    "AC child multiplicity overflowed EGraphConfig::M; \
+                     the configured multiplicity width is too narrow for this e-graph",
+                );
+                true
+            } else {
+                false
+            }
+        }
+    };
 }
 
 /// Id bundle for the anti-unification subsystem: search-graph identities,
