@@ -21,7 +21,7 @@ pub struct LitValStoreToken(crate::containers::MapToken);
 /// Append-only intern table for literals, backed by `SpMap`.
 #[derive(Debug)]
 pub struct LitValStore<L: LitVal, V: DenseId, const TRACK: bool> {
-    map: crate::containers::SpMap<L, (), TRACK>,
+    map: crate::containers::SpMap<L, (), usize, TRACK>,
     _phantom: core::marker::PhantomData<V>,
 }
 

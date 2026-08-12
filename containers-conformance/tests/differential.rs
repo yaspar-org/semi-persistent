@@ -194,8 +194,8 @@ fn differential_vec_parallel() {
 // ---------------------------------------------------------------------------
 
 fn aov_trace(seed: u64, steps: usize) {
-    let mut p: prod::AppendOnlyVec<u32, true> = prod::AppendOnlyVec::new();
-    let mut v: verus::append_only_vec::AppendOnlyVec<u32, true> =
+    let mut p: prod::AppendOnlyVec<u32, usize, true> = prod::AppendOnlyVec::new();
+    let mut v: verus::append_only_vec::AppendOnlyVec<u32, usize, true> =
         verus::append_only_vec::AppendOnlyVec::new();
 
     let mut rng = Rng::new(seed);
@@ -258,8 +258,8 @@ fn differential_append_only_vec() {
 // ---------------------------------------------------------------------------
 
 fn map_trace(seed: u64, steps: usize) {
-    let mut p: prod::Map<u32, u32, true> = prod::Map::new();
-    let mut v: verus::map::SpMap<u32, u32, true> = verus::map::SpMap::new();
+    let mut p: prod::Map<u32, u32, usize, true> = prod::Map::new();
+    let mut v: verus::map::SpMap<u32, u32, usize, true> = verus::map::SpMap::new();
 
     let mut rng = Rng::new(seed);
     let mut marks: Vec<(prod::MapToken, verus::map::MapToken)> = Vec::new();
@@ -624,8 +624,8 @@ fn differential_bplus_from_sorted_batched() {
 // ---------------------------------------------------------------------------
 
 fn map_string_trace(seed: u64, steps: usize) {
-    let mut p: prod::Map<String, u32, true> = prod::Map::new();
-    let mut v: verus::map::SpMap<String, u32, true> = verus::map::SpMap::new();
+    let mut p: prod::Map<String, u32, usize, true> = prod::Map::new();
+    let mut v: verus::map::SpMap<String, u32, usize, true> = verus::map::SpMap::new();
 
     let mut rng = Rng::new(seed);
     let mut marks: Vec<(prod::MapToken, verus::map::MapToken)> = Vec::new();

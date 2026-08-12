@@ -23,9 +23,16 @@ use crate::index_like::IndexLike;
 use crate::vec::{ShrinkPolicy, VecToken};
 
 /// Push-only vec with semi-persistent mark/restore.
-pub struct AppendOnlyVec<T, const TRACK: bool = true> {
+///
+/// `I` is the index word: it names a position and thereby bounds the collection
+/// (`wf` pins `data.len() < I::max_nat()`, so the last storable element sits at
+/// `I::max_spec()` and no position ever wraps). Saved frame lengths are positions
+/// too, hence `frames: Vec<I>` rather than `Vec<usize>` — at a 31-bit index that
+/// halves the frame stack. `usize` is the default because a container cannot know
+/// its own population; a caller who knows it opts into the narrow word.
+pub struct AppendOnlyVec<T, I: IndexLike = usize, const TRACK: bool = true> {
     pub(crate) data: std::vec::Vec<T>,
-    pub(crate) frames: std::vec::Vec<usize>,
+    pub(crate) frames: std::vec::Vec<I>,
     pub(crate) forks: ForkHistory,
     pub(crate) id: ContainerId,
     /// Ghost snapshot stack: `snapshots[k]` is `data@` as of frame `k`'s mark,
@@ -33,7 +40,7 @@ pub struct AppendOnlyVec<T, const TRACK: bool = true> {
     pub(crate) snapshots: Ghost<Seq<Seq<T>>>,
 }
 
-impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
+impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// The abstract contents: the data sequence.
     pub open(crate) spec fn view(&self) -> Seq<T> {
         self.data@
@@ -55,6 +62,10 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
     }
 
     /// Well-formedness:
+    ///  - the element count fits the index word, so every position — the index
+    ///    `push` returns, the length `len` reports, the frame lengths `mark`
+    ///    saves — is representable in `I` and the checked conversions below are
+    ///    infallible rather than merely guarded;
     ///  - snapshots and frames are parallel stacks;
     ///  - every saved length is within the current data and monotone
     ///    non-decreasing (append-only: a frame's prefix never shrinks while
@@ -65,12 +76,14 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         let data = self.data@;
         let frames = self.frames@;
         let snaps = self.snapshots@;
+        &&& data.len() < I::max_nat()
         &&& snaps.len() == frames.len()
-        &&& (forall|k: int| 0 <= k < frames.len() ==> #[trigger] frames[k] <= data.len())
-        &&& (forall|k: int| 0 <= k && k + 1 < frames.len() ==>
-                #[trigger] frames[k] <= #[trigger] frames[k + 1])
         &&& (forall|k: int| 0 <= k < frames.len() ==>
-                #[trigger] snaps[k] == data.subrange(0, frames[k] as int))
+                #[trigger] frames[k].as_nat() <= data.len())
+        &&& (forall|k: int| 0 <= k && k + 1 < frames.len() ==>
+                (#[trigger] frames[k]).as_nat() <= (#[trigger] frames[k + 1]).as_nat())
+        &&& (forall|k: int| 0 <= k < frames.len() ==>
+                #[trigger] snaps[k] == data.subrange(0, frames[k].as_nat() as int))
         &&& self.forks.wf()
     }
 
@@ -100,6 +113,7 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
     pub fn new() -> (v: Self)
         ensures v.wf(), v.view().len() == 0, v.snapshots_view().len() == 0,
     {
+        proof { I::lemma_max_nat_positive(); }  // 0 < I::max_nat(), so empty is wf
         AppendOnlyVec {
             data: std::vec::Vec::new(),
             frames: std::vec::Vec::new(),
@@ -109,10 +123,17 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         }
     }
 
-    pub fn len(&self) -> (n: usize)
-        ensures n == self.view().len(),
+    /// Element count, as a position in `I`.
+    ///
+    /// The `expect` is discharged by `wf`'s `data.len() < I::max_nat()` clause, so
+    /// this cannot fail for a well-formed vec — the same protocol as
+    /// `InlineStore::len` (`inline_store.rs`), and the reason `push` guards the
+    /// *new* length rather than the returned index.
+    pub fn len(&self) -> (n: I)
+        requires self.wf(),
+        ensures n.as_nat() == self.view().len(),
     {
-        self.data.len()
+        I::try_from_usize(self.data.len()).expect("len overflow")
     }
 
     pub fn is_empty(&self) -> (b: bool)
@@ -121,11 +142,11 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         self.data.len() == 0
     }
 
-    pub fn get(&self, idx: usize) -> (v: &T)
-        requires idx < self.view().len(),
-        ensures *v == self.view()[idx as int],
+    pub fn get(&self, idx: I) -> (v: &T)
+        requires idx.as_nat() < self.view().len(),
+        ensures *v == self.view()[idx.as_nat() as int],
     {
-        &self.data[idx]
+        &self.data[idx.as_usize()]
     }
 
     /// Contiguous read access to all elements (production parity; also the
@@ -139,15 +160,24 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
 
     /// Append a value; returns its index. Existing data and every snapshot
     /// prefix are preserved (append-only), so `wf` is maintained.
-    pub fn push(&mut self, val: T) -> (idx: usize)
-        requires old(self).wf(),
+    ///
+    /// The capacity precondition is on the length *after* the append, not on the
+    /// returned index: `wf` has to hold on exit, and it is what makes `len` and
+    /// `mark` infallible. Requiring only `view().len() < I::max_nat()` would admit
+    /// a final push whose successor length falls outside `I`.
+    pub fn push(&mut self, val: T) -> (idx: I)
+        requires
+            old(self).wf(),
+            old(self).view().len() + 1 < I::max_nat(),
         ensures
             final(self).wf(),
-            idx == old(self).view().len(),
+            idx.as_nat() == old(self).view().len(),
             final(self).view() == old(self).view().push(val),
             final(self).snapshots_view() == old(self).snapshots_view(),
     {
-        let idx = self.data.len();
+        let idx = I::try_from_usize(self.data.len()).expect(
+            "append-only vec is full for its index word",
+        );
         self.data.push(val);
         proof {
             let data = self.data@;
@@ -156,12 +186,13 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             // Each old frame length <= old_data.len() <= data.len(), and the
             // prefix [0, frames[k]) is unchanged by the append.
             assert forall|k: int| 0 <= k < self.frames@.len() implies
-                #[trigger] self.snapshots@[k] == data.subrange(0, self.frames@[k] as int)
+                #[trigger] self.snapshots@[k] == data.subrange(0, self.frames@[k].as_nat() as int)
             by {
-                assert(old(self).snapshots@[k] == old_data.subrange(0, self.frames@[k] as int));
-                assert(self.frames@[k] <= old_data.len());
-                assert(data.subrange(0, self.frames@[k] as int)
-                    =~= old_data.subrange(0, self.frames@[k] as int));
+                assert(old(self).snapshots@[k]
+                    == old_data.subrange(0, self.frames@[k].as_nat() as int));
+                assert(self.frames@[k].as_nat() <= old_data.len());
+                assert(data.subrange(0, self.frames@[k].as_nat() as int)
+                    =~= old_data.subrange(0, self.frames@[k].as_nat() as int));
             }
         }
         idx
@@ -226,7 +257,9 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         let token_depth = self.frames.len() as u32;
         let token_container = self.id;
 
-        let saved_len = self.data.len();
+        // The saved length is a position, so it is stored as `I`; the conversion
+        // is infallible by `wf`.
+        let saved_len = I::try_from_usize(self.data.len()).expect("len overflow");
         let ghost old_view = self.view();
         let ghost old_frames = self.frames@;
 
@@ -243,22 +276,23 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             // monotone: only the new adjacency (old top, new) to check;
             // old top <= old_data.len() == saved_len == frames[new_top].
             assert forall|k: int| 0 <= k && k + 1 < frames.len() implies
-                #[trigger] frames[k] <= #[trigger] frames[k + 1] by {
+                (#[trigger] frames[k]).as_nat() <= (#[trigger] frames[k + 1]).as_nat() by {
                 if k + 1 < new_top {
                 } else {
-                    assert(frames[k] <= data.len());
-                    assert(frames[k + 1] == saved_len == data.len());
+                    assert(frames[k].as_nat() <= data.len());
+                    assert(frames[k + 1].as_nat() == saved_len.as_nat() == data.len());
                 }
             }
             // snapshots: new top is the full current data prefix; old ones
             // unchanged (data unchanged by mark).
             assert forall|k: int| 0 <= k < frames.len() implies
-                #[trigger] snaps[k] == data.subrange(0, frames[k] as int) by {
+                #[trigger] snaps[k] == data.subrange(0, frames[k].as_nat() as int) by {
                 if k < new_top {
-                    assert(old(self).snapshots@[k] == data.subrange(0, frames[k] as int));
+                    assert(old(self).snapshots@[k]
+                        == data.subrange(0, frames[k].as_nat() as int));
                 } else {
                     assert(snaps[new_top] == old_view);
-                    assert(frames[new_top] == data.len());
+                    assert(frames[new_top].as_nat() == data.len());
                     assert(old_view =~= data.subrange(0, data.len() as int));
                 }
             }
@@ -346,7 +380,7 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
         );
 
         let target = token.frame_idx;
-        let saved_len = self.frames[target];
+        let saved_len = self.frames[target].as_usize();
 
         let ghost old_data = self.data@;
         let ghost old_frames = self.frames@;
@@ -393,22 +427,22 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
             // facts; each surviving frame's length <= saved_len == data.len(),
             // and its prefix is unchanged by the data truncation.
             assert forall|k: int| 0 <= k < frames.len() implies
-                #[trigger] frames[k] <= data.len() by {
+                #[trigger] frames[k].as_nat() <= data.len() by {
                 assert(frames[k] == old_frames[k]);
                 assert(k < target);
                 // old monotone: frames[k] <= old_frames[target] == saved_len.
                 lemma_aov_frames_le(old_frames, k, target as int);
             }
             assert forall|k: int| 0 <= k < frames.len() implies
-                #[trigger] snaps[k] == data.subrange(0, frames[k] as int) by {
+                #[trigger] snaps[k] == data.subrange(0, frames[k].as_nat() as int) by {
                 assert(snaps[k] == old_snaps[k]);
-                assert(old_snaps[k] == old_data.subrange(0, frames[k] as int));
+                assert(old_snaps[k] == old_data.subrange(0, frames[k].as_nat() as int));
                 lemma_aov_frames_le(old_frames, k, target as int);
-                assert(frames[k] <= saved_len);
+                assert(frames[k].as_nat() <= saved_len);
                 // data == old_data prefix [0,saved_len); for m < frames[k] <= saved_len
                 // the two prefixes agree.
-                assert(data.subrange(0, frames[k] as int)
-                    =~= old_data.subrange(0, frames[k] as int));
+                assert(data.subrange(0, frames[k].as_nat() as int)
+                    =~= old_data.subrange(0, frames[k].as_nat() as int));
             }
         }
     }
@@ -417,19 +451,19 @@ impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
 /// In a monotone non-decreasing frame-length sequence, `frames[k] <=
 /// frames[j]` for `k <= j`. (Used to bound a surviving frame by the restore
 /// target's saved length.)
-pub(crate) proof fn lemma_aov_frames_le(frames: Seq<usize>, k: int, j: int)
+pub(crate) proof fn lemma_aov_frames_le<I: IndexLike>(frames: Seq<I>, k: int, j: int)
     requires
         0 <= k <= j < frames.len(),
         forall|a: int| 0 <= a && a + 1 < frames.len() ==>
-            #[trigger] frames[a] <= #[trigger] frames[a + 1],
+            (#[trigger] frames[a]).as_nat() <= (#[trigger] frames[a + 1]).as_nat(),
     ensures
-        frames[k] <= frames[j],
+        frames[k].as_nat() <= frames[j].as_nat(),
     decreases j - k,
 {
     if k < j {
         lemma_aov_frames_le(frames, k, j - 1);
         assert(0 <= (j - 1) && (j - 1) + 1 < frames.len());
-        assert(frames[(j - 1)] <= frames[(j - 1) + 1]);  // trigger at a = j-1
+        assert(frames[(j - 1)].as_nat() <= frames[(j - 1) + 1].as_nat());  // trigger at a = j-1
     }
 }
 
@@ -456,7 +490,7 @@ fn shrink_aov_capacity<T>(data: &mut Vec<T>, factor: usize, headroom: usize)
 // from a `&self` iterator.
 // ---------------------------------------------------------------------------
 
-impl<T, const TRACK: bool> AppendOnlyVec<T, TRACK> {
+impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// Iterate over the elements in insertion order (production parity).
     #[inline(always)]
     pub fn iter(&self) -> core::slice::Iter<'_, T> {

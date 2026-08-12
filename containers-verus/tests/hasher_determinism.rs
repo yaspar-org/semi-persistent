@@ -168,7 +168,7 @@ fn with_seed_is_const() {
 #[test]
 fn iteration_order_is_insertion_order() {
     let build = || {
-        let mut m: SpMap<u64, u64, true> = SpMap::new();
+        let mut m: SpMap<u64, u64, usize, true> = SpMap::new();
         for i in 0..64u64 {
             m.insert(i * 7 % 13, i);
         }
@@ -189,7 +189,7 @@ fn iteration_order_is_insertion_order() {
 #[test]
 fn identical_op_sequences_produce_identical_state() {
     let run = || {
-        let mut m: SpMap<String, u64, true> = SpMap::new();
+        let mut m: SpMap<String, u64, usize, true> = SpMap::new();
         for i in 0..50u64 {
             m.insert(format!("key{}", i % 20), i);
         }
@@ -213,7 +213,7 @@ fn identical_op_sequences_produce_identical_state() {
 /// invariant that makes the index a pure accelerator rather than state.
 #[test]
 fn lookups_agree_with_log_after_restore() {
-    let mut m: SpMap<u64, u64, true> = SpMap::new();
+    let mut m: SpMap<u64, u64, usize, true> = SpMap::new();
     for i in 0..100u64 {
         m.insert(i % 40, i);
     }

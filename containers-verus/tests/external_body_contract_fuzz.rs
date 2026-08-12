@@ -323,7 +323,7 @@ fn shrink_preserves_aov_contents() {
         let factor = (next() % 5) as usize;
         let headroom = (next() % 4) as usize;
 
-        let mut v: AppendOnlyVec<u64, true> = AppendOnlyVec::new();
+        let mut v: AppendOnlyVec<u64, usize, true> = AppendOnlyVec::new();
         let mut expect = Vec::with_capacity(n);
         for _ in 0..n {
             let x = next();

@@ -193,7 +193,7 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
 #[test]
 fn append_only_vec_ops_and_rollback() {
     for seed in 0..12u64 {
-        let mut a = AppendOnlyVec::<u64, true>::new(); // mark/restore requires TRACK (plan 2.4)
+        let mut a = AppendOnlyVec::<u64, usize, true>::new(); // mark/restore requires TRACK (plan 2.4)
         let mut oracle: Vec<u64> = Vec::new();
         let mut rng = Lcg::new(seed ^ 0x5151);
         let mut frames: Vec<(_, Vec<u64>)> = Vec::new();

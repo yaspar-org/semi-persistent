@@ -37,10 +37,10 @@ impl Lcg {
 // SpMap: insert (overwrite-on-dup), contains_key, id_of, get, vs a HashMap.
 // --------------------------------------------------------------------------
 
-type Map = SpMap<u32, u64, false>;
+type Map = SpMap<u32, u64, usize, false>;
 /// Tracked variant for the mark/restore tests: mark/restore on an untracked
 /// container now panics (production parity, migration plan 2.4).
-type MapT = SpMap<u32, u64, true>;
+type MapT = SpMap<u32, u64, usize, true>;
 
 #[test]
 fn map_ops_match_oracle() {

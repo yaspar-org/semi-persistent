@@ -277,7 +277,7 @@ fn child_seed_seals_on_first_use() {
     assert!(!hasher_spec::seed_is_sealed(), "sealed before any use");
 
     // Build a container: this observes the seed and must seal it.
-    let _m: SpMap<u64, u64, true> = SpMap::new();
+    let _m: SpMap<u64, u64, usize, true> = SpMap::new();
     assert!(
         hasher_spec::seed_is_sealed(),
         "constructing an SpMap did not seal the seed"
@@ -309,7 +309,7 @@ fn child_configured_seed_reaches_spmap() {
     // reference map keyed the same way.
     assert_eq!(hasher_spec::effective_seed(), 0x99);
 
-    let mut m: SpMap<u64, u64, true> = SpMap::new();
+    let mut m: SpMap<u64, u64, usize, true> = SpMap::new();
     for i in 0..200u64 {
         m.insert(i, i * 3);
     }

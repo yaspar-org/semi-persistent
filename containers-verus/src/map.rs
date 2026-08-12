@@ -47,6 +47,7 @@ use std::hash::Hash;
 use vstd::prelude::*;
 
 use crate::append_only_vec::AppendOnlyVec;
+use crate::index_like::IndexLike;
 use crate::vec::{ShrinkPolicy, VecToken};
 
 // The index hasher (and the determinism policy behind it) lives in one place:
@@ -86,15 +87,21 @@ pub open(crate) spec fn is_last_occurrence<K, V>(log: Seq<(K, V)>, i: int) -> bo
 
 /// Semi-persistent map. (`SpMap` rather than `Map` to avoid colliding with
 /// `vstd::map::Map`, which is `HashMap`'s view type.)
-pub struct SpMap<K, V, const TRACK: bool = true>
+///
+/// `I` is the log's index word, and it is also the hash index's VALUE type — which
+/// is where the width is paid for in memory: one entry per live key. A map keyed
+/// over a 31-bit id space at `I = u32` stores 4-byte positions instead of 8-byte
+/// ones, and `wf` (via the log's) still pins every position inside `I`, so nothing
+/// wraps. See [`AppendOnlyVec`] for why the default is `usize`.
+pub struct SpMap<K, V, I: IndexLike = usize, const TRACK: bool = true>
 where
     K: Clone + Hash + Eq,
 {
-    pub(crate) log: AppendOnlyVec<(K, V), TRACK>,
-    pub(crate) index: HashMap<K, usize, IndexHasher>,
+    pub(crate) log: AppendOnlyVec<(K, V), I, TRACK>,
+    pub(crate) index: HashMap<K, I, IndexHasher>,
 }
 
-impl<K, V, const TRACK: bool> SpMap<K, V, TRACK>
+impl<K, V, I: IndexLike, const TRACK: bool> SpMap<K, V, I, TRACK>
 where
     K: Clone + Hash + Eq,
 {
@@ -104,7 +111,7 @@ where
     }
 
     /// The index map (spec twin; the field is `pub(crate)` — privacy closeout).
-    pub open(crate) spec fn index_view(&self) -> Map<K, usize> {
+    pub open(crate) spec fn index_view(&self) -> Map<K, I> {
         self.index@
     }
 
@@ -126,16 +133,21 @@ where
     /// Index/log agreement: the exec index contains `k → i` iff `i` is the
     /// last occurrence of `k` in the log. (`obeys_key_model` keeps the
     /// HashMap key model well-behaved.)
+    ///
+    /// Positions are compared through `as_nat()` because the stored value is now
+    /// an `I`, not a `usize`. `as_nat` is injective (`lemma_as_nat_injective`), so
+    /// "the index value projects to `i`" still pins the stored word uniquely — the
+    /// agreement is exactly as strong as before, just stated on the projection.
     pub open(crate) spec fn index_agrees(&self) -> bool {
         let log = self.log_view();
         let m = self.index@;
         &&& obeys_key_model::<K>()
         &&& builds_valid_hashers::<IndexHasher>()
         &&& (forall|i: int| #[trigger] is_last_occurrence(log, i)
-                ==> m.contains_key(log[i].0) && m[log[i].0] == i)
+                ==> m.contains_key(log[i].0) && m[log[i].0].as_nat() == i)
         &&& (forall|k: K| #[trigger] m.contains_key(k)
-                ==> 0 <= m[k] < log.len() && log[m[k] as int].0 == k
-                    && is_last_occurrence(log, m[k] as int))
+                ==> m[k].as_nat() < log.len() && log[m[k].as_nat() as int].0 == k
+                    && is_last_occurrence(log, m[k].as_nat() as int))
     }
 
     pub open(crate) spec fn wf(&self) -> bool {
@@ -160,7 +172,7 @@ where
             // supplies it with `assume(obeys_key_model::<MyKey>())`. It is a
             // property of `K`, so it threads through `wf` for the map's life.
             obeys_key_model::<K>(),
-        ensures m.wf(), m.log_view().len() == 0, m.index_view() == Map::<K, usize>::empty(),
+        ensures m.wf(), m.log_view().len() == 0, m.index_view() == Map::<K, I>::empty(),
     {
         broadcast use vstd::std_specs::hash::group_hash_axioms;
         broadcast use crate::hasher_spec::axiom_index_hasher_builds_valid_hashers;
@@ -172,24 +184,28 @@ where
         // `IndexHasher::default()` rather than a `with_hasher` constructor: vstd
         // does not spec `with_hasher`, so this route keeps seed control free of
         // added trust. See hasher_spec.
-        let index: HashMap<K, usize, IndexHasher> = HashMap::default();
+        let index: HashMap<K, I, IndexHasher> = HashMap::default();
         let m = SpMap { log, index };
         proof {
             assert(m.log_view().len() == 0);
-            assert(m.index@ =~= Map::<K, usize>::empty());
+            assert(m.index@ =~= Map::<K, I>::empty());
         }
         m
     }
 
     /// Number of entries in the log (including overwritten shadows).
-    pub fn log_len(&self) -> (n: usize)
-        ensures n == self.log_view().len(),
+    ///
+    /// A count of positions, so it is reported in `I`; `wf` makes the conversion
+    /// inside the log's `len` infallible.
+    pub fn log_len(&self) -> (n: I)
+        requires self.wf(),
+        ensures n.as_nat() == self.log_view().len(),
     {
         self.log.len()
     }
 
     /// Current dense index for a key, if present.
-    pub fn id_of(&self, key: &K) -> (r: Option<usize>)
+    pub fn id_of(&self, key: &K) -> (r: Option<I>)
         requires self.wf(),
         ensures
             match r {
@@ -214,17 +230,17 @@ where
     }
 
     /// Value+key pair at a dense log index.
-    pub fn get(&self, idx: usize) -> (r: &(K, V))
-        requires self.wf(), idx < self.log_view().len(),
-        ensures *r == self.log_view()[idx as int],
+    pub fn get(&self, idx: I) -> (r: &(K, V))
+        requires self.wf(), idx.as_nat() < self.log_view().len(),
+        ensures *r == self.log_view()[idx.as_nat() as int],
     {
         self.log.get(idx)
     }
 
     /// The key at a dense log index (production `Map::key` parity).
-    pub fn key(&self, idx: usize) -> (r: &K)
-        requires self.wf(), idx < self.log_view().len(),
-        ensures *r == self.log_view()[idx as int].0,
+    pub fn key(&self, idx: I) -> (r: &K)
+        requires self.wf(), idx.as_nat() < self.log_view().len(),
+        ensures *r == self.log_view()[idx.as_nat() as int].0,
     {
         &self.log.get(idx).0
     }
@@ -232,9 +248,9 @@ where
     /// The value at a dense log index (production `Map::get` returned `&V`;
     /// under the verus names `get` returns the pair and this returns the
     /// value).
-    pub fn get_val(&self, idx: usize) -> (r: &V)
-        requires self.wf(), idx < self.log_view().len(),
-        ensures *r == self.log_view()[idx as int].1,
+    pub fn get_val(&self, idx: I) -> (r: &V)
+        requires self.wf(), idx.as_nat() < self.log_view().len(),
+        ensures *r == self.log_view()[idx.as_nat() as int].1,
     {
         &self.log.get(idx).1
     }
@@ -248,7 +264,7 @@ where
         ensures
             match r {
                 Some(v) => self.index_view().contains_key(*key)
-                    && *v == self.log_view()[self.index_view()[*key] as int].1,
+                    && *v == self.log_view()[self.index_view()[*key].as_nat() as int].1,
                 None => !self.index_view().contains_key(*key),
             },
     {
@@ -266,6 +282,12 @@ where
     /// Number of LIVE keys (production `Map::len` parity): the index's size —
     /// each live key has exactly one index entry (`index_agrees`), so
     /// `index.len()` is the live-key count. O(1); no separate counter field.
+    ///
+    /// `usize`, not `I`: this is the hash index's cardinality, not a log position.
+    /// It is bounded by the log — `index_agrees` injects live keys into distinct
+    /// positions — but that is a finite-cardinality argument, and the count is
+    /// never stored, so narrowing it would cost a proof and save nothing.
+    /// [`log_len`](Self::log_len) is the position count.
     pub fn len(&self) -> (n: usize)
         requires self.wf(),
         ensures n == self.index_view().len(),
@@ -292,11 +314,14 @@ where
     /// Insert or overwrite. Appends `(key, val)` to the log (the new last
     /// occurrence of `key`) and points the index at it. Returns the dense
     /// log index of the new entry.
-    pub fn insert(&mut self, key: K, val: V) -> (id: usize)
-        requires old(self).wf(),
+    pub fn insert(&mut self, key: K, val: V) -> (id: I)
+        requires
+            old(self).wf(),
+            // Room for one more position in the index word; see `AppendOnlyVec::push`.
+            old(self).log_view().len() + 1 < I::max_nat(),
         ensures
             final(self).wf(),
-            id == old(self).log_view().len(),
+            id.as_nat() == old(self).log_view().len(),
             final(self).log_view() == old(self).log_view().push((key, val)),
             final(self).index_view() == old(self).index_view().insert(key, id),
     {
@@ -309,17 +334,18 @@ where
         proof {
             let log = self.log_view();
             let m = self.index@;
+            let idn = id.as_nat() as int;
             assert(log == old_log.push((key, val)));
-            assert(log[id as int] == (key, val));
+            assert(log[idn] == (key, val));
             // The appended entry is the unique new last-occurrence of `key`;
             // every other position's last-occurrence status is unchanged
             // (only an entry with key `key` could lose it, and the new tail
             // entry has key `key`, so prior `key` entries are no longer last —
             // but the index now maps `key` to `id`, matching).
-            assert(is_last_occurrence(log, id as int));
+            assert(is_last_occurrence(log, idn));
             assert forall|i: int| #[trigger] is_last_occurrence(log, i)
-                implies m.contains_key(log[i].0) && m[log[i].0] == i by {
-                if i == id as int {
+                implies m.contains_key(log[i].0) && m[log[i].0].as_nat() == i by {
+                if i == idn {
                     assert(m[key] == id);
                 } else {
                     // i < id; entry unchanged from old_log. It's still a last
@@ -335,13 +361,13 @@ where
                         }
                     }
                     assert(old(self).index@.contains_key(log[i].0));
-                    assert(old(self).index@[log[i].0] == i);
+                    assert(old(self).index@[log[i].0].as_nat() == i);
                     assert(m[log[i].0] == old(self).index@[log[i].0]);
                 }
             }
             assert forall|k: K| #[trigger] m.contains_key(k)
-                implies 0 <= m[k] < log.len() && log[m[k] as int].0 == k
-                    && is_last_occurrence(log, m[k] as int) by {
+                implies m[k].as_nat() < log.len() && log[m[k].as_nat() as int].0 == k
+                    && is_last_occurrence(log, m[k].as_nat() as int) by {
                 if k == key {
                     assert(m[k] == id);
                 } else {
@@ -349,7 +375,7 @@ where
                     assert(old(self).index@.contains_key(k));
                     // old last-occurrence of k is still last (the new tail has
                     // key `key` != k, doesn't shadow k).
-                    let p = old(self).index@[k] as int;
+                    let p = old(self).index@[k].as_nat() as int;
                     assert(is_last_occurrence(old_log, p));
                     assert(log[p] == old_log[p]);
                     assert forall|j: int| p < j < log.len()
@@ -429,7 +455,11 @@ where
         broadcast use crate::hasher_spec::axiom_index_hasher_builds_valid_hashers;
         let ghost log = self.log_view();
         self.index.clear();
-        let n = self.log.len();
+        // The scan counter stays `usize` — it is a loop variable, never stored —
+        // and is converted to the stored width once per iteration for the entry it
+        // names. The conversion is infallible: `i < n == log.len() < I::max_nat()`
+        // by the log's `wf`.
+        let n = self.log.len().as_usize();
         let mut i: usize = 0;
         // Invariant: index agrees with last-occurrence RESTRICTED to the prefix
         // [0, i): a key maps to its last occurrence within [0, i), and every
@@ -439,41 +469,42 @@ where
                 self.log == old(self).log,
                 log == self.log_view(),
                 n == log.len(),
+                log.len() < I::max_nat(),
                 0 <= i <= n,
                 obeys_key_model::<K>(),
                 builds_valid_hashers::<IndexHasher>(),
                 forall|p: int| 0 <= p < i && is_last_occurrence_prefix(log, p, i as int)
                     ==> #[trigger] self.index@.contains_key(log[p].0)
-                        && self.index@[log[p].0] == p,
+                        && self.index@[log[p].0].as_nat() == p,
                 forall|k: K| #[trigger] self.index@.contains_key(k)
-                    ==> 0 <= self.index@[k] < i && log[self.index@[k] as int].0 == k
-                        && is_last_occurrence_prefix(log, self.index@[k] as int, i as int),
+                    ==> self.index@[k].as_nat() < i && log[self.index@[k].as_nat() as int].0 == k
+                        && is_last_occurrence_prefix(log, self.index@[k].as_nat() as int, i as int),
             decreases n - i,
         {
-            let entry = self.log.get(i);
+            let pos = I::try_from_usize(i).expect("log position exceeds the map's index word");
+            let entry = self.log.get(pos);
             let key = clone_key_exact(&entry.0);
-            self.index.insert(key, i);
+            self.index.insert(key, pos);
             proof {
                 let m = self.index@;
                 // After inserting (key, i): key's last-occ-in-[0,i+1) is i.
                 assert forall|p: int| 0 <= p < (i + 1) && is_last_occurrence_prefix(log, p, (i + 1) as int)
-                    implies #[trigger] m.contains_key(log[p].0) && m[log[p].0] == p by {
+                    implies #[trigger] m.contains_key(log[p].0) && m[log[p].0].as_nat() == p by {
                     if p == i as int {
-                        assert(m[key] == i);
+                        assert(m[key] == pos);
                     } else {
                         // p < i and last-occ in [0,i+1): so log[p].0 != log[i].0
                         // (else i would shadow it), hence it was last-occ in
                         // [0,i) and the index for it is unchanged.
                         assert(log[p].0 != log[i as int].0);
                         assert(is_last_occurrence_prefix(log, p, i as int));
-                        assert(m[log[p].0] == old(self).index@[log[p].0] || true);
                     }
                 }
                 assert forall|kk: K| #[trigger] m.contains_key(kk)
-                    implies 0 <= m[kk] < (i + 1) && log[m[kk] as int].0 == kk
-                        && is_last_occurrence_prefix(log, m[kk] as int, (i + 1) as int) by {
+                    implies m[kk].as_nat() < (i + 1) && log[m[kk].as_nat() as int].0 == kk
+                        && is_last_occurrence_prefix(log, m[kk].as_nat() as int, (i + 1) as int) by {
                     if kk == key {
-                        assert(m[kk] == i);
+                        assert(m[kk] == pos);
                     } else {
                         // unchanged entry; was last-occ in [0,i), still is in
                         // [0,i+1) because log[i].0 == key != kk.
@@ -487,13 +518,13 @@ where
             // At i == n, last-occurrence-in-prefix-[0,n) == last-occurrence.
             let m = self.index@;
             assert forall|p: int| #[trigger] is_last_occurrence(log, p)
-                implies m.contains_key(log[p].0) && m[log[p].0] == p by {
+                implies m.contains_key(log[p].0) && m[log[p].0].as_nat() == p by {
                 assert(is_last_occurrence_prefix(log, p, n as int));
             }
             assert forall|k: K| #[trigger] m.contains_key(k)
-                implies 0 <= m[k] < log.len() && log[m[k] as int].0 == k
-                    && is_last_occurrence(log, m[k] as int) by {
-                assert(is_last_occurrence_prefix(log, m[k] as int, n as int));
+                implies m[k].as_nat() < log.len() && log[m[k].as_nat() as int].0 == k
+                    && is_last_occurrence(log, m[k].as_nat() as int) by {
+                assert(is_last_occurrence_prefix(log, m[k].as_nat() as int, n as int));
             }
         }
     }
@@ -545,7 +576,7 @@ impl core::fmt::Debug for MapToken {
 // `verus!{}` is unsupported. Prints the live entries via the public `iter`
 // (the log is the source of truth); shadowed/overwritten log entries are not
 // shown, matching the map's logical contents.
-impl<K, V, const TRACK: bool> core::fmt::Debug for SpMap<K, V, TRACK>
+impl<K, V, I: IndexLike, const TRACK: bool> core::fmt::Debug for SpMap<K, V, I, TRACK>
 where
     K: Clone + core::hash::Hash + Eq + core::fmt::Debug,
     V: core::fmt::Debug,
@@ -563,7 +594,7 @@ where
 // semantics). Delegates to the verified AppendOnlyVec::as_slice.
 // ---------------------------------------------------------------------------
 
-impl<K, V, const TRACK: bool> SpMap<K, V, TRACK>
+impl<K, V, I: IndexLike, const TRACK: bool> SpMap<K, V, I, TRACK>
 where
     K: Clone + std::hash::Hash + Eq,
 {

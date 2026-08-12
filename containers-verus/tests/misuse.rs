@@ -175,7 +175,7 @@ fn untracked_mark_panics() {
 #[test]
 #[should_panic(expected = "mark() called on untracked AppendOnlyVec")]
 fn untracked_append_only_mark_panics() {
-    let mut v = AppendOnlyVec::<u32, false>::new();
+    let mut v = AppendOnlyVec::<u32, usize, false>::new();
     v.push(1);
     let _ = v.mark(ShrinkPolicy::Never);
 }
@@ -238,8 +238,8 @@ fn untracked_normal_ops_work() {
 #[test]
 #[should_panic(expected = "token belongs to a different container")]
 fn aov_foreign_token_panics() {
-    let mut a = AppendOnlyVec::<u32, true>::new();
-    let mut b = AppendOnlyVec::<u32, true>::new();
+    let mut a = AppendOnlyVec::<u32, usize, true>::new();
+    let mut b = AppendOnlyVec::<u32, usize, true>::new();
     a.push(1);
     b.push(2);
     let tok_a = a.mark(ShrinkPolicy::Never);
@@ -249,7 +249,7 @@ fn aov_foreign_token_panics() {
 #[test]
 #[should_panic(expected = "token points beyond frame stack")]
 fn aov_consumed_token_panics() {
-    let mut v = AppendOnlyVec::<u32, true>::new();
+    let mut v = AppendOnlyVec::<u32, usize, true>::new();
     v.push(1);
     let tok = v.mark(ShrinkPolicy::Never);
     v.push(2);
@@ -259,7 +259,7 @@ fn aov_consumed_token_panics() {
 
 #[test]
 fn aov_consumed_token_reported_invalid() {
-    let mut v = AppendOnlyVec::<u32, true>::new();
+    let mut v = AppendOnlyVec::<u32, usize, true>::new();
     v.push(1);
     let tok = v.mark(ShrinkPolicy::Never);
     assert!(v.is_valid_token(&tok));
@@ -274,7 +274,7 @@ fn aov_consumed_token_reported_invalid() {
 #[test]
 fn map_consumed_token_reported_invalid_and_state_preserved() {
     use semi_persistent_containers_verus::map::SpMap;
-    let mut m = SpMap::<u32, u32, true>::new();
+    let mut m = SpMap::<u32, u32, usize, true>::new();
     m.insert(1, 10);
     let tok = m.mark(ShrinkPolicy::Never);
     m.insert(2, 20);
