@@ -34,12 +34,40 @@ pub enum Cell {
 }
 
 /// A transportation problem instance.
+///
+/// Supplies and demands are `u32`: this is the solver's own capacity limit, not
+/// the e-graph's multiplicity width. Internally each cell capacity becomes an
+/// `i64` and the objective a `u128`, both of which have headroom above `u32`,
+/// but the flow matrix and the supply vectors do not. Callers holding
+/// surface-width multiplicities must come through [`TransportProblem::narrowed`]
+/// rather than casting.
 #[derive(Clone, Debug)]
 pub struct TransportProblem {
     pub row_supply: Vec<u32>,
     pub col_demand: Vec<u32>,
     /// `cost[i][j]` for row i, column j. Dimensions rows x cols.
     pub cost: Vec<Vec<Cell>>,
+}
+
+impl TransportProblem {
+    /// Build from surface-width (`u64`) supplies and demands, or `None` if any
+    /// exceeds the solver's `u32` capacity.
+    ///
+    /// `None` is the same signal [`solve_transport`] gives for an infeasible
+    /// instance, and every caller already treats that as "this representation
+    /// pair does not yield an action". An unrepresentable supply is genuinely
+    /// unsolvable *by this solver*, so reporting it as infeasible loses only
+    /// candidate generalizations — never soundness. Truncating instead would
+    /// solve a different problem and report its cost as this one's.
+    pub fn narrowed(row_supply: &[u64], col_demand: &[u64], cost: Vec<Vec<Cell>>) -> Option<Self> {
+        let narrow =
+            |v: &[u64]| -> Option<Vec<u32>> { v.iter().map(|&n| u32::try_from(n).ok()).collect() };
+        Some(TransportProblem {
+            row_supply: narrow(row_supply)?,
+            col_demand: narrow(col_demand)?,
+            cost,
+        })
+    }
 }
 
 /// An optimal solution: the matching-count matrix and its total quality.
@@ -102,9 +130,20 @@ impl Network {
 
 /// A float-cost transportation problem (for MCGS Q estimates). Costs must be
 /// finite; non-finite cells must be passed as `None` (Forbidden).
+///
+/// Deliberately has no `narrowed` constructor to match [`TransportProblem::narrowed`].
+/// This solver only ever re-solves margins that the integer solver already accepted:
+/// the sole caller reads them back out of the AND node's stored `transport_rows` /
+/// `transport_cols`, which were moved out of the very [`TransportProblem`] the
+/// feasibility gate ran, so they are `u32` because they already passed the one
+/// narrowing check and not because anything narrows here. A constructor taking `u64`
+/// would invite a *second* narrowing point that could disagree with the gate about
+/// which instance was declared feasible.
 #[derive(Clone, Debug)]
 pub struct TransportProblemF64 {
+    /// Already at the solver's width; see the type doc.
     pub row_supply: Vec<u32>,
+    /// Already at the solver's width; see the type doc.
     pub col_demand: Vec<u32>,
     /// `cost[i][j]`: `Some(finite f64)` = allowed, `None` = forbidden.
     pub cost: Vec<Vec<Option<f64>>>,

@@ -9,7 +9,9 @@
 //! SpMap for deduplication caches); mark/restore truncates them as one unit.
 
 use crate::config::AuIds;
-use crate::containers::{AppendOnlyVec, DenseId, MapToken, ShrinkPolicy, SpMap, VecToken};
+use crate::containers::{
+    AppendOnlyVec, DenseId, IndexLike, MapToken, ShrinkPolicy, SpMap, VecToken,
+};
 
 use super::{AuIds31, Span};
 
@@ -54,13 +56,18 @@ pub enum CycleMode {
 
 /// Interns sorted class-id vectors as context ids. Two equal vectors get the
 /// same context id; comparison is then a single integer compare.
+///
+/// Both pools and the dedup map are addressed by ids whose `Index` is `A::Index`
+/// (`A::Context` for `spans`, `A::ContextElem` for `classes`, and `index`'s log
+/// positions are what `A::Context`s are minted from), so that word is the index type
+/// rather than `usize`.
 pub struct ContextStore<A: AuIds = AuIds31> {
     /// Each interned context's data as a typed span into `classes`.
-    spans: AppendOnlyVec<Span<A::ContextElem>>,
+    spans: AppendOnlyVec<Span<A::ContextElem>, A::Index>,
     /// Pool of class ids (all interned contexts concatenated).
-    classes: AppendOnlyVec<A::Class>,
+    classes: AppendOnlyVec<A::Class, A::Index>,
     /// Deduplication map: sorted class vector -> context id.
-    index: SpMap<Vec<A::Class>, A::Context>,
+    index: SpMap<Vec<A::Class>, A::Context, A::Index>,
 }
 
 /// Token for restoring a `ContextStore` to a previous state.
@@ -83,6 +90,8 @@ impl<A: AuIds> ContextStore<A> {
     }
 
     pub fn empty(&self) -> A::Context {
+        // The empty context is interned first in `new`, so id 0 is it. Id 0 exists in every
+        // id family, so this mint needs no check.
         A::Context::from_usize(0)
     }
 
@@ -90,8 +99,8 @@ impl<A: AuIds> ContextStore<A> {
         if let Some(log_idx) = self.index.id_of(&sorted_classes.to_vec()) {
             return *self.index.get_val(log_idx);
         }
-        let id = A::Context::from_usize(self.spans.len());
-        let start = self.classes.len();
+        let id: A::Context = crate::id::id_at_index(self.spans.len());
+        let start = self.classes.len().as_usize();
         for &c in sorted_classes {
             self.classes.push(c);
         }
@@ -102,7 +111,7 @@ impl<A: AuIds> ContextStore<A> {
 
     #[inline]
     pub fn get(&self, id: A::Context) -> &[A::Class] {
-        let span = *self.spans.get(id.to_usize());
+        let span = *self.spans.get(id.to_index());
         let start = span.start_usize();
         let len = span.len_usize();
         // `as_slice()` is the verified accessor for exactly this: its
@@ -119,7 +128,9 @@ impl<A: AuIds> ContextStore<A> {
         self.get(id).binary_search(&class).is_ok()
     }
 
-    pub fn len(&self) -> usize {
+    /// Number of interned contexts, in the configured index word (a context count is
+    /// a position count: the next context interns at exactly this index).
+    pub fn len(&self) -> A::Index {
         self.spans.len()
     }
 
@@ -159,15 +170,17 @@ impl<A: AuIds> Default for ContextStore<A> {
 // ---------------------------------------------------------------------------
 
 /// The OR-node arena: each node is a subproblem `AU(l, r)` with cycle contexts.
+/// Every column is addressed by `A::Or`, and `by_key`'s log positions are what the
+/// `A::Or`s are minted from, so the index word is `A::Index` throughout.
 pub struct OrArena<A: AuIds = AuIds31> {
-    pub left: AppendOnlyVec<A::Class>,
-    pub right: AppendOnlyVec<A::Class>,
-    pub left_ctx: AppendOnlyVec<A::Context>,
-    pub right_ctx: AppendOnlyVec<A::Context>,
-    pub terminal: AppendOnlyVec<bool>,
-    pub left_best_size: AppendOnlyVec<u32>,
-    pub right_best_size: AppendOnlyVec<u32>,
-    pub by_key: SpMap<(A::Class, A::Class, A::Context, A::Context), A::Or>,
+    pub left: AppendOnlyVec<A::Class, A::Index>,
+    pub right: AppendOnlyVec<A::Class, A::Index>,
+    pub left_ctx: AppendOnlyVec<A::Context, A::Index>,
+    pub right_ctx: AppendOnlyVec<A::Context, A::Index>,
+    pub terminal: AppendOnlyVec<bool, A::Index>,
+    pub left_best_size: AppendOnlyVec<u32, A::Index>,
+    pub right_best_size: AppendOnlyVec<u32, A::Index>,
+    pub by_key: SpMap<(A::Class, A::Class, A::Context, A::Context), A::Or, A::Index>,
 }
 
 /// Token for restoring an `OrArena`.
@@ -197,7 +210,9 @@ impl<A: AuIds> OrArena<A> {
         }
     }
 
-    pub fn len(&self) -> usize {
+    /// Number of OR nodes, in the configured index word (the next node lands at
+    /// exactly this index).
+    pub fn len(&self) -> A::Index {
         self.left.len()
     }
 
@@ -282,7 +297,7 @@ impl<A: AuIds> SearchSpace<A> {
         if let Some(log_idx) = self.or_arena.by_key.id_of(&key) {
             return (*self.or_arena.by_key.get_val(log_idx), false);
         }
-        let id = A::Or::from_usize(self.or_arena.len());
+        let id: A::Or = crate::id::id_at_index(self.or_arena.len());
         self.or_arena.left.push(l);
         self.or_arena.right.push(r);
         self.or_arena.left_ctx.push(ctx_l);
@@ -319,8 +334,8 @@ impl<A: AuIds> SearchSpace<A> {
 
     /// Check if an action's child pair is blocked by the cycle mode filter.
     pub fn is_cycle_blocked(&self, or_id: A::Or, child_l: A::Class, child_r: A::Class) -> bool {
-        let ctx_l = *self.or_arena.left_ctx.get(or_id.to_usize());
-        let ctx_r = *self.or_arena.right_ctx.get(or_id.to_usize());
+        let ctx_l = *self.or_arena.left_ctx.get(or_id.to_index());
+        let ctx_r = *self.or_arena.right_ctx.get(or_id.to_index());
 
         if self.contexts.contains(ctx_l, child_l) {
             return true;
@@ -330,8 +345,8 @@ impl<A: AuIds> SearchSpace<A> {
         }
 
         if self.cycle_mode == CycleMode::CurrentInclusive {
-            let l = *self.or_arena.left.get(or_id.to_usize());
-            let r = *self.or_arena.right.get(or_id.to_usize());
+            let l = *self.or_arena.left.get(or_id.to_index());
+            let r = *self.or_arena.right.get(or_id.to_index());
             if child_l == l || child_r == r {
                 return true;
             }
@@ -477,7 +492,7 @@ mod tests {
         let ctx = space.contexts.empty();
 
         let (or_id, _) = space.get_or_insert_or_node(c0, c0, ctx, ctx, 1, 1);
-        assert!(*space.or_arena.terminal.get(or_id.to_usize()));
+        assert!(*space.or_arena.terminal.get(or_id.to_index()));
     }
 
     #[test]

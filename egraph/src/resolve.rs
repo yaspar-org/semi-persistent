@@ -1301,6 +1301,11 @@ pub enum RRhsChild<O, S, L> {
 }
 
 /// Resolved multiplicity expression — literal or bound mult variable.
+///
+/// `Lit` stays at the *surface* width (`u64`). Resolution is not parameterized
+/// by the e-graph config, so it cannot narrow to the configured multiplicity
+/// type; that narrowing is a checked conversion at the use sites, which are
+/// `Cfg`-generic.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedMultExpr {
     Lit(u64),

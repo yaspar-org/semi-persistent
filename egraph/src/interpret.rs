@@ -168,6 +168,22 @@ where
         Ok(())
     }
 
+    /// Reject a rule whose multiplicity literals exceed the configured width, before it
+    /// can be saturated with. See [`crate::apply::check_mult_literals`] for why this has
+    /// to happen at install rather than at match/apply time.
+    fn check_rule_mults(
+        name: &str,
+        rule: &PreparedRule<Cfg::O, Cfg::S, L>,
+    ) -> Result<(), InterpError> {
+        crate::apply::check_mult_literals::<Cfg, _, _, _>(rule).map_err(|n| {
+            InterpError::DeclError(format!(
+                "rule `{name}`: multiplicity literal {n} exceeds the configured \
+                 multiplicity width (EGraphConfig::M holds at most {})",
+                <Cfg::M as crate::multiplicity::MultiplicityLike>::MAX
+            ))
+        })
+    }
+
     fn exec_checked(&mut self, cmd: &CCommand<Cfg::O, Cfg::S, L>) -> Result<(), InterpError> {
         match cmd {
             CCommand::Decl(_) => {
@@ -245,11 +261,13 @@ where
                 if *subsume {
                     actions.push(crate::apply::CompiledAction::Subsume(*root_vid));
                 }
-                self.rules.push(PreparedRule {
+                let rule = PreparedRule {
                     rule_id,
                     query: query.clone(),
                     actions,
-                });
+                };
+                Self::check_rule_mults(&name, &rule)?;
+                self.rules.push(rule);
             }
             CCommand::Rule { query, actions } => {
                 let name = format!("rule_{}", self.eg.rules().len());
@@ -258,11 +276,13 @@ where
                     .iter()
                     .map(|a| crate::apply::compile_action(a, rule_id))
                     .collect();
-                self.rules.push(PreparedRule {
+                let rule = PreparedRule {
                     rule_id,
                     query: query.clone(),
                     actions: compiled,
-                });
+                };
+                Self::check_rule_mults(&name, &rule)?;
+                self.rules.push(rule);
             }
             CCommand::Run(n) => {
                 let limit = *n as usize;

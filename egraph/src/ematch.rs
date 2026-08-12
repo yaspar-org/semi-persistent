@@ -8,10 +8,12 @@
 use crate::ast::{CmpOp, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, VarId};
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
+use crate::containers::IndexLike;
 use crate::egraph::EGraph;
 use crate::index::{IndexMode, IndexStore, SortedVec, SortedVecCursor, VariantIndex};
 use crate::leapfrog::{CursorVec, Difference, LeapfrogJoin, SortedCursor};
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 use crate::resolve::{PatVar, RMult};
 use crate::schedule::{IndexLookup, QueryPlan, Step};
 
@@ -72,6 +74,72 @@ fn bump_match_steps() {
 }
 
 // ---------------------------------------------------------------------------
+// Rest-pool spans
+// ---------------------------------------------------------------------------
+
+/// A `(start, len)` span into one of the flattened rest pools, in the config's index
+/// word.
+///
+/// `Cfg::Index`, not `u32` and not `usize`. Not `u32`, because a 63-bit config's pools
+/// address far past four billion entries and a fixed word would cap them there — the same
+/// hard-coded ceiling this pass exists to remove. Not `usize`, because these spans are
+/// *stored*: `Match` keeps one per seq/set/mset variable and `MatchSet` keeps one per
+/// (match, variable), so at a 31-bit config the pair is 8 bytes rather than 16, and the
+/// stride-packed span vectors — the largest arrays in a `MatchSet` after the pools
+/// themselves — halve.
+type PoolSpan<Cfg> = (<Cfg as EGraphConfig>::Index, <Cfg as EGraphConfig>::Index);
+
+/// The empty span, for an unbound rest variable.
+#[inline]
+fn empty_span<Cfg: EGraphConfig>() -> PoolSpan<Cfg> {
+    let zero = <Cfg::Index as IndexLike>::min();
+    (zero, zero)
+}
+
+/// `(start, len)` for the region `start..end` of a pool, converted into the config's
+/// index word, or a panic naming the pool if the region is not addressable there.
+///
+/// Checked on the **end** position, which is the quantity that bounds the pair: `start`
+/// and `end - start` are both at most `end`, so one check covers all three, and the span
+/// can then be read back as `s + l` in the index word without a second check at every
+/// read. Checking the two fields separately instead would wave through exactly the case
+/// that matters — a start and a length that each fit while their sum does not.
+///
+/// This is a hard failure rather than a saturating clamp because a truncated span is
+/// unrecoverable and silent: it aliases one variable's rest data onto another's, and
+/// e-matching would then report confident, wrong matches. The message names the pool and
+/// the ceiling so the remedy (a wider `EGraphConfig::Index`) is actionable.
+#[inline]
+fn pool_span<Cfg: EGraphConfig>(start: usize, end: usize, pool: &'static str) -> PoolSpan<Cfg> {
+    debug_assert!(
+        start <= end,
+        "{pool}: span end {end} precedes start {start}"
+    );
+    if <Cfg::Index as IndexLike>::try_from_usize(end).is_none() {
+        panic!(
+            "{pool} grew to {end} entries, past the {} addressable by EGraphConfig::Index; \
+             configure a wider index word",
+            <Cfg::Index as IndexLike>::max().as_usize(),
+        );
+    }
+    // Both fit, given `end` does: `start <= end` and `end - start <= end`.
+    let ix = |n: usize| {
+        <Cfg::Index as IndexLike>::try_from_usize(n).expect("bounded by the checked end position")
+    };
+    (ix(start), ix(end - start))
+}
+
+/// The `start..start + len` range of a stored span, back in `usize` for slicing.
+///
+/// Widening, so it cannot truncate, and the sum cannot overflow `usize`: both fields came
+/// from positions in a live `Vec`, whose length is a `usize`.
+#[inline]
+fn span_range<Cfg: EGraphConfig>(span: PoolSpan<Cfg>) -> core::ops::Range<usize> {
+    let start = span.0.as_usize();
+    start..start + span.1.as_usize()
+}
+
+// ---------------------------------------------------------------------------
 // Binding environment
 // ---------------------------------------------------------------------------
 
@@ -86,15 +154,15 @@ pub struct Match<Cfg: EGraphConfig> {
     /// Sequence rest pool — all seq slices packed contiguously.
     pub seq_pool: Vec<Cfg::G>,
     /// Span (start, len) into seq_pool, indexed by SeqVarId.
-    pub seq_spans: Vec<(u32, u32)>,
+    pub seq_spans: Vec<PoolSpan<Cfg>>,
     /// Set rest pool — all set slices packed contiguously.
     pub set_pool: Vec<Cfg::G>,
     /// Span (start, len) into set_pool, indexed by SetVarId.
-    pub set_spans: Vec<(u32, u32)>,
+    pub set_spans: Vec<PoolSpan<Cfg>>,
     /// Multiset rest pool — packed AC children (id + mult).
     pub mset_pool: Vec<Cfg::C>,
     /// Span (start, len) into mset_pool, indexed by MsetVarId.
-    pub mset_spans: Vec<(u32, u32)>,
+    pub mset_spans: Vec<PoolSpan<Cfg>>,
 }
 
 impl<Cfg: EGraphConfig> Clone for Match<Cfg> {
@@ -136,14 +204,14 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
     pub fn new(shape: &crate::resolve::MatchShape) -> Self {
         Self {
             nodes: vec![None; shape.num_vars()],
-            mults: vec![Cfg::M::from(0); shape.num_mult_vars()],
+            mults: vec![Cfg::M::ZERO; shape.num_mult_vars()],
             lit_vals: vec![Cfg::V::default(); shape.num_lit_val_vars()],
             seq_pool: Vec::new(),
-            seq_spans: vec![(0, 0); shape.num_seq_vars()],
+            seq_spans: vec![empty_span::<Cfg>(); shape.num_seq_vars()],
             set_pool: Vec::new(),
-            set_spans: vec![(0, 0); shape.num_set_vars()],
+            set_spans: vec![empty_span::<Cfg>(); shape.num_set_vars()],
             mset_pool: Vec::new(),
-            mset_spans: vec![(0, 0); shape.num_mset_vars()],
+            mset_spans: vec![empty_span::<Cfg>(); shape.num_mset_vars()],
         }
     }
     // Node bindings
@@ -192,48 +260,46 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
     }
     // Seq rest
     pub fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G] {
-        let (s, l) = self.seq_spans[v.idx()];
-        &self.seq_pool[s as usize..(s + l) as usize]
+        &self.seq_pool[span_range::<Cfg>(self.seq_spans[v.idx()])]
     }
     pub fn push_seq(&mut self, v: SeqVarId, data: &[Cfg::G]) {
-        let start = self.seq_pool.len() as u32;
+        let start = self.seq_pool.len();
         self.seq_pool.extend_from_slice(data);
-        self.seq_spans[v.idx()] = (start, data.len() as u32);
+        self.seq_spans[v.idx()] = pool_span::<Cfg>(start, self.seq_pool.len(), "Match::seq_pool");
     }
     pub fn pop_seq(&mut self, v: SeqVarId) {
         let (s, _) = self.seq_spans[v.idx()];
-        self.seq_pool.truncate(s as usize);
-        self.seq_spans[v.idx()] = (0, 0);
+        self.seq_pool.truncate(s.as_usize());
+        self.seq_spans[v.idx()] = empty_span::<Cfg>();
     }
     // Set rest
     pub fn set_slice(&self, v: SetVarId) -> &[Cfg::G] {
-        let (s, l) = self.set_spans[v.idx()];
-        &self.set_pool[s as usize..(s + l) as usize]
+        &self.set_pool[span_range::<Cfg>(self.set_spans[v.idx()])]
     }
     pub fn push_set(&mut self, v: SetVarId, data: &[Cfg::G]) {
-        let start = self.set_pool.len() as u32;
+        let start = self.set_pool.len();
         self.set_pool.extend_from_slice(data);
-        self.set_spans[v.idx()] = (start, data.len() as u32);
+        self.set_spans[v.idx()] = pool_span::<Cfg>(start, self.set_pool.len(), "Match::set_pool");
     }
     pub fn pop_set(&mut self, v: SetVarId) {
         let (s, _) = self.set_spans[v.idx()];
-        self.set_pool.truncate(s as usize);
-        self.set_spans[v.idx()] = (0, 0);
+        self.set_pool.truncate(s.as_usize());
+        self.set_spans[v.idx()] = empty_span::<Cfg>();
     }
     // Mset rest
     pub fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
-        let (s, l) = self.mset_spans[v.idx()];
-        &self.mset_pool[s as usize..(s + l) as usize]
+        &self.mset_pool[span_range::<Cfg>(self.mset_spans[v.idx()])]
     }
     pub fn push_mset(&mut self, v: MsetVarId, data: &[Cfg::C]) {
-        let start = self.mset_pool.len() as u32;
+        let start = self.mset_pool.len();
         self.mset_pool.extend_from_slice(data);
-        self.mset_spans[v.idx()] = (start, data.len() as u32);
+        self.mset_spans[v.idx()] =
+            pool_span::<Cfg>(start, self.mset_pool.len(), "Match::mset_pool");
     }
     pub fn pop_mset(&mut self, v: MsetVarId) {
         let (s, _) = self.mset_spans[v.idx()];
-        self.mset_pool.truncate(s as usize);
-        self.mset_spans[v.idx()] = (0, 0);
+        self.mset_pool.truncate(s.as_usize());
+        self.mset_spans[v.idx()] = empty_span::<Cfg>();
     }
 }
 
@@ -373,9 +439,9 @@ pub struct MatchSet<Cfg: EGraphConfig> {
     mset_stride: usize,
     nodes: Vec<Cfg::G>,
     mults: Vec<Cfg::M>,
-    seq_spans: Vec<(u32, u32)>,
-    set_spans: Vec<(u32, u32)>,
-    mset_spans: Vec<(u32, u32)>,
+    seq_spans: Vec<PoolSpan<Cfg>>,
+    set_spans: Vec<PoolSpan<Cfg>>,
+    mset_spans: Vec<PoolSpan<Cfg>>,
     seq_pool: Vec<Cfg::G>,
     set_pool: Vec<Cfg::G>,
     mset_pool: Vec<Cfg::C>,
@@ -409,23 +475,35 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         if !m.mults.is_empty() {
             self.mults.extend_from_slice(&m.mults);
         }
-        for &(s, l) in &m.seq_spans {
-            let start = self.seq_pool.len() as u32;
+        for &span in &m.seq_spans {
+            let start = self.seq_pool.len();
             self.seq_pool
-                .extend_from_slice(&m.seq_pool[s as usize..(s + l) as usize]);
-            self.seq_spans.push((start, l));
+                .extend_from_slice(&m.seq_pool[span_range::<Cfg>(span)]);
+            self.seq_spans.push(pool_span::<Cfg>(
+                start,
+                self.seq_pool.len(),
+                "MatchSet::seq_pool",
+            ));
         }
-        for &(s, l) in &m.set_spans {
-            let start = self.set_pool.len() as u32;
+        for &span in &m.set_spans {
+            let start = self.set_pool.len();
             self.set_pool
-                .extend_from_slice(&m.set_pool[s as usize..(s + l) as usize]);
-            self.set_spans.push((start, l));
+                .extend_from_slice(&m.set_pool[span_range::<Cfg>(span)]);
+            self.set_spans.push(pool_span::<Cfg>(
+                start,
+                self.set_pool.len(),
+                "MatchSet::set_pool",
+            ));
         }
-        for &(s, l) in &m.mset_spans {
-            let start = self.mset_pool.len() as u32;
+        for &span in &m.mset_spans {
+            let start = self.mset_pool.len();
             self.mset_pool
-                .extend_from_slice(&m.mset_pool[s as usize..(s + l) as usize]);
-            self.mset_spans.push((start, l));
+                .extend_from_slice(&m.mset_pool[span_range::<Cfg>(span)]);
+            self.mset_spans.push(pool_span::<Cfg>(
+                start,
+                self.mset_pool.len(),
+                "MatchSet::mset_pool",
+            ));
         }
         self.count += 1;
     }
@@ -445,16 +523,16 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         self.mults[j * self.mult_stride + v.idx()]
     }
     pub fn seq_slice(&self, v: SeqVarId, j: usize) -> &[Cfg::G] {
-        let (s, l) = self.seq_spans[j * self.seq_stride + v.idx()];
-        &self.seq_pool[s as usize..(s + l) as usize]
+        let span = self.seq_spans[j * self.seq_stride + v.idx()];
+        &self.seq_pool[span_range::<Cfg>(span)]
     }
     pub fn set_slice(&self, v: SetVarId, j: usize) -> &[Cfg::G] {
-        let (s, l) = self.set_spans[j * self.set_stride + v.idx()];
-        &self.set_pool[s as usize..(s + l) as usize]
+        let span = self.set_spans[j * self.set_stride + v.idx()];
+        &self.set_pool[span_range::<Cfg>(span)]
     }
     pub fn mset_slice(&self, v: MsetVarId, j: usize) -> &[Cfg::C] {
-        let (s, l) = self.mset_spans[j * self.mset_stride + v.idx()];
-        &self.mset_pool[s as usize..(s + l) as usize]
+        let span = self.mset_spans[j * self.mset_stride + v.idx()];
+        &self.mset_pool[span_range::<Cfg>(span)]
     }
 }
 
@@ -495,7 +573,7 @@ where
 /// and do not care about allocation — tests, the REPL, `EGraph::run_query`. The
 /// saturation drivers use `run_query_into` with a persistent [`MatchPool`].
 pub fn run_query<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -516,7 +594,7 @@ where
 /// The pool is cleared first, so a caller may hand the same pool to every query
 /// in a round; see [`MatchPool`] for why that is where the win is.
 pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -532,7 +610,7 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
@@ -668,7 +746,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     children: &[PatVar],
     pre: Option<SeqVarId>,
@@ -739,7 +817,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     children: &[PatVar],
     seq: &[Cfg::G],
@@ -790,9 +868,13 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
 /// Var with constraint: avail must be >= 1, satisfy the constraint,
 /// and if the mult variable is already bound (non-zero), avail must
 /// equal the bound value (non-linear variable consistency).
-fn mult_matches(mult: &RMult, avail: u32, bound_mult: Option<u32>) -> bool {
+fn mult_matches(mult: &RMult, avail: u64, bound_mult: Option<u64>) -> bool {
     match mult {
-        RMult::Exact(n) => avail == *n as u32,
+        // Compared at the surface width. Narrowing `*n` to the configured
+        // multiplicity width instead would make a literal above that width
+        // alias onto a small multiplicity (`x:4294967297` matching 1); a
+        // literal the configuration cannot represent simply never matches.
+        RMult::Exact(n) => avail == *n,
         RMult::Var { constraint, .. } => {
             if avail < 1 {
                 return false;
@@ -809,12 +891,12 @@ fn mult_matches(mult: &RMult, avail: u32, bound_mult: Option<u32>) -> bool {
                 Some((op, val)) => {
                     let v = *val;
                     match op {
-                        CmpOp::Ge => avail as u64 >= v,
-                        CmpOp::Gt => avail as u64 > v,
-                        CmpOp::Le => avail as u64 <= v,
-                        CmpOp::Lt => (avail as u64) < v,
-                        CmpOp::Eq => avail as u64 == v,
-                        CmpOp::Ne => avail as u64 != v,
+                        CmpOp::Ge => avail >= v,
+                        CmpOp::Gt => avail > v,
+                        CmpOp::Le => avail <= v,
+                        CmpOp::Lt => avail < v,
+                        CmpOp::Eq => avail == v,
+                        CmpOp::Ne => avail != v,
                     }
                 }
             }
@@ -824,17 +906,17 @@ fn mult_matches(mult: &RMult, avail: u32, bound_mult: Option<u32>) -> bool {
 
 /// Get the currently bound multiplicity for a mult variable, if any.
 /// Returns Some(val) where val > 0 if already bound, None otherwise.
-fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<u32> {
+fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<u64> {
     match mult {
         RMult::Exact(_) => None,
         RMult::Var { var, .. } => {
-            let v: u32 = env.get_mult(*var).into();
+            let v = env.get_mult(*var).to_u64();
             if v > 0 { Some(v) } else { None }
         }
     }
 }
 fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     rest: Option<MsetVarId>,
@@ -855,7 +937,7 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     ei: usize,
@@ -871,7 +953,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let zero: Cfg::M = 0u32.into();
+    let zero = Cfg::M::ZERO;
     if ei >= elems.len() {
         if let Some(rv) = rest {
             let remaining: Vec<Cfg::C> = residual
@@ -897,24 +979,26 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 
     if let Some(repr) = bound_repr {
         if let Some(pos) = residual.iter().position(|&(r, m)| {
-            r == repr && mult_matches(mult, m.into(), bound_mult_val(mult, env))
+            r == repr && mult_matches(mult, m.to_u64(), bound_mult_val(mult, env))
         }) {
             let actual = residual[pos].1;
             let was_unbound = match mult {
-                RMult::Var { var: mv, .. } => env.get_mult(*mv) == 0u32.into(),
+                RMult::Var { var: mv, .. } => env.get_mult(*mv) == Cfg::M::ZERO,
                 _ => false,
             };
             let take: Cfg::M = match mult {
-                RMult::Exact(n) => (*n as u32).into(),
+                // `mult_matches` compared this entry against the literal at the
+                // surface width, so an `Exact` match means the literal equals
+                // `actual`; reuse it rather than narrowing the literal back
+                // down, which is where the truncation used to happen.
+                RMult::Exact(_) => actual,
                 RMult::Var { var: mv, .. } => {
                     env.set_mult(*mv, actual);
                     actual
                 }
             };
             let prev = residual[pos].1;
-            let take_u32: u32 = take.into();
-            let prev_u32: u32 = prev.into();
-            residual[pos].1 = (prev_u32 - take_u32).into();
+            residual[pos].1 = prev.saturating_sub(take);
             decompose_ac_elem(
                 plan,
                 step_idx,
@@ -930,7 +1014,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             );
             residual[pos].1 = prev;
             if was_unbound && let RMult::Var { var: mv, .. } = mult {
-                env.set_mult(*mv, 0u32.into());
+                env.set_mult(*mv, Cfg::M::ZERO);
             }
         }
         return;
@@ -939,7 +1023,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let n = residual.len();
     for ri in 0..n {
         let (repr, avail) = residual[ri];
-        if !mult_matches(mult, avail.into(), bound_mult_val(mult, env)) {
+        if !mult_matches(mult, avail.to_u64(), bound_mult_val(mult, env)) {
             continue;
         }
         let PatVar::Local(vid) = *var else {
@@ -947,20 +1031,20 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         };
         env.set(vid, repr);
         let was_unbound = match mult {
-            RMult::Var { var: mv, .. } => env.get_mult(*mv) == 0u32.into(),
+            RMult::Var { var: mv, .. } => env.get_mult(*mv) == Cfg::M::ZERO,
             _ => false,
         };
         let take: Cfg::M = match mult {
-            RMult::Exact(n) => (*n as u32).into(),
+            // See the bound-repr path above: an `Exact` match means the literal
+            // equals `avail` at the surface width.
+            RMult::Exact(_) => avail,
             RMult::Var { var: mv, .. } => {
                 env.set_mult(*mv, avail);
                 avail
             }
         };
         let prev = residual[ri].1;
-        let take_u32: u32 = take.into();
-        let prev_u32: u32 = prev.into();
-        residual[ri].1 = (prev_u32 - take_u32).into();
+        residual[ri].1 = prev.saturating_sub(take);
         decompose_ac_elem(
             plan,
             step_idx,
@@ -977,7 +1061,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         residual[ri].1 = prev;
         env.clear(vid);
         if was_unbound && let RMult::Var { var: mv, .. } = mult {
-            env.set_mult(*mv, 0u32.into());
+            env.set_mult(*mv, Cfg::M::ZERO);
         }
     }
 }
@@ -987,7 +1071,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     elems: &[PatVar],
     rest: Option<SetVarId>,
@@ -1009,7 +1093,7 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     elems: &[PatVar],
     ei: usize,
@@ -1108,10 +1192,10 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     target: VarId,
-    lookups: &[IndexLookup<Cfg::O>],
+    lookups: &[IndexLookup<Cfg::O, Cfg::Index>],
     atom_id: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
@@ -1172,7 +1256,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 /// over the matching bucket (empty if the key is absent).
 fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     store: &'a IndexStore<Cfg>,
-    l: &IndexLookup<Cfg::O>,
+    l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
@@ -1207,7 +1291,7 @@ where
 /// binding `target` to each match and recursing into the next plan step.
 fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     cursors: CursorVec<C>,
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     step_idx: usize,
     target: VarId,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
@@ -1246,7 +1330,7 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
 /// pull-based engine runs naive only — see semi-naive design notes).
 /// Returns `None` when the lookup key is absent (i.e. no matches).
 fn resolve_lookup<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool>(
-    l: &IndexLookup<Cfg::O>,
+    l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, T, P>,
     index: &'a VariantIndex<'a, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1308,7 +1392,7 @@ struct Frame<'a, Cfg: EGraphConfig> {
 }
 
 pub struct MatchIterator<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool> {
-    plan: &'a QueryPlan<Cfg::O>,
+    plan: &'a QueryPlan<Cfg::O, Cfg::Index>,
     eg: &'a EGraph<Cfg, L, T, P>,
     index: &'a VariantIndex<'a, Cfg>,
     globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1326,7 +1410,7 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub fn new(
-        plan: &'a QueryPlan<Cfg::O>,
+        plan: &'a QueryPlan<Cfg::O, Cfg::Index>,
         eg: &'a EGraph<Cfg, L, T, P>,
         index: &'a VariantIndex<'a, Cfg>,
         globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1515,7 +1599,7 @@ where
         }
     }
 
-    fn enter_join(&mut self, target: VarId, lookups: &[IndexLookup<Cfg::O>]) -> Enter {
+    fn enter_join(&mut self, target: VarId, lookups: &[IndexLookup<Cfg::O, Cfg::Index>]) -> Enter {
         // Collected straight into cursors: `resolve_lookup` borrows from the
         // index, which outlives the frame, so there is no need for the
         // intermediate `Vec<&SortedVec>` this used to build.
@@ -1624,7 +1708,7 @@ where
         mut residual: Vec<(Cfg::G, Cfg::M)>,
     ) -> Enter {
         if elems.is_empty() {
-            let zero: Cfg::M = 0u32.into();
+            let zero = Cfg::M::ZERO;
             if let Some(rv) = rest {
                 let rem: Vec<Cfg::C> = residual
                     .iter()
@@ -1646,7 +1730,7 @@ where
         let mut accepted = valid;
         if valid {
             if let Some(rv) = rest {
-                let zero: Cfg::M = 0u32.into();
+                let zero = Cfg::M::ZERO;
                 let rem: Vec<Cfg::C> = residual
                     .iter()
                     .filter(|&&(_, m)| m > zero)
@@ -1655,7 +1739,7 @@ where
                 self.env.push_mset(rv, &rem);
             } else {
                 // Exact: all residual must be consumed.
-                let zero: Cfg::M = 0u32.into();
+                let zero = Cfg::M::ZERO;
                 if !residual.iter().all(|&(_, m)| m == zero) {
                     accepted = false;
                 }
@@ -1837,7 +1921,7 @@ where
                             break;
                         }
                         if let Some(rv) = *rest {
-                            let zero: Cfg::M = 0u32.into();
+                            let zero = Cfg::M::ZERO;
                             let rem: Vec<Cfg::C> = residual
                                 .iter()
                                 .filter(|&&(_, m)| m > zero)
@@ -1848,7 +1932,7 @@ where
                             self.frames.push(frame);
                             return true;
                         } else {
-                            let zero: Cfg::M = 0u32.into();
+                            let zero = Cfg::M::ZERO;
                             if residual.iter().all(|&(_, m)| m == zero) {
                                 self.cursor += 1;
                                 self.frames.push(frame);
@@ -1947,18 +2031,22 @@ where
         if let Some(repr) = bound_repr {
             for ri in start..residual.len() {
                 if residual[ri].0 == repr
-                    && mult_matches(mult, residual[ri].1.into(), bound_mult_val(mult, &self.env))
+                    && mult_matches(
+                        mult,
+                        residual[ri].1.to_u64(),
+                        bound_mult_val(mult, &self.env),
+                    )
                 {
                     let take: Cfg::M = match mult {
-                        RMult::Exact(n) => (*n as u32).into(),
+                        // Matched at the surface width, so the literal equals
+                        // this entry's multiplicity; reuse it.
+                        RMult::Exact(_) => residual[ri].1,
                         RMult::Var { var: mv, .. } => {
                             self.env.set_mult(*mv, residual[ri].1);
                             residual[ri].1
                         }
                     };
-                    let prev: u32 = residual[ri].1.into();
-                    let t: u32 = take.into();
-                    residual[ri].1 = (prev - t).into();
+                    residual[ri].1 = residual[ri].1.saturating_sub(take);
                     return Some(ri);
                 }
             }
@@ -1967,7 +2055,7 @@ where
 
         for ri in start..residual.len() {
             let (repr, avail) = residual[ri];
-            if !mult_matches(mult, avail.into(), bound_mult_val(mult, &self.env)) {
+            if !mult_matches(mult, avail.to_u64(), bound_mult_val(mult, &self.env)) {
                 continue;
             }
             let PatVar::Local(vid) = *var else {
@@ -1975,15 +2063,14 @@ where
             };
             self.env.set(vid, repr);
             let take: Cfg::M = match mult {
-                RMult::Exact(n) => (*n as u32).into(),
+                // See the bound-repr path above.
+                RMult::Exact(_) => avail,
                 RMult::Var { var: mv, .. } => {
                     self.env.set_mult(*mv, avail);
                     avail
                 }
             };
-            let prev: u32 = avail.into();
-            let t: u32 = take.into();
-            residual[ri].1 = (prev - t).into();
+            residual[ri].1 = avail.saturating_sub(take);
             return Some(ri);
         }
         None
@@ -1997,12 +2084,21 @@ where
         ri: usize,
     ) {
         let (var, mult) = &elems[ei];
-        let restore: u32 = match mult {
-            RMult::Exact(n) => *n as u32,
-            RMult::Var { var: mv, .. } => self.env.get_mult(*mv).into(),
+        let restore: Cfg::M = match mult {
+            // `ac_scan` only took this entry because the literal equalled its
+            // stored multiplicity, so the literal is representable at the
+            // configured width.
+            RMult::Exact(n) => Cfg::M::try_from_u64(*n)
+                .expect("Exact multiplicity matched a stored one, so it fits the configured width"),
+            RMult::Var { var: mv, .. } => self.env.get_mult(*mv),
         };
-        let prev: u32 = residual[ri].1.into();
-        residual[ri].1 = (prev + restore).into();
+        // Summation is checked: this undoes a subtraction `ac_scan` performed on
+        // the same entry, so the sum cannot exceed the width — but a wrap here
+        // would silently forge a multiplicity (possibly zero) and corrupt the
+        // residual multiset rather than fail a match.
+        residual[ri].1 = residual[ri].1.checked_add(restore).expect(
+            "ac_undo restores a multiplicity previously subtracted from this entry, so the sum fits",
+        );
         if let PatVar::Local(vid) = *var {
             self.env.clear(vid);
         }
@@ -2012,7 +2108,7 @@ where
                 .iter()
                 .any(|(_, m)| matches!(m, RMult::Var { var: v, .. } if *v == *mv));
             if !earlier_uses {
-                self.env.set_mult(*mv, 0u32.into());
+                self.env.set_mult(*mv, Cfg::M::ZERO);
             }
         }
     }
@@ -2209,7 +2305,7 @@ enum Enter {
 
 /// Convenience: collect all matches using the iterator.
 pub fn run_query_iter<Cfg, L, const T: bool, const P: bool>(
-    plan: &QueryPlan<Cfg::O>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, T, P>,
     index: &VariantIndex<'_, Cfg>,
 ) -> Vec<Match<Cfg>>

@@ -160,6 +160,112 @@ pub struct PreparedRule<O, S, V> {
     pub actions: Vec<CompiledAction<O, V>>,
 }
 
+// ---------------------------------------------------------------------------
+// Install-time multiplicity-width validation
+// ---------------------------------------------------------------------------
+
+/// Reject a rule whose surface multiplicity literals do not fit the configured
+/// [`EGraphConfig::M`](crate::config::EGraphConfig::M), naming the offending value.
+///
+/// Multiplicity literals are parsed and resolved at the `u64` surface width, which is
+/// independent of the width a given config stores. The two use sites cannot both fail
+/// gracefully at match/apply time:
+///
+/// * on the **RHS** (`MsetComp`'s output multiplicity), `n` says how many copies of the
+///   body to emit; there is no error channel inside `apply`, and emitting fewer copies
+///   than asked would silently change what the rule means.
+/// * on the **LHS** (`RMult::Exact` and a `RMult::Var` bound), a literal above the
+///   stored width can never equal a stored multiplicity, so the pattern is dead — sound,
+///   but silently so, which is exactly the failure that hides a mis-sized config.
+///
+/// Checking once at install turns both into one diagnosable error, and is what licenses
+/// the `expect` at the RHS narrowing site.
+pub fn check_mult_literals<Cfg: crate::config::EGraphConfig, O, S, V>(
+    rule: &PreparedRule<O, S, V>,
+) -> Result<(), u64> {
+    for atom in &rule.query.atoms {
+        let elems: &[(crate::resolve::PatVar, crate::resolve::RMult)] = match atom {
+            crate::resolve::RAtom::ACExact { elems, .. }
+            | crate::resolve::RAtom::ACSub { elems, .. } => elems,
+            _ => continue,
+        };
+        for (_, m) in elems {
+            match m {
+                crate::resolve::RMult::Exact(n) => check_one::<Cfg>(*n)?,
+                crate::resolve::RMult::Var {
+                    constraint: Some((_, n)),
+                    ..
+                } => check_one::<Cfg>(*n)?,
+                crate::resolve::RMult::Var { .. } => {}
+            }
+        }
+    }
+    for (_, lo, hi) in &rule.query.mult_intervals {
+        check_one::<Cfg>(*lo)?;
+        // An open upper bound is `u64::MAX`, not a literal the rule spelled out; only a
+        // bound the author actually wrote can be too wide for the configuration.
+        if *hi != u64::MAX {
+            check_one::<Cfg>(*hi)?;
+        }
+    }
+    for action in &rule.actions {
+        match action {
+            CompiledAction::Union(_, a, b) => {
+                check_op_mults::<Cfg, _, _>(a)?;
+                check_op_mults::<Cfg, _, _>(b)?;
+            }
+            CompiledAction::Insert(t) => check_op_mults::<Cfg, _, _>(t)?,
+            CompiledAction::Set { args, value, .. } => {
+                for a in args {
+                    check_op_mults::<Cfg, _, _>(a)?;
+                }
+                check_op_mults::<Cfg, _, _>(value)?;
+            }
+            CompiledAction::Subsume(_) => {}
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn check_one<Cfg: crate::config::EGraphConfig>(n: u64) -> Result<(), u64> {
+    match <Cfg::M as MultiplicityLike>::try_from_u64(n) {
+        Some(_) => Ok(()),
+        None => Err(n),
+    }
+}
+
+fn check_op_mults<Cfg: crate::config::EGraphConfig, O, V>(op: &RhsOp<O, V>) -> Result<(), u64> {
+    let args = match op {
+        RhsOp::App { args, .. } => args,
+        _ => return Ok(()),
+    };
+    for arg in args {
+        match arg {
+            RhsArg::One(inner) => check_op_mults::<Cfg, _, _>(inner)?,
+            RhsArg::MsetComp {
+                body, mult, filter, ..
+            } => {
+                if let crate::resolve::ResolvedMultExpr::Lit(n) = mult {
+                    check_one::<Cfg>(*n)?;
+                }
+                check_op_mults::<Cfg, _, _>(body)?;
+                if let Some(f) = filter {
+                    check_op_mults::<Cfg, _, _>(f)?;
+                }
+            }
+            RhsArg::SetComp { body, filter, .. } | RhsArg::SeqComp { body, filter, .. } => {
+                check_op_mults::<Cfg, _, _>(body)?;
+                if let Some(f) = filter {
+                    check_op_mults::<Cfg, _, _>(f)?;
+                }
+            }
+            RhsArg::SpliceSeq(_) | RhsArg::SpliceSet(_) | RhsArg::SpliceMset(_) => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn compile_action<O: Clone, S, V: Clone>(
     action: &crate::resolve::ResolvedAction<O, S, V>,
     rule_id: crate::id::RuleId,
@@ -292,6 +398,7 @@ use crate::egraph::EGraph;
 use crate::ematch::{Match, MatchPool, run_query_into};
 use crate::index::IndexStore;
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 use smallvec::SmallVec;
 
 /// Inline capacity for a node's child list during RHS instantiation.
@@ -393,8 +500,9 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
             for c in m.mset_slice(*mid) {
                 let id = Cfg::mset_child_id(c);
                 let mult = Cfg::mset_child_mult(c);
-                let mult_u32: u32 = mult.into();
-                for _ in 0..mult_u32 {
+                // A repetition count, not a stored multiplicity: widening to
+                // `usize` is lossless for every supported width.
+                for _ in 0..mult.to_usize() {
                     out.push(id);
                 }
             }
@@ -458,11 +566,19 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
                     }
                 }
                 let result = eval(body, m, eg, model, globals);
-                let n: u32 = match out_mult {
-                    crate::resolve::ResolvedMultExpr::Lit(n) => *n as u32,
-                    crate::resolve::ResolvedMultExpr::Var(mid) => m.get_mult(*mid).into(),
+                // The surface literal is narrowed to the configured width here
+                // rather than being truncated. Emitting `n` duplicate children
+                // that canonicalisation folds back into a multiplicity of `n`
+                // only makes sense if `n` is representable, so an unrepresentable
+                // literal is a rule error, not a silently smaller multiplicity.
+                // `check_mult_literals` rejects such rules at install time, which
+                // is why this is an `expect` rather than a propagated error.
+                let n: Cfg::M = match out_mult {
+                    crate::resolve::ResolvedMultExpr::Lit(n) => Cfg::M::try_from_u64(*n)
+                        .expect("RHS multiplicity literal exceeds the configured width"),
+                    crate::resolve::ResolvedMultExpr::Var(mid) => m.get_mult(*mid),
                 };
-                for _ in 0..n {
+                for _ in 0..n.to_usize() {
                     out.push(result);
                 }
             }

@@ -140,11 +140,35 @@ impl<G: DenseId, O: DenseId, const K: usize> Tagged for FixedArityNode<G, O, K> 
 // VariableArityNode<G, O>
 // ---------------------------------------------------------------------------
 
+/// A node whose children live in a shared side pool, addressed by a `[start, end)` span.
+///
+/// `start`/`end` stay `usize` **deliberately**, and this is the one place in the store where
+/// that is the right answer rather than an unfixed hardcoding. Everywhere else a stored index
+/// drops to the id family's `Index` word, because what it addresses is one-per-id and so its
+/// population is bounded by the id capacity — [`ClassData::min_row`] is the pattern: one pool
+/// row per class, so a row number cannot outgrow `T::Index`.
+///
+/// The child pool has no such bound. Its length is the *sum of arities* over every
+/// variable-arity node, which no single population bounds: `G::Index` bounds the node count,
+/// and nothing at all bounds the per-node arity. Narrowing these two words to `G::Index`
+/// would therefore not track a width — it would install a fresh capacity cap at
+/// `G::Index::MAX` children *in total*, reachable at the 31-bit config with a few large AC
+/// terms, which is exactly the class of cap this store is being audited to remove. Pointer
+/// width is the honest width for an offset into a pool whose population is `Σ arity`.
+///
+/// The size is asserted below, so this choice is priced rather than assumed: two `usize`
+/// words are what put the node at 32 bytes.
+///
+/// [`ClassData::min_row`]: crate::classes::ClassData::min_row
 #[derive(Clone, Copy, Debug)]
 pub struct VariableArityNode<G: DenseId, O: DenseId> {
     pub global_id: G::Repr,
     pub op: O::Repr,
+    /// Inclusive start of this node's span in the child pool. `usize`, not `G::Index` — see
+    /// the type doc: the pool's population is `Σ arity`, which the id capacity does not bound.
     pub start: usize,
+    /// Exclusive end of this node's span in the child pool. `usize` for the same reason as
+    /// [`start`](Self::start).
     pub end: usize,
     pub flags: u8,
 }

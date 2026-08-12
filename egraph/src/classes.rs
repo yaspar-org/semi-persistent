@@ -54,12 +54,12 @@ type ClassRing<T, const TRACK: bool> = CircularList<Opt<<T as DenseId>::Index>, 
 /// Per-class data stored in the `reprs` sparse set, keyed by `repr_id`.
 ///
 /// - `use_list` — the class's use-list id (parents referencing this class).
-/// - `min_row` — a nullable **plain offset** (`Option<usize>`) into `EClasses::min_pool` of
+/// - `min_row` — a nullable **row number** (`Option<T::Index>`) into `EClasses::min_pool` of
 ///   this class's row of per-completion-op minimum-monomial nodes (design "the column → op
 ///   reference array"). `None` means "no row: the class holds no completion monomial yet".
-///   It is a pool offset, not a node-derived id, so it is a plain `Option<usize>` — not
-///   `T::default()` (id 0 is a real node, so an id-typed sentinel would be unsound) and not an
-///   id index type. The pool cells, which *are* node ids, use `Opt<T>` (niche) instead. A
+///   It is not a node-derived id, so absence is `None` rather than `T::default()` (id 0 is a
+///   real node, so an id-typed sentinel would be unsound). The pool cells, which *are* node
+///   ids, use `Opt<T>` (niche) instead. A
 ///   row's column `k` is the class's `≫_f`-least monomial node for completion op `k`, or
 ///   `None` if absent. Maintained O(1) on merge by `EGraph` (which has the op→column map and
 ///   the node access `monomial_cmp` needs); `EClasses` only stores and shuttles the pool.
@@ -69,33 +69,44 @@ type ClassRing<T, const TRACK: bool> = CircularList<Opt<<T as DenseId>::Index>, 
 ///   rule RHS is `{classid}` if `atomic`, else the relevant column's monomial.
 ///
 /// One slot for all three facts, so they cannot desync and roll back together. The `min_row`
-/// offset rolls back with the sparse-set entry; the pool row it points at rolls back with the
+/// number rolls back with the sparse-set entry; the pool row it points at rolls back with the
 /// pool's own `mark`/`restore` (they are marked together).
 #[derive(Clone, Copy)]
 pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
-    /// Base offset of this class's row in `EClasses::min_pool`, or `None` if no row is
-    /// allocated (the class holds no completion monomial yet). This is a **plain pool
-    /// offset**, not a node-derived id: `usize`, `None` for absent — not `T::default()` (id 0
-    /// is a real node) and not an id index type. The pool itself is `usize`-indexed.
-    pub min_row: Option<usize>,
+    /// This class's **row number** in `EClasses::min_pool`, or `None` if no row is allocated
+    /// (the class holds no completion monomial yet). Multiply by `min_width` for the base pool
+    /// offset; the pool itself stays `usize`-indexed, because its length is
+    /// `rows * min_width` and a product of two populations is bounded by neither.
+    ///
+    /// A row *number*, not that offset, is what makes `T::Index` the right width here rather
+    /// than a new capacity cap. Rows are allocated one per class and never freed, so the row
+    /// count is bounded by the class count, which is bounded by `T`'s id capacity — the same
+    /// bound `T::Index` is sized for. Storing the offset instead would tie this field to the
+    /// *pool's* population, which `T::Index` genuinely cannot bound.
+    ///
+    /// This is stored per class, so the width is not free: at 31-bit ids the packed `Repr`
+    /// below is 12 bytes to a `usize` offset's 16.
+    pub min_row: Option<T::Index>,
     pub atomic: bool,
     _t: core::marker::PhantomData<T>,
 }
 
 // `Tagged` by delegating the CAPTURE tag to the first field (`use_list`), the same idiom as
-// `ListNode` in `containers/list.rs`. `min_row` is stored as `(offset, present)`: a plain
-// `usize` offset plus a presence bool (both are just `Copy` data in the `Repr` tuple — the
-// capture bit lives only on `use_list`, element 0).
+// `ListNode` in `containers/list.rs`. `min_row` is stored as `(row, present)`: the row number
+// at `T::Index` plus a presence bool, rather than `Option<T::Index>`, because `T::Index` is a
+// plain integer with no spare niche — an `Option` of it would spend a whole word on the
+// discriminant and undo the narrowing. Both are just `Copy` data in the `Repr` tuple; the
+// capture bit lives only on `use_list`, element 0.
 impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
-    type Repr = (L::Repr, usize, bool, bool);
+    type Repr = (L::Repr, T::Index, bool, bool);
 
     fn into_repr(self) -> Self::Repr {
-        let (off, present) = match self.min_row {
-            Some(o) => (o, true),
-            None => (0, false),
+        let (row, present) = match self.min_row {
+            Some(r) => (r, true),
+            None => (<T::Index as IndexLike>::min(), false),
         };
-        (self.use_list.into_repr(), off, present, self.atomic)
+        (self.use_list.into_repr(), row, present, self.atomic)
     }
     fn from_repr(r: &Self::Repr) -> Self {
         Self {
@@ -131,15 +142,15 @@ impl<L: DenseId, T: DenseId> Default for ClassData<L, T> {
 // MergeInfo — returned by merge, carries absorbed use-list for rebuild
 // ---------------------------------------------------------------------------
 
-pub struct MergeInfo<T, L> {
+pub struct MergeInfo<T: DenseId, L> {
     pub survivor: T,
     pub absorbed: T,
     pub absorbed_uses: L,
-    /// The absorbed class's min-monomial pool row offset (`None` if it had no row), so the
+    /// The absorbed class's min-monomial pool row number (`None` if it had no row), so the
     /// caller can fold each column into the survivor's row (`EGraph` does the per-column
-    /// `monomial_cmp`, §9a). The pool is append-only, so this offset stays valid after the
+    /// `monomial_cmp`, §9a). The pool is append-only, so this row stays valid after the
     /// absorbed repr is removed from the sparse set.
-    pub absorbed_min_row: Option<usize>,
+    pub absorbed_min_row: Option<T::Index>,
     /// The absorbed class's `atomic` flag, OR-combined into the survivor's (§9a).
     pub absorbed_atomic: bool,
 }
@@ -175,6 +186,11 @@ pub struct EClasses<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const
     /// `VecI` (it needs its own tag bit, which VecI would steal — see containers `tagged.rs`),
     /// but `VecP` steals nothing, so `Opt`'s niche encoding is safe and compact here.
     /// Semi-persistent: rows roll back with the pool's own `mark`/`restore`.
+    ///
+    /// Indexed at `usize`, unlike `min_row`'s `T::Index`: the pool's population is
+    /// `rows * min_width`, a product of the class count and the completion-op count, and
+    /// `T::Index` bounds only the first factor. Narrowing the pool index would cap the product
+    /// at the class capacity, i.e. forbid more than one completion column at a full e-graph.
     min_pool: containers::VecP<Opt<T>, usize, TRACK>,
     /// Fixed row width = number of completion ops (`nb_completion`). Set once by
     /// `set_min_width` before the first row is allocated; 0 until then (no completion ops).
@@ -225,24 +241,42 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     }
 
     /// Ensure this class has a pool row, allocating one (all-`Opt::none()` cells) on first use.
-    /// Returns the row's base pool offset (a plain `usize`; `min_row` stores it as
-    /// `Some(offset)`).
-    fn ensure_min_row(&mut self, repr_id: T::Index) -> usize {
+    /// Returns the row *number* (what `min_row` stores); multiply by `min_width` for the base
+    /// pool offset.
+    fn ensure_min_row(&mut self, repr_id: T::Index) -> T::Index {
         let mut data = self.reprs.get(repr_id);
-        if let Some(off) = data.min_row {
-            return off;
+        if let Some(row) = data.min_row {
+            return row;
         }
         debug_assert!(
             self.min_width > 0,
             "set_min_width must precede row allocation"
         );
-        let off = self.min_pool.len();
+        // Rows are appended `min_width` cells at a time and never freed, so the pool length is
+        // always an exact multiple of the width and this division is the row's number.
+        debug_assert_eq!(self.min_pool.len() % self.min_width, 0);
+        // One row per class, so the row count cannot pass the class count, which cannot pass
+        // `T`'s id capacity — the bound `T::Index` is sized for. Spelled as a checked
+        // conversion anyway: that argument is what makes the narrowing safe, and an `as` cast
+        // would bury it and alias a row onto another class's if it ever stopped holding.
+        let row = <T::Index as IndexLike>::try_from_usize(self.min_pool.len() / self.min_width)
+            .expect("min-monomial rows are one per class, so a row number fits the id index");
         for _ in 0..self.min_width {
             self.min_pool.push(Opt::none());
         }
-        data.min_row = Some(off);
+        data.min_row = Some(row);
         self.reprs.set(repr_id, data);
-        off
+        row
+    }
+
+    /// Base pool offset of row number `row`.
+    ///
+    /// `row * min_width` leaves both factors' widths — the product is bounded by the pool's
+    /// population, not by either the class count or the column count — so it is computed at
+    /// `usize`, the pool's own index type, and never narrowed back.
+    #[inline]
+    fn min_row_base(&self, row: T::Index) -> usize {
+        row.as_usize() * self.min_width
     }
 
     pub fn len(&self) -> T::Index {
@@ -326,7 +360,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn min_monomial(&self, repr_id: T::Index, col: usize) -> Option<T> {
         let row = self.reprs.get(repr_id).min_row?;
         debug_assert!(col < self.min_width, "completion column out of range");
-        self.min_pool.get(row + col).to_option()
+        self.min_pool.get(self.min_row_base(row) + col).to_option()
     }
 
     /// Whether the class is referenced as a child of some node, making `{classid}` its
@@ -341,13 +375,14 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     pub fn set_min_monomial(&mut self, repr_id: T::Index, col: usize, node: T) {
         debug_assert!(col < self.min_width, "completion column out of range");
         let row = self.ensure_min_row(repr_id);
-        self.min_pool.set(row + col, Opt::some(node));
+        let base = self.min_row_base(row);
+        self.min_pool.set(base + col, Opt::some(node));
     }
 
-    /// Read completion column `col` of a raw pool row offset (as carried in `MergeInfo`), for
-    /// the merge fold. Returns `None` if the offset is absent (`None`) or the column is empty.
-    pub fn min_monomial_at_row(&self, row: Option<usize>, col: usize) -> Option<T> {
-        let base = row?;
+    /// Read completion column `col` of a row number (as carried in `MergeInfo`), for the merge
+    /// fold. Returns `None` if the row is absent (`None`) or the column is empty.
+    pub fn min_monomial_at_row(&self, row: Option<T::Index>, col: usize) -> Option<T> {
+        let base = self.min_row_base(row?);
         debug_assert!(col < self.min_width, "completion column out of range");
         self.min_pool.get(base + col).to_option()
     }
@@ -602,6 +637,24 @@ const _: () = assert!(
         >,
     >() == 12,
     "e-class ring cell must stay 12 bytes at 31-bit ids"
+);
+
+// The per-class slot: a use-list head plus `min_row` plus two flags. Asserted because
+// `min_row`'s width is the whole reason it stores a row *number* rather than a pool offset
+// (see `ClassData::min_row`): at 31-bit ids a `usize` offset made this 16 bytes, and the
+// row number packs it into 12 alongside the head word and both bools. Spelled through the
+// id types rather than as `(u32, u32, bool, bool)` so the assertion cannot keep passing
+// while describing a type `EClasses` no longer instantiates.
+//
+// This is one slot per class, so the 4 bytes are 4 per class — the reason the narrowing is
+// worth stating as a fact instead of a comment. Reintroducing a pointer-width offset here,
+// or wrapping the row in an `Option<T::Index>` (no niche, so a whole extra word), fails
+// this and not any behavioural test.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(
+    core::mem::size_of::<<ClassData<crate::id::UseListId, crate::id::ENodeId> as Tagged>::Repr>()
+        == 12,
+    "per-class slot must stay 12 bytes at 31-bit ids"
 );
 
 #[cfg(test)]

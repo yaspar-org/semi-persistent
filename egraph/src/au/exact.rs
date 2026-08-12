@@ -11,6 +11,7 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::config::{AuIds, EGraphConfig};
 use crate::containers::DenseId;
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 
 use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
@@ -52,7 +53,8 @@ where
     let mut pool = TermPool::new();
     // AC/ACI pairs are solved by min-cost transport (zero matrix enumeration);
     // the cache materializes only the non-AC action kinds.
-    let mut cache: ActionCache<Cfg::O, Cfg::Au> = ActionCache::without_ac_actions(usize::MAX);
+    let mut cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M> =
+        ActionCache::without_ac_actions(usize::MAX);
     let mut results: BestResults<Cfg::Au> = BestResults::new();
 
     let empty_ctx = space.contexts.empty();
@@ -91,7 +93,7 @@ enum Stage<Cfg: EGraphConfig> {
     Actions {
         action_idx: usize,
         pair_idx: usize,
-        child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)>,
+        child_terms: Vec<(<Cfg::Au as AuIds>::Term, u64)>,
     },
     /// Iterating AC/ACI operators, their representation pairs, and each
     /// pair's cell subproblems (§3.4.4). `pairs` holds the current operator's
@@ -128,7 +130,7 @@ struct SolveFrame<Cfg: EGraphConfig> {
     r: ClassOf<Cfg>,
     ctx_l: <Cfg::Au as AuIds>::Context,
     ctx_r: <Cfg::Au as AuIds>::Context,
-    actions: Vec<super::actions::Action<Cfg::O, Cfg::Au>>,
+    actions: Vec<super::actions::Action<Cfg::O, Cfg::Au, Cfg::M>>,
     best: <Cfg::Au as AuIds>::Term,
     best_quality: (u32, u32),
     stage: Stage<Cfg>,
@@ -157,7 +159,7 @@ fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
-    cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     results: &mut BestResults<Cfg::Au>,
     memo: &mut Vec<MemoState<<Cfg::Au as AuIds>::Term>>,
     root_or: <Cfg::Au as AuIds>::Or,
@@ -187,8 +189,8 @@ where
             MemoState::Empty => {
                 memo[or_id.to_usize()] = MemoState::Visiting;
 
-                let l = *space.or_arena.left.get(or_id.to_usize());
-                let r = *space.or_arena.right.get(or_id.to_usize());
+                let l = *space.or_arena.left.get(or_id.to_index());
+                let r = *space.or_arena.right.get(or_id.to_index());
 
                 if l == r {
                     // Terminal case: l == r.
@@ -209,8 +211,8 @@ where
                     generate_actions(snap, cache, l, r);
                     let actions = cache.get(l, r).unwrap().to_vec();
 
-                    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_usize());
-                    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_usize());
+                    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_index());
+                    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_index());
 
                     stack.push(SolveFrame {
                         or_id,
@@ -245,8 +247,10 @@ where
                         pair_idx,
                         child_terms,
                     } => {
+                        // Widening to the surface width, which `intern_action_result`
+                        // takes so the structural and transport paths can share it.
                         let count = frame.actions[*action_idx].pairs[*pair_idx].count;
-                        child_terms.push((term, count));
+                        child_terms.push((term, count.to_u64()));
                         *pair_idx += 1;
                     }
                     Stage::Transport { cells, .. } => {
@@ -392,20 +396,27 @@ where
                             // directly (§3.4.4). Infeasible pairs contribute no
                             // candidate.
                             let cell = cells.take().expect("cell state present");
-                            let problem = TransportProblem {
-                                row_supply: cell.lm.iter().map(|(_, k)| *k).collect(),
-                                col_demand: cell.rm.iter().map(|(_, k)| *k).collect(),
-                                cost: cell.cost,
-                            };
-                            if let Some(solution) = solve_transport(&problem) {
+                            // Monomials carry surface-width multiplicities; the
+                            // solver's supply vectors are narrower. A pair it
+                            // cannot represent contributes no candidate, exactly
+                            // as an infeasible pair does — never a truncated one.
+                            let problem = TransportProblem::narrowed(
+                                &cell.lm.iter().map(|(_, k)| *k).collect::<Vec<_>>(),
+                                &cell.rm.iter().map(|(_, k)| *k).collect::<Vec<_>>(),
+                                cell.cost,
+                            );
+                            if let Some(solution) = problem.as_ref().and_then(solve_transport) {
                                 // Compose the winning matrix into a term. AC/ACI
                                 // kinds are commutative: canonical child order.
-                                let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u32)> =
+                                let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u64)> =
                                     Vec::new();
                                 for (i, row) in solution.flow.iter().enumerate() {
                                     for (j, &x) in row.iter().enumerate() {
                                         if x > 0 {
-                                            child_terms.push((cell.cell_term[i][j].unwrap(), x));
+                                            child_terms.push((
+                                                cell.cell_term[i][j].unwrap(),
+                                                u64::from(x),
+                                            ));
                                         }
                                     }
                                 }

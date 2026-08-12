@@ -4,7 +4,7 @@
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
-use crate::containers::DenseId;
+use crate::containers::{DenseId, IndexLike};
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
 use std::collections::HashMap;
@@ -63,8 +63,13 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     pub by_op: FastMap<Cfg::O, SortedVec<Cfg::G>>,
     /// by_repr[repr] → sorted vec of node ids in that e-class
     pub by_repr: FastMap<Cfg::G, SortedVec<Cfg::G>>,
-    /// by_child_pos[(child_repr, position)] → sorted vec of parent node ids
-    pub by_child_pos: FastMap<(Cfg::G, u32), SortedVec<Cfg::G>>,
+    /// by_child_pos[(child_repr, position)] → sorted vec of parent node ids.
+    /// The position is [`Cfg::Index`](crate::config::EGraphConfig::Index)-wide: it is an
+    /// offset into one node's children, and a variadic node's children are a span in the
+    /// child pool, which that word already sizes. See [`IndexLookup::ByChildPos`].
+    ///
+    /// [`IndexLookup::ByChildPos`]: crate::schedule::IndexLookup::ByChildPos
+    pub by_child_pos: FastMap<(Cfg::G, Cfg::Index), SortedVec<Cfg::G>>,
     /// by_contains[child_repr] → sorted vec of variadic parent node ids (A/AC/ACI/PlainN)
     pub by_contains: FastMap<Cfg::G, SortedVec<Cfg::G>>,
 }
@@ -108,7 +113,7 @@ where
     ) -> Self {
         let mut by_op: FastMap<Cfg::O, Vec<Cfg::G>> = FastMap::default();
         let mut by_repr: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
-        let mut by_child_pos: FastMap<(Cfg::G, u32), Vec<Cfg::G>> = FastMap::default();
+        let mut by_child_pos: FastMap<(Cfg::G, Cfg::Index), Vec<Cfg::G>> = FastMap::default();
         let mut by_contains: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
 
         for gid in ids {
@@ -121,11 +126,16 @@ where
             by_op.entry(op).or_default().push(gid);
             by_repr.entry(repr).or_default().push(gid);
 
-            let mut pos = 0u32;
+            // The counter is `Cfg::Index`-wide and checked. A variadic node's arity is
+            // a span in the child pool, so it is bounded by this word and by nothing
+            // narrower; as a `u32` this wrapped, and the child at position 2^32 was filed
+            // in bucket 0 — where a pattern written for the first argument would match it.
+            let mut pos = <Cfg::Index as IndexLike>::min();
             let is_variadic = eg.for_each_child(gid, |child, _mult| {
                 let child_repr = eg.class_repr(child);
                 by_child_pos.entry((child_repr, pos)).or_default().push(gid);
-                pos += 1;
+                pos = crate::containers::index_like::checked_incr(pos)
+                    .expect("node arity exceeds EGraphConfig::Index; configure a wider index word");
             });
             // For variadic nodes (arity > 0 from PlainN/A/AC/ACI), also populate by_contains
             if is_variadic > 3
@@ -185,7 +195,11 @@ where
     }
 
     /// Get an iterator over parent nodes that have `child_repr` at position `pos`.
-    pub fn iter_by_child_pos(&self, child_repr: Cfg::G, pos: u32) -> SortedVecCursor<'_, Cfg::G> {
+    pub fn iter_by_child_pos(
+        &self,
+        child_repr: Cfg::G,
+        pos: Cfg::Index,
+    ) -> SortedVecCursor<'_, Cfg::G> {
         match self.by_child_pos.get(&(child_repr, pos)) {
             Some(sv) => SortedVecCursor::new(&sv.data),
             None => SortedVecCursor::new(&[]),

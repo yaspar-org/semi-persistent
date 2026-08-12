@@ -16,12 +16,27 @@ use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::id::ENodeKind;
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 
 use super::egraph_api::{AuSnapshot, ClassOf};
 
 /// One canonical monomial: sorted, deduplicated `(child class, multiplicity)`
 /// pairs with all multiplicities positive.
-pub type Monomial<C> = Vec<(C, u32)>;
+///
+/// Multiplicities are held at the *surface* width (`u64`), not at the e-graph's
+/// configured [`EGraphConfig::M`]. Two reasons: every supported configured width
+/// widens into `u64` totally and losslessly, so reading a member's child
+/// multiset never needs a fallible narrowing here; and a monomial's own
+/// arithmetic — [`total`], identity padding — sums *across* entries, a quantity
+/// legitimately wider than any single entry. Monomials are transient solver
+/// scratch, never stored in the e-graph, so the width costs nothing per e-node.
+pub type Monomial<C> = Vec<(C, u64)>;
+
+/// Overflow message shared by the monomial summation sites. A wrapped
+/// multiplicity would silently shrink a monomial (possibly to zero, breaking the
+/// positivity invariant) and make the transport problem's supply and demand
+/// disagree with the multisets they came from.
+const MONO_OVERFLOW: &str = "AU monomial multiplicity exceeds u64";
 
 fn canonize<C: DenseId>(mut m: Monomial<C>) -> Monomial<C> {
     m.sort_unstable_by_key(|(c, _)| c.to_usize());
@@ -32,7 +47,7 @@ fn canonize<C: DenseId>(mut m: Monomial<C>) -> Monomial<C> {
             continue;
         }
         match out.last_mut() {
-            Some((lc, lk)) if *lc == c => *lk += k,
+            Some((lc, lk)) if *lc == c => *lk = lk.checked_add(k).expect(MONO_OVERFLOW),
             _ => out.push((c, k)),
         }
     }
@@ -64,7 +79,7 @@ where
             eg.mset_children(member_id, &mut buf);
             canonize(
                 buf.iter()
-                    .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
+                    .map(|(g, m)| (snap.class_of(*g).unwrap(), m.to_u64()))
                     .collect(),
             )
         } else {
@@ -94,9 +109,16 @@ where
     reprs
 }
 
-/// Total multiplicity of a monomial.
-pub fn total<C: DenseId>(m: &Monomial<C>) -> u32 {
-    m.iter().map(|(_, k)| *k).sum()
+/// Total multiplicity of a monomial: the number of operator arguments it stands
+/// for, i.e. a sum across entries rather than a single child's multiplicity.
+///
+/// Summation is checked. Padding derives a deficit from the difference of two
+/// totals, so a wrapped total would produce a bogus deficit and pad the wrong
+/// monomial by the wrong amount.
+pub fn total<C: DenseId>(m: &Monomial<C>) -> u64 {
+    m.iter()
+        .try_fold(0u64, |acc, (_, k)| acc.checked_add(*k))
+        .expect(MONO_OVERFLOW)
 }
 
 /// Pad the smaller of two monomials with identity copies so totals are equal.
@@ -126,9 +148,9 @@ where
     Some((canonize(l), canonize(r)))
 }
 
-fn add_identity<C: DenseId>(m: &mut Monomial<C>, id_class: C, deficit: u32) {
+fn add_identity<C: DenseId>(m: &mut Monomial<C>, id_class: C, deficit: u64) {
     if let Some(entry) = m.iter_mut().find(|(c, _)| *c == id_class) {
-        entry.1 += deficit;
+        entry.1 = entry.1.checked_add(deficit).expect(MONO_OVERFLOW);
     } else {
         m.push((id_class, deficit));
     }

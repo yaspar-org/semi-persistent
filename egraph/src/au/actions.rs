@@ -15,6 +15,7 @@ use crate::containers::{DenseId, MapToken, ShrinkPolicy, SpMap};
 use crate::egraph::EGraph;
 use crate::id::ENodeKind;
 use crate::literal::LitVal;
+use crate::multiplicity::{Multiplicity, MultiplicityLike};
 
 use super::AuIds31;
 use super::egraph_api::{AuSnapshot, ClassOf};
@@ -22,13 +23,13 @@ use crate::config::AuIds;
 
 /// One structural action: an operator plus its paired children with multiplicities.
 #[derive(Debug)]
-pub struct Action<O: DenseId, A: AuIds = AuIds31> {
+pub struct Action<O: DenseId, A: AuIds = AuIds31, M: MultiplicityLike = Multiplicity> {
     pub op: O,
-    pub pairs: Vec<ActionPair<A>>,
+    pub pairs: Vec<ActionPair<A, M>>,
 }
 
 // Manual impls: derives would demand `A: Clone`, but `A` is a family marker.
-impl<O: DenseId, A: AuIds> Clone for Action<O, A> {
+impl<O: DenseId, A: AuIds, M: MultiplicityLike> Clone for Action<O, A, M> {
     fn clone(&self) -> Self {
         Action {
             op: self.op,
@@ -38,25 +39,40 @@ impl<O: DenseId, A: AuIds> Clone for Action<O, A> {
 }
 
 /// A single child-pair in an action. `count` is the multiplicity (>1 for AC repeated children).
+///
+/// `count` is at the configured multiplicity width [`EGraphConfig::M`], not a fixed `u32`.
+/// It is a copy of an AC child multiplicity — or, in the matrix enumerator, a sum of
+/// several — so `Cfg::M` is the width it already has, and the previous hardcoded `u32`
+/// meant a *narrowing* on the way in. At `Multiplicity64` that narrowing dropped members
+/// whose multiplicity the e-graph represents fine: a completeness loss with no upside,
+/// since the enumerator's arithmetic is checked at whatever width it runs.
+///
+/// This is not a space argument in either direction. At 4-byte class ids a 2-byte count
+/// pads to the same 12-byte pair as a 4-byte one, and at 8-byte ids every width pads to
+/// 24 — the same padding fact `multiplicity_width_is_free_at_the_wide_id_width` records
+/// for AC children. Every shipped config is byte-for-byte unchanged by this parameter;
+/// what it buys is that the field cannot cap a width the e-graph supports.
+///
+/// [`EGraphConfig::M`]: crate::config::EGraphConfig::M
 #[derive(Debug)]
-pub struct ActionPair<A: AuIds = AuIds31> {
+pub struct ActionPair<A: AuIds = AuIds31, M: MultiplicityLike = Multiplicity> {
     pub left: A::Class,
     pub right: A::Class,
-    pub count: u32,
+    pub count: M,
 }
 
-impl<A: AuIds> Clone for ActionPair<A> {
+impl<A: AuIds, M: MultiplicityLike> Clone for ActionPair<A, M> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<A: AuIds> Copy for ActionPair<A> {}
-impl<A: AuIds> PartialEq for ActionPair<A> {
+impl<A: AuIds, M: MultiplicityLike> Copy for ActionPair<A, M> {}
+impl<A: AuIds, M: MultiplicityLike> PartialEq for ActionPair<A, M> {
     fn eq(&self, other: &Self) -> bool {
         self.left == other.left && self.right == other.right && self.count == other.count
     }
 }
-impl<A: AuIds> Eq for ActionPair<A> {}
+impl<A: AuIds, M: MultiplicityLike> Eq for ActionPair<A, M> {}
 
 /// Default maximum number of AC matrices to materialize before using lazy chain states.
 pub const DEFAULT_A_MAX: usize = 32;
@@ -67,11 +83,14 @@ pub const DEFAULT_A_MAX: usize = 32;
 /// and is truncated on restore. Actions are deterministic from the immutable
 /// snapshot, so re-derivation after restore is cheap (cache is a performance
 /// optimization, not a correctness requirement).
-pub struct ActionCache<O: DenseId, A: AuIds = AuIds31> {
+pub struct ActionCache<O: DenseId, A: AuIds = AuIds31, M: MultiplicityLike = Multiplicity> {
     /// Deduplication map: (l, r) -> typed action-list id into `values`.
-    index: SpMap<(A::Class, A::Class), A::Action>,
+    ///
+    /// Index word `A::Index`: the map's log positions are what the `A::Action`s are
+    /// minted from, and `A::Action::Index` is that word.
+    index: SpMap<(A::Class, A::Class), A::Action, A::Index>,
     /// Action lists, indexed by the map's stored value.
-    values: Vec<Vec<Action<O, A>>>,
+    values: Vec<Vec<Action<O, A, M>>>,
     a_max: usize,
     include_ac: bool,
 }
@@ -84,7 +103,7 @@ pub struct ActionCacheToken {
     values_len: usize,
 }
 
-impl<O: DenseId, A: AuIds> ActionCache<O, A> {
+impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
     pub fn new(a_max: usize) -> Self {
         ActionCache {
             index: SpMap::new(),
@@ -109,7 +128,7 @@ impl<O: DenseId, A: AuIds> ActionCache<O, A> {
         self.include_ac
     }
 
-    pub fn get(&self, l: A::Class, r: A::Class) -> Option<&[Action<O, A>]> {
+    pub fn get(&self, l: A::Class, r: A::Class) -> Option<&[Action<O, A, M>]> {
         let key = (l, r);
         self.index.id_of(&key).map(|log_idx| {
             let &idx = self.index.get_val(log_idx);
@@ -117,8 +136,12 @@ impl<O: DenseId, A: AuIds> ActionCache<O, A> {
         })
     }
 
-    pub fn insert(&mut self, l: A::Class, r: A::Class, actions: Vec<Action<O, A>>) {
-        let idx = A::Action::from_usize(self.values.len());
+    pub fn insert(&mut self, l: A::Class, r: A::Class, actions: Vec<Action<O, A, M>>) {
+        // Checked: `values` is a plain `Vec`, so nothing but this call stands between the
+        // action-list count and the `A::Action` id space. Masking would hand the new list
+        // the id of an older one, and `get` would then serve the wrong action list for a
+        // class pair — a search that expands moves belonging to a different subproblem.
+        let idx = crate::id::id_at::<A::Action>(self.values.len());
         self.values.push(actions);
         self.index.insert((l, r), idx);
     }
@@ -145,7 +168,7 @@ impl<O: DenseId, A: AuIds> ActionCache<O, A> {
     }
 }
 
-impl<O: DenseId, A: AuIds> Default for ActionCache<O, A> {
+impl<O: DenseId, A: AuIds, M: MultiplicityLike> Default for ActionCache<O, A, M> {
     fn default() -> Self {
         Self::new(DEFAULT_A_MAX)
     }
@@ -155,7 +178,7 @@ impl<O: DenseId, A: AuIds> Default for ActionCache<O, A> {
 /// Actions are NOT cycle-filtered here; that is done at the OR-node level.
 pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
-    cache: &mut ActionCache<Cfg::O, Cfg::Au>,
+    cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     l: ClassOf<Cfg>,
     r: ClassOf<Cfg>,
 ) where
@@ -171,7 +194,7 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     let a_max = cache.a_max();
     let include_ac = cache.include_ac();
 
-    let mut actions: Vec<Action<Cfg::O, Cfg::Au>> = Vec::new();
+    let mut actions: Vec<Action<Cfg::O, Cfg::Au, Cfg::M>> = Vec::new();
 
     // Group members by op (they are already sorted by op).
     let mut il = 0;
@@ -295,26 +318,31 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             .collect();
         if kind == ENodeKind::Set {
             // ACI: right is a singleton set {r}.
-            let r_children = vec![(r, 1u32)];
+            let r_children = vec![(r, Cfg::M::ONE)];
             for &(_, l_id) in &l_op_members {
                 let mut l_children: Vec<ClassOf<Cfg>> = Vec::new();
                 eg.for_each_child(l_id, |child, _| {
                     l_children.push(snap.class_of(child).unwrap());
                 });
-                let mut l_classes: Vec<(ClassOf<Cfg>, u32)> =
-                    l_children.iter().map(|&c| (c, 1)).collect();
+                let mut l_classes: Vec<(ClassOf<Cfg>, Cfg::M)> =
+                    l_children.iter().map(|&c| (c, Cfg::M::ONE)).collect();
                 let id_class = identity.unwrap();
-                let r_total: u32 = r_children.iter().map(|(_, m)| m).sum();
-                let l_total: u32 = l_classes.iter().map(|(_, m)| m).sum();
+                // A set member's cardinality is bounded by `for_each_child`'s
+                // 64·node_count cap, which exceeds `Count` for a wide config, so
+                // even these all-ones totals are summed with overflow detection.
+                let (Some(r_total), Some(l_total)) =
+                    (counts_total(&r_children), counts_total(&l_classes))
+                else {
+                    continue;
+                };
                 let mut r_padded = r_children.clone();
                 if l_total > r_total {
-                    r_padded.push((id_class, l_total - r_total));
-                } else if r_total > l_total {
-                    if let Some(entry) = l_classes.iter_mut().find(|(c, _)| *c == id_class) {
-                        entry.1 += r_total - l_total;
-                    } else {
-                        l_classes.push((id_class, r_total - l_total));
-                    }
+                    r_padded.push((id_class, l_total.saturating_sub(r_total)));
+                } else if r_total > l_total
+                    && pad_identity(&mut l_classes, id_class, r_total.saturating_sub(l_total))
+                        .is_none()
+                {
+                    continue;
                 }
                 enumerate_matrices(op_id, &l_classes, &r_padded, a_max, &mut actions);
             }
@@ -323,15 +351,13 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             let mut l_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
             for &(_, l_id) in &l_op_members {
                 eg.mset_children(l_id, &mut l_mset_buf);
-                let l_classes: Vec<(ClassOf<Cfg>, u32)> = l_mset_buf
-                    .iter()
-                    .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
-                    .collect();
-                let l_total: u32 = l_classes.iter().map(|(_, m)| m).sum();
+                let Some((l_classes, l_total)) = mset_counts(snap, &l_mset_buf) else {
+                    continue;
+                };
                 let id_class = identity.unwrap();
-                let mut r_classes = vec![(r, 1u32)];
-                if l_total > 1 {
-                    r_classes.push((id_class, l_total - 1));
+                let mut r_classes = vec![(r, Cfg::M::ONE)];
+                if l_total > Cfg::M::ONE {
+                    r_classes.push((id_class, l_total.saturating_sub(Cfg::M::ONE)));
                 }
                 enumerate_matrices(op_id, &l_classes, &r_classes, a_max, &mut actions);
             }
@@ -357,26 +383,29 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             .copied()
             .collect();
         if kind == ENodeKind::Set {
-            let l_children = vec![(l, 1u32)];
+            let l_children = vec![(l, Cfg::M::ONE)];
             for &(_, r_id) in &r_op_members {
                 let mut r_children: Vec<ClassOf<Cfg>> = Vec::new();
                 eg.for_each_child(r_id, |child, _| {
                     r_children.push(snap.class_of(child).unwrap());
                 });
-                let mut r_classes: Vec<(ClassOf<Cfg>, u32)> =
-                    r_children.iter().map(|&c| (c, 1)).collect();
+                let mut r_classes: Vec<(ClassOf<Cfg>, Cfg::M)> =
+                    r_children.iter().map(|&c| (c, Cfg::M::ONE)).collect();
                 let id_class = identity.unwrap();
-                let r_total: u32 = r_classes.iter().map(|(_, m)| m).sum();
-                let l_total: u32 = l_children.iter().map(|(_, m)| m).sum();
+                // See the mirrored branch above on why these are checked.
+                let (Some(r_total), Some(l_total)) =
+                    (counts_total(&r_classes), counts_total(&l_children))
+                else {
+                    continue;
+                };
                 let mut l_padded = l_children.clone();
                 if r_total > l_total {
-                    l_padded.push((id_class, r_total - l_total));
-                } else if l_total > r_total {
-                    if let Some(entry) = r_classes.iter_mut().find(|(c, _)| *c == id_class) {
-                        entry.1 += l_total - r_total;
-                    } else {
-                        r_classes.push((id_class, l_total - r_total));
-                    }
+                    l_padded.push((id_class, r_total.saturating_sub(l_total)));
+                } else if l_total > r_total
+                    && pad_identity(&mut r_classes, id_class, l_total.saturating_sub(r_total))
+                        .is_none()
+                {
+                    continue;
                 }
                 enumerate_matrices(op_id, &l_padded, &r_classes, a_max, &mut actions);
             }
@@ -384,15 +413,13 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
             let mut r_mset_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
             for &(_, r_id) in &r_op_members {
                 eg.mset_children(r_id, &mut r_mset_buf);
-                let r_classes: Vec<(ClassOf<Cfg>, u32)> = r_mset_buf
-                    .iter()
-                    .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
-                    .collect();
-                let r_total: u32 = r_classes.iter().map(|(_, m)| m).sum();
+                let Some((r_classes, r_total)) = mset_counts(snap, &r_mset_buf) else {
+                    continue;
+                };
                 let id_class = identity.unwrap();
-                let mut l_classes = vec![(l, 1u32)];
-                if r_total > 1 {
-                    l_classes.push((id_class, r_total - 1));
+                let mut l_classes = vec![(l, Cfg::M::ONE)];
+                if r_total > Cfg::M::ONE {
+                    l_classes.push((id_class, r_total.saturating_sub(Cfg::M::ONE)));
                 }
                 enumerate_matrices(op_id, &l_classes, &r_classes, a_max, &mut actions);
             }
@@ -407,18 +434,23 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 /// actions from different (l_node, r_node) pairs; duplicates would surface as
 /// separate statistics edges and bias MCGS selection toward the duplicated
 /// action.
-fn dedup_and_insert<O: DenseId, A: AuIds>(
-    cache: &mut ActionCache<O, A>,
+fn dedup_and_insert<O: DenseId, A: AuIds, M: MultiplicityLike>(
+    cache: &mut ActionCache<O, A, M>,
     l: A::Class,
     r: A::Class,
-    mut actions: Vec<Action<O, A>>,
+    mut actions: Vec<Action<O, A, M>>,
 ) {
-    let mut seen: hashbrown::HashSet<Vec<(usize, usize, u32)>> = hashbrown::HashSet::new();
+    // The signature holds the pair's own types. Widening the two class ids to `usize` to
+    // key a hash set bought nothing — dense ids are already `Hash + Ord` — and cost real
+    // bytes in a set that is rebuilt for every class pair the search visits: at the 31-bit
+    // family a `(usize, usize, u32)` entry is 24 bytes to this tuple's 12, because the two
+    // widened words also raise the tuple's alignment and so its tail padding.
+    let mut seen: hashbrown::HashSet<Vec<(A::Class, A::Class, M)>> = hashbrown::HashSet::new();
     actions.retain(|action| {
-        let mut sig: Vec<(usize, usize, u32)> = action
+        let mut sig: Vec<(A::Class, A::Class, M)> = action
             .pairs
             .iter()
-            .map(|p| (p.left.to_usize(), p.right.to_usize(), p.count))
+            .map(|p| (p.left, p.right, p.count))
             .collect();
         sig.sort_unstable();
         seen.insert(sig)
@@ -433,7 +465,7 @@ fn generate_ordered_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au, Cfg::M>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -454,10 +486,10 @@ fn generate_ordered_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P
             for i in 0..l_arity {
                 let lc = snap.class_of(l_children[i]).unwrap();
                 let rc = snap.class_of(r_children[i]).unwrap();
-                pairs.push(ActionPair::<Cfg::Au> {
+                pairs.push(ActionPair::<Cfg::Au, Cfg::M> {
                     left: lc,
                     right: rc,
-                    count: 1,
+                    count: Cfg::M::ONE,
                 });
             }
             actions.push(Action { op, pairs });
@@ -474,7 +506,7 @@ fn generate_seq_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au, Cfg::M>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -489,7 +521,7 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au, Cfg::M>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -515,15 +547,15 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
 
             // Orientation 1: positional (a,c), (b,d).
             let pairs1 = vec![
-                ActionPair::<Cfg::Au> {
+                ActionPair::<Cfg::Au, Cfg::M> {
                     left: l_children[0],
                     right: r_children[0],
-                    count: 1,
+                    count: Cfg::M::ONE,
                 },
-                ActionPair::<Cfg::Au> {
+                ActionPair::<Cfg::Au, Cfg::M> {
                     left: l_children[1],
                     right: r_children[1],
-                    count: 1,
+                    count: Cfg::M::ONE,
                 },
             ];
             actions.push(Action { op, pairs: pairs1 });
@@ -531,15 +563,15 @@ fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: 
             // Orientation 2: crossed (a,d), (b,c) — skip if same as orientation 1.
             if !(l_children[0] == l_children[1] || r_children[0] == r_children[1]) {
                 let pairs2 = vec![
-                    ActionPair::<Cfg::Au> {
+                    ActionPair::<Cfg::Au, Cfg::M> {
                         left: l_children[0],
                         right: r_children[1],
-                        count: 1,
+                        count: Cfg::M::ONE,
                     },
-                    ActionPair::<Cfg::Au> {
+                    ActionPair::<Cfg::Au, Cfg::M> {
                         left: l_children[1],
                         right: r_children[0],
-                        count: 1,
+                        count: Cfg::M::ONE,
                     },
                 ];
                 actions.push(Action { op, pairs: pairs2 });
@@ -561,7 +593,7 @@ fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: b
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
     a_max: usize,
-    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au, Cfg::M>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -571,40 +603,32 @@ fn generate_mset_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: b
 
     for &(_, l_id) in l_nodes {
         eg.mset_children(l_id, &mut l_mset_buf);
-        let l_total: u32 = l_mset_buf.iter().map(|(_, m)| Into::<u32>::into(*m)).sum();
+        // Counts and total come from one checked read, so they cannot disagree.
+        let Some((l_read, l_total)) = mset_counts(snap, &l_mset_buf) else {
+            continue;
+        };
 
         for &(_, r_id) in r_nodes {
             eg.mset_children(r_id, &mut r_mset_buf);
-            let r_total: u32 = r_mset_buf.iter().map(|(_, m)| Into::<u32>::into(*m)).sum();
+            let Some((r_read, r_total)) = mset_counts(snap, &r_mset_buf) else {
+                continue;
+            };
 
-            let mut l_classes: Vec<(ClassOf<Cfg>, u32)> = l_mset_buf
-                .iter()
-                .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
-                .collect();
-            let mut r_classes: Vec<(ClassOf<Cfg>, u32)> = r_mset_buf
-                .iter()
-                .map(|(g, m)| (snap.class_of(*g).unwrap(), (*m).into()))
-                .collect();
+            let mut l_classes = l_read.clone();
+            let mut r_classes = r_read;
 
             if l_total != r_total {
                 // Pad the shorter side with identity copies if available.
                 let Some(id_class) = identity_class else {
                     continue;
                 };
-                if l_total < r_total {
-                    let deficit = r_total - l_total;
-                    if let Some(entry) = l_classes.iter_mut().find(|(c, _)| *c == id_class) {
-                        entry.1 += deficit;
-                    } else {
-                        l_classes.push((id_class, deficit));
-                    }
+                let padded = if l_total < r_total {
+                    pad_identity(&mut l_classes, id_class, r_total.saturating_sub(l_total))
                 } else {
-                    let deficit = l_total - r_total;
-                    if let Some(entry) = r_classes.iter_mut().find(|(c, _)| *c == id_class) {
-                        entry.1 += deficit;
-                    } else {
-                        r_classes.push((id_class, deficit));
-                    }
+                    pad_identity(&mut r_classes, id_class, l_total.saturating_sub(r_total))
+                };
+                if padded.is_none() {
+                    continue;
                 }
             }
 
@@ -624,7 +648,7 @@ fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
     a_max: usize,
-    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au, Cfg::M>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -655,8 +679,10 @@ fn generate_set_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
                 }
             }
 
-            let l_classes: Vec<(ClassOf<Cfg>, u32)> = l_children.iter().map(|&c| (c, 1)).collect();
-            let r_classes: Vec<(ClassOf<Cfg>, u32)> = r_children.iter().map(|&c| (c, 1)).collect();
+            let l_classes: Vec<(ClassOf<Cfg>, Cfg::M)> =
+                l_children.iter().map(|&c| (c, Cfg::M::ONE)).collect();
+            let r_classes: Vec<(ClassOf<Cfg>, Cfg::M)> =
+                r_children.iter().map(|&c| (c, Cfg::M::ONE)).collect();
 
             enumerate_matrices(op, &l_classes, &r_classes, a_max, actions);
         }
@@ -669,7 +695,7 @@ fn generate_lit_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     op: Cfg::O,
     l_nodes: &[(Cfg::O, Cfg::G)],
     r_nodes: &[(Cfg::O, Cfg::G)],
-    actions: &mut Vec<Action<Cfg::O, Cfg::Au>>,
+    actions: &mut Vec<Action<Cfg::O, Cfg::Au, Cfg::M>>,
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -692,21 +718,71 @@ fn generate_lit_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
 // AC matrix enumeration
 // ---------------------------------------------------------------------------
 
+/// Read an AC member's child multiset into class counts, together with their total.
+///
+/// Reading the multiplicities is exact — they are already at the configured width — but
+/// the *total* is not: a sum of multiplicities can exceed the width one multiplicity fits
+/// in. `None` on that overflow, meaning "enumerate no actions from this member". Actions
+/// are candidate generalizations, so dropping one costs search completeness, never
+/// soundness — whereas a wrapped total would drive the enumerator over margins the
+/// e-graph's multiset does not have, and report the resulting term as a generalization of
+/// one it does.
+fn mset_counts<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    buf: &[(Cfg::G, Cfg::M)],
+) -> Option<(Vec<(ClassOf<Cfg>, Cfg::M)>, Cfg::M)>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut out: Vec<(ClassOf<Cfg>, Cfg::M)> = Vec::with_capacity(buf.len());
+    let mut total = Cfg::M::ZERO;
+    for (g, m) in buf {
+        out.push((snap.class_of(*g).unwrap(), *m));
+        total = total.checked_add(*m)?;
+    }
+    Some((out, total))
+}
+
+/// Sum of the counts, or `None` on overflow of the multiplicity width.
+fn counts_total<C, M: MultiplicityLike>(v: &[(C, M)]) -> Option<M> {
+    v.iter()
+        .try_fold(M::ZERO, |acc, (_, k)| acc.checked_add(*k))
+}
+
+/// Add `deficit` identity copies, merging into an existing identity entry so the
+/// vector stays duplicate-free. `None` on overflow of the multiplicity width.
+fn pad_identity<C: PartialEq, M: MultiplicityLike>(
+    v: &mut Vec<(C, M)>,
+    id_class: C,
+    deficit: M,
+) -> Option<()> {
+    match v.iter_mut().find(|(c, _)| *c == id_class) {
+        Some(entry) => entry.1 = entry.1.checked_add(deficit)?,
+        None => v.push((id_class, deficit)),
+    }
+    Some(())
+}
+
 /// Enumerate all valid matching-count matrices for multisets `M` and `N` with equal
 /// total multiplicity. A matrix X has `x[i][j]` copies of pair `(l_i, r_j)`;
 /// row i sums to `m_i`, column j sums to `n_j`.
 ///
-/// Enumerate all valid matching-count matrices for multisets with equal total
-/// multiplicity, using row-by-row distribution. Used only as a differential test
-/// oracle (both production paths use min-cost transport instead). `a_max` bounds
-/// the number of emitted actions.
-/// The enumeration is complete and greedy-first (diagonal matches tried first).
-fn enumerate_matrices<O: DenseId, A: AuIds>(
+/// Row-by-row distribution, complete and greedy-first (diagonal matches tried first).
+/// Used only as a differential test oracle — both production paths use min-cost
+/// transport instead. `a_max` bounds the number of emitted actions.
+///
+/// Margins, residuals and cells all carry the configured multiplicity width, the same
+/// width the input multisets came in at, so nothing here needs a narrowing check. The
+/// arithmetic that *can* leave the width is the summation the caller already did
+/// ([`counts_total`], [`pad_identity`], [`mset_counts`]); inside the recursion every
+/// value is bounded by a margin, so the subtractions are exact and the descending scans
+/// stay in range by construction.
+fn enumerate_matrices<O: DenseId, A: AuIds, M: MultiplicityLike>(
     op: O,
-    l_classes: &[(A::Class, u32)],
-    r_classes: &[(A::Class, u32)],
+    l_classes: &[(A::Class, M)],
+    r_classes: &[(A::Class, M)],
     a_max: usize,
-    actions: &mut Vec<Action<O, A>>,
+    actions: &mut Vec<Action<O, A, M>>,
 ) {
     let rows = l_classes.len();
     let cols = r_classes.len();
@@ -715,9 +791,9 @@ fn enumerate_matrices<O: DenseId, A: AuIds>(
         return;
     }
 
-    let row_sums: Vec<u32> = l_classes.iter().map(|(_, m)| *m).collect();
-    let col_residual: Vec<u32> = r_classes.iter().map(|(_, m)| *m).collect();
-    let mut matrix: Vec<Vec<u32>> = vec![vec![0; cols]; rows];
+    let row_sums: Vec<M> = l_classes.iter().map(|(_, m)| *m).collect();
+    let col_residual: Vec<M> = r_classes.iter().map(|(_, m)| *m).collect();
+    let mut matrix: Vec<Vec<M>> = vec![vec![M::ZERO; cols]; rows];
     let mut count = 0;
 
     enumerate_row(
@@ -735,17 +811,17 @@ fn enumerate_matrices<O: DenseId, A: AuIds>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn enumerate_row<O: DenseId, A: AuIds>(
+fn enumerate_row<O: DenseId, A: AuIds, M: MultiplicityLike>(
     op: O,
-    l_classes: &[(A::Class, u32)],
-    r_classes: &[(A::Class, u32)],
-    row_sums: &[u32],
-    matrix: &mut [Vec<u32>],
+    l_classes: &[(A::Class, M)],
+    r_classes: &[(A::Class, M)],
+    row_sums: &[M],
+    matrix: &mut [Vec<M>],
     row: usize,
-    col_residual: &mut Vec<u32>,
+    col_residual: &mut Vec<M>,
     a_max: usize,
     count: &mut usize,
-    actions: &mut Vec<Action<O, A>>,
+    actions: &mut Vec<Action<O, A, M>>,
 ) {
     if *count >= a_max {
         return;
@@ -755,11 +831,11 @@ fn enumerate_row<O: DenseId, A: AuIds>(
     let cols = r_classes.len();
 
     if row == rows {
-        let mut pairs: Vec<ActionPair<A>> = Vec::new();
+        let mut pairs: Vec<ActionPair<A, M>> = Vec::new();
         for i in 0..rows {
             for j in 0..cols {
-                if matrix[i][j] > 0 {
-                    pairs.push(ActionPair::<A> {
+                if matrix[i][j] > M::ZERO {
+                    pairs.push(ActionPair::<A, M> {
                         left: l_classes[i].0,
                         right: r_classes[j].0,
                         count: matrix[i][j],
@@ -789,19 +865,19 @@ fn enumerate_row<O: DenseId, A: AuIds>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn distribute_row<O: DenseId, A: AuIds>(
+fn distribute_row<O: DenseId, A: AuIds, M: MultiplicityLike>(
     op: O,
-    l_classes: &[(A::Class, u32)],
-    r_classes: &[(A::Class, u32)],
-    row_sums: &[u32],
-    matrix: &mut [Vec<u32>],
+    l_classes: &[(A::Class, M)],
+    r_classes: &[(A::Class, M)],
+    row_sums: &[M],
+    matrix: &mut [Vec<M>],
     row: usize,
     col: usize,
-    remaining: u32,
-    col_residual: &mut Vec<u32>,
+    remaining: M,
+    col_residual: &mut Vec<M>,
     a_max: usize,
     count: &mut usize,
-    actions: &mut Vec<Action<O, A>>,
+    actions: &mut Vec<Action<O, A, M>>,
 ) {
     if *count >= a_max {
         return;
@@ -811,8 +887,12 @@ fn distribute_row<O: DenseId, A: AuIds>(
 
     if col == cols - 1 {
         if remaining <= col_residual[col] {
+            // Save-and-restore rather than subtract-then-add-back: the residual returns to
+            // exactly the value it held, with no second arithmetic step that could leave
+            // the width. The `saturating_sub` is exact under the guard above.
+            let saved = col_residual[col];
             matrix[row][col] = remaining;
-            col_residual[col] -= remaining;
+            col_residual[col] = saved.saturating_sub(remaining);
             enumerate_row(
                 op,
                 l_classes,
@@ -825,22 +905,23 @@ fn distribute_row<O: DenseId, A: AuIds>(
                 count,
                 actions,
             );
-            col_residual[col] += remaining;
-            matrix[row][col] = 0;
+            col_residual[col] = saved;
+            matrix[row][col] = M::ZERO;
         }
         return;
     }
 
     let max_assign = remaining.min(col_residual[col]);
+    let saved = col_residual[col];
 
     // Greedy-first: if l_classes[row] == r_classes[col] (diagonal), try the
     // maximum allocation first (it is usually optimal). Otherwise descend from max.
     let greedy = l_classes[row].0 == r_classes[col].0;
     if greedy {
         // Try max_assign first (the diagonal greedy), then the rest descending.
-        for val in (0..=max_assign).rev() {
+        for val in descending_upto(max_assign) {
             matrix[row][col] = val;
-            col_residual[col] -= val;
+            col_residual[col] = saved.saturating_sub(val);
             distribute_row(
                 op,
                 l_classes,
@@ -849,23 +930,23 @@ fn distribute_row<O: DenseId, A: AuIds>(
                 matrix,
                 row,
                 col + 1,
-                remaining - val,
+                remaining.saturating_sub(val),
                 col_residual,
                 a_max,
                 count,
                 actions,
             );
-            col_residual[col] += val;
-            matrix[row][col] = 0;
+            col_residual[col] = saved;
+            matrix[row][col] = M::ZERO;
             if *count >= a_max {
                 return;
             }
         }
     } else {
         // Off-diagonal: try from max down (so smaller allocations come later).
-        for val in (0..=max_assign).rev() {
+        for val in descending_upto(max_assign) {
             matrix[row][col] = val;
-            col_residual[col] -= val;
+            col_residual[col] = saved.saturating_sub(val);
             distribute_row(
                 op,
                 l_classes,
@@ -874,19 +955,32 @@ fn distribute_row<O: DenseId, A: AuIds>(
                 matrix,
                 row,
                 col + 1,
-                remaining - val,
+                remaining.saturating_sub(val),
                 col_residual,
                 a_max,
                 count,
                 actions,
             );
-            col_residual[col] += val;
-            matrix[row][col] = 0;
+            col_residual[col] = saved;
+            matrix[row][col] = M::ZERO;
             if *count >= a_max {
                 return;
             }
         }
     }
+}
+
+/// `max ..= 0` descending, at the multiplicity width.
+///
+/// A multiplicity is not an integer literal type, so `(0..=max).rev()` — which needs
+/// `Step` — is unavailable; the range is walked at the surface width and narrowed back.
+/// Every step is `<= max`, and `max` is a value of this width, so the narrowing cannot
+/// fail. It is still spelled as a checked conversion with the reason attached rather than
+/// an `as` cast, because that argument is what makes it safe and an `as` would hide it.
+fn descending_upto<M: MultiplicityLike>(max: M) -> impl Iterator<Item = M> {
+    (0..=max.to_u64()).rev().map(|v| {
+        M::try_from_u64(v).expect("a value at or below `max` fits the width `max` came from")
+    })
 }
 
 #[cfg(test)]
@@ -929,7 +1023,7 @@ mod tests {
         for action in acts {
             assert_eq!(action.pairs.len(), 3);
             for pair in &action.pairs {
-                assert_eq!(pair.count, 1);
+                assert_eq!(pair.count, Multiplicity::ONE);
             }
         }
     }
@@ -992,8 +1086,8 @@ mod tests {
         let acts = cache.get(l, r).unwrap();
         assert_eq!(acts.len(), 1);
         assert_eq!(acts[0].pairs.len(), 2);
-        assert_eq!(acts[0].pairs[0].count, 1);
-        assert_eq!(acts[0].pairs[1].count, 1);
+        assert_eq!(acts[0].pairs[0].count, Multiplicity::ONE);
+        assert_eq!(acts[0].pairs[1].count, Multiplicity::ONE);
     }
 
     /// Seq preserves order and zips only equal-length members positionally.

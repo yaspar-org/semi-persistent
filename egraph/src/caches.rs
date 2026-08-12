@@ -92,8 +92,12 @@ pub struct FixedArityCache<
     const TRACK: bool = true,
     const PROOFS: bool = false,
 > {
+    /// One entry per node, so `L` (a local node id) is the index width.
     nodes: VecI<FixedArityNode<G, O, K>, L, TRACK>,
     index: hashbrown::HashMap<StoredKey<L>, G, PassthroughBuildHasher>,
+    /// Recanonicalization history, indexed at `usize`: its population is the number of
+    /// rewrites performed, not the number of nodes, and a single node can be recanonicalized
+    /// arbitrarily many times — so no id capacity bounds it and `L` here would be a cap.
     history: Option<VecI<FixedArityNode<G, O, K>, usize, TRACK>>,
 }
 
@@ -282,6 +286,11 @@ impl<
 
     fn rebuild_index(&mut self) {
         self.index.clear();
+        // `from_usize` needs no bound check here: `nodes` is indexed *by* `L`, so its own
+        // capacity guard is the id bound (`IndexLike::max_nat()` of a dense id is its
+        // `id_bound()`). Every position the arena can hold therefore has a local id. The
+        // scans that DO need a check are the ones over a container indexed by an id's
+        // *word* rather than the id — see `EGraph::node_ids`.
         let count = self.nodes.len().as_usize();
         for i in 0..count {
             let lid = L::from_usize(i);
@@ -290,7 +299,7 @@ impl<
             self.index.insert(
                 StoredKey {
                     content_hash: h,
-                    local_id: L::from_usize(i),
+                    local_id: lid,
                 },
                 n.global_id(),
             );
@@ -317,10 +326,20 @@ pub struct VariableArityCache<
     const TRACK: bool = true,
     const PROOFS: bool = false,
 > {
+    /// One entry per node, so `L` (a local node id) is the index width.
     nodes: VecI<VariableArityNode<G, O>, L, TRACK>,
+    /// The shared child pool the nodes' spans address. Indexed at `usize`, matching the
+    /// `start`/`end` words in [`VariableArityNode`]: its population is `Σ arity` over the
+    /// nodes, which neither `L`'s nor `G`'s capacity bounds, so an id-width index here would
+    /// be a new cap rather than a narrowing. See [`VariableArityNode::start`].
     children: VecI<C, usize, TRACK>,
     index: hashbrown::HashMap<StoredKey<L>, G, PassthroughBuildHasher>,
+    /// Recanonicalization history. `usize` for a different reason than `children`: the
+    /// population here is the number of *rewrites* the run has performed, which is unbounded
+    /// by any id capacity — a single node can be recanonicalized arbitrarily many times.
     history_nodes: Option<VecI<VariableArityNode<G, O>, usize, TRACK>>,
+    /// Children of the history entries; `Σ arity` over `history_nodes`, so `usize` for both
+    /// of the reasons above at once.
     history_children: Option<VecI<C, usize, TRACK>>,
 }
 
@@ -586,6 +605,11 @@ impl<
 
     fn rebuild_index(&mut self) {
         self.index.clear();
+        // `from_usize` needs no bound check here: `nodes` is indexed *by* `L`, so its own
+        // capacity guard is the id bound (`IndexLike::max_nat()` of a dense id is its
+        // `id_bound()`). Every position the arena can hold therefore has a local id. The
+        // scans that DO need a check are the ones over a container indexed by an id's
+        // *word* rather than the id — see `EGraph::node_ids`.
         let count = self.nodes.len().as_usize();
         for i in 0..count {
             let lid = L::from_usize(i);
@@ -594,7 +618,7 @@ impl<
             self.index.insert(
                 StoredKey {
                     content_hash: h,
-                    local_id: L::from_usize(i),
+                    local_id: lid,
                 },
                 n.global_id(),
             );
@@ -713,6 +737,11 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
 
     fn rebuild_index(&mut self) {
         self.index.clear();
+        // `from_usize` needs no bound check here: `nodes` is indexed *by* `L`, so its own
+        // capacity guard is the id bound (`IndexLike::max_nat()` of a dense id is its
+        // `id_bound()`). Every position the arena can hold therefore has a local id. The
+        // scans that DO need a check are the ones over a container indexed by an id's
+        // *word* rather than the id — see `EGraph::node_ids`.
         let count = self.nodes.len().as_usize();
         for i in 0..count {
             let lid = L::from_usize(i);
@@ -721,7 +750,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
             self.index.insert(
                 StoredKey {
                     content_hash: h,
-                    local_id: L::from_usize(i),
+                    local_id: lid,
                 },
                 n.global_id(),
             );

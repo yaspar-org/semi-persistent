@@ -222,7 +222,7 @@ where
     pub(crate) space: SearchSpace<Cfg::Au>,
     pub(crate) pool: TermPool<Cfg::O, Cfg::V, Cfg::Au>,
     pub(crate) results: BestResults<Cfg::Au>,
-    pub(crate) action_cache: ActionCache<Cfg::O, Cfg::Au>,
+    pub(crate) action_cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     pub(crate) mcgs: super::mcgs::McgsState<Cfg::Au, Cfg::O>,
 }
 

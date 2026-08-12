@@ -1254,9 +1254,14 @@ generic e-graph API uses `Cfg::G` for e-node ids and class representatives, `Cfg
 for operators, `Cfg::V` for literal values, and `Cfg::M` for multiplicities; it does
 not expose separate `ClassId` and `NodeId` types. The snapshot maps representative
 `Cfg::G` values to the config-selected dense class id used by contexts and
-reachability bitsets. Multiplicity is checked-converted from `Cfg::M` to `u32` while
-building the snapshot; a value that does not fit returns
-`AuError::MultiplicityOverflow`.
+reachability bitsets. Multiplicities are carried at `Cfg::M` and widened losslessly to
+`u64` at the two seams where the AU search needs one width for values arriving from
+both the structural path (`Cfg::M`) and the min-cost-transport solver (the solver's own
+narrower flow capacity): `AndStatsData::child_counts` and the count argument of
+`TermPool::intern_action_result`. Nothing narrows a multiplicity, so reading one cannot
+overflow. A *sum* of multiplicities can exceed `Cfg::M`, and `generate_actions` answers
+that by enumerating no actions from the offending member — a search-completeness loss,
+not an error, so it does not fail the snapshot.
 
 ### 5.4 Arena schemas
 

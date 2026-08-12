@@ -21,7 +21,6 @@
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
-use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
 use std::collections::HashMap;
@@ -66,8 +65,7 @@ where
         // (reducible by a smaller rule) — neither is a completion rule. See §6b. Both
         // completion partitions are covered: MSet (plain AC / nilpotent) and Set (ACI).
         let inactive = crate::node_types::FLAG_SUBSUMED | crate::node_types::FLAG_AC_COLLAPSED;
-        for i in 0..eg.node_count() {
-            let gid = Cfg::G::from_usize(i);
+        for gid in eg.node_ids() {
             if eg.node_flags(gid) & inactive != 0 {
                 continue;
             }

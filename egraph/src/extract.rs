@@ -9,6 +9,7 @@ use crate::config::EGraphConfig;
 use crate::containers::DenseId;
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 
 /// Extract the cheapest term from the e-class containing `root`.
 /// Cost = AST size (each node costs 1).
@@ -23,7 +24,7 @@ where
 {
     let n = eg.len();
     // Both tables are indexed by class id rather than hashed. Ids here are
-    // dense by construction — the scan below is over `from_usize(0..n)` and
+    // dense by construction — the scan below is over `eg.node_ids()` and
     // every representative is one of those ids — so a hash map's key storage,
     // hashing and probing all buy nothing over a direct index.
     //
@@ -39,8 +40,7 @@ where
 
     loop {
         let mut changed = false;
-        for i in 0..n {
-            let id = Cfg::G::from_usize(i);
+        for id in eg.node_ids() {
             let repr = eg.find_const(id);
 
             let mut total: usize = 1;
@@ -53,7 +53,7 @@ where
                 if c == UNSET {
                     ok = false;
                 } else {
-                    total = total.saturating_add(c * mult as usize);
+                    total = total.saturating_add(c.saturating_mul(mult.to_usize()));
                 }
             });
             if !ok {
@@ -98,7 +98,7 @@ where
 
     let mut children = Vec::new();
     eg.for_each_child(id, |child, mult| {
-        if mult == 0 {
+        if mult == Cfg::M::ZERO {
             return;
         }
         let t = reconstruct(eg, best_node, eg.find_const(child));
@@ -108,7 +108,7 @@ where
         // previous form made extraction of a depth-`d` chain O(d^2) node copies
         // for a `d`-node result, because each level copied the whole subterm its
         // recursive call had just built and then threw the original away.
-        for _ in 1..mult {
+        for _ in 1..mult.to_usize() {
             children.push(t.clone());
         }
         children.push(t);

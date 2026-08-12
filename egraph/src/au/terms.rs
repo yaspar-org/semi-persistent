@@ -8,8 +8,11 @@
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::{AuIds, EGraphConfig};
-use crate::containers::{AppendOnlyVec, DenseId, MapToken, ShrinkPolicy, SpMap, VecToken};
+use crate::containers::{
+    AppendOnlyVec, DenseId, IndexLike, MapToken, ShrinkPolicy, SpMap, VecToken,
+};
 use crate::literal::LitVal;
+use crate::multiplicity::MultiplicityLike;
 
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::{AuIds31, Span};
@@ -34,13 +37,19 @@ pub enum TermOp<O: DenseId, V: DenseId> {
 /// All fields are semi-persistent (AppendOnlyVec/SpMap); mark/restore truncates.
 /// The id family `A` defaults to the 31-bit family; a Config64 session
 /// instantiates `TermPool<O, V, AuIds64>` through `Cfg::Au`.
+///
+/// Every pool here is addressed by an id whose `Index` is `A::Index`, so that word —
+/// not `usize` — is the index type: the five term-indexed columns are addressed by
+/// `A::Term`, `child_pool` by `A::TermChild`, and `by_structure`'s log positions are
+/// what `A::Term`s are minted from. Pinning them keeps each saved frame length and
+/// each hash-index value at the configured width instead of 8 bytes.
 pub struct TermPool<O: DenseId, V: DenseId, A: AuIds = AuIds31> {
-    ops: AppendOnlyVec<TermOp<O, V>>,
-    child_spans: AppendOnlyVec<Span<A::TermChild>>,
-    child_pool: AppendOnlyVec<A::Term>,
-    sizes: AppendOnlyVec<u32>,
-    vmasses: AppendOnlyVec<u32>,
-    by_structure: SpMap<(TermOp<O, V>, Vec<A::Term>), A::Term>,
+    ops: AppendOnlyVec<TermOp<O, V>, A::Index>,
+    child_spans: AppendOnlyVec<Span<A::TermChild>, A::Index>,
+    child_pool: AppendOnlyVec<A::Term, A::Index>,
+    sizes: AppendOnlyVec<u32, A::Index>,
+    vmasses: AppendOnlyVec<u32, A::Index>,
+    by_structure: SpMap<(TermOp<O, V>, Vec<A::Term>), A::Term, A::Index>,
 }
 
 /// Token for restoring a `TermPool` to a previous state.
@@ -66,8 +75,11 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         }
     }
 
-    /// Number of interned terms.
-    pub fn len(&self) -> usize {
+    /// Number of interned terms, in the configured index word.
+    ///
+    /// A term count is a position count — the next term interns at exactly this
+    /// index — so it is reported in `A::Index` rather than widened to `usize`.
+    pub fn len(&self) -> A::Index {
         self.ops.len()
     }
 
@@ -82,24 +94,43 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             return *self.by_structure.get_val(log_idx);
         }
 
-        let id = A::Term::from_usize(self.ops.len());
-        let start = self.child_pool.len();
+        let id: A::Term = crate::id::id_at_index(self.ops.len());
+        let start = self.child_pool.len().as_usize();
         for &c in children {
             self.child_pool.push(c);
         }
 
-        let child_size_sum: u32 = children
-            .iter()
-            .map(|&c| *self.sizes.get(c.to_usize()))
-            .sum();
+        // Expanded sizes saturate. They do not wrap, and they do not panic.
+        //
+        // A term is a hash-consed DAG, so the *expanded* size these fields count is
+        // exponential in the DAG's depth: a chain of 32 binary nodes already names
+        // 2^32 leaves out of 33 stored rows. `u32` is therefore reachable from a
+        // pool small enough to build, and no wider word makes it unreachable — `u64`
+        // only moves the chain to depth 64. The width is a storage choice; the
+        // arithmetic has to be total either way.
+        //
+        // Saturation rather than a panic because these two fields are read only as
+        // the `quality` ranking key, where lower is better. A term too large to
+        // count belongs at the *worst* end of that order, which is exactly where
+        // `u32::MAX` puts it; two such terms tie, and a tie between candidates
+        // nobody can materialize costs nothing. Wrapping put them at the *best*
+        // end — a 2^32-node generalization scored 0 and was selected as the minimal
+        // one. That was silent: `Iterator::sum` on `u32` panics in debug and wraps
+        // in release, so it only ever misbehaved in the configuration that ships.
+        //
+        // `AuSnapshot::best_size` takes the same view from the other side: it
+        // reserves `u32::MAX` as an explicit "no finite representative" sentinel and
+        // rejects any total that reaches it (`egraph_api.rs`).
+        let child_size_sum = children.iter().fold(0u32, |acc, &c| {
+            acc.saturating_add(*self.sizes.get(c.to_index()))
+        });
         let (size, vmass) = match &op {
             TermOp::Variants => (child_size_sum, child_size_sum),
             _ => {
-                let vm = children
-                    .iter()
-                    .map(|&c| *self.vmasses.get(c.to_usize()))
-                    .sum::<u32>();
-                (1 + child_size_sum, vm)
+                let vm = children.iter().fold(0u32, |acc, &c| {
+                    acc.saturating_add(*self.vmasses.get(c.to_index()))
+                });
+                (child_size_sum.saturating_add(1), vm)
             }
         };
 
@@ -117,10 +148,20 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     /// commutative (SPair, MSet, Set): their children are sorted into canonical
     /// structural order. For ordered operators (Plain*, Seq) it MUST be false: the
     /// pair order of the action is positional semantics and is preserved verbatim.
+    ///
+    /// Counts arrive at the *surface* width. Two callers feed this: the structural path,
+    /// whose counts are [`EGraphConfig::M`] multiplicities, and the transport path, whose
+    /// counts are flow cells at the solver's own narrower capacity. `u64` is the one width
+    /// that holds both without a fallible conversion — [`MultiplicityLike::to_u64`] is
+    /// total and lossless at every configured width — and the count is consumed here
+    /// rather than stored, so the width costs nothing beyond the call.
+    ///
+    /// [`EGraphConfig::M`]: crate::config::EGraphConfig::M
+    /// [`MultiplicityLike::to_u64`]: crate::multiplicity::MultiplicityLike::to_u64
     pub fn intern_action_result(
         &mut self,
         op: TermOp<O, V>,
-        children_with_counts: &[(A::Term, u32)],
+        children_with_counts: &[(A::Term, u64)],
         commutative: bool,
     ) -> A::Term {
         // Expand counts into repeated children.
@@ -189,40 +230,47 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         Ordering::Equal
     }
 
-    /// Get the size of a term.
+    /// Get the size of a term. Saturates at `u32::MAX` for terms whose expanded
+    /// size exceeds the counter (see `intern`); such a term is ranked worst, never
+    /// best.
     #[inline]
     pub fn size(&self, id: A::Term) -> u32 {
-        *self.sizes.get(id.to_usize())
+        *self.sizes.get(id.to_index())
     }
 
     /// Get the variant mass of a term: concrete nodes under `Variants` nodes.
     /// `size - variant_mass` is the backbone (shared structure) size.
     #[inline]
     pub fn variant_mass(&self, id: A::Term) -> u32 {
-        *self.vmasses.get(id.to_usize())
+        *self.vmasses.get(id.to_index())
     }
 
     /// The lexicographic quality key `(size, variant_mass)`. Lower is better:
     /// primary objective is minimum size; at equal size the term with less
     /// variant mass has more backbone (more factored structure) and wins.
+    ///
+    /// Both components saturate (`intern`), so the order is total and monotone but
+    /// loses discrimination among terms too large to count — they all tie at the
+    /// bottom. That is the intended degradation: the alternative, wrapping, inverted
+    /// the comparison and made the largest term look like the best one.
     #[inline]
     pub fn quality(&self, id: A::Term) -> (u32, u32) {
         (
-            *self.sizes.get(id.to_usize()),
-            *self.vmasses.get(id.to_usize()),
+            *self.sizes.get(id.to_index()),
+            *self.vmasses.get(id.to_index()),
         )
     }
 
     /// Get the operator of a term.
     #[inline]
     pub fn op(&self, id: A::Term) -> &TermOp<O, V> {
-        self.ops.get(id.to_usize())
+        self.ops.get(id.to_index())
     }
 
     /// Get the children of a term.
     #[inline]
     pub fn children(&self, id: A::Term) -> &[A::Term] {
-        let span = *self.child_spans.get(id.to_usize());
+        let span = *self.child_spans.get(id.to_index());
         let (start, len) = (span.start_usize(), span.len_usize());
         // Verified `as_slice()` instead of `from_raw_parts` — see the twin in
         // `space.rs::ContextStore::get`. The children of a term are pushed
@@ -394,15 +442,15 @@ pub fn build_best_term<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    struct Frame<O, C, Term> {
+    struct Frame<O, C, M, Term> {
         op: O,
         /// Child classes with multiplicities, in `for_each_child` order.
-        child_classes: Vec<(C, u32)>,
+        child_classes: Vec<(C, M)>,
         cursor: usize,
         children: Vec<Term>,
     }
     let eg = snap.egraph();
-    let mut stack: Vec<Frame<Cfg::O, ClassOf<Cfg>, <Cfg::Au as AuIds>::Term>> = Vec::new();
+    let mut stack: Vec<Frame<Cfg::O, ClassOf<Cfg>, Cfg::M, <Cfg::Au as AuIds>::Term>> = Vec::new();
     let mut pending = class;
     loop {
         // Enter: resolve the class's best node; literals complete immediately,
@@ -413,7 +461,7 @@ where
         if let Some(val_id) = eg.get_lit_val_id(best_id) {
             done = Some(pool.intern(TermOp::Literal(op, val_id), &[]));
         } else {
-            let mut child_classes: Vec<(ClassOf<Cfg>, u32)> = Vec::new();
+            let mut child_classes: Vec<(ClassOf<Cfg>, Cfg::M)> = Vec::new();
             eg.for_each_child(best_id, |child, mult| {
                 child_classes.push((snap.class_of(child).unwrap(), mult));
             });
@@ -431,7 +479,7 @@ where
                     return term;
                 };
                 let (_, mult) = parent.child_classes[parent.cursor];
-                for _ in 0..mult {
+                for _ in 0..mult.to_usize() {
                     parent.children.push(term);
                 }
                 parent.cursor += 1;
@@ -589,6 +637,37 @@ mod tests {
 
         // The factored form is strictly better in the lexicographic order.
         assert!(pool.quality(factored) < pool.quality(bare));
+    }
+
+    /// A term whose expanded size passes `u32` saturates and stays the *worst*
+    /// candidate. 33 stored rows are enough to name 2^32 leaves, so this is not a
+    /// hypothetical width: it is what wrapping arithmetic looked like in release,
+    /// where the giant term scored 0 and beat every real generalization.
+    #[test]
+    fn expanded_size_saturates_and_ranks_worst() {
+        let mut pool = TermPool::<OpId, crate::id::ENodeId>::new();
+        let x = pool.intern(TermOp::EGraph(OpId::from_usize(0)), &[]);
+        assert_eq!(pool.size(x), 1);
+
+        // Each level doubles: `size(v_k) == 2^k`, so `v_32` would be 2^32.
+        let mut v = x;
+        for level in 1..=31u32 {
+            v = pool.intern(TermOp::Variants, &[v, v]);
+            assert_eq!(pool.size(v), 1u32 << level, "level {level} is exact");
+        }
+
+        let over = pool.intern(TermOp::Variants, &[v, v]);
+        assert_eq!(pool.size(over), u32::MAX);
+        assert_eq!(pool.variant_mass(over), u32::MAX);
+
+        // Saturated, so it ranks below the largest exactly-counted term — and below
+        // the leaf. Wrapping would have made it `(0, 0)`: the best score possible.
+        assert!(pool.quality(v) < pool.quality(over));
+        assert!(pool.quality(x) < pool.quality(over));
+
+        // A backbone node above a saturated child stays saturated (`1 + MAX`).
+        let wrapped = pool.intern(TermOp::EGraph(OpId::from_usize(1)), &[over]);
+        assert_eq!(pool.size(wrapped), u32::MAX);
     }
 
     #[test]
