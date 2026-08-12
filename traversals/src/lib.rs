@@ -226,7 +226,10 @@ pub enum Variadic<R> {
     /// (~16 GiB at 4-byte ids — reachable), and a wrapped offset is a valid
     /// offset into someone else's span. The width is free: the `Resolved`
     /// variant's inline `SmallVec` dominates the enum's size either way.
-    Span { start: usize, len: usize },
+    Span {
+        start: usize,
+        len: usize,
+    },
     Resolved(smallvec::SmallVec<[R; 4]>),
 }
 

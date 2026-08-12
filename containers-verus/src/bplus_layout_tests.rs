@@ -6,10 +6,8 @@
 //! `tests/`. Merged from the former `tests/bplus_layout_proptest.rs` and the
 //! bplus_layout block of `tests/external_body_contract_fuzz.rs`.
 
+use crate::bplus_layout::{arr_get, arr_set, arr_shift_up, sel_usize, slice_get};
 use proptest::prelude::*;
-use crate::bplus_layout::{
-    arr_get, arr_set, arr_shift_up, sel_usize, slice_get,
-};
 
 /// The three array contracts at one `(T, N)` instantiation. Every property
 /// compares against a mirror driven through the ordinary checked std form:
