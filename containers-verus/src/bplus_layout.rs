@@ -136,11 +136,15 @@ pub proof fn lemma_u64_usize_roundtrip(x: u64)
 /// arithmetic relates the bound to the index — there is nothing to get wrong
 /// beyond the precondition Verus checks at every call site.
 #[verifier::external_body]
-pub fn arr_get<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
+pub(crate) fn arr_get<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
     requires i < N,
     ensures r == a[i as int],
 {
-    // SAFETY: `i < N` is a verified precondition at every call site.
+    // SAFETY: `i < N` is a verified precondition at every call site. The
+    // debug_assert is a runtime monitor on that assumption for unverified
+    // crate-internal callers (get_unchecked skips the bounds check even in
+    // debug builds): a violation panics cleanly instead of reading OOB.
+    debug_assert!(i < N);
     unsafe { *a.get_unchecked(i) }
 }
 
@@ -155,11 +159,13 @@ pub fn arr_get<T: Copy, const N: usize>(a: &[T; N], i: usize) -> (r: T)
 /// as [`arr_get`]: `external_body`, contract is `get_unchecked`'s own documented
 /// one, and the precondition is checked by Verus at every call site.
 #[verifier::external_body]
-pub fn slice_get<T: Copy>(s: &[T], i: usize) -> (r: T)
+pub(crate) fn slice_get<T: Copy>(s: &[T], i: usize) -> (r: T)
     requires i < s@.len(),
     ensures r == s@[i as int],
 {
     // SAFETY: `i < s.len()` is a verified precondition at every call site.
+    // debug_assert: runtime monitor (see `arr_get`).
+    debug_assert!(i < s.len());
     unsafe { *s.get_unchecked(i) }
 }
 
@@ -186,7 +192,7 @@ pub fn slice_get<T: Copy>(s: &[T], i: usize) -> (r: T)
 /// stated here, and `select_unpredictable`'s own documented semantics are exactly
 /// `if c { b } else { a }` — it is a codegen hint, not a semantic one.
 #[verifier::external_body]
-pub fn sel_usize(c: bool, a: usize, b: usize) -> (r: usize)
+pub(crate) fn sel_usize(c: bool, a: usize, b: usize) -> (r: usize)
     requires true,
     ensures r == if c { b } else { a },
 {
@@ -196,11 +202,13 @@ pub fn sel_usize(c: bool, a: usize, b: usize) -> (r: usize)
 /// `a[i] = v` with the bounds check elided. See [`arr_get`] for why the check
 /// is provably dead and what is trusted here.
 #[verifier::external_body]
-pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
+pub(crate) fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
     requires i < N,
     ensures final(a)@ =~= old(a)@.update(i as int, v),
 {
     // SAFETY: `i < N` is a verified precondition at every call site.
+    // debug_assert: runtime monitor (see `arr_get`).
+    debug_assert!(i < N);
     unsafe {
         *a.get_unchecked_mut(i) = v;
     }
@@ -243,7 +251,7 @@ pub fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
 /// call sites can fold it away and `memmove` can be reached without a `callq`.
 #[inline(always)]
 #[verifier::external_body]
-pub fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, cnt: usize)
+pub(crate) fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, cnt: usize)
     requires pos <= cnt, cnt < N,
     ensures
         final(a)@.len() == old(a)@.len(),
@@ -251,6 +259,9 @@ pub fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, cnt: us
         forall|k: int| pos < k <= cnt ==> final(a)@[k] == old(a)@[k - 1],
         forall|k: int| cnt < k < N ==> final(a)@[k] == old(a)@[k],
 {
+    // Runtime monitor on the verified precondition: a violated bound here
+    // corrupts the node silently rather than faulting.
+    debug_assert!(pos <= cnt && cnt < N);
     // The crossover measured on this layout (see the table above). Below it the
     // element loop is cheaper than entering `memmove` at all.
     if cnt - pos < 18 {

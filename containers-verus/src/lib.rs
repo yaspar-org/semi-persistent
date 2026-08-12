@@ -73,6 +73,8 @@
 pub mod append_only_vec;
 pub mod bplus;
 pub mod bplus_layout;
+#[cfg(test)]
+mod bplus_layout_tests;
 pub mod bplus_search;
 pub mod bplus_tree;
 #[cfg(feature = "literal-types")]
