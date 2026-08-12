@@ -467,6 +467,22 @@ where T: Sized + Copy + core::default::Default {
             final(self).model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
             final(self).payload_seq()[nid.id_nat() as int] == payload,
     {
+        // Runtime guard for UNVERIFIED callers on the id-range precondition:
+        // the sibling word-headroom clause is already trapped by `Vec::len`'s
+        // overflow protocol, but `Index::max_nat()` is one bit wider than
+        // `id_bound()`, and in the window between them `from_usize` masks —
+        // the new node would silently alias node `id - id_bound` and its
+        // self-loop would point into an unrelated ring. Same doctrine and
+        // shape as `ListArena::{new_list,prepend,append}`.
+        proof {
+            // `n + 1` fits in usize: the word-headroom precondition bounds it by
+            // `Index::max_nat()`, and max_nat is at most usize::MAX + 1.
+            <N as DenseId>::Index::lemma_max_nat_fits_usize();
+        }
+        crate::guard::check_precondition(
+            N::try_new(self.entries.len().as_usize() + 1).is_some(),
+            "CircularList::add_singleton: node-id range exhausted",
+        );
         // The new node's dense index is the pre-push length. It is representable
         // in `N` (precondition `n_spec + 1 < id_bound`), so `from_usize`
         // round-trips and the self-loop `next_seq()[id] == id` holds.
