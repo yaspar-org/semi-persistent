@@ -56,7 +56,10 @@ impl<G: DenseId> SortedVec<G> {
     /// Debug builds re-check; release trusts the caller within this module's
     /// review boundary.
     pub fn from_sorted_dedup(v: Vec<G>) -> Self {
-        debug_assert!(v.windows(2).all(|w| w[0] < w[1]), "SortedVec: input not strictly sorted");
+        debug_assert!(
+            v.windows(2).all(|w| w[0] < w[1]),
+            "SortedVec: input not strictly sorted"
+        );
         SortedVec { data: v }
     }
     /// Sort + dedup, then wrap. For callers with unordered input.
@@ -312,8 +315,8 @@ mod tests {
     use super::*;
     // The inherent cursor `step` is now crate-private in containers-verus
     // (it shadowed this guarded trait impl); tests step through the trait.
-    use crate::leapfrog::SortedCursor;
     use crate::egraph::EGraph31;
+    use crate::leapfrog::SortedCursor;
     use crate::literal::NiraLitVal;
 
     #[test]

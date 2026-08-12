@@ -136,56 +136,82 @@ fn row_mark_set_restore() -> Row {
 /// Isolated because a full mark/set/restore cycle is set-dominated and can read
 /// net-faster while restore itself regresses — exactly what happened when
 /// `CaptureBits::set_true` regained production's `inline(always)` (cycle −25%,
-/// restore +30%). ~45 µs of timed work, above the layout floor.
+/// restore +30%). The timed unit is RESTORE_BATCH independent restores: one
+/// (~40 µs) proved to be within reach of the per-build layout artifact on a
+/// shared runner — the row read +13.0% on ubuntu-latest at a commit that does
+/// not touch the restore path, while reading −3.0% locally, the `class_walk`
+/// incident's exact signature. Batching scales the work; the ratio is
+/// dimensionless and carries over.
 fn row_restore_replay() -> Row {
+    fn prod_fixture() -> (prod::VecP<u64, u32, true>, prod::VecToken) {
+        let mut vv: prod::VecP<u64, u32, true> = prod::VecP::new();
+        for i in 0..VEC_N {
+            vv.push(i as u64);
+        }
+        // Steady state: the capture bitmap is already materialized, as it is
+        // in every criterion iteration after the first.
+        let t0 = vv.mark(prod::ShrinkPolicy::Never);
+        for i in 0..VEC_TOUCHES {
+            vv.set(i as u32, i as u64);
+        }
+        vv.restore(t0);
+        let tok = vv.mark(prod::ShrinkPolicy::Never);
+        for i in 0..VEC_TOUCHES {
+            vv.set(i as u32, (i + 999) as u64);
+        }
+        (vv, tok)
+    }
+    fn verus_fixture() -> (VerusVecP, verus::vec::VecToken) {
+        let mut vv: VerusVecP = VerusVecP::new();
+        for i in 0..VEC_N {
+            vv.push(i as u64);
+        }
+        let t0 = vv.mark(verus::vec::ShrinkPolicy::Never);
+        for i in 0..VEC_TOUCHES {
+            vv.set(i as u32, i as u64);
+        }
+        vv.restore(t0);
+        let tok = vv.mark(verus::vec::ShrinkPolicy::Never);
+        for i in 0..VEC_TOUCHES {
+            vv.set(i as u32, (i + 999) as u64);
+        }
+        (vv, tok)
+    }
     let (p, v) = perf::compare_batched(
         || {
-            let mut vv: prod::VecP<u64, u32, true> = prod::VecP::new();
-            for i in 0..VEC_N {
-                vv.push(i as u64);
-            }
-            // Steady state: the capture bitmap is already materialized, as it is
-            // in every criterion iteration after the first.
-            let t0 = vv.mark(prod::ShrinkPolicy::Never);
-            for i in 0..VEC_TOUCHES {
-                vv.set(i as u32, i as u64);
-            }
-            vv.restore(t0);
-            let tok = vv.mark(prod::ShrinkPolicy::Never);
-            for i in 0..VEC_TOUCHES {
-                vv.set(i as u32, (i + 999) as u64);
-            }
-            (vv, tok)
+            (0..RESTORE_BATCH)
+                .map(|_| prod_fixture())
+                .collect::<std::vec::Vec<_>>()
         },
-        |(vv, tok)| {
-            vv.restore(*tok);
-            vv.len()
+        |fs| {
+            let mut total = 0usize;
+            for (vv, tok) in fs.iter_mut() {
+                vv.restore(*tok);
+                total += vv.len() as usize;
+            }
+            total
         },
         || {
-            let mut vv: VerusVecP = VerusVecP::new();
-            for i in 0..VEC_N {
-                vv.push(i as u64);
-            }
-            let t0 = vv.mark(verus::vec::ShrinkPolicy::Never);
-            for i in 0..VEC_TOUCHES {
-                vv.set(i as u32, i as u64);
-            }
-            vv.restore(t0);
-            let tok = vv.mark(verus::vec::ShrinkPolicy::Never);
-            for i in 0..VEC_TOUCHES {
-                vv.set(i as u32, (i + 999) as u64);
-            }
-            (vv, tok)
+            (0..RESTORE_BATCH)
+                .map(|_| verus_fixture())
+                .collect::<std::vec::Vec<_>>()
         },
-        |(vv, tok)| {
-            vv.restore(*tok);
-            vv.len()
+        |fs| {
+            let mut total = 0usize;
+            for (vv, tok) in fs.iter_mut() {
+                vv.restore(*tok);
+                total += vv.len() as usize;
+            }
+            total
         },
     );
     // Recorded −1.1% … +1.4% over seven runs. Isolating the restore phase
     // removes the set-phase noise, so this row is tight; pinned at parity.
     Row::gated("restore_replay", p, v, 1.5)
 }
+
+/// Restores per timed unit in `restore_replay` — see that row's comment.
+const RESTORE_BATCH: usize = 8;
 
 const WRITES_PER_FRAME: usize = 64;
 

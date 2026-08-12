@@ -323,7 +323,10 @@ impl MatchShape {
             // Checked mint (u16 id family): the 65537th distinct name would
             // otherwise wrap onto id 0; report through the existing Err channel.
             let raw = u16::try_from(self.mults.len()).map_err(|_| {
-                format!("too many mult variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+                format!(
+                    "too many mult variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
             })?;
             let id = MultVarId::new(raw);
             self.mults.push(name.to_owned());
@@ -340,7 +343,10 @@ impl MatchShape {
             // Checked mint (u16 id family): the 65537th distinct name would
             // otherwise wrap onto id 0; report through the existing Err channel.
             let raw = u16::try_from(self.nodes.len()).map_err(|_| {
-                format!("too many node variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+                format!(
+                    "too many node variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
             })?;
             let id = VarId::new(raw);
             self.nodes.push(name.to_owned());
@@ -357,7 +363,10 @@ impl MatchShape {
             // Checked mint (u16 id family): the 65537th distinct name would
             // otherwise wrap onto id 0; report through the existing Err channel.
             let raw = u16::try_from(self.seqs.len()).map_err(|_| {
-                format!("too many sequence variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+                format!(
+                    "too many sequence variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
             })?;
             let id = SeqVarId::new(raw);
             self.seqs.push(name.to_owned());
@@ -374,7 +383,10 @@ impl MatchShape {
             // Checked mint (u16 id family): the 65537th distinct name would
             // otherwise wrap onto id 0; report through the existing Err channel.
             let raw = u16::try_from(self.sets.len()).map_err(|_| {
-                format!("too many set variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+                format!(
+                    "too many set variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
             })?;
             let id = SetVarId::new(raw);
             self.sets.push(name.to_owned());
@@ -391,7 +403,10 @@ impl MatchShape {
             // Checked mint (u16 id family): the 65537th distinct name would
             // otherwise wrap onto id 0; report through the existing Err channel.
             let raw = u16::try_from(self.msets.len()).map_err(|_| {
-                format!("too many multiset variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+                format!(
+                    "too many multiset variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
             })?;
             let id = MsetVarId::new(raw);
             self.msets.push(name.to_owned());
@@ -408,7 +423,10 @@ impl MatchShape {
             // Checked mint (u16 id family): the 65537th distinct name would
             // otherwise wrap onto id 0; report through the existing Err channel.
             let raw = u16::try_from(self.lit_vals.len()).map_err(|_| {
-                format!("too many literal-value variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+                format!(
+                    "too many literal-value variables in one rule: at most {} distinct names",
+                    u16::MAX as u32 + 1
+                )
             })?;
             let id = LitValVarId::new(raw);
             self.lit_vals.push(name.to_owned());

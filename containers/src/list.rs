@@ -260,7 +260,10 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         // Same-list splice would link the tail to its own head (a cycle iter()
         // never exits) and then overwrite the header; the verified twin traps
         // this and the misuse suite pins the panic. Keep the crates aligned.
-        assert!(dst != src, "ListArena::splice: dst and src are the same list");
+        assert!(
+            dst != src,
+            "ListArena::splice: dst and src are the same list"
+        );
         let src_h = self.heads.get(src.into());
         if src_h.is_empty() {
             return;

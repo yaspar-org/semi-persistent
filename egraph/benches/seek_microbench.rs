@@ -48,9 +48,9 @@ fn seek_microbench(c: &mut Criterion) {
         // Keys: 0, 10, 20, ... (step 10 so seek targets can fall between).
         let data: Vec<u32> = (0..n as u32).map(|i| i * 10).collect();
 
-        let svec = SortedVec::<ENodeId> {
-            data: data.iter().map(|&x| ENodeId::new(x)).collect(),
-        };
+        let svec = SortedVec::<ENodeId>::from_sorted_dedup(
+            data.iter().map(|&x| ENodeId::new(x)).collect(),
+        );
 
         // Bulk-built tree: arena in traversal order.
         let data_ids: Vec<ENodeId> = data.iter().map(|&x| ENodeId::new(x)).collect();
@@ -129,9 +129,9 @@ fn seek_stride_sweep(c: &mut Criterion) {
     group.sample_size(20);
 
     const N: usize = 1_000_000;
-    let svec = SortedVec::<ENodeId> {
-        data: (0..N as u32).map(|i| ENodeId::new(i * 10)).collect(),
-    };
+    let svec = SortedVec::<ENodeId>::from_sorted_dedup(
+        (0..N as u32).map(|i| ENodeId::new(i * 10)).collect(),
+    );
 
     // Same seek count for every shape below, so the rows are comparable as
     // per-seek costs rather than as totals.

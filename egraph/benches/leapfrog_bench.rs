@@ -112,9 +112,7 @@ fn bench_leapfrog(c: &mut Criterion) {
 
         let svecs: Vec<SortedVec<ENodeId>> = raw
             .iter()
-            .map(|v| SortedVec {
-                data: v.iter().map(|&x| ENodeId::new(x)).collect(),
-            })
+            .map(|v| SortedVec::from_sorted_dedup(v.iter().map(|&x| ENodeId::new(x)).collect()))
             .collect();
         let trees: Vec<Tree> = raw
             .iter()

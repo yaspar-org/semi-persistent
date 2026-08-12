@@ -26,10 +26,10 @@
 //! ladder arithmetic is over `usize` in both.
 
 // The inherent step is crate-private now; step through the guarded trait.
-use semi_persistent_containers_verus::sorted_cursor::SortedCursor;
 use proptest::prelude::*;
 use semi_persistent_containers_verus::dense_id::{DenseId31, DenseId63};
 use semi_persistent_containers_verus::opt::DenseId;
+use semi_persistent_containers_verus::sorted_cursor::SortedCursor;
 use semi_persistent_containers_verus::sorted_vec_cursor::SortedVecCursor;
 
 /// A sorted, duplicate-free key vector — the cursor's `requires` (a strictly
