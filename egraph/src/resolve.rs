@@ -42,7 +42,14 @@ impl<S: Copy, G: Copy> GlobalCtx<S, G> {
     }
 
     pub fn insert(&mut self, name: String, sort: S, eclass: G) -> GlobalVarId {
-        let gid = GlobalVarId::new(self.sorts.len() as u16);
+        // Checked mint: `GlobalVarId` is a bare u16 with no bound of its own, and
+        // globals accumulate across a session, so the 65537th binding would
+        // otherwise wrap and alias binding 0 — the same narrow-before-check shape
+        // fixed in the container index layer. No Result channel here, so refuse
+        // loudly rather than hand back an aliased id.
+        let raw = u16::try_from(self.sorts.len())
+            .expect("too many global bindings: GlobalVarId is u16, so at most 65536 are supported");
+        let gid = GlobalVarId::new(raw);
         self.sorts.push(sort);
         self.bindings.push(eclass);
         self.index.insert(name, gid);
@@ -313,7 +320,12 @@ impl MatchShape {
         Ok(if let Some(id) = self.find_mult(name) {
             id
         } else {
-            let id = MultVarId::new(self.mults.len() as u16);
+            // Checked mint (u16 id family): the 65537th distinct name would
+            // otherwise wrap onto id 0; report through the existing Err channel.
+            let raw = u16::try_from(self.mults.len()).map_err(|_| {
+                format!("too many mult variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+            })?;
+            let id = MultVarId::new(raw);
             self.mults.push(name.to_owned());
             self.kinds.insert(name.to_owned(), VarKind::Mult);
             id
@@ -325,7 +337,12 @@ impl MatchShape {
         Ok(if let Some(id) = self.find_var(name) {
             id
         } else {
-            let id = VarId::new(self.nodes.len() as u16);
+            // Checked mint (u16 id family): the 65537th distinct name would
+            // otherwise wrap onto id 0; report through the existing Err channel.
+            let raw = u16::try_from(self.nodes.len()).map_err(|_| {
+                format!("too many node variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+            })?;
+            let id = VarId::new(raw);
             self.nodes.push(name.to_owned());
             self.kinds.insert(name.to_owned(), VarKind::Node);
             id
@@ -337,7 +354,12 @@ impl MatchShape {
         Ok(if let Some(id) = self.find_seq(name) {
             id
         } else {
-            let id = SeqVarId::new(self.seqs.len() as u16);
+            // Checked mint (u16 id family): the 65537th distinct name would
+            // otherwise wrap onto id 0; report through the existing Err channel.
+            let raw = u16::try_from(self.seqs.len()).map_err(|_| {
+                format!("too many sequence variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+            })?;
+            let id = SeqVarId::new(raw);
             self.seqs.push(name.to_owned());
             self.kinds.insert(name.to_owned(), VarKind::Seq);
             id
@@ -349,7 +371,12 @@ impl MatchShape {
         Ok(if let Some(id) = self.find_set(name) {
             id
         } else {
-            let id = SetVarId::new(self.sets.len() as u16);
+            // Checked mint (u16 id family): the 65537th distinct name would
+            // otherwise wrap onto id 0; report through the existing Err channel.
+            let raw = u16::try_from(self.sets.len()).map_err(|_| {
+                format!("too many set variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+            })?;
+            let id = SetVarId::new(raw);
             self.sets.push(name.to_owned());
             self.kinds.insert(name.to_owned(), VarKind::Set);
             id
@@ -361,7 +388,12 @@ impl MatchShape {
         Ok(if let Some(id) = self.find_mset(name) {
             id
         } else {
-            let id = MsetVarId::new(self.msets.len() as u16);
+            // Checked mint (u16 id family): the 65537th distinct name would
+            // otherwise wrap onto id 0; report through the existing Err channel.
+            let raw = u16::try_from(self.msets.len()).map_err(|_| {
+                format!("too many multiset variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+            })?;
+            let id = MsetVarId::new(raw);
             self.msets.push(name.to_owned());
             self.kinds.insert(name.to_owned(), VarKind::Mset);
             id
@@ -373,7 +405,12 @@ impl MatchShape {
         Ok(if let Some(id) = self.find_lit_val(name) {
             id
         } else {
-            let id = LitValVarId::new(self.lit_vals.len() as u16);
+            // Checked mint (u16 id family): the 65537th distinct name would
+            // otherwise wrap onto id 0; report through the existing Err channel.
+            let raw = u16::try_from(self.lit_vals.len()).map_err(|_| {
+                format!("too many literal-value variables in one rule: at most {} distinct names", u16::MAX as u32 + 1)
+            })?;
+            let id = LitValVarId::new(raw);
             self.lit_vals.push(name.to_owned());
             self.kinds.insert(name.to_owned(), VarKind::LitVal);
             id

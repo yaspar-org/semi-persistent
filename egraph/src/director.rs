@@ -229,9 +229,13 @@ impl<W: DirectorBits> Director<W> {
     #[inline]
     pub fn new_inline(bits: u64) -> Self {
         if W::BITS > 0 {
-            debug_assert!(
-                bits & (W::SPILL_TAG.to_u64()) == 0,
-                "inline bits overflow: MSB must be 0"
+            // Hard assert against the full payload width, not the tag bit alone —
+            // `new_spilled`'s doc records the two ways the old `debug_assert` was
+            // wrong, and this constructor had kept both: `0x1_0001` passed the
+            // one-bit test and truncated to `1` in `W::from_u64`.
+            assert!(
+                bits < W::SPILL_TAG.to_u64(),
+                "inline bits overflow the director word's payload"
             );
         }
         Director(W::from_u64(bits))
@@ -704,7 +708,8 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK,
 
     /// Read bit_length from a working pool entry.
     pub fn bit_length(&self, start: I) -> u32 {
-        self.work.get(start).bits() as u32
+        u32::try_from(self.work.get(start).bits())
+            .expect("pool entry bit length exceeds u32: `start` does not name a header word")
     }
 
     /// Get a single working pool word by index.
@@ -719,7 +724,8 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK,
 
     /// Read a spilled matrix from the working pool.
     pub fn read(&self, start: I) -> (u32, std::vec::Vec<PoolDirector>) {
-        let bit_length = self.work.get(start).bits() as u32;
+        let bit_length = u32::try_from(self.work.get(start).bits())
+            .expect("pool entry bit length exceeds u32: `start` does not name a header word");
         let word_count = ceil_div(bit_length, PoolDirector::USABLE_BITS);
         let mut data = std::vec::Vec::with_capacity(word_count);
         for i in 0..word_count {

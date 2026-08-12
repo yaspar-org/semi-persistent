@@ -83,7 +83,11 @@ where
     pub fn build<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     ) -> Self {
-        Self::build_from(eg, (0..eg.node_count()).map(Cfg::G::from_usize))
+        // `node_ids`, not a bare `from_usize` scan: the bound argument (every
+        // routing entry was minted through `TypedRouting::reserve`'s checked
+        // path) lives with `node_ids`; an inline scan here would restate the
+        // unchecked spelling without the justification.
+        Self::build_from(eg, eg.node_ids())
     }
 
     /// Build the per-round **delta** index from the touched-node log: the
