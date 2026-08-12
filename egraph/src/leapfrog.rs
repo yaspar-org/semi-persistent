@@ -196,9 +196,7 @@ mod tests {
     use crate::index::{SortedVec, SortedVecCursor};
 
     fn svec<G: DenseId>(vals: &[usize]) -> SortedVec<G> {
-        SortedVec {
-            data: vals.iter().map(|&v| G::from_usize(v)).collect(),
-        }
+        SortedVec::from_unsorted(vals.iter().map(|&v| G::from_usize(v)).collect())
     }
 
     fn collect<'a, G: DenseId>(j: &mut LeapfrogJoin<SortedVecCursor<'a, G>>) -> Vec<usize> {

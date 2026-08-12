@@ -40,12 +40,34 @@ pub use semi_persistent_containers::SortedVecCursor;
 
 /// Sorted index over node ids, backed by a contiguous `Vec<G>`.
 /// Supports O(log n) seek and O(1) step for leapfrog join.
+///
+/// The field is private on purpose: `SortedVecCursor::new`'s `requires` is
+/// strict sortedness, and Verus erases it at runtime — an unsorted vector
+/// here would not panic, it would silently drop join matches. Construction
+/// goes through the two constructors below, so the invariant is carried by
+/// the type instead of by the discipline of one call site.
 #[derive(Clone, Debug)]
 pub struct SortedVec<G> {
-    pub data: Vec<G>,
+    data: Vec<G>,
 }
 
 impl<G: DenseId> SortedVec<G> {
+    /// Wrap a vector the caller has already sorted and deduplicated.
+    /// Debug builds re-check; release trusts the caller within this module's
+    /// review boundary.
+    pub fn from_sorted_dedup(v: Vec<G>) -> Self {
+        debug_assert!(v.windows(2).all(|w| w[0] < w[1]), "SortedVec: input not strictly sorted");
+        SortedVec { data: v }
+    }
+    /// Sort + dedup, then wrap. For callers with unordered input.
+    pub fn from_unsorted(mut v: Vec<G>) -> Self {
+        v.sort_unstable();
+        v.dedup();
+        SortedVec { data: v }
+    }
+    pub fn as_slice(&self) -> &[G] {
+        &self.data
+    }
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -169,7 +191,7 @@ where
                 .map(|(k, mut v)| {
                     v.sort_unstable();
                     v.dedup();
-                    (k, SortedVec { data: v })
+                    (k, SortedVec::from_sorted_dedup(v))
                 })
                 .collect()
         }
@@ -288,6 +310,9 @@ impl<'a, Cfg: EGraphConfig> VariantIndex<'a, Cfg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The inherent cursor `step` is now crate-private in containers-verus
+    // (it shadowed this guarded trait impl); tests step through the trait.
+    use crate::leapfrog::SortedCursor;
     use crate::egraph::EGraph31;
     use crate::literal::NiraLitVal;
 

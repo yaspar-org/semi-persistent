@@ -100,7 +100,7 @@ where
     #[inline(always)]
     fn step(&mut self) {
         if SortedVecCursor::is_valid(self) {
-            SortedVecCursor::step(self)
+            SortedVecCursor::step_unchecked(self)
         }
     }
 

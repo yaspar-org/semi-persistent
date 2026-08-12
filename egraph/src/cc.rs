@@ -254,7 +254,7 @@ mod tests {
 
         // Baseline: pab is both a completion candidate and in the matcher index.
         assert_eq!(CcSnapshot::build(&eg).completion_nodes(), &[pab]);
-        assert!(IndexStore::build(&eg).by_op[&plus].data.contains(&pab));
+        assert!(IndexStore::build(&eg).by_op[&plus].as_slice().contains(&pab));
 
         // Collapse it (the completion-internal retirement).
         eg.set_cc_collapsed(pab);
@@ -266,7 +266,7 @@ mod tests {
         );
         // ...but still matchable: present in the index and still in its class.
         assert!(
-            IndexStore::build(&eg).by_op[&plus].data.contains(&pab),
+            IndexStore::build(&eg).by_op[&plus].as_slice().contains(&pab),
             "AC-collapsed node must stay visible to the matcher (not subsumed)"
         );
         assert_eq!(eg.class_repr(pab), eg.class_repr(pab));
@@ -277,7 +277,7 @@ mod tests {
             !IndexStore::build(&eg)
                 .by_op
                 .get(&plus)
-                .is_some_and(|v| v.data.contains(&pab)),
+                .is_some_and(|v| v.as_slice().contains(&pab)),
             "subsumed node must be hidden from the matcher index"
         );
     }
