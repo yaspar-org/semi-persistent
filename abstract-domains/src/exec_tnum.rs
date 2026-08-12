@@ -289,12 +289,20 @@ impl ExecAnum {
     pub fn add(&self, t: &ExecAnum) -> (r: ExecAnum)
         ensures r.wf()
     {
+        // Overflow guards mirroring the verified twin (domains.rs ExecAnum::add,
+        // which proves it needs them): without these, {base: MAX, span: 0} +
+        // {base: 0, span: 3} concretized to {MAX} alone while the true sums
+        // are {MAX, 0, 1, 2}.
         let v = self.base.wrapping_add(t.base);
-        // Uncertainty: Tnum-add the masks
+        let max1 = self.base.wrapping_add(self.span);
+        let max2 = t.base.wrapping_add(t.span);
+        let max_sum = max1.wrapping_add(max2);
         let m1 = self.span; let m2 = t.span;
-        let lbm = m1.wrapping_add(m2);
-        let ub = lbm; // lbv for masks is 0, so ub = 0 + lbm = lbm
-        let mask = ub | m1 | m2; // simplified: diff = ub ^ 0 = ub
+        let mask = m1.wrapping_add(m2) | m1 | m2;
+        if max1 < self.base || max2 < t.base || max_sum < max1 || max_sum < max2
+            || v < self.base || mask < m1 {
+            return ExecAnum::top();
+        }
         ExecAnum { base: v, span: mask }
     }
 
@@ -303,9 +311,17 @@ impl ExecAnum {
     pub fn sub(&self, t: &ExecAnum) -> (r: ExecAnum)
         ensures r.wf()
     {
-        let v = self.base.wrapping_sub(t.base.wrapping_add(t.span));
+        // Guards: the subtrahend's max and the mask sum must not wrap, and the
+        // subtraction must not underflow past the base, or the result window is
+        // disjoint from the true difference set (at d8, {0} - [5,255] produced
+        // {252..255} where the truth is [1,251]).
+        let max2 = t.base.wrapping_add(t.span);
+        let v = self.base.wrapping_sub(max2);
         let m1 = self.span; let m2 = t.span;
         let mask = m1.wrapping_add(m2) | m1 | m2;
+        if max2 < t.base || v > self.base || mask < m1 {
+            return ExecAnum::top();
+        }
         ExecAnum { base: v, span: mask }
     }
 
@@ -317,8 +333,12 @@ impl ExecAnum {
     {
         let sv = self.base; let sm = self.span;
         let min_q = sv / d;
-        let max_q = sv.wrapping_add(sm) / d;
-        if max_q < min_q {
+        let max_v = sv.wrapping_add(sm);
+        let max_q = max_v / d;
+        // Both disjuncts, as in the verified twin (domains.rs): testing only
+        // max_q < min_q lets a wrapped max_v yield a plausible quotient window
+        // ({base: 5, span: MAX} / 4 answered the singleton {1}).
+        if max_q < min_q || max_v < sv {
             // Overflow: go to top
             ExecAnum::top()
         } else {

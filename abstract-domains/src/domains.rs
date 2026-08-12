@@ -640,8 +640,16 @@ macro_rules! abstract_domain {
                     r
                 }
                 #[inline] pub fn sub(&self, t: &ExecAnum) -> ExecAnum {
-                    let v = self.base.wrapping_sub(t.base.wrapping_add(t.span));
+                    // The one ExecAnum method here with no soundness ensures: the
+                    // guards below are the hand-checked analogue of add's, until
+                    // sub gets its own has-postcondition. Without them the result
+                    // window can be disjoint from the true difference set.
+                    let max2 = t.base.wrapping_add(t.span);
+                    let v = self.base.wrapping_sub(max2);
                     let m = self.span.wrapping_add(t.span) | self.span | t.span;
+                    if max2 < t.base || v > self.base || m < self.span {
+                        return ExecAnum { base: 0, span: !(0 as $uint) };
+                    }
                     ExecAnum { base: v, span: m }
                 }
                 pub fn div_const(&self, d: $uint) -> (r: ExecAnum)

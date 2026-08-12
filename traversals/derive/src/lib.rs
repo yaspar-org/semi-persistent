@@ -674,9 +674,15 @@ fn gen_container(
             let id = format_ident!("{}Id", sort_names[ci]);
             quote! {
                 #vis fn #method(&mut self, children: &[#id]) -> ::semi_persistent_traversals::Variadic<#id> {
-                    let start = self.#pool_field.len() as u32;
+                    // Checked narrowing: a wrapped u32 offset is a VALID offset
+                    // into someone else's span, so two variadic nodes would
+                    // silently alias; refuse instead.
+                    let start = u32::try_from(self.#pool_field.len())
+                        .expect("variadic child pool exceeds u32 offsets");
+                    let len = u32::try_from(children.len())
+                        .expect("variadic child count exceeds u32");
                     self.#pool_field.extend_from_slice(children);
-                    ::semi_persistent_traversals::Variadic::Span { start, len: children.len() as u32 }
+                    ::semi_persistent_traversals::Variadic::Span { start, len }
                 }
             }
         })
