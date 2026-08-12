@@ -219,7 +219,14 @@ impl MappingOps for SparseMapping {
 
 #[derive(Clone, Debug)]
 pub enum Variadic<R> {
-    Span { start: u32, len: u32 },
+    /// `usize` offsets, not an id-family word: the pool a span indexes holds
+    /// CONCATENATED child lists, so its population is the sum of arities —
+    /// bounded by memory, not by any id capacity (2^31 nodes of 2^31 children
+    /// is 2^62 entries). A `u32` here capped every pool at 2^32 entries
+    /// (~16 GiB at 4-byte ids — reachable), and a wrapped offset is a valid
+    /// offset into someone else's span. The width is free: the `Resolved`
+    /// variant's inline `SmallVec` dominates the enum's size either way.
+    Span { start: usize, len: usize },
     Resolved(smallvec::SmallVec<[R; 4]>),
 }
 
@@ -233,7 +240,7 @@ impl<R> Variadic<R> {
     pub fn len(&self) -> usize {
         match self {
             Variadic::Resolved(v) => v.len(),
-            Variadic::Span { len, .. } => *len as usize,
+            Variadic::Span { len, .. } => *len,
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -254,9 +261,7 @@ impl<R> Variadic<R> {
     /// Get the pool slice indices without allocating. Only valid for Span variant.
     pub fn span_indices<'a>(&self, pool: &'a [usize]) -> &'a [usize] {
         match self {
-            Variadic::Span { start, len } => {
-                &pool[*start as usize..(*start as usize + *len as usize)]
-            }
+            Variadic::Span { start, len } => &pool[*start..(*start + *len)],
             Variadic::Resolved(_) => panic!("already resolved"),
         }
     }
