@@ -407,10 +407,16 @@ fn unary_chain_depth_6000() {
         true,
         "chain n=6000 exact",
     );
-    assert!(
-        elapsed.as_secs() < 90,
-        "depth-6000 chain exceeded its runtime bound: {elapsed:?}"
-    );
+    // Wall-clock bound: a release-codegen property, meaningless in
+    // unoptimized or instrumented builds (the coverage job read 107s for a
+    // computation whose functional assertions all passed). Same rule as the
+    // binary-search timing canary in bplus_search_parity.rs.
+    if !cfg!(debug_assertions) {
+        assert!(
+            elapsed.as_secs() < 90,
+            "depth-6000 chain exceeded its runtime bound: {elapsed:?}"
+        );
+    }
 }
 
 /// Runtime-bounded case documenting the practical limit. The exact solver
@@ -442,10 +448,13 @@ fn runtime_bounded_practical_limit() {
             false,
             &format!("chain n={n} exact (practical limit)"),
         );
-        assert!(
-            elapsed.as_secs() < 60,
-            "practical-limit case n={n} exceeded its runtime bound: {elapsed:?}"
-        );
+        // Release-codegen bound only; see the depth-6000 case above.
+        if !cfg!(debug_assertions) {
+            assert!(
+                elapsed.as_secs() < 60,
+                "practical-limit case n={n} exceeded its runtime bound: {elapsed:?}"
+            );
+        }
     }
 }
 
