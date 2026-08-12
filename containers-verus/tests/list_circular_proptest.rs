@@ -109,9 +109,12 @@ fn list_arena_prepend_append_match_oracle() {
                 oracle[probe],
                 "seed={seed}: list {probe} contents"
             );
-            // O(1) cached len agrees with the oracle length.
+            // O(1) cached len agrees with the oracle length. `as_usize` because the
+            // cached count is `N::Index`-wide — `u64` here, since `N` is `DenseId63` —
+            // rather than a fixed `u32`, which is what lets a list at this id width run
+            // past 4 billion elements at all.
             assert_eq!(
-                a.len(DenseId63::from_usize(probe)),
+                a.len(DenseId63::from_usize(probe)).as_usize(),
                 oracle[probe].len(),
                 "seed={seed}: len({probe})"
             );
@@ -120,7 +123,7 @@ fn list_arena_prepend_append_match_oracle() {
         for (l, expected) in oracle.iter().enumerate() {
             assert_eq!(read_list(&a, l), *expected, "seed={seed}: final list {l}");
             assert_eq!(
-                a.len(DenseId63::from_usize(l)),
+                a.len(DenseId63::from_usize(l)).as_usize(),
                 expected.len(),
                 "seed={seed}: final len {l}"
             );
@@ -176,7 +179,7 @@ fn list_arena_splice_match_oracle() {
                     "seed={seed}: list {l} after splice"
                 );
                 assert_eq!(
-                    a.len(DenseId63::from_usize(l)),
+                    a.len(DenseId63::from_usize(l)).as_usize(),
                     expected.len(),
                     "seed={seed}: len {l} after splice"
                 );
