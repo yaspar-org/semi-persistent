@@ -193,6 +193,13 @@ macro_rules! define_id_impl {
             proof fn lemma_max_nat_positive() {}
             proof fn lemma_order_is_as_nat(a: Self, b: Self) {}
 
+            // `$CAP` is a `$Int` value and `$Int` is never wider than a pointer here
+            // (the macro is instantiated at u8/u32/u64), so the cap is below
+            // `usize::MAX + 1` once `usize` is known to be 64 bits wide.
+            proof fn lemma_max_nat_fits_usize() {
+                $crate::index_like::lemma_u64_usize_64bit();
+            }
+
             fn min() -> Self { $Name { raw: 0 } }
             fn max() -> Self { $Name { raw: $MASK } }
 

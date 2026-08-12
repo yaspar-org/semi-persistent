@@ -119,10 +119,11 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.store
             .prepare_mark(saved_len, &self.diff_log[diff_start..]);
 
+        let depth = crate::token::narrow_count(self.frames.len(), "mark nesting depth");
         let token = VecToken {
             branch_id: self.forks.current_branch(),
-            depth: self.frames.len() as u32,
-            frame_index: self.frames.len() as u32,
+            depth,
+            frame_index: depth,
             container_id: self.id,
         };
 
@@ -144,7 +145,10 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
             "token belongs to a different container"
         );
         assert!(
-            self.forks.is_valid(&token, self.frames.len() as u32),
+            self.forks.is_valid(
+                &token,
+                crate::token::narrow_count(self.frames.len(), "mark nesting depth")
+            ),
             "invalid restore token (abandoned future)"
         );
 
@@ -193,7 +197,10 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
             I::MIN
         };
 
-        self.forks.fork(&token, self.frames.len() as u32);
+        self.forks.fork(
+            &token,
+            crate::token::narrow_count(self.frames.len(), "mark nesting depth"),
+        );
     }
 
     pub fn depth(&self) -> usize {
@@ -203,7 +210,10 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
     pub fn is_valid_token(&self, token: &VecToken) -> bool {
         TRACK
             && token.container_id == self.id
-            && self.forks.is_valid(token, self.frames.len() as u32)
+            && self.forks.is_valid(
+                token,
+                crate::token::narrow_count(self.frames.len(), "mark nesting depth"),
+            )
     }
 
     /// Total bytes used by this Vec: struct + store + diff_log + frames + forks.

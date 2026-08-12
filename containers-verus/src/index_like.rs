@@ -99,6 +99,29 @@ pub trait IndexLike: Sized + Copy + core::cmp::Ord + core::hash::Hash + core::fm
     proof fn lemma_max_nat_positive()
         ensures 0 < Self::max_nat();
 
+    /// The index range fits in a `usize`: every representable index is `<= usize::MAX`.
+    ///
+    /// Implied by `as_usize` (whose return is a `usize` equal to `as_nat()`), but only
+    /// *at a value* and only in exec code. Generic proof code needs it as a fact about
+    /// the type, without a witness and without a runtime call — which is why this is a
+    /// trait obligation rather than something derived at each use.
+    ///
+    /// What needs it: any `usize` counter whose range is bounded by an `I`-indexed
+    /// collection. `ListIter::pos` walks a list whose length is bounded by the node
+    /// arena, which is bounded by `N::Index::max_nat()`; `pos + 1` is overflow-free only
+    /// once that chain reaches `usize`. Before `ListHead::len` followed the id family,
+    /// that last step came free from the count being a literal `u32` (and Verus knows
+    /// `usize::MAX >= u32::MAX`). A width-parametric count has no such accident, so the
+    /// fact has to be stated — and stating it here means every index type is *checked*
+    /// against it rather than assumed to satisfy it.
+    ///
+    /// Every impl discharges it from the crate-wide `global size_of usize == 8` pin via
+    /// `lemma_u64_usize_64bit`; `usize`/`DenseUsize` have it by definition. An index type
+    /// wider than a pointer could not implement it, which is the intended outcome —
+    /// `as_usize` would narrow.
+    proof fn lemma_max_nat_fits_usize()
+        ensures Self::max_nat() <= usize::MAX as nat + 1;
+
     /// `max_spec()` projects to `max_nat() - 1` (the maximum representable).
     proof fn lemma_max_as_nat()
         ensures Self::max_spec().as_nat() == (Self::max_nat() - 1) as nat;
@@ -144,6 +167,168 @@ pub trait IndexLike: Sized + Copy + core::cmp::Ord + core::hash::Hash + core::fm
 }
 
 // ---------------------------------------------------------------------------
+// Checked index arithmetic.
+//
+// Production's `IndexLike` carries these as default-bodied trait methods
+// (`containers/src/dense_id.rs`). Here they are free functions over `I: IndexLike`
+// instead, for one reason: every postcondition below is *derived* from the contract the
+// trait already states — `as_usize` is exact, `try_from_usize` is its inverse on
+// `[0, max_nat)`, `max_spec()` projects to `max_nat() - 1` — so no impl has to restate
+// or re-prove anything, and adding an index type stays as cheap as it is today.
+//
+// Every operation is bounded by `I::max_nat()`, not by the machine word. An index type
+// may be narrower than the word carrying it (`DenseId31` lives in a `u32`, MSB reserved
+// for the inline capture flag), so a sum landing in that gap has no index even though the
+// word addition did not overflow. Returning it would hand back a value whose MSB reads as
+// a tag — the arithmetic equivalent of `try_from_usize` narrowing before it checks.
+//
+// The guards are written against `I::max().as_usize()` rather than against `usize::MAX`.
+// That is what makes them exact: it is the largest *index*, and getting it through
+// `as_usize` also establishes `max_nat() - 1 <= usize::MAX` in passing, which is what
+// licenses the `usize` intermediates below without a new proof obligation on the trait.
+// ---------------------------------------------------------------------------
+
+/// `a + b` as an index of `I`, or `None` if the sum is not representable.
+pub fn checked_add<I: IndexLike>(a: I, b: I) -> (r: Option<I>)
+    ensures
+        r is Some ==> r->Some_0.as_nat() == a.as_nat() + b.as_nat(),
+        r is Some <==> a.as_nat() + b.as_nat() < I::max_nat(),
+{
+    let mx = <I as IndexLike>::max().as_usize();
+    let x = a.as_usize();
+    let y = b.as_usize();
+    proof {
+        // x <= mx and y <= mx, so `mx - x` cannot underflow and, in the taken
+        // branch, `x + y <= mx` cannot overflow the `usize` either.
+        a.lemma_as_nat_bounded();
+        b.lemma_as_nat_bounded();
+        I::lemma_max_as_nat();
+    }
+    if y > mx - x {
+        None
+    } else {
+        I::try_from_usize(x + y)
+    }
+}
+
+/// `a - b` as an index of `I`, or `None` if `b > a`. There are no negative indices, so
+/// this is the only way to subtract one.
+pub fn checked_sub<I: IndexLike>(a: I, b: I) -> (r: Option<I>)
+    ensures
+        r is Some ==> r->Some_0.as_nat() + b.as_nat() == a.as_nat(),
+        r is Some <==> b.as_nat() <= a.as_nat(),
+{
+    let x = a.as_usize();
+    let y = b.as_usize();
+    proof {
+        // The difference is at most `a.as_nat()`, which is already in range, so
+        // the non-`None` branch always succeeds.
+        a.lemma_as_nat_bounded();
+    }
+    if x < y {
+        None
+    } else {
+        I::try_from_usize(x - y)
+    }
+}
+
+/// `a * b` as an index of `I`, or `None` if the product is not representable.
+///
+/// For strides into a flattened pool (`base + k * stride`), where the product is the term
+/// that leaves the range first: it is bounded by neither factor's width, so a guard
+/// written against the factors — however careful — does not constrain it.
+///
+/// Computed in `u128` rather than guarded by a division. Two `usize` factors cannot
+/// overflow a `u128`, so the product is exact before it is compared, and the comparison is
+/// against the largest *index* rather than against `usize::MAX`.
+pub fn checked_mul<I: IndexLike>(a: I, b: I) -> (r: Option<I>)
+    ensures
+        r is Some ==> r->Some_0.as_nat() == a.as_nat() * b.as_nat(),
+        r is Some <==> a.as_nat() * b.as_nat() < I::max_nat(),
+{
+    let mx = <I as IndexLike>::max().as_usize();
+    let x = a.as_usize();
+    let y = b.as_usize();
+    proof {
+        a.lemma_as_nat_bounded();
+        b.lemma_as_nat_bounded();
+        I::lemma_max_as_nat();
+        lemma_u64_usize_64bit();
+        // Both factors are below 2^64, so the product is below 2^128: the widened
+        // multiply cannot itself overflow, which is the whole point of doing it.
+        assert((x as u128) * (y as u128) <= u128::MAX) by (nonlinear_arith)
+            requires x <= u64::MAX, y <= u64::MAX;
+    }
+    let p: u128 = (x as u128) * (y as u128);
+    if p > mx as u128 {
+        None
+    } else {
+        I::try_from_usize(p as usize)
+    }
+}
+
+/// `a + 1`, or `None` at the maximum index.
+///
+/// The common case by a wide margin — a cursor, a length, a fresh position — and the one
+/// worth having separately: a bump needs no second value of `I` to be constructed first.
+pub fn checked_incr<I: IndexLike>(a: I) -> (r: Option<I>)
+    ensures
+        r is Some ==> r->Some_0.as_nat() == a.as_nat() + 1,
+        r is Some <==> a.as_nat() + 1 < I::max_nat(),
+{
+    let mx = <I as IndexLike>::max().as_usize();
+    let x = a.as_usize();
+    proof {
+        a.lemma_as_nat_bounded();
+        I::lemma_max_as_nat();
+    }
+    if x >= mx {
+        None
+    } else {
+        I::try_from_usize(x + 1)
+    }
+}
+
+/// `a - 1`, or `None` at index 0.
+pub fn checked_decr<I: IndexLike>(a: I) -> (r: Option<I>)
+    ensures
+        r is Some ==> r->Some_0.as_nat() + 1 == a.as_nat(),
+        r is Some <==> 0 < a.as_nat(),
+{
+    let x = a.as_usize();
+    proof {
+        a.lemma_as_nat_bounded();
+    }
+    if x == 0 {
+        None
+    } else {
+        I::try_from_usize(x - 1)
+    }
+}
+
+/// `a + n` where `n` is a `usize` count, or `None` if the sum is not representable in `I`.
+///
+/// The boundary between a `std` collection's `len()` and a narrow stored index: the count
+/// arrives unbounded by `I` and must not be assumed to fit.
+pub fn checked_add_usize<I: IndexLike>(a: I, n: usize) -> (r: Option<I>)
+    ensures
+        r is Some ==> r->Some_0.as_nat() == a.as_nat() + (n as nat),
+        r is Some <==> a.as_nat() + (n as nat) < I::max_nat(),
+{
+    let mx = <I as IndexLike>::max().as_usize();
+    let x = a.as_usize();
+    proof {
+        a.lemma_as_nat_bounded();
+        I::lemma_max_as_nat();
+    }
+    if n > mx - x {
+        None
+    } else {
+        I::try_from_usize(x + n)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Concrete impls for primitive integers.
 //
 // Bodies that involve `try_into` or wrapping casts are `external_body`; the
@@ -170,6 +355,9 @@ impl IndexLike for u8 {
         assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
         assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
     }
+
+    // 0x100 <= usize::MAX + 1 once `usize` is known to be 64 bits wide.
+    proof fn lemma_max_nat_fits_usize() { lemma_u64_usize_64bit(); }
 
     fn min() -> Self { 0u8 }
     fn max() -> Self { u8::MAX }
@@ -202,6 +390,8 @@ impl IndexLike for u16 {
         assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
     }
 
+    proof fn lemma_max_nat_fits_usize() { lemma_u64_usize_64bit(); }
+
     fn min() -> Self { 0u16 }
     fn max() -> Self { u16::MAX }
 
@@ -232,6 +422,8 @@ impl IndexLike for u32 {
         assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
         assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
     }
+
+    proof fn lemma_max_nat_fits_usize() { lemma_u64_usize_64bit(); }
 
     fn min() -> Self { 0u32 }
     fn max() -> Self { u32::MAX }
@@ -272,6 +464,10 @@ impl IndexLike for u64 {
         assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
     }
 
+    // The tight case: `max_nat()` IS `usize::MAX + 1` here, so this is exactly the
+    // 64-bit-host assumption the `cfg` gate above already makes explicit.
+    proof fn lemma_max_nat_fits_usize() { lemma_u64_usize_64bit(); }
+
     fn min() -> Self { 0u64 }
     fn max() -> Self { u64::MAX }
 
@@ -311,6 +507,9 @@ impl IndexLike for usize {
         assert(a.lt_spec(b) == (a.as_nat() < b.as_nat()));
         assert(a.le_spec(b) == (a.as_nat() <= b.as_nat()));
     }
+
+    // `max_nat()` is defined as `usize::MAX + 1`; the obligation is that definition.
+    proof fn lemma_max_nat_fits_usize() {}
 
     fn min() -> Self { 0usize }
     fn max() -> Self { usize::MAX }

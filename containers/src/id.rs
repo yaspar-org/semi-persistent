@@ -144,8 +144,17 @@ macro_rules! define_id_impl {
             #[inline(always)]
             fn to_usize(self) -> usize { self.0 as usize }
 
-            #[inline(always)]
-            fn from_usize(n: usize) -> Self { Self::new(n as $Int) }
+            #[inline]
+            fn from_usize(n: usize) -> Self {
+                // Range-checked in `usize`, *before* the narrowing cast. `Self::new`
+                // asserts against `MAX_RAW`, but `n as $Int` truncates first, so it
+                // would have been handed an already-wrapped value: with `$Int = u32`,
+                // `from_usize(1 << 32)` produced id 0 — a silent aliasing of two
+                // distinct positions onto one id, which is exactly the capacity cap
+                // this type exists to make explicit.
+                <Self as $crate::IndexLike>::try_from_usize(n)
+                    .expect(concat!(stringify!($Name), " exceeds range"))
+            }
         }
 
         impl $crate::IndexLike for $Name {
@@ -155,7 +164,14 @@ macro_rules! define_id_impl {
             fn as_usize(self) -> usize { (self.0 & $MASK) as usize }
             #[inline(always)]
             fn try_from_usize(n: usize) -> Option<Self> {
-                if (n as $Int) <= $MASK { Some(Self(n as $Int)) } else { None }
+                // Widen, compare, then narrow. `(n as $Int) <= $MASK` narrowed
+                // *first*: at `$Int = u8` it mapped 256 to 0, so the check passed and
+                // the function reported success while handing back a different index
+                // than the caller asked for. That is the worst shape an overflow can
+                // take here — not a panic, but two distinct positions silently
+                // aliased onto one id. `usize as u64` is lossless on every supported
+                // target, so the comparison is exact.
+                if n as u64 <= $MASK as u64 { Some(Self(n as $Int)) } else { None }
             }
         }
 
