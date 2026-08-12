@@ -139,7 +139,7 @@ impl<S: DenseId> OpInfo<S> {
 /// Append-only sort registry backed by `SpMap`.
 #[derive(Debug)]
 pub struct SortRegistry<S: DenseId, const TRACK: bool> {
-    map: SpMap<String, (), TRACK>,
+    map: SpMap<String, (), usize, TRACK>,
     builtin_count: usize,
     concrete_count: usize,
     _phantom: core::marker::PhantomData<S>,
@@ -221,7 +221,7 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
 /// Append-only operator registry backed by `SpMap`.
 #[derive(Debug)]
 pub struct OpRegistry<O: DenseId, S: DenseId, const TRACK: bool> {
-    map: SpMap<String, OpInfo<S>, TRACK>,
+    map: SpMap<String, OpInfo<S>, usize, TRACK>,
     builtin_count: usize,
     concrete_sort_count: usize,
     _phantom: core::marker::PhantomData<O>,
@@ -516,7 +516,7 @@ pub struct RuleInfo {
 
 /// Append-only rule registry backed by `SpMap`.
 pub struct RuleRegistry<const TRACK: bool> {
-    map: SpMap<String, RuleInfo, TRACK>,
+    map: SpMap<String, RuleInfo, usize, TRACK>,
 }
 
 impl<const TRACK: bool> Default for RuleRegistry<TRACK> {
@@ -591,7 +591,7 @@ pub struct AxiomInfo<G: Copy> {
 
 /// Append-only axiom registry backed by `SpMap`.
 pub struct AxiomRegistry<G: Copy + DenseId, const TRACK: bool> {
-    map: SpMap<String, AxiomInfo<G>, TRACK>,
+    map: SpMap<String, AxiomInfo<G>, usize, TRACK>,
 }
 
 impl<G: Copy + DenseId, const TRACK: bool> Default for AxiomRegistry<G, TRACK> {

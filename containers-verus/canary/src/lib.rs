@@ -44,10 +44,14 @@ mod aov_heap_payloads {
         legal_cells: Vec<bool>,
     }
 
+    // The index word is `u32`, matching `DefaultConfig::Index` at the AU sites these
+    // shapes mirror: an arena slot per spilled matrix, addressed by the same word the
+    // config's ids use.
     struct OrStatsArenaShaped {
-        transport_descs: cv::append_only_vec::AppendOnlyVec<Vec<TransportActionDescShaped>, true>,
-        transport_rows: cv::append_only_vec::AppendOnlyVec<Vec<u32>, true>,
-        transport_cell_map: cv::append_only_vec::AppendOnlyVec<Vec<Option<u32>>, true>,
+        transport_descs:
+            cv::append_only_vec::AppendOnlyVec<Vec<TransportActionDescShaped>, u32, true>,
+        transport_rows: cv::append_only_vec::AppendOnlyVec<Vec<u32>, u32, true>,
+        transport_cell_map: cv::append_only_vec::AppendOnlyVec<Vec<Option<u32>>, u32, true>,
     }
 
     fn build() -> OrStatsArenaShaped {
@@ -79,7 +83,7 @@ mod aov_clone_only_payload {
     }
 
     struct PoolShaped {
-        ops: cv::append_only_vec::AppendOnlyVec<TermOpShaped, true>,
+        ops: cv::append_only_vec::AppendOnlyVec<TermOpShaped, u32, true>,
     }
 
     pub fn smoke() {
@@ -169,9 +173,11 @@ mod min_pool_shaped {
 mod copy_key_maps {
     use super::cv;
 
+    // Index word `u32`, as at the egraph sites: both maps are keyed by an operator id
+    // whose `Index` is the config word, so a log position shares that word.
     struct EGraphMapsShaped {
-        unit_node: cv::map::SpMap<u32, u32, true>,
-        inverse_op: cv::map::SpMap<u32, u32, true>,
+        unit_node: cv::map::SpMap<u32, u32, u32, true>,
+        inverse_op: cv::map::SpMap<u32, u32, u32, true>,
     }
 
     pub fn smoke() {
@@ -295,13 +301,15 @@ mod clone_key_maps {
         is_constructor: bool,
     }
 
+    // Index word `u32` at every site, as in the egraph: each of these maps mints its
+    // ids from its own log positions, and those ids' `Index` is the config word.
     struct RegistriesShaped {
-        sorts: cv::map::SpMap<String, (), true>,
-        ops: cv::map::SpMap<String, OpInfoShaped, true>,
+        sorts: cv::map::SpMap<String, (), u32, true>,
+        ops: cv::map::SpMap<String, OpInfoShaped, u32, true>,
         // au/terms.rs:43 — Vec inside the key tuple.
-        by_structure: cv::map::SpMap<(u32, Vec<u32>), u32, true>,
+        by_structure: cv::map::SpMap<(u32, Vec<u32>), u32, u32, true>,
         // au/space.rs:63 — Vec as the whole key.
-        ctx_index: cv::map::SpMap<Vec<u32>, u32, true>,
+        ctx_index: cv::map::SpMap<Vec<u32>, u32, u32, true>,
     }
 
     pub fn smoke() {

@@ -99,13 +99,13 @@ pub struct EGraph<
     /// here rather than on `OpKind<S>` because a node id is `Cfg::G`, which `OpKind<S>` cannot
     /// carry. Semi-persistent (its own token), so it rolls back with the op declarations that
     /// created the units. Absent key = the op has no declared identity.
-    unit_node: crate::containers::SpMap<Cfg::O, Cfg::G, TRACK>,
+    unit_node: crate::containers::SpMap<Cfg::O, Cfg::G, usize, TRACK>,
     /// Per-op group inverse operator, for AC ops declared with `:inverse neg`
     /// (`x ∘ neg(x) = e`). Resolved to a real op id at registration (sortcheck validates
     /// the unary signature). Same persistence story as `unit_node`. Absent key = no
     /// declared inverse. NOTE: gate-level group support — inverse-PAIR cancellation only,
     /// not Kapur §5.4's full Abelian-group completion (no Gaussian elimination).
-    inverse_op: crate::containers::SpMap<Cfg::O, Cfg::O, TRACK>,
+    inverse_op: crate::containers::SpMap<Cfg::O, Cfg::O, usize, TRACK>,
     /// Outcome of the most recent `rebuild` when `cc` is enabled. Lets callers distinguish
     /// convergence from a growth-budget abort. `None` if completion hasn't run yet.
     completion_outcome: Option<CompletionOutcome>,

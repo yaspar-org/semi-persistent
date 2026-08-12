@@ -8,6 +8,7 @@
 
 use super::append_only_vec::AppendOnlyVec;
 use super::token::VecToken;
+use crate::dense_id::IndexLike;
 use std::hash::Hash;
 
 /// Opaque token for [`Map::mark`] / [`Map::restore`].
@@ -20,12 +21,20 @@ pub struct MapToken(VecToken);
 /// Overwrites append a new entry (the old one stays in the log as a shadow).
 /// On restore, the log truncates and the HashMap rebuilds from survivors.
 /// Rebuild is O(surviving_len) — fine for small maps (registries, globals).
-pub struct Map<K: Hash + Eq + Clone, V, const TRACK: bool = true> {
-    log: AppendOnlyVec<(K, V), TRACK>,
-    index: hashbrown::HashMap<K, usize>,
+///
+/// # Index width
+///
+/// `I` names a log position and so bounds the map, exactly as in
+/// [`AppendOnlyVec`]. It is also the value type of the accelerating `HashMap`, which
+/// is where the width actually pays: one entry per live key, so a registry keyed by
+/// a 31-bit id space stores `u32` positions instead of `usize` and drops 4 bytes per
+/// key. See [`AppendOnlyVec`]'s note for why the default is `usize`.
+pub struct Map<K: Hash + Eq + Clone, V, I: IndexLike = usize, const TRACK: bool = true> {
+    log: AppendOnlyVec<(K, V), I, TRACK>,
+    index: hashbrown::HashMap<K, I>,
 }
 
-impl<K: Hash + Eq + Clone, V, const TRACK: bool> Map<K, V, TRACK> {
+impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRACK> {
     pub fn new() -> Self {
         Self {
             log: AppendOnlyVec::new(),
@@ -34,7 +43,11 @@ impl<K: Hash + Eq + Clone, V, const TRACK: bool> Map<K, V, TRACK> {
     }
 
     /// Insert or overwrite. Returns the dense log index of the new entry.
-    pub fn insert(&mut self, key: K, val: V) -> usize {
+    ///
+    /// # Panics
+    ///
+    /// If the log has no room left in `I`; see [`AppendOnlyVec::push`].
+    pub fn insert(&mut self, key: K, val: V) -> I {
         let id = self.log.push((key.clone(), val));
         self.index.insert(key, id);
         id
@@ -42,25 +55,25 @@ impl<K: Hash + Eq + Clone, V, const TRACK: bool> Map<K, V, TRACK> {
 
     /// Look up the current dense index for a key.
     #[inline]
-    pub fn id_of(&self, key: &K) -> Option<usize> {
+    pub fn id_of(&self, key: &K) -> Option<I> {
         self.index.get(key).copied()
     }
 
     /// Get the value at a dense log index.
     #[inline]
-    pub fn get(&self, idx: usize) -> &V {
+    pub fn get(&self, idx: I) -> &V {
         &self.log.get(idx).1
     }
 
     /// Get a mutable reference to the value at a dense log index.
     #[inline]
-    pub fn get_mut(&mut self, idx: usize) -> &mut V {
+    pub fn get_mut(&mut self, idx: I) -> &mut V {
         &mut self.log.get_mut(idx).1
     }
 
     /// Get the key at a dense log index.
     #[inline]
-    pub fn key(&self, idx: usize) -> &K {
+    pub fn key(&self, idx: I) -> &K {
         &self.log.get(idx).0
     }
 
@@ -70,12 +83,18 @@ impl<K: Hash + Eq + Clone, V, const TRACK: bool> Map<K, V, TRACK> {
     }
 
     /// Number of live keys.
+    ///
+    /// `usize`, not `I`: this is the hash index's own cardinality, not a log
+    /// position. It is in fact bounded by the log — each live key holds one
+    /// position — but that bound is an injection argument the verified twin cannot
+    /// discharge cheaply, and the count is never stored, so narrowing it would buy
+    /// nothing. [`log_len`](Self::log_len) is the one that counts positions.
     pub fn len(&self) -> usize {
         self.index.len()
     }
 
     /// Number of entries in the log (including overwritten shadows).
-    pub fn log_len(&self) -> usize {
+    pub fn log_len(&self) -> I {
         self.log.len()
     }
 
@@ -109,7 +128,11 @@ impl<K: Hash + Eq + Clone, V, const TRACK: bool> Map<K, V, TRACK> {
     fn rebuild_index(&mut self) {
         self.index.clear();
         for (i, (k, _)) in self.log.iter().enumerate() {
-            self.index.insert(k.clone(), i);
+            // Infallible: `i` is below the surviving log length, which `push` kept
+            // inside `I`. Checked anyway so a broken length invariant surfaces here
+            // rather than as two keys aliased onto one wrapped position.
+            let pos = I::try_from_usize(i).expect("log position overflow during index rebuild");
+            self.index.insert(k.clone(), pos);
         }
     }
 
@@ -119,8 +142,8 @@ impl<K: Hash + Eq + Clone, V, const TRACK: bool> Map<K, V, TRACK> {
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, V: std::fmt::Debug, const TRACK: bool> std::fmt::Debug
-    for Map<K, V, TRACK>
+impl<K: Hash + Eq + Clone + std::fmt::Debug, V: std::fmt::Debug, I: IndexLike, const TRACK: bool>
+    std::fmt::Debug for Map<K, V, I, TRACK>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Map")
@@ -130,7 +153,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, V: std::fmt::Debug, const TRACK: bo
     }
 }
 
-impl<K: Hash + Eq + Clone, V, const TRACK: bool> Default for Map<K, V, TRACK> {
+impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Default for Map<K, V, I, TRACK> {
     fn default() -> Self {
         Self::new()
     }

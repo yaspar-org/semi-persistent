@@ -55,9 +55,28 @@
 //! `differential.rs` pins `TRACK=true` and `ShrinkPolicy::Never`. Here both
 //! shrink policies are generated (verus proves shrink observably inert; this
 //! checks production agrees), `TRACK=false` gets its own no-tracking property,
-//! and the index/id widths are instantiated at u32 and u64 (`DenseId31` /
-//! `DenseId63` for the id-keyed containers) so the niche-packing boundaries are
-//! exercised rather than assumed.
+//! and **every container is run at two index widths** -- a narrow `u32` and a
+//! 64-bit one -- so the width parameterization is exercised rather than assumed.
+//!
+//! The second width is what makes this a migration gate for the width work
+//! rather than for the semi-persistence alone. The index type is not inert: it
+//! is the value type of the map's accelerating hash index, the element type of
+//! the sparse set's two side arrays, and the type every `push` return and
+//! `len` flows through, so each container has its own set of
+//! `try_from_usize` / `as_usize` boundaries per width. A property that passes at
+//! one width says nothing about the other -- and the failure mode at the wide
+//! width is exactly the silent kind: a `usize`-shaped assumption that happens to
+//! hold when the index *is* `usize`.
+//!
+//! The width-parametric bodies are `macro_rules!` over the index type rather
+//! than generic functions. Both real implementations differ in their trait
+//! bounds (`T: Clone` vs `T: Copy`, distinct `IndexLike`s), so one generic
+//! signature satisfying both would have to name the intersection of two
+//! crates' bounds and would drift the moment either moves; the macro names the
+//! *program* once and lets each instantiation be type-checked on its own terms.
+//! Widening to `usize` and narrowing back go through `ix`/`xi` below rather than
+//! `as`, for the reason the containers themselves do: a cast at the narrow
+//! instantiation would truncate quietly and turn a real divergence into a pass.
 //!
 //! Restores deliberately target *arbitrary* live marks, not just the newest, so
 //! restore-to-ancestor cuts a branch and invalidates a suffix of tokens -- the
@@ -328,6 +347,30 @@ fn config() -> ProptestConfig {
         cases: cases(),
         ..ProptestConfig::default()
     }
+}
+
+/// Widen an index to `usize`, exactly. `IndexLike::as_usize` is total and lossless at
+/// every index type (an index type wider than a pointer could not implement the trait),
+/// so this is the honest spelling of what an `as usize` would do here by accident.
+fn ix<I: prod::IndexLike>(i: I) -> usize {
+    i.as_usize()
+}
+
+/// Narrow a `usize` back to an index, checked.
+///
+/// This is the direction that can lie, and the direction the width-parametric bodies below
+/// need constantly (`for i in 0..len` yields `usize`; every accessor takes `I`). A test that
+/// reached for `as` here would, at the `u32` instantiation, alias element `2^32 + k` onto
+/// element `k` -- reading the wrong cell and comparing it against the oracle's right one, or
+/// worse, agreeing. The panic message names the width so a failure reads as "this program
+/// outgrew the instantiation", not as a container bug.
+fn xi<I: prod::IndexLike>(n: usize) -> I {
+    I::try_from_usize(n).unwrap_or_else(|| {
+        panic!(
+            "test program index {n} exceeds the instantiated index width ({} bytes)",
+            core::mem::size_of::<I>()
+        )
+    })
 }
 
 fn policy(shrink: bool) -> (prod::ShrinkPolicy, verus::vec::ShrinkPolicy) {
@@ -647,79 +690,94 @@ enum AovOp {
     Restore { which: u16 },
 }
 
-proptest! {
-    #![proptest_config(config())]
+/// The append-only property, over the index type. `$I` is the width under test; it is the
+/// type of every push return, of `len`, and of the frame stack the restore truncates to.
+macro_rules! aov_property {
+    ($name:ident, $I:ty) => {
+        proptest! {
+            #![proptest_config(config())]
 
-    #[test]
-    fn prop_append_only_vec(
-        ops in prop::collection::vec(
-            prop_oneof![
-                6 => any::<u32>().prop_map(AovOp::Push),
-                2 => any::<bool>().prop_map(|shrink| AovOp::Mark { shrink }),
-                2 => any::<u16>().prop_map(|which| AovOp::Restore { which }),
-            ],
-            1..300,
-        )
-    ) {
-        let mut p: prod::AppendOnlyVec<u32, true> = prod::AppendOnlyVec::new();
-        let mut v: verus::AppendOnlyVec<u32, true> = verus::AppendOnlyVec::new();
-        let mut o: SnapStack<Vec<u32>> = SnapStack::new();
-        let mut toks: Vec<(prod::VecToken, verus::vec::VecToken, oracle::Tok)> = Vec::new();
+            #[test]
+            fn $name(
+                ops in prop::collection::vec(
+                    prop_oneof![
+                        6 => any::<u32>().prop_map(AovOp::Push),
+                        2 => any::<bool>().prop_map(|shrink| AovOp::Mark { shrink }),
+                        2 => any::<u16>().prop_map(|which| AovOp::Restore { which }),
+                    ],
+                    1..300,
+                )
+            ) {
+                let mut p: prod::AppendOnlyVec<u32, $I, true> = prod::AppendOnlyVec::new();
+                let mut v: verus::AppendOnlyVec<u32, $I, true> = verus::AppendOnlyVec::new();
+                let mut o: SnapStack<Vec<u32>> = SnapStack::new();
+                let mut toks: Vec<(prod::VecToken, verus::vec::VecToken, oracle::Tok)> = Vec::new();
 
-        for (step, op) in ops.iter().enumerate() {
-            match *op {
-                AovOp::Push(val) => {
-                    let ip = p.push(val);
-                    let iv = v.push(val);
-                    prop_assert_eq!(ip, iv, "step {}: push index diverged", step);
-                    prop_assert_eq!(ip, o.len(), "step {}: push index vs oracle", step);
-                    o.push(val);
-                }
-                AovOp::Mark { shrink } => {
-                    if o.depth() >= 8 { continue; }
-                    let (pp, vp) = policy(shrink);
-                    let tp = p.mark(pp);
-                    let tv = v.mark(vp);
-                    let to = o.mark();
-                    toks.push((tp, tv, to));
-                }
-                AovOp::Restore { which } => {
-                    let all: Vec<oracle::Tok> = toks.iter().map(|t| t.2).collect();
-                    let Some(pick) = o.pick_restorable(&all, which) else { continue };
-                    let (tp, tv, to) = toks[pick];
-                    prop_assert!(p.is_valid_token(&tp), "step {}: prod rejects live token", step);
-                    prop_assert!(v.is_valid_token(&tv), "step {}: verus rejects live token", step);
-                    p.restore(tp);
-                    v.restore(tv);
-                    o.restore(to);
-                }
-            }
+                for (step, op) in ops.iter().enumerate() {
+                    match *op {
+                        AovOp::Push(val) => {
+                            let ip = p.push(val);
+                            let iv = v.push(val);
+                            prop_assert_eq!(ip, iv, "step {}: push index diverged", step);
+                            prop_assert_eq!(ix(ip), o.len(), "step {}: push index vs oracle", step);
+                            o.push(val);
+                        }
+                        AovOp::Mark { shrink } => {
+                            if o.depth() >= 8 { continue; }
+                            let (pp, vp) = policy(shrink);
+                            let tp = p.mark(pp);
+                            let tv = v.mark(vp);
+                            let to = o.mark();
+                            toks.push((tp, tv, to));
+                        }
+                        AovOp::Restore { which } => {
+                            let all: Vec<oracle::Tok> = toks.iter().map(|t| t.2).collect();
+                            let Some(pick) = o.pick_restorable(&all, which) else { continue };
+                            let (tp, tv, to) = toks[pick];
+                            prop_assert!(p.is_valid_token(&tp), "step {}: prod rejects live token", step);
+                            prop_assert!(v.is_valid_token(&tv), "step {}: verus rejects live token", step);
+                            p.restore(tp);
+                            v.restore(tv);
+                            o.restore(to);
+                        }
+                    }
 
-            prop_assert_eq!(p.len(), v.len(), "step {}: aov len diverged", step);
-            prop_assert_eq!(p.len(), o.len(), "step {}: aov len vs oracle", step);
-            prop_assert_eq!(p.depth(), v.depth(), "step {}: aov depth diverged", step);
-            prop_assert_eq!(p.as_slice(), v.as_slice(), "step {}: aov slice diverged", step);
-            for i in 0..o.len() {
-                prop_assert_eq!(p.get(i), o.get(i), "step {}: aov element {} vs oracle", step, i);
-            }
-            for (j, (tp, tv, to)) in toks.iter().enumerate() {
-                let vp = p.is_valid_token(tp);
-                let vv = v.is_valid_token(tv);
-                prop_assert_eq!(
-                    vp, o.on_branch(*to),
-                    "step {}: aov token {} prod validity vs oracle on-branch", step, j
-                );
-                prop_assert_eq!(
-                    vv, o.is_restorable(*to),
-                    "step {}: aov token {} verus validity vs oracle restorable", step, j
-                );
-                if o.is_restorable(*to) {
-                    prop_assert_eq!(vp, vv, "step {}: aov token {} restorable disagreement", step, j);
+                    prop_assert_eq!(p.len(), v.len(), "step {}: aov len diverged", step);
+                    prop_assert_eq!(ix(p.len()), o.len(), "step {}: aov len vs oracle", step);
+                    prop_assert_eq!(p.depth(), v.depth(), "step {}: aov depth diverged", step);
+                    prop_assert_eq!(p.as_slice(), v.as_slice(), "step {}: aov slice diverged", step);
+                    for i in 0..o.len() {
+                        let at: $I = xi(i);
+                        prop_assert_eq!(p.get(at), o.get(i), "step {}: aov element {} vs oracle", step, i);
+                        prop_assert_eq!(v.get(at), o.get(i), "step {}: verus aov element {} vs oracle", step, i);
+                    }
+                    for (j, (tp, tv, to)) in toks.iter().enumerate() {
+                        let vp = p.is_valid_token(tp);
+                        let vv = v.is_valid_token(tv);
+                        prop_assert_eq!(
+                            vp, o.on_branch(*to),
+                            "step {}: aov token {} prod validity vs oracle on-branch", step, j
+                        );
+                        prop_assert_eq!(
+                            vv, o.is_restorable(*to),
+                            "step {}: aov token {} verus validity vs oracle restorable", step, j
+                        );
+                        if o.is_restorable(*to) {
+                            prop_assert_eq!(vp, vv, "step {}: aov token {} restorable disagreement", step, j);
+                        }
+                    }
                 }
             }
         }
-    }
+    };
 }
+
+aov_property!(prop_append_only_vec_u32, u32);
+aov_property!(prop_append_only_vec_u64, u64);
+// `usize` as well as `u64`: they are the same width on a 64-bit target but not the same
+// *type*, and `usize` is the default the rest of the tree gets when it names no width. Keeping
+// it instantiated means the default path is covered by the search and not only by inference.
+aov_property!(prop_append_only_vec_usize, usize);
 
 // ---------------------------------------------------------------------------
 // SpMap vs production Map
@@ -745,127 +803,140 @@ fn oracle_id_of(log: &[(u32, u32)], k: u32) -> Option<usize> {
     (0..log.len()).rev().find(|&i| log[i].0 == k)
 }
 
-proptest! {
-    #![proptest_config(config())]
+/// The map property, over the index type. `$I` is the log-position width, and in the map it is
+/// also the *value* type of the accelerating hash index -- so a width bug here can hide in the
+/// index rebuild that follows a restore, which is precisely what the key-domain sweep below
+/// catches.
+macro_rules! map_property {
+    ($name:ident, $I:ty) => {
+        proptest! {
+            #![proptest_config(config())]
 
-    #[test]
-    fn prop_map(
-        ops in prop::collection::vec(
-            prop_oneof![
-                6 => (any::<u16>(), any::<u32>()).prop_map(|(key, val)| MapOp::Insert { key, val }),
-                3 => any::<u16>().prop_map(|key| MapOp::IdOf { key }),
-                2 => any::<u16>().prop_map(|key| MapOp::Contains { key }),
-                2 => any::<bool>().prop_map(|shrink| MapOp::Mark { shrink }),
-                2 => any::<u16>().prop_map(|which| MapOp::Restore { which }),
-            ],
-            1..300,
-        )
-    ) {
-        // Narrow the key domain hard: repeated keys are the interesting case
-        // (they make `id_of` depend on last-occurrence, and make the index
-        // rebuild after restore observable).
-        const KEYS: u32 = 24;
+            #[test]
+            fn $name(
+                ops in prop::collection::vec(
+                    prop_oneof![
+                        6 => (any::<u16>(), any::<u32>()).prop_map(|(key, val)| MapOp::Insert { key, val }),
+                        3 => any::<u16>().prop_map(|key| MapOp::IdOf { key }),
+                        2 => any::<u16>().prop_map(|key| MapOp::Contains { key }),
+                        2 => any::<bool>().prop_map(|shrink| MapOp::Mark { shrink }),
+                        2 => any::<u16>().prop_map(|which| MapOp::Restore { which }),
+                    ],
+                    1..300,
+                )
+            ) {
+                // Narrow the key domain hard: repeated keys are the interesting case
+                // (they make `id_of` depend on last-occurrence, and make the index
+                // rebuild after restore observable).
+                const KEYS: u32 = 24;
 
-        let mut p: prod::Map<u32, u32, true> = prod::Map::new();
-        let mut v: verus::SpMap<u32, u32, true> = verus::SpMap::new();
-        // Same genealogy model as the vectors, over the map's log as the state.
-        let mut o: SnapStack<Vec<(u32, u32)>> = SnapStack::new();
-        let mut toks: Vec<(prod::MapToken, verus::map::MapToken, oracle::Tok)> = Vec::new();
+                let mut p: prod::Map<u32, u32, $I, true> = prod::Map::new();
+                let mut v: verus::SpMap<u32, u32, $I, true> = verus::SpMap::new();
+                // Same genealogy model as the vectors, over the map's log as the state.
+                let mut o: SnapStack<Vec<(u32, u32)>> = SnapStack::new();
+                let mut toks: Vec<(prod::MapToken, verus::map::MapToken, oracle::Tok)> = Vec::new();
 
-        for (step, op) in ops.iter().enumerate() {
-            match *op {
-                MapOp::Insert { key, val } => {
-                    let k = key as u32 % KEYS;
-                    let ip = p.insert(k, val);
-                    let iv = v.insert(k, val);
-                    o.cur.push((k, val));
-                    let io = o.cur.len() - 1;
-                    prop_assert_eq!(ip, iv, "step {}: insert id prod/verus diverged", step);
-                    prop_assert_eq!(ip, io, "step {}: insert id prod/oracle diverged", step);
-                }
-                MapOp::IdOf { key } => {
-                    let k = key as u32 % KEYS;
-                    let gp = p.id_of(&k);
-                    let gv = v.id_of(&k);
-                    let go = oracle_id_of(&o.cur, k);
-                    prop_assert_eq!(gp, gv, "step {}: id_of prod/verus diverged", step);
-                    prop_assert_eq!(gp, go, "step {}: id_of prod/oracle diverged", step);
-                }
-                MapOp::Contains { key } => {
-                    let k = key as u32 % KEYS;
-                    let gp = p.contains_key(&k);
-                    let gv = v.contains_key(&k);
-                    prop_assert_eq!(gp, gv, "step {}: contains prod/verus diverged", step);
-                    prop_assert_eq!(
-                        gp, oracle_id_of(&o.cur, k).is_some(),
-                        "step {}: contains prod/oracle diverged", step
-                    );
-                }
-                MapOp::Mark { shrink } => {
-                    if o.depth() >= 8 { continue; }
-                    let (pp, vp) = policy(shrink);
-                    let tp = p.mark(pp);
-                    let tv = v.mark(vp);
-                    let to = o.mark();
-                    toks.push((tp, tv, to));
-                }
-                MapOp::Restore { which } => {
-                    let all: Vec<oracle::Tok> = toks.iter().map(|t| t.2).collect();
-                    let Some(pick) = o.pick_restorable(&all, which) else { continue };
-                    let (tp, tv, to) = toks[pick];
-                    prop_assert!(p.is_valid_token(&tp), "step {}: prod rejects live map token", step);
-                    prop_assert!(v.is_valid_token(&tv), "step {}: verus rejects live map token", step);
-                    p.restore(tp);
-                    v.restore(tv);
-                    o.restore(to);
-                }
-            }
+                for (step, op) in ops.iter().enumerate() {
+                    match *op {
+                        MapOp::Insert { key, val } => {
+                            let k = key as u32 % KEYS;
+                            let ip = p.insert(k, val);
+                            let iv = v.insert(k, val);
+                            o.cur.push((k, val));
+                            let io = o.cur.len() - 1;
+                            prop_assert_eq!(ip, iv, "step {}: insert id prod/verus diverged", step);
+                            prop_assert_eq!(ix(ip), io, "step {}: insert id prod/oracle diverged", step);
+                        }
+                        MapOp::IdOf { key } => {
+                            let k = key as u32 % KEYS;
+                            let gp = p.id_of(&k);
+                            let gv = v.id_of(&k);
+                            let go = oracle_id_of(&o.cur, k);
+                            prop_assert_eq!(gp, gv, "step {}: id_of prod/verus diverged", step);
+                            prop_assert_eq!(gp.map(ix), go, "step {}: id_of prod/oracle diverged", step);
+                        }
+                        MapOp::Contains { key } => {
+                            let k = key as u32 % KEYS;
+                            let gp = p.contains_key(&k);
+                            let gv = v.contains_key(&k);
+                            prop_assert_eq!(gp, gv, "step {}: contains prod/verus diverged", step);
+                            prop_assert_eq!(
+                                gp, oracle_id_of(&o.cur, k).is_some(),
+                                "step {}: contains prod/oracle diverged", step
+                            );
+                        }
+                        MapOp::Mark { shrink } => {
+                            if o.depth() >= 8 { continue; }
+                            let (pp, vp) = policy(shrink);
+                            let tp = p.mark(pp);
+                            let tv = v.mark(vp);
+                            let to = o.mark();
+                            toks.push((tp, tv, to));
+                        }
+                        MapOp::Restore { which } => {
+                            let all: Vec<oracle::Tok> = toks.iter().map(|t| t.2).collect();
+                            let Some(pick) = o.pick_restorable(&all, which) else { continue };
+                            let (tp, tv, to) = toks[pick];
+                            prop_assert!(p.is_valid_token(&tp), "step {}: prod rejects live map token", step);
+                            prop_assert!(v.is_valid_token(&tv), "step {}: verus rejects live map token", step);
+                            p.restore(tp);
+                            v.restore(tv);
+                            o.restore(to);
+                        }
+                    }
 
-            prop_assert_eq!(p.log_len(), v.log_len(), "step {}: log_len diverged", step);
-            prop_assert_eq!(p.log_len(), o.cur.len(), "step {}: log_len vs oracle", step);
-            prop_assert_eq!(p.depth(), v.depth(), "step {}: map depth diverged", step);
-            prop_assert_eq!(p.depth(), o.depth(), "step {}: map depth vs oracle", step);
+                    prop_assert_eq!(p.log_len(), v.log_len(), "step {}: log_len diverged", step);
+                    prop_assert_eq!(ix(p.log_len()), o.cur.len(), "step {}: log_len vs oracle", step);
+                    prop_assert_eq!(p.depth(), v.depth(), "step {}: map depth diverged", step);
+                    prop_assert_eq!(p.depth(), o.depth(), "step {}: map depth vs oracle", step);
 
-            // Sweep the whole key domain: an index left stale by a restore
-            // shows up here as a wrong id_of for some key, at the step it broke.
-            for k in 0..KEYS {
-                let gp = p.id_of(&k);
-                let gv = v.id_of(&k);
-                prop_assert_eq!(gp, gv, "step {}: key {} id_of prod/verus diverged", step, k);
-                prop_assert_eq!(
-                    gp, oracle_id_of(&o.cur, k),
-                    "step {}: key {} id_of vs oracle", step, k
-                );
-            }
-            // And the log itself, entry by entry.
-            for i in 0..o.cur.len() {
-                prop_assert_eq!(*p.key(i), o.cur[i].0, "step {}: log key {} vs oracle", step, i);
-                prop_assert_eq!(*v.key(i), o.cur[i].0, "step {}: verus log key {} vs oracle", step, i);
-                // Production spells the value accessor `get`; under the verus
-                // names `get` returns the pair and `get_val` the value. This is
-                // the one recorded map interface divergence (plan 5.1-5.3), so
-                // each side is called by its own name.
-                prop_assert_eq!(*p.get(i), o.cur[i].1, "step {}: log val {} vs oracle", step, i);
-                prop_assert_eq!(*v.get_val(i), o.cur[i].1, "step {}: verus log val {} vs oracle", step, i);
-            }
-            for (j, (tp, tv, to)) in toks.iter().enumerate() {
-                let vp = p.is_valid_token(tp);
-                let vv = v.is_valid_token(tv);
-                prop_assert_eq!(
-                    vp, o.on_branch(*to),
-                    "step {}: map token {} prod validity vs oracle on-branch", step, j
-                );
-                prop_assert_eq!(
-                    vv, o.is_restorable(*to),
-                    "step {}: map token {} verus validity vs oracle restorable", step, j
-                );
-                if o.is_restorable(*to) {
-                    prop_assert_eq!(vp, vv, "step {}: map token {} restorable disagreement", step, j);
+                    // Sweep the whole key domain: an index left stale by a restore
+                    // shows up here as a wrong id_of for some key, at the step it broke.
+                    for k in 0..KEYS {
+                        let gp = p.id_of(&k);
+                        let gv = v.id_of(&k);
+                        prop_assert_eq!(gp, gv, "step {}: key {} id_of prod/verus diverged", step, k);
+                        prop_assert_eq!(
+                            gp.map(ix), oracle_id_of(&o.cur, k),
+                            "step {}: key {} id_of vs oracle", step, k
+                        );
+                    }
+                    // And the log itself, entry by entry.
+                    for i in 0..o.cur.len() {
+                        let at: $I = xi(i);
+                        prop_assert_eq!(*p.key(at), o.cur[i].0, "step {}: log key {} vs oracle", step, i);
+                        prop_assert_eq!(*v.key(at), o.cur[i].0, "step {}: verus log key {} vs oracle", step, i);
+                        // Production spells the value accessor `get`; under the verus
+                        // names `get` returns the pair and `get_val` the value. This is
+                        // the one recorded map interface divergence (plan 5.1-5.3), so
+                        // each side is called by its own name.
+                        prop_assert_eq!(*p.get(at), o.cur[i].1, "step {}: log val {} vs oracle", step, i);
+                        prop_assert_eq!(*v.get_val(at), o.cur[i].1, "step {}: verus log val {} vs oracle", step, i);
+                    }
+                    for (j, (tp, tv, to)) in toks.iter().enumerate() {
+                        let vp = p.is_valid_token(tp);
+                        let vv = v.is_valid_token(tv);
+                        prop_assert_eq!(
+                            vp, o.on_branch(*to),
+                            "step {}: map token {} prod validity vs oracle on-branch", step, j
+                        );
+                        prop_assert_eq!(
+                            vv, o.is_restorable(*to),
+                            "step {}: map token {} verus validity vs oracle restorable", step, j
+                        );
+                        if o.is_restorable(*to) {
+                            prop_assert_eq!(vp, vv, "step {}: map token {} restorable disagreement", step, j);
+                        }
+                    }
                 }
             }
         }
-    }
+    };
 }
+
+map_property!(prop_map_u32, u32);
+map_property!(prop_map_u64, u64);
+map_property!(prop_map_usize, usize);
 
 // ---------------------------------------------------------------------------
 // SparseSet
@@ -902,100 +973,114 @@ enum SetOp {
     },
 }
 
-proptest! {
-    #![proptest_config(config())]
+/// The sparse-set property, over the id/index type. `$I` is both the handed-out id type and
+/// the element type of the two side arrays (`sparse` and `indices`), so it is the width the
+/// whole indirection is stored at -- and the one a `usize`-shaped assumption in the
+/// swap-remove would hide in.
+macro_rules! sparse_set_property {
+    ($name:ident, $I:ty) => {
+        proptest! {
+            #![proptest_config(config())]
 
-    #[test]
-    fn prop_sparse_set(
-        ops in prop::collection::vec(
-            prop_oneof![
-                6 => any::<u32>().prop_map(SetOp::Add),
-                3 => any::<u16>().prop_map(|which| SetOp::Remove { which }),
-                2 => any::<u16>().prop_map(|which| SetOp::Get { which }),
-                2 => any::<bool>().prop_map(|shrink| SetOp::Mark { shrink }),
-                2 => any::<u16>().prop_map(|which| SetOp::Restore { which }),
-            ],
-            1..200,
-        )
-    ) {
-        let mut p: prod::SparseSet<u32, u32, prod::ParallelStore<u32, u32>, true> =
-            prod::SparseSet::new();
-        let mut v: verus::SparseSet<u32, u32, verus::ParallelStore<u32, u32>, true> =
-            verus::SparseSet::new();
-        // Oracle: live id -> value, under the same genealogy model as the other
-        // containers. No dense array, no swap-remove, no pool order. BTreeMap
-        // (not HashMap) so `which` picks deterministically.
-        let mut o: SnapStack<std::collections::BTreeMap<u32, u32>> = SnapStack::new();
-        let mut toks: Vec<(prod::SparseSetToken, verus::SparseSetToken, oracle::Tok)> = Vec::new();
+            #[test]
+            fn $name(
+                ops in prop::collection::vec(
+                    prop_oneof![
+                        6 => any::<u32>().prop_map(SetOp::Add),
+                        3 => any::<u16>().prop_map(|which| SetOp::Remove { which }),
+                        2 => any::<u16>().prop_map(|which| SetOp::Get { which }),
+                        2 => any::<bool>().prop_map(|shrink| SetOp::Mark { shrink }),
+                        2 => any::<u16>().prop_map(|which| SetOp::Restore { which }),
+                    ],
+                    1..200,
+                )
+            ) {
+                let mut p: prod::SparseSet<u32, $I, prod::ParallelStore<u32, $I>, true> =
+                    prod::SparseSet::new();
+                let mut v: verus::SparseSet<u32, $I, verus::ParallelStore<u32, $I>, true> =
+                    verus::SparseSet::new();
+                // Oracle: live id -> value, under the same genealogy model as the other
+                // containers. No dense array, no swap-remove, no pool order. BTreeMap
+                // (not HashMap) so `which` picks deterministically. Keyed at `$I` so the
+                // oracle never widens an id behind the implementations' backs -- if the two
+                // sides disagree about which id was issued, the key is what shows it.
+                let mut o: SnapStack<std::collections::BTreeMap<$I, u32>> = SnapStack::new();
+                let mut toks: Vec<(prod::SparseSetToken, verus::SparseSetToken, oracle::Tok)> = Vec::new();
 
-        for (step, op) in ops.iter().enumerate() {
-            match *op {
-                SetOp::Add(val) => {
-                    let ip = p.add(val);
-                    let iv = v.add(val);
-                    // Both must hand out the SAME id: id allocation (including
-                    // which id the free pool recycles) is observable, so it is
-                    // part of the parity surface even though the oracle does
-                    // not predict which id that will be.
-                    prop_assert_eq!(ip, iv, "step {}: add id diverged", step);
-                    // Abstract contract: the id was not live, and now is.
-                    prop_assert!(!o.cur.contains_key(&ip), "step {}: add reissued live id {}", step, ip);
-                    o.cur.insert(ip, val);
-                }
-                SetOp::Remove { which } => {
-                    let ids: Vec<u32> = o.cur.keys().copied().collect();
-                    if let Some(i) = scale(which, ids.len()) {
-                        let id = ids[i];
-                        p.remove(id);
-                        v.remove(id);
-                        o.cur.remove(&id);
+                for (step, op) in ops.iter().enumerate() {
+                    match *op {
+                        SetOp::Add(val) => {
+                            let ip = p.add(val);
+                            let iv = v.add(val);
+                            // Both must hand out the SAME id: id allocation (including
+                            // which id the free pool recycles) is observable, so it is
+                            // part of the parity surface even though the oracle does
+                            // not predict which id that will be.
+                            prop_assert_eq!(ip, iv, "step {}: add id diverged", step);
+                            // Abstract contract: the id was not live, and now is.
+                            prop_assert!(!o.cur.contains_key(&ip), "step {}: add reissued live id {}", step, ip);
+                            o.cur.insert(ip, val);
+                        }
+                        SetOp::Remove { which } => {
+                            let ids: Vec<$I> = o.cur.keys().copied().collect();
+                            if let Some(i) = scale(which, ids.len()) {
+                                let id = ids[i];
+                                p.remove(id);
+                                v.remove(id);
+                                o.cur.remove(&id);
+                            }
+                        }
+                        SetOp::Get { which } => {
+                            let ids: Vec<$I> = o.cur.keys().copied().collect();
+                            if let Some(i) = scale(which, ids.len()) {
+                                let id = ids[i];
+                                let gp = p.get(id);
+                                let gv = v.get(id);
+                                prop_assert_eq!(gp, gv, "step {}: sparse get diverged", step);
+                                prop_assert_eq!(gp, o.cur[&id], "step {}: sparse get vs oracle", step);
+                            }
+                        }
+                        SetOp::Mark { shrink } => {
+                            if o.depth() >= 8 { continue; }
+                            let (pp, vp) = policy(shrink);
+                            let tp = p.mark(pp);
+                            let tv = v.mark(vp);
+                            let to = o.mark();
+                            toks.push((tp, tv, to));
+                        }
+                        SetOp::Restore { which } => {
+                            let all: Vec<oracle::Tok> = toks.iter().map(|t| t.2).collect();
+                            let Some(pick) = o.pick_restorable(&all, which) else { continue };
+                            let (tp, tv, to) = toks[pick];
+                            prop_assert!(
+                                v.is_valid_token(&tv),
+                                "step {}: verus rejects a live sparse-set token", step
+                            );
+                            p.restore(tp);
+                            v.restore(tv);
+                            o.restore(to);
+                        }
+                    }
+
+                    prop_assert_eq!(p.len(), v.len(), "step {}: sparse len diverged", step);
+                    prop_assert_eq!(ix(p.len()), o.cur.len(), "step {}: sparse len vs oracle", step);
+                    // Every id the oracle believes live must be live and hold the right
+                    // value on both sides -- including across a restore, which is where
+                    // id stability is easiest to get wrong.
+                    for (&id, &val) in o.cur.iter() {
+                        prop_assert!(p.contains(id), "step {}: prod lost live id {}", step, id);
+                        prop_assert!(v.contains(id), "step {}: verus lost live id {}", step, id);
+                        let ep = p.get(id);
+                        let ev = v.get(id);
+                        prop_assert_eq!(ep, ev, "step {}: sparse id {} diverged", step, id);
+                        prop_assert_eq!(ep, val, "step {}: sparse id {} vs oracle", step, id);
                     }
                 }
-                SetOp::Get { which } => {
-                    let ids: Vec<u32> = o.cur.keys().copied().collect();
-                    if let Some(i) = scale(which, ids.len()) {
-                        let id = ids[i];
-                        let gp = p.get(id);
-                        let gv = v.get(id);
-                        prop_assert_eq!(gp, gv, "step {}: sparse get diverged", step);
-                        prop_assert_eq!(gp, o.cur[&id], "step {}: sparse get vs oracle", step);
-                    }
-                }
-                SetOp::Mark { shrink } => {
-                    if o.depth() >= 8 { continue; }
-                    let (pp, vp) = policy(shrink);
-                    let tp = p.mark(pp);
-                    let tv = v.mark(vp);
-                    let to = o.mark();
-                    toks.push((tp, tv, to));
-                }
-                SetOp::Restore { which } => {
-                    let all: Vec<oracle::Tok> = toks.iter().map(|t| t.2).collect();
-                    let Some(pick) = o.pick_restorable(&all, which) else { continue };
-                    let (tp, tv, to) = toks[pick];
-                    prop_assert!(
-                        v.is_valid_token(&tv),
-                        "step {}: verus rejects a live sparse-set token", step
-                    );
-                    p.restore(tp);
-                    v.restore(tv);
-                    o.restore(to);
-                }
-            }
-
-            prop_assert_eq!(p.len() as usize, v.len() as usize, "step {}: sparse len diverged", step);
-            prop_assert_eq!(p.len() as usize, o.cur.len(), "step {}: sparse len vs oracle", step);
-            // Every id the oracle believes live must be live and hold the right
-            // value on both sides -- including across a restore, which is where
-            // id stability is easiest to get wrong.
-            for (&id, &val) in o.cur.iter() {
-                prop_assert!(p.contains(id), "step {}: prod lost live id {}", step, id);
-                prop_assert!(v.contains(id), "step {}: verus lost live id {}", step, id);
-                let ep = p.get(id);
-                let ev = v.get(id);
-                prop_assert_eq!(ep, ev, "step {}: sparse id {} diverged", step, id);
-                prop_assert_eq!(ep, val, "step {}: sparse id {} vs oracle", step, id);
             }
         }
-    }
+    };
 }
+
+sparse_set_property!(prop_sparse_set_u32, u32);
+sparse_set_property!(prop_sparse_set_u64, u64);
+sparse_set_property!(prop_sparse_set_usize, usize);

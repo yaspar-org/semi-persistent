@@ -91,7 +91,7 @@ impl<I: NodeIds> core::fmt::Debug for NodeRef<I> {
 /// `truncate`). `TRACK` matches the owning `NodeStore` (mark/restore are
 /// caller errors when `TRACK == false`, container parity).
 pub struct TypedRouting<G: DenseId, I: NodeIds, const TRACK: bool = true> {
-    entries: AppendOnlyVec<NodeRef<I>, TRACK>,
+    entries: AppendOnlyVec<NodeRef<I>, usize, TRACK>,
     reserved: bool,
     _phantom: core::marker::PhantomData<G>,
 }

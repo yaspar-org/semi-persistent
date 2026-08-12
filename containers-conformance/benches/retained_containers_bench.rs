@@ -296,7 +296,7 @@ fn bench_map_intern(c: &mut Criterion) {
 
     g.bench_function("prod", |b| {
         b.iter(|| {
-            let mut m: prod::Map<u64, (), true> = prod::Map::new();
+            let mut m: prod::Map<u64, (), usize, true> = prod::Map::new();
             let mut x: u64 = 0x243F_6A88_85A3_08D3;
             let tok = {
                 for _ in 0..N / 2 {
@@ -327,7 +327,7 @@ fn bench_map_intern(c: &mut Criterion) {
 
     g.bench_function("verus", |b| {
         b.iter(|| {
-            let mut m: verus::SpMap<u64, (), true> = verus::SpMap::new();
+            let mut m: verus::SpMap<u64, (), usize, true> = verus::SpMap::new();
             let mut x: u64 = 0x243F_6A88_85A3_08D3;
             let tok = {
                 for _ in 0..N / 2 {
@@ -435,7 +435,7 @@ fn bench_aov_log(c: &mut Criterion) {
 
     g.bench_function("prod", |b| {
         b.iter(|| {
-            let mut v: prod::AppendOnlyVec<u64, true> = prod::AppendOnlyVec::new();
+            let mut v: prod::AppendOnlyVec<u64, usize, true> = prod::AppendOnlyVec::new();
             for i in 0..N / 2 {
                 v.push(i as u64);
             }
@@ -454,7 +454,7 @@ fn bench_aov_log(c: &mut Criterion) {
 
     g.bench_function("verus", |b| {
         b.iter(|| {
-            let mut v: verus::AppendOnlyVec<u64, true> = verus::AppendOnlyVec::new();
+            let mut v: verus::AppendOnlyVec<u64, usize, true> = verus::AppendOnlyVec::new();
             for i in 0..N / 2 {
                 v.push(i as u64);
             }
@@ -494,7 +494,7 @@ fn bench_map_intern_string(c: &mut Criterion) {
     g.bench_function("prod", |b| {
         let ks = keys();
         b.iter(|| {
-            let mut m: prod::Map<String, u32, true> = prod::Map::new();
+            let mut m: prod::Map<String, u32, usize, true> = prod::Map::new();
             for (i, k) in ks.iter().enumerate() {
                 if m.id_of(k).is_none() {
                     m.insert(k.clone(), i as u32);
@@ -513,7 +513,7 @@ fn bench_map_intern_string(c: &mut Criterion) {
     g.bench_function("verus", |b| {
         let ks = keys();
         b.iter(|| {
-            let mut m: verus::SpMap<String, u32, true> = verus::SpMap::new();
+            let mut m: verus::SpMap<String, u32, usize, true> = verus::SpMap::new();
             for (i, k) in ks.iter().enumerate() {
                 if m.id_of(k).is_none() {
                     m.insert(k.clone(), i as u32);
@@ -550,7 +550,7 @@ fn bench_map_intern_composite(c: &mut Criterion) {
     g.bench_function("prod", |b| {
         let ks = keys();
         b.iter(|| {
-            let mut m: prod::Map<(u32, Vec<u32>), u32, true> = prod::Map::new();
+            let mut m: prod::Map<(u32, Vec<u32>), u32, usize, true> = prod::Map::new();
             for (i, k) in ks.iter().enumerate() {
                 if m.id_of(k).is_none() {
                     m.insert(k.clone(), i as u32);
@@ -569,7 +569,7 @@ fn bench_map_intern_composite(c: &mut Criterion) {
     g.bench_function("verus", |b| {
         let ks = keys();
         b.iter(|| {
-            let mut m: verus::SpMap<(u32, Vec<u32>), u32, true> = verus::SpMap::new();
+            let mut m: verus::SpMap<(u32, Vec<u32>), u32, usize, true> = verus::SpMap::new();
             for (i, k) in ks.iter().enumerate() {
                 if m.id_of(k).is_none() {
                     m.insert(k.clone(), i as u32);

@@ -540,7 +540,7 @@ pub struct DirectorPool<const TRACK: bool = true, const PROOFS: bool = false> {
     /// Working pool: mutable, capture-tracked, rollback by restore.
     work: VecI<PoolDirector, u32, TRACK>,
     /// Proof pool: append-only, survives working rollback.
-    proof: AppendOnlyVec<PoolDirector, TRACK>,
+    proof: AppendOnlyVec<PoolDirector, usize, TRACK>,
 }
 
 impl<const TRACK: bool, const PROOFS: bool> Default for DirectorPool<TRACK, PROOFS> {

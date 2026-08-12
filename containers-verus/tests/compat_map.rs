@@ -28,7 +28,7 @@ fn op_strategy() -> impl Strategy<Value = Op> {
 }
 
 fn run_ops(ops: Vec<Op>) {
-    let mut m = SpMap::<String, u32, true>::new();
+    let mut m = SpMap::<String, u32, usize, true>::new();
     let mut oracle = std::collections::HashMap::<String, u32>::new();
     let mut snapshots: Vec<(MapToken, std::collections::HashMap<String, u32>)> = Vec::new();
 
@@ -129,7 +129,7 @@ mod literal_keys {
     }
 
     fn exercise<K: Clone + Hash + Eq + std::fmt::Debug>(keys: Vec<K>) {
-        let mut m: SpMap<K, u64, true> = SpMap::new();
+        let mut m: SpMap<K, u64, usize, true> = SpMap::new();
         let mut oracle: HashMap<K, u64> = HashMap::new();
 
         for (i, k) in keys.iter().enumerate() {
@@ -454,7 +454,7 @@ mod canonical_key_model {
     /// withdrawn OrderedFloat axiom) now legitimately collapse to ONE key.
     #[test]
     fn canonical_keys_spmap_oracle() {
-        let mut m: SpMap<CanonicalF64, u64, true> = SpMap::new();
+        let mut m: SpMap<CanonicalF64, u64, usize, true> = SpMap::new();
         let mut oracle: std::collections::HashMap<CanonicalF64, u64> =
             std::collections::HashMap::new();
 
@@ -488,7 +488,7 @@ mod canonical_key_model {
         }
 
         // Rational side: raw non-reduced input interns to the same id.
-        let mut r: SpMap<CanonicalRational, u64, true> = SpMap::new();
+        let mut r: SpMap<CanonicalRational, u64, usize, true> = SpMap::new();
         let half = CanonicalRational::new(BigInt::from(1), BigInt::from(2));
         let raw_half =
             CanonicalRational::from_rational(&Ratio::new_raw(BigInt::from(2), BigInt::from(4)));
