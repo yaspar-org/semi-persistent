@@ -106,7 +106,7 @@ fn assert_delta_is_full_restricted<K>(
     let mut expected: HashMap<&K, Vec<usize>> = HashMap::new();
     for (k, sv) in full {
         let f: Vec<usize> = sv
-            .data
+            .as_slice()
             .iter()
             .map(|g| g.to_usize())
             .filter(|x| tset.contains(x))
@@ -121,7 +121,7 @@ fn assert_delta_is_full_restricted<K>(
         "delta key set differs from full∩touched"
     );
     for (k, dsv) in delta {
-        let got: Vec<usize> = dsv.data.iter().map(|g| g.to_usize()).collect();
+        let got: Vec<usize> = dsv.as_slice().iter().map(|g| g.to_usize()).collect();
         let exp = expected
             .get(k)
             .unwrap_or_else(|| panic!("delta key {k:?} not present in full∩touched"));

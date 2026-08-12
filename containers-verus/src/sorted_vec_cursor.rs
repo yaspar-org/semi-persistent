@@ -211,7 +211,11 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
     /// `requires` is what keeps it in bounds. Production's `step` is only ever
     /// called under `is_valid`, and every leapfrog combinator does so.
     #[inline]
-    pub fn step(&mut self)
+    /// `pub(crate)` and suffixed `_unchecked`: the inherent method shadows the
+    /// guarded `SortedCursor::step` impl under method resolution, and its
+    /// `requires` (cursor not exhausted) is erased at runtime. External
+    /// callers get only the trait impl, which tests `is_valid` first.
+    pub(crate) fn step_unchecked(&mut self)
         requires
             old(self).cursor_wf(),
             old(self).idx() < old(self).model().len(),

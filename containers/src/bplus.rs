@@ -551,6 +551,12 @@ where
 
     /// Build from a sorted, deduplicated slice of keys. O(N).
     pub fn from_sorted(sorted: &[K]) -> Self {
+        // The bulk loader assumes strictly ascending distinct keys; a violation
+        // builds a structurally wrong tree whose lookups silently miss.
+        debug_assert!(
+            sorted.windows(2).all(|w| w[0] < w[1]),
+            "from_sorted: keys not strictly ascending"
+        );
         if sorted.is_empty() {
             return Self::new();
         }
