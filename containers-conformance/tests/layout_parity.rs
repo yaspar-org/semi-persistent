@@ -23,13 +23,62 @@ fn node_size_matches_production() {
     );
 }
 
+/// The list header, at both id families.
+///
+/// Production's `ListHead` is `(head_repr, tail_repr, len)` where `len` is `N::Index` —
+/// the node arena's own index type — rather than a fixed `u32`. This test is the witness
+/// that following the id family there costs nothing, which is what made the widening
+/// unconditional instead of a 63-bit-only concession:
+///
+/// * 31-bit `N`: two `u32` words plus a `u32` count = 12 bytes. Unchanged; the count was
+///   already this wide.
+/// * 63-bit `N`: two `u64` words plus a `u64` count = 24 bytes. A `u32` count would have
+///   padded `(u64, u64, u32)` back up to 24 anyway, so the wider count lives in padding
+///   that existed either way — and buys the removal of a hard 4-billion-element cap on a
+///   single list at an id width whose arena has room for far more.
+///
+/// Both are asserted, because a single-width check is exactly what would let a future
+/// `u32` count slip back in unnoticed: it is free at 31 bits and only wrong at 63.
+/// Production's own in-crate twin is `head_is_two_words_plus_a_same_width_count`
+/// (`containers/src/list.rs`), which can see the private type directly.
 #[test]
 fn head_size_matches_production() {
-    // Production ListHead<N=u32>: head_repr u32 + tail_repr u32 + len u32 = 12.
     assert_eq!(
         core::mem::size_of::<verus::list::ListHead<VN>>(),
         12,
         "packed verus ListHead<31-bit id> must be 12 bytes"
+    );
+    assert_eq!(
+        core::mem::size_of::<verus::list::ListHead<VN64>>(),
+        24,
+        "packed verus ListHead<63-bit id> must be 24 bytes: two u64 words + a u64 count, \
+         which is what `(u64, u64, u32)` already padded to"
+    );
+
+    // The *stored* form is what occupies the store's backing vector (the logical header is
+    // only ever a temporary), so the claim has to hold of the repr too. `ListHeadRepr`'s
+    // count parameter is written `<Id as DenseId>::Index`, never a literal word: hard-coding
+    // it would let this test keep passing while asserting about a type the arena no longer
+    // instantiates.
+    assert_eq!(
+        core::mem::size_of::<
+            verus::list::ListHeadRepr<
+                <VN as verus::tagged::Tagged>::Repr,
+                <VN as verus::opt::DenseId>::Index,
+            >,
+        >(),
+        12,
+        "the inline-stored 31-bit header repr must match the header"
+    );
+    assert_eq!(
+        core::mem::size_of::<
+            verus::list::ListHeadRepr<
+                <VN64 as verus::tagged::Tagged>::Repr,
+                <VN64 as verus::opt::DenseId>::Index,
+            >,
+        >(),
+        24,
+        "the inline-stored 63-bit header repr must match the header"
     );
 }
 

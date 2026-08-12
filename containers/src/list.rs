@@ -80,11 +80,23 @@ impl<T: Tagged, N: DenseId> Tagged for ListNode<T, N> {
 /// so `ListArena::len` is O(1) without traversing. It rolls back with the rest of
 /// the header: the whole `ListHead` is captured as one `Tagged` value on every
 /// `set`, so semi-persistent restore reverts `len` together with the pointers.
+///
+/// `len: N::Index`, not `u32`. A list's length is bounded by the node arena's
+/// population and by nothing else, and that arena is a `VecI<_, N::Index>`, so
+/// `N::Index` is the width the quantity actually lives in — a `u32` here capped
+/// every list at 4 billion elements no matter how wide `N` was, which is exactly
+/// the kind of cap a 63-bit configuration exists to remove.
+///
+/// The widening is free at both id families, which is why it is unconditional.
+/// At a 31-bit `N` the field was already `u32`, so nothing moves. At a 63-bit `N`
+/// the header is two `u64` words followed by the count: `(u64, u64, u32)` pads to
+/// 24 bytes and `(u64, u64, u64)` *is* 24, so the wider count occupies padding
+/// that was there either way. Asserted in `head_is_two_words_plus_a_same_width_count`.
 #[derive(Clone, Copy)]
 struct ListHead<N: DenseId> {
     head_repr: <N as Tagged>::Repr,
     tail_repr: <N as Tagged>::Repr,
-    len: u32,
+    len: N::Index,
 }
 
 impl<N: DenseId> Default for ListHead<N> {
@@ -98,7 +110,7 @@ impl<N: DenseId> ListHead<N> {
         Self {
             head_repr: Opt::<N>::none().into_raw(),
             tail_repr: N::default().into_repr(),
-            len: 0,
+            len: N::Index::MIN,
         }
     }
 
@@ -114,7 +126,7 @@ impl<N: DenseId> ListHead<N> {
 /// Tagged delegates to tail_repr (first in Repr tuple). VecI steals that bit.
 /// `len` rides along as a plain `Copy` field; it carries no tag.
 impl<N: DenseId> Tagged for ListHead<N> {
-    type Repr = (<N as Tagged>::Repr, <N as Tagged>::Repr, u32);
+    type Repr = (<N as Tagged>::Repr, <N as Tagged>::Repr, N::Index);
 
     fn into_repr(self) -> Self::Repr {
         (self.tail_repr, self.head_repr, self.len)
@@ -182,6 +194,27 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         self.heads.total_bytes() + self.nodes.total_bytes()
     }
 
+    /// One more element in a list, or a panic.
+    ///
+    /// Checked rather than a bare `+= 1`, even though the increment cannot in fact
+    /// overflow: a list holds distinct nodes of the arena, the arena's population is
+    /// capped by `N::from_usize` at `N::MAX`, and `N::MAX` is *half* of
+    /// `N::Index::MAX` because the id gives up its top bit to the capture tag. So the
+    /// count has a full spare bit of headroom above anything reachable.
+    ///
+    /// That argument holds only as long as the node ids and the count are drawn from
+    /// the same family, which is a property of two other functions, not of this one.
+    /// An unchecked `+=` would turn any future divergence into a wrapped length: a
+    /// header claiming 0 elements while `head` still points into a live chain, so
+    /// `len()` and `iter().count()` disagree and every caller that trusts the O(1)
+    /// count reads the list as empty. A panic here says the configuration is too
+    /// narrow; a wrap says nothing at all.
+    #[inline]
+    fn grown(len: N::Index) -> N::Index {
+        len.checked_incr()
+            .expect("list length exceeds the node index range")
+    }
+
     /// Create a new empty list.
     pub fn new_list(&mut self) -> L {
         let id = L::from_usize(self.heads.len().as_usize());
@@ -199,7 +232,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         if was_empty {
             h.tail_repr = slot.into_repr();
         }
-        h.len += 1;
+        h.len = Self::grown(h.len);
         self.heads.set(list.into(), h);
     }
 
@@ -217,7 +250,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
             self.nodes.set(old_tail.into(), tail_node);
         }
         h.tail_repr = slot.into_repr();
-        h.len += 1;
+        h.len = Self::grown(h.len);
         self.heads.set(list.into(), h);
     }
 
@@ -240,7 +273,10 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
             self.nodes.set(dst_tail.into(), tail_node);
             dst_h.tail_repr = src_h.tail_repr;
         }
-        dst_h.len += src_h.len;
+        dst_h.len = dst_h
+            .len
+            .checked_add(src_h.len)
+            .expect("spliced list length exceeds the node index range");
         self.heads.set(dst.into(), dst_h);
         // Clear src to empty
         self.heads.set(src.into(), ListHead::empty());
@@ -252,7 +288,10 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
     }
 
     /// Number of elements in the list, O(1) (read from the cached header count).
-    pub fn len(&self, list: L) -> u32 {
+    ///
+    /// Returns `N::Index` — the node arena's index type — because that is what bounds
+    /// a list's length. Callers wanting a plain count use `IndexLike::as_usize`.
+    pub fn len(&self, list: L) -> N::Index {
         self.heads.get(list.into()).len
     }
 
@@ -401,6 +440,117 @@ mod tests {
         assert_eq!(collect(&a, l2), vec![2]);
     }
 
+    crate::define_id63! {
+        /// Test-only 63-bit node id, for the header-layout claim below. The rest of this
+        /// module runs at 31 bits (`UseNodeId`), where the count's width is invisible.
+        struct WideNodeId / StoredWideNodeId, "w";
+    }
+
+    /// `len` follows the node id family, and that is free at both of them.
+    ///
+    /// This is the assertion the field's doc comment points at. It exists because the
+    /// widening from `u32` to `N::Index` is *only* observable at 63 bits — at 31 bits the
+    /// field was already `u32` — so a test at one width could not tell a correct header
+    /// from one that had quietly regained a fixed 4-billion cap.
+    ///
+    /// 31-bit: `(u32, u32, u32)` = 12. 63-bit: `(u64, u64, u64)` = 24, which is what
+    /// `(u64, u64, u32)` padded to as well — the count occupies alignment padding that was
+    /// there either way, so nothing is paid for removing the cap.
+    #[test]
+    fn head_is_two_words_plus_a_same_width_count() {
+        use core::mem::size_of;
+
+        assert_eq!(
+            size_of::<ListHead<UseNodeId>>(),
+            3 * size_of::<u32>(),
+            "a 31-bit header is two id words plus an equally wide count"
+        );
+        assert_eq!(
+            size_of::<ListHead<WideNodeId>>(),
+            3 * size_of::<u64>(),
+            "a 63-bit header is two id words plus an equally wide count"
+        );
+
+        // The count really is the *node* index type, not some other width that happens to
+        // agree. Stated against the associated type so it cannot drift.
+        assert_eq!(size_of::<<UseNodeId as DenseId>::Index>(), size_of::<u32>());
+        assert_eq!(
+            size_of::<<WideNodeId as DenseId>::Index>(),
+            size_of::<u64>()
+        );
+
+        // Free, not merely equal: a `u32` count at 63 bits would have padded to the same
+        // 24 bytes, which is the whole reason the widening is unconditional rather than
+        // gated on the id width.
+        assert_eq!(
+            size_of::<(u64, u64, u32)>(),
+            size_of::<(u64, u64, u64)>(),
+            "the wider count lives in padding the header already carried"
+        );
+
+        // And `Tagged::Repr` — the form that actually occupies the store's backing vector
+        // — tracks the header, since the whole header is captured as one value per write.
+        assert_eq!(
+            size_of::<<ListHead<UseNodeId> as Tagged>::Repr>(),
+            size_of::<ListHead<UseNodeId>>()
+        );
+        assert_eq!(
+            size_of::<<ListHead<WideNodeId> as Tagged>::Repr>(),
+            size_of::<ListHead<WideNodeId>>()
+        );
+    }
+
+    crate::define_id7! {
+        /// Test-only 7-bit node id: 128 nodes, so the arena's ceiling is reachable with a
+        /// literal number of pushes. At 31 bits the same cases need four billion.
+        struct TinyNodeId / StoredTinyNodeId, "y";
+    }
+
+    type TinyArena = ListArena<TestNodeId, UseListId, TinyNodeId, false>;
+
+    /// The count has a spare bit above anything the arena can reach, and the arena says so
+    /// rather than letting a length wrap.
+    ///
+    /// This is the argument in `grown`'s doc, asserted instead of assumed: `N::MAX` is
+    /// *half* of `N::Index::MAX` because the id gives up its top bit to the capture tag, so
+    /// the ids run out a full bit before the count does. What a wrap would look like is a
+    /// header claiming 0 elements while `head` still points into a live chain — `len()` and
+    /// `iter().count()` disagreeing — which is why both are compared here.
+    #[test]
+    fn len_has_headroom_above_the_full_arena() {
+        let mut a = TinyArena::new();
+        let l = a.new_list();
+        for i in 0..128u32 {
+            a.append(l, TestNodeId::new(i));
+        }
+        assert_eq!(
+            a.len(l).as_usize(),
+            128,
+            "every 7-bit node id is in the list"
+        );
+        assert_eq!(
+            a.len(l).as_usize(),
+            a.iter(l).count(),
+            "the cached count and the traversal must agree"
+        );
+        assert!(
+            a.len(l) < <TinyNodeId as DenseId>::Index::MAX,
+            "a full arena still leaves the count a spare bit"
+        );
+    }
+
+    /// One node past the id space panics rather than aliasing two positions onto one id.
+    /// The ids are what run out; `grown` is never the thing that refuses.
+    #[test]
+    #[should_panic(expected = "exceeds range")]
+    fn node_id_exhaustion_panics_rather_than_aliasing() {
+        let mut a = TinyArena::new();
+        let l = a.new_list();
+        for i in 0..129u32 {
+            a.append(l, TestNodeId::new(i));
+        }
+    }
+
     #[test]
     fn len_tracks_prepend_append_splice() {
         let mut a = Arena::new();
@@ -411,7 +561,7 @@ mod tests {
         a.prepend(l, TestNodeId::new(3));
         assert_eq!(a.len(l), 3);
         // len matches the actual traversal count.
-        assert_eq!(a.len(l) as usize, a.iter(l).count());
+        assert_eq!(a.len(l).as_usize(), a.iter(l).count());
 
         let src = a.new_list();
         a.append(src, TestNodeId::new(10));
@@ -421,7 +571,7 @@ mod tests {
         // dst gains src's count; src resets to 0.
         assert_eq!(a.len(l), 5);
         assert_eq!(a.len(src), 0);
-        assert_eq!(a.len(l) as usize, a.iter(l).count());
+        assert_eq!(a.len(l).as_usize(), a.iter(l).count());
     }
 
     #[test]
@@ -436,7 +586,7 @@ mod tests {
         a.restore(token);
         // The cached count reverts with the header.
         assert_eq!(a.len(l), 1);
-        assert_eq!(a.len(l) as usize, a.iter(l).count());
+        assert_eq!(a.len(l).as_usize(), a.iter(l).count());
     }
 
     #[test]

@@ -299,7 +299,8 @@ pub struct ListHead<N: DenseId + Tagged> {
     // `set_tag`/`clear_tag`. Same size either way (an id is its own word).
     pub head_repr: <N as Tagged>::Repr,
     pub tail: N,
-    pub len: u32,
+    /// Cached element count, in the NODE arena's index type — see [`ListHead::len_spec`].
+    pub len: N::Index,
 }
 
 impl<N: DenseId + Tagged> ListHead<N> {
@@ -318,12 +319,27 @@ impl<N: DenseId + Tagged> ListHead<N> {
         self.tail.id_nat() as usize
     }
 
-    /// Cached length (u32, production parity — list lengths are bounded by
-    /// the arena size, which the id range bounds well below u32::MAX for
-    /// 31-bit ids; for 63-bit ids the arena bound still caps a single list
-    /// at u32::MAX elements, matching production's documented limit).
-    pub open(crate) spec fn len_spec(self) -> usize {
-        self.len as usize
+    /// Cached length, projected to `nat`.
+    ///
+    /// The field is `N::Index` — the node arena's index type — because a list's
+    /// length is bounded by the node arena's population and by nothing else. It was
+    /// `u32`, which put a hard 4-billion ceiling on a single list at *every* id
+    /// width: reachable for a 63-bit `N`, where the arena itself has room for far
+    /// more, and a ceiling the caller had to keep proving it stayed under (the
+    /// `< 0x1_0000_0000` precondition every mutator used to carry). Widening it to
+    /// `N::Index` makes that obligation *derivable* instead — `lemma_len_bounded`
+    /// already bounds a list by the arena, and the store's own `wf` bounds the arena
+    /// by `Index::max_nat()` — so the preconditions are gone and no caller states a
+    /// length bound at all.
+    ///
+    /// Free at both id widths, hence unconditional: at a 31-bit `N` the field was
+    /// already 4 bytes, and at a 63-bit `N` the header is two 8-byte words plus the
+    /// count, which pads to 24 either way (`containers-conformance/tests/layout_parity.rs`).
+    ///
+    /// `nat`, not `usize`: the count is compared against ghost sequence lengths
+    /// throughout, and `N::Index`'s projection to `nat` (`as_nat`) is the exact one.
+    pub open(crate) spec fn len_spec(self) -> nat {
+        self.len.as_nat()
     }
 
     /// Repr well-formedness. Only the head word is packed now (the tail is a
@@ -418,7 +434,8 @@ impl<N: DenseId + Tagged + core::default::Default> core::default::Default for Li
         let o = crate::opt::Opt::<N>::none();
         let none_repr = o.into_raw();
         let zero = N::from_usize(0);
-        ListHead { head_repr: none_repr, tail: zero, len: 0 }
+        proof { <N::Index as IndexLike>::lemma_min_as_nat(); }
+        ListHead { head_repr: none_repr, tail: zero, len: <N::Index as IndexLike>::min() }
     }
 }
 
@@ -427,19 +444,24 @@ impl<N: DenseId + Tagged + core::default::Default> core::default::Default for Li
 /// (`containers/src/list.rs:116-138`: `(tail_repr, head_repr, len)` with `tag`
 /// delegating to `.0`).
 ///
-/// Both `a` and `b` are `<N as Tagged>::Repr`-typed words, so this struct has
-/// exactly production's `(Repr, Repr, u32)` layout — the whole point of the
-/// exercise. The tag is stolen from `a` (the tail), which the header stores as a
-/// bare id, so `into_repr`/`from_repr` pack and unpack it through `N`'s own
-/// verified `Tagged` round-trip.
+/// Both `a` and `b` are `<N as Tagged>::Repr`-typed words and `c` is the node
+/// arena's index type, so this struct has exactly production's
+/// `(Repr, Repr, N::Index)` layout — the whole point of the exercise. The tag is
+/// stolen from `a` (the tail), which the header stores as a bare id, so
+/// `into_repr`/`from_repr` pack and unpack it through `N`'s own verified `Tagged`
+/// round-trip.
+///
+/// `I` is a second type parameter rather than a hardcoded `u32` for the reason
+/// [`ListHead::len_spec`] gives: the stored count follows the node index width, so a
+/// 63-bit arena is not capped at 4 billion elements per list.
 #[derive(Copy)]
-pub struct ListHeadRepr<NR> {
+pub struct ListHeadRepr<NR, I> {
     pub a: NR,
     pub b: NR,
-    pub c: u32,
+    pub c: I,
 }
 
-impl<NR: Copy> Clone for ListHeadRepr<NR> {
+impl<NR: Copy, I: Copy> Clone for ListHeadRepr<NR, I> {
     fn clone(&self) -> (r: Self)
         ensures r == *self,
     {
@@ -452,7 +474,7 @@ impl<NR: Copy> Clone for ListHeadRepr<NR> {
 /// the empty list (`head_wf`/`head_ref` read it as an `Opt<N>`), whereas the tail
 /// is only ever read when the head is Some, so its spare bit is genuinely free.
 impl<N: DenseId + Tagged> Tagged for ListHead<N> {
-    type Repr = ListHeadRepr<<N as Tagged>::Repr>;
+    type Repr = ListHeadRepr<<N as Tagged>::Repr, N::Index>;
 
     // `value_of` projects the tail word through `N::value_of`, which strips the
     // stolen bit and yields the clean id — exactly the type the header stores.
@@ -609,6 +631,62 @@ where
         }
     }
 
+    // -- cached-length arithmetic -------------------------------------------
+    //
+    // `ListHead::len` is `N::Index`, so growing it is index arithmetic, and it goes
+    // through the checked operations for the same reason `head_ix`/`node_ix` go through
+    // `try_from_usize`: `N::Index` may be narrower than the word carrying it (a 31-bit
+    // node id lives in a `u32` whose MSB is the capture flag), so a sum that does not
+    // overflow the word can still fail to be an index. A raw `+` would produce a value
+    // whose top bit reads as a tag, which is not a length at all.
+    //
+    // Both are TOTAL, like the two row-index bridges: the `requires` is discharged once
+    // at each call site from `wf` (via `lemma_len_bounded` / `lemma_concat_len_bounded`
+    // and `lemma_nodes_len_fits`), so the `None` arm is dead and provably so. That is the
+    // whole reason the mutators below no longer carry a length precondition.
+
+    /// `len + 1` as a node-arena index.
+    #[inline(always)]
+    pub(crate) fn len_incr(len: N::Index) -> (r: N::Index)
+        requires len.as_nat() + 1 < <N::Index as crate::index_like::IndexLike>::max_nat(),
+        ensures r.as_nat() == len.as_nat() + 1,
+    {
+        match crate::index_like::checked_incr(len) {
+            Some(x) => x,
+            None => {
+                // Unreachable: the bound above proves `checked_incr` is Some.
+                proof { assert(false); }
+                #[allow(clippy::empty_loop)]
+                loop
+                    invariant false,
+                    decreases 0int,
+                {
+                }
+            }
+        }
+    }
+
+    /// `a + b` as a node-arena index (splice: the destination gains the source's count).
+    #[inline(always)]
+    pub(crate) fn len_add(a: N::Index, b: N::Index) -> (r: N::Index)
+        requires
+            a.as_nat() + b.as_nat() < <N::Index as crate::index_like::IndexLike>::max_nat(),
+        ensures r.as_nat() == a.as_nat() + b.as_nat(),
+    {
+        match crate::index_like::checked_add(a, b) {
+            Some(x) => x,
+            None => {
+                proof { assert(false); }
+                #[allow(clippy::empty_loop)]
+                loop
+                    invariant false,
+                    decreases 0int,
+                {
+                }
+            }
+        }
+    }
+
     /// `heads.len()` as a `usize` row count (the core's width). The inner vec
     /// returns `L::Index`; `as_usize`'s ensures is stated in `as_nat`, which is
     /// exactly the vec's `len` postcondition, so the bridge is definitional.
@@ -686,6 +764,24 @@ where
             self.nodes.wf(),
             i < self.nodes_view().len(),
         ensures i < <N::Index as crate::index_like::IndexLike>::max_nat(),
+    {
+    }
+
+    /// The node arena's *population* — not just any row in it — is representable in
+    /// `N::Index`. One past the last row, which `lemma_node_row_fits` does not give.
+    ///
+    /// This is what retires the length-bound preconditions the mutators used to carry.
+    /// A list's cached count is bounded by the arena (`lemma_len_bounded`,
+    /// `lemma_concat_len_bounded`) and the arena is bounded here, so `len + 1` and
+    /// `dst.len + src.len` are both in range as a consequence of `wf` — no caller has
+    /// to state it, and there is nothing left for a caller to state it *wrongly*.
+    ///
+    /// Empty body: the bound is literally `InlineStore::wf_spec`'s first conjunct
+    /// (`data@.len() < I::max_nat()`), and `nodes_view()` is that data mapped through
+    /// `value_of`, which preserves length.
+    pub(crate) proof fn lemma_nodes_len_fits(&self)
+        requires self.nodes.wf(),
+        ensures self.nodes_view().len() < <N::Index as crate::index_like::IndexLike>::max_nat(),
     {
     }
 
@@ -805,11 +901,15 @@ where
 
     /// Cached-length consistency: each header's `len` equals its model list length.
     /// This is what makes the O(1) `len()` accessor return the true length.
+    ///
+    /// Stated through `len_spec()` (the field's projection to `nat`) rather than on the
+    /// field: `len` is `N::Index`, so comparing it to a ghost `Seq::len()` needs the
+    /// projection the index type already provides.
     pub open(crate) spec fn cache_len(&self) -> bool {
         let model = self.model@;
         let heads = self.heads_view();
         forall|l: int| 0 <= l < model.len()
-            ==> (#[trigger] heads[l]).len == (#[trigger] model[l]).len()
+            ==> (#[trigger] heads[l]).len_spec() == (#[trigger] model[l]).len()
     }
 
     /// Packed-repr invariant: every stored next-repr is Tagged-well-formed
@@ -1025,9 +1125,10 @@ where
             // the node column's `N::Index` word must have room for one more row
             // (`lemma_node_push_fits` derives the word bound from this one).
             old(self).nodes_view().len() + 1 < N::id_bound(),
-            // u32 length-cache headroom (production stores len as u32 and
-            // silently wraps past 2^32-1; we surface the bound instead).
-            old(self).model_view()[l as int].len() + 1 < 0x1_0000_0000,
+            // No length-cache precondition. The count is `N::Index`-wide (the node
+            // arena's own index type), so `len + 1` being representable follows from
+            // `wf` — see the proof block below — rather than from anything the caller
+            // has to know or could state wrongly.
         ensures
             final(self).wf(),
             final(self).model_view().len() == old(self).model_view().len(),
@@ -1035,8 +1136,10 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
-        // Bound the old list length (<= arena size < usize::MAX) BEFORE mutating, so
-        // the `h.len + 1` below cannot overflow. Old cache_len ties h.len to it.
+        // Bound the old list length BEFORE mutating: a list is no longer than the arena
+        // (`lemma_len_bounded`, from disjointness + in-range by pigeonhole). Combined with
+        // the arena bound taken *after* the push below, that is what replaces the deleted
+        // length precondition. Old `cache_len` ties `h.len` to this model length.
         proof { self.lemma_len_bounded(l as int); }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
@@ -1061,15 +1164,18 @@ where
         if was_empty {
             h.set_tail(slot);
         }
-        // h.len == old model[l].len() (old cache_len), bounded by the arena
-        // (< N::id_bound() <= u32-capacity for 31-bit ids; the u32 guard is
-        // enforced by the wf length bound).
-        assert(h.len_spec() == old_model[l as int].len());
-        crate::guard::check_precondition(
-            h.len < u32::MAX,
-            "ListArena: list length cache would overflow u32",
-        );
-        h.len = h.len + 1;
+        // `h.len + 1` is representable, with no help from the caller. `h.len` is the OLD
+        // model length (old `cache_len`), which `lemma_len_bounded` above bounded by the
+        // OLD arena size; the node just pushed makes the arena one longer, and the store's
+        // own `wf` bounds *that* by `N::Index`'s range. So
+        //   h.len + 1 <= old_nodes.len() + 1 == nodes.len() < N::Index::max_nat().
+        // The two ends only meet because the count and the node index are the same width.
+        proof {
+            assert(h.len_spec() == old_model[l as int].len());
+            self.lemma_nodes_len_fits();
+            assert(self.nodes_view().len() == old_nodes.len() + 1);
+        }
+        h.len = Self::len_incr(h.len);
         let li = self.head_ix(l);
         self.heads.set_index(li, h);
 
@@ -1183,7 +1289,7 @@ where
 
             // --- cache_len: heads[l].len grew by 1 with model[l]; others unchanged.
             assert forall|l2: int| 0 <= l2 < model.len() implies
-                (#[trigger] heads[l2]).len == (#[trigger] model[l2]).len() by {
+                (#[trigger] heads[l2]).len_spec() == (#[trigger] model[l2]).len() by {
                 if l2 == l as int {
                     assert(model[l as int].len() == old_model[l as int].len() + 1);
                 } else {
@@ -1213,9 +1319,8 @@ where
             // the node column's `N::Index` word must have room for one more row
             // (`lemma_node_push_fits` derives the word bound from this one).
             old(self).nodes_view().len() + 1 < N::id_bound(),
-            // u32 length-cache headroom (production stores len as u32 and
-            // silently wraps past 2^32-1; we surface the bound instead).
-            old(self).model_view()[l as int].len() + 1 < 0x1_0000_0000,
+            // No length-cache precondition; see `prepend_raw`. The count shares the node
+            // index's width, so `wf` already bounds it.
         ensures
             final(self).wf(),
             final(self).model_view().len() == old(self).model_view().len(),
@@ -1223,7 +1328,8 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
-        // Bound the old list length before mutating so `h.len + 1` cannot overflow.
+        // Bound the old list length before mutating; paired with the arena bound taken
+        // after the push, this is what makes `len + 1` representable (see `prepend_raw`).
         proof { self.lemma_len_bounded(l as int); }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
@@ -1255,12 +1361,14 @@ where
             h.set_head(NodeRef::to(slot));
         }
         h.set_tail(slot);
-        assert(h.len_spec() == old_model[l as int].len());
-        crate::guard::check_precondition(
-            h.len < u32::MAX,
-            "ListArena: list length cache would overflow u32",
-        );
-        h.len = h.len + 1;
+        // Same chain as `prepend_raw`: old count <= old arena, arena grew by the pushed
+        // node, and the store's `wf` bounds the grown arena by `N::Index`'s range.
+        proof {
+            assert(h.len_spec() == old_model[l as int].len());
+            self.lemma_nodes_len_fits();
+            assert(self.nodes_view().len() == old_nodes.len() + 1);
+        }
+        h.len = Self::len_incr(h.len);
         let li = self.head_ix(l);
         self.heads.set_index(li, h);
 
@@ -1378,7 +1486,7 @@ where
 
             // --- cache_len: heads[l].len grew by 1 with model[l]; others unchanged.
             assert forall|l2: int| 0 <= l2 < model.len() implies
-                (#[trigger] heads[l2]).len == (#[trigger] model[l2]).len() by {
+                (#[trigger] heads[l2]).len_spec() == (#[trigger] model[l2]).len() by {
                 if l2 == l as int {
                     assert(model[l as int].len() == old_model[l as int].len() + 1);
                 } else {
@@ -1391,16 +1499,23 @@ where
 
     /// Number of elements in list `l`, O(1) from the cached header count. Verified
     /// (via `wf`'s `cache_len`) to equal the abstract list length.
-    pub(crate) fn len_raw(&self, l: usize) -> (n: usize)
+    ///
+    /// Returns `N::Index`, not `usize`, even though the raw core takes a `usize` row:
+    /// the argument is a row and the result is a count, and the count's type is the node
+    /// arena's index type — the same reasoning that widened the stored field, and the same
+    /// convention the inner vec follows (`DiffStore::len(&self) -> I`, matching
+    /// production's `Vec::len` and `ListArena::len`). Callers wanting a plain count use
+    /// `IndexLike::as_usize`.
+    pub(crate) fn len_raw(&self, l: usize) -> (n: N::Index)
         requires self.wf(), (l as int) < self.model_view().len(),
-        ensures n as int == self.list_seq(l as int).len(),
+        ensures n.as_nat() == self.list_seq(l as int).len(),
     {
         proof {
             // header len == model len (cache_len); list_seq len == model len (by def).
-            assert(self.heads_view()[l as int].len == self.model@[l as int].len());
+            assert(self.heads_view()[l as int].len_spec() == self.model@[l as int].len());
             assert(self.list_seq(l as int).len() == self.model@[l as int].len());
         }
-        self.heads.get_index(self.head_ix(l)).len as usize
+        self.heads.get_index(self.head_ix(l)).len
     }
 
     /// Is list `l` empty?
@@ -1431,20 +1546,30 @@ where
     /// at `rlimit(100)` (10x its measured need), because the disjointness
     /// quantifier below shares a solver context with the rest of the module.
     /// Measured ~75.9M rlimit (17.6s) once the quad-nested disjointness goal is
-    /// delegated to `lemma_splice_disjoint`; 150 is ~2x that. It was 800, sized
+    /// delegated to `lemma_splice_disjoint`; 150 was ~2x that. It was 800, sized
     /// for the 1.56-BILLION-rlimit (223s) version where that goal was proved
     /// inline here -- see the lemma's header for why that was so expensive.
+    ///
+    /// Re-measured when the cached count became `N::Index`-wide: the floor moved above
+    /// 150 (bisected — 150 fails, 175 passes), so 300 keeps the same ~2x margin. The
+    /// growth is the length arithmetic, not the concatenation: the merged count is now a
+    /// checked `len_add` whose in-range obligation is *derived* here from
+    /// `lemma_concat_len_bounded` + `lemma_nodes_len_fits` instead of being asserted by
+    /// the caller as a `< 0x1_0000_0000` precondition. That trade is the point — a
+    /// precondition an unverified caller could get wrong became a proof obligation
+    /// discharged from `wf`, and it costs solver time here rather than soundness there.
     #[verifier::spinoff_prover]
-    #[verifier::rlimit(150)]
+    #[verifier::rlimit(300)]
     pub(crate) fn splice_raw(&mut self, dst: usize, src: usize)
         requires
             old(self).wf(),
             (dst as int) < old(self).model_view().len(),
             (src as int) < old(self).model_view().len(),
             dst != src,
-            // u32 length-cache headroom for the merged list.
-            old(self).model_view()[dst as int].len()
-                + old(self).model_view()[src as int].len() < 0x1_0000_0000,
+            // No length-cache precondition for the merged list. The two lists are
+            // disjoint, so their combined length is bounded by the arena
+            // (`lemma_concat_len_bounded`) and the arena by `N::Index`'s range
+            // (`lemma_nodes_len_fits`) — the sum is in range as a consequence of `wf`.
         ensures
             final(self).wf(),
             final(self).model_view().len() == old(self).model_view().len(),
@@ -1455,23 +1580,27 @@ where
                 && m != dst as int && m != src as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
-        // Bound dst.len + src.len (disjoint lists) before mutating, so the sum below
-        // cannot overflow. Old cache_len ties each header len to its model length.
-        proof { self.lemma_concat_len_bounded(dst as int, src as int); }
+        // Bound dst.len + src.len before mutating: the two lists are disjoint, so their
+        // combined length fits the arena, and the arena fits `N::Index`. No node is
+        // pushed here, so unlike prepend/append both facts are about the *current* arena
+        // and can be taken together. Old cache_len ties each header len to its model.
+        proof {
+            self.lemma_concat_len_bounded(dst as int, src as int);
+            self.lemma_nodes_len_fits();
+        }
         let ghost old_nodes = self.nodes_view();
         let ghost old_model = self.model@;
         let hd = self.heads.get_index(self.head_ix(dst));
         let hs = self.heads.get_index(self.head_ix(src));
         let dst_empty = hd.head().is_null_exec();
         let src_empty = hs.head().is_null_exec();
-        // hd.len == |old dst|, hs.len == |old src| (old cache_len); sum <= nodes.len().
-        assert(hd.len_spec() == old_model[dst as int].len());
-        assert(hs.len_spec() == old_model[src as int].len());
-        crate::guard::check_precondition(
-            (hd.len as u64) + (hs.len as u64) <= u32::MAX as u64,
-            "ListArena::splice: merged length cache would overflow u32",
-        );
-        let new_dst_len = hd.len + hs.len;
+        // hd.len == |old dst|, hs.len == |old src| (old cache_len); sum <= nodes.len()
+        // < N::Index::max_nat() from the two lemmas above.
+        proof {
+            assert(hd.len_spec() == old_model[dst as int].len());
+            assert(hs.len_spec() == old_model[src as int].len());
+        }
+        let new_dst_len = Self::len_add(hd.len, hs.len);
 
         if !src_empty {
             if dst_empty {
@@ -1625,7 +1754,7 @@ where
             // --- cache_len: dst.len := |old dst| + |old src| == |new dst model|;
             // src.len := 0 == |empty|; all other headers and model lengths unchanged.
             assert forall|l2: int| 0 <= l2 < model.len() implies
-                (#[trigger] heads[l2]).len == (#[trigger] model[l2]).len() by {
+                (#[trigger] heads[l2]).len_spec() == (#[trigger] model[l2]).len() by {
                 if l2 == dst as int {
                     assert(model[dst as int].len()
                         == old_model[dst as int].len() + old_model[src as int].len());
@@ -1634,7 +1763,7 @@ where
                     // is unchanged) — either way equals the new model length.
                 } else if l2 == src as int {
                     assert(model[src as int].len() == 0);
-                    assert(heads[src as int].len == 0);  // ListHead::default()
+                    assert(heads[src as int].len_spec() == 0);  // ListHead::default()
                 } else {
                     assert(heads[l2] == old(self).heads_view()[l2]);
                     assert(model[l2] == old_model[l2]);
@@ -1845,9 +1974,10 @@ where
             // node allocation stays within N's id range (production's
             // VecI<_, N::Index> capacity semantics).
             old(self).nodes_view().len() + 1 < N::id_bound(),
-            // u32 length-cache headroom (implied for <=31-bit ids via
-            // lemma_len_bounded; surfaced for 63-bit; runtime-guarded).
-            old(self).model_view()[l.id_nat() as int].len() + 1 < 0x1_0000_0000,
+            // No length-cache precondition. The cached count is `N::Index`-wide, so its
+            // bound follows from `wf` at every id width — including 63-bit, where the old
+            // `u32` cache was a real 4-billion ceiling the caller had to promise to stay
+            // under. `prepend_raw` derives it; nothing is left for a caller to get wrong.
         ensures
             final(self).wf(),
             final(self).model_view().len() == old(self).model_view().len(),
@@ -1885,10 +2015,7 @@ where
             old(self).nodes_view().len() + 1 < usize::MAX,
             // node allocation stays within N's id range.
             old(self).nodes_view().len() + 1 < N::id_bound(),
-            // u32 length-cache headroom. For id widths up to 31 bits this is
-            // implied (list len <= arena len < id_bound <= 2^31); callers can
-            // discharge it via lemma_len_bounded. Runtime-guarded regardless.
-            old(self).model_view()[l.id_nat() as int].len() + 1 < 0x1_0000_0000,
+            // No length-cache precondition; see `prepend`.
         ensures
             final(self).wf(),
             final(self).model_view().len() == old(self).model_view().len(),
@@ -1911,10 +2038,17 @@ where
     }
 
     /// O(1) verified length through the typed handle.
+    ///
+    /// `N::Index`, matching production (`containers/src/list.rs`'s `len`): a list's
+    /// length is bounded by the node arena's population, so the node arena's index type
+    /// is the width it belongs in. The postcondition is stated through `as_nat`, which is
+    /// `IndexLike`'s exact projection, so this is as strong as the `usize` form it
+    /// replaced — the caller learns the count *is* the abstract list length, not merely
+    /// that it fits.
     #[inline(always)]
-    pub fn len(&self, l: L) -> (n: usize)
+    pub fn len(&self, l: L) -> (n: N::Index)
         requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures n as int == self.list_seq(l.id_nat() as int).len(),
+        ensures n.as_nat() == self.list_seq(l.id_nat() as int).len(),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
         self.len_raw(l.as_usize())
@@ -1964,9 +2098,8 @@ where
             dst.id_nat() < old(self).model_view().len(),
             src.id_nat() < old(self).model_view().len(),
             dst.id_nat() != src.id_nat(),
-            // u32 length-cache headroom for the merged list (see append).
-            old(self).model_view()[dst.id_nat() as int].len()
-                + old(self).model_view()[src.id_nat() as int].len() < 0x1_0000_0000,
+            // No length-cache precondition for the merged list; see `prepend`. The two
+            // lists are disjoint, so `splice_raw` derives the bound from `wf`.
         ensures
             final(self).wf(),
             final(self).model_view().len() == old(self).model_view().len(),
@@ -2074,6 +2207,13 @@ where
     }
 
     /// Yield `list_seq(list)[pos]` and advance the cursor — O(1) per call.
+    ///
+    /// No `rlimit` and no `spinoff_prover`: this verifies at the default budget. Worth
+    /// recording, because widening the cached count first presented here as an rlimit
+    /// exhaustion, which reads like a solver-budget problem and is not one — raising the
+    /// budget only let the solver get far enough to report the real goal, the `pos + 1`
+    /// overflow check below. The fix was the missing fact (`IndexLike::
+    /// lemma_max_nat_fits_usize`), not more budget; with it, the cost is back where it was.
     #[inline(always)]
     pub fn next(&mut self) -> (r: Option<T>)
         requires
@@ -2108,6 +2248,16 @@ where
             assert((self.pos as int) < m.len());
             assert(self.cur.target() == m[self.pos as int]);
             assert(m[self.pos as int] < self.arena.nodes_view().len());
+            // `pos + 1` does not overflow the counter. The chain is: `pos < m.len()`
+            // (above), `m.len() <= nodes.len()` (the model's entries are distinct rows),
+            // `nodes.len() < N::Index::max_nat()` (the store's own `wf`), and finally
+            // `max_nat() <= usize::MAX + 1` (`IndexLike`'s width obligation). The last
+            // step is the one the cached count used to supply for free when it was a
+            // literal `u32`; now that it follows the id family, the bound has to come
+            // from the index type's contract instead of from a fixed word.
+            self.arena.lemma_len_bounded(self.list as int);
+            self.arena.lemma_nodes_len_fits();
+            <N::Index as IndexLike>::lemma_max_nat_fits_usize();
         }
         let node = self.arena.nodes.get_index(self.arena.node_ix(self.cur.idx));
         self.cur = node.next();

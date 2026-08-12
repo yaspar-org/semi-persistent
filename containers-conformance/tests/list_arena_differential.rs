@@ -65,8 +65,14 @@ fn list_arena_trace(seed: u64, steps: usize) {
                 let pv: Vec<u32> = p.iter(PList::new(l)).map(|e| e.raw()).collect();
                 let vv: Vec<u32> = v.iter(VList::new(l)).map(|e| e.raw()).collect();
                 assert_eq!(pv, vv, "step {step}: iter({l}) diverged");
+                // Compared without a cast on either side: both `len`s return the node
+                // arena's `N::Index`, which at a 31-bit id is `u32` on both crates. The
+                // absence of a conversion here is itself part of the parity claim — if
+                // one side's cached count went back to a fixed width while the other
+                // followed the id family, this would stop type-checking rather than
+                // silently agreeing at small lengths.
                 assert_eq!(
-                    p.len(PList::new(l)) as usize,
+                    p.len(PList::new(l)),
                     v.len(VList::new(l)),
                     "step {step}: len({l}) diverged"
                 );

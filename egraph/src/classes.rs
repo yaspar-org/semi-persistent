@@ -29,6 +29,7 @@
 //! below pins the 12 bytes so a future layout change cannot regress it silently.
 
 use crate::containers::DenseId;
+use crate::containers::IndexLike;
 use crate::containers::circular_list::{CircularList, CircularListToken};
 use crate::containers::list::{ListArena, ListArenaToken};
 use crate::containers::sparse_set::{SparseSet, SparseSetToken};
@@ -303,14 +304,19 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     /// Number of parents in a representative's use-list, O(1) (cached in the list header).
     /// Used to choose the merge survivor by parent count (the larger list survives, so the
     /// smaller absorbed set is what gets recanonicalized).
-    /// Returns `usize`, not the id word. A use-list length is a **count**, not an id
-    /// or an index into an id-keyed arena, so it is not capacity-coupled and must not
-    /// be narrowed to one: `as u32` here would silently truncate on a config whose
-    /// `Index` is wider than `u32` (`egraph/src/config.rs`), which is the overflow
-    /// class the single-`Index` discipline exists to rule out. The verus
-    /// `ListArena::len` already returns `usize`; this is a pass-through.
+    ///
+    /// Returns `usize`, widening from the arena's own `N::Index`. Widening is always sound
+    /// and this is the right place for it: the value leaves the container here and is only
+    /// ever compared against another one (`merge`, below), so nothing downstream stores it
+    /// and nothing pays for the extra bytes. Narrowing would be the error — a `as u32` on a
+    /// config whose `Index` is wider truncates a real count into a smaller one and picks
+    /// the wrong merge survivor, silently.
+    ///
+    /// `ListArena::len` itself is `N::Index`-wide, which is what removed the 4-billion cap
+    /// on a single use-list: the count is bounded by the node arena's population, so it
+    /// belongs in that arena's index type and scales with the config.
     pub fn use_list_len(&self, repr_id: T::Index) -> usize {
-        self.uses.len(self.reprs.get(repr_id).use_list)
+        self.uses.len(self.reprs.get(repr_id).use_list).as_usize()
     }
 
     /// The class's current minimum-monomial node for completion column `col` (the completion
