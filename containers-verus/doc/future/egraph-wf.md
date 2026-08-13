@@ -85,26 +85,28 @@ forest the way `ListArena` archives its model (list.rs, Phase 7). This is a
 known-shape verification; the effort estimate is an inference from the
 `ListArena` and `CircularList` proofs, not a measurement.
 
-**Status 2026-08-13 (branch egraph-wf, worktree /tmp/total-api).** Stage 0
-landed (debug monitors in production classes.rs). Stage 1 landed:
-containers-verus/src/union_find.rs, W1 proved (ghost roots + dist measure,
-path-halving find, union/union_directed, Phase-7 mark/restore). Stage 2 in
-progress in containers-verus/src/eclasses.rs: ClassData with Tagged laws,
-eg_model_wf (W2-W6 over component views, pool cell view included),
-add_singleton, merge/merge_directed (splice_absorb's distinct-rings
-precondition discharged from W2+W3 in merge_with; lemma_merge_wf), add_use,
-splice_uses (lemma_splice_uses_w5), set_min_width, set_min_monomial
-(lemma_mid_pool_wf), min_monomial, atomic/set_atomic, use_list_id,
-iter_class/iter_uses - all verified, crate green at every commit. REMAINING
-for stage 2: (a) snapshot-framing ensures on the component ops the aggregate
-calls (SparseSet add/set/remove + mark family; CircularList singleton/
-splice_absorb/set_payload + mark family; ListArena try_new_list/try_append/
-splice + mark family; UnionFind try_make_set lacks dist_snapshots framing),
-(b) eg_archive_agrees opaque clause in EClasses::wf keyed on the five
-components' snapshot stacks, (c) EClassesToken + mark/try_mark/
-is_valid_token/restore/try_restore, (d) misuse + behavioral tests, gate
-check, this doc's final status. Production untouched throughout (the goal
-forbids it); consumer migration is a later, separate step.
+**Status 2026-08-13 (branch egraph-wf).** Stages 0 through 2 are done.
+Stage 0: debug monitors on W2/W3/W6 in production's classes.rs (landed
+before this branch froze production; every later change is confined to
+containers-verus). Stage 1: containers-verus/src/union_find.rs, W1 as the
+ghost root map plus a strictly-decreasing path measure; find compresses by
+path halving; the public surface is total. Stage 2:
+containers-verus/src/eclasses.rs, the verified aggregate with W1-W6 as its
+wf: ClassData with its Tagged laws, eg_model_wf over the five components'
+views (pool cell view included), add_singleton, merge and merge_directed
+(splice_absorb's distinct-rings precondition is discharged from W2+W3
+inside merge_with - the WITNESS-PENDING argument as a theorem), add_use,
+splice_uses, the min-monomial pool family, set_atomic, verified ring and
+use-list iterators, and Phase-7 mark/restore whose joint archive also
+discharges SparseSet::restore's snapshot-wellformedness precondition.
+Behavioral and misuse tests in tests/eclasses_behavior.rs. The crate
+verifies clean with the aggregate included; the partial-api gate is
+unchanged at 35 (every new public fn is total). The public allowlist
+entries for splice_absorb and SparseSet::restore remain: they guard
+EXTERNAL callers of the components; inside the aggregate both preconditions
+are proof obligations, discharged. Consumer migration (egraph's EClasses
+onto this kernel) is deliberately out of scope here - production is frozen
+by the goal - and follows the container-migration pattern when scheduled.
 
 **Stage 2: a verified `EClasses` kernel.** Move the aggregate into
 containers-verus with W1 through W6 as its `wf()`, and prove `add_singleton`,
