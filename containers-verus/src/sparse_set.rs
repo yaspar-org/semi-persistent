@@ -48,6 +48,20 @@ pub struct SparseSetToken {
     pub(crate) indices: VecToken,
 }
 
+impl SparseSetToken {
+    pub open(crate) spec fn dense_frame_idx_spec(self) -> nat {
+        self.dense.frame_idx as nat
+    }
+
+    pub open(crate) spec fn sparse_frame_idx_spec(self) -> nat {
+        self.sparse.frame_idx as nat
+    }
+
+    pub open(crate) spec fn indices_frame_idx_spec(self) -> nat {
+        self.indices.frame_idx as nat
+    }
+}
+
 /// Semi-persistent sparse set with stable IDs.
 pub struct SparseSet<T, Idx, S, const TRACK: bool = true>
 where
@@ -78,6 +92,18 @@ where
     /// Sparse column (spec twin; fields are `pub(crate)` — privacy closeout).
     pub open(crate) spec fn indices_view(&self) -> Seq<Idx> {
         self.indices.view()
+    }
+
+    pub open(crate) spec fn sparse_snapshots_view(&self) -> Seq<Seq<Idx>> {
+        self.sparse.snapshots_view()
+    }
+
+    pub open(crate) spec fn indices_snapshots_view(&self) -> Seq<Seq<Idx>> {
+        self.indices.snapshots_view()
+    }
+
+    pub open(crate) spec fn dense_depth_spec(&self) -> nat {
+        self.dense.depth_spec()
     }
 
     pub open(crate) spec fn sparse_view(&self) -> Seq<Idx> {
@@ -112,15 +138,15 @@ where
     /// the snapshot-wf clause, which quantifies over the actual snapshots).
     pub open(crate) spec fn restore_pre_spec(&self, token: SparseSetToken) -> bool {
         &&& self.dense.is_token_valid_spec(token.dense)
-        &&& token.dense.frame_idx_spec() < self.dense.depth_spec()
+        &&& token.dense_frame_idx_spec() < self.dense.depth_spec()
         &&& self.dense.depth_spec() < u32::MAX
         &&& self.dense.fork_count_spec() + 1 <= u32::MAX
         &&& self.sparse.is_token_valid_spec(token.sparse)
-        &&& token.sparse.frame_idx_spec() < self.sparse.depth_spec()
+        &&& token.sparse_frame_idx_spec() < self.sparse.depth_spec()
         &&& self.sparse.depth_spec() < u32::MAX
         &&& self.sparse.fork_count_spec() + 1 <= u32::MAX
         &&& self.indices.is_token_valid_spec(token.indices)
-        &&& token.indices.frame_idx_spec() < self.indices.depth_spec()
+        &&& token.indices_frame_idx_spec() < self.indices.depth_spec()
         &&& self.indices.depth_spec() < u32::MAX
         &&& self.indices.fork_count_spec() + 1 <= u32::MAX
     }
@@ -128,9 +154,9 @@ where
     /// The three column snapshots a token names (spec twin for restore's
     /// contract).
     pub open(crate) spec fn snap_at(&self, token: SparseSetToken) -> (Seq<T>, Seq<Idx>, Seq<Idx>) {
-        (self.dense.snapshots_view()[token.dense.frame_idx_spec() as int],
-         self.sparse.snapshots_view()[token.sparse.frame_idx_spec() as int],
-         self.indices.snapshots_view()[token.indices.frame_idx_spec() as int])
+        (self.dense.snapshots_view()[token.dense_frame_idx_spec() as int],
+         self.sparse.snapshots_view()[token.sparse_frame_idx_spec() as int],
+         self.indices.snapshots_view()[token.indices_frame_idx_spec() as int])
     }
 
     /// Dense snapshot stack (spec twin).
@@ -344,6 +370,11 @@ where
                 &&& final(self).id_set() == old(self).id_set()
                 &&& final(self).free_pool() == old(self).free_pool()
             },
+            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
         // Total-with-documented-panic: see `get`.
         if !self.contains(id) {
@@ -403,6 +434,11 @@ where
                             final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
                         == old(self).dense_view()[
                             old(self).sparse_view()[k.as_nat() as int].as_nat() as int],
+            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -597,6 +633,11 @@ where
                                 == old(self).dense_view()[
                                     old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
             },
+            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
         // Total-with-documented-panic: see `get`.
         if !self.contains(id) {
@@ -874,8 +915,18 @@ where
         ensures
             final(self).wf(),
             final(self).dense_view() == old(self).dense_view(),
+            final(self).sparse_view() == old(self).sparse_view(),
+            final(self).indices_view() == old(self).indices_view(),
             final(self).dense_snapshots_view()
                 == old(self).dense_snapshots_view().push(old(self).dense_view()),
+            final(self).sparse_snapshots_view()
+                == old(self).sparse_snapshots_view().push(old(self).sparse_view()),
+            final(self).indices_snapshots_view()
+                == old(self).indices_snapshots_view().push(old(self).indices_view()),
+            token.dense_frame_idx_spec() == old(self).dense_depth_spec(),
+            token.sparse_frame_idx_spec() == old(self).sparse.depth_spec(),
+            token.indices_frame_idx_spec() == old(self).indices.depth_spec(),
+            final(self).dense_depth_spec() == old(self).dense_depth_spec() + 1,
     {
         let dense = self.dense.mark(shrink);
         let sparse = self.sparse.mark(shrink);
@@ -928,6 +979,11 @@ where
                                 == old(self).dense_view()[
                                     old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
             },
+            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
         if self.can_add() {
             Ok(self.add(value))
@@ -958,6 +1014,23 @@ where
         ensures
             final(self).wf(),
             r is Err ==> final(self).id_set() == old(self).id_set(),
+            r matches Ok(token) ==> {
+                &&& final(self).dense_view() == old(self).dense_view()
+                &&& final(self).sparse_view() == old(self).sparse_view()
+                &&& final(self).indices_view() == old(self).indices_view()
+                &&& final(self).dense_snapshots_view()
+                    == old(self).dense_snapshots_view().push(old(self).dense_view())
+                &&& final(self).sparse_snapshots_view()
+                    == old(self).sparse_snapshots_view().push(old(self).sparse_view())
+                &&& final(self).indices_snapshots_view()
+                    == old(self).indices_snapshots_view().push(old(self).indices_view())
+                &&& token.dense_frame_idx_spec()
+                    == final(self).dense_snapshots_view().len() - 1
+                &&& token.sparse_frame_idx_spec()
+                    == final(self).sparse_snapshots_view().len() - 1
+                &&& token.indices_frame_idx_spec()
+                    == final(self).indices_snapshots_view().len() - 1
+            },
     {
         if !TRACK {
             return Err(crate::error::ContainerError::Untracked);
@@ -995,6 +1068,14 @@ where
         ensures
             final(self).wf(),
             final(self).dense_view() == old(self).snap_at(token).0,
+            final(self).sparse_view() == old(self).snap_at(token).1,
+            final(self).indices_view() == old(self).snap_at(token).2,
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view()
+                .subrange(0, token.dense_frame_idx_spec() as int),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view()
+                .subrange(0, token.sparse_frame_idx_spec() as int),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view()
+                .subrange(0, token.indices_frame_idx_spec() as int),
     {
         // Atomic compound restore (plan 2.3): prevalidate ALL constituent
         // tokens before restoring ANY — a partially-restored sparse set

@@ -1340,6 +1340,9 @@ where
             forall|k: int| 0 <= k < old(self).nodes_view().len()
                 ==> (#[trigger] final(self).nodes_view()[k]).payload
                     == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
             final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Bound the old list length before mutating; paired with the arena bound taken
@@ -1602,6 +1605,9 @@ where
             forall|k: int| 0 <= k < old(self).nodes_view().len()
                 ==> (#[trigger] final(self).nodes_view()[k]).payload
                     == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Bound dst.len + src.len before mutating: the two lists are disjoint, so their
         // combined length fits the arena, and the arena fits `N::Index`. No node is
@@ -1812,6 +1818,14 @@ where
             final(self).model_view() == old(self).model_view(),
             token.heads_frame_idx_spec() == old(self).heads_depth_spec(),
             token.nodes_frame_idx_spec() == old(self).nodes_depth_spec(),
+            final(self).heads_snapshots_view()
+                == old(self).heads_snapshots_view().push(old(self).heads_view()),
+            final(self).nodes_snapshots_view()
+                == old(self).nodes_snapshots_view().push(old(self).nodes_view()),
+            final(self).model_snapshots_view()
+                == old(self).model_snapshots_view().push(old(self).model_view()),
+            token.heads_frame_idx_spec() == final(self).heads_snapshots_view().len() - 1,
+            token.nodes_frame_idx_spec() == final(self).nodes_snapshots_view().len() - 1,
     {
         let heads = self.heads.mark(shrink);
         let nodes = self.nodes.mark(shrink);
@@ -1894,6 +1908,9 @@ where
             },
             r is Err ==> final(self).model_view() == old(self).model_view()
                 && final(self).nodes_view() == old(self).nodes_view(),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         if !(l.to_usize() < self.heads.store.data.len()) {
             return Err(crate::error::ContainerError::IndexOutOfBounds);
@@ -1938,8 +1955,20 @@ where
             final(self).wf(),
             r matches Ok(token) ==> {
                 &&& final(self).model_view() == old(self).model_view()
+                &&& final(self).heads_view() == old(self).heads_view()
+                &&& final(self).nodes_view() == old(self).nodes_view()
                 &&& token.heads_frame_idx_spec() == old(self).heads_depth_spec()
                 &&& token.nodes_frame_idx_spec() == old(self).nodes_depth_spec()
+                &&& final(self).heads_snapshots_view()
+                    == old(self).heads_snapshots_view().push(old(self).heads_view())
+                &&& final(self).nodes_snapshots_view()
+                    == old(self).nodes_snapshots_view().push(old(self).nodes_view())
+                &&& final(self).model_snapshots_view()
+                    == old(self).model_snapshots_view().push(old(self).model_view())
+                &&& token.heads_frame_idx_spec()
+                    == final(self).heads_snapshots_view().len() - 1
+                &&& token.nodes_frame_idx_spec()
+                    == final(self).nodes_snapshots_view().len() - 1
             },
             r is Err ==> final(self).model_view() == old(self).model_view(),
     {
@@ -2010,6 +2039,12 @@ where
             // The restored model is the one archived at that mark (Phase 7:
             // recovered internally, no caller-supplied ghost).
             final(self).model_view() == old(self).model_snapshots_view()[token.heads_frame_idx_spec() as int],
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view()
+                .subrange(0, token.heads_frame_idx_spec() as int),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view()
+                .subrange(0, token.nodes_frame_idx_spec() as int),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view()
+                .subrange(0, token.heads_frame_idx_spec() as int),
     {
         // Atomic compound restore (plan 2.3): prevalidate BOTH constituent
         // tokens before restoring either — heads rolled back without nodes
@@ -2184,6 +2219,9 @@ where
             forall|k: int| 0 <= k < old(self).nodes_view().len()
                 ==> (#[trigger] final(self).nodes_view()[k]).payload
                     == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
             final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Runtime guard: node-id headroom before allocating.
@@ -2298,6 +2336,9 @@ where
                 && dst.id_nat() != src.id_nat())
                 ==> final(self).model_view() == old(self).model_view()
                     && final(self).nodes_view() == old(self).nodes_view(),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         proof { dst.lemma_as_nat_is_id_nat(); src.lemma_as_nat_is_id_nat(); }  // prod-parity
         let du = dst.as_usize();

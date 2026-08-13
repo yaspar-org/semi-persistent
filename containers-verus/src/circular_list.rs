@@ -431,6 +431,7 @@ where T: Sized + Copy + core::default::Default {
             final(self).model_view() == old(self).model_view(),
             final(self).payload_seq() == old(self).payload_seq().update(i.id_nat() as int, payload),
             final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Total-with-documented-panic: explicit node-bound branch.
         if !(i.to_usize() < self.entries.store.data.len()) {
@@ -487,6 +488,9 @@ where T: Sized + Copy + core::default::Default {
                 && final(self).payload_seq() == old(self).payload_seq().push(payload),
             r is Err ==> final(self).model_view() == old(self).model_view()
                 && final(self).payload_seq() == old(self).payload_seq(),
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+
             r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
     {
         if self.entries.can_push() {
@@ -514,6 +518,8 @@ where T: Sized + Copy + core::default::Default {
             final(self).model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
             final(self).payload_seq() == old(self).payload_seq().push(payload),
             final(self).payload_seq()[nid.id_nat() as int] == payload,
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Runtime guard for UNVERIFIED callers on the id-range precondition:
         // the sibling word-headroom clause is already trapped by `Vec::len`'s
@@ -851,6 +857,8 @@ where T: Sized + Copy + core::default::Default {
                 &&& (forall|c: int| 0 <= c < final(self).model_view().len() && c != cs && c != ca
                         ==> #[trigger] final(self).model_view()[c] == old(self).model_view()[c])
             }),
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Body is `splice`'s verbatim except for the absorbed cell's payload;
         // see `splice` for the commentary on each step.
@@ -923,8 +931,12 @@ where T: Sized + Copy + core::default::Default {
             final(self).next_seq() == old(self).next_seq(),
             final(self).n_spec() == old(self).n_spec(),
             final(self).model_view() == old(self).model_view(),
+            final(self).payload_seq() == old(self).payload_seq(),
             final(self).entries_snapshots_view()
                 == old(self).entries_snapshots_view().push(old(self).entries_view()),
+            final(self).model_snapshots_view()
+                == old(self).model_snapshots_view().push(old(self).model_view()),
+            token.frame_idx_spec() == final(self).entries_snapshots_view().len() - 1,
     {
         let entries = self.entries.mark(shrink);
         // Archive the live ring partition alongside the vec snapshot (Phase 7).
@@ -992,6 +1004,13 @@ where T: Sized + Copy + core::default::Default {
                 &&& final(self).next_seq() == old(self).next_seq()
                 &&& final(self).n_spec() == old(self).n_spec()
                 &&& final(self).model_view() == old(self).model_view()
+                &&& final(self).payload_seq() == old(self).payload_seq()
+                &&& final(self).entries_snapshots_view()
+                    == old(self).entries_snapshots_view().push(old(self).entries_view())
+                &&& final(self).model_snapshots_view()
+                    == old(self).model_snapshots_view().push(old(self).model_view())
+                &&& token.frame_idx_spec()
+                    == final(self).entries_snapshots_view().len() - 1
             },
             r is Err ==> final(self).model_view() == old(self).model_view()
                 && final(self).next_seq() == old(self).next_seq(),
@@ -1018,7 +1037,13 @@ where T: Sized + Copy + core::default::Default {
             r is Ok ==> final(self).entries_view()
                 == old(self).entries_snapshots_view()[token.frame_idx_spec() as int]
                 && final(self).model_view()
-                    == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
+                    == old(self).model_snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).entries_snapshots_view()
+                    == old(self).entries_snapshots_view()
+                        .subrange(0, token.frame_idx_spec() as int)
+                && final(self).model_snapshots_view()
+                    == old(self).model_snapshots_view()
+                        .subrange(0, token.frame_idx_spec() as int),
             r is Err ==> final(self).model_view() == old(self).model_view()
                 && final(self).next_seq() == old(self).next_seq(),
             r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
@@ -1052,6 +1077,10 @@ where T: Sized + Copy + core::default::Default {
                 == old(self).entries_snapshots_view()[token.frame_idx_spec() as int],
             // Restored to the ring partition archived at that mark (Phase 7).
             final(self).model_view() == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
+            final(self).entries_snapshots_view()
+                == old(self).entries_snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            final(self).model_snapshots_view()
+                == old(self).model_snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
         // Runtime guard (plan 2.3): full restorable predicate before mutation.
         crate::guard::check_precondition(

@@ -260,6 +260,7 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 &&& final(self).parent_snapshots_view() == old(self).parent_snapshots_view()
                 &&& final(self).rank_snapshots_view() == old(self).rank_snapshots_view()
                 &&& final(self).roots_snapshots_view() == old(self).roots_snapshots_view()
+                &&& final(self).dist_snapshots_view() == old(self).dist_snapshots_view()
             },
             r is Err ==> *final(self) == *old(self),
             r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
@@ -889,6 +890,12 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             token.rank_frame_idx_spec() == old(self).rank_depth_spec(),
             final(self).parent_depth_spec() == old(self).parent_depth_spec() + 1,
             final(self).rank_depth_spec() == old(self).rank_depth_spec() + 1,
+            final(self).roots_snapshots_view()
+                == old(self).roots_snapshots_view().push(old(self).roots_view()),
+            final(self).parent_snapshots_view()
+                == old(self).parent_snapshots_view().push(old(self).parent_view()),
+            token.parent_frame_idx_spec()
+                == final(self).roots_snapshots_view().len() - 1,
     {
         let parent_tok = self.parent.mark(shrink);
         let rank_tok = self.rank.mark(shrink);
@@ -937,8 +944,15 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             final(self).wf(),
             r matches Ok(token) ==> {
                 &&& final(self).roots_view() == old(self).roots_view()
+                &&& final(self).parent_view() == old(self).parent_view()
                 &&& token.parent_frame_idx_spec() == old(self).parent_depth_spec()
                 &&& token.rank_frame_idx_spec() == old(self).rank_depth_spec()
+                &&& final(self).roots_snapshots_view()
+                    == old(self).roots_snapshots_view().push(old(self).roots_view())
+                &&& final(self).parent_snapshots_view()
+                    == old(self).parent_snapshots_view().push(old(self).parent_view())
+                &&& token.parent_frame_idx_spec()
+                    == final(self).roots_snapshots_view().len() - 1
             },
             r is Err ==> final(self).roots_view() == old(self).roots_view(),
     {
@@ -974,6 +988,10 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 == old(self).rank_snapshots_view()[token.rank_frame_idx_spec() as int],
             final(self).roots_view()
                 == old(self).roots_snapshots_view()[token.parent_frame_idx_spec() as int],
+            final(self).roots_snapshots_view() == old(self).roots_snapshots_view()
+                .subrange(0, token.parent_frame_idx_spec() as int),
+            final(self).parent_snapshots_view() == old(self).parent_snapshots_view()
+                .subrange(0, token.parent_frame_idx_spec() as int),
     {
         // Atomic compound restore: prevalidate BOTH constituent tokens before
         // restoring either (a parent column rolled back without its rank
@@ -1038,7 +1056,9 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         ensures
             final(self).wf(),
             r is Ok ==> final(self).roots_view()
-                == old(self).roots_snapshots_view()[token.parent_frame_idx_spec() as int],
+                == old(self).roots_snapshots_view()[token.parent_frame_idx_spec() as int]
+                && final(self).roots_snapshots_view() == old(self).roots_snapshots_view()
+                    .subrange(0, token.parent_frame_idx_spec() as int),
             r is Err ==> final(self).roots_view() == old(self).roots_view(),
             r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
     {
