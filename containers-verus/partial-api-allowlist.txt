@@ -2,14 +2,7 @@
 # drain list (doc/future/total-api-plan.md). May only shrink.
 append_only_vec.rs::get
 bplus.rs::from_sorted
-bplus.rs::insert
-bplus.rs::key
-bplus.rs::mark
 bplus.rs::new
-bplus.rs::restore
-bplus.rs::seek
-bplus.rs::seek_first
-bplus.rs::step
 bplus_layout.rs::child
 bplus_layout.rs::first_key
 bplus_layout.rs::internal_insert_at
@@ -50,7 +43,6 @@ map.rs::new
 opt.rs::get
 sorted_vec_cursor.rs::key
 sorted_vec_cursor.rs::new
-sorted_vec_cursor.rs::seek
 sparse_set.rs::restore
 sparse_set.rs::with_store
 tagged.rs::clear_tag
@@ -58,8 +50,5 @@ tagged.rs::from_repr
 tagged.rs::set_tag
 tagged.rs::tag
 vec.rs::get
-vec.rs::is_empty
-vec.rs::iter
-vec.rs::len
 vec.rs::next
 vec.rs::with_store
