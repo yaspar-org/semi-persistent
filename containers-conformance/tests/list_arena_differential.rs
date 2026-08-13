@@ -34,7 +34,7 @@ fn list_arena_trace(seed: u64, steps: usize) {
         match rng.below(100) {
             0..=14 => {
                 let pl = p.new_list();
-                let vl = v.new_list();
+                let vl = v.try_new_list().expect("within id space");
                 assert_eq!(
                     pl.raw() as usize,
                     vl.raw() as usize,
@@ -50,10 +50,12 @@ fn list_arena_trace(seed: u64, steps: usize) {
                 let val = (rng.next() as u32) & 0x7FFF_FFFF;
                 if rng.below(2) == 0 {
                     p.append(PList::new(l), PElem::new(val));
-                    v.append(VList::new(l), VElem::new(val));
+                    v.try_append(VList::new(l), VElem::new(val))
+                        .expect("within id space");
                 } else {
                     p.prepend(PList::new(l), PElem::new(val));
-                    v.prepend(VList::new(l), VElem::new(val));
+                    v.try_prepend(VList::new(l), VElem::new(val))
+                        .expect("within id space");
                 }
                 nodes_pushed += 1;
             }
@@ -94,7 +96,9 @@ fn list_arena_trace(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::ShrinkPolicy::Never);
+                let tv = v
+                    .try_mark(verus::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 marks.push((tp, tv, lists));
             }
             _ => {
@@ -104,7 +108,7 @@ fn list_arena_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv, count_at_mark) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 lists = count_at_mark;
             }

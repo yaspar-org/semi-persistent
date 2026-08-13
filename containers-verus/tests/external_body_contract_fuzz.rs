@@ -74,10 +74,12 @@ fn cross_container_token_rejected() {
     let mut a = V::new();
     let mut b = V::new();
     for i in 0..10u32 {
-        a.push(i);
-        b.push(i + 100);
+        a.try_push(i).expect("push: within index word");
+        b.try_push(i + 100).expect("push: within index word");
     }
-    let token_a = a.mark(ShrinkPolicy::Never);
+    let token_a = a
+        .try_mark(ShrinkPolicy::Never)
+        .expect("mark: depth bounded by this harness");
     // a's own token is valid on a.
     assert!(a.is_valid_token(&token_a), "a's token should be valid on a");
     // but the SAME token must be rejected by b (different container id).
@@ -156,9 +158,11 @@ fn byte_counters_are_consistent() {
             prev_tracking = tracking;
 
             if rng.next().is_multiple_of(5) {
-                let _ = v.mark(ShrinkPolicy::Never);
+                let _ = v
+                    .try_mark(ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
             } else {
-                v.push(rng.next());
+                v.try_push(rng.next()).expect("push: within index word");
             }
         }
         println!(
@@ -189,12 +193,12 @@ fn push_overflow_traps_for_small_index() {
     let mut v = V::new();
     // 255 pushes are fine: lengths 0..=254 each satisfy `len + 1 < 256`.
     for i in 0..255u32 {
-        v.push(i);
+        v.try_push(i).expect("push: within index word");
     }
     // The 256th push (at len 255) violates the erased requires; like
     // production, the push itself completes (data length 256)...
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        v.push(999);
+        v.try_push(999).expect("push: within index word");
         // ...and the NEXT length read traps instead of silently wrapping
         // (production: `try_from_usize(256).expect("len overflow")`).
         let _ = v.len();
@@ -211,8 +215,8 @@ fn push_overflow_traps_for_small_index() {
 fn restores_remaining_tracks_fork_history() {
     type V = SpVec<u32, u32, ParallelStore<u32, u32>, true>;
     let mut v = V::new();
-    v.push(1);
-    v.push(2);
+    v.try_push(1).expect("push: within index word");
+    v.try_push(2).expect("push: within index word");
 
     // Fresh container: no restores taken yet, so full u32 headroom.
     let start = v.restores_remaining();
@@ -220,9 +224,11 @@ fn restores_remaining_tracks_fork_history() {
 
     // Each restore consumes exactly one unit of headroom.
     for k in 1..=5usize {
-        let t = v.mark(ShrinkPolicy::Never);
-        v.push(100 + k as u32);
-        v.restore(t);
+        let t = v
+            .try_mark(ShrinkPolicy::Never)
+            .expect("mark: depth bounded by this harness");
+        v.try_push(100 + k as u32).expect("push: within index word");
+        v.try_restore(t).expect("restore: own token");
         assert_eq!(
             v.restores_remaining(),
             start - k,
@@ -272,13 +278,15 @@ fn shrink_preserves_vec_contents() {
         // ParallelStore-backed
         let mut vp: VP = VP::new();
         for _ in 0..keep + excess {
-            vp.push(next());
+            vp.try_push(next()).expect("push: within index word");
         }
         for _ in 0..excess {
             vp.pop();
         }
         let before: Vec<u64> = (0..keep as u32).map(|i| vp.get_index(i)).collect();
-        let _tok = vp.mark(policy); // shrink_vec_capacity fires inside mark
+        let _tok = vp
+            .try_mark(policy)
+            .expect("mark: depth bounded by this harness"); // shrink_vec_capacity fires inside mark
         let after: Vec<u64> = (0..keep as u32).map(|i| vp.get_index(i)).collect();
         assert_eq!(
             before, after,
@@ -290,13 +298,16 @@ fn shrink_preserves_vec_contents() {
         let keep_i = (next() % 100) as usize;
         let mut vi: VI = VI::new();
         for _ in 0..keep_i + excess {
-            vi.push((next() as u32) & 0x7FFF_FFFF);
+            vi.try_push((next() as u32) & 0x7FFF_FFFF)
+                .expect("push: within index word");
         }
         for _ in 0..excess {
             vi.pop();
         }
         let before: Vec<u32> = (0..keep_i as u32).map(|i| vi.get_index(i)).collect();
-        let _tok = vi.mark(policy);
+        let _tok = vi
+            .try_mark(policy)
+            .expect("mark: depth bounded by this harness");
         let after: Vec<u32> = (0..keep_i as u32).map(|i| vi.get_index(i)).collect();
         assert_eq!(
             before, after,
@@ -327,12 +338,14 @@ fn shrink_preserves_aov_contents() {
         let mut expect = Vec::with_capacity(n);
         for _ in 0..n {
             let x = next();
-            v.push(x);
+            v.try_push(x).expect("push: within index word");
             expect.push(x);
         }
         // shrink_aov_capacity fires inside mark (AOV variant condition
         // `cap > len*factor + headroom`, target `len + headroom`).
-        let _tok = v.mark(ShrinkPolicy::IfOverallocated { factor, headroom });
+        let _tok = v
+            .try_mark(ShrinkPolicy::IfOverallocated { factor, headroom })
+            .expect("mark: depth bounded by this harness");
         assert_eq!(v.len(), expect.len(), "round {round}: length changed");
         for (i, e) in expect.iter().enumerate() {
             assert_eq!(

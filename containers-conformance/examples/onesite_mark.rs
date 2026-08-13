@@ -26,7 +26,7 @@ const VEC_TOUCHES: usize = 50_000;
 macro_rules! churn {
     ($v:expr, $policy:expr) => {{
         let v = $v;
-        let tok = v.mark($policy);
+        let tok = v.try_mark($policy).expect("mark");
         let mut x: u64 = 0x9E3779B97F4A7C15;
         for _ in 0..VEC_TOUCHES {
             x ^= x << 13;
@@ -35,7 +35,7 @@ macro_rules! churn {
             let idx = (x % VEC_N as u64) as u32;
             v.set(idx, x);
         }
-        v.restore(tok);
+        v.try_restore(tok).expect("restore");
         v.len() as usize
     }};
 }
@@ -49,7 +49,7 @@ fn time(w: usize) -> f64 {
         if w == 0 {
             let mut v: prod::VecP<u64, u32, true> = prod::VecP::new();
             for i in 0..VEC_N {
-                v.push(i as u64);
+                v.try_push(i as u64).expect("push");
             }
             let t = std::time::Instant::now();
             black_box(churn!(&mut v, prod::ShrinkPolicy::Never));
@@ -60,7 +60,7 @@ fn time(w: usize) -> f64 {
         } else {
             let mut v: VV = VV::new();
             for i in 0..VEC_N {
-                v.push(i as u64);
+                v.try_push(i as u64).expect("push: within index word");
             }
             let t = std::time::Instant::now();
             black_box(churn!(&mut v, verus::vec::ShrinkPolicy::Never));

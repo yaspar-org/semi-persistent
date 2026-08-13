@@ -47,6 +47,14 @@ impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRAC
     /// # Panics
     ///
     /// If the log has no room left in `I`; see [`AppendOnlyVec::push`].
+    /// Total-API twin (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_insert(&mut self, key: K, val: V) -> Result<I, &'static str> {
+        Ok(self.insert(key, val))
+    }
+
     pub fn insert(&mut self, key: K, val: V) -> I {
         let id = self.log.push((key.clone(), val));
         self.index.insert(key, id);
@@ -106,12 +114,29 @@ impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRAC
         self.index.contains_key(key)
     }
 
+    /// Total-API twin (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_mark(&mut self, policy: super::ShrinkPolicy) -> Result<MapToken, &'static str> {
+        Ok(self.mark(policy))
+    }
+
     pub fn mark(&mut self, shrink: super::ShrinkPolicy) -> MapToken {
         MapToken(self.log.mark(shrink))
     }
 
     /// Restore to the given token. Truncates the log and rebuilds the
     /// HashMap from surviving entries.
+    /// Total-API twin (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_restore(&mut self, token: MapToken) -> Result<(), &'static str> {
+        self.restore(token);
+        Ok(())
+    }
+
     pub fn restore(&mut self, token: MapToken) {
         self.log.restore(token.0);
         self.rebuild_index();

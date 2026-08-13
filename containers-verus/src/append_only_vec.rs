@@ -165,7 +165,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// returned index: `wf` has to hold on exit, and it is what makes `len` and
     /// `mark` infallible. Requiring only `view().len() < I::max_nat()` would admit
     /// a final push whose successor length falls outside `I`.
-    pub fn push(&mut self, val: T) -> (idx: I)
+    pub(crate) fn push(&mut self, val: T) -> (idx: I)
         requires
             old(self).wf(),
             old(self).view().len() + 1 < I::max_nat(),
@@ -222,7 +222,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// Mark: save the current length, returning a token. The new frame records
     /// `data.len()` (>= every prior frame, since data only grew), keeping
     /// `frames` monotone.
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
             old(self).wf(),
             // TRACK gate (production parity, plan 2.4).
@@ -425,7 +425,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// Restore to the state the token names: truncate `data` to the saved
     /// length and the frame/snapshot stacks to the target, then record the
     /// branch cut. Reproduces `snapshots[token.frame_idx]` exactly.
-    pub fn restore(&mut self, token: VecToken)
+    pub(crate) fn restore(&mut self, token: VecToken)
         requires
             old(self).wf(),
             TRACK,

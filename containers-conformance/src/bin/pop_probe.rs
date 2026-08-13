@@ -9,7 +9,7 @@ fn main() {
     for _ in 0..500 {
         let mut v: V = V::new();
         for i in 0..100_000u64 {
-            v.push(i);
+            v.try_push(i).expect("push: within index word");
         }
         let t = std::time::Instant::now();
         while let Some(x) = v.pop() {

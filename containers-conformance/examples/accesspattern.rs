@@ -27,12 +27,12 @@ macro_rules! arm {
     ($ty:ty, $policy:expr, $random:expr) => {{
         let mut v = <$ty>::new();
         for i in 0..N {
-            v.push((i as u32) & 0x7FFF_FFFF);
+            v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
         }
         // Criterion reuses one vec across iterations, so time a steady-state
         // mark/set/restore cycle on an already-materialized capture bitmap.
         let t = std::time::Instant::now();
-        let tok = v.mark($policy);
+        let tok = v.try_mark($policy).expect("mark");
         if $random {
             let mut x: u64 = 0x9E3779B97F4A7C15;
             for _ in 0..(N / 2) {
@@ -46,7 +46,7 @@ macro_rules! arm {
                 v.set(i, (i as u32 + 999) & 0x7FFF_FFFF);
             }
         }
-        v.restore(tok);
+        v.try_restore(tok).expect("restore");
         let us = t.elapsed().as_nanos() as f64 / 1000.0;
         black_box(v.len());
         us

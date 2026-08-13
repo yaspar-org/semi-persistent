@@ -10,7 +10,8 @@ use semi_persistent_egraph::lca::{LcaTable, LcaTableCompact};
 /// Each node i > 0 gets a random parent in 0..i.
 fn random_tree(n: usize, seed: u64) -> VecI<ENodeId, u32, false> {
     let mut pp = VecI::<ENodeId, u32, false>::new();
-    pp.push(ENodeId::new(0)); // root
+    pp.try_push(ENodeId::new(0))
+        .expect("push: within index word"); // root
     let mut rng = seed;
     for i in 1..n {
         // xorshift64
@@ -18,7 +19,8 @@ fn random_tree(n: usize, seed: u64) -> VecI<ENodeId, u32, false> {
         rng ^= rng >> 7;
         rng ^= rng << 17;
         let parent = (rng as usize) % i;
-        pp.push(ENodeId::new(parent as u32));
+        pp.try_push(ENodeId::new(parent as u32))
+            .expect("push: within index word");
     }
     pp
 }

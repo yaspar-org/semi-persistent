@@ -111,7 +111,8 @@ fn verus_build<const TRACK: bool>() -> VerusRing<TRACK> {
     for i in 0..RING_N {
         // The class key is the node's own index word, via the id — never a cast to
         // a fixed width.
-        ring.add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()));
+        ring.try_add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()))
+            .expect("within id space");
     }
     ring
 }

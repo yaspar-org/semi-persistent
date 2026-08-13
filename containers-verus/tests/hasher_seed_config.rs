@@ -311,7 +311,7 @@ fn child_configured_seed_reaches_spmap() {
 
     let mut m: SpMap<u64, u64, usize, true> = SpMap::new();
     for i in 0..200u64 {
-        m.insert(i, i * 3);
+        m.try_insert(i, i * 3).expect("insert: within index word");
     }
     // Behaviour is seed-independent by design, so this asserts CORRECTNESS under
     // a non-default seed rather than a seed-specific output: a wrong seed

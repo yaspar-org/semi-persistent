@@ -42,7 +42,7 @@ fn prod_loop() -> u32 {
 fn verus_loop() -> u32 {
     let mut v: VV = VV::new();
     for i in 0..N {
-        v.push(i as u64);
+        v.try_push(i as u64).expect("push: within index word");
     }
     v.len()
 }

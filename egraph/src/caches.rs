@@ -169,7 +169,7 @@ impl<
         let node = FixedArityNode::new(global_id, op, children);
         let h = self.hash_content(&op, &children);
         let lid = self.nodes.len();
-        self.nodes.push(node);
+        self.nodes.try_push(node).expect("push: within index word");
         self.index.insert(
             StoredKey {
                 content_hash: h,
@@ -227,7 +227,8 @@ impl<
         if let Some(hist) = &mut self.history
             && !node.has_history()
         {
-            hist.push(self.nodes.get(local_id));
+            hist.try_push(self.nodes.get(local_id))
+                .expect("push: within index word");
         }
 
         self.index.remove(&StoredKey {
@@ -438,13 +439,13 @@ impl<
     pub fn insert(&mut self, global_id: G, op: O, elems: &[C]) -> L {
         let start = self.children.len();
         for &e in elems {
-            self.children.push(e);
+            self.children.try_push(e).expect("push: within index word");
         }
         let end = self.children.len();
         let node = VariableArityNode::make(global_id, op, start, end);
         let h = self.hash_content(&op, elems);
         let lid = self.nodes.len();
-        self.nodes.push(node);
+        self.nodes.try_push(node).expect("push: within index word");
         self.index.insert(
             StoredKey {
                 content_hash: h,
@@ -516,10 +517,11 @@ impl<
         {
             let hist_start = hc.len();
             for i in start..end {
-                hc.push(self.children.get(i));
+                hc.try_push(self.children.get(i))
+                    .expect("push: within index word");
             }
             let hist_end = hc.len();
-            hn.push(VariableArityNode::make(
+            hn.try_push(VariableArityNode::make(
                 node.global_id(),
                 node.op(),
                 hist_start,
@@ -731,7 +733,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
         let node = LitNode::new(global_id, op, lit);
         let h = self.hash_content(&op, &lit);
         let lid = self.nodes.len();
-        self.nodes.push(node);
+        self.nodes.try_push(node).expect("push: within index word");
         self.index.insert(
             StoredKey {
                 content_hash: h,

@@ -57,7 +57,7 @@ fn bench_push_only(c: &mut Criterion) {
         b.iter(|| {
             let mut v: V = V::new();
             for i in 0..N {
-                v.push(i as u64);
+                v.try_push(i as u64).expect("push: within index word");
             }
             black_box(v.len())
         })
@@ -92,7 +92,7 @@ fn bench_pop_only(c: &mut Criterion) {
             || {
                 let mut v: V = V::new();
                 for i in 0..N {
-                    v.push(i as u64);
+                    v.try_push(i as u64).expect("push: within index word");
                 }
                 v
             },

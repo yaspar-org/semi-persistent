@@ -48,7 +48,7 @@ fn vec_trace_inline(seed: u64, steps: usize) {
             0..=39 => {
                 let val = rng.next() as u32;
                 p.push(val);
-                v.push(val);
+                v.try_push(val).expect("push: within index word");
                 len += 1;
             }
             40..=64 => {
@@ -78,7 +78,9 @@ fn vec_trace_inline(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tv = v
+                    .try_mark(verus::vec::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 marks.push((tp, tv));
             }
             _ => {
@@ -88,7 +90,7 @@ fn vec_trace_inline(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 len = p.len() as usize;
             }
@@ -131,7 +133,7 @@ fn vec_trace_parallel(seed: u64, steps: usize) {
             0..=39 => {
                 let val = rng.next() as u32;
                 p.push(val);
-                v.push(val);
+                v.try_push(val).expect("push: within index word");
                 len += 1;
             }
             40..=64 => {
@@ -160,7 +162,8 @@ fn vec_trace_parallel(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -170,7 +173,7 @@ fn vec_trace_parallel(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 len = p.len() as usize;
             }
@@ -206,7 +209,7 @@ fn aov_trace(seed: u64, steps: usize) {
             0..=49 => {
                 let val = rng.next() as u32;
                 let ip = p.push(val);
-                let iv = v.push(val);
+                let iv = v.try_push(val).expect("push: within index word");
                 assert_eq!(ip, iv, "step {step}: push index diverged");
             }
             50..=79 => {
@@ -222,7 +225,8 @@ fn aov_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -232,7 +236,7 @@ fn aov_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
             }
         }
@@ -271,7 +275,7 @@ fn map_trace(seed: u64, steps: usize) {
                 let key = rng.below(50) as u32;
                 let val = rng.next() as u32;
                 let ip = p.insert(key, val);
-                let iv = v.insert(key, val);
+                let iv = v.try_insert(key, val).expect("insert: within index word");
                 assert_eq!(ip, iv, "step {step}: insert log-index diverged");
             }
             45..=74 => {
@@ -299,7 +303,8 @@ fn map_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -309,7 +314,7 @@ fn map_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
             }
         }
@@ -636,7 +641,7 @@ fn map_string_trace(seed: u64, steps: usize) {
                 let key = format!("k{}", rng.below(40));
                 let val = rng.next() as u32;
                 let ip = p.insert(key.clone(), val);
-                let iv = v.insert(key, val);
+                let iv = v.try_insert(key, val).expect("insert: within index word");
                 assert_eq!(ip, iv, "step {step}: insert log-index diverged");
             }
             45..=74 => {
@@ -655,7 +660,8 @@ fn map_string_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -665,7 +671,7 @@ fn map_string_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
             }
         }
@@ -714,7 +720,7 @@ fn sparse_set_trace(seed: u64, steps: usize) {
             0..=39 => {
                 let val = rng.next() as u32;
                 let ip = p.add(val);
-                let iv = v.add(val);
+                let iv = v.try_add(val).expect("add: within id space");
                 assert_eq!(ip, iv, "step {step}: add returned different ids");
                 live_ids.push(ip);
             }
@@ -746,7 +752,8 @@ fn sparse_set_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                     live_ids.clone(),
                 ));
             }
@@ -818,7 +825,7 @@ fn bytes_trace(seed: u64, steps: usize) {
             0..=44 => {
                 let val = rng.next();
                 p.push(val);
-                v.push(val);
+                v.try_push(val).expect("push: within index word");
                 len += 1;
             }
             45..=69 => {
@@ -840,7 +847,9 @@ fn bytes_trace(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tv = v
+                    .try_mark(verus::vec::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 marks.push((tp, tv));
             }
             _ => {
@@ -850,7 +859,7 @@ fn bytes_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 len = p.len() as usize;
             }
@@ -922,7 +931,8 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
         true,
     > = verus::CircularList::new();
     for i in 0..N {
-        v.add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()));
+        v.try_add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()))
+            .expect("within id space");
     }
 
     // Both sides start with identically-grown backing vectors, so tracking

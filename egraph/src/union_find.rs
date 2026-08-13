@@ -159,13 +159,16 @@ impl<T: DenseId, const TRACK: bool, const PROOFS: bool> UnionFind<T, TRACK, PROO
             id.to_usize() == self.parent_fast.len().as_usize(),
             "UnionFind::make_set: id must be sequential"
         );
-        self.parent_fast.push(id);
-        self.rank.push(0);
+        self.parent_fast
+            .try_push(id)
+            .expect("push: within index word");
+        self.rank.try_push(0).expect("push: within index word");
         if let Some(pp) = &mut self.parent_proof {
-            pp.push(id);
+            pp.try_push(id).expect("push: within index word");
         }
         if let Some(j) = &mut self.justification {
-            j.push(Justification::<T>::Filler);
+            j.try_push(Justification::<T>::Filler)
+                .expect("push: within index word");
         }
     }
 
