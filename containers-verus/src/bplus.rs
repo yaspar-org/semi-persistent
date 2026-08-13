@@ -6234,6 +6234,64 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     /// key was newly added. Arena capacity is discharged internally (M6);
     /// the only caller obligations are the key-count headroom and the static
     /// bit-stealing fact.
+    /// Total insert (total-API plan phase 3).
+    pub fn try_insert(&mut self, key: K) -> (r: Result<bool, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(added) ==> added == !old(self).model().contains(key.id_nat())
+                && final(self).model().to_set() == old(self).model().to_set().insert(key.id_nat()),
+            r is Err ==> final(self).model() == old(self).model(),
+    {
+        if !K::bit_stealing() {
+            return Err(crate::error::ContainerError::UnsupportedKey);
+        }
+        if !(self.nkeys < usize::MAX) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        Ok(self.insert(key))
+    }
+
+    /// Total bulk load: the ascending-distinct requirement becomes an O(n)
+    /// check refusing as `NotSorted` — the cost argument is n against the
+    /// build's n log n.
+    pub fn try_from_sorted(keys: &[K]) -> (r: Result<Self, crate::error::ContainerError>)
+        ensures
+            r matches Ok(t) ==> t.wf() && t.model().len() == keys@.len(),
+    {
+        if !K::bit_stealing() {
+            return Err(crate::error::ContainerError::UnsupportedKey);
+        }
+        if !(keys.len() < usize::MAX) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        if keys.len() > 1 {
+            let mut i: usize = 1;
+            while i < keys.len()
+                invariant
+                    1 <= i <= keys@.len(),
+                    keys@.len() < usize::MAX,
+                    forall|a: int, b: int| 0 <= a < b < i
+                        ==> (#[trigger] keys@[a]).id_nat() < (#[trigger] keys@[b]).id_nat(),
+                decreases keys@.len() - i,
+            {
+                if !(keys[i - 1].to_usize() < keys[i].to_usize()) {
+                    return Err(crate::error::ContainerError::NotSorted);
+                }
+                proof {
+                    assert forall|a: int, b: int| 0 <= a < b < i + 1
+                        implies (#[trigger] keys@[a]).id_nat() < (#[trigger] keys@[b]).id_nat() by {
+                        if b == i as int && a < i - 1 {
+                            assert(keys@[a].id_nat() < keys@[i - 1].id_nat());
+                        }
+                    }
+                }
+                i += 1;
+            }
+        }
+        Ok(Self::from_sorted(keys))
+    }
+
     pub fn insert(&mut self, key: K) -> (added: bool)
         requires
             old(self).wf(),

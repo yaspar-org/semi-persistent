@@ -272,6 +272,8 @@ macro_rules! define_id_impl {
 
             open spec fn is_bit_stealing() -> bool { true }
 
+            fn bit_stealing() -> (b: bool) { true }
+
             proof fn lemma_id_bound_word_relation() {}
         }
 

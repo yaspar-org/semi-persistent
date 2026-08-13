@@ -297,6 +297,13 @@ pub trait DenseId:
     /// arena. `is_bit_stealing()` selects the arm so generic tree code can branch.
     spec fn is_bit_stealing() -> bool;
 
+    /// Exec twin of `is_bit_stealing` (total-API plan phase 3): a static
+    /// type property, so every impl is a literal and the check const-folds;
+    /// it exists so the B+tree's total shell can refuse a non-bit-stealing
+    /// key at runtime instead of carrying a `requires`.
+    fn bit_stealing() -> (b: bool)
+        ensures b == Self::is_bit_stealing();
+
     proof fn lemma_id_bound_word_relation()
         ensures
             if Self::is_bit_stealing() {
@@ -414,6 +421,8 @@ impl DenseId for DenseUsize {
     }
 
     open spec fn is_bit_stealing() -> bool { false }   // full-range id
+
+    fn bit_stealing() -> (b: bool) { false }
 
     proof fn lemma_id_bound_word_relation() {
         // id_bound == usize::MAX + 1 == <usize as IndexLike>::max_nat() (the `== ` arm).

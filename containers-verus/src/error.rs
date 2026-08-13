@@ -27,6 +27,12 @@ pub enum ContainerError {
     Untracked,
     /// An index beyond the current length.
     IndexOutOfBounds,
+    /// Input violates an ordering/shape requirement (e.g. `from_sorted` on
+    /// keys that are not strictly ascending).
+    NotSorted,
+    /// The key type lacks a property the container requires statically
+    /// (e.g. a non-bit-stealing id family on the B+tree).
+    UnsupportedKey,
 }
 
 } // verus!
@@ -40,6 +46,8 @@ impl core::fmt::Display for ContainerError {
             ContainerError::InvalidToken => "token does not name a restorable frame",
             ContainerError::Untracked => "operation requires a tracked (TRACK=true) container",
             ContainerError::IndexOutOfBounds => "index beyond current length",
+            ContainerError::NotSorted => "input keys not strictly ascending",
+            ContainerError::UnsupportedKey => "key type lacks a required static property",
         };
         f.write_str(s)
     }
