@@ -143,7 +143,9 @@ impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
         // class pair — a search that expands moves belonging to a different subproblem.
         let idx = crate::id::id_at::<A::Action>(self.values.len());
         self.values.push(actions);
-        self.index.insert((l, r), idx);
+        self.index
+            .try_insert((l, r), idx)
+            .expect("AU arena sized by its index word");
     }
 
     pub fn a_max(&self) -> usize {
@@ -152,7 +154,10 @@ impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
 
     pub fn mark(&mut self) -> ActionCacheToken {
         ActionCacheToken {
-            index: self.index.mark(ShrinkPolicy::Never),
+            index: self
+                .index
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
             values_len: self.values.len(),
         }
     }
@@ -163,7 +168,9 @@ impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
     }
 
     pub fn restore(&mut self, token: ActionCacheToken) {
-        self.index.restore(token.index);
+        self.index
+            .try_restore(token.index)
+            .expect("restore: token minted by this container's own mark");
         self.values.truncate(token.values_len);
     }
 }

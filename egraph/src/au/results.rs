@@ -63,7 +63,9 @@ impl<A: AuIds> BestResults<A> {
     pub fn ensure_capacity(&mut self, or_id: A::Or) {
         let idx = or_id.to_usize();
         while self.entries.len().as_usize() <= idx {
-            self.entries.push(ResultEntry::default());
+            self.entries
+                .try_push(ResultEntry::default())
+                .expect("AU arena sized by its index word");
         }
     }
 
@@ -134,7 +136,10 @@ impl<A: AuIds> BestResults<A> {
 
     pub fn mark(&mut self) -> BestResultsToken {
         BestResultsToken {
-            entries: self.entries.mark(ShrinkPolicy::Never),
+            entries: self
+                .entries
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -144,7 +149,9 @@ impl<A: AuIds> BestResults<A> {
     }
 
     pub fn restore(&mut self, token: BestResultsToken) {
-        self.entries.restore(token.entries);
+        self.entries
+            .try_restore(token.entries)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 

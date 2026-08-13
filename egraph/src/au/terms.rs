@@ -97,7 +97,9 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         let id: A::Term = crate::id::id_at_index(self.ops.len());
         let start = self.child_pool.len().as_usize();
         for &c in children {
-            self.child_pool.push(c);
+            self.child_pool
+                .try_push(c)
+                .expect("AU arena sized by its index word");
         }
 
         // Expanded sizes saturate. They do not wrap, and they do not panic.
@@ -134,11 +136,21 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             }
         };
 
-        self.ops.push(op);
-        self.child_spans.push(Span::new(start, children.len()));
-        self.sizes.push(size);
-        self.vmasses.push(vmass);
-        self.by_structure.insert(key, id);
+        self.ops
+            .try_push(op)
+            .expect("AU arena sized by its index word");
+        self.child_spans
+            .try_push(Span::new(start, children.len()))
+            .expect("AU arena sized by its index word");
+        self.sizes
+            .try_push(size)
+            .expect("AU arena sized by its index word");
+        self.vmasses
+            .try_push(vmass)
+            .expect("AU arena sized by its index word");
+        self.by_structure
+            .try_insert(key, id)
+            .expect("AU arena sized by its index word");
         id
     }
 
@@ -280,12 +292,30 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
 
     pub fn mark(&mut self) -> TermPoolToken {
         TermPoolToken {
-            ops: self.ops.mark(ShrinkPolicy::Never),
-            child_spans: self.child_spans.mark(ShrinkPolicy::Never),
-            child_pool: self.child_pool.mark(ShrinkPolicy::Never),
-            sizes: self.sizes.mark(ShrinkPolicy::Never),
-            vmasses: self.vmasses.mark(ShrinkPolicy::Never),
-            by_structure: self.by_structure.mark(ShrinkPolicy::Never),
+            ops: self
+                .ops
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            child_spans: self
+                .child_spans
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            child_pool: self
+                .child_pool
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            sizes: self
+                .sizes
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            vmasses: self
+                .vmasses
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            by_structure: self
+                .by_structure
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -301,12 +331,24 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     }
 
     pub fn restore(&mut self, token: TermPoolToken) {
-        self.by_structure.restore(token.by_structure);
-        self.vmasses.restore(token.vmasses);
-        self.sizes.restore(token.sizes);
-        self.child_pool.restore(token.child_pool);
-        self.child_spans.restore(token.child_spans);
-        self.ops.restore(token.ops);
+        self.by_structure
+            .try_restore(token.by_structure)
+            .expect("restore: token minted by this container's own mark");
+        self.vmasses
+            .try_restore(token.vmasses)
+            .expect("restore: token minted by this container's own mark");
+        self.sizes
+            .try_restore(token.sizes)
+            .expect("restore: token minted by this container's own mark");
+        self.child_pool
+            .try_restore(token.child_pool)
+            .expect("restore: token minted by this container's own mark");
+        self.child_spans
+            .try_restore(token.child_spans)
+            .expect("restore: token minted by this container's own mark");
+        self.ops
+            .try_restore(token.ops)
+            .expect("restore: token minted by this container's own mark");
     }
 
     /// Project one side of the anti-unifier: replace every `Variants` node —

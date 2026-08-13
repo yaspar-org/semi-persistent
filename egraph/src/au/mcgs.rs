@@ -281,19 +281,39 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         );
 
         for visit in data.edge_visits {
-            self.edge_visits.push(visit);
+            self.edge_visits
+                .try_push(visit)
+                .expect("AU arena sized by its index word");
         }
         for and_id in data.edge_and {
-            self.edge_and.push(and_id);
+            self.edge_and
+                .try_push(and_id)
+                .expect("AU arena sized by its index word");
         }
-        self.or_ids.push(or_id);
-        self.min_size.push(data.min_size);
-        self.max_size.push(data.max_size);
-        self.terminal.push(data.terminal);
-        self.edge_spans.push(edge_span);
-        self.initial_value.push(data.initial_value);
-        self.value.push(data.value);
-        self.transport_descs.push(transport_descs);
+        self.or_ids
+            .try_push(or_id)
+            .expect("AU arena sized by its index word");
+        self.min_size
+            .try_push(data.min_size)
+            .expect("AU arena sized by its index word");
+        self.max_size
+            .try_push(data.max_size)
+            .expect("AU arena sized by its index word");
+        self.terminal
+            .try_push(data.terminal)
+            .expect("AU arena sized by its index word");
+        self.edge_spans
+            .try_push(edge_span)
+            .expect("AU arena sized by its index word");
+        self.initial_value
+            .try_push(data.initial_value)
+            .expect("AU arena sized by its index word");
+        self.value
+            .try_push(data.value)
+            .expect("AU arena sized by its index word");
+        self.transport_descs
+            .try_push(transport_descs)
+            .expect("AU arena sized by its index word");
         id
     }
 
@@ -354,16 +374,46 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
 
     fn mark(&mut self) -> OrStatsToken {
         OrStatsToken {
-            or_ids: self.or_ids.mark(ShrinkPolicy::Never),
-            min_size: self.min_size.mark(ShrinkPolicy::Never),
-            max_size: self.max_size.mark(ShrinkPolicy::Never),
-            terminal: self.terminal.mark(ShrinkPolicy::Never),
-            edge_spans: self.edge_spans.mark(ShrinkPolicy::Never),
-            initial_value: self.initial_value.mark(ShrinkPolicy::Never),
-            value: self.value.mark(ShrinkPolicy::Never),
-            edge_visits: self.edge_visits.mark(ShrinkPolicy::Never),
-            edge_and: self.edge_and.mark(ShrinkPolicy::Never),
-            transport_descs: self.transport_descs.mark(ShrinkPolicy::Never),
+            or_ids: self
+                .or_ids
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            min_size: self
+                .min_size
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            max_size: self
+                .max_size
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            terminal: self
+                .terminal
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            edge_spans: self
+                .edge_spans
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            initial_value: self
+                .initial_value
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            value: self
+                .value
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            edge_visits: self
+                .edge_visits
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            edge_and: self
+                .edge_and
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            transport_descs: self
+                .transport_descs
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -382,16 +432,36 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
 
     fn restore(&mut self, token: OrStatsToken) {
         assert!(self.is_valid_token(&token), "OrStatsArena: invalid token");
-        self.transport_descs.restore(token.transport_descs);
-        self.edge_and.restore(token.edge_and);
-        self.edge_visits.restore(token.edge_visits);
-        self.value.restore(token.value);
-        self.initial_value.restore(token.initial_value);
-        self.edge_spans.restore(token.edge_spans);
-        self.terminal.restore(token.terminal);
-        self.max_size.restore(token.max_size);
-        self.min_size.restore(token.min_size);
-        self.or_ids.restore(token.or_ids);
+        self.transport_descs
+            .try_restore(token.transport_descs)
+            .expect("restore: token minted by this container's own mark");
+        self.edge_and
+            .try_restore(token.edge_and)
+            .expect("restore: token minted by this container's own mark");
+        self.edge_visits
+            .try_restore(token.edge_visits)
+            .expect("restore: token minted by this container's own mark");
+        self.value
+            .try_restore(token.value)
+            .expect("restore: token minted by this container's own mark");
+        self.initial_value
+            .try_restore(token.initial_value)
+            .expect("restore: token minted by this container's own mark");
+        self.edge_spans
+            .try_restore(token.edge_spans)
+            .expect("restore: token minted by this container's own mark");
+        self.terminal
+            .try_restore(token.terminal)
+            .expect("restore: token minted by this container's own mark");
+        self.max_size
+            .try_restore(token.max_size)
+            .expect("restore: token minted by this container's own mark");
+        self.min_size
+            .try_restore(token.min_size)
+            .expect("restore: token minted by this container's own mark");
+        self.or_ids
+            .try_restore(token.or_ids)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -506,23 +576,47 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
             .collect();
 
         for child in data.child_or_stats {
-            self.child_or_stats.push(child);
+            self.child_or_stats
+                .try_push(child)
+                .expect("AU arena sized by its index word");
         }
         for count in data.child_counts {
-            self.child_counts.push(count);
+            self.child_counts
+                .try_push(count)
+                .expect("AU arena sized by its index word");
         }
         for visits in data.child_visits {
-            self.child_visits.push(visits);
+            self.child_visits
+                .try_push(visits)
+                .expect("AU arena sized by its index word");
         }
-        self.parent.push(data.parent);
-        self.op.push(data.op);
-        self.commutative.push(data.commutative);
-        self.child_spans.push(child_span);
-        self.value.push(data.value);
-        self.round_robin.push(data.round_robin);
-        self.transport_rows.push(data.transport_rows);
-        self.transport_cols.push(data.transport_cols);
-        self.transport_cell_map.push(typed_cell_map);
+        self.parent
+            .try_push(data.parent)
+            .expect("AU arena sized by its index word");
+        self.op
+            .try_push(data.op)
+            .expect("AU arena sized by its index word");
+        self.commutative
+            .try_push(data.commutative)
+            .expect("AU arena sized by its index word");
+        self.child_spans
+            .try_push(child_span)
+            .expect("AU arena sized by its index word");
+        self.value
+            .try_push(data.value)
+            .expect("AU arena sized by its index word");
+        self.round_robin
+            .try_push(data.round_robin)
+            .expect("AU arena sized by its index word");
+        self.transport_rows
+            .try_push(data.transport_rows)
+            .expect("AU arena sized by its index word");
+        self.transport_cols
+            .try_push(data.transport_cols)
+            .expect("AU arena sized by its index word");
+        self.transport_cell_map
+            .try_push(typed_cell_map)
+            .expect("AU arena sized by its index word");
         id
     }
 
@@ -590,18 +684,54 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
 
     fn mark(&mut self) -> AndStatsToken {
         AndStatsToken {
-            parent: self.parent.mark(ShrinkPolicy::Never),
-            op: self.op.mark(ShrinkPolicy::Never),
-            commutative: self.commutative.mark(ShrinkPolicy::Never),
-            child_spans: self.child_spans.mark(ShrinkPolicy::Never),
-            child_or_stats: self.child_or_stats.mark(ShrinkPolicy::Never),
-            value: self.value.mark(ShrinkPolicy::Never),
-            child_counts: self.child_counts.mark(ShrinkPolicy::Never),
-            child_visits: self.child_visits.mark(ShrinkPolicy::Never),
-            round_robin: self.round_robin.mark(ShrinkPolicy::Never),
-            transport_rows: self.transport_rows.mark(ShrinkPolicy::Never),
-            transport_cols: self.transport_cols.mark(ShrinkPolicy::Never),
-            transport_cell_map: self.transport_cell_map.mark(ShrinkPolicy::Never),
+            parent: self
+                .parent
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            op: self
+                .op
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            commutative: self
+                .commutative
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            child_spans: self
+                .child_spans
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            child_or_stats: self
+                .child_or_stats
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            value: self
+                .value
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            child_counts: self
+                .child_counts
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            child_visits: self
+                .child_visits
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            round_robin: self
+                .round_robin
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            transport_rows: self
+                .transport_rows
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            transport_cols: self
+                .transport_cols
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            transport_cell_map: self
+                .transport_cell_map
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -624,18 +754,42 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
 
     fn restore(&mut self, token: AndStatsToken) {
         assert!(self.is_valid_token(&token), "AndStatsArena: invalid token");
-        self.transport_cell_map.restore(token.transport_cell_map);
-        self.transport_cols.restore(token.transport_cols);
-        self.transport_rows.restore(token.transport_rows);
-        self.round_robin.restore(token.round_robin);
-        self.child_visits.restore(token.child_visits);
-        self.child_counts.restore(token.child_counts);
-        self.value.restore(token.value);
-        self.child_or_stats.restore(token.child_or_stats);
-        self.child_spans.restore(token.child_spans);
-        self.commutative.restore(token.commutative);
-        self.op.restore(token.op);
-        self.parent.restore(token.parent);
+        self.transport_cell_map
+            .try_restore(token.transport_cell_map)
+            .expect("restore: token minted by this container's own mark");
+        self.transport_cols
+            .try_restore(token.transport_cols)
+            .expect("restore: token minted by this container's own mark");
+        self.transport_rows
+            .try_restore(token.transport_rows)
+            .expect("restore: token minted by this container's own mark");
+        self.round_robin
+            .try_restore(token.round_robin)
+            .expect("restore: token minted by this container's own mark");
+        self.child_visits
+            .try_restore(token.child_visits)
+            .expect("restore: token minted by this container's own mark");
+        self.child_counts
+            .try_restore(token.child_counts)
+            .expect("restore: token minted by this container's own mark");
+        self.value
+            .try_restore(token.value)
+            .expect("restore: token minted by this container's own mark");
+        self.child_or_stats
+            .try_restore(token.child_or_stats)
+            .expect("restore: token minted by this container's own mark");
+        self.child_spans
+            .try_restore(token.child_spans)
+            .expect("restore: token minted by this container's own mark");
+        self.commutative
+            .try_restore(token.commutative)
+            .expect("restore: token minted by this container's own mark");
+        self.op
+            .try_restore(token.op)
+            .expect("restore: token minted by this container's own mark");
+        self.parent
+            .try_restore(token.parent)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -669,7 +823,10 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
         McgsToken {
             or_stats: self.or_stats.mark(),
             and_stats: self.and_stats.mark(),
-            or_stats_map: self.or_stats_map.mark(ShrinkPolicy::Never),
+            or_stats_map: self
+                .or_stats_map
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -684,7 +841,9 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
             self.is_valid_token(&token),
             "McgsState: token is invalid (foreign or abandoned)"
         );
-        self.or_stats_map.restore(token.or_stats_map);
+        self.or_stats_map
+            .try_restore(token.or_stats_map)
+            .expect("restore: token minted by this container's own mark");
         self.and_stats.restore(token.and_stats);
         self.or_stats.restore(token.or_stats);
     }
@@ -711,7 +870,9 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
         descriptors: Vec<TransportActionDesc<O, A::Class>>,
     ) -> A::OrStats {
         let id = self.or_stats.push(or_id, data, descriptors);
-        self.or_stats_map.insert(or_id, id);
+        self.or_stats_map
+            .try_insert(or_id, id)
+            .expect("AU arena sized by its index word");
         id
     }
 
