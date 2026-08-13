@@ -3305,9 +3305,10 @@ where
     }
 
     pub fn get(&self, i: I) -> (v: T)
-        requires self.vec_ref().wf(), i.as_nat() < self.seq().len(),
-        ensures v == self.seq()[i.as_nat() as int],
+        requires self.vec_ref().wf(),
+        ensures i.as_nat() < self.seq().len() ==> v == self.seq()[i.as_nat() as int],
     {
+        // get_index is total: an out-of-range index refuses there by name.
         self.vec.get_index(i)
     }
 
@@ -3355,19 +3356,34 @@ where
     pub fn next(&mut self) -> (r: Option<T>)
         requires
             old(self).vec_ref().wf(),
-            old(self).pos_spec() <= old(self).vec_ref().view().len(),
-            old(self).vec_ref().view().len() < I::max_nat(),
         ensures
-            final(self).vec_ref() == old(self).vec_ref(),
-            old(self).pos_spec() < old(self).vec_ref().view().len() ==> {
-                &&& r == Some(old(self).vec_ref().view()[old(self).pos_spec() as int])
-                &&& final(self).pos_spec() == old(self).pos_spec() + 1
-            },
-            old(self).pos_spec() >= old(self).vec_ref().view().len() ==> {
-                &&& r is None
-                &&& final(self).pos_spec() == old(self).pos_spec()
-            },
+            (old(self).pos_spec() <= old(self).vec_ref().view().len()
+                && old(self).vec_ref().view().len() < I::max_nat()) ==> ({
+                &&& final(self).vec_ref() == old(self).vec_ref()
+                &&& (old(self).pos_spec() < old(self).vec_ref().view().len() ==> {
+                    &&& r == Some(old(self).vec_ref().view()[old(self).pos_spec() as int])
+                    &&& final(self).pos_spec() == old(self).pos_spec() + 1
+                })
+                &&& (old(self).pos_spec() >= old(self).vec_ref().view().len() ==> {
+                    &&& r is None
+                    &&& final(self).pos_spec() == old(self).pos_spec()
+                })
+            }),
     {
+        // Total-with-documented-panic: the erased iterator-state requires
+        // become branches (pos past the view, or a view too long for I).
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+        }
+        if !(self.vec.store.raw_len() <= cap) {
+            crate::guard::refuse("VecViewIter::next: view exceeds the index word");
+        }
+        if !(self.pos <= self.vec.store.raw_len()) {
+            crate::guard::refuse("VecViewIter::next: cursor past the view");
+        }
         let len = self.vec.len();
         if self.pos >= len.as_usize() {
             return None;

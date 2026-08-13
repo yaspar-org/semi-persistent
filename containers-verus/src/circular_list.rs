@@ -616,16 +616,21 @@ where T: Sized + Copy + core::default::Default {
     /// The cursor wraps once around and stops when it returns to `start` — so
     /// exactly the ring's nodes are visited, each once.
     pub fn iter_class(&self, start: N) -> (it: RingIter<'_, T, N, TRACK>)
-        requires self.wf(), start.id_nat() < self.n_spec(),
-        ensures
-            it.list_ref() == self,
-            it.start_spec() == start.id_nat(),
-            it.pos_spec() == 0,
-            !it.done_spec(),
-            it.cursor_ok(),
+        requires self.wf(),
+        ensures start.id_nat() < self.n_spec() ==> ({
+            &&& it.list_ref() == self
+            &&& it.start_spec() == start.id_nat()
+            &&& it.pos_spec() == 0
+            &&& !it.done_spec()
+            &&& it.cursor_ok()
             // The walk enumerates exactly `class_seq(start)` (public twin).
-            it.walk_seq() == self.class_seq(start.id_nat() as int),
+            &&& it.walk_seq() == self.class_seq(start.id_nat() as int)
+        }),
     {
+        // Total-with-documented-panic: node-bound branch.
+        if !(start.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::iter_class: node id out of range");
+        }
         proof {
             // covers ⟹ locate's choose is satisfiable; disjoint ⟹ unique.
             assert(self.in_some_ring(start.id_nat() as int));

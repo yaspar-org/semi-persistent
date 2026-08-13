@@ -131,7 +131,7 @@ def scan_file(path: Path):
             # holding a corrupted value. Not caller obligations.
             rm = re.search(r'\brequires\b(.*?)(?=\bensures\b|\brecommends\b|$)', sig, re.S)
             clause = rm.group(1) if rm else ''
-            residue = re.sub(r'(old\(\w+\)|\w+)\s*(\.\s*\w+\s*\(\s*\))?\s*\.\s*(cursor_)?wf\s*\(\s*\)', '', clause)
+            residue = re.sub(r'(old\(\w+\)|\w+)\s*(\.\s*\w+\s*\(\s*\))?\s*\.\s*(cursor_wf|cursor_ok|wf)\s*\(\s*\)', '', clause)
             residue = re.sub(r'[\s,]+', '', residue)
             if residue == '':
                 has_req = False
@@ -160,10 +160,15 @@ def main():
             if body_unsafe:
                 unsafe_pub.append((name, line))
     if update:
+        header = ''
+        if allow_path.exists():
+            header = ''.join(l for l in allow_path.read_text().splitlines(keepends=True)
+                             if l.startswith('#'))
+        if not header:
+            header = ('# Public exec fns with a `requires` clause: the total-API plan\'s\n'
+                      '# drain list (doc/future/total-api-plan.md). May only shrink.\n')
         allow_path.write_text(
-            '# Public exec fns with a `requires` clause: the total-API plan\'s\n'
-            '# drain list (doc/future/total-api-plan.md). May only shrink.\n'
-            + ''.join(f'{n}\n' for n in sorted({n for n, _ in partial})))
+            header + ''.join(f'{n}\n' for n in sorted({n for n, _ in partial})))
         print(f'allowlist rewritten: {len(partial)} entries')
         return 0
     allowed = {l.strip() for l in allow_path.read_text().splitlines()
