@@ -483,18 +483,14 @@ fn aov_total_shell_refuses_and_round_trips() {
     type A = AppendOnlyVec<String, u8, true>;
     let mut a: A = A::new();
     while a.can_push() {
-        a.try_push(format!("x")).unwrap();
+        a.try_push("x".to_string()).unwrap();
     }
     assert_eq!(
-        a.try_push(format!("y")).unwrap_err(),
+        a.try_push("y".to_string()).unwrap_err(),
         ContainerError::CapacityExhausted
     );
     let tok = a.try_mark(ShrinkPolicy::Never).unwrap();
-    assert_eq!(
-        a.try_restore(tok).map_err(|e| e),
-        Ok(()),
-        "fresh token restores"
-    );
+    assert_eq!(a.try_restore(tok), Ok(()), "fresh token restores");
     assert_eq!(
         a.try_restore(tok).unwrap_err(),
         ContainerError::InvalidToken,

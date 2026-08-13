@@ -12,7 +12,7 @@ use crate::canon::{FixedCanon, VarCanon};
 use crate::containers::DenseId;
 use crate::containers::IndexLike; // prod-parity: L::min() (was L::MIN)
 use crate::containers::Tagged;
-use crate::containers::{InlineStore, ShrinkPolicy, VecI, VecToken};
+use crate::containers::{ShrinkPolicy, VecI, VecToken};
 use crate::node_types::{FixedArityNode, LitNode, VariableArityNode};
 
 // ---------------------------------------------------------------------------
@@ -514,7 +514,8 @@ impl<
                 node.op(),
                 hist_start,
                 hist_end,
-            ));
+            ))
+            .expect("push: within index word");
         }
 
         self.index.remove(&StoredKey {
