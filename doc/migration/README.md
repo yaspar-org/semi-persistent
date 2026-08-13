@@ -99,7 +99,7 @@ narrates the retracted bisection.
 
 ## What is trusted, and why that number is gated
 
-26 `external_body` markers by default, 5 more under `literal-types` (31 total).
+27 `external_body` markers by default, 5 more under `literal-types` (32 total).
 Exactly ten carry contracts; the rest are contract-free, meaning nothing can be
 assumed from them. The per-item argument is
 `containers-verus/doc/design/02-trust-boundary.md`.

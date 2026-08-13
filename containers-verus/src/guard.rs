@@ -41,6 +41,22 @@ pub fn check_precondition(cond: bool, msg: &str)
     }
 }
 
+/// Total refusal: diverges unconditionally, with NO `requires` — the total
+/// shell's panic arm (total-API plan phases 4/5). Where `check_precondition`
+/// serves verified callers (who prove `cond` and get a dead check),
+/// `refuse` serves the total public surface: a function that has already
+/// BRANCHED on its would-be precondition calls this in the violating arm, so
+/// its signature carries no obligation and its panic is documented behavior,
+/// matching production's panic-on-misuse parity. `external_body` only for
+/// the unmodeled panic machinery; the `!` return means nothing is assumable
+/// from it (there is no post-state).
+#[verifier::external_body]
+#[inline(never)]
+pub fn refuse(msg: &str) -> !
+{
+    panic!("containers-verus: {}", msg);
+}
+
 } // verus!
 
 /// The same trap, callable from inside `external_body` diagnostic code where

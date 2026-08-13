@@ -12,8 +12,8 @@ for each, why it is trusted rather than proved.*
 
 | configuration | `external_body` markers | axiom fns |
 |---|---|---|
-| default features | **26** (3 structs + 23 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
-| `literal-types` | **31** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
+| default features | **27** (3 structs + 24 functions) | **1** (`builds_valid_hashers::<IndexHasher>` — SpMap's index hasher; mirrors vstd's shipped `RandomState` axiom) |
+| `literal-types` | **32** (adds 5 opaque type registrations) | **6** (adds `obeys_key_model` for BigInt, BigUint, CanonicalF64, CanonicalRational, BitsF64) |
 
 *Counts re-derived 2026-08-08 by grepping `#[verifier::external_body]` and
 splitting on the `literal-types` gate (`external_specs.rs` is the only gated
@@ -86,12 +86,12 @@ signature its callers are checked against, and where it carries an `ensures`
 that contract is the *only* thing trusted.
 
 A healthy verified crate drives `external_body` down to the irreducible
-boundary. This crate has 26 default-build markers: 3 ContainerId + 11
+boundary. This crate has 27 default-build markers: 3 ContainerId + 11
 capacity/byte diagnostics and shrink helpers + the 5 `bplus_layout`
-bounds-elided array/slice primitives + `check_precondition` +
+bounds-elided array/slice primitives + `check_precondition` + `refuse` +
 `clone_key_exact` + `values_equal` + the debug ring-walk +
 `white_box_head` + the `ExIndexHasher` and `ExFoldHasher` registrations
-(5 more behind `literal-types`, for 31). The casts that were *eliminated* (the
+(5 more behind `literal-types`, for 32). The casts that were *eliminated* (the
 `IndexLike`/`DenseId` integer casts) are described in §3.
 
 The groups differ in kind, and the distinction is the point of this chapter:
@@ -370,7 +370,15 @@ checked std form with shrinking, at the `(T, N)` instantiations the trees use,
 including both sides of `arr_shift_up`'s length-18 scalar/`memmove` dispatch
 at every admissible `pos`.
 
-## 2.5. Group C: the runtime-guard primitive (`check_precondition`) — 1 item
+## 2.5. Group C: the runtime-guard primitives (`check_precondition`, `refuse`) — 2 items
+
+`refuse(msg) -> !` is the total shell's panic arm (total-API plan): a public
+total function branches on its would-be precondition and calls `refuse` in
+the violating arm, so the signature carries no obligation. `external_body`
+for the same reason as `check_precondition` (unmodeled panic machinery);
+contract-free in the strongest sense — the `!` return type means there is no
+post-state to assume anything about.
+
 
 ```rust
 #[verifier::external_body]
@@ -568,7 +576,7 @@ bypass it.
 
 ## 4. Summary table
 
-All 26 default-build `external_body` markers plus the 1 default-build axiom
+All 27 default-build `external_body` markers plus the 1 default-build axiom
 (the `literal-types` additions are listed after):
 
 | # | Item | Group | Trusted because | Provable? |
@@ -592,6 +600,7 @@ All 26 default-build `external_body` markers plus the 1 default-build axiom
 | 11f | `slice_get` (bplus_layout) | B | same, with a runtime-length bound (`i < s.len()`) | same |
 | 11g | `sel_usize` (bplus_layout) | B | `select_unpredictable` unspecced (a codegen hint); contract = the `if`/`else` it replaces; **no `unsafe`** | when vstd specs the intrinsic |
 | 11h | `arr_shift_up` (bplus_layout) | B | `copy_within` unspecced; four-clause shift postcondition; **no `unsafe`** (short arm is the element loop it replaces) | when vstd specs `copy_within` |
+| 11i | `guard::refuse` | C | diverges (`-> !`); body is the unmodeled panic machinery; nothing assumable (no post-state) | n/a (no contract) |
 | 12 | `guard::check_precondition` | C | body `panic!` uses unmodeled format machinery (`requires cond` is checked) | no (same reason as `vstd::runtime_assert`) |
 | 13 | `clone_key_exact` | D | projects key-model requirement (3) out of vstd's prose-stated `obeys_key_model`; no new assumption | no (vstd provides no lemma) |
 | 14 | `values_equal` | E | no ensures — unconstrained bool, nothing derivable; avoids `obeys_eq_spec` plumbing | by threading vstd eq specs; declined for production shape |
@@ -629,8 +638,8 @@ runtime-fuzzed), 11 capacity-introspection items (8 spec-free byte reporters
 store reporters formula-level only — 2 contract-carrying shrink
 helpers, and `data_capacity_bits`), 5 bounds-elided array/slice primitives
 (§2d — each contract restates a documented std behavior, fuzzed and
-property-tested against the checked form), 1 runtime-trap primitive (`check_precondition`, load-bearing,
-body is a one-line panic), 1 key-model projection (`clone_key_exact`, no
+property-tested against the checked form), 2 runtime-trap primitives (`check_precondition`, load-bearing,
+body is a one-line panic; `refuse`, diverging and contract-free), 1 key-model projection (`clone_key_exact`, no
 new assumption beyond the `obeys_key_model` precondition SpMap already
 carries), 2 glue items (`values_equal` unconstrained, the debug
 ring-walk diagnostic), and 1 hasher fact + its 2 type registrations
