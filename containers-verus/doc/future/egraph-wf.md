@@ -33,36 +33,78 @@ verified containers with specification-level views this plan builds on:
 
 ## The invariant
 
-Over a ghost view `classes(x) = { y | uf_find(y) == uf_find(x) }`, where
-`uf_find` is the spec-level root function of the parent column:
+The seven clauses, as first planned. W1 through W6 are now implemented and
+proved in `containers-verus` (see the status note below); where the proved
+form differs from the first sketch, the text states the proved form.
 
-- **W1, forest.** The parent column is acyclic: following `parent_fast` from
-  any allocated id reaches a fixed point, and `rank` strictly decreases along
-  no edge (rank bounds height, which gives `find` its termination measure).
+- **W1, forest.** The union-find's ghost root map is canonical
+  (`roots[roots[i]] == roots[i]`) and self-parented; a parent step preserves
+  the root; a self-parent is a root; and a ghost distance measure is 0
+  exactly at roots and strictly decreases along every parent edge. The
+  distance clause is acyclicity in the form a `decreases` clause consumes,
+  and it is `find`'s termination measure. Rank is stored but no clause reads
+  it: it is a survivor-selection heuristic, and its bump saturates rather
+  than carrying the `rank <= log2(n)` argument.
 - **W2, roots are the live classes.** `x` is a union-find root iff the ring
-  cell `x` carries a present payload iff that payload is a live key in
-  `reprs`. Absorbed ids have absent payloads and are not roots.
-- **W3, rings realize the union-find partition.** `y` lies on `x`'s ring iff
-  `uf_find(y) == uf_find(x)`. The ring side of the partition is already
-  proved inside `CircularList`; W3 is the agreement of that partition with
-  the union-find's, and it is what discharges `splice_absorb`'s
-  distinct-rings precondition: distinct roots imply distinct classes imply
-  distinct rings.
-- **W4, use-list ownership.** The `use_list` keys of live classes are
-  pairwise distinct, and every non-empty `ListArena` list is owned by exactly
-  one live class. With `ListArena`'s proved disjointness this makes
-  `splice_uses(survivor, absorbed)` hit two distinct lists.
-- **W5, use-list contents (up to staleness).** Every entry of class `c`'s use
-  list is a node that had a child in `c` when the entry was appended. Entries
-  go stale between a merge and the rebuild that recanonicalizes them; W5
-  deliberately does not claim freshness. Freshness after rebuild is W7.
-- **W6, pool geometry.** `min_pool.len() == allocated_rows * min_width`;
-  every live `min_row` is below `allocated_rows`; live `min_row` values are
-  pairwise distinct. Rows are never freed, so `allocated_rows` only grows.
-- **W7, congruence at the rebuild fixpoint.** When the dirty set is empty, the
-  hash-cons maps each live node's canonical form to its id, and no two live
-  nodes share a canonical form. W7 is the correctness theorem of `rebuild`,
-  not a step invariant; stages 0 through 3 do not touch it.
+  cell `x` carries a present payload; each root's key is live in `reprs`;
+  keys are injective across roots; and every live key is some root's key. A
+  bijection between roots and live classes, stated as four clauses.
+- **W3, rings realize the union-find partition.** Same ring iff same root,
+  stated in both directions over ring-model coordinates. The ring side of
+  the partition is proved inside `CircularList`; W3 is the agreement of that
+  partition with the union-find's, and it is what discharges
+  `splice_absorb`'s distinct-rings precondition inside `merge`: distinct
+  roots imply distinct rings.
+- **W4, use-list ownership.** Live classes own pairwise-distinct, allocated
+  use-lists, so `splice_uses(survivor, absorbed)` hits two distinct lists.
+- **W5, use-list entries are allocated.** Every entry of every use-list
+  names an allocated node id. This is deliberately the weak form: it does
+  NOT claim the entry is canonical or fresh, because merges stale entries on
+  purpose and rebuild repairs them. The strong form, freshness outside a
+  dirty set, is stage 3.
+- **W6, pool geometry.** The pool length is a whole number of `min_width`
+  rows; every live class's row number points at an allocated row; no two
+  live classes share a row. Which node a pool cell names is data, not
+  invariant: W6 is geometry.
+- **W7, congruence at the rebuild fixpoint.** When the dirty set is empty,
+  the hash-cons maps each live node's canonical form to its id, and no two
+  live nodes share a canonical form. W7 is the correctness theorem of
+  `rebuild`, not a step invariant; stages 0 through 3 do not touch it.
+
+## What `wf` states, and what it does not
+
+The aggregate's `wf()` (`eclasses.rs`) is three layers, all machine-checked:
+every public mutator carries `requires old(self).wf(), ensures
+final(self).wf()`, and the verifier rejects the build unless each body
+re-establishes every clause.
+
+**Layer 1: each component's own invariant.** The ring's model partitions the
+allocated cells with correct successor structure; the repr set's index
+column is a permutation inverting the sparse column on the live region; the
+union-find is W1; the use-list arena's ghost lists are disjoint and its
+head/tail/next/length caches agree with them; the pool vector's
+store/diff-log/frame invariants hold.
+
+**Layer 2: the agreement between components.** W2 through W6 above, plus the
+glue bounds: one ring cell and one union-find slot per node, repr capacity
+at most the node count, and every payload and pool cell decodes (niche
+encodings are well-formed, so reads round-trip).
+
+**Layer 3: the archive.** At every outstanding mark, the five components'
+archived snapshots jointly satisfy layers 1 and 2; the archived repr triple
+is a valid sparse-set state (which is how the aggregate's `restore`
+discharges `SparseSet::restore`'s snapshot-wellformedness precondition);
+and archived pool lengths are monotone and bounded by the live pool.
+
+What `wf` does NOT state, by design: congruence and the hash-cons (there is
+no hash-cons in the class layer; that is EGraph state, and its invariant is
+W7, rebuild's theorem); freshness of use-list entries under merges (stage
+3's `wf_except(dirty)`); the meaning of pool cells (caller data); and rank
+values (unread heuristic). The one-line summary: `wf` says the five
+structures are each internally valid and tell one consistent story about
+the partition, and every archived snapshot tells the same kind of story; it
+says nothing about terms. The semantic layer, which nodes are congruent and
+which entries are stale, starts at stage 3.
 
 ## Stages
 
