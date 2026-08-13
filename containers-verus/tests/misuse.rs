@@ -328,3 +328,86 @@ fn sparse_set_atomic_restore_rejects_consumed_compound() {
     assert!(!s.contains(id2));
     assert_eq!(s.get(id1), 100);
 }
+
+// ---------------------------------------------------------------------------
+// Total shell (total-API plan phase 2): every refusal is an Err naming the
+// failed precondition, the container is unchanged, and nothing panics.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn try_push_refuses_at_the_index_words_capacity() {
+    use semi_persistent_containers_verus::error::ContainerError;
+    type V = SpVec<u32, u8, ParallelStore<u32, u8>, false>;
+    let mut v: V = V::new();
+    // can_push holds while len + 1 < 256, i.e. through len == 254.
+    let mut n = 0usize;
+    while v.can_push() {
+        v.try_push(7).unwrap();
+        n += 1;
+    }
+    assert_eq!(n, 255, "push admits exactly max_nat - 1 elements");
+    let e = v.try_push(8).unwrap_err();
+    assert_eq!(e, ContainerError::CapacityExhausted);
+    // Unchanged: still the same length, and a subsequent len() must not trap.
+    assert_eq!(v.len(), u8::MAX);
+}
+
+#[test]
+fn try_extend_is_all_or_nothing() {
+    use semi_persistent_containers_verus::error::ContainerError;
+    type V = SpVec<u32, u8, ParallelStore<u32, u8>, false>;
+    let mut v: V = V::new();
+    v.try_extend(&[1, 2, 3]).unwrap();
+    assert_eq!(v.len(), 3);
+    // 253 more would land exactly at 256 > 255 = cap: refused whole.
+    let big: Vec<u32> = (0..253).collect();
+    let e = v.try_extend(&big).unwrap_err();
+    assert_eq!(e, ContainerError::CapacityExhausted);
+    assert_eq!(v.len(), 3, "a refused batch appends nothing");
+    // 252 more lands at 255 == cap: admitted.
+    v.try_extend(&big[..252]).unwrap();
+    assert_eq!(v.len(), u8::MAX);
+}
+
+#[test]
+fn try_mark_names_the_failed_precondition() {
+    use semi_persistent_containers_verus::error::ContainerError;
+    // Untracked: refused as Untracked, not a panic (the partial mark panics).
+    type U = SpVec<u32, u8, ParallelStore<u32, u8>, false>;
+    let mut u: U = U::new();
+    assert_eq!(
+        u.try_mark(ShrinkPolicy::Never).unwrap_err(),
+        ContainerError::Untracked
+    );
+    // Tracked and in range: succeeds and round-trips through try_restore.
+    type T = SpVec<u32, u8, ParallelStore<u32, u8>, true>;
+    let mut t: T = T::new();
+    t.try_push(1).unwrap();
+    let tok = t.try_mark(ShrinkPolicy::Never).unwrap();
+    t.try_push(2).unwrap();
+    t.try_restore(tok).unwrap();
+    assert_eq!(t.len(), 1);
+}
+
+#[test]
+fn try_restore_rejects_a_foreign_token_as_err() {
+    use semi_persistent_containers_verus::error::ContainerError;
+    type T = SpVec<u32, u8, ParallelStore<u32, u8>, true>;
+    let mut a: T = T::new();
+    let mut b: T = T::new();
+    a.try_push(1).unwrap();
+    b.try_push(9).unwrap();
+    let tok_a = a.try_mark(ShrinkPolicy::Never).unwrap();
+    assert_eq!(
+        b.try_restore(tok_a).unwrap_err(),
+        ContainerError::InvalidToken,
+        "a foreign token is an Err on the total surface (the partial core panics)"
+    );
+    assert_eq!(b.len(), 1, "refused restore leaves the container unchanged");
+    // Consumed token: valid once, then Err.
+    a.try_restore(tok_a).unwrap();
+    assert_eq!(
+        a.try_restore(tok_a).unwrap_err(),
+        ContainerError::InvalidToken
+    );
+}

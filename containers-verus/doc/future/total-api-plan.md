@@ -54,6 +54,13 @@ by the witness. Exit criterion is a measured `perf_gate` row for the shell
 path within the migration ceiling on the baseline machine; if the witness
 cannot hold parity, stop and rethink here, before the sweep.
 
+*Resolved 2026-08-12:* the pilot chose `try_extend` (one check licenses the
+batch, the loop invariant carries the bound) over a borrowing
+reservation-witness type: same amortization, no session-lifetime machinery,
+and the row reads +1.6% against production's raw push loop (provisional,
+dev machine). Revisit the witness type only if consumer profiling shows
+per-element `try_push` on a path that cannot batch.
+
 **3. Sweep** the remaining containers and cursors. Two designed items:
 `splice`'s different-rings check becomes an O(1) per-list ring-id witness in
 the header (candidate space: the padding the `ListHead` widening measured; if

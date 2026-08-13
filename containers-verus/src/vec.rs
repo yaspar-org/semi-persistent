@@ -1325,6 +1325,59 @@ where
         }
     }
 
+    /// Total batch push: ONE capacity check licenses the whole slice, the
+    /// loop invariant carries the bound to each core `push` — the amortized
+    /// form of `try_push` for hot loops (one branch per batch, none per
+    /// element).
+    pub fn try_extend(&mut self, values: &[T]) -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view() == old(self).view() + values@,
+            r is Err ==> final(self).view() == old(self).view(),
+            final(self).snapshots_view() == old(self).snapshots_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        let n = self.store.raw_len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(n as nat == self.view().len());
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        // `n <= cap` first so `cap - n` cannot underflow; then the batch must
+        // fit strictly under the word (`< max_nat` after every push).
+        if n > cap || values.len() > cap - n {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        let ghost old_view = self.view();
+        let mut i: usize = 0;
+        while i < values.len()
+            invariant
+                self.wf(),
+                i <= values@.len(),
+                self.view() == old_view + values@.subrange(0, i as int),
+                self.snapshots_view() == old(self).snapshots_view(),
+                old_view.len() + values@.len() < I::max_nat(),
+            decreases values@.len() - i,
+        {
+            proof {
+                assert(self.view().len() + 1 < I::max_nat());
+            }
+            self.push(values[i]);
+            proof {
+                assert(self.view() =~= old_view + values@.subrange(0, i as int + 1));
+            }
+            i += 1;
+        }
+        proof {
+            assert(values@.subrange(0, values@.len() as int) =~= values@);
+        }
+        Ok(())
+    }
+
     /// Exec twin of `mark`'s preconditions (TRACK, depth headroom, length
     /// representable in the token's saved_len).
     pub fn can_mark(&self) -> (b: bool)

@@ -89,6 +89,7 @@ pinned in `perf_gate.rs` — and `ceiling` is what the build actually fails abov
 
 | bench                 | observed range  | spread | recorded | ceiling | notes |
 |-----------------------|-----------------|--------|----------|---------|-------|
+| `vec/try_extend`      | +1.6% (PROVISIONAL: dev arm64, single run) | — | +3.0% | +9.0% | the total shell's batch path vs production's raw push loop, 100k u64 untracked: one capacity check licenses the batch, so the shell costs one branch per batch. Re-record on the baseline machine with the spread before treating the margin as a contract |
 | `mark_set_restore`    | −12.1% … −17.0% | 4.9pp  | −12.0%   | −6.0%   | tracked mark / 50k set / restore; verus faster. Noisiest row: the timed unit includes the 50k-set phase |
 | `restore_replay`      | −1.1% … +1.4%   | 2.5pp  | +1.5%    | +7.5%   | restore phase ALONE; see "gate on phases" below. Timed unit is 8 independent restores (`RESTORE_BATCH`): a single ~40 µs restore proved within reach of the per-build layout artifact on a shared runner (+13.0% on ubuntu-latest at a commit not touching the restore path, −3.0% locally — the `class_walk` signature). The ratio is dimensionless; the recorded range carries over |
 | `class_splice`        | +3.9% … +4.7%   | 0.8pp  | +4.7%    | +10.0%  | ceiling is `MIGRATION_GATE`-capped (4.7+6 > 10). Residual is the extra payload write clearing the absorbed key's presence bit |

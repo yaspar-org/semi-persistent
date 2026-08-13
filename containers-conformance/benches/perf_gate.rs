@@ -213,6 +213,41 @@ fn row_restore_replay() -> Row {
 /// Restores per timed unit in `restore_replay` — see that row's comment.
 const RESTORE_BATCH: usize = 8;
 
+/// vec/try_extend: the total shell's batch path (total-API plan phase 2)
+/// against production's plain push loop, 100k u64s, untracked. One capacity
+/// check licenses the batch; the loop invariant carries the bound, so the
+/// shell adds one branch per BATCH over the partial core. Growth reallocs
+/// dominate both arms equally, which is what makes this push-shaped row
+/// timeable where per-element `push_only` is not (see that row's exclusion).
+fn row_try_extend() -> Row {
+    const N: usize = 100_000;
+    let (p, v) = perf::compare_batched(
+        || (0..N as u64).collect::<std::vec::Vec<u64>>(),
+        |src| {
+            let mut vv: prod::VecP<u64, u32, false> = prod::VecP::new();
+            for &x in src.iter() {
+                vv.push(x);
+            }
+            vv.len()
+        },
+        || (0..N as u64).collect::<std::vec::Vec<u64>>(),
+        |src| {
+            let mut vv = verus::vec::Vec::<
+                u64,
+                u32,
+                verus::parallel_store::ParallelStore<u64, u32>,
+                false,
+            >::new();
+            vv.try_extend(src).expect("100k fits a u32 index word");
+            vv.len()
+        },
+    );
+    // PROVISIONAL: recorded on the dev arm64 machine, not the EPYC baseline
+    // box - re-record there with the spread before treating the margin as a
+    // contract (BASELINE.md notes this row as pending).
+    Row::gated("vec/try_extend (shell batch path)", p, v, 3.0)
+}
+
 const WRITES_PER_FRAME: usize = 64;
 
 /// nested_mark: build `depth` marked frames of WRITES_PER_FRAME sets each, then
@@ -514,6 +549,7 @@ fn main() {
     // are separate rows for the phase reason above — a merge-then-walk cycle is
     // hop-dominated and would hide a slower splice.
     let rows = [
+        row_try_extend(),
         row_mark_set_restore(),
         row_restore_replay(),
         row_class_splice(),
