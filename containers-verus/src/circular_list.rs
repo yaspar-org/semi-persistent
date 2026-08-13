@@ -328,6 +328,8 @@ where T: Sized + Copy + core::default::Default {
 
     pub fn new() -> (c: Self)
         ensures c.wf(), c.n_spec() == 0, c.model_view().len() == 0,
+            c.entries_snapshots_view().len() == 0,
+            c.model_snapshots_view().len() == 0,
     {
         let c = CircularList {
             entries: SpVec::<

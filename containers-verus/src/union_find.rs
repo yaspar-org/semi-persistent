@@ -214,6 +214,8 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
     pub fn new() -> (u: Self)
         ensures u.wf(), u.n_spec() == 0, u.roots_view().len() == 0,
             u.parent_depth_spec() == 0,
+            u.roots_snapshots_view().len() == 0,
+            u.parent_snapshots_view().len() == 0,
     {
         let u = UnionFind {
             parent: SpVec::<T, T::Index, InlineStore<T, T::Index>, TRACK>::new(),

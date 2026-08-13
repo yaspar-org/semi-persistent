@@ -1271,6 +1271,9 @@ where
             s.wf(),
             s.n_spec() == 0,
             s.cap_spec() == 0,
+            s.dense_snapshots_view().len() == 0,
+            s.sparse_snapshots_view().len() == 0,
+            s.indices_snapshots_view().len() == 0,
     {
         let s = SparseSet {
             dense: SpVec::with_store(store),
@@ -1309,6 +1312,9 @@ where
     /// `SparseSet::new_inline` parity).
     pub fn new_inline() -> (s: Self)
         ensures s.wf(), s.n_spec() == 0, s.cap_spec() == 0,
+            s.dense_snapshots_view().len() == 0,
+            s.sparse_snapshots_view().len() == 0,
+            s.indices_snapshots_view().len() == 0,
     {
         Self::with_store(crate::inline_store::InlineStore::new())
     }

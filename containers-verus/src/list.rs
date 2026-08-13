@@ -1057,6 +1057,9 @@ where
     pub fn new() -> (a: Self)
         ensures a.wf(), a.heads_view().len() == 0, a.nodes_view().len() == 0,
             a.model_view().len() == 0,
+            a.heads_snapshots_view().len() == 0,
+            a.nodes_snapshots_view().len() == 0,
+            a.model_snapshots_view().len() == 0,
     {
         let a = ListArena {
             heads:
@@ -1091,6 +1094,9 @@ where
             // existing lists unchanged.
             forall|m: int| 0 <= m < old(self).model_view().len()
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         let l = self.heads_len();
         proof { Self::lemma_head_push_fits(self.heads_view().len()); }
@@ -1877,6 +1883,9 @@ where
                 && final(self).model_view() == old(self).model_view().push(Seq::empty()),
             r is Err ==> final(self).model_view() == old(self).model_view(),
             r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         let n = self.heads.store.data.len();
         if n < usize::MAX - 1 && L::try_new(n + 1).is_some() {
@@ -2122,6 +2131,9 @@ where
             final(self).list_seq(l.id_nat() as int) == Seq::<T>::empty(),
             forall|m: int| 0 <= m < old(self).model_view().len()
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Mint the typed handle for the WOULD-BE fresh row BEFORE any
         // mutation (plan 2.3: reject-before-mutate) — id-range exhaustion
