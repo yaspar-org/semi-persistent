@@ -1125,7 +1125,7 @@ where
 {
     /// Empty sparse set over a caller-supplied (empty, well-formed) dense
     /// store. Production `with_store` parity.
-    pub fn with_store(store: S) -> (s: Self)
+    pub(crate) fn with_store(store: S) -> (s: Self)
         requires
             store.wf(),
             store.data().len() == 0,

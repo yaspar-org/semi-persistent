@@ -685,7 +685,7 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> Default
 impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK, PROOFS> {
     pub fn new() -> Self {
         Self {
-            work: VecI::with_store(Default::default()),
+            work: VecI::new(),
             proof: AppendOnlyVec::new(),
         }
     }
