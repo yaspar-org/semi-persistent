@@ -105,6 +105,19 @@ differential suite needs them, and the parity claim re-scopes to a pinned
 correspondence: verus `Err(X)` exactly where production panics, asserted by
 the misuse suite. Trust ledger and design docs move in the same commits.
 
+## Drain status (2026-08-13)
+
+The allowlist stands at 35, every entry in a named floor class with its
+argument recorded in the list header: uninterp type-class obligations (no
+exec twin is expressible), unreachable receivers (store constructors are
+pub(crate) — compiler-enforced), hot sorted-input contracts (an O(n) check
+would sit on the join/search hot path; debug builds assert), the
+witness-pending trio (ring-id witness, snapshot-wf archival), and the
+measured-decline NodeLayout calculus (refuse-branches would reinstate the
+priced-out bounds checks). Everything drainable has drained: 81 → 35 across
+eleven batches, each landing verified and workspace-green. The gate forbids
+new entries and reports drained ones for removal.
+
 ## Out of scope, tracked
 
 - `next_id_from`'s release-mode id-exhaustion guard stays disclosed-and-priced
