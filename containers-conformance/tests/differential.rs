@@ -982,7 +982,7 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tv = v.try_mark(verus::vec::ShrinkPolicy::Never).expect("mark");
                 marks.push((tp, tv));
             }
             _ => {
@@ -992,7 +992,7 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore");
                 marks.truncate(idx);
             }
         }

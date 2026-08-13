@@ -196,14 +196,16 @@ fn pair_tracked(v_body: fn(&mut VerusRing<true>)) -> (f64, f64) {
         |ring| {
             let tok = ring.mark(prod::ShrinkPolicy::Never);
             prod_merges::<true>(ring);
-            ring.restore(tok);
+            ring.try_restore(tok).expect("restore");
             black_box(ring.len());
         },
         verus_build::<true>,
         move |ring| {
-            let tok = ring.mark(verus::vec::ShrinkPolicy::Never);
+            let tok = ring
+                .try_mark(verus::vec::ShrinkPolicy::Never)
+                .expect("mark");
             v_body(ring);
-            ring.restore(tok);
+            ring.try_restore(tok).expect("restore");
             black_box(ring.len());
         },
     )

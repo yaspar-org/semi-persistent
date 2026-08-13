@@ -459,7 +459,9 @@ fn circular_list_mark_restore() {
         for _ in 0..250 {
             match rng.below(7) {
                 0 => {
-                    let token = c.mark(ShrinkPolicy::Never);
+                    let token = c
+                        .try_mark(ShrinkPolicy::Never)
+                        .expect("mark: bounded depth");
                     frames.push((
                         token,
                         (node_payload.clone(), rings.clone(), ring_of.clone()),
@@ -467,7 +469,7 @@ fn circular_list_mark_restore() {
                 }
                 1 if !frames.is_empty() => {
                     let (tok, (np, rg, ro)) = frames.pop().unwrap();
-                    c.restore(tok); // token-only signature (Phase 7)
+                    c.try_restore(tok).expect("restore: own token"); // token-only signature (Phase 7)
                     node_payload = np;
                     rings = rg;
                     ring_of = ro;
