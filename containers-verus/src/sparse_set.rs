@@ -76,6 +76,10 @@ where
     }
 
     /// Sparse column (spec twin; fields are `pub(crate)` — privacy closeout).
+    pub open(crate) spec fn indices_view(&self) -> Seq<Idx> {
+        self.indices.view()
+    }
+
     pub open(crate) spec fn sparse_view(&self) -> Seq<Idx> {
         self.sparse.view()
     }
@@ -333,6 +337,12 @@ where
             old(self).contains_spec(id) ==> {
                 &&& final(self).cap_spec() == old(self).cap_spec()
                 &&& final(self).n_spec() == old(self).n_spec()
+                &&& final(self).sparse_view() == old(self).sparse_view()
+                &&& final(self).indices_view() == old(self).indices_view()
+                &&& final(self).dense_view() == old(self).dense_view().update(
+                        old(self).sparse_view()[id.as_nat() as int].as_nat() as int, value)
+                &&& final(self).id_set() == old(self).id_set()
+                &&& final(self).free_pool() == old(self).free_pool()
             },
     {
         // Total-with-documented-panic: see `get`.
@@ -375,6 +385,24 @@ where
                  && final(self).free_pool() =~= old(self).free_pool().drop_first()),
             old(self).free_pool().len() == 0 ==>
                 (id.as_nat() == old(self).cap_spec() && final(self).free_pool().len() == 0),
+            // capacity: recycling keeps it, a fresh id grows it by one, and
+            // either way the minted id is within the old capacity.
+            id.as_nat() <= old(self).cap_spec(),
+            final(self).cap_spec() == if old(self).free_pool().len() == 0 {
+                old(self).cap_spec() + 1
+            } else {
+                old(self).cap_spec()
+            },
+            // the stored value is readable back at the new id.
+            final(self).dense_view()[
+                final(self).sparse_view()[id.as_nat() as int].as_nat() as int] == value,
+            // survivors: every previously live id stays live with its value.
+            forall|k: Idx| #[trigger] old(self).contains_spec(k)
+                ==> final(self).contains_spec(k)
+                    && final(self).dense_view()[
+                            final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
+                        == old(self).dense_view()[
+                            old(self).sparse_view()[k.as_nat() as int].as_nat() as int],
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -559,6 +587,15 @@ where
                 // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
                 // (so the next `add` recycles it — LIFO), the rest shifts back.
                 &&& final(self).free_pool() =~= old(self).free_pool().insert(0, id.as_nat())
+                // survivors: every other live id stays live with its value
+                // (the swap-remove moves the last dense slot, not its id map).
+                &&& (forall|k: Idx| #[trigger] old(self).contains_spec(k)
+                        && k.as_nat() != id.as_nat()
+                        ==> final(self).contains_spec(k)
+                            && final(self).dense_view()[
+                                    final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
+                                == old(self).dense_view()[
+                                    old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
             },
     {
         // Total-with-documented-panic: see `get`.
@@ -871,6 +908,26 @@ where
             final(self).wf(),
             r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted
                 && final(self).id_set() == old(self).id_set(),
+            r matches Ok(id) ==> {
+                &&& final(self).n_spec() == old(self).n_spec() + 1
+                &&& final(self).contains_spec(id)
+                &&& !old(self).id_set().contains(id.as_nat())
+                &&& final(self).id_set() =~= old(self).id_set().insert(id.as_nat())
+                &&& id.as_nat() <= old(self).cap_spec()
+                &&& final(self).cap_spec() == if old(self).free_pool().len() == 0 {
+                        old(self).cap_spec() + 1
+                    } else {
+                        old(self).cap_spec()
+                    }
+                &&& final(self).dense_view()[
+                        final(self).sparse_view()[id.as_nat() as int].as_nat() as int] == value
+                &&& (forall|k: Idx| #[trigger] old(self).contains_spec(k)
+                        ==> final(self).contains_spec(k)
+                            && final(self).dense_view()[
+                                    final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
+                                == old(self).dense_view()[
+                                    old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
+            },
     {
         if self.can_add() {
             Ok(self.add(value))

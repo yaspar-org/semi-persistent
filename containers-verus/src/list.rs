@@ -1331,6 +1331,16 @@ where
             final(self).list_seq(l as int) == old(self).list_seq(l as int).push(payload),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects, for aggregate invariants stated over the model
+            // (egraph-wf W5): the model gains exactly the fresh node at the
+            // list's end, and no stored payload changes.
+            final(self).model_view() == old(self).model_view().update(l as int,
+                old(self).model_view()[l as int].push(old(self).nodes_view().len() as usize)),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Bound the old list length before mutating; paired with the arena bound taken
         // after the push, this is what makes `len + 1` representable (see `prepend_raw`).
@@ -1583,6 +1593,15 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len()
                 && m != dst as int && m != src as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects (egraph-wf W5): concatenated model, no payload moves.
+            final(self).model_view() == old(self).model_view()
+                .update(dst as int,
+                    old(self).model_view()[dst as int] + old(self).model_view()[src as int])
+                .update(src as int, Seq::<usize>::empty()),
+            final(self).nodes_view().len() == old(self).nodes_view().len(),
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
     {
         // Bound dst.len + src.len before mutating: the two lists are disjoint, so their
         // combined length fits the arena, and the arena fits `N::Index`. No node is
@@ -1862,7 +1881,19 @@ where
             final(self).wf(),
             r is Ok ==> final(self).list_seq(l.id_nat() as int)
                 == old(self).list_seq(l.id_nat() as int).push(payload),
-            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r is Ok ==> {
+                &&& final(self).model_view() == old(self).model_view().update(
+                        l.id_nat() as int, old(self).model_view()[l.id_nat() as int].push(
+                            old(self).nodes_view().len() as usize))
+                &&& final(self).nodes_view().len() == old(self).nodes_view().len() + 1
+                &&& (forall|k: int| 0 <= k < old(self).nodes_view().len()
+                        ==> (#[trigger] final(self).nodes_view()[k]).payload
+                            == old(self).nodes_view()[k].payload)
+                &&& final(self).nodes_view()[old(self).nodes_view().len() as int].payload
+                    == payload
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).nodes_view() == old(self).nodes_view(),
     {
         if !(l.to_usize() < self.heads.store.data.len()) {
             return Err(crate::error::ContainerError::IndexOutOfBounds);
@@ -2145,6 +2176,15 @@ where
                 == old(self).list_seq(l.id_nat() as int).push(payload),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects (egraph-wf W5), inherited from `append_raw`.
+            final(self).model_view() == old(self).model_view().update(l.id_nat() as int,
+                old(self).model_view()[l.id_nat() as int].push(
+                    old(self).nodes_view().len() as usize)),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Runtime guard: node-id headroom before allocating.
         crate::guard::check_precondition(

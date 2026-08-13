@@ -483,8 +483,10 @@ where T: Sized + Copy + core::default::Default {
             r matches Ok(nid) ==> nid.id_nat() == old(self).n_spec()
                 && final(self).n_spec() == old(self).n_spec() + 1
                 && final(self).model_view()
-                    == old(self).model_view().push(seq![nid.id_nat() as usize]),
-            r is Err ==> final(self).model_view() == old(self).model_view(),
+                    == old(self).model_view().push(seq![nid.id_nat() as usize])
+                && final(self).payload_seq() == old(self).payload_seq().push(payload),
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).payload_seq() == old(self).payload_seq(),
             r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
     {
         if self.entries.can_push() {
@@ -510,6 +512,7 @@ where T: Sized + Copy + core::default::Default {
             nid.id_nat() == old(self).n_spec(),
             final(self).n_spec() == old(self).n_spec() + 1,
             final(self).model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
+            final(self).payload_seq() == old(self).payload_seq().push(payload),
             final(self).payload_seq()[nid.id_nat() as int] == payload,
     {
         // Runtime guard for UNVERIFIED callers on the id-range precondition:
