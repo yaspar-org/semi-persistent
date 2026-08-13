@@ -131,7 +131,7 @@ def scan_file(path: Path):
             # holding a corrupted value. Not caller obligations.
             rm = re.search(r'\brequires\b(.*?)(?=\bensures\b|\brecommends\b|$)', sig, re.S)
             clause = rm.group(1) if rm else ''
-            residue = re.sub(r'(old\(self\)|self)\s*(\.\s*\w+\s*\(\s*\))?\s*\.\s*(cursor_)?wf\s*\(\s*\)', '', clause)
+            residue = re.sub(r'(old\(\w+\)|\w+)\s*(\.\s*\w+\s*\(\s*\))?\s*\.\s*(cursor_)?wf\s*\(\s*\)', '', clause)
             residue = re.sub(r'[\s,]+', '', residue)
             if residue == '':
                 has_req = False

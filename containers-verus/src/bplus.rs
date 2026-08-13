@@ -2239,8 +2239,6 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     /// besides (see `bulk_load`'s doc: no per-level index vector, no separate link
     /// pass, no `first_key_word` descent).
     pub fn from_sorted(keys: &[K]) -> (t: Self)
-        requires
-            true,
         ensures
             t.wf(),
             t.model().len() == keys@.len(),
