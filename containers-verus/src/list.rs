@@ -2261,14 +2261,19 @@ where
     /// Iterate list `l` in order, yielding payloads by value (production
     /// `ListIter` parity).
     pub fn iter(&self, l: L) -> (it: ListIter<'_, T, L, N, TRACK>)
-        requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures
-            it.arena_ref() == self,
-            it.list_spec() == l.id_nat(),
-            it.pos_spec() == 0,
-            it.cursor_ok(),
+        requires self.wf(),
+        ensures l.id_nat() < self.model_view().len() ==> ({
+            &&& it.arena_ref() == self
+            &&& it.list_spec() == l.id_nat()
+            &&& it.pos_spec() == 0
+            &&& it.cursor_ok()
+        }),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
+        // Total-with-documented-panic: handle-bound branch.
+        if !(l.as_usize() < self.heads.store.data.len()) {
+            crate::guard::refuse("ListArena::iter: list handle out of range");
+        }
         let lu = l.as_usize();
         let head = self.heads.get_index(self.head_ix(lu)).head();
         proof {
@@ -2353,21 +2358,26 @@ where
     pub fn next(&mut self) -> (r: Option<T>)
         requires
             old(self).arena_ref().wf(),
-            (old(self).list_spec() as int) < old(self).arena_ref().model_view().len(),
             old(self).cursor_ok(),
         ensures
-            final(self).arena_ref() == old(self).arena_ref(),
-            final(self).list_spec() == old(self).list_spec(),
-            final(self).cursor_ok(),
-            old(self).pos_spec() < old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
-                &&& r == Some(old(self).arena_ref().list_seq(old(self).list_spec() as int)[old(self).pos_spec() as int])
-                &&& final(self).pos_spec() == old(self).pos_spec() + 1
-            },
-            old(self).pos_spec() >= old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
-                &&& r is None
-                &&& final(self).pos_spec() == old(self).pos_spec()
-            },
+            (old(self).list_spec() as int) < old(self).arena_ref().model_view().len() ==> ({
+                &&& final(self).arena_ref() == old(self).arena_ref()
+                &&& final(self).list_spec() == old(self).list_spec()
+                &&& final(self).cursor_ok()
+                &&& (old(self).pos_spec() < old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
+                    &&& r == Some(old(self).arena_ref().list_seq(old(self).list_spec() as int)[old(self).pos_spec() as int])
+                    &&& final(self).pos_spec() == old(self).pos_spec() + 1
+                })
+                &&& (old(self).pos_spec() >= old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
+                    &&& r is None
+                    &&& final(self).pos_spec() == old(self).pos_spec()
+                })
+            }),
     {
+        // Total-with-documented-panic: stale-handle branch.
+        if !((self.list as usize) < self.arena.heads.store.data.len()) {
+            crate::guard::refuse("ListIter::next: list handle out of range");
+        }
         let ghost m = self.arena.model_view()[self.list as int];
         if self.cur.is_null_exec() {
             proof {
