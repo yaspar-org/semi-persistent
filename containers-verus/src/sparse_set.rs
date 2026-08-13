@@ -311,21 +311,34 @@ where
 
     /// Value of a live id (through the stable indirection).
     pub fn get(&self, id: Idx) -> (v: T)
-        requires self.wf(), self.contains_spec(id),
-        ensures v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
+        requires self.wf(),
+        ensures self.contains_spec(id)
+            ==> v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
     {
+        // Total-with-documented-panic: liveness is an explicit branch. A dead
+        // id previously read a stale dense slot silently (production asserts;
+        // the verified core relied on the erased requires).
+        if !self.contains(id) {
+            crate::guard::refuse("SparseSet::get: id is not live");
+        }
         let pos = self.sparse.get_index(id);
         self.dense.get_index(pos)
     }
 
     /// Overwrite a live id's value in place (position and id unchanged).
     pub fn set(&mut self, id: Idx, value: T)
-        requires old(self).wf(), old(self).contains_spec(id),
+        requires old(self).wf(),
         ensures
             final(self).wf(),
-            final(self).cap_spec() == old(self).cap_spec(),
-            final(self).n_spec() == old(self).n_spec(),
+            old(self).contains_spec(id) ==> {
+                &&& final(self).cap_spec() == old(self).cap_spec()
+                &&& final(self).n_spec() == old(self).n_spec()
+            },
     {
+        // Total-with-documented-panic: see `get`.
+        if !self.contains(id) {
+            crate::guard::refuse("SparseSet::set: id is not live");
+        }
         let pos = self.sparse.get_index(id);
         self.dense.set_index(pos, value);
         proof {
@@ -533,18 +546,25 @@ where
     /// parks the freed id at the new boundary `indices[n-1]` (the first free
     /// slot), preserving the permutation by a transposition.
     pub fn remove(&mut self, id: Idx)
-        requires old(self).wf(), old(self).contains_spec(id),
+        requires old(self).wf(),
         ensures
             final(self).wf(),
-            final(self).n_spec() == old(self).n_spec() - 1,
-            final(self).cap_spec() == old(self).cap_spec(),
-            // ABSTRACT EFFECT: the live set loses exactly `id`.
-            final(self).id_set() =~= old(self).id_set().remove(id.as_nat()),
-            // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
-            // (so the next `add` recycles it — LIFO), the rest of the pool
-            // shifts back by one.
-            final(self).free_pool() =~= old(self).free_pool().insert(0, id.as_nat()),
+            // Every clause is conditional on liveness at entry; a dead id
+            // refuses at the branch and reaches none of this.
+            old(self).contains_spec(id) ==> {
+                &&& final(self).n_spec() == old(self).n_spec() - 1
+                &&& final(self).cap_spec() == old(self).cap_spec()
+                // ABSTRACT EFFECT: the live set loses exactly `id`.
+                &&& final(self).id_set() =~= old(self).id_set().remove(id.as_nat())
+                // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
+                // (so the next `add` recycles it — LIFO), the rest shifts back.
+                &&& final(self).free_pool() =~= old(self).free_pool().insert(0, id.as_nat())
+            },
     {
+        // Total-with-documented-panic: see `get`.
+        if !self.contains(id) {
+            crate::guard::refuse("SparseSet::remove: id is not live");
+        }
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
         let ghost old_sparse = self.sparse.view();

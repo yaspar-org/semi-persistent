@@ -61,10 +61,7 @@ opt.rs::get
 sorted_vec_cursor.rs::key
 sorted_vec_cursor.rs::new
 sorted_vec_cursor.rs::seek
-sparse_set.rs::get
-sparse_set.rs::remove
 sparse_set.rs::restore
-sparse_set.rs::set
 sparse_set.rs::with_store
 tagged.rs::clear_tag
 tagged.rs::from_repr
