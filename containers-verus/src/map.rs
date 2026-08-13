@@ -413,6 +413,82 @@ where
         MapToken { inner }
     }
 
+    // ------------------------------------------------------------------
+    // Total shell (total-API plan phase 3): Vec's pilot pattern; the map
+    // delegates every capacity/validity question to its single component.
+    // ------------------------------------------------------------------
+
+    /// Exec twin of `insert`'s capacity precondition (the log's).
+    pub fn can_insert(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (self.log_view().len() + 1 < I::max_nat()),
+    {
+        self.log.can_push()
+    }
+
+    /// Total insert: refuses at the log's index-word capacity.
+    pub fn try_insert(&mut self, key: K, val: V)
+        -> (r: Result<I, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(id) ==> id.as_nat() == old(self).log_view().len()
+                && final(self).log_view() == old(self).log_view().push((key, val))
+                && final(self).index_view() == old(self).index_view().insert(key, id),
+            r is Err ==> final(self).log_view() == old(self).log_view()
+                && final(self).index_view() == old(self).index_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.can_insert() {
+            Ok(self.insert(key, val))
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total mark.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<MapToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).log_view() == old(self).log_view()
+                &&& final(self).index_view() == old(self).index_view()
+                &&& token.frame_idx_spec() == old(self).depth_spec()
+            },
+            r is Err ==> final(self).log_view() == old(self).log_view()
+                && final(self).index_view() == old(self).index_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.log.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore.
+    pub fn try_restore(&mut self, token: MapToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).log_view()
+                == old(self).log_snapshots_view()[token.frame_idx_spec() as int],
+            r is Err ==> final(self).log_view() == old(self).log_view()
+                && final(self).index_view() == old(self).index_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
     /// "Restorable now" (plan 2.2), delegating to the log — the map's single
     /// component, so component-wise restorability IS map restorability.
     pub fn is_valid_token(&self, token: &MapToken) -> (b: bool)
