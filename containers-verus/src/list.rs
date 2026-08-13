@@ -55,6 +55,7 @@
 
 use vstd::prelude::*;
 
+use crate::diff_store::DiffStore;
 use crate::index_like::IndexLike;
 use crate::inline_store::InlineStore;
 use crate::opt::DenseId;
@@ -1307,9 +1308,12 @@ where
     /// could not represent; the ghost model makes it routine.
     /// Measured ~11.7M rlimit (2.4s) once the disjointness quantifier is
     /// delegated to `lemma_insert_fresh_disjoint`, i.e. ~1.17x the default
-    /// budget of 10, so this still does not pass bare. 30 is ~2.5x measured
-    /// need. It was 50.
-    #[verifier::rlimit(30)]
+    /// budget of 10, so this still does not pass bare. 30 was ~2.5x measured
+    /// need until the phase-3 shell additions moved the module's proof seed
+    /// and it tripped at 30; 60 restores the same ~2.5x margin over the new
+    /// measurement. The real fix is the splice_raw-style dimension split this
+    /// fn is queued for (plan doc, remaining tail).
+    #[verifier::rlimit(60)]
     pub(crate) fn append_raw(&mut self, l: usize, payload: T)
         requires
             old(self).wf(),
@@ -1831,6 +1835,78 @@ where
     /// model still describes them (`arena_model_wf`). Semi-persistence composes
     /// from the two inner `Vec`s.
     /// "Restorable now" for the composite token (plan 2.2/2.3).
+    // ------------------------------------------------------------------
+    // Total shell (total-API plan phase 3).
+    // ------------------------------------------------------------------
+
+    /// Total list allocation: refuses at `L`'s id range.
+    pub fn try_new_list(&mut self) -> (r: Result<L, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(l) ==> l.id_nat() == old(self).heads_view().len()
+                && final(self).nodes_view() == old(self).nodes_view()
+                && final(self).model_view() == old(self).model_view().push(Seq::empty()),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        let n = self.heads.store.data.len();
+        if n < usize::MAX - 1 && L::try_new(n + 1).is_some() {
+            Ok(self.new_list())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total mark.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<ListArenaToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).model_view() == old(self).model_view()
+                &&& token.heads_frame_idx_spec() == old(self).heads_depth_spec()
+                &&& token.nodes_frame_idx_spec() == old(self).nodes_depth_spec()
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        let hn = self.heads.store.data.len();
+        let nn = self.nodes.store.data.len();
+        if !(hn < usize::MAX && nn < usize::MAX) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        if !(self.heads.frames.len() < u32::MAX as usize
+            && self.nodes.frames.len() < u32::MAX as usize)
+        {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: component restorability plus the same-mark frame
+    /// agreement (a mixed token from two different marks refuses).
+    pub fn try_restore(&mut self, token: ListArenaToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
+    {
+        if self.is_valid_token(&token)
+            && token.heads.frame_idx == token.nodes.frame_idx
+        {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
     pub fn is_valid_token(&self, token: &ListArenaToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
