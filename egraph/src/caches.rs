@@ -271,15 +271,24 @@ impl<
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> CacheToken {
         CacheToken {
-            nodes: self.nodes.mark(shrink),
-            history: self.history.as_mut().map(|h| h.mark(shrink)),
+            nodes: self
+                .nodes
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            history: self.history.as_mut().map(|h| {
+                h.try_mark(shrink)
+                    .expect("mark: frame depth is bounded by the saturation driver")
+            }),
         }
     }
 
     pub fn restore(&mut self, token: CacheToken) {
-        self.nodes.restore(token.nodes);
+        self.nodes
+            .try_restore(token.nodes)
+            .expect("restore: token minted by this container's own mark");
         if let (Some(h), Some(tok)) = (&mut self.history, token.history) {
-            h.restore(tok);
+            h.try_restore(tok)
+                .expect("restore: token minted by this container's own mark");
         }
         self.rebuild_index();
     }
@@ -576,21 +585,39 @@ impl<
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> PoolCacheToken {
         PoolCacheToken {
-            nodes: self.nodes.mark(shrink),
-            children: self.children.mark(shrink),
-            history_nodes: self.history_nodes.as_mut().map(|h| h.mark(shrink)),
-            history_children: self.history_children.as_mut().map(|h| h.mark(shrink)),
+            nodes: self
+                .nodes
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            children: self
+                .children
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            history_nodes: self.history_nodes.as_mut().map(|h| {
+                h.try_mark(shrink)
+                    .expect("mark: frame depth is bounded by the saturation driver")
+            }),
+            history_children: self.history_children.as_mut().map(|h| {
+                h.try_mark(shrink)
+                    .expect("mark: frame depth is bounded by the saturation driver")
+            }),
         }
     }
 
     pub fn restore(&mut self, token: PoolCacheToken) {
-        self.nodes.restore(token.nodes);
-        self.children.restore(token.children);
+        self.nodes
+            .try_restore(token.nodes)
+            .expect("restore: token minted by this container's own mark");
+        self.children
+            .try_restore(token.children)
+            .expect("restore: token minted by this container's own mark");
         if let (Some(h), Some(tok)) = (&mut self.history_nodes, token.history_nodes) {
-            h.restore(tok);
+            h.try_restore(tok)
+                .expect("restore: token minted by this container's own mark");
         }
         if let (Some(h), Some(tok)) = (&mut self.history_children, token.history_children) {
-            h.restore(tok);
+            h.try_restore(tok)
+                .expect("restore: token minted by this container's own mark");
         }
         self.rebuild_index();
     }
@@ -725,13 +752,18 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> CacheToken {
         CacheToken {
-            nodes: self.nodes.mark(shrink),
+            nodes: self
+                .nodes
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
             history: None,
         }
     }
 
     pub fn restore(&mut self, token: CacheToken) {
-        self.nodes.restore(token.nodes);
+        self.nodes
+            .try_restore(token.nodes)
+            .expect("restore: token minted by this container's own mark");
         self.rebuild_index();
     }
 

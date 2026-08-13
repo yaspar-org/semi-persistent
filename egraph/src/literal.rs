@@ -44,7 +44,10 @@ impl<L: LitVal, V: DenseId, const TRACK: bool> LitValStore<L, V, TRACK> {
         if let Some(id) = self.map.id_of(&value) {
             return crate::id::id_at_index::<V>(id);
         }
-        let id = self.map.insert(value, ());
+        let id = self
+            .map
+            .try_insert(value, ())
+            .expect("literal interner exhausted the id index word");
         crate::id::id_at_index::<V>(id)
     }
 
@@ -67,11 +70,17 @@ impl<L: LitVal, V: DenseId, const TRACK: bool> LitValStore<L, V, TRACK> {
     }
 
     pub fn mark(&mut self, shrink: crate::containers::ShrinkPolicy) -> LitValStoreToken {
-        LitValStoreToken(self.map.mark(shrink))
+        LitValStoreToken(
+            self.map
+                .try_mark(shrink)
+                .expect("literal mark: depth bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: LitValStoreToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("literal restore: token minted by this container's own mark");
     }
 }
 

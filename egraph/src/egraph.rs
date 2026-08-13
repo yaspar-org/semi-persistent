@@ -354,14 +354,18 @@ where
     /// Record `op`'s identity (unit) element node (`x ∘ e = x`; the unit drops from monomials).
     /// Called by the resolver in `sortcheck` after it builds the `:identity` term to a node.
     pub fn set_unit_node(&mut self, op: Cfg::O, unit: Cfg::G) {
-        self.unit_node.insert(op, unit);
+        self.unit_node
+            .try_insert(op, unit)
+            .expect("unit/inverse-op map exhausted its index word");
     }
     /// The identity (unit) element node of `op`, or `None` if `op` has no declared identity.
     pub fn unit_node(&self, op: Cfg::O) -> Option<Cfg::G> {
         self.unit_node.get_by_key(&op).copied()
     }
     pub fn set_inverse_op(&mut self, op: Cfg::O, inv: Cfg::O) {
-        self.inverse_op.insert(op, inv);
+        self.inverse_op
+            .try_insert(op, inv)
+            .expect("unit/inverse-op map exhausted its index word");
     }
     /// The group inverse operator of `op` (`:inverse neg`), or `None` if none declared.
     pub fn inverse_op(&self, op: Cfg::O) -> Option<Cfg::O> {
@@ -2135,8 +2139,14 @@ where
             rules: self.rules.mark(shrink),
             axioms: self.axioms.mark(shrink),
             lits: self.lits.mark(shrink),
-            unit_node: self.unit_node.mark(shrink),
-            inverse_op: self.inverse_op.mark(shrink),
+            unit_node: self
+                .unit_node
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            inverse_op: self
+                .inverse_op
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
             completion_outcome: self.completion_outcome,
         }
     }
@@ -2149,8 +2159,12 @@ where
         self.rules.restore(token.rules);
         self.axioms.restore(token.axioms);
         self.lits.restore(token.lits);
-        self.unit_node.restore(token.unit_node);
-        self.inverse_op.restore(token.inverse_op);
+        self.unit_node
+            .try_restore(token.unit_node)
+            .expect("restore: token minted by this container's own mark");
+        self.inverse_op
+            .try_restore(token.inverse_op)
+            .expect("restore: token minted by this container's own mark");
         // Roll the outcome back with the graph: the mark-time value describes exactly the
         // restored state (mark() rebuilds first), so a post-restore reader never sees an
         // outcome computed for the discarded scope.

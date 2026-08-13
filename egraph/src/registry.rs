@@ -169,7 +169,9 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
             "register_builtins must be called on empty registry"
         );
         for name in sort_names {
-            self.map.insert(name.to_string(), ());
+            self.map
+                .try_insert(name.to_string(), ())
+                .expect("registry id space exhausted for its index word");
         }
         self.builtin_count = self.map.len();
         self.concrete_count = self.map.len();
@@ -181,7 +183,10 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
             // range; re-checking costs nothing on this path and keeps one spelling.
             return id_at::<S>(id.as_usize());
         }
-        let id = self.map.insert(name.to_owned(), ());
+        let id = self
+            .map
+            .try_insert(name.to_owned(), ())
+            .expect("registry id space exhausted for its index word");
         id_at::<S>(id.as_usize())
     }
 
@@ -216,11 +221,17 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> SortRegistryToken {
-        SortRegistryToken(self.map.mark(shrink))
+        SortRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: SortRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -474,15 +485,18 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 return_sort.to_usize()
             );
         }
-        let id = self.map.insert(
-            name.to_owned(),
-            OpInfo {
-                name: name.to_owned(),
-                return_sort,
-                kind,
-                is_constructor: false,
-            },
-        );
+        let id = self
+            .map
+            .try_insert(
+                name.to_owned(),
+                OpInfo {
+                    name: name.to_owned(),
+                    return_sort,
+                    kind,
+                    is_constructor: false,
+                },
+            )
+            .expect("registry id space exhausted for its index word");
         id_at::<O>(id.as_usize())
     }
 
@@ -499,11 +513,17 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     pub fn set_constructor(&mut self, _id: O) {}
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> OpRegistryToken {
-        OpRegistryToken(self.map.mark(shrink))
+        OpRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: OpRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -542,14 +562,17 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
     }
 
     pub fn register(&mut self, name: &str, lhs: &str, rhs: &str) -> crate::id::RuleId {
-        let id = self.map.insert(
-            name.to_owned(),
-            RuleInfo {
-                name: name.to_owned(),
-                lhs: lhs.to_owned(),
-                rhs: rhs.to_owned(),
-            },
-        );
+        let id = self
+            .map
+            .try_insert(
+                name.to_owned(),
+                RuleInfo {
+                    name: name.to_owned(),
+                    lhs: lhs.to_owned(),
+                    rhs: rhs.to_owned(),
+                },
+            )
+            .expect("registry id space exhausted for its index word");
         id_at::<crate::id::RuleId>(id.as_usize())
     }
 
@@ -576,11 +599,17 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> RuleRegistryToken {
-        RuleRegistryToken(self.map.mark(shrink))
+        RuleRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: RuleRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -620,14 +649,17 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
     }
 
     pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> crate::id::AxiomId {
-        let id = self.map.insert(
-            name.to_owned(),
-            AxiomInfo {
-                name: name.to_owned(),
-                lhs,
-                rhs,
-            },
-        );
+        let id = self
+            .map
+            .try_insert(
+                name.to_owned(),
+                AxiomInfo {
+                    name: name.to_owned(),
+                    lhs,
+                    rhs,
+                },
+            )
+            .expect("registry id space exhausted for its index word");
         id_at::<crate::id::AxiomId>(id.as_usize())
     }
 
@@ -648,11 +680,17 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> AxiomRegistryToken {
-        AxiomRegistryToken(self.map.mark(shrink))
+        AxiomRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: AxiomRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
