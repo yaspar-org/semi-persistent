@@ -194,10 +194,13 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
     pub fn key(&self) -> (r: K)
         requires
             self.cursor_wf(),
-            self.idx() < self.model().len(),
         ensures
-            r.id_nat() == self.model()[self.idx()],
+            self.idx() < self.model().len() ==> r.id_nat() == self.model()[self.idx()],
     {
+        // Total-with-documented-panic: exhaustion is the branch.
+        if !(self.pos < self.data.len()) {
+            crate::guard::refuse("SortedVecCursor::key: cursor exhausted");
+        }
         proof {
             lemma_nat_model_index(self.data@, self.idx());
         }

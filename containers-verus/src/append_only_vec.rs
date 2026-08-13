@@ -143,9 +143,12 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     }
 
     pub fn get(&self, idx: I) -> (v: &T)
-        requires idx.as_nat() < self.view().len(),
-        ensures *v == self.view()[idx.as_nat() as int],
+        ensures idx.as_nat() < self.view().len() ==> *v == self.view()[idx.as_nat() as int],
     {
+        // Total-with-documented-panic: explicit bound branch.
+        if !(idx.as_usize() < self.data.len()) {
+            crate::guard::refuse("AppendOnlyVec::get: index out of bounds");
+        }
         &self.data[idx.as_usize()]
     }
 

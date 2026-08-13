@@ -423,7 +423,7 @@ where T: Sized + Copy + core::default::Default {
     /// with it every `wf` clause — is preserved by congruence; only
     /// `payload_seq` moves.
     pub fn set_payload(&mut self, i: N, payload: T)
-        requires old(self).wf(), i.id_nat() < old(self).n_spec(),
+        requires old(self).wf(),
         ensures
             final(self).wf(),
             final(self).n_spec() == old(self).n_spec(),
@@ -432,6 +432,10 @@ where T: Sized + Copy + core::default::Default {
             final(self).payload_seq() == old(self).payload_seq().update(i.id_nat() as int, payload),
             final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
     {
+        // Total-with-documented-panic: explicit node-bound branch.
+        if !(i.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::set_payload: node id out of range");
+        }
         proof { i.lemma_as_nat_is_id_nat(); }
         let iw = i.to_index();
         let next = self.entries.get_index(iw).next;

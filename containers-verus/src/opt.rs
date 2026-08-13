@@ -78,9 +78,13 @@ impl<T: Tagged> Opt<T> {
 
     /// Extract the value (panics on `None` in exec via the precondition).
     pub fn get(&self) -> (v: T)
-        requires self.wf(), self.get_spec() is Some,
-        ensures Some(v) == self.get_spec(),
+        requires self.wf(),
+        ensures self.get_spec() is Some ==> Some(v) == self.get_spec(),
     {
+        // Total-with-documented-panic: presence is the branch.
+        if !self.is_some() {
+            crate::guard::refuse("Opt::get: value is None");
+        }
         T::from_repr(&self.repr)
     }
 

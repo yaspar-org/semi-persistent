@@ -82,13 +82,17 @@ impl<T: DenseId> IdFactory<T> {
 
     /// Allocate, panicking on exhaustion (production message parity).
     pub fn alloc(&mut self) -> (id: T)
-        requires old(self).count_spec() < T::id_bound(), old(self).count_spec() < usize::MAX,
         ensures
-            id.id_nat() == old(self).count_spec(),
-            final(self).count_spec() == old(self).count_spec() + 1,
+            (old(self).count_spec() < T::id_bound() && old(self).count_spec() < usize::MAX) ==> {
+                &&& id.id_nat() == old(self).count_spec()
+                &&& final(self).count_spec() == old(self).count_spec() + 1
+            },
     {
         let r = self.try_alloc();
-        crate::guard::check_precondition(r.is_some(), "DenseId range exhausted");
+        // Total-with-documented-panic: exhaustion refuses by name.
+        if r.is_none() {
+            crate::guard::refuse("IdFactory::alloc: DenseId range exhausted");
+        }
         match r {
             Some(id) => id,
             None => {
