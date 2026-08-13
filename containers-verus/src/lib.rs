@@ -104,6 +104,7 @@ pub mod sorted_cursor;
 pub mod sorted_vec_cursor;
 pub mod sparse_set;
 pub mod tagged;
+pub mod union_find;
 pub mod vec;
 
 // ---------------------------------------------------------------------------
