@@ -28,11 +28,11 @@ const N: usize = 100_000;
 macro_rules! churn {
     ($v:expr, $policy:expr, $idx:ty) => {{
         let v = $v;
-        let t = v.mark($policy);
+        let t = v.try_mark($policy).expect("mark");
         for i in 0..(N / 2) {
             v.set((i % N) as $idx, (i as u32 + 999) & 0x7FFF_FFFF);
         }
-        v.restore(t);
+        v.try_restore(t).expect("restore");
         v.len()
     }};
 }
@@ -44,7 +44,7 @@ fn time(which: usize) -> f64 {
             0 => {
                 let mut v = VProdU::new();
                 for i in 0..N {
-                    v.push((i as u32) & 0x7FFF_FFFF);
+                    v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
                 }
                 let t = std::time::Instant::now();
                 black_box(churn!(&mut v, prod::ShrinkPolicy::Never, usize));
@@ -53,7 +53,7 @@ fn time(which: usize) -> f64 {
             1 => {
                 let mut v = VVerusU::new();
                 for i in 0..N {
-                    v.push((i as u32) & 0x7FFF_FFFF);
+                    v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
                 }
                 let t = std::time::Instant::now();
                 black_box(churn!(&mut v, verus::vec::ShrinkPolicy::Never, usize));
@@ -62,7 +62,7 @@ fn time(which: usize) -> f64 {
             2 => {
                 let mut v = VProd32::new();
                 for i in 0..N {
-                    v.push((i as u32) & 0x7FFF_FFFF);
+                    v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
                 }
                 let t = std::time::Instant::now();
                 black_box(churn!(&mut v, prod::ShrinkPolicy::Never, u32));
@@ -71,7 +71,7 @@ fn time(which: usize) -> f64 {
             _ => {
                 let mut v = VVerus32::new();
                 for i in 0..N {
-                    v.push((i as u32) & 0x7FFF_FFFF);
+                    v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
                 }
                 let t = std::time::Instant::now();
                 black_box(churn!(&mut v, verus::vec::ShrinkPolicy::Never, u32));

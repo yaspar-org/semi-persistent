@@ -118,12 +118,14 @@ fn bench_vec_mark_set_restore(c: &mut Criterion) {
             || {
                 let mut v: V = V::new();
                 for i in 0..VEC_N {
-                    v.push(i as u64);
+                    v.try_push(i as u64).expect("push: within index word");
                 }
                 v
             },
             |v| {
-                let tok = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tok = v
+                    .try_mark(verus::vec::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 let mut x: u64 = 0x9E3779B97F4A7C15;
                 for _ in 0..VEC_TOUCHES {
                     x ^= x << 13;
@@ -132,7 +134,7 @@ fn bench_vec_mark_set_restore(c: &mut Criterion) {
                     let idx = (x % VEC_N as u64) as u32;
                     v.set(idx, x);
                 }
-                v.restore(tok);
+                v.try_restore(tok).expect("restore: own token");
                 black_box(v.len());
             },
             BatchSize::LargeInput,
@@ -168,7 +170,7 @@ fn bench_vec_push_pop_untracked(c: &mut Criterion) {
         b.iter(|| {
             let mut v: V = V::new();
             for i in 0..VEC_N {
-                v.push(i as u64);
+                v.try_push(i as u64).expect("push: within index word");
             }
             let mut acc = 0u64;
             while let Some(x) = v.pop() {
@@ -215,11 +217,12 @@ fn bench_list_append_iter(c: &mut Criterion) {
             let mut a: verus::ListArena<VElem, VList, VNode, false> = verus::ListArena::new();
             let mut lists = Vec::with_capacity(LISTS);
             for _ in 0..LISTS {
-                lists.push(a.new_list());
+                lists.push(a.try_new_list().expect("within id space"));
             }
             for (k, &l) in lists.iter().enumerate() {
                 for j in 0..PER_LIST {
-                    a.append(l, VElem::new((k * PER_LIST + j) as u32 & 0x7FFF_FFFF));
+                    a.try_append(l, VElem::new((k * PER_LIST + j) as u32 & 0x7FFF_FFFF))
+                        .expect("within id space");
                 }
             }
             let mut acc = 0u64;
@@ -267,9 +270,10 @@ fn bench_list_splice(c: &mut Criterion) {
             let mut a: verus::ListArena<VElem, VList, VNode, false> = verus::ListArena::new();
             let mut lists = Vec::with_capacity(LISTS);
             for k in 0..LISTS {
-                let l = a.new_list();
+                let l = a.try_new_list().expect("within id space");
                 for j in 0..4 {
-                    a.append(l, VElem::new((k * 4 + j) as u32 & 0x7FFF_FFFF));
+                    a.try_append(l, VElem::new((k * 4 + j) as u32 & 0x7FFF_FFFF))
+                        .expect("within id space");
                 }
                 lists.push(l);
             }
@@ -336,10 +340,11 @@ fn bench_map_intern(c: &mut Criterion) {
                     x ^= x << 17;
                     let key = x % (N as u64 / 2);
                     if m.id_of(&key).is_none() {
-                        m.insert(key, ());
+                        m.try_insert(key, ()).expect("insert: within index word");
                     }
                 }
-                m.mark(verus::ShrinkPolicy::Never)
+                m.try_mark(verus::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness")
             };
             for _ in 0..N / 2 {
                 x ^= x << 13;
@@ -347,10 +352,10 @@ fn bench_map_intern(c: &mut Criterion) {
                 x ^= x << 17;
                 let key = x % (N as u64);
                 if m.id_of(&key).is_none() {
-                    m.insert(key, ());
+                    m.try_insert(key, ()).expect("insert: within index word");
                 }
             }
-            m.restore(tok);
+            m.try_restore(tok).expect("restore: own token");
             black_box(m.len())
         })
     });
@@ -400,9 +405,11 @@ fn bench_sparse_set_churn(c: &mut Criterion) {
                 verus::SparseSet::new();
             let mut ids = Vec::with_capacity(N);
             for i in 0..N {
-                ids.push(s.add(i as u64));
+                ids.push(s.try_add(i as u64).expect("add: within id space"));
             }
-            let tok = s.mark(verus::ShrinkPolicy::Never);
+            let tok = s
+                .try_mark(verus::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness");
             let mut x: u64 = 0xB5297A4D;
             for _ in 0..N / 2 {
                 x ^= x << 13;
@@ -413,7 +420,7 @@ fn bench_sparse_set_churn(c: &mut Criterion) {
                 if s.contains(id) {
                     s.remove(id);
                 } else {
-                    ids[k] = s.add(x);
+                    ids[k] = s.try_add(x).expect("add: within id space");
                 }
             }
             s.restore(tok);
@@ -456,17 +463,19 @@ fn bench_aov_log(c: &mut Criterion) {
         b.iter(|| {
             let mut v: verus::AppendOnlyVec<u64, usize, true> = verus::AppendOnlyVec::new();
             for i in 0..N / 2 {
-                v.push(i as u64);
+                v.try_push(i as u64).expect("push: within index word");
             }
-            let tok = v.mark(verus::ShrinkPolicy::Never);
+            let tok = v
+                .try_mark(verus::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness");
             for i in 0..N / 2 {
-                v.push(i as u64);
+                v.try_push(i as u64).expect("push: within index word");
             }
             let mut acc = 0u64;
             for x in v.as_slice() {
                 acc = acc.wrapping_add(*x);
             }
-            v.restore(tok);
+            v.try_restore(tok).expect("restore: own token");
             black_box((acc, v.len()))
         })
     });
@@ -516,7 +525,8 @@ fn bench_map_intern_string(c: &mut Criterion) {
             let mut m: verus::SpMap<String, u32, usize, true> = verus::SpMap::new();
             for (i, k) in ks.iter().enumerate() {
                 if m.id_of(k).is_none() {
-                    m.insert(k.clone(), i as u32);
+                    m.try_insert(k.clone(), i as u32)
+                        .expect("insert: within index word");
                 }
             }
             let mut hits = 0usize;
@@ -572,7 +582,8 @@ fn bench_map_intern_composite(c: &mut Criterion) {
             let mut m: verus::SpMap<(u32, Vec<u32>), u32, usize, true> = verus::SpMap::new();
             for (i, k) in ks.iter().enumerate() {
                 if m.id_of(k).is_none() {
-                    m.insert(k.clone(), i as u32);
+                    m.try_insert(k.clone(), i as u32)
+                        .expect("insert: within index word");
                 }
             }
             let mut hits = 0usize;

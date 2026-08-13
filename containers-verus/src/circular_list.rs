@@ -486,7 +486,7 @@ where T: Sized + Copy + core::default::Default {
         Err(crate::error::ContainerError::CapacityExhausted)
     }
 
-    pub fn add_singleton(&mut self, payload: T) -> (nid: N)
+    pub(crate) fn add_singleton(&mut self, payload: T) -> (nid: N)
         requires
             old(self).wf(),
             old(self).n_spec() + 1 < <N as DenseId>::Index::max_nat(),

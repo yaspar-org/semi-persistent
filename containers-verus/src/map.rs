@@ -314,7 +314,7 @@ where
     /// Insert or overwrite. Appends `(key, val)` to the log (the new last
     /// occurrence of `key`) and points the index at it. Returns the dense
     /// log index of the new entry.
-    pub fn insert(&mut self, key: K, val: V) -> (id: I)
+    pub(crate) fn insert(&mut self, key: K, val: V) -> (id: I)
         requires
             old(self).wf(),
             // Room for one more position in the index word; see `AppendOnlyVec::push`.
@@ -394,7 +394,7 @@ where
     }
 
     /// Mark, delegating to the log.
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: MapToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: MapToken)
         requires old(self).wf(), TRACK, old(self).depth_spec() < u32::MAX,
         ensures
             final(self).wf(),
@@ -501,7 +501,7 @@ where
     /// Restore: truncate the log to the token's snapshot, then rebuild the
     /// index from the survivors. The log restore reproduces the marked
     /// contents (headline theorem composes); rebuild re-establishes agreement.
-    pub fn restore(&mut self, token: MapToken)
+    pub(crate) fn restore(&mut self, token: MapToken)
         requires
             old(self).wf(),
             TRACK,

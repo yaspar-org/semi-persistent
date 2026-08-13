@@ -82,7 +82,7 @@ fn list_arena_prepend_append_match_oracle() {
         // a handful of lists.
         let nlists = 1 + rng.below(5);
         for _ in 0..nlists {
-            let l = a.new_list().as_usize();
+            let l = a.try_new_list().expect("within id space").as_usize();
             assert_eq!(l, oracle.len(), "seed={seed}: new_list index mismatch");
             oracle.push(Vec::new());
         }
@@ -91,10 +91,12 @@ fn list_arena_prepend_append_match_oracle() {
             let l = rng.below(oracle.len());
             let v = rng.next() as u32;
             if rng.below(2) == 0 {
-                a.prepend(DenseId63::from_usize(l), v);
+                a.try_prepend(DenseId63::from_usize(l), v)
+                    .expect("within id space");
                 oracle[l].insert(0, v);
             } else {
-                a.append(DenseId63::from_usize(l), v);
+                a.try_append(DenseId63::from_usize(l), v)
+                    .expect("within id space");
                 oracle[l].push(v);
             }
             // is_empty agrees, and a random list reads back exactly.
@@ -141,14 +143,15 @@ fn list_arena_splice_match_oracle() {
 
         let nlists = 3 + rng.below(6);
         for _ in 0..nlists {
-            a.new_list();
+            a.try_new_list().expect("within id space");
             oracle.push(Vec::new());
         }
         // seed each list with a few values.
         for (l, olist) in oracle.iter_mut().enumerate() {
             for _ in 0..rng.below(6) {
                 let v = rng.next() as u32;
-                a.append(DenseId63::from_usize(l), v);
+                a.try_append(DenseId63::from_usize(l), v)
+                    .expect("within id space");
                 olist.push(v);
             }
         }
@@ -168,7 +171,8 @@ fn list_arena_splice_match_oracle() {
             if rng.below(3) == 0 {
                 let l = rng.below(nlists);
                 let v = rng.next() as u32;
-                a.append(DenseId63::from_usize(l), v);
+                a.try_append(DenseId63::from_usize(l), v)
+                    .expect("within id space");
                 oracle[l].push(v);
             }
 
@@ -197,7 +201,7 @@ fn list_arena_mark_restore() {
         let mut rng = Lcg::new(seed ^ 0x9988);
         let nlists = 2 + rng.below(4);
         for _ in 0..nlists {
-            a.new_list();
+            a.try_new_list().expect("within id space");
             oracle.push(Vec::new());
         }
         let mut frames: Vec<(_, Vec<Vec<u32>>)> = Vec::new();
@@ -205,22 +209,26 @@ fn list_arena_mark_restore() {
         for _ in 0..250 {
             match rng.below(8) {
                 0 => {
-                    let token = a.mark(ShrinkPolicy::Never);
+                    let token = a
+                        .try_mark(ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness");
                     frames.push((token, oracle.clone()));
                 }
                 1 if !frames.is_empty() => {
                     let (tok, snap) = frames.pop().unwrap();
-                    a.restore(tok); // token-only signature (Phase 7)
+                    a.try_restore(tok).expect("restore: own token"); // token-only signature (Phase 7)
                     oracle = snap;
                 }
                 _ => {
                     let l = rng.below(nlists);
                     let v = rng.next() as u32;
                     if rng.below(2) == 0 {
-                        a.prepend(DenseId63::from_usize(l), v);
+                        a.try_prepend(DenseId63::from_usize(l), v)
+                            .expect("within id space");
                         oracle[l].insert(0, v);
                     } else {
-                        a.append(DenseId63::from_usize(l), v);
+                        a.try_append(DenseId63::from_usize(l), v)
+                            .expect("within id space");
                         oracle[l].push(v);
                     }
                 }
@@ -234,7 +242,7 @@ fn list_arena_mark_restore() {
         }
         // unwind fully.
         while let Some((tok, snap)) = frames.pop() {
-            a.restore(tok); // token-only signature (Phase 7)
+            a.try_restore(tok).expect("restore: own token"); // token-only signature (Phase 7)
             for (l, expected) in snap.iter().enumerate() {
                 assert_eq!(
                     read_list(&a, l),
@@ -347,7 +355,7 @@ fn circular_list_singleton_and_splice() {
             let make_new = rng.below(3) == 0 || node_payload.len() < 2;
             if make_new {
                 let p = rng.next() as u32;
-                let id = c.add_singleton(p).to_usize();
+                let id = c.try_add_singleton(p).expect("within id space").to_usize();
                 assert_eq!(
                     id,
                     node_payload.len(),
@@ -466,7 +474,7 @@ fn circular_list_mark_restore() {
                 }
                 _ => {
                     let p = rng.next() as u32;
-                    let id = c.add_singleton(p).to_usize();
+                    let id = c.try_add_singleton(p).expect("within id space").to_usize();
                     node_payload.push(p);
                     ring_of.push(rings.len());
                     rings.push(vec![id]);

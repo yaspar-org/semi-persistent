@@ -34,42 +34,42 @@ macro_rules! arm {
     ($ty:ty, $policy:expr, $ph:expr) => {{
         let mut v = <$ty>::new();
         for i in 0..N {
-            v.push((i as u32) & 0x7FFF_FFFF);
+            v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
         }
         // Warm the bitmap the way the criterion bench does: it reuses ONE vec
         // across all iterations, so every iteration after the first sees an
         // already-materialized capture bitmap.
-        let t0 = v.mark($policy);
+        let t0 = v.try_mark($policy).expect("mark");
         for i in 0..(N / 2) {
             v.set(i, (i as u32 + 999) & 0x7FFF_FFFF);
         }
-        v.restore(t0);
+        v.try_restore(t0).expect("restore");
 
         let us;
         match $ph {
             Ph::Mark => {
                 let t = std::time::Instant::now();
-                let tok = v.mark($policy);
+                let tok = v.try_mark($policy).expect("mark");
                 us = t.elapsed().as_nanos() as f64 / 1000.0;
                 black_box(&tok);
-                v.restore(tok);
+                v.try_restore(tok).expect("restore");
             }
             Ph::Sets => {
-                let tok = v.mark($policy);
+                let tok = v.try_mark($policy).expect("mark");
                 let t = std::time::Instant::now();
                 for i in 0..(N / 2) {
                     v.set(i, (i as u32 + 999) & 0x7FFF_FFFF);
                 }
                 us = t.elapsed().as_nanos() as f64 / 1000.0;
-                v.restore(tok);
+                v.try_restore(tok).expect("restore");
             }
             Ph::Restore => {
-                let tok = v.mark($policy);
+                let tok = v.try_mark($policy).expect("mark");
                 for i in 0..(N / 2) {
                     v.set(i, (i as u32 + 999) & 0x7FFF_FFFF);
                 }
                 let t = std::time::Instant::now();
-                v.restore(tok);
+                v.try_restore(tok).expect("restore");
                 us = t.elapsed().as_nanos() as f64 / 1000.0;
             }
         }

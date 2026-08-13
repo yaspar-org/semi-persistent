@@ -26,13 +26,13 @@ fn run(which: usize) -> u32 {
     if which == 0 {
         let mut v: prod::VecP<u64, u32, false> = prod::VecP::new();
         for i in 0..N {
-            v.push(i as u64);
+            v.try_push(i as u64).expect("push");
         }
         v.len()
     } else {
         let mut v: VV = VV::new();
         for i in 0..N {
-            v.push(i as u64);
+            v.try_push(i as u64).expect("push: within index word");
         }
         v.len()
     }

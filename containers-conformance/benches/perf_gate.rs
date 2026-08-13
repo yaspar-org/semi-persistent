@@ -110,18 +110,20 @@ fn row_mark_set_restore() -> Row {
         || {
             let mut vv: VerusVecP = VerusVecP::new();
             for i in 0..VEC_N {
-                vv.push(i as u64);
+                vv.try_push(i as u64).expect("push: within index word");
             }
             vv
         },
         |vv| {
-            let tok = vv.mark(verus::vec::ShrinkPolicy::Never);
+            let tok = vv
+                .try_mark(verus::vec::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness");
             let mut x = 0x9E3779B97F4A7C15u64;
             for _ in 0..VEC_TOUCHES {
                 let idx = (xorshift(&mut x) % VEC_N as u64) as u32;
                 vv.set(idx, x);
             }
-            vv.restore(tok);
+            vv.try_restore(tok).expect("restore: own token");
             vv.len()
         },
     );
@@ -164,14 +166,18 @@ fn row_restore_replay() -> Row {
     fn verus_fixture() -> (VerusVecP, verus::vec::VecToken) {
         let mut vv: VerusVecP = VerusVecP::new();
         for i in 0..VEC_N {
-            vv.push(i as u64);
+            vv.try_push(i as u64).expect("push: within index word");
         }
-        let t0 = vv.mark(verus::vec::ShrinkPolicy::Never);
+        let t0 = vv
+            .try_mark(verus::vec::ShrinkPolicy::Never)
+            .expect("mark: depth bounded by this harness");
         for i in 0..VEC_TOUCHES {
             vv.set(i as u32, i as u64);
         }
-        vv.restore(t0);
-        let tok = vv.mark(verus::vec::ShrinkPolicy::Never);
+        vv.try_restore(t0).expect("restore: own token");
+        let tok = vv
+            .try_mark(verus::vec::ShrinkPolicy::Never)
+            .expect("mark: depth bounded by this harness");
         for i in 0..VEC_TOUCHES {
             vv.set(i as u32, (i + 999) as u64);
         }
@@ -199,7 +205,7 @@ fn row_restore_replay() -> Row {
         |fs| {
             let mut total = 0usize;
             for (vv, tok) in fs.iter_mut() {
-                vv.restore(*tok);
+                vv.try_restore(*tok).expect("restore: own token");
                 total += vv.len() as usize;
             }
             total
@@ -280,12 +286,15 @@ fn row_nested_mark(depth: usize, name: &'static str) -> Row {
         || {
             let mut vv: VerusVecP = VerusVecP::new();
             for i in 0..VEC_N {
-                vv.push(i as u64);
+                vv.try_push(i as u64).expect("push: within index word");
             }
             let mut x = 0x9E3779B97F4A7C15u64;
             let mut toks = std::vec::Vec::new();
             for _ in 0..depth {
-                toks.push(vv.mark(verus::vec::ShrinkPolicy::Never));
+                toks.push(
+                    vv.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
+                );
                 for _ in 0..WRITES_PER_FRAME {
                     let idx = (xorshift(&mut x) % VEC_N as u64) as u32;
                     vv.set(idx, x);
@@ -294,9 +303,11 @@ fn row_nested_mark(depth: usize, name: &'static str) -> Row {
             (vv, toks)
         },
         |(vv, toks)| {
-            let final_tok = vv.mark(verus::vec::ShrinkPolicy::Never);
+            let final_tok = vv
+                .try_mark(verus::vec::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness");
             black_box(&final_tok);
-            vv.restore(toks[0]);
+            vv.try_restore(toks[0]).expect("restore: own token");
             vv.len()
         },
     );
@@ -379,7 +390,8 @@ fn verus_ring_build<const TRACK: bool>() -> VerusRing<TRACK> {
     let mut ring: VerusRing<TRACK> = VerusRing::new();
     for i in 0..RING_N {
         // Class key = the node's own index word, via the id.
-        ring.add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()));
+        ring.try_add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()))
+            .expect("within id space");
     }
     ring
 }

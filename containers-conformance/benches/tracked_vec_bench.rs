@@ -54,14 +54,17 @@ fn bench_veci_mark_churn(c: &mut Criterion) {
                 || {
                     let mut v: V = V::new();
                     for i in 0..n {
-                        v.push((i as u32) & 0x7FFF_FFFF);
+                        v.try_push((i as u32) & 0x7FFF_FFFF)
+                            .expect("push: within index word");
                     }
                     v
                 },
                 |v| {
                     let mut x: u64 = 0x2545F491;
                     for _ in 0..MARKS {
-                        let tok = v.mark(verus::ShrinkPolicy::Never);
+                        let tok = v
+                            .try_mark(verus::ShrinkPolicy::Never)
+                            .expect("mark: depth bounded by this harness");
                         for _ in 0..WRITES_PER_MARK {
                             x ^= x << 13;
                             x ^= x >> 7;
@@ -69,7 +72,7 @@ fn bench_veci_mark_churn(c: &mut Criterion) {
                             let idx = (x % n as u64) as u32;
                             v.set_index(idx, (x as u32) & 0x7FFF_FFFF);
                         }
-                        v.restore(tok);
+                        v.try_restore(tok).expect("restore: own token");
                     }
                     black_box(v.len());
                 },
@@ -116,14 +119,16 @@ fn bench_vecp_mark_churn(c: &mut Criterion) {
                 || {
                     let mut v: V = V::new();
                     for i in 0..n {
-                        v.push(i as u64);
+                        v.try_push(i as u64).expect("push: within index word");
                     }
                     v
                 },
                 |v| {
                     let mut x: u64 = 0x2545F492;
                     for _ in 0..MARKS {
-                        let tok = v.mark(verus::ShrinkPolicy::Never);
+                        let tok = v
+                            .try_mark(verus::ShrinkPolicy::Never)
+                            .expect("mark: depth bounded by this harness");
                         for _ in 0..WRITES_PER_MARK {
                             x ^= x << 13;
                             x ^= x >> 7;
@@ -131,7 +136,7 @@ fn bench_vecp_mark_churn(c: &mut Criterion) {
                             let idx = (x % n as u64) as u32;
                             v.set_index(idx, x);
                         }
-                        v.restore(tok);
+                        v.try_restore(tok).expect("restore: own token");
                     }
                     black_box(v.len());
                 },

@@ -1,9 +1,6 @@
 # Public exec fns with a `requires` clause: the total-API plan's
 # drain list (doc/future/total-api-plan.md). May only shrink.
 append_only_vec.rs::get
-append_only_vec.rs::mark
-append_only_vec.rs::push
-append_only_vec.rs::restore
 bplus.rs::from_sorted
 bplus.rs::insert
 bplus.rs::key
@@ -26,7 +23,6 @@ bplus_layout.rs::set_internal_child
 bplus_search.rs::find_ge
 bplus_search.rs::find_gt
 capture_bits.rs::set_true
-circular_list.rs::add_singleton
 circular_list.rs::iter_class
 circular_list.rs::mark
 circular_list.rs::next
@@ -52,30 +48,20 @@ diff_store.rs::truncate
 guard.rs::check_precondition
 id_factory.rs::alloc
 id_macros.rs::new
-list.rs::append
 list.rs::is_empty
 list.rs::iter
 list.rs::len
-list.rs::mark
-list.rs::new_list
 list.rs::next
-list.rs::prepend
-list.rs::restore
 list.rs::splice
 map.rs::get
 map.rs::get_val
-map.rs::insert
 map.rs::key
-map.rs::mark
 map.rs::new
-map.rs::restore
 opt.rs::get
 sorted_vec_cursor.rs::key
 sorted_vec_cursor.rs::new
 sorted_vec_cursor.rs::seek
-sparse_set.rs::add
 sparse_set.rs::get
-sparse_set.rs::mark
 sparse_set.rs::remove
 sparse_set.rs::restore
 sparse_set.rs::set
@@ -89,12 +75,9 @@ vec.rs::get_index
 vec.rs::is_empty
 vec.rs::iter
 vec.rs::len
-vec.rs::mark
 vec.rs::next
 vec.rs::pop_untracked
-vec.rs::push
 vec.rs::push_untracked
-vec.rs::restore
 vec.rs::set_index
 vec.rs::set_untracked
 vec.rs::with_store

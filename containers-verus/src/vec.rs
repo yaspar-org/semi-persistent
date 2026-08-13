@@ -1506,7 +1506,7 @@ where
     }
 
     #[inline(always)]
-    pub fn push(&mut self, value: T)
+    pub(crate) fn push(&mut self, value: T)
         requires
             old(self).wf(),
             old(self).view().len() + 1 < I::max_nat(),
@@ -2419,7 +2419,7 @@ where
     /// equals the view — so its frame_inv_range transfers.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
             old(self).wf(),
             // TRACK gate (production parity, plan 2.4): mark is uncallable on
@@ -2660,7 +2660,7 @@ where
     /// lemma `lemma_snap_eq_overlay` equals `snapshots[target]`.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
-    pub fn restore(&mut self, token: VecToken)
+    pub(crate) fn restore(&mut self, token: VecToken)
         where T: core::default::Default
         requires
             old(self).wf(),

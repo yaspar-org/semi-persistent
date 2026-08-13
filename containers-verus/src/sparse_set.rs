@@ -340,7 +340,7 @@ where
     /// Add a value, returning a stable id. If a free slot exists (`n < cap`),
     /// recycle the id parked at `indices[n]`; otherwise allocate a fresh id
     /// `== n`. The new element occupies dense position `n`.
-    pub fn add(&mut self, value: T) -> (id: Idx)
+    pub(crate) fn add(&mut self, value: T) -> (id: Idx)
         requires
             old(self).wf(),
             old(self).can_add_spec(),
@@ -809,7 +809,7 @@ where
 
     // ---- semi-persistence: delegate to the three inner vectors ----
 
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: SparseSetToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: SparseSetToken)
         requires
             old(self).wf(),
             TRACK,

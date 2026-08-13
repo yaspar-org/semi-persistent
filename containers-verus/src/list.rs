@@ -1778,7 +1778,7 @@ where
 
     // ---- semi-persistence: delegate to the two inner vectors ----
 
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: ListArenaToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: ListArenaToken)
         requires
             old(self).wf(),
             TRACK,
@@ -1960,7 +1960,7 @@ where
         self.heads.is_valid_token(&token.heads) && self.nodes.is_valid_token(&token.nodes)
     }
 
-    pub fn restore(&mut self, token: ListArenaToken)
+    pub(crate) fn restore(&mut self, token: ListArenaToken)
         requires
             old(self).wf(),
             TRACK,
@@ -2043,7 +2043,7 @@ where
 
     /// Create a new empty list, returning its typed handle (production
     /// `new_list() -> L` parity). Requires headroom in `L`'s id range.
-    pub fn new_list(&mut self) -> (l: L)
+    pub(crate) fn new_list(&mut self) -> (l: L)
         requires
             old(self).wf(),
             old(self).heads_view().len() + 1 < usize::MAX,
@@ -2088,7 +2088,7 @@ where
 
     /// O(1) prepend through the typed handle.
     #[inline(always)]
-    pub fn prepend(&mut self, l: L, payload: T)
+    pub(crate) fn prepend(&mut self, l: L, payload: T)
         requires
             old(self).wf(),
             l.id_nat() < old(self).model_view().len(),
@@ -2130,7 +2130,7 @@ where
 
     /// O(1) append through the typed handle (cached tail).
     #[inline(always)]
-    pub fn append(&mut self, l: L, payload: T)
+    pub(crate) fn append(&mut self, l: L, payload: T)
         requires
             old(self).wf(),
             l.id_nat() < old(self).model_view().len(),

@@ -64,7 +64,9 @@ mod aov_heap_payloads {
 
     pub fn smoke() {
         let mut a = build();
-        a.transport_rows.push(vec![1, 2, 3]);
+        a.transport_rows
+            .try_push(vec![1, 2, 3])
+            .expect("push: within index word");
         let row: &Vec<u32> = a.transport_rows.get(0);
         assert_eq!(row.len(), 3);
     }
@@ -90,8 +92,12 @@ mod aov_clone_only_payload {
         let mut p = PoolShaped {
             ops: cv::append_only_vec::AppendOnlyVec::new(),
         };
-        p.ops.push(TermOpShaped::Variants);
-        p.ops.push(TermOpShaped::EGraph(7));
+        p.ops
+            .try_push(TermOpShaped::Variants)
+            .expect("push: within index word");
+        p.ops
+            .try_push(TermOpShaped::EGraph(7))
+            .expect("push: within index word");
         assert_eq!(p.ops.len(), 2);
         let _ = p.ops.get(1);
         let _ = TermOpShaped::Literal(0, 0);
@@ -127,21 +133,33 @@ mod union_find_shaped {
             rank: RankVec::new(),
             parent_proof: None,
         };
-        uf.parent_fast.push(DenseId31::new(0));
-        uf.rank.push(0u8);
+        uf.parent_fast
+            .try_push(DenseId31::new(0))
+            .expect("push: within index word");
+        uf.rank.try_push(0u8).expect("push: within index word");
         // Composite mark: each member vec marks; token wraps them.
         let tok = UnionFindTokenShaped {
-            parent_fast: uf.parent_fast.mark(cv::vec::ShrinkPolicy::Never),
-            rank: uf.rank.mark(cv::vec::ShrinkPolicy::Never),
+            parent_fast: uf
+                .parent_fast
+                .try_mark(cv::vec::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness"),
+            rank: uf
+                .rank
+                .try_mark(cv::vec::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness"),
             parent_proof: None,
         };
-        uf.parent_fast.push(DenseId31::new(1));
-        uf.rank.push(1u8);
+        uf.parent_fast
+            .try_push(DenseId31::new(1))
+            .expect("push: within index word");
+        uf.rank.try_push(1u8).expect("push: within index word");
         // Two-phase restore: prevalidate ALL, then restore in reverse order.
         assert!(uf.parent_fast.is_valid_token(&tok.parent_fast));
         assert!(uf.rank.is_valid_token(&tok.rank));
-        uf.rank.restore(tok.rank);
-        uf.parent_fast.restore(tok.parent_fast);
+        uf.rank.try_restore(tok.rank).expect("restore: own token");
+        uf.parent_fast
+            .try_restore(tok.parent_fast)
+            .expect("restore: own token");
         assert_eq!(uf.parent_fast.len(), 1);
     }
 }
@@ -162,7 +180,8 @@ mod min_pool_shaped {
 
     pub fn smoke() {
         let mut pool = MinPool::new();
-        pool.push(Opt::some(DenseId31::new(5)));
+        pool.try_push(Opt::some(DenseId31::new(5)))
+            .expect("push: within index word");
         let o = pool.get(0usize);
         assert!(o.is_some());
     }
@@ -185,8 +204,12 @@ mod copy_key_maps {
             unit_node: cv::map::SpMap::new(),
             inverse_op: cv::map::SpMap::new(),
         };
-        m.unit_node.insert(1, 100);
-        m.inverse_op.insert(2, 3);
+        m.unit_node
+            .try_insert(1, 100)
+            .expect("insert: within index word");
+        m.inverse_op
+            .try_insert(2, 3)
+            .expect("insert: within index word");
         assert!(m.unit_node.contains_key(&1));
         assert_eq!(m.inverse_op.id_of(&2), Some(0));
     }

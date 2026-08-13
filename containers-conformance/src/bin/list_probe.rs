@@ -45,10 +45,13 @@ fn main() {
     let mut va_final = None;
     for _ in 0..REPS {
         let mut a: verus::ListArena<VE, VL, VN, false> = verus::ListArena::new();
-        let ls: Vec<VL> = (0..LISTS).map(|_| a.new_list()).collect();
+        let ls: Vec<VL> = (0..LISTS)
+            .map(|_| a.try_new_list().expect("within id space"))
+            .collect();
         for (k, &l) in ls.iter().enumerate() {
             for j in 0..PER {
-                a.append(l, VE::new((k * PER + j) as u32 & 0x7FFF_FFFF));
+                a.try_append(l, VE::new((k * PER + j) as u32 & 0x7FFF_FFFF))
+                    .expect("within id space");
             }
         }
         va_final = Some((a, ls));

@@ -9,9 +9,11 @@ fn bench_iteration(c: &mut Criterion) {
     // --- Bitset: has as_slice() ---
     let mut bitset = VecP::<u32, u32>::new();
     for i in 0..n {
-        bitset.push(i);
+        bitset.try_push(i).expect("push: within index word");
     }
-    let _t = bitset.mark(ShrinkPolicy::Never);
+    let _t = bitset
+        .try_mark(ShrinkPolicy::Never)
+        .expect("mark: depth bounded by this harness");
 
     c.bench_function("bitset/slice_iter", |b| {
         b.iter(|| {
@@ -38,9 +40,11 @@ fn bench_iteration(c: &mut Criterion) {
     // --- Marked: no as_slice(), view only ---
     let mut marked = VecI::<u32, u32>::new();
     for i in 0..n {
-        marked.push(i);
+        marked.try_push(i).expect("push: within index word");
     }
-    let _t = marked.mark(ShrinkPolicy::Never);
+    let _t = marked
+        .try_mark(ShrinkPolicy::Never)
+        .expect("mark: depth bounded by this harness");
 
     assert!(
         marked.as_slice().is_none(),

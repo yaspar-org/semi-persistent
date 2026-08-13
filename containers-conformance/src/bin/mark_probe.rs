@@ -47,7 +47,7 @@ fn main() {
     type V = verus::VecP<u64, u32, true>;
     let mut v: V = V::new();
     for i in 0..N {
-        v.push(i as u64);
+        v.try_push(i as u64).expect("push: within index word");
     }
     let t = std::time::Instant::now();
     let mut vtoks = Vec::new();
@@ -55,7 +55,10 @@ fn main() {
         vtoks.clear();
         let mut x = 0x9E3779B97F4A7C15u64;
         for _ in 0..DEPTH {
-            vtoks.push(v.mark(verus::ShrinkPolicy::Never));
+            vtoks.push(
+                v.try_mark(verus::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness"),
+            );
             for _ in 0..W {
                 x ^= x << 13;
                 x ^= x >> 7;
@@ -63,7 +66,7 @@ fn main() {
                 v.set_index((x % N as u64) as u32, x);
             }
         }
-        v.restore(vtoks[0]);
+        v.try_restore(vtoks[0]).expect("restore: own token");
     }
     println!("verus full cycle: {:?}", t.elapsed() / REPS);
 
@@ -71,9 +74,12 @@ fn main() {
     for _ in 0..REPS {
         vtoks.clear();
         for _ in 0..DEPTH {
-            vtoks.push(v.mark(verus::ShrinkPolicy::Never));
+            vtoks.push(
+                v.try_mark(verus::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness"),
+            );
         }
-        v.restore(vtoks[0]);
+        v.try_restore(vtoks[0]).expect("restore: own token");
     }
     println!("verus mark-only:  {:?}", t.elapsed() / REPS);
 
@@ -100,7 +106,9 @@ fn main() {
     let tv = {
         let mut xv = 0u64;
         let t = std::time::Instant::now();
-        let tok = v.mark(verus::ShrinkPolicy::Never);
+        let tok = v
+            .try_mark(verus::ShrinkPolicy::Never)
+            .expect("mark: depth bounded by this harness");
         for _ in 0..REPS {
             for _ in 0..(DEPTH * W) {
                 x ^= x << 13;
@@ -110,7 +118,7 @@ fn main() {
                 xv ^= x;
             }
         }
-        v.restore(tok);
+        v.try_restore(tok).expect("restore: own token");
         std::hint::black_box(xv);
         t.elapsed() / REPS
     };
@@ -145,7 +153,10 @@ fn main() {
         let mut x = 0x777u64;
         let mut toks = Vec::new();
         for _ in 0..DEPTH {
-            toks.push(v.mark(verus::ShrinkPolicy::Never));
+            toks.push(
+                v.try_mark(verus::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness"),
+            );
             for _ in 0..W {
                 x ^= x << 13;
                 x ^= x >> 7;
@@ -159,7 +170,7 @@ fn main() {
     for _ in 0..REPS {
         let toks = v_build(&mut v);
         let t = std::time::Instant::now();
-        v.restore(toks[0]);
+        v.try_restore(toks[0]).expect("restore: own token");
         tot += t.elapsed();
     }
     println!("verus restore32:  {:?}", tot / REPS);

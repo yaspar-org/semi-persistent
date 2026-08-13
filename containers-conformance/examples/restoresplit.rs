@@ -29,21 +29,21 @@ macro_rules! arm {
     ($ty:ty, $policy:expr, $dirty:expr) => {{
         let mut v = <$ty>::new();
         for i in 0..N {
-            v.push((i as u32) & 0x7FFF_FFFF);
+            v.try_push((i as u32) & 0x7FFF_FFFF).expect("push");
         }
         // Steady state: bitmap already materialized, as in criterion's reuse.
-        let t0 = v.mark($policy);
+        let t0 = v.try_mark($policy).expect("mark");
         for i in 0..$dirty {
             v.set(i, (i as u32) & 0x7FFF_FFFF);
         }
-        v.restore(t0);
+        v.try_restore(t0).expect("restore");
 
-        let tok = v.mark($policy);
+        let tok = v.try_mark($policy).expect("mark");
         for i in 0..$dirty {
             v.set(i, (i as u32 + 999) & 0x7FFF_FFFF);
         }
         let t = std::time::Instant::now();
-        v.restore(tok);
+        v.try_restore(tok).expect("restore");
         let us = t.elapsed().as_nanos() as f64 / 1000.0;
         black_box(v.len());
         us

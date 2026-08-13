@@ -24,7 +24,7 @@ const WRITES_PER_FRAME: usize = 64;
 // then mark once more — the final mark's prepare_mark sees a diff log with
 // depth*WRITES retained entries but should clear only the top frame's.
 macro_rules! nested_body {
-    ($v:expr, $mark:path, $never:expr, $set:ident, $depth:expr) => {{
+    ($v:expr, $mark:expr, $restore:expr, $never:expr, $set:ident, $depth:expr) => {{
         let mut x: u64 = 0x9E3779B97F4A7C15;
         let mut toks = Vec::new();
         for _ in 0..$depth {
@@ -41,7 +41,7 @@ macro_rules! nested_body {
         let final_tok = $mark(&mut $v, $never);
         black_box(&final_tok);
         // Restore all the way out (cost not the focus; keeps state bounded).
-        $v.restore(toks[0]);
+        $restore(&mut $v, toks[0]);
         black_box($v.len())
     }};
 }
@@ -58,7 +58,18 @@ fn bench_nested_mark(c: &mut Criterion) {
                     }
                     v
                 },
-                |v| nested_body!(*v, prod::VecP::mark, prod::ShrinkPolicy::Never, set, depth),
+                |v| {
+                    nested_body!(
+                        *v,
+                        prod::VecP::mark,
+                        |vv: &mut prod::VecP<u64, u32, true>, t| {
+                            vv.restore(t);
+                        },
+                        prod::ShrinkPolicy::Never,
+                        set,
+                        depth
+                    )
+                },
                 BatchSize::LargeInput,
             )
         });
@@ -68,11 +79,22 @@ fn bench_nested_mark(c: &mut Criterion) {
                 || {
                     let mut v: V = V::new();
                     for i in 0..N {
-                        v.push(i as u64);
+                        v.try_push(i as u64).expect("push: within index word");
                     }
                     v
                 },
-                |v| nested_body!(*v, V::mark, verus::ShrinkPolicy::Never, set_index, depth),
+                |v| {
+                    nested_body!(
+                        *v,
+                        |vv: &mut V, s| vv.try_mark(s).expect("mark: bounded depth"),
+                        |vv: &mut V, t| {
+                            vv.try_restore(t).expect("restore: own token");
+                        },
+                        verus::ShrinkPolicy::Never,
+                        set_index,
+                        depth
+                    )
+                },
                 BatchSize::LargeInput,
             )
         });

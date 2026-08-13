@@ -411,7 +411,7 @@ macro_rules! vec_property {
                 match *op {
                     Op::Push(val) => {
                         p.push(val);
-                        v.push(val);
+                        v.try_push(val).expect("push: within index word");
                         o.push(val);
                     }
                     Op::Pop => {
@@ -449,7 +449,7 @@ macro_rules! vec_property {
                         }
                         let (pp, vp) = policy(shrink);
                         let tp = p.mark(pp);
-                        let tv = v.mark(vp);
+                        let tv = v.try_mark(vp).expect("mark: depth bounded by this harness");
                         let to = o.mark();
                         toks.push((tp, tv, to));
                     }
@@ -480,7 +480,7 @@ macro_rules! vec_property {
                         );
 
                         p.restore(tp);
-                        v.restore(tv);
+                        v.try_restore(tv).expect("restore: own token");
                         o.restore(to);
                     }
                 }
@@ -717,7 +717,7 @@ macro_rules! aov_property {
                     match *op {
                         AovOp::Push(val) => {
                             let ip = p.push(val);
-                            let iv = v.push(val);
+                            let iv = v.try_push(val).expect("push: within index word");
                             prop_assert_eq!(ip, iv, "step {}: push index diverged", step);
                             prop_assert_eq!(ix(ip), o.len(), "step {}: push index vs oracle", step);
                             o.push(val);
@@ -726,7 +726,7 @@ macro_rules! aov_property {
                             if o.depth() >= 8 { continue; }
                             let (pp, vp) = policy(shrink);
                             let tp = p.mark(pp);
-                            let tv = v.mark(vp);
+                            let tv = v.try_mark(vp).expect("mark: depth bounded by this harness");
                             let to = o.mark();
                             toks.push((tp, tv, to));
                         }
@@ -737,7 +737,7 @@ macro_rules! aov_property {
                             prop_assert!(p.is_valid_token(&tp), "step {}: prod rejects live token", step);
                             prop_assert!(v.is_valid_token(&tv), "step {}: verus rejects live token", step);
                             p.restore(tp);
-                            v.restore(tv);
+                            v.try_restore(tv).expect("restore: own token");
                             o.restore(to);
                         }
                     }
@@ -841,7 +841,7 @@ macro_rules! map_property {
                         MapOp::Insert { key, val } => {
                             let k = key as u32 % KEYS;
                             let ip = p.insert(k, val);
-                            let iv = v.insert(k, val);
+                            let iv = v.try_insert(k, val).expect("insert: within index word");
                             o.cur.push((k, val));
                             let io = o.cur.len() - 1;
                             prop_assert_eq!(ip, iv, "step {}: insert id prod/verus diverged", step);
@@ -869,7 +869,7 @@ macro_rules! map_property {
                             if o.depth() >= 8 { continue; }
                             let (pp, vp) = policy(shrink);
                             let tp = p.mark(pp);
-                            let tv = v.mark(vp);
+                            let tv = v.try_mark(vp).expect("mark: depth bounded by this harness");
                             let to = o.mark();
                             toks.push((tp, tv, to));
                         }
@@ -880,7 +880,7 @@ macro_rules! map_property {
                             prop_assert!(p.is_valid_token(&tp), "step {}: prod rejects live map token", step);
                             prop_assert!(v.is_valid_token(&tv), "step {}: verus rejects live map token", step);
                             p.restore(tp);
-                            v.restore(tv);
+                            v.try_restore(tv).expect("restore: own token");
                             o.restore(to);
                         }
                     }
@@ -1011,7 +1011,7 @@ macro_rules! sparse_set_property {
                     match *op {
                         SetOp::Add(val) => {
                             let ip = p.add(val);
-                            let iv = v.add(val);
+                            let iv = v.try_add(val).expect("add: within id space");
                             // Both must hand out the SAME id: id allocation (including
                             // which id the free pool recycles) is observable, so it is
                             // part of the parity surface even though the oracle does
@@ -1044,7 +1044,7 @@ macro_rules! sparse_set_property {
                             if o.depth() >= 8 { continue; }
                             let (pp, vp) = policy(shrink);
                             let tp = p.mark(pp);
-                            let tv = v.mark(vp);
+                            let tv = v.try_mark(vp).expect("mark: depth bounded by this harness");
                             let to = o.mark();
                             toks.push((tp, tv, to));
                         }
