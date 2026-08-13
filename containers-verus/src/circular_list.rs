@@ -899,7 +899,7 @@ where T: Sized + Copy + core::default::Default {
 
     // ---- semi-persistence: delegate to the inner vector ----
 
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: CircularListToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: CircularListToken)
         requires
             old(self).wf(),
             TRACK,
@@ -970,6 +970,55 @@ where T: Sized + Copy + core::default::Default {
     /// Restore to the marked snapshot. The restored entries, together with the
     /// ghost model live at the mark, must form a valid ring partition.
     /// "Restorable now" for the token (plan 2.2).
+    /// Total mark (Vec's pilot pattern; single component).
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<CircularListToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).next_seq() == old(self).next_seq()
+                &&& final(self).n_spec() == old(self).n_spec()
+                &&& final(self).model_view() == old(self).model_view()
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).next_seq() == old(self).next_seq(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.entries.store.data.len() < usize::MAX) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        if !(self.entries.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: `is_valid_token` answers exactly "would restore
+    /// succeed now" (delegated to the entries component).
+    pub fn try_restore(&mut self, token: CircularListToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).entries_view()
+                == old(self).entries_snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).model_view()
+                    == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).next_seq() == old(self).next_seq(),
+            r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
     pub fn is_valid_token(&self, token: &CircularListToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -977,7 +1026,7 @@ where T: Sized + Copy + core::default::Default {
         self.entries.is_valid_token(&token.entries)
     }
 
-    pub fn restore(&mut self, token: CircularListToken)
+    pub(crate) fn restore(&mut self, token: CircularListToken)
         requires
             old(self).wf(),
             TRACK,

@@ -595,9 +595,10 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> EClassesToken {
         EClassesToken {
-            // entries stays on the guarded core: CircularList has no try_mark yet
-            // (total-api plan, phase-3 deferrals).
-            entries: self.entries.mark(shrink),
+            entries: self
+                .entries
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
             reprs: self
                 .reprs
                 .try_mark(shrink)
@@ -615,8 +616,9 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     }
 
     pub fn restore(&mut self, token: EClassesToken) {
-        // Guarded core: CircularList try_restore is a phase-3 deferral.
-        self.entries.restore(token.entries);
+        self.entries
+            .try_restore(token.entries)
+            .expect("restore: token minted by this container's own mark");
         // Guarded core: SparseSet try_restore waits on snapshot-wf archival
         // (total-api plan, phase-3 deferrals).
         self.reprs.restore(token.reprs);
