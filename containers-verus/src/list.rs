@@ -2280,6 +2280,15 @@ where
                 &&& forall|m: int| 0 <= m < final(self).model_view().len()
                     && m != dst.id_nat() as int && m != src.id_nat() as int
                     ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m)
+                // raw effects (egraph-wf W5), inherited from `splice_raw`.
+                &&& final(self).model_view() == old(self).model_view()
+                    .update(dst.id_nat() as int, old(self).model_view()[dst.id_nat() as int]
+                        + old(self).model_view()[src.id_nat() as int])
+                    .update(src.id_nat() as int, Seq::<usize>::empty())
+                &&& final(self).nodes_view().len() == old(self).nodes_view().len()
+                &&& (forall|k: int| 0 <= k < old(self).nodes_view().len()
+                        ==> (#[trigger] final(self).nodes_view()[k]).payload
+                            == old(self).nodes_view()[k].payload)
             },
     {
         proof { dst.lemma_as_nat_is_id_nat(); src.lemma_as_nat_is_id_nat(); }  // prod-parity

@@ -741,4 +741,561 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Merge
+// ---------------------------------------------------------------------------
+
+/// Returned by `merge`: the surviving and absorbed canonical ids plus the
+/// absorbed class's data, which the rebuild loop consumes (production's
+/// `MergeInfo`).
+pub struct MergeInfo<T: DenseId, L: DenseId> {
+    pub survivor: T,
+    pub absorbed: T,
+    pub absorbed_uses: L,
+    pub absorbed_min_row: Option<<T as DenseId>::Index>,
+    pub absorbed_atomic: bool,
+}
+
+impl<T, L, N, const TRACK: bool> EClasses<T, L, N, TRACK>
+where
+    T: DenseId,
+    L: DenseId,
+    N: DenseId + Tagged + core::default::Default,
+{
+
+    /// Re-establishes `eg_model_wf` after a merge's three mutations (union,
+    /// ring splice with payload clear, repr removal). Extracted for the same
+    /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
+    /// and root quantifiers e-match against both states' full `wf`.
+    proof fn lemma_merge_wf(&self, o: Self, s: T, ab: T, key_ab: nat, ab_pay: Opt<T>,
+        cs: int, ps: int, ca: int, pa: int)
+        requires
+            o.wf(),
+            self.uf.wf(),
+            self.entries.wf(),
+            self.reprs.wf(),
+            self.uses.wf(),
+            self.min_pool.wf(),
+            s.id_nat() < o.n_spec(),
+            ab.id_nat() < o.n_spec(),
+            s.id_nat() != ab.id_nat(),
+            s.id_nat() <= usize::MAX as nat,
+            ab.id_nat() <= usize::MAX as nat,
+            o.roots_view()[s.id_nat() as int] == s.id_nat() as usize,
+            o.roots_view()[ab.id_nat() as int] == ab.id_nat() as usize,
+            key_ab == o.key_of(ab.id_nat() as int),
+            ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), key_ab),
+            0 <= cs < o.entries.model_view().len(),
+            0 <= ps < o.entries.model_view()[cs].len(),
+            o.entries.model_view()[cs][ps] == s.id_nat() as usize,
+            0 <= ca < o.entries.model_view().len(),
+            0 <= pa < o.entries.model_view()[ca].len(),
+            o.entries.model_view()[ca][pa] == ab.id_nat() as usize,
+            cs != ca,
+            self.entries.model_view() == o.entries.model_view()
+                .update(cs, crate::circular_list::rotate(o.entries.model_view()[cs], ps + 1)
+                    + crate::circular_list::rotate(o.entries.model_view()[ca], pa + 1))
+                .update(ca, Seq::<usize>::empty()),
+            self.entries.payload_seq()
+                == o.entries.payload_seq().update(ab.id_nat() as int, ab_pay),
+            self.entries.n_spec() == o.n_spec(),
+            ab_pay.wf(),
+            ab_pay.get_spec() is None,
+            self.uf.roots_view() == crate::union_find::merge_roots(
+                o.roots_view(), s.id_nat(), ab.id_nat()),
+            self.uf.n_spec() == o.n_spec(),
+            self.reprs.n_spec() == o.reprs.n_spec() - 1,
+            self.reprs.cap_spec() == o.reprs.cap_spec(),
+            self.reprs.id_set() == o.reprs.id_set().remove(key_ab),
+            forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
+                && k.as_nat() != key_ab
+                ==> self.reprs.contains_spec(k)
+                    && ss_value(self.reprs.dense_view(), self.reprs.sparse_view(),
+                            k.as_nat())
+                        == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                            k.as_nat()),
+            self.uses.model_view() == o.uses.model_view(),
+            self.uses.nodes_view() == o.uses.nodes_view(),
+            self.min_pool.view() == o.min_pool.view(),
+            self.min_width == o.min_width,
+        ensures
+            eg_model_wf::<T, L, N>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), self.reprs.dense_view(),
+                self.reprs.sparse_view(), self.reprs.indices_view(),
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view().len(), self.min_width as nat),
+            self.reprs.cap_spec() <= self.n_spec(),
+    {
+        let n = o.n_spec();
+        let sn = s.id_nat();
+        let abn = ab.id_nat();
+        let su = sn as usize;
+        let abu = abn as usize;
+        let orm = o.entries.model_view();
+        let opay = o.entries.payload_seq();
+        let oroots = o.roots_view();
+        let odense = o.reprs.dense_view();
+        let osparse = o.reprs.sparse_view();
+        let oindices = o.reprs.indices_view();
+        let olive = o.reprs.n_spec();
+        let rm = self.entries.model_view();
+        let pay = self.entries.payload_seq();
+        let roots = self.uf.roots_view();
+        let dense = self.reprs.dense_view();
+        let sparse = self.reprs.sparse_view();
+        let indices = self.reprs.indices_view();
+        let live = self.reprs.n_spec();
+        let um = self.uses.model_view();
+        let un = self.uses.nodes_view();
+        let merged = crate::circular_list::rotate(orm[cs], ps + 1)
+            + crate::circular_list::rotate(orm[ca], pa + 1);
+
+        // casts between int positions and usize root values are faithful:
+        // every id is below n <= id_bound <= usize::MAX + 1.
+        T::lemma_id_bound_fits_usize();
+        assert(n <= usize::MAX as nat + 1);
+
+        crate::circular_list::lemma_rotate_props(orm[cs], ps + 1);
+        crate::circular_list::lemma_rotate_props(orm[ca], pa + 1);
+
+        // every merged-ring element is an element of one of the two old rings
+        assert forall|q: int| 0 <= q < merged.len() implies
+            exists|c0: int, j: int| (c0 == cs || c0 == ca)
+                && 0 <= j < orm[c0].len() && orm[c0][j] == #[trigger] merged[q] by {
+            let lcs = orm[cs].len() as int;
+            if q < lcs {
+                let j = if ps + 1 + q < lcs { ps + 1 + q } else { ps + 1 + q - lcs };
+                assert(merged[q] == orm[cs][j]);
+            } else {
+                let q2 = q - lcs;
+                let lca = orm[ca].len() as int;
+                let j = if pa + 1 + q2 < lca { pa + 1 + q2 } else { pa + 1 + q2 - lca };
+                assert(merged[q] == orm[ca][j]);
+            }
+        }
+        // old roots of the two rings' members: cs members root to s, ca to ab
+        assert forall|j: int| 0 <= j < orm[cs].len() implies
+            oroots[(#[trigger] orm[cs][j]) as int] == su by {
+            assert(oroots[orm[cs][j] as int] == oroots[orm[cs][ps] as int]);
+        }
+        assert forall|j: int| 0 <= j < orm[ca].len() implies
+            oroots[(#[trigger] orm[ca][j]) as int] == abu by {
+            assert(oroots[orm[ca][j] as int] == oroots[orm[ca][pa] as int]);
+        }
+        // a member of any OTHER ring roots to neither s nor ab
+        assert forall|c: int, p: int|
+            0 <= c < orm.len() && c != cs && c != ca && 0 <= p < orm[c].len()
+            implies oroots[(#[trigger] orm[c][p]) as int] != su
+                && oroots[orm[c][p] as int] != abu by {
+            if oroots[orm[c][p] as int] == su {
+                // same root as s -> same ring as s (old W3b) -> c == cs.
+                assert(oroots[orm[cs][ps] as int] == su);
+            }
+            if oroots[orm[c][p] as int] == abu {
+                assert(oroots[orm[ca][pa] as int] == abu);
+            }
+        }
+        // the remap in one line: roots[x] = s if old ab, else old.
+        assert forall|x: int| 0 <= x < n implies
+            #[trigger] roots[x] == (if oroots[x] == abu { su } else { oroots[x] }) by {
+            assert(roots[x] == crate::union_find::merge_roots(oroots, sn, abn)[x]);
+        }
+
+        // survivors + dead-stay-dead, in the nat form the clauses use
+        assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
+            && kk != key_ab
+            implies ss_contains(sparse, indices, live, kk)
+                && ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {
+            let kw = oindices[osparse[kk as int].as_nat() as int];
+            assert(kw.as_nat() == kk);
+            assert(o.reprs.contains_spec(kw));
+            assert(self.reprs.contains_spec(kw));
+        }
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            implies ss_contains(osparse, oindices, olive, kk) && kk != key_ab by {
+            let kw = indices[sparse[kk as int].as_nat() as int];
+            assert(kw.as_nat() == kk);
+            assert(self.reprs.contains_spec(kw));
+            assert(self.reprs.id_set().contains(kk)) by {
+                assert(indices[sparse[kk as int].as_nat() as int].as_nat() == kk);
+            }
+            assert(o.reprs.id_set().contains(kk) && kk != key_ab);
+            let p = choose|p: int| 0 <= p < olive
+                && (#[trigger] oindices[p]).as_nat() == kk;
+            let ow = oindices[p];
+            assert(o.reprs.contains_spec(ow));
+        }
+
+        // --- Opt wf on payload cells
+        assert forall|x: int| 0 <= x < n implies (#[trigger] pay[x]).wf() by {
+            if x != abn as int { assert(pay[x] == opay[x]); }
+        }
+        // --- W2a
+        assert forall|x: int| 0 <= x < n implies
+            ((#[trigger] roots[x]) == x as usize <==> pay[x].get_spec() is Some) by {
+            if x == abn as int {
+                assert(roots[x] == su);
+                assert(pay[x] == ab_pay);
+            } else {
+                assert(pay[x] == opay[x]);
+                if oroots[x] == abu {
+                    // x was in ab's class but is not ab: not an old root
+                    // (an old root satisfies oroots[x] == x, which with
+                    // oroots[x] == ab forces x == ab), and its new root is
+                    // s != x (x == s would make s's old root ab).
+                    if oroots[x] == x as usize {
+                        assert(x as usize == abu);
+                        assert(x == abn as int);
+                        assert(false);
+                    }
+                    assert(roots[x] == su);
+                    if roots[x] == x as usize {
+                        assert(x as usize == su);
+                        assert(x == sn as int);
+                        assert(oroots[sn as int] == su);
+                        assert(false);
+                    }
+                } else {
+                    assert(roots[x] == oroots[x]);
+                }
+            }
+        }
+        // --- W2b
+        assert forall|x: int| 0 <= x < n && (#[trigger] roots[x]) == x as usize
+            implies ss_contains(sparse, indices, live,
+                pay[x].get_spec()->Some_0.id_nat()) by {
+            assert(x != abn as int);
+            assert(pay[x] == opay[x]);
+            assert(oroots[x] == x as usize);
+            assert(ss_contains(osparse, oindices, olive,
+                opay[x].get_spec()->Some_0.id_nat()));
+            // x's key is not ab's key: W2c injectivity in the old state.
+            assert(opay[x].get_spec()->Some_0.id_nat() != key_ab);
+        }
+        // --- W2c
+        assert forall|x: int, y: int|
+            0 <= x < n && 0 <= y < n && x != y
+                && (#[trigger] roots[x]) == x as usize
+                && (#[trigger] roots[y]) == y as usize
+            implies pay[x].get_spec()->Some_0.id_nat()
+                != pay[y].get_spec()->Some_0.id_nat() by {
+            assert(x != abn as int && y != abn as int);
+            assert(pay[x] == opay[x] && pay[y] == opay[y]);
+            assert(oroots[x] == x as usize && oroots[y] == y as usize);
+        }
+        // --- W2d
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            implies exists|x: int| 0 <= x < n && roots[x] == x as usize
+                && (#[trigger] pay[x]).get_spec()->Some_0.id_nat() == kk by {
+            assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
+            let x = choose|x: int| 0 <= x < n && oroots[x] == x as usize
+                && (#[trigger] opay[x]).get_spec()->Some_0.id_nat() == kk;
+            // x is an old root with key kk != key_ab, so x != ab, so x keeps
+            // its payload; and x's class was not ab's (both were roots), so
+            // its root stays x.
+            assert(x != abn as int) by {
+                if x == abn as int { assert(kk == key_ab); }
+            }
+            assert(oroots[x] != abu) by {
+                if oroots[x] == abu {
+                    assert(x as usize == abu);
+                    assert(x == abn as int);
+                    assert(false);
+                }
+            }
+            assert(roots[x] == x as usize);
+            assert(pay[x] == opay[x]);
+        }
+        // --- W3a
+        assert forall|c: int, p: int, q: int|
+            0 <= c < rm.len() && 0 <= p < rm[c].len() && 0 <= q < rm[c].len()
+            implies roots[(#[trigger] rm[c][p]) as int]
+                == roots[(#[trigger] rm[c][q]) as int] by {
+            if c == cs {
+                assert(rm[c] == merged);
+                // both elements come from the two old rings; either way the
+                // new root is s.
+                let (c1, j1) = choose|c0: int, j: int| (c0 == cs || c0 == ca)
+                    && 0 <= j < orm[c0].len() && orm[c0][j] == merged[p];
+                let (c2, j2) = choose|c0: int, j: int| (c0 == cs || c0 == ca)
+                    && 0 <= j < orm[c0].len() && orm[c0][j] == merged[q];
+                assert(roots[merged[p] as int] == su);
+                assert(roots[merged[q] as int] == su);
+            } else if c == ca {
+                assert(rm[c].len() == 0);
+            } else {
+                assert(rm[c] == orm[c]);
+                assert(oroots[orm[c][p] as int] == oroots[orm[c][q] as int]);
+                assert(oroots[orm[c][p] as int] != abu);
+            }
+        }
+        // --- W3b
+        assert forall|c1: int, p1: int, c2: int, p2: int|
+            0 <= c1 < rm.len() && 0 <= p1 < rm[c1].len()
+                && 0 <= c2 < rm.len() && 0 <= p2 < rm[c2].len()
+                && roots[(#[trigger] rm[c1][p1]) as int]
+                    == roots[(#[trigger] rm[c2][p2]) as int]
+            implies c1 == c2 by {
+            // roots of members: cs -> s; other rings -> their old root,
+            // which is neither s nor ab.
+            if c1 == cs && c2 != cs && c2 != ca {
+                assert(roots[rm[c1][p1] as int] == su);
+                assert(rm[c2] == orm[c2]);
+                assert(oroots[orm[c2][p2] as int] != abu);
+                assert(roots[rm[c2][p2] as int] == oroots[orm[c2][p2] as int]);
+                assert(oroots[orm[c2][p2] as int] != su);
+                assert(false);
+            } else if c2 == cs && c1 != cs && c1 != ca {
+                assert(roots[rm[c2][p2] as int] == su);
+                assert(rm[c1] == orm[c1]);
+                assert(oroots[orm[c1][p1] as int] != abu);
+                assert(roots[rm[c1][p1] as int] == oroots[orm[c1][p1] as int]);
+                assert(oroots[orm[c1][p1] as int] != su);
+                assert(false);
+            } else if c1 != cs && c1 != ca && c2 != cs && c2 != ca {
+                assert(rm[c1] == orm[c1] && rm[c2] == orm[c2]);
+                assert(oroots[orm[c1][p1] as int] != abu);
+                assert(oroots[orm[c2][p2] as int] != abu);
+                assert(roots[rm[c1][p1] as int] == oroots[orm[c1][p1] as int]);
+                assert(roots[rm[c2][p2] as int] == oroots[orm[c2][p2] as int]);
+            } else if c1 == ca {
+                assert(rm[ca].len() == 0);
+            } else if c2 == ca {
+                assert(rm[ca].len() == 0);
+            }
+        }
+        // --- W4
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            implies ss_value(dense, sparse, kk).use_list.id_nat() < um.len() by {
+            assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
+            assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+        }
+        assert forall|k1: nat, k2: nat|
+            ss_contains(sparse, indices, live, k1)
+                && ss_contains(sparse, indices, live, k2) && k1 != k2
+            implies #[trigger] ss_value(dense, sparse, k1).use_list.id_nat()
+                != #[trigger] ss_value(dense, sparse, k2).use_list.id_nat() by {
+            assert(ss_contains(osparse, oindices, olive, k1) && k1 != key_ab);
+            assert(ss_contains(osparse, oindices, olive, k2) && k2 != key_ab);
+            assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
+            assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
+        }
+        // --- W5 (uses untouched)
+        assert forall|l: int, p: int|
+            0 <= l < um.len() && 0 <= p < (#[trigger] um[l]).len()
+            implies un[#[trigger] um[l][p] as int].payload.id_nat() < n by {
+            assert(um[l] == o.uses.model_view()[l]);
+        }
+        // --- W6
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            && ss_value(dense, sparse, kk).min_row is Some
+            implies self.min_width as nat > 0
+                && (ss_value(dense, sparse, kk).min_row->Some_0.as_nat() + 1)
+                    * (self.min_width as nat) <= self.min_pool.view().len() by {
+            assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
+            assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+        }
+        assert forall|k1: nat, k2: nat|
+            ss_contains(sparse, indices, live, k1)
+                && ss_contains(sparse, indices, live, k2) && k1 != k2
+                && #[trigger] ss_value(dense, sparse, k1).min_row is Some
+                && #[trigger] ss_value(dense, sparse, k2).min_row is Some
+            implies ss_value(dense, sparse, k1).min_row->Some_0.as_nat()
+                != ss_value(dense, sparse, k2).min_row->Some_0.as_nat() by {
+            assert(ss_contains(osparse, oindices, olive, k1) && k1 != key_ab);
+            assert(ss_contains(osparse, oindices, olive, k2) && k2 != key_ab);
+            assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
+            assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
+        }
+        assert(eg_model_wf::<T, L, N>(rm, pay, roots, dense, sparse, indices,
+            um, un, self.min_pool.view().len(), self.min_width as nat));
+    }
+
+    /// Merge the classes of `a` and `b`: union-find link, ring splice with
+    /// the absorbed payload cleared, repr removal. `None` iff already one
+    /// class. The core of `merge` and `merge_directed`; the distinct-rings
+    /// precondition of `splice_absorb` is DISCHARGED here from W2 + W3 —
+    /// the machine-checked form of the argument that closes the
+    /// WITNESS-PENDING allowlist entries for the aggregate's use.
+    pub(crate) fn merge_with(&mut self, a: T, b: T, directed: bool, prefer_a: bool)
+        -> (r: Option<MergeInfo<T, L>>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).min_width_spec() == old(self).min_width_spec(),
+            a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
+                let ra = old(self).roots_view()[a.id_nat() as int] as nat;
+                let rb = old(self).roots_view()[b.id_nat() as int] as nat;
+                &&& (r is None <==> ra == rb)
+                &&& (r is None ==> final(self).roots_view() == old(self).roots_view()
+                        && final(self).num_classes_spec() == old(self).num_classes_spec())
+                &&& (r matches Some(mi) ==> {
+                        &&& ((mi.survivor.id_nat() == ra && mi.absorbed.id_nat() == rb)
+                            || (mi.survivor.id_nat() == rb && mi.absorbed.id_nat() == ra))
+                        &&& (directed ==> mi.survivor.id_nat()
+                                == (if prefer_a { ra } else { rb }))
+                        &&& ra != rb
+                        &&& final(self).roots_view() == crate::union_find::merge_roots(
+                                old(self).roots_view(), mi.survivor.id_nat(),
+                                mi.absorbed.id_nat())
+                        &&& final(self).num_classes_spec()
+                            == old(self).num_classes_spec() - 1
+                        &&& mi.absorbed_uses == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).use_list
+                        &&& mi.absorbed_min_row == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).min_row
+                        &&& mi.absorbed_atomic == old(self).class_data_spec(
+                                old(self).key_of(mi.absorbed.id_nat() as int)).atomic
+                    })
+            },
+    {
+        if !(a.to_usize() < self.uf.len().as_usize()
+            && b.to_usize() < self.uf.len().as_usize())
+        {
+            crate::guard::refuse("EClasses::merge: node id out of range");
+        }
+        let ghost o = *old(self);
+        let ghost n = o.n_spec();
+        let res = if directed {
+            self.uf.union_directed(a, b, prefer_a)
+        } else {
+            self.uf.union(a, b)
+        };
+        let (s, ab) = match res {
+            None => {
+                return None;
+            }
+            Some(pair) => pair,
+        };
+        proof {
+            crate::opt::lemma_id_nat_fits_usize(s);
+            crate::opt::lemma_id_nat_fits_usize(ab);
+            // s and ab are distinct old roots.
+            assert(o.roots_view()[s.id_nat() as int] == s.id_nat() as usize);
+            assert(o.roots_view()[ab.id_nat() as int] == ab.id_nat() as usize);
+            assert(s.id_nat() != ab.id_nat());
+        }
+        // the absorbed root's payload is present (W2a) and names a live key
+        // (W2b): production reads it with get_unchecked; here presence is a
+        // theorem.
+        let pay_ab = self.entries.payload_of(ab);
+        proof {
+            assert(self.entries == o.entries);
+            assert(pay_ab == o.entries.payload_seq()[ab.id_nat() as int]);
+            assert(pay_ab.wf());
+            assert(pay_ab.get_spec() is Some);
+        }
+        let key_t = pay_ab.get();
+        let key = key_t.to_index();
+        proof {
+            key_t.lemma_as_nat_is_id_nat();
+            assert(key.as_nat() == o.key_of(ab.id_nat() as int));
+            assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), key.as_nat()));
+            assert(self.reprs.contains_spec(key));
+        }
+        let data = self.reprs.get(key);
+        proof {
+            assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                key.as_nat()));
+        }
+        // distinct rings, from W3a: were s and ab on one ring, they would
+        // share a root, and they are distinct roots.
+        let ghost cs = self.entries.locate(s.id_nat() as int).0;
+        let ghost ps = self.entries.locate(s.id_nat() as int).1;
+        let ghost ca = self.entries.locate(ab.id_nat() as int).0;
+        let ghost pa = self.entries.locate(ab.id_nat() as int).1;
+        proof {
+            let orm = o.entries.model_view();
+            assert(o.entries.in_some_ring(s.id_nat() as int));
+            assert(o.entries.in_some_ring(ab.id_nat() as int));
+            assert(0 <= cs < orm.len() && 0 <= ps < orm[cs].len()
+                && orm[cs][ps] == s.id_nat() as usize);
+            assert(0 <= ca < orm.len() && 0 <= pa < orm[ca].len()
+                && orm[ca][pa] == ab.id_nat() as usize);
+            if cs == ca {
+                // same ring -> same root (W3a on the OLD state) -> s == ab.
+                assert(o.roots_view()[orm[cs][ps] as int]
+                    == o.roots_view()[orm[cs][pa] as int]);
+                assert(false);
+            }
+        }
+        let none_pay = Opt::<T>::none();
+        self.entries.splice_absorb(s, ab, none_pay);
+        self.reprs.remove(key);
+        proof {
+            // assemble the pointwise splice ensures into the update form.
+            assert(self.entries.model_view() =~= o.entries.model_view()
+                .update(cs, crate::circular_list::rotate(o.entries.model_view()[cs], ps + 1)
+                    + crate::circular_list::rotate(o.entries.model_view()[ca], pa + 1))
+                .update(ca, Seq::<usize>::empty()));
+            assert(self.reprs.id_set() =~= o.reprs.id_set().remove(key.as_nat()));
+            self.lemma_merge_wf(o, s, ab, key.as_nat(), none_pay, cs, ps, ca, pa);
+        }
+        Some(MergeInfo {
+            survivor: s,
+            absorbed: ab,
+            absorbed_uses: data.use_list,
+            absorbed_min_row: data.min_row,
+            absorbed_atomic: data.atomic,
+        })
+    }
+
+    /// Union-by-rank merge (production's `merge`, minus the proof-forest
+    /// justification, which is postponed with the verified union-find's).
+    pub fn merge(&mut self, a: T, b: T) -> (r: Option<MergeInfo<T, L>>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).min_width_spec() == old(self).min_width_spec(),
+            a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
+                let ra = old(self).roots_view()[a.id_nat() as int] as nat;
+                let rb = old(self).roots_view()[b.id_nat() as int] as nat;
+                &&& (r is None <==> ra == rb)
+                &&& (r is None ==> final(self).roots_view() == old(self).roots_view())
+                &&& (r matches Some(mi) ==> {
+                        &&& ((mi.survivor.id_nat() == ra && mi.absorbed.id_nat() == rb)
+                            || (mi.survivor.id_nat() == rb && mi.absorbed.id_nat() == ra))
+                        &&& ra != rb
+                        &&& final(self).roots_view() == crate::union_find::merge_roots(
+                                old(self).roots_view(), mi.survivor.id_nat(),
+                                mi.absorbed.id_nat())
+                        &&& final(self).num_classes_spec()
+                            == old(self).num_classes_spec() - 1
+                    })
+            },
+    {
+        self.merge_with(a, b, false, false)
+    }
+
+    /// Directed merge: the survivor is `a`'s class when `prefer_a`
+    /// (production's `merge_directed` policy hook; the parent-count policy
+    /// computes the flag from use-list lengths).
+    pub fn merge_directed(&mut self, a: T, b: T, prefer_a: bool)
+        -> (r: Option<MergeInfo<T, L>>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
+                let ra = old(self).roots_view()[a.id_nat() as int] as nat;
+                let rb = old(self).roots_view()[b.id_nat() as int] as nat;
+                &&& (r is None <==> ra == rb)
+                &&& (r matches Some(mi) ==> {
+                        &&& mi.survivor.id_nat() == (if prefer_a { ra } else { rb })
+                        &&& mi.absorbed.id_nat() == (if prefer_a { rb } else { ra })
+                        &&& final(self).roots_view() == crate::union_find::merge_roots(
+                                old(self).roots_view(), mi.survivor.id_nat(),
+                                mi.absorbed.id_nat())
+                    })
+            },
+    {
+        self.merge_with(a, b, true, prefer_a)
+    }
+}
+
 } // verus!
