@@ -515,17 +515,19 @@ fn row_class_merge_restore() -> Row {
                 let (s, a) = pids(i);
                 pring::splice(ring, s, a);
             }
-            ring.restore(tok);
+            ring.try_restore(tok).expect("restore");
             ring.len()
         },
         verus_ring_build::<true>,
         |ring| {
-            let tok = ring.mark(verus::vec::ShrinkPolicy::Never);
+            let tok = ring
+                .try_mark(verus::vec::ShrinkPolicy::Never)
+                .expect("mark");
             for i in 0..RING_MERGES {
                 let (s, a) = vids(i);
                 verus_splice(ring, s, a);
             }
-            ring.restore(tok);
+            ring.try_restore(tok).expect("restore");
             ring.len()
         },
     );

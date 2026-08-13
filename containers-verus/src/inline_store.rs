@@ -65,7 +65,7 @@ where
     /// `InlineStore::new()` takes no turbofish, and the const generic could not
     /// be inferred through `Vec::with_store` (whose return type does not mention
     /// `TRACK`) — the consumer calls `InlineStore::new()` bare.
-    pub fn new() -> (s: InlineStore<T, I>)
+    pub(crate) fn new() -> (s: InlineStore<T, I>)
         ensures
             DiffStore::<T, I, false>::wf(&s),
             DiffStore::<T, I, true>::wf(&s),

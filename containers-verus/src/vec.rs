@@ -1150,7 +1150,7 @@ where
     /// production's `with_store`. The store must be well-formed and empty
     /// (no data, no capture flags) — the concrete `new()` of each backend
     /// supplies that.
-    pub fn with_store(store: S) -> (v: Self)
+    pub(crate) fn with_store(store: S) -> (v: Self)
         requires
             store.wf(),
             store.data().len() == 0,

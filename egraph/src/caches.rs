@@ -126,13 +126,9 @@ impl<
 {
     pub fn new() -> Self {
         Self {
-            nodes: VecI::with_store(InlineStore::new()),
+            nodes: VecI::new(),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
-            history: if PROOFS {
-                Some(VecI::with_store(InlineStore::new()))
-            } else {
-                None
-            },
+            history: if PROOFS { Some(VecI::new()) } else { None },
         }
     }
 
@@ -378,19 +374,11 @@ impl<
 {
     pub fn new() -> Self {
         Self {
-            nodes: VecI::with_store(InlineStore::new()),
-            children: VecI::with_store(InlineStore::new()),
+            nodes: VecI::new(),
+            children: VecI::new(),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
-            history_nodes: if PROOFS {
-                Some(VecI::with_store(InlineStore::new()))
-            } else {
-                None
-            },
-            history_children: if PROOFS {
-                Some(VecI::with_store(InlineStore::new()))
-            } else {
-                None
-            },
+            history_nodes: if PROOFS { Some(VecI::new()) } else { None },
+            history_children: if PROOFS { Some(VecI::new()) } else { None },
         }
     }
 
@@ -695,7 +683,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
 {
     pub fn new() -> Self {
         Self {
-            nodes: VecI::with_store(InlineStore::new()),
+            nodes: VecI::new(),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
         }
     }

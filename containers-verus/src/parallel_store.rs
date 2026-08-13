@@ -527,7 +527,7 @@ where
     // prod-parity: no `TRACK` const generic (un-inferable through
     // `Vec::with_store`; production's `new()` is bare). Empty ⟹ wf for both
     // `TRACK` values, so the ensures is stated for each.
-    pub fn new() -> (s: ParallelStore<T, I>)
+    pub(crate) fn new() -> (s: ParallelStore<T, I>)
         ensures
             DiffStore::<T, I, false>::wf(&s),
             DiffStore::<T, I, true>::wf(&s),
