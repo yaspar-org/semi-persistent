@@ -1830,11 +1830,6 @@ where
         ListArenaToken { heads, nodes }
     }
 
-    /// Restore both arenas to the marked snapshot. The restored snapshots must
-    /// jointly form a valid arena *for the current ghost model* — i.e. the
-    /// model still describes them (`arena_model_wf`). Semi-persistence composes
-    /// from the two inner `Vec`s.
-    /// "Restorable now" for the composite token (plan 2.2/2.3).
     // ------------------------------------------------------------------
     // Total shell (total-API plan phase 3).
     // ------------------------------------------------------------------
@@ -1953,6 +1948,7 @@ where
         }
     }
 
+    /// "Restorable now" for the composite token (plan 2.2/2.3).
     pub fn is_valid_token(&self, token: &ListArenaToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -1960,6 +1956,10 @@ where
         self.heads.is_valid_token(&token.heads) && self.nodes.is_valid_token(&token.nodes)
     }
 
+    /// Restore both arenas to the marked snapshot. The restored snapshots must
+    /// jointly form a valid arena *for the current ghost model* — i.e. the
+    /// model still describes them (`arena_model_wf`). Semi-persistence composes
+    /// from the two inner `Vec`s.
     pub(crate) fn restore(&mut self, token: ListArenaToken)
         requires
             old(self).wf(),
@@ -2375,7 +2375,7 @@ where
             }),
     {
         // Total-with-documented-panic: stale-handle branch.
-        if !((self.list as usize) < self.arena.heads.store.data.len()) {
+        if !(self.list < self.arena.heads.store.data.len()) {
             crate::guard::refuse("ListIter::next: list handle out of range");
         }
         let ghost m = self.arena.model_view()[self.list as int];

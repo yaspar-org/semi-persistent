@@ -309,9 +309,6 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         }
     }
 
-    /// THE public token-validity check: "restorable now" (plan 2.2). True iff
-    /// `restore(token)` would succeed at this moment. Borrows the token
-    /// (production parity).
     // ------------------------------------------------------------------
     // Total shell (total-API plan phase 3): same pattern as Vec's pilot.
     // ------------------------------------------------------------------
@@ -401,6 +398,9 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         }
     }
 
+    /// THE public token-validity check: "restorable now" (plan 2.2). True iff
+    /// `restore(token)` would succeed at this moment. Borrows the token
+    /// (production parity).
     pub fn is_valid_token(&self, token: &VecToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),

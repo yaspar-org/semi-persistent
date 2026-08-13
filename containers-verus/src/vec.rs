@@ -1311,13 +1311,6 @@ where
         core::mem::size_of::<Self>() + self.store.heap_bytes() + self.tracking_bytes()
     }
 
-    /// THE public token-validity check: "restorable now" (migration plan 2.2).
-    /// Returns exactly `is_restorable_spec(token)` — true iff `restore(token)`
-    /// would succeed at this moment: TRACK on, same container, frame still
-    /// live (rejects consumed tokens), on the live branch path within its
-    /// depth bound, and both counter headrooms hold. Borrows the token
-    /// (production parity). The genealogy-only walk that older revisions
-    /// exposed under this name is the private `is_on_current_branch`.
     // ------------------------------------------------------------------
     // Total shell (total-API plan phase 2): no `requires` beyond wf; every
     // precondition of the partial core is evaluated by a verified exec twin
@@ -1494,6 +1487,13 @@ where
         }
     }
 
+    /// THE public token-validity check: "restorable now" (migration plan 2.2).
+    /// Returns exactly `is_restorable_spec(token)` — true iff `restore(token)`
+    /// would succeed at this moment: TRACK on, same container, frame still
+    /// live (rejects consumed tokens), on the live branch path within its
+    /// depth bound, and both counter headrooms hold. Borrows the token
+    /// (production parity). The genealogy-only walk that older revisions
+    /// exposed under this name is the private `is_on_current_branch`.
     pub fn is_valid_token(&self, token: &VecToken) -> (b: bool)
         requires
             self.wf(),

@@ -846,9 +846,6 @@ where
         SparseSetToken { dense, sparse, indices }
     }
 
-    /// "Restorable now" for the composite token (plan 2.2/2.3): every
-    /// constituent must be restorable — the aggregate-atomicity invariant's
-    /// validation half.
     // ------------------------------------------------------------------
     // Total shell (total-API plan phase 3). `try_restore` is deliberately
     // absent: `restore` carries a snapshot-wellformedness precondition that
@@ -915,6 +912,9 @@ where
         }
     }
 
+    /// "Restorable now" for the composite token (plan 2.2/2.3): every
+    /// constituent must be restorable — the aggregate-atomicity invariant's
+    /// validation half.
     pub fn is_valid_token(&self, token: &SparseSetToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),

@@ -255,8 +255,8 @@ fn circular_splice_same_ring_panics_in_debug() {
     use semi_persistent_containers_verus::circular_list::CircularList;
     use semi_persistent_containers_verus::dense_id::DenseId31;
     let mut c = CircularList::<u32, DenseId31, true>::new();
-    let a = c.add_singleton(1);
-    let b = c.add_singleton(2);
+    let a = c.try_add_singleton(1).expect("id range");
+    let b = c.try_add_singleton(2).expect("id range");
     c.splice(a, b); // legal: different rings -> merged
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         c.splice(a, b); // now the SAME ring: debug guard must fire
@@ -483,18 +483,14 @@ fn aov_total_shell_refuses_and_round_trips() {
     type A = AppendOnlyVec<String, u8, true>;
     let mut a: A = A::new();
     while a.can_push() {
-        a.try_push(format!("x")).unwrap();
+        a.try_push("x".to_string()).unwrap();
     }
     assert_eq!(
-        a.try_push(format!("y")).unwrap_err(),
+        a.try_push("y".to_string()).unwrap_err(),
         ContainerError::CapacityExhausted
     );
     let tok = a.try_mark(ShrinkPolicy::Never).unwrap();
-    assert_eq!(
-        a.try_restore(tok).map_err(|e| e),
-        Ok(()),
-        "fresh token restores"
-    );
+    assert_eq!(a.try_restore(tok), Ok(()), "fresh token restores");
     assert_eq!(
         a.try_restore(tok).unwrap_err(),
         ContainerError::InvalidToken,
