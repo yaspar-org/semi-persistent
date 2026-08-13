@@ -85,13 +85,13 @@ impl DenseId31 {
 
     /// Construct from a `u32` known to fit in 31 bits.
     pub fn new(n: u32) -> (r: DenseId31)
-        requires n < DENSE31_BOUND,
-        ensures r@ == n as nat,
+        ensures n < DENSE31_BOUND ==> r@ == n as nat,
     {
-        // Runtime guard for unverified callers, matching define_id31!'s
-        // generated `new`: an out-of-range raw would violate the type
-        // invariant and alias through the bit-stealing mask.
-        crate::guard::check_precondition(n < 0x8000_0000u32, "DenseId31::new: id out of range");
+        // Total-with-documented-panic: an out-of-range raw would violate the
+        // type invariant and alias through the bit-stealing mask.
+        if !(n < 0x8000_0000u32) {
+            crate::guard::refuse("DenseId31::new: id out of range");
+        }
         DenseId31 { raw: n }
     }
 
@@ -354,11 +354,12 @@ impl DenseId63 {
     }
 
     pub fn new(n: u64) -> (r: DenseId63)
-        requires n < DENSE63_BOUND,
-        ensures r@ == n as nat,
+        ensures n < DENSE63_BOUND ==> r@ == n as nat,
     {
         // Same rationale as DenseId31::new above.
-        crate::guard::check_precondition(n < 0x8000_0000_0000_0000u64, "DenseId63::new: id out of range");
+        if !(n < 0x8000_0000_0000_0000u64) {
+            crate::guard::refuse("DenseId63::new: id out of range");
+        }
         DenseId63 { raw: n }
     }
 }

@@ -1,8 +1,6 @@
 # Public exec fns with a `requires` clause: the total-API plan's
 # drain list (doc/future/total-api-plan.md). May only shrink.
 append_only_vec.rs::get
-bplus.rs::from_sorted
-bplus.rs::new
 bplus_layout.rs::child
 bplus_layout.rs::first_key
 bplus_layout.rs::internal_insert_at
@@ -21,7 +19,6 @@ circular_list.rs::next
 circular_list.rs::set_payload
 circular_list.rs::splice
 circular_list.rs::splice_absorb
-dense_id.rs::new
 diff_store.rs::begin_restore
 diff_store.rs::capture
 diff_store.rs::finish_restore
@@ -36,7 +33,6 @@ diff_store.rs::set_raw
 diff_store.rs::truncate
 guard.rs::check_precondition
 id_factory.rs::alloc
-id_macros.rs::new
 list.rs::iter
 list.rs::next
 map.rs::new

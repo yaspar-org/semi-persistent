@@ -127,13 +127,12 @@ macro_rules! define_id_impl {
             /// exist).
             #[inline(always)]
             pub fn new(n: $Int) -> (r: $Name)
-                requires n < $CAP,
-                ensures r@ == n as nat,
+                ensures n < $CAP ==> r@ == n as nat,
             {
-                $crate::guard::check_precondition(
-                    n <= $MASK,
-                    concat!(stringify!($Name), " exceeds range"),
-                );
+                // Total-with-documented-panic: the range check is the branch.
+                if !(n <= $MASK) {
+                    $crate::guard::refuse(concat!(stringify!($Name), " exceeds range"));
+                }
                 $Name { raw: n }
             }
 
