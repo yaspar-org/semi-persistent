@@ -455,6 +455,37 @@ where T: Sized + Copy + core::default::Default {
     /// index type `N` (`< N::id_bound()`) so the stored `next` self-loop
     /// round-trips (`from_usize(id).id_nat() == id`). The e-graph guarantees this
     /// the same way it bounds any dense id — id allocation is width-checked.
+    /// Total node allocation (total-API plan phase 3): refuses at either of
+    /// `add_singleton`'s two ceilings — the index word, and `N`'s id range one
+    /// bit below it — where the partial core's runtime guard panics.
+    /// `splice_absorb` has no total form yet: its different-rings
+    /// precondition needs the O(1) ring-id witness (plan doc, phase-3
+    /// designed item); the debug walk is the interim monitor.
+    pub fn try_add_singleton(&mut self, payload: T)
+        -> (r: Result<N, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(nid) ==> nid.id_nat() == old(self).n_spec()
+                && final(self).n_spec() == old(self).n_spec() + 1
+                && final(self).model_view()
+                    == old(self).model_view().push(seq![nid.id_nat() as usize]),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.entries.can_push() {
+            let n = self.entries.store.data.len();
+            proof {
+                <N as DenseId>::Index::lemma_max_nat_fits_usize();
+                assert(n as nat == self.entries.view().len());
+            }
+            if N::try_new(n + 1).is_some() {
+                return Ok(self.add_singleton(payload));
+            }
+        }
+        Err(crate::error::ContainerError::CapacityExhausted)
+    }
+
     pub fn add_singleton(&mut self, payload: T) -> (nid: N)
         requires
             old(self).wf(),
