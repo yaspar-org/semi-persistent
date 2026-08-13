@@ -1045,26 +1045,48 @@ where
     /// in push/set/pop's own contracts, which hold for ALL states.
     pub fn push_untracked(&mut self, value: T)
         requires
-            old(self).wf(), old(self).untracked(),
-            old(self).view().len() + 1 < I::max_nat(),
+            old(self).wf(),
         ensures
-            final(self).wf(), final(self).untracked(),
-            final(self).view() == old(self).view().push(value),   // std::Vec::push
-            final(self).diff_log_len_spec() == 0,                   // no overhead
+            final(self).wf(),
+            (old(self).untracked() && old(self).view().len() + 1 < I::max_nat()) ==> {
+                &&& final(self).untracked()
+                &&& final(self).view() == old(self).view().push(value)
+                &&& final(self).diff_log_len_spec() == 0
+            },
     {
+        if !(self.frames.len() == 0) {
+            crate::guard::refuse("Vec::push_untracked: vector has live frames");
+        }
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+        }
+        if !(self.store.raw_len() < cap) {
+            crate::guard::refuse("Vec::push_untracked: index word exhausted");
+        }
         self.push(value);
         proof { self.lemma_untracked_no_overhead(); }
     }
 
     pub fn pop_untracked(&mut self) -> (r: Option<T>)
-        requires old(self).wf(), old(self).untracked(),
+        requires old(self).wf(),
         ensures
-            final(self).wf(), final(self).untracked(),
-            old(self).view().len() == 0 ==> r is None && final(self).view() == old(self).view(),
-            old(self).view().len() > 0 ==> r == Some(old(self).view().last())
-                && final(self).view() == old(self).view().drop_last(),   // std::Vec::pop
-            final(self).diff_log_len_spec() == 0,                         // no overhead
+            final(self).wf(),
+            old(self).untracked() ==> {
+                &&& final(self).untracked()
+                &&& (old(self).view().len() == 0
+                    ==> r is None && final(self).view() == old(self).view())
+                &&& (old(self).view().len() > 0
+                    ==> r == Some(old(self).view().last())
+                        && final(self).view() == old(self).view().drop_last())
+                &&& final(self).diff_log_len_spec() == 0
+            },
     {
+        if !(self.frames.len() == 0) {
+            crate::guard::refuse("Vec::pop_untracked: vector has live frames");
+        }
         let r = self.pop();
         proof { self.lemma_untracked_no_overhead(); }
         r
@@ -1072,13 +1094,21 @@ where
 
     pub fn set_untracked(&mut self, i: I, value: T)
         requires
-            old(self).wf(), old(self).untracked(),
-            i.as_nat() < old(self).view().len(),
+            old(self).wf(),
         ensures
-            final(self).wf(), final(self).untracked(),
-            final(self).view() == old(self).view().update(i.as_nat() as int, value),  // std update
-            final(self).diff_log_len_spec() == 0,                                      // no overhead
+            final(self).wf(),
+            (old(self).untracked() && i.as_nat() < old(self).view().len()) ==> {
+                &&& final(self).untracked()
+                &&& final(self).view() == old(self).view().update(i.as_nat() as int, value)
+                &&& final(self).diff_log_len_spec() == 0
+            },
     {
+        if !(self.frames.len() == 0) {
+            crate::guard::refuse("Vec::set_untracked: vector has live frames");
+        }
+        if !(i.as_usize() < self.store.raw_len()) {
+            crate::guard::refuse("Vec::set_untracked: index out of bounds");
+        }
         self.set_index(i, value);
         proof { self.lemma_untracked_no_overhead(); }
     }
@@ -1103,9 +1133,16 @@ where
     pub fn get_index(&self, i: I) -> (v: T)
         requires
             self.wf(),
-            i.as_nat() < self.view().len(),
-        ensures v == self.view()[i.as_nat() as int],
+        ensures
+            i.as_nat() < self.view().len() ==> v == self.view()[i.as_nat() as int],
     {
+        // Total-with-documented-panic (total-API plan, hot family): the bound
+        // is an explicit branch, not an erased requires — an out-of-range
+        // index from an unverified caller refuses instead of whatever the
+        // store does. The check is the one std indexing performed anyway.
+        if !(i.as_usize() < self.store.raw_len()) {
+            crate::guard::refuse("Vec::get_index: index out of bounds");
+        }
         self.store.get(i)
     }
 
@@ -2089,12 +2126,17 @@ where
     pub fn set_index(&mut self, i: I, value: T)
         requires
             old(self).wf(),
-            i.as_nat() < old(self).view().len(),
         ensures
             final(self).wf(),
-            final(self).view() == old(self).view().update(i.as_nat() as int, value),
-            final(self).snapshots_view() == old(self).snapshots_view(),
+            i.as_nat() < old(self).view().len() ==> {
+                &&& final(self).view() == old(self).view().update(i.as_nat() as int, value)
+                &&& final(self).snapshots_view() == old(self).snapshots_view()
+            },
     {
+        // Total-with-documented-panic (hot family): explicit bound branch.
+        if !(i.as_usize() < self.store.raw_len()) {
+            crate::guard::refuse("Vec::set_index: index out of bounds");
+        }
         let ghost old_view = self.view();
         let ghost old_diffs = self.diff_log@;
         let ghost old_frames = self.frames@;

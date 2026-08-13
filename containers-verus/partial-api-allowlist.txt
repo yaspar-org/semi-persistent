@@ -71,13 +71,8 @@ tagged.rs::from_repr
 tagged.rs::set_tag
 tagged.rs::tag
 vec.rs::get
-vec.rs::get_index
 vec.rs::is_empty
 vec.rs::iter
 vec.rs::len
 vec.rs::next
-vec.rs::pop_untracked
-vec.rs::push_untracked
-vec.rs::set_index
-vec.rs::set_untracked
 vec.rs::with_store
