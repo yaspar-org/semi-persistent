@@ -26,8 +26,6 @@ capture_bits.rs::set_true
 circular_list.rs::iter_class
 circular_list.rs::mark
 circular_list.rs::next
-circular_list.rs::next_of
-circular_list.rs::payload_of
 circular_list.rs::restore
 circular_list.rs::set_payload
 circular_list.rs::splice

@@ -385,10 +385,15 @@ where T: Sized + Copy + core::default::Default {
     /// This is the stored word verbatim (no decode), so it is exactly
     /// `next_seq()[i]` under `id_nat`.
     pub fn next_of(&self, i: N) -> (r: N)
-        requires self.wf(), i.id_nat() < self.n_spec(),
-        ensures r.id_nat() == self.next_seq()[i.id_nat() as int],
+        requires self.wf(),
+        ensures i.id_nat() < self.n_spec()
+            ==> r.id_nat() == self.next_seq()[i.id_nat() as int],
     {
         proof { i.lemma_as_nat_is_id_nat(); }
+        // Total-with-documented-panic: explicit node-bound branch.
+        if !(i.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::next_of: node id out of range");
+        }
         let r = self.entries.get_index(i.to_index()).next;
         // `next_seq` projects the stored id through `id_nat() as usize`; that
         // cast is lossless because a DenseId's range fits in a usize.
@@ -401,10 +406,15 @@ where T: Sized + Copy + core::default::Default {
     /// sparse-set repr key there), so the consumer reads and writes it through
     /// this pair rather than owning a second parallel vector.
     pub fn payload_of(&self, i: N) -> (p: T)
-        requires self.wf(), i.id_nat() < self.n_spec(),
-        ensures p == self.payload_seq()[i.id_nat() as int],
+        requires self.wf(),
+        ensures i.id_nat() < self.n_spec()
+            ==> p == self.payload_seq()[i.id_nat() as int],
     {
         proof { i.lemma_as_nat_is_id_nat(); }
+        // Total-with-documented-panic: explicit node-bound branch.
+        if !(i.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::payload_of: node id out of range");
+        }
         self.entries.get_index(i.to_index()).payload
     }
 
