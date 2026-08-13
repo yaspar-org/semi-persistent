@@ -2290,6 +2290,14 @@ where
                         ==> (#[trigger] final(self).nodes_view()[k]).payload
                             == old(self).nodes_view()[k].payload)
             },
+            // out-of-range or equal handles refuse before any mutation, so
+            // every returning path outside the guarded case is a no-op
+            // (vacuously provable: those paths diverge).
+            !(dst.id_nat() < old(self).model_view().len()
+                && src.id_nat() < old(self).model_view().len()
+                && dst.id_nat() != src.id_nat())
+                ==> final(self).model_view() == old(self).model_view()
+                    && final(self).nodes_view() == old(self).nodes_view(),
     {
         proof { dst.lemma_as_nat_is_id_nat(); src.lemma_as_nat_is_id_nat(); }  // prod-parity
         let du = dst.as_usize();

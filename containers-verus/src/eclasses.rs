@@ -741,6 +741,51 @@ where
     }
 }
 
+
+/// W5 after a use-list splice, over bare views (extracted like
+/// `lemma_splice_disjoint`: in the method body this quantifier e-matches
+/// against both states' full wf).
+pub(crate) proof fn lemma_splice_uses_w5<T: DenseId, N: DenseId + Tagged>(
+    oum: Seq<Seq<usize>>, um: Seq<Seq<usize>>,
+    oun: Seq<ListNode<T, N>>, un: Seq<ListNode<T, N>>,
+    di: int, si: int, n: nat,
+)
+    requires
+        0 <= di < oum.len(),
+        0 <= si < oum.len(),
+        di != si,
+        um == oum.update(di, oum[di] + oum[si]).update(si, Seq::<usize>::empty()),
+        un.len() == oun.len(),
+        forall|k: int| 0 <= k < oun.len()
+            ==> (#[trigger] un[k]).payload == oun[k].payload,
+        forall|l: int, p: int|
+            0 <= l < oum.len() && 0 <= p < oum[l].len()
+                ==> (#[trigger] oum[l][p]) < oun.len(),
+        forall|l: int, p: int|
+            0 <= l < oum.len() && 0 <= p < oum[l].len()
+                ==> oun[(#[trigger] oum[l][p]) as int].payload.id_nat() < n,
+    ensures
+        forall|l: int, p: int|
+            0 <= l < um.len() && 0 <= p < (#[trigger] um[l]).len()
+                ==> un[#[trigger] um[l][p] as int].payload.id_nat() < n,
+{
+    assert forall|l: int, p: int|
+        0 <= l < um.len() && 0 <= p < (#[trigger] um[l]).len()
+        implies un[#[trigger] um[l][p] as int].payload.id_nat() < n by {
+        if l == di {
+            if p < oum[di].len() {
+                assert(um[l][p] == oum[di][p]);
+            } else {
+                assert(um[l][p] == oum[si][p - oum[di].len()]);
+            }
+        } else if l != si {
+            assert(um[l] == oum[l]);
+        }
+        assert(um[l][p] < oun.len());
+        assert(un[um[l][p] as int].payload == oun[um[l][p] as int].payload);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Merge
 // ---------------------------------------------------------------------------
@@ -1242,6 +1287,157 @@ where
             absorbed_min_row: data.min_row,
             absorbed_atomic: data.atomic,
         })
+    }
+
+
+    /// Record that `parent_node` uses class `child_key` as a child, marking
+    /// the class atomic (production's `add_use`). Refuses a dead key, an
+    /// out-of-range parent id, or node exhaustion.
+    pub fn add_use(&mut self, child_key: <T as DenseId>::Index, parent_node: T)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).num_classes_spec() == old(self).num_classes_spec(),
+    {
+        if !(parent_node.to_usize() < self.uf.len().as_usize()) {
+            crate::guard::refuse("EClasses::add_use: parent node id out of range");
+        }
+        if !self.reprs.contains(child_key) {
+            crate::guard::refuse("EClasses::add_use: class key is not live");
+        }
+        let ghost o = *old(self);
+        let mut data = self.reprs.get(child_key);
+        proof {
+            crate::opt::lemma_id_nat_fits_usize(parent_node);
+            assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                child_key.as_nat()));
+            assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), child_key.as_nat()));
+            // W4a: the class's list handle is allocated.
+            assert(data.use_list.id_nat() < o.uses.model_view().len());
+        }
+        match self.uses.try_append(data.use_list, parent_node) {
+            Ok(()) => (),
+            Err(_) => crate::guard::refuse("EClasses::add_use: use-list node range exhausted"),
+        }
+        let ghost mid_um = self.uses.model_view();
+        let ghost mid_un = self.uses.nodes_view();
+        if !data.atomic {
+            data.atomic = true;
+            self.reprs.set(child_key, data);
+        }
+        proof {
+            let n = o.n_spec();
+            let li = data.use_list.id_nat() as int;
+            let um = self.uses.model_view();
+            let un = self.uses.nodes_view();
+            let oum = o.uses.model_view();
+            let oun = o.uses.nodes_view();
+            let dense = self.reprs.dense_view();
+            let sparse = self.reprs.sparse_view();
+            let indices = self.reprs.indices_view();
+            let live = self.reprs.n_spec();
+            let odense = o.reprs.dense_view();
+            let osparse = o.reprs.sparse_view();
+            let oindices = o.reprs.indices_view();
+
+            // reprs: at most one value changed, and only its atomic flag.
+            assert(sparse == osparse && indices == oindices && live == o.reprs.n_spec());
+            assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+                implies ss_contains(osparse, oindices, o.reprs.n_spec(), kk)
+                    && ss_value(dense, sparse, kk).use_list
+                        == ss_value(odense, osparse, kk).use_list
+                    && ss_value(dense, sparse, kk).min_row
+                        == ss_value(odense, osparse, kk).min_row by {
+                if kk != child_key.as_nat() {
+                    // positions are injective on the live region, so a
+                    // different live key reads a different dense slot.
+                    assert(osparse[kk as int].as_nat() != osparse[child_key.as_nat() as int].as_nat()) by {
+                        if osparse[kk as int].as_nat() == osparse[child_key.as_nat() as int].as_nat() {
+                            assert(oindices[osparse[kk as int].as_nat() as int].as_nat() == kk);
+                        }
+                    }
+                }
+            }
+            assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, o.reprs.n_spec(), kk)
+                implies ss_contains(sparse, indices, live, kk) by {}
+
+            // uses: list li gained one entry naming parent_node; others same.
+            o.uses.lemma_nodes_len_fits();
+            <N as DenseId>::Index::lemma_max_nat_fits_usize();
+            assert(oun.len() <= usize::MAX as nat);
+            assert(um == oum.update(li, oum[li].push(oun.len() as usize)));
+            assert(un.len() == oun.len() + 1);
+            assert(un[oun.len() as int].payload == parent_node);
+
+            assert forall|l: int, p: int|
+                0 <= l < um.len() && 0 <= p < (#[trigger] um[l]).len()
+                implies un[#[trigger] um[l][p] as int].payload.id_nat() < n by {
+                if l == li && p == um[l].len() - 1 {
+                    assert(um[l][p] == oun.len() as usize);
+                } else {
+                    assert(um[l][p] == oum[l][p]);
+                    assert(oum[l][p] < oun.len());
+                    assert(un[um[l][p] as int].payload == oun[oum[l][p] as int].payload);
+                }
+            }
+            assert(eg_model_wf::<T, L, N>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), dense, sparse, indices, um, un,
+                self.min_pool.view().len(), self.min_width as nat));
+        }
+    }
+
+    /// Splice the absorbed class's use-list onto the survivor's after a
+    /// merge (production's `splice_uses`; the rebuild loop iterates the
+    /// absorbed list first). Refuses equal handles at runtime inside the
+    /// arena; W4 ownership is untouched because list ids do not move.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(120)]
+    pub fn splice_uses(&mut self, survivor_list: L, absorbed_list: L)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).num_classes_spec() == old(self).num_classes_spec(),
+    {
+        let ghost o = *old(self);
+        self.uses.splice(survivor_list, absorbed_list);
+        proof {
+            let n = o.n_spec();
+            let um = self.uses.model_view();
+            let un = self.uses.nodes_view();
+            let oum = o.uses.model_view();
+            let oun = o.uses.nodes_view();
+            o.uses.lemma_nodes_len_fits();
+            <N as DenseId>::Index::lemma_max_nat_fits_usize();
+            if survivor_list.id_nat() < oum.len() && absorbed_list.id_nat() < oum.len()
+                && survivor_list.id_nat() != absorbed_list.id_nat()
+            {
+                let di = survivor_list.id_nat() as int;
+                let si = absorbed_list.id_nat() as int;
+                assert(um == oum.update(di, oum[di] + oum[si]).update(si, Seq::<usize>::empty()));
+                lemma_splice_uses_w5::<T, N>(oum, um, oun, un, di, si, n);
+                assert(eg_model_wf::<T, L, N>(
+                    self.entries.model_view(), self.entries.payload_seq(),
+                    self.uf.roots_view(), self.reprs.dense_view(),
+                    self.reprs.sparse_view(), self.reprs.indices_view(),
+                    um, un, self.min_pool.view().len(), self.min_width as nat));
+            } else {
+                // the arena refused (equal or out-of-range handles diverge
+                // before mutation) or the ensures' conditional guards fired;
+                // in every returning case the views are unchanged.
+                assert(um == oum && un == oun);
+                assert(eg_model_wf::<T, L, N>(
+                    self.entries.model_view(), self.entries.payload_seq(),
+                    self.uf.roots_view(), self.reprs.dense_view(),
+                    self.reprs.sparse_view(), self.reprs.indices_view(),
+                    um, un, self.min_pool.view().len(), self.min_width as nat));
+            }
+        }
     }
 
     /// Union-by-rank merge (production's `merge`, minus the proof-forest
