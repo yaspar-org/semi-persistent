@@ -187,11 +187,12 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
     reprs_indices: Seq<<T as DenseId>::Index>,
     uses_model: Seq<Seq<usize>>,
     uses_nodes: Seq<ListNode<T, N>>,
-    pool_len: nat,
+    pool: Seq<Opt<T>>,
     min_width: nat,
 ) -> bool {
     let n = payloads.len();
     let live = reprs_dense.len();
+    let pool_len = pool.len();
     &&& roots.len() == n
     // payload cells decode (Opt well-formedness)
     &&& (forall|x: int| 0 <= x < n ==> (#[trigger] payloads[x]).wf())
@@ -239,6 +240,9 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
     &&& (forall|l: int, p: int|
             0 <= l < uses_model.len() && 0 <= p < (#[trigger] uses_model[l]).len()
                 ==> uses_nodes[#[trigger] uses_model[l][p] as int].payload.id_nat() < n)
+    // pool cells decode (Opt well-formedness; the cells are data, W6 is
+    // geometry, but a read must round-trip)
+    &&& (forall|i: int| 0 <= i < pool.len() ==> (#[trigger] pool[i]).wf())
     // W6: whole rows; live row numbers allocated and pairwise distinct
     &&& (min_width > 0 ==> pool_len % min_width == 0)
     &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
@@ -320,6 +324,26 @@ where
         ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), id)
     }
 
+    /// Key liveness (spec twin of the repr set's membership).
+    pub open(crate) spec fn contains_key_spec(&self, key: <T as DenseId>::Index) -> bool {
+        self.reprs.contains_spec(key)
+    }
+
+    /// The ring component (spec ref, for iterator ensures).
+    pub open(crate) spec fn entries_ref(&self) -> &CircularList<Opt<T>, T, TRACK> {
+        &self.entries
+    }
+
+    /// The use-list arena (spec ref, for iterator ensures).
+    pub open(crate) spec fn uses_ref(&self) -> &ListArena<T, L, N, TRACK> {
+        &self.uses
+    }
+
+    /// The class-ring walk of `start` (spec twin of `iter_class`'s output).
+    pub open(crate) spec fn class_seq(&self, start: int) -> Seq<usize> {
+        self.entries.class_seq(start)
+    }
+
     pub open(crate) spec fn min_width_spec(&self) -> nat {
         self.min_width as nat
     }
@@ -341,7 +365,7 @@ where
                 self.reprs.indices_view(),
                 self.uses.model_view(),
                 self.uses.nodes_view(),
-                self.min_pool.view().len(),
+                self.min_pool.view(),
                 self.min_width as nat)
     }
 
@@ -735,7 +759,7 @@ where
                 assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
             }
             assert(eg_model_wf::<T, L, N>(rm, pay, roots, dense, sparse, indices,
-                um, un, self.min_pool.view().len(), self.min_width as nat));
+                um, un, self.min_pool.view(), self.min_width as nat));
         }
         (id, key)
     }
@@ -870,7 +894,7 @@ where
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.uses.model_view(), self.uses.nodes_view(),
-                self.min_pool.view().len(), self.min_width as nat),
+                self.min_pool.view(), self.min_width as nat),
             self.reprs.cap_spec() <= self.n_spec(),
     {
         let n = o.n_spec();
@@ -1155,7 +1179,7 @@ where
             assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
         }
         assert(eg_model_wf::<T, L, N>(rm, pay, roots, dense, sparse, indices,
-            um, un, self.min_pool.view().len(), self.min_width as nat));
+            um, un, self.min_pool.view(), self.min_width as nat));
     }
 
     /// Merge the classes of `a` and `b`: union-find link, ring splice with
@@ -1386,7 +1410,7 @@ where
             assert(eg_model_wf::<T, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices, um, un,
-                self.min_pool.view().len(), self.min_width as nat));
+                self.min_pool.view(), self.min_width as nat));
         }
     }
 
@@ -1425,7 +1449,7 @@ where
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
-                    um, un, self.min_pool.view().len(), self.min_width as nat));
+                    um, un, self.min_pool.view(), self.min_width as nat));
             } else {
                 // the arena refused (equal or out-of-range handles diverge
                 // before mutation) or the ensures' conditional guards fired;
@@ -1435,9 +1459,487 @@ where
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
-                    um, un, self.min_pool.view().len(), self.min_width as nat));
+                    um, un, self.min_pool.view(), self.min_width as nat));
             }
         }
+    }
+
+
+    /// Set the min-monomial pool row width (production's `set_min_width`):
+    /// once rows exist the width is frozen, and a change request refuses.
+    pub fn set_min_width(&mut self, width: usize)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).min_width_spec() == width as nat,
+    {
+        if self.min_width == width {
+            return;
+        }
+        if !(self.min_pool.len() == 0) {
+            crate::guard::refuse("EClasses::set_min_width: width is fixed once rows exist");
+        }
+        let ghost o = *old(self);
+        self.min_width = width;
+        proof {
+            // the pool is empty, so the geometry clause is 0 % w == 0 and no
+            // live class can hold a row number (its allocation bound would
+            // read (r+1)*w <= 0).
+            let dense = self.reprs.dense_view();
+            let sparse = self.reprs.sparse_view();
+            let indices = self.reprs.indices_view();
+            let live = self.reprs.n_spec();
+            assert(self.min_pool.view().len() == 0);
+            assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+                && ss_value(dense, sparse, kk).min_row is Some
+                implies (width as nat) > 0
+                    && (ss_value(dense, sparse, kk).min_row->Some_0.as_nat() + 1)
+                        * (width as nat) <= self.min_pool.view().len() by {
+                // refuted: under the OLD width the same clause bounded the
+                // row by the pool length, which is 0.
+                assert((ss_value(dense, sparse, kk).min_row->Some_0.as_nat() + 1)
+                    * (o.min_width as nat) <= 0);
+                assert(false) by (nonlinear_arith)
+                    requires (ss_value(dense, sparse, kk).min_row->Some_0.as_nat() + 1)
+                        * (o.min_width as nat) <= 0,
+                        o.min_width as nat > 0;
+            }
+            assert((self.min_pool.view().len() as nat) % (width as nat) == 0
+                || width == 0) by {
+                if width > 0 {
+                    assert((0 as nat) % (width as nat) == 0);
+                }
+            }
+            assert(eg_model_wf::<T, L, N>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), dense, sparse, indices,
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view(), width as nat));
+        }
+    }
+
+    pub fn min_width(&self) -> (w: usize)
+        requires self.wf(),
+        ensures w as nat == self.min_width_spec(),
+    {
+        self.min_width
+    }
+
+    /// Read class `key`'s min-monomial for completion column `col`
+    /// (`None` when the class has no row or the cell is empty). Refuses a
+    /// dead key or an out-of-range column.
+    pub fn min_monomial(&self, key: <T as DenseId>::Index, col: usize) -> (r: Option<T>)
+        requires self.wf(),
+    {
+        if !(col < self.min_width) {
+            crate::guard::refuse("EClasses::min_monomial: completion column out of range");
+        }
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::min_monomial: class key is not live");
+        }
+        let data = self.reprs.get(key);
+        match data.min_row {
+            None => None,
+            Some(row) => {
+                proof {
+                    // W6: the row is allocated, so base + col is in the pool.
+                    assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
+                        self.reprs.n_spec(), key.as_nat()));
+                    assert((row.as_nat() + 1) * (self.min_width as nat)
+                        <= self.min_pool.view().len());
+                    assert(row.as_nat() * (self.min_width as nat) + (self.min_width as nat)
+                        == (row.as_nat() + 1) * (self.min_width as nat)) by (nonlinear_arith);
+                    <T::Index as IndexLike>::lemma_max_nat_fits_usize();
+                }
+                let base = row.as_usize() * self.min_width;
+                let cell = self.min_pool.get_index(base + col);
+                proof {
+                    assert(cell == self.min_pool.view()[(base + col) as int]);
+                    assert(cell.wf());
+                }
+                cell.to_option()
+            }
+        }
+    }
+
+    /// Write class `key`'s min-monomial for column `col`, allocating the
+    /// class's pool row on first use (production's `ensure_min_row` +
+    /// `set_min_monomial`). Refuses a dead key, an out-of-range column, a
+    /// zero width, or pool exhaustion.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(120)]
+    pub fn set_min_monomial(&mut self, key: <T as DenseId>::Index, col: usize, node: T)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).num_classes_spec() == old(self).num_classes_spec(),
+            final(self).min_width_spec() == old(self).min_width_spec(),
+    {
+        if !(self.min_width > 0 && col < self.min_width) {
+            crate::guard::refuse("EClasses::set_min_monomial: completion column out of range");
+        }
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::set_min_monomial: class key is not live");
+        }
+        let ghost o = *old(self);
+        let ghost w = o.min_width as nat;
+        let mut data = self.reprs.get(key);
+        proof {
+            assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), key.as_nat()));
+            assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                key.as_nat()));
+        }
+        let row = match data.min_row {
+            Some(row) => {
+                proof {
+                    // W6 in the old state bounds the existing row; the pool
+                    // is untouched on this arm.
+                    assert((row.as_nat() + 1) * w <= self.min_pool.view().len());
+                    assert(forall|i: int| 0 <= i < self.min_pool.view().len()
+                        ==> (#[trigger] self.min_pool.view()[i]).wf());
+                }
+                row
+            }
+            None => {
+                // allocate a fresh all-empty row at the pool's end.
+                let len0 = self.min_pool.len();
+                proof {
+                    assert(len0 as nat % w == 0);
+                    assert(len0 as nat == self.min_pool.view().len());
+                }
+                let row_num = len0 / self.min_width;
+                proof {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                        len0 as int, o.min_width as int);
+                    assert(len0 as int == (o.min_width as int) * (row_num as int));
+                }
+                let row = match <T::Index as IndexLike>::try_from_usize(row_num) {
+                    Some(r) => r,
+                    None => crate::guard::refuse(
+                        "EClasses::set_min_monomial: row number exceeds the id index range"),
+                };
+                let mut i: usize = 0;
+                while i < self.min_width
+                    invariant
+                        o.wf(),
+                        self.min_width == o.min_width,
+                        self.min_width > 0,
+                        i <= self.min_width,
+                        self.entries == o.entries,
+                        self.reprs == o.reprs,
+                        self.uf == o.uf,
+                        self.uses == o.uses,
+                        self.min_pool.wf(),
+                        self.min_pool.view().len() == o.min_pool.view().len() + i as nat,
+                        forall|j: int| 0 <= j < self.min_pool.view().len()
+                            ==> (#[trigger] self.min_pool.view()[j]).wf(),
+                    decreases self.min_width - i,
+                {
+                    match self.min_pool.try_push(Opt::none()) {
+                        Ok(()) => (),
+                        Err(_) => crate::guard::refuse(
+                            "EClasses::set_min_monomial: min-monomial pool exhausted"),
+                    }
+                    i = i + 1;
+                }
+                data.min_row = Some(row);
+                self.reprs.set(key, data);
+                proof {
+                    let len1 = self.min_pool.view().len();
+                    let dense = self.reprs.dense_view();
+                    let sparse = self.reprs.sparse_view();
+                    let indices = self.reprs.indices_view();
+                    let live = self.reprs.n_spec();
+                    let odense = o.reprs.dense_view();
+                    let osparse = o.reprs.sparse_view();
+                    let oindices = o.reprs.indices_view();
+                    assert(len1 == o.min_pool.view().len() + w);
+                    assert(row.as_nat() == row_num as nat);
+                    // the new row is exactly the grown tail.
+                    assert((row.as_nat() + 1) * w == len1) by (nonlinear_arith)
+                        requires
+                            o.min_pool.view().len() as int
+                                == (w as int) * (row.as_nat() as int),
+                            len1 == o.min_pool.view().len() + w;
+                    // geometry: len1 == w * (row + 1), a whole number of rows.
+                    assert(len1 as int == (w as int) * ((row.as_nat() + 1) as int))
+                        by (nonlinear_arith)
+                        requires
+                            o.min_pool.view().len() as int
+                                == (w as int) * (row.as_nat() as int),
+                            len1 == o.min_pool.view().len() + w;
+                    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(
+                        (row.as_nat() + 1) as int, w as int);
+                    assert(len1 % w == 0);
+                    // reprs: only key's value changed, and only its min_row.
+                    assert(sparse == osparse && indices == oindices
+                        && live == o.reprs.n_spec());
+                    assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+                        && kk != key.as_nat()
+                        implies ss_value(dense, sparse, kk)
+                            == ss_value(odense, osparse, kk) by {
+                        assert(osparse[kk as int].as_nat()
+                            != osparse[key.as_nat() as int].as_nat()) by {
+                            if osparse[kk as int].as_nat()
+                                == osparse[key.as_nat() as int].as_nat() {
+                                assert(oindices[osparse[kk as int].as_nat() as int]
+                                    .as_nat() == kk);
+                            }
+                        }
+                    }
+                    // every OLD row is strictly below the new one.
+                    assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices,
+                            o.reprs.n_spec(), kk)
+                        && ss_value(odense, osparse, kk).min_row is Some
+                        implies ss_value(odense, osparse, kk).min_row->Some_0.as_nat()
+                            < row.as_nat() by {
+                        let r0 = ss_value(odense, osparse, kk).min_row->Some_0.as_nat();
+                        assert((r0 + 1) * w <= o.min_pool.view().len());
+                        assert(r0 < row.as_nat()) by (nonlinear_arith)
+                            requires
+                                (r0 + 1) * w <= o.min_pool.view().len(),
+                                o.min_pool.view().len() as int
+                                    == (w as int) * (row.as_nat() as int),
+                                w > 0;
+                    }
+                    assert(forall|i: int| 0 <= i < self.min_pool.view().len()
+                        ==> (#[trigger] self.min_pool.view()[i]).wf());
+                }
+                row
+            }
+        };
+        let ghost mid = *self;
+        proof {
+            // both arms deliver: the class's row is allocated in the current
+            // pool, and eg_model_wf holds for the mid state.
+            assert((row.as_nat() + 1) * w <= self.min_pool.view().len());
+            assert(row.as_nat() * w + w == (row.as_nat() + 1) * w) by (nonlinear_arith);
+            <T::Index as IndexLike>::lemma_max_nat_fits_usize();
+            self.lemma_mid_pool_wf(o, key, row);
+        }
+        let base = row.as_usize() * self.min_width;
+        let cell = Opt::some(node);
+        self.min_pool.set_index(base + col, cell);
+        proof {
+            assert(self.min_pool.view().len() == mid.min_pool.view().len());
+            assert(eg_model_wf::<T, L, N>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), self.reprs.dense_view(),
+                self.reprs.sparse_view(), self.reprs.indices_view(),
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view(), self.min_width as nat));
+        }
+    }
+
+    /// The mid-state invariant of `set_min_monomial`, per arm: with the row
+    /// already allocated (either from the old state or freshly grown), the
+    /// full joint invariant holds. Extracted so the two arms discharge one
+    /// obligation each instead of the final assert re-deriving both.
+    proof fn lemma_mid_pool_wf(&self, o: Self, key: <T as DenseId>::Index,
+        row: <T as DenseId>::Index)
+        requires
+            o.wf(),
+            self.entries == o.entries,
+            self.uf == o.uf,
+            self.uses == o.uses,
+            self.min_width == o.min_width,
+            (o.min_width as nat) > 0,
+            self.reprs.wf(),
+            self.min_pool.wf(),
+            self.reprs.n_spec() == o.reprs.n_spec(),
+            self.reprs.cap_spec() == o.reprs.cap_spec(),
+            self.reprs.sparse_view() == o.reprs.sparse_view(),
+            self.reprs.indices_view() == o.reprs.indices_view(),
+            ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), key.as_nat()),
+            // the only possible dense change is key's min_row becoming
+            // Some(row); everything else of the value survives.
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
+                .use_list
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
+                    .use_list,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
+                .min_row is Some,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
+                .min_row->Some_0 == row,
+            forall|kk: nat| #[trigger] ss_contains(o.reprs.sparse_view(),
+                    o.reprs.indices_view(), o.reprs.n_spec(), kk)
+                && kk != key.as_nat()
+                ==> ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), kk)
+                    == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), kk),
+            (row.as_nat() + 1) * (o.min_width as nat) <= self.min_pool.view().len(),
+            self.min_pool.view().len() % (o.min_width as nat) == 0,
+            forall|i: int| 0 <= i < self.min_pool.view().len()
+                ==> (#[trigger] self.min_pool.view()[i]).wf(),
+            // strict dominance: every other live row is below `row` OR the
+            // pool did not grow and rows are the old ones (covered by the
+            // dominance hypothesis at the call sites).
+            forall|kk: nat| #[trigger] ss_contains(o.reprs.sparse_view(),
+                    o.reprs.indices_view(), o.reprs.n_spec(), kk)
+                && kk != key.as_nat()
+                && ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), kk)
+                    .min_row is Some
+                ==> ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), kk)
+                        .min_row->Some_0.as_nat() != row.as_nat()
+                    && (ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), kk)
+                        .min_row->Some_0.as_nat() + 1) * (o.min_width as nat)
+                        <= self.min_pool.view().len(),
+        ensures
+            eg_model_wf::<T, L, N>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), self.reprs.dense_view(),
+                self.reprs.sparse_view(), self.reprs.indices_view(),
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view(), self.min_width as nat),
+    {
+        let dense = self.reprs.dense_view();
+        let sparse = self.reprs.sparse_view();
+        let indices = self.reprs.indices_view();
+        let live = self.reprs.n_spec();
+        let odense = o.reprs.dense_view();
+        let osparse = o.reprs.sparse_view();
+        let oindices = o.reprs.indices_view();
+        // W2b-d and W4 quantify over values whose use_list/liveness are
+        // untouched; W6 is the hypothesis set.
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            implies ss_value(dense, sparse, kk).use_list
+                == ss_value(odense, osparse, kk).use_list by {
+            if kk != key.as_nat() {
+                assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+            }
+        }
+        assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+            && kk != key.as_nat()
+            implies ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {}
+        assert(eg_model_wf::<T, L, N>(
+            self.entries.model_view(), self.entries.payload_seq(),
+            self.uf.roots_view(), dense, sparse, indices,
+            self.uses.model_view(), self.uses.nodes_view(),
+            self.min_pool.view(), self.min_width as nat));
+    }
+
+    /// Whether class `key` is atomic (referenced as a child). Refuses a
+    /// dead key.
+    pub fn atomic(&self, key: <T as DenseId>::Index) -> (b: bool)
+        requires self.wf(),
+    {
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::atomic: class key is not live");
+        }
+        self.reprs.get(key).atomic
+    }
+
+    /// The use-list id of class `key`. Refuses a dead key.
+    pub fn use_list_id(&self, key: <T as DenseId>::Index) -> (l: L)
+        requires self.wf(),
+        ensures self.contains_key_spec(key)
+            ==> l == self.class_data_spec(key.as_nat()).use_list,
+    {
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::use_list_id: class key is not live");
+        }
+        self.reprs.get(key).use_list
+    }
+
+
+    /// Mark class `key` atomic (production's `set_atomic`; `EGraph` calls it
+    /// when a class gains a non-completion node). Refuses a dead key.
+    pub fn set_atomic(&mut self, key: <T as DenseId>::Index)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).roots_view() == old(self).roots_view(),
+            final(self).num_classes_spec() == old(self).num_classes_spec(),
+    {
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::set_atomic: class key is not live");
+        }
+        let ghost o = *old(self);
+        let mut data = self.reprs.get(key);
+        if data.atomic {
+            return;
+        }
+        data.atomic = true;
+        self.reprs.set(key, data);
+        proof {
+            let dense = self.reprs.dense_view();
+            let sparse = self.reprs.sparse_view();
+            let indices = self.reprs.indices_view();
+            let live = self.reprs.n_spec();
+            let odense = o.reprs.dense_view();
+            let osparse = o.reprs.sparse_view();
+            let oindices = o.reprs.indices_view();
+            assert(sparse == osparse && indices == oindices && live == o.reprs.n_spec());
+            assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
+                implies ss_value(dense, sparse, kk).use_list
+                        == ss_value(odense, osparse, kk).use_list
+                    && ss_value(dense, sparse, kk).min_row
+                        == ss_value(odense, osparse, kk).min_row by {
+                if kk != key.as_nat() {
+                    assert(osparse[kk as int].as_nat()
+                        != osparse[key.as_nat() as int].as_nat()) by {
+                        if osparse[kk as int].as_nat()
+                            == osparse[key.as_nat() as int].as_nat() {
+                            assert(oindices[osparse[kk as int].as_nat() as int]
+                                .as_nat() == kk);
+                        }
+                    }
+                    assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+                }
+            }
+            assert(eg_model_wf::<T, L, N>(
+                self.entries.model_view(), self.entries.payload_seq(),
+                self.uf.roots_view(), dense, sparse, indices,
+                self.uses.model_view(), self.uses.nodes_view(),
+                self.min_pool.view(), self.min_width as nat));
+        }
+    }
+
+    /// Iterate `start`'s class ring (the verified `RingIter`: exactly the
+    /// ring's nodes, each once, in successor order).
+    pub fn iter_class(&self, start: T)
+        -> (it: crate::circular_list::RingIter<'_, Opt<T>, T, TRACK>)
+        requires self.wf(),
+        ensures start.id_nat() < self.n_spec() ==> ({
+            &&& it.list_ref() == self.entries_ref()
+            &&& it.start_spec() == start.id_nat()
+            &&& it.pos_spec() == 0
+            &&& !it.done_spec()
+            &&& it.cursor_ok()
+            &&& it.walk_seq() == self.class_seq(start.id_nat() as int)
+        }),
+    {
+        self.entries.iter_class(start)
+    }
+
+    /// Iterate class `key`'s use-list (the verified `ListIter`). Refuses a
+    /// dead key.
+    pub fn iter_uses(&self, key: <T as DenseId>::Index)
+        -> (it: crate::list::ListIter<'_, T, L, N, TRACK>)
+        requires self.wf(),
+        ensures self.contains_key_spec(key) ==> ({
+            &&& it.arena_ref() == self.uses_ref()
+            &&& it.list_spec() == self.class_data_spec(key.as_nat()).use_list.id_nat()
+            &&& it.pos_spec() == 0
+            &&& it.cursor_ok()
+        }),
+    {
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::iter_uses: class key is not live");
+        }
+        let l = self.reprs.get(key).use_list;
+        proof {
+            assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
+                self.reprs.n_spec(), key.as_nat()));
+            assert(l.id_nat() < self.uses.model_view().len());
+        }
+        self.uses.iter(l)
     }
 
     /// Union-by-rank merge (production's `merge`, minus the proof-forest
