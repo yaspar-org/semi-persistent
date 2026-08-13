@@ -2169,18 +2169,26 @@ where
     /// that it fits.
     #[inline(always)]
     pub fn len(&self, l: L) -> (n: N::Index)
-        requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures n.as_nat() == self.list_seq(l.id_nat() as int).len(),
+        requires self.wf(),
+        ensures l.id_nat() < self.model_view().len() ==> n.as_nat() == self.list_seq(l.id_nat() as int).len(),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
+        // Total-with-documented-panic: explicit handle-bound branch.
+        if !(l.as_usize() < self.heads.store.data.len()) {
+            crate::guard::refuse("ListArena::len: list handle out of range");
+        }
         self.len_raw(l.as_usize())
     }
 
     pub fn is_empty(&self, l: L) -> (b: bool)
-        requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures b == (self.list_seq(l.id_nat() as int) == Seq::<T>::empty()),
+        requires self.wf(),
+        ensures l.id_nat() < self.model_view().len() ==> b == (self.list_seq(l.id_nat() as int) == Seq::<T>::empty()),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
+        // Total-with-documented-panic: explicit handle-bound branch.
+        if !(l.as_usize() < self.heads.store.data.len()) {
+            crate::guard::refuse("ListArena::is_empty: list handle out of range");
+        }
         self.is_empty_raw(l.as_usize())
     }
 
@@ -2217,31 +2225,36 @@ where
     pub fn splice(&mut self, dst: L, src: L)
         requires
             old(self).wf(),
-            dst.id_nat() < old(self).model_view().len(),
-            src.id_nat() < old(self).model_view().len(),
-            dst.id_nat() != src.id_nat(),
             // No length-cache precondition for the merged list; see `prepend`. The two
             // lists are disjoint, so `splice_raw` derives the bound from `wf`.
         ensures
             final(self).wf(),
-            final(self).model_view().len() == old(self).model_view().len(),
-            final(self).list_seq(dst.id_nat() as int)
-                == old(self).list_seq(dst.id_nat() as int)
-                    + old(self).list_seq(src.id_nat() as int),
-            final(self).list_seq(src.id_nat() as int) == Seq::<T>::empty(),
-            forall|m: int| 0 <= m < final(self).model_view().len()
-                && m != dst.id_nat() as int && m != src.id_nat() as int
-                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            (dst.id_nat() < old(self).model_view().len()
+                && src.id_nat() < old(self).model_view().len()
+                && dst.id_nat() != src.id_nat()) ==> {
+                &&& final(self).model_view().len() == old(self).model_view().len()
+                &&& final(self).list_seq(dst.id_nat() as int)
+                    == old(self).list_seq(dst.id_nat() as int)
+                        + old(self).list_seq(src.id_nat() as int)
+                &&& final(self).list_seq(src.id_nat() as int) == Seq::<T>::empty()
+                &&& forall|m: int| 0 <= m < final(self).model_view().len()
+                    && m != dst.id_nat() as int && m != src.id_nat() as int
+                    ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m)
+            },
     {
         proof { dst.lemma_as_nat_is_id_nat(); src.lemma_as_nat_is_id_nat(); }  // prod-parity
         let du = dst.as_usize();
         let su = src.as_usize();
-        // Runtime guard (plan 2.3): same-handle splice would corrupt the
-        // list; erased spec precondition mirrored before any mutation.
-        crate::guard::check_precondition(
-            du != su,
-            "ListArena::splice: dst and src are the same list",
-        );
+        // Total-with-documented-panic: handle bounds and the same-handle case
+        // are explicit branches (the same-handle splice would corrupt the
+        // list; formerly a check_precondition on an erased requires).
+        let hn = self.heads.store.data.len();
+        if !(du < hn && su < hn) {
+            crate::guard::refuse("ListArena::splice: list handle out of range");
+        }
+        if du == su {
+            crate::guard::refuse("ListArena::splice: dst and src are the same list");
+        }
         self.splice_raw(du, su)
     }
 

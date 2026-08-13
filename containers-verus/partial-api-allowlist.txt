@@ -1,10 +1,5 @@
 # Public exec fns with a `requires` clause: the total-API plan's
 # drain list (doc/future/total-api-plan.md). May only shrink.
-#
-# PERMANENT (static spec obligations with no possible exec twin - uninterp
-# type-class predicates discharged at instantiation via the axiom machinery):
-#   map.rs::new (obeys_key_model::<K>), and trait-method entries whose
-#   requires is a type-class law. Everything else drains.
 append_only_vec.rs::get
 bplus.rs::from_sorted
 bplus.rs::insert
@@ -53,11 +48,8 @@ diff_store.rs::truncate
 guard.rs::check_precondition
 id_factory.rs::alloc
 id_macros.rs::new
-list.rs::is_empty
 list.rs::iter
-list.rs::len
 list.rs::next
-list.rs::splice
 map.rs::new
 opt.rs::get
 sorted_vec_cursor.rs::key
