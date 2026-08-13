@@ -150,6 +150,17 @@ jobs:
           fi
           exit $fail
 
+      # Partial-API gate (total-API plan phase 0): every PUBLIC exec fn with
+      # a `requires` clause must be in the drain allowlist, and no public fn
+      # body may contain unsafe/get_unchecked. Verus erases `requires` at
+      # runtime, so a public partial function hands an unverified caller
+      # whatever the body does on violated preconditions. The allowlist may
+      # only shrink; see containers-verus/doc/future/total-api-plan.md.
+      - name: Partial-API surface (public fns with requires)
+        run: |
+          python3 containers-verus/tools/check_partial_api.py \
+            containers-verus/src containers-verus/partial-api-allowlist.txt
+
       # No `admit()`/`assume()` in the verified modules. The ledger's central
       # claim is that the ONLY trusted code is external_body signatures plus the
       # enumerated axioms; an admit would silently break that without changing
