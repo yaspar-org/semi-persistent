@@ -76,6 +76,24 @@ is archiving snapshot-wf in `wf` as `ListArena` archives `arena_model_wf`;
 until then a total restore needs an O(cap) runtime permutation check. This is
 the sweep's one open item of that shape.
 
+*Phase 4/5 mechanics (2026-08-13), from the sweep:* the 98 remaining
+allowlist entries split into two conversion shapes, and the phases land
+per-function-family with 5-before-4 ordering (flipping visibility before
+migrating a consumer would break the e-graph build mid-history):
+
+- *Token/allocation family* (mark, restore, new_list, prepend, append,
+  add, insert, add_singleton, from_sorted, …): the `try_` sibling exists;
+  the core goes `pub(crate)` and the e-graph's few, cold call sites become
+  `try_*().unwrap()` with a one-line justification (the consumer asserting
+  its own invariant — the audit's per-site arguments become visible code).
+- *Index/capacity family* (get, set, len, push with the deferred trap, …):
+  hot-path, panic-parity with production, already total-with-panic in
+  behavior. These convert IN PLACE: drop the `requires`, make the check an
+  explicit branch to a total diverging refuse helper (guard.rs), and the
+  body's proofs pick the bound up from the branch instead of the contract.
+  No consumer change, no added cost (the check already existed as the
+  guard or the std bounds check), and the gate entry drains.
+
 **4. Visibility flip.** Every `requires`-carrying and guard-panicking core fn
 to `pub(crate)`; allowlist drains to empty. From here `rustc` enforces the
 property; the gates only catch accidental re-`pub`s.
