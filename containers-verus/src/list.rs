@@ -1858,6 +1858,52 @@ where
         }
     }
 
+    /// Total append: refuses a bad list handle as `IndexOutOfBounds` and node
+    /// exhaustion as `CapacityExhausted`, where the guarded core panics.
+    pub fn try_append(&mut self, l: L, payload: T)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).list_seq(l.id_nat() as int)
+                == old(self).list_seq(l.id_nat() as int).push(payload),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+    {
+        if !(l.to_usize() < self.heads.store.data.len()) {
+            return Err(crate::error::ContainerError::IndexOutOfBounds);
+        }
+        let n = self.nodes.store.data.len();
+        if n < usize::MAX - 1 && N::try_new(n + 1).is_some() {
+            self.append(l, payload);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total prepend: refuses a bad list handle as `IndexOutOfBounds` and node
+    /// exhaustion as `CapacityExhausted`, where the guarded core panics.
+    pub fn try_prepend(&mut self, l: L, payload: T)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).list_seq(l.id_nat() as int)
+                == seq![payload] + old(self).list_seq(l.id_nat() as int),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+    {
+        if !(l.to_usize() < self.heads.store.data.len()) {
+            return Err(crate::error::ContainerError::IndexOutOfBounds);
+        }
+        let n = self.nodes.store.data.len();
+        if n < usize::MAX - 1 && N::try_new(n + 1).is_some() {
+            self.prepend(l, payload);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
     /// Total mark.
     pub fn try_mark(&mut self, shrink: ShrinkPolicy)
         -> (r: Result<ListArenaToken, crate::error::ContainerError>)

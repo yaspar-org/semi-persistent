@@ -393,21 +393,37 @@ impl<T: DenseId, const TRACK: bool, const PROOFS: bool> UnionFind<T, TRACK, PROO
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> UnionFindToken {
         assert!(TRACK, "mark() called on untracked UnionFind");
         UnionFindToken {
-            parent_fast: self.parent_fast.mark(shrink),
-            rank: self.rank.mark(shrink),
-            parent_proof: self.parent_proof.as_mut().map(|v| v.mark(shrink)),
-            justification: self.justification.as_mut().map(|v| v.mark(shrink)),
+            parent_fast: self
+                .parent_fast
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            rank: self
+                .rank
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            parent_proof: self.parent_proof.as_mut().map(|v| {
+                v.try_mark(shrink)
+                    .expect("mark: frame depth is bounded by the saturation driver")
+            }),
+            justification: self.justification.as_mut().map(|v| {
+                v.try_mark(shrink)
+                    .expect("mark: frame depth is bounded by the saturation driver")
+            }),
         }
     }
 
     pub fn restore(&mut self, token: UnionFindToken) {
-        self.parent_fast.restore(token.parent_fast);
-        self.rank.restore(token.rank);
+        self.parent_fast
+            .try_restore(token.parent_fast)
+            .expect("restore: own token");
+        self.rank
+            .try_restore(token.rank)
+            .expect("restore: own token");
         if let (Some(pp), Some(tok)) = (&mut self.parent_proof, token.parent_proof) {
-            pp.restore(tok);
+            pp.try_restore(tok).expect("restore: own token");
         }
         if let (Some(j), Some(tok)) = (&mut self.justification, token.justification) {
-            j.restore(tok);
+            j.try_restore(tok).expect("restore: own token");
         }
     }
 }

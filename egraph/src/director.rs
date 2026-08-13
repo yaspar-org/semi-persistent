@@ -699,9 +699,13 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK,
     /// starts with — traps.
     pub fn append(&mut self, bit_length: u32, data: &[PoolDirector]) -> I {
         let start = self.work.len();
-        self.work.push(PoolDirector::new(bit_length as u64));
+        self.work
+            .try_push(PoolDirector::new(bit_length as u64))
+            .expect("director pool sized by its index word");
         for &w in data {
-            self.work.push(w);
+            self.work
+                .try_push(w)
+                .expect("director pool sized by its index word");
         }
         start
     }
@@ -749,12 +753,16 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK,
 
     /// Mark for semi-persistent checkpoint.
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> VecToken {
-        self.work.mark(shrink)
+        self.work
+            .try_mark(shrink)
+            .expect("mark: frame depth is bounded by the saturation driver")
     }
 
     /// Restore to a previous checkpoint.
     pub fn restore(&mut self, token: VecToken) {
-        self.work.restore(token);
+        self.work
+            .try_restore(token)
+            .expect("restore: token minted by this container's own mark");
     }
 
     // -- Proof pool -----------------------------------------------------------
@@ -769,9 +777,13 @@ impl<I: IndexLike, const TRACK: bool, const PROOFS: bool> DirectorPool<I, TRACK,
         assert!(PROOFS, "snapshot_to_proof called with PROOFS=false");
         let (bit_length, data) = self.read(work_start);
         let proof_start = self.proof.len();
-        self.proof.push(PoolDirector::new(bit_length as u64));
+        self.proof
+            .try_push(PoolDirector::new(bit_length as u64))
+            .expect("proof pool sized by its index word");
         for w in data {
-            self.proof.push(w);
+            self.proof
+                .try_push(w)
+                .expect("proof pool sized by its index word");
         }
         proof_start
     }

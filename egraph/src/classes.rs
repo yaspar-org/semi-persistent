@@ -262,7 +262,9 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
         let row = <T::Index as IndexLike>::try_from_usize(self.min_pool.len() / self.min_width)
             .expect("min-monomial rows are one per class, so a row number fits the id index");
         for _ in 0..self.min_width {
-            self.min_pool.push(Opt::none());
+            self.min_pool
+                .try_push(Opt::none())
+                .expect("bounded by the node/class id space the mint paths already check");
         }
         data.min_row = Some(row);
         self.reprs.set(repr_id, data);
@@ -293,21 +295,30 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
     pub fn add_singleton(&mut self, id: T) -> T::Index {
         self.uf.make_set(id);
-        let list_id = self.uses.new_list();
+        let list_id = self
+            .uses
+            .try_new_list()
+            .expect("bounded by the node/class id space the mint paths already check");
         // No pool row yet (`min_row` is `Opt::none()`): a fresh class holds no completion
         // monomial until its op's column is seeded by `EGraph` (which knows the node's op).
         // Not yet referenced as a child, so not atomic (§9a).
-        let repr_id = self.reprs.add(ClassData {
-            use_list: list_id,
-            min_row: None,
-            atomic: false,
-            _t: core::marker::PhantomData,
-        });
+        let repr_id = self
+            .reprs
+            .try_add(ClassData {
+                use_list: list_id,
+                min_row: None,
+                atomic: false,
+                _t: core::marker::PhantomData,
+            })
+            .expect("bounded by the node/class id space the mint paths already check");
         // The ring allocates the node's cell as its own singleton class
         // (self-loop `next`), carrying the class key as the payload. Its id is
         // the pre-push length, which `id` must equal — the caller allocates node
         // ids densely and in order, the same contract the old `push` relied on.
-        let ring_id = self.entries.add_singleton(Opt::some(repr_id));
+        let ring_id = self
+            .entries
+            .try_add_singleton(Opt::some(repr_id))
+            .expect("bounded by the node/class id space the mint paths already check");
         debug_assert_eq!(
             ring_id.to_usize(),
             id.to_usize(),
@@ -323,7 +334,9 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
     /// becomes `atomic` (its completion rule RHS, §9a).
     pub fn add_use(&mut self, child_repr: T::Index, parent_node: T) {
         let mut data = self.reprs.get(child_repr);
-        self.uses.append(data.use_list, parent_node);
+        self.uses
+            .try_append(data.use_list, parent_node)
+            .expect("bounded by the node/class id space the mint paths already check");
         if !data.atomic {
             data.atomic = true;
             self.reprs.set(child_repr, data);
@@ -582,20 +595,38 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> EClassesToken {
         EClassesToken {
+            // entries stays on the guarded core: CircularList has no try_mark yet
+            // (total-api plan, phase-3 deferrals).
             entries: self.entries.mark(shrink),
-            reprs: self.reprs.mark(shrink),
+            reprs: self
+                .reprs
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
             uf: self.uf.mark(shrink),
-            uses: self.uses.mark(shrink),
-            min_pool: self.min_pool.mark(shrink),
+            uses: self
+                .uses
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            min_pool: self
+                .min_pool
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
         }
     }
 
     pub fn restore(&mut self, token: EClassesToken) {
+        // Guarded core: CircularList try_restore is a phase-3 deferral.
         self.entries.restore(token.entries);
+        // Guarded core: SparseSet try_restore waits on snapshot-wf archival
+        // (total-api plan, phase-3 deferrals).
         self.reprs.restore(token.reprs);
         self.uf.restore(token.uf);
-        self.uses.restore(token.uses);
-        self.min_pool.restore(token.min_pool);
+        self.uses
+            .try_restore(token.uses)
+            .expect("restore: token minted by this container's own mark");
+        self.min_pool
+            .try_restore(token.min_pool)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
