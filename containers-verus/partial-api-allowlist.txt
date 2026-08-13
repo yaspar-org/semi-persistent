@@ -19,6 +19,14 @@
 # WITNESS-PENDING (drains when the ring-id witness / snapshot-wf archival
 # land - plan doc phase-3 deferrals):
 #   circular_list.rs::{splice, splice_absorb}, sparse_set.rs::restore.
+#
+# MEASURED-DECLINE floor: bplus_layout.rs's NodeLayout methods are the
+# B+tree's internal node calculus. Refuse-branches here would reinstate the
+# per-probe and per-shift bounds checks the bounds-elision work removed and
+# priced (doc/design/10-bplus-tree.md, 11-layout-parity.md); the unsafe
+# primitives beneath are pub(crate) and debug-monitored, so external misuse
+# of the trait surface cannot reach undefined behavior. Conversion declined
+# on measured-performance grounds, revisitable with a new measurement.
 bplus_layout.rs::child
 bplus_layout.rs::first_key
 bplus_layout.rs::internal_insert_at
