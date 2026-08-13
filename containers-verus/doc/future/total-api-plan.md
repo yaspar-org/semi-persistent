@@ -69,6 +69,13 @@ assumption), replacing the O(ring) debug walk; `from_sorted` pays an O(n)
 sortedness check against its O(n log n) build. `step`-shaped APIs become
 `next() -> Option`. The misuse suite converts container by container.
 
+*Sweep note (2026-08-12):* `SparseSet::try_restore` is deferred: `restore`
+carries a snapshot-wellformedness precondition (`sparse_set_snap_wf` over the
+archived columns) that `is_valid_token` does not answer. The structural fix
+is archiving snapshot-wf in `wf` as `ListArena` archives `arena_model_wf`;
+until then a total restore needs an O(cap) runtime permutation check. This is
+the sweep's one open item of that shape.
+
 **4. Visibility flip.** Every `requires`-carrying and guard-panicking core fn
 to `pub(crate)`; allowlist drains to empty. From here `rustc` enforces the
 property; the gates only catch accidental re-`pub`s.

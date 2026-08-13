@@ -829,6 +829,72 @@ where
     /// "Restorable now" for the composite token (plan 2.2/2.3): every
     /// constituent must be restorable — the aggregate-atomicity invariant's
     /// validation half.
+    // ------------------------------------------------------------------
+    // Total shell (total-API plan phase 3). `try_restore` is deliberately
+    // absent: `restore` carries a snapshot-wellformedness precondition that
+    // `is_valid_token` does not answer (it quantifies over archived snapshot
+    // contents). The structural fix is archiving snapshot-wf in `wf` the way
+    // `ListArena` archives `arena_model_wf` (Phase 7); until then a total
+    // restore would need an O(cap) runtime permutation check. Tracked in
+    // doc/future/total-api-plan.md.
+    // ------------------------------------------------------------------
+
+    /// Exec twin of `add`'s three-column capacity precondition.
+    pub fn can_add(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == self.can_add_spec(),
+    {
+        self.dense.can_push() && self.sparse.can_push() && self.indices.can_push()
+    }
+
+    /// Total add.
+    pub fn try_add(&mut self, value: T) -> (r: Result<Idx, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted
+                && final(self).id_set() == old(self).id_set(),
+    {
+        if self.can_add() {
+            Ok(self.add(value))
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total get: `Err(IndexOutOfBounds)` for an id that is not live.
+    pub fn try_get(&self, id: Idx) -> (r: Result<T, crate::error::ContainerError>)
+        requires self.wf(),
+        ensures
+            r is Ok <==> self.contains_spec(id),
+            r matches Ok(v) ==> v
+                == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
+    {
+        if self.contains(id) {
+            Ok(self.get(id))
+        } else {
+            Err(crate::error::ContainerError::IndexOutOfBounds)
+        }
+    }
+
+    /// Total mark: TRACK first, then the six column headrooms as one answer.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<SparseSetToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Err ==> final(self).id_set() == old(self).id_set(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if self.dense.can_mark() && self.sparse.can_mark() && self.indices.can_mark() {
+            Ok(self.mark(shrink))
+        } else {
+            Err(crate::error::ContainerError::DepthLimit)
+        }
+    }
+
     pub fn is_valid_token(&self, token: &SparseSetToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
