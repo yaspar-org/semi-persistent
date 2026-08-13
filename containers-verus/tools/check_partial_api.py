@@ -124,13 +124,14 @@ def scan_file(path: Path):
         sig = text[sig_start:i]
         has_req = bool(re.search(r'\brequires\b', sig))
         if has_req:
-            # wf-only requires are the type's self-invariant, upheld by every
-            # constructor and mutator - a caller cannot violate them without
-            # already holding a corrupted value. Not a partial function in
-            # the caller-obligation sense (audit class (a)).
+            # Invariant-only requires are the audit's class (a): the type's own
+            # well-formedness (wf, cursor_wf) or that of a borrowed projection
+            # (vec_ref().wf(), tree_ref().wf()) - upheld by every constructor
+            # and mutator, so a caller cannot violate them without already
+            # holding a corrupted value. Not caller obligations.
             rm = re.search(r'\brequires\b(.*?)(?=\bensures\b|\brecommends\b|$)', sig, re.S)
             clause = rm.group(1) if rm else ''
-            residue = re.sub(r'(old\(self\)|self)\s*\.\s*wf\s*\(\s*\)', '', clause)
+            residue = re.sub(r'(old\(self\)|self)\s*(\.\s*\w+\s*\(\s*\))?\s*\.\s*(cursor_)?wf\s*\(\s*\)', '', clause)
             residue = re.sub(r'[\s,]+', '', residue)
             if residue == '':
                 has_req = False

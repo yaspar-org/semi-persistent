@@ -2240,12 +2240,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     /// pass, no `first_key_word` descent).
     pub fn from_sorted(keys: &[K]) -> (t: Self)
         requires
-            K::is_bit_stealing(),
-            keys@.len() < usize::MAX,
-            // strictly ascending dense indices (production sorts + dedups
-            // upstream; debug-asserts sortedness).
-            forall|i: int, j: int| 0 <= i < j < keys@.len()
-                ==> (#[trigger] keys@[i]).id_nat() < (#[trigger] keys@[j]).id_nat(),
+            true,
         ensures
             t.wf(),
             t.model().len() == keys@.len(),
@@ -2254,6 +2249,41 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|v: nat| t.model().to_set().contains(v)
                 ==> exists|i: int| 0 <= i < keys@.len() && (#[trigger] keys@[i]).id_nat() == v,
     {
+        // Total-with-documented-panic: the three erased requires become
+        // branches — the static key fact, the length ceiling, and the
+        // ascending-distinct check (O(n) against the build's n log n), whose
+        // loop invariant lifts adjacent comparisons to the global forall the
+        // body's proofs consume.
+        if !K::bit_stealing() {
+            crate::guard::refuse("BPlusTreeSet::from_sorted: key type does not steal a bit");
+        }
+        if !(keys.len() < usize::MAX) {
+            crate::guard::refuse("BPlusTreeSet::from_sorted: too many keys");
+        }
+        if keys.len() > 1 {
+            let mut ci: usize = 1;
+            while ci < keys.len()
+                invariant
+                    1 <= ci <= keys@.len(),
+                    keys@.len() < usize::MAX,
+                    forall|a: int, b: int| 0 <= a < b < ci
+                        ==> (#[trigger] keys@[a]).id_nat() < (#[trigger] keys@[b]).id_nat(),
+                decreases keys@.len() - ci,
+            {
+                if !(keys[ci - 1].to_usize() < keys[ci].to_usize()) {
+                    crate::guard::refuse("BPlusTreeSet::from_sorted: keys not strictly ascending");
+                }
+                proof {
+                    assert forall|a: int, b: int| 0 <= a < b < ci + 1
+                        implies (#[trigger] keys@[a]).id_nat() < (#[trigger] keys@[b]).id_nat() by {
+                        if b == ci as int && a < ci - 1 {
+                            assert(keys@[a].id_nat() < keys@[ci - 1].id_nat());
+                        }
+                    }
+                }
+                ci += 1;
+            }
+        }
         if keys.len() == 0 {
             let t = Self::new();
             proof { assert(t.model() =~= Seq::<nat>::empty()); }
@@ -6295,19 +6325,19 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     pub fn insert(&mut self, key: K) -> (added: bool)
         requires
             old(self).wf(),
-            old(self).nkeys_spec() < usize::MAX,
-            // The arena-capacity precondition is no longer a CALLER obligation: it
-            // is discharged internally from `wf` by `lemma_arena_never_overflows`
-            // (M6). The only added requirement is the STATIC fact that the key type
-            // steals a bit (`K::is_bit_stealing()`) — true for every B+tree key
-            // (Id31/Id63); it is what gives the arena one bit of headroom over the
-            // value count. So `insert_general` is now TOTAL for any reachable state.
-            K::is_bit_stealing(),
         ensures
             final(self).wf(),
             added == !old(self).model().contains(key.id_nat()),
             final(self).model().to_set() == old(self).model().to_set().insert(key.id_nat()),
     {
+        // Total-with-documented-panic: the static key-type fact and the nkeys
+        // ceiling become refuse branches; ensures bind returning paths only.
+        if !K::bit_stealing() {
+            crate::guard::refuse("BPlusTreeSet::insert: key type does not steal a bit");
+        }
+        if !(self.nkeys < usize::MAX) {
+            crate::guard::refuse("BPlusTreeSet::insert: key count at usize ceiling");
+        }
         // Runtime guard (overflow): a verified caller proves `nkeys < usize::MAX`;
         // an unverified one is trapped before the `nkeys + 1` count would wrap.
         // (The arena cannot overflow — discharged internally — so this key count
@@ -10385,10 +10415,6 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             // `wf` already implies arena.len() < max_nat (its last clause), so no
             // separate capacity obligation: mark is total on any wf tree.
             old(self).wf(),
-            // TRACK gate (production parity, plan 2.4).
-            TRACK,
-            // inner Vec's u32 depth-cast bound (propagated; guarded there).
-            old(self).arena_depth_spec() < u32::MAX,
         ensures
             final(self).wf(),
             final(self).tree_spec() == old(self).tree_spec(),
@@ -10402,6 +10428,14 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             token.root_spec() == final(self).root_spec().as_nat(),
             token.nkeys_spec() == final(self).nkeys_spec(),
         {
+        // Total-with-documented-panic: the erased TRACK and depth requires
+        // become explicit refuse branches; ensures bind returning paths only.
+        if !TRACK {
+            crate::guard::refuse("BPlusTreeSet::mark: tree is untracked");
+        }
+        if !(self.nodes.frames.len() < (u32::MAX as usize)) {
+            crate::guard::refuse("BPlusTreeSet::mark: frame depth at u32 ceiling");
+        }
             let nodes_token = self.nodes.mark(shrink);
             // Phase 7: archive the header + ghost tree alongside the arena
             // snapshot the inner mark just pushed.
@@ -10490,11 +10524,6 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         where L::Node: core::default::Default
         requires
             old(self).wf(),
-            TRACK,
-            old(self).is_token_valid_spec(token),
-            token.frame_idx_spec() < old(self).arena_depth_spec(),
-            old(self).arena_depth_spec() < u32::MAX,
-            old(self).arena_fork_count_spec() + 1 <= u32::MAX,
         ensures
             final(self).wf(),
             // Restored to the state archived at that mark (Phase 7: header
@@ -10505,6 +10534,11 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             final(self).model() == crate::bplus_tree::tree_keys(
                 old(self).tree_snapshots_spec()[token.frame_idx_spec() as int]),
         {
+        // Total-with-documented-panic: is_valid_token answers exactly "would
+        // restore succeed now"; a stale/foreign token refuses here.
+        if !self.is_valid_token(&token) {
+            crate::guard::refuse("BPlusTreeSet::restore: token does not name a restorable frame");
+        }
             // Runtime guards (plan 2.3), all BEFORE `self.nodes.restore`
             // mutates the arena, so a bad token cannot leave the tree
             // half-restored. The header comes from the internal archive (in
