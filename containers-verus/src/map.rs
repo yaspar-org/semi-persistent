@@ -231,17 +231,25 @@ where
 
     /// Value+key pair at a dense log index.
     pub fn get(&self, idx: I) -> (r: &(K, V))
-        requires self.wf(), idx.as_nat() < self.log_view().len(),
-        ensures *r == self.log_view()[idx.as_nat() as int],
+        requires self.wf(),
+        ensures idx.as_nat() < self.log_view().len() ==> *r == self.log_view()[idx.as_nat() as int],
     {
+        // Total-with-documented-panic: explicit bound branch (hot family).
+        if !(idx.as_usize() < self.log.data.len()) {
+            crate::guard::refuse("SpMap::get: index out of bounds");
+        }
         self.log.get(idx)
     }
 
     /// The key at a dense log index (production `Map::key` parity).
     pub fn key(&self, idx: I) -> (r: &K)
-        requires self.wf(), idx.as_nat() < self.log_view().len(),
-        ensures *r == self.log_view()[idx.as_nat() as int].0,
+        requires self.wf(),
+        ensures idx.as_nat() < self.log_view().len() ==> *r == self.log_view()[idx.as_nat() as int].0,
     {
+        // Total-with-documented-panic: explicit bound branch (hot family).
+        if !(idx.as_usize() < self.log.data.len()) {
+            crate::guard::refuse("SpMap::key: index out of bounds");
+        }
         &self.log.get(idx).0
     }
 
@@ -249,9 +257,13 @@ where
     /// under the verus names `get` returns the pair and this returns the
     /// value).
     pub fn get_val(&self, idx: I) -> (r: &V)
-        requires self.wf(), idx.as_nat() < self.log_view().len(),
-        ensures *r == self.log_view()[idx.as_nat() as int].1,
+        requires self.wf(),
+        ensures idx.as_nat() < self.log_view().len() ==> *r == self.log_view()[idx.as_nat() as int].1,
     {
+        // Total-with-documented-panic: explicit bound branch (hot family).
+        if !(idx.as_usize() < self.log.data.len()) {
+            crate::guard::refuse("SpMap::get_val: index out of bounds");
+        }
         &self.log.get(idx).1
     }
 
