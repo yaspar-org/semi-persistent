@@ -411,3 +411,28 @@ fn try_restore_rejects_a_foreign_token_as_err() {
         ContainerError::InvalidToken
     );
 }
+
+#[test]
+fn aov_total_shell_refuses_and_round_trips() {
+    use semi_persistent_containers_verus::error::ContainerError;
+    type A = AppendOnlyVec<String, u8, true>;
+    let mut a: A = A::new();
+    while a.can_push() {
+        a.try_push(format!("x")).unwrap();
+    }
+    assert_eq!(
+        a.try_push(format!("y")).unwrap_err(),
+        ContainerError::CapacityExhausted
+    );
+    let tok = a.try_mark(ShrinkPolicy::Never).unwrap();
+    assert_eq!(
+        a.try_restore(tok).map_err(|e| e),
+        Ok(()),
+        "fresh token restores"
+    );
+    assert_eq!(
+        a.try_restore(tok).unwrap_err(),
+        ContainerError::InvalidToken,
+        "consumed token refuses as Err"
+    );
+}
