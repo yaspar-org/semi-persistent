@@ -72,6 +72,14 @@ where
         requires self.wf(),
         ensures n.as_nat() == self.data().len();
 
+    /// Untrapped element count, for the total shell's headroom queries
+    /// (total-API plan phase 2): `len()` deliberately traps past the index
+    /// word (the deferred overflow protocol), so a capacity check needs the
+    /// usize truth without a trap.
+    fn raw_len(&self) -> (n: usize)
+        requires self.wf(),
+        ensures n == self.data().len();
+
     fn get(&self, i: I) -> (v: T)
         requires
             self.wf(),

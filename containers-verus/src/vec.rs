@@ -1281,6 +1281,129 @@ where
     /// depth bound, and both counter headrooms hold. Borrows the token
     /// (production parity). The genealogy-only walk that older revisions
     /// exposed under this name is the private `is_on_current_branch`.
+    // ------------------------------------------------------------------
+    // Total shell (total-API plan phase 2): no `requires` beyond wf; every
+    // precondition of the partial core is evaluated by a verified exec twin
+    // and the branch discharges the core's contract as a proof obligation,
+    // so the check and the contract cannot drift.
+    // ------------------------------------------------------------------
+
+    /// Exec twin of `push`'s capacity precondition.
+    pub fn can_push(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (self.view().len() + 1 < I::max_nat()),
+    {
+        let n = self.store.raw_len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(n as nat == self.view().len());
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        n < cap
+    }
+
+    /// Total push: refuses at the index word's capacity instead of the
+    /// partial core's deferred trap-at-next-`len()` protocol.
+    pub fn try_push(&mut self, value: T) -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view() == old(self).view().push(value)
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.can_push() {
+            self.push(value);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Exec twin of `mark`'s preconditions (TRACK, depth headroom, length
+    /// representable in the token's saved_len).
+    pub fn can_mark(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (TRACK && self.depth_spec() < u32::MAX
+            && self.view().len() < I::max_nat()),
+    {
+        let n = self.store.raw_len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(n as nat == self.view().len());
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        TRACK && self.frames.len() < (u32::MAX as usize) && n <= cap
+    }
+
+    /// Total mark: the error names which precondition failed.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<VecToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).view() == old(self).view()
+                &&& token.frame_idx_spec() == old(self).depth_spec()
+                &&& final(self).depth_spec() == old(self).depth_spec() + 1
+                &&& final(self).snapshots_view()
+                    == old(self).snapshots_view().push(old(self).view())
+            },
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).depth_spec() == old(self).depth_spec()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+        }
+        if !(self.store.raw_len() <= <I as crate::index_like::IndexLike>::max().as_usize()) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: `is_valid_token` already answers exactly "would
+    /// `restore` succeed right now" (`is_restorable_spec` is the FULL
+    /// runtime-checkable precondition), so the wrapper is the check.
+    pub fn try_restore(&mut self, token: VecToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        where T: core::default::Default
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view()
+                == old(self).snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).depth_spec() == token.frame_idx_spec()
+                && final(self).snapshots_view()
+                    == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).depth_spec() == old(self).depth_spec()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
     pub fn is_valid_token(&self, token: &VecToken) -> (b: bool)
         requires
             self.wf(),

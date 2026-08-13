@@ -123,6 +123,17 @@ def scan_file(path: Path):
             i += 1
         sig = text[sig_start:i]
         has_req = bool(re.search(r'\brequires\b', sig))
+        if has_req:
+            # wf-only requires are the type's self-invariant, upheld by every
+            # constructor and mutator - a caller cannot violate them without
+            # already holding a corrupted value. Not a partial function in
+            # the caller-obligation sense (audit class (a)).
+            rm = re.search(r'\brequires\b(.*?)(?=\bensures\b|\brecommends\b|$)', sig, re.S)
+            clause = rm.group(1) if rm else ''
+            residue = re.sub(r'(old\(self\)|self)\s*\.\s*wf\s*\(\s*\)', '', clause)
+            residue = re.sub(r'[\s,]+', '', residue)
+            if residue == '':
+                has_req = False
         # Body scan for check 2 (only when a body exists).
         body_unsafe = False
         if i < len(text) and text[i] == '{':

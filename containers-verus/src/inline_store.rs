@@ -102,6 +102,10 @@ where
         self.data.len() == 0
     }
 
+    fn raw_len(&self) -> (n: usize) {
+        self.data.len()
+    }
+
     #[inline(always)]
     fn len(&self) -> I {
         // Production's line verbatim (containers/src/diff_store.rs:246); vstd's

@@ -84,6 +84,7 @@ pub mod circular_list;
 pub mod container_id;
 pub mod dense_id;
 pub mod diff_store;
+pub mod error;
 #[cfg(feature = "literal-types")]
 pub mod external_specs;
 pub mod fork_history;
