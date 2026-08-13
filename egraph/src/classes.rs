@@ -572,6 +572,73 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
             .splice_absorb(survivor, absorbed, absorbed_payload);
 
         self.reprs.remove(abs_repr);
+
+        #[cfg(debug_assertions)]
+        self.monitor_merge_invariants(survivor, absorbed);
+    }
+
+    /// Debug-build monitor for the aggregate invariants W2, W3 and W6 of
+    /// `containers-verus/doc/future/egraph-wf.md` (stage 0 of that plan), run
+    /// after every merge's ring surgery. Each container proves its own
+    /// invariant; these clauses are the *agreement* between containers, which
+    /// nothing proves yet, so until stage 2 they hold by argument only. The
+    /// walk is O(merged class size) per merge, debug builds only.
+    #[cfg(debug_assertions)]
+    fn monitor_merge_invariants(&self, survivor: T, absorbed: T) {
+        // W2 at the absorbed id: payload absent, and its repr key removed
+        // from the sparse set.
+        debug_assert!(
+            self.entries.payload_of(absorbed).is_none(),
+            "W2 violated: absorbed id {} kept a present ring payload",
+            absorbed.to_usize()
+        );
+        // W2 at the survivor: its root's payload present and live in reprs.
+        let root = self.uf.find_const(survivor);
+        let root_key = self
+            .entries
+            .payload_of(root)
+            .to_option()
+            .expect("W2 violated: union-find root has an absent ring payload");
+        debug_assert!(
+            self.reprs.contains(root_key),
+            "W2 violated: root {}'s repr key is not live in the sparse set",
+            root.to_usize()
+        );
+        // W3: every member of the merged ring finds the same root, and the
+        // absorbed id is on that ring (the splice put it there).
+        let mut absorbed_seen = false;
+        for member in self.iter_class(survivor) {
+            debug_assert!(
+                self.uf.find_const(member).to_usize() == root.to_usize(),
+                "W3 violated: ring member {} finds {}, not the ring's root {}",
+                member.to_usize(),
+                self.uf.find_const(member).to_usize(),
+                root.to_usize()
+            );
+            absorbed_seen |= member.to_usize() == absorbed.to_usize();
+        }
+        debug_assert!(
+            absorbed_seen,
+            "W3 violated: absorbed id {} is not on the survivor's ring",
+            absorbed.to_usize()
+        );
+        // W6: the pool is whole rows, and the survivor's row (if any) is an
+        // allocated one.
+        if self.min_width > 0 {
+            debug_assert_eq!(
+                self.min_pool.len() % self.min_width,
+                0,
+                "W6 violated: pool length is not a whole number of rows"
+            );
+            if let Some(row) = self.reprs.get(root_key).min_row {
+                debug_assert!(
+                    row.as_usize() < self.min_pool.len() / self.min_width,
+                    "W6 violated: survivor's row number {} is past the pool's {} rows",
+                    row.as_usize(),
+                    self.min_pool.len() / self.min_width
+                );
+            }
+        }
     }
 
     // -- Proofs -------------------------------------------------------------
