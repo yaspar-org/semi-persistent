@@ -25,7 +25,12 @@ verus::define_id31! { pub struct CE / StoredCE, "e"; }
 verus::define_id31! { pub struct CL / StoredCL, "l"; }
 verus::define_id31! { pub struct CN / StoredCN, "n"; }
 
-type EC = EClasses<CE, CL, CN, true>;
+use semi_persistent_containers_verus::union_find::NoJust;
+verus::define_id63! { pub struct CE64 / StoredCE64, "e64"; }
+verus::define_id63! { pub struct CL64 / StoredCL64, "l64"; }
+verus::define_id63! { pub struct CN64 / StoredCN64, "n64"; }
+type EC = EClasses<CE, CL, CN, NoJust, true, false>;
+type EC64 = EClasses<CE64, CL64, CN64, NoJust, true, false>;
 
 // ---------------------------------------------------------------------------
 // Layout pins (the numbers the swap was required to keep)
@@ -140,7 +145,7 @@ fn trace(seed: u64, steps: usize) {
         match rng.next() % 10 {
             // allocate
             0..=2 => {
-                let (id, key) = ec.add_singleton();
+                let (id, key) = ec.try_add_singleton();
                 assert_eq!(id.to_usize(), n);
                 m.add_singleton(key.as_usize());
             }
@@ -185,7 +190,7 @@ fn trace(seed: u64, steps: usize) {
                     let (la, lb) = (m.uses[ka].len(), m.uses[kb].len());
                     let prefer_a = la >= lb;
                     let mi = ec
-                        .merge_directed(ce(a), ce(b), prefer_a)
+                        .merge_directed_with(ce(a), ce(b), prefer_a)
                         .expect("distinct classes merge");
                     let expect_s = if prefer_a { ra } else { rb };
                     assert_eq!(
@@ -286,4 +291,45 @@ fn differential_short_traces() {
 #[test]
 fn differential_long_trace() {
     trace(0xE61A55, 3000);
+}
+
+// ---------------------------------------------------------------------------
+// 63-bit twin: the same relation checks over the wide id family
+// ---------------------------------------------------------------------------
+
+fn ce64(n: usize) -> CE64 {
+    CE64::try_new(n).expect("trace id in range")
+}
+
+#[test]
+fn bits63_smoke_relation() {
+    let mut ec = EC64::new();
+    let mut m = Model::default();
+    for _ in 0..24 {
+        let (id, key) = ec.try_add_singleton();
+        assert_eq!(id.to_usize(), m.parent.len());
+        m.add_singleton(key.as_usize());
+    }
+    for step in 0..24usize {
+        let a = (step * 7) % 24;
+        let b = (step * 11 + 3) % 24;
+        let same = m.find(a) == m.find(b);
+        let r = ec.merge(ce64(a), ce64(b));
+        assert_eq!(r.is_none(), same, "63-bit step {step}");
+        if let Some(mi) = r {
+            let ab = mi.absorbed.to_usize();
+            let s = mi.survivor.to_usize();
+            m.key_of_root.remove(&ab).expect("absorbed had a key");
+            m.parent[ab] = s;
+        }
+    }
+    for a in 0..24usize {
+        for b in 0..24usize {
+            assert_eq!(
+                ec.find_const(ce64(a)).to_usize() == ec.find_const(ce64(b)).to_usize(),
+                m.find(a) == m.find(b),
+                "63-bit relation ({a},{b})"
+            );
+        }
+    }
 }

@@ -316,11 +316,12 @@ pub open(crate) spec fn eg_archive_agrees<T: DenseId, L: DenseId, N: DenseId + T
 
 /// Verified equivalence classes: ring + union-find + repr set + use-lists +
 /// min-monomial pool, with the agreement clauses as `wf`.
-pub struct EClasses<T, L, N, const TRACK: bool>
+pub struct EClasses<T, L, N, J, const TRACK: bool, const PROOFS: bool>
 where
     T: DenseId,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
+    J: Tagged + Copy + core::default::Default,
 {
     /// The class ring; each cell carries the class's repr key (as a
     /// node-typed dense id) while the class is live, absent once absorbed.
@@ -329,7 +330,7 @@ where
     pub(crate) reprs: SparseSet<ClassData<L, T>, <T as DenseId>::Index,
         InlineStore<ClassData<L, T>, <T as DenseId>::Index>, TRACK>,
     /// Canonical-representative lookup (verified stage 1).
-    pub(crate) uf: UnionFind<T, TRACK>,
+    pub(crate) uf: UnionFind<T, J, TRACK, PROOFS>,
     /// Per-class parent lists.
     pub(crate) uses: ListArena<T, L, N, TRACK>,
     /// Min-monomial pool: flat rows of `min_width` columns. `ParallelStore`,
@@ -340,11 +341,12 @@ where
     pub(crate) min_width: usize,
 }
 
-impl<T, L, N, const TRACK: bool> EClasses<T, L, N, TRACK>
+impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
+    J: Tagged + Copy + core::default::Default,
 {
     /// Node count (spec).
     pub open(crate) spec fn n_spec(&self) -> nat {
@@ -546,10 +548,39 @@ where
         p.to_option()
     }
 
-    /// Allocate a fresh node as its own singleton class; returns the node id
-    /// and its repr key. Total-with-documented-panic at the capacity
-    /// ceilings (production allocates through `expect` at the same points).
-    pub fn add_singleton(&mut self) -> (r: (T, <T as DenseId>::Index))
+    /// Allocate `id` as its own singleton class, returning its repr key
+    /// (production's surface: the caller supplies the next dense id; the
+    /// sequential contract refuses with production's message, which
+    /// historically came from `UnionFind::make_set`).
+    pub fn add_singleton(&mut self, id: T) -> (key: <T as DenseId>::Index)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            id.id_nat() == old(self).n_spec() ==> {
+                &&& final(self).n_spec() == old(self).n_spec() + 1
+                &&& final(self).num_classes_spec() == old(self).num_classes_spec() + 1
+                &&& final(self).roots_view()
+                    == old(self).roots_view().push(old(self).n_spec() as usize)
+                &&& final(self).key_of(id.id_nat() as int) == key.as_nat()
+            },
+    {
+        if !(id.to_usize() == self.uf.len().as_usize()) {
+            crate::guard::refuse("UnionFind::make_set: id must be sequential");
+        }
+        let (minted, key) = self.try_add_singleton();
+        proof {
+            if id.id_nat() == old(self).n_spec() {
+                T::lemma_id_injective(minted, id);
+            }
+        }
+        key
+    }
+
+    /// Allocate the NEXT fresh node as its own singleton class; returns the
+    /// minted node id and its repr key. Total-with-documented-panic at the
+    /// capacity ceilings (production allocates through `expect` at the same
+    /// points).
+    pub fn try_add_singleton(&mut self) -> (r: (T, <T as DenseId>::Index))
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -915,11 +946,12 @@ pub struct MergeInfo<T: DenseId, L: DenseId> {
     pub absorbed_atomic: bool,
 }
 
-impl<T, L, N, const TRACK: bool> EClasses<T, L, N, TRACK>
+impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
+    J: Tagged + Copy + core::default::Default,
 {
 
     /// Re-establishes `eg_model_wf` after a merge's three mutations (union,
@@ -1320,9 +1352,9 @@ where
         let ghost o = *old(self);
         let ghost n = o.n_spec();
         let res = if directed {
-            self.uf.union_directed(a, b, prefer_a)
+            self.uf.union_directed_core(a, b, prefer_a)
         } else {
-            self.uf.union(a, b)
+            self.uf.union_core(a, b)
         };
         let (s, ab) = match res {
             None => {
@@ -2173,8 +2205,9 @@ where
         &self.uses
     }
 
-    /// Union-by-rank merge (production's `merge`, minus the proof-forest
-    /// justification, which is postponed with the verified union-find's).
+    /// Union-by-rank merge. Only available when `PROOFS = false`
+    /// (production's contract, with its message); `merge_justified` is the
+    /// proofs form.
     pub fn merge(&mut self, a: T, b: T) -> (r: Option<MergeInfo<T, L>>)
         requires old(self).wf(),
         ensures
@@ -2198,13 +2231,69 @@ where
                     })
             },
     {
+        if PROOFS {
+            crate::guard::refuse(
+                "union() called on a PROOFS=true UnionFind; use union_justified() instead");
+        }
         self.merge_with(a, b, false, false)
     }
 
-    /// Directed merge: the survivor is `a`'s class when `prefer_a`
-    /// (production's `merge_directed` policy hook; the parent-count policy
-    /// computes the flag from use-list lengths).
-    pub fn merge_directed(&mut self, a: T, b: T, prefer_a: bool)
+    /// Whether `find(a)`'s class has at least as many parents as `find(b)`'s
+    /// (production's survivor policy for directed merges).
+    fn prefer_a_by_uses(&self, a: T, b: T) -> (r: bool)
+        requires self.wf(),
+    {
+        if !(a.to_usize() < self.uf.len().as_usize()
+            && b.to_usize() < self.uf.len().as_usize())
+        {
+            crate::guard::refuse("EClasses::merge_directed: node id out of range");
+        }
+        let ra = self.uf.find_const(a);
+        let rb = self.uf.find_const(b);
+        let la = match self.repr_id(ra) {
+            Some(k) => self.use_list_len(k),
+            None => 0,
+        };
+        let lb = match self.repr_id(rb) {
+            Some(k) => self.use_list_len(k),
+            None => 0,
+        };
+        la >= lb
+    }
+
+    /// Like [`Self::merge`], but keeps the larger-use-list class as
+    /// survivor (production's two-argument `merge_directed`). Only
+    /// available when `PROOFS = false`.
+    pub fn merge_directed(&mut self, a: T, b: T) -> (r: Option<MergeInfo<T, L>>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
+                let ra = old(self).roots_view()[a.id_nat() as int] as nat;
+                let rb = old(self).roots_view()[b.id_nat() as int] as nat;
+                &&& (r is None <==> ra == rb)
+                &&& (r matches Some(mi) ==> {
+                        &&& ((mi.survivor.id_nat() == ra && mi.absorbed.id_nat() == rb)
+                            || (mi.survivor.id_nat() == rb && mi.absorbed.id_nat() == ra))
+                        &&& final(self).roots_view() == crate::union_find::merge_roots(
+                                old(self).roots_view(), mi.survivor.id_nat(),
+                                mi.absorbed.id_nat())
+                    })
+            },
+    {
+        if PROOFS {
+            crate::guard::refuse(
+                "union_directed() called on a PROOFS=true UnionFind; use union_justified_directed()");
+        }
+        let prefer_a = self.prefer_a_by_uses(a, b);
+        self.merge_with(a, b, true, prefer_a)
+    }
+
+    /// The directed core with an explicit survivor flag (`merge_with`'s
+    /// public face for callers that computed their own policy; the
+    /// conformance differential uses it).
+    pub fn merge_directed_with(&mut self, a: T, b: T, prefer_a: bool)
         -> (r: Option<MergeInfo<T, L>>)
         requires old(self).wf(),
         ensures
@@ -2247,11 +2336,12 @@ impl EClassesToken {
     }
 }
 
-impl<T, L, N, const TRACK: bool> EClasses<T, L, N, TRACK>
+impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
+    J: Tagged + Copy + core::default::Default,
 {
     /// Mark the aggregate: one frame on every component, atomically from the
     /// caller's view (a component that cannot mark refuses before the next
@@ -2593,6 +2683,44 @@ where
 }
 
 } // verus!
+
+// ---------------------------------------------------------------------------
+// Justified merges and explain (trusted glue; the partition work is the
+// verified core, the proof edge and LCA walk are production's algorithms in
+// the union-find's glue — doc/design/12-egraph-class-layer-parity.md).
+// ---------------------------------------------------------------------------
+
+impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
+where
+    T: DenseId,
+    L: DenseId,
+    N: DenseId + Tagged + core::default::Default,
+    J: Tagged + Copy + core::default::Default,
+{
+    /// Merge with justification (records the proof edge `a—b`).
+    pub fn merge_justified(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
+        let r = self.merge_with(a, b, false, false);
+        if r.is_some() {
+            self.uf.record_proof_edge(a, b, just);
+        }
+        r
+    }
+
+    /// Justified counterpart of [`Self::merge_directed`].
+    pub fn merge_justified_directed(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
+        let prefer_a = self.prefer_a_by_uses(a, b);
+        let r = self.merge_with(a, b, true, prefer_a);
+        if r.is_some() {
+            self.uf.record_proof_edge(a, b, just);
+        }
+        r
+    }
+
+    /// Explain why `a ≡ b` by walking the proof tree (production's surface).
+    pub fn explain(&self, a: T, b: T, buf: &mut crate::union_find::ProofBuf<T, J>) -> bool {
+        self.uf.explain(a, b, buf)
+    }
+}
 
 // prod-parity: the consumer's adapter token derives `Debug` and bundles this
 // one; manual because deriving inside `verus!{}` is unsupported.

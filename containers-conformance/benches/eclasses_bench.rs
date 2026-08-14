@@ -31,7 +31,8 @@ verus::define_id31! { pub struct BE / StoredBE, "e"; }
 verus::define_id31! { pub struct BL / StoredBL, "l"; }
 verus::define_id31! { pub struct BN / StoredBN, "n"; }
 
-type EC = EClasses<BE, BL, BN, true>;
+use semi_persistent_containers_verus::union_find::NoJust;
+type EC = EClasses<BE, BL, BN, NoJust, true, false>;
 
 fn be(n: usize) -> BE {
     BE::try_new(n).expect("bench id in range")
@@ -43,7 +44,7 @@ const N: usize = 4096;
 fn build() -> EC {
     let mut ec = EC::new();
     for i in 0..N {
-        let (_, key) = ec.add_singleton();
+        let (_, key) = ec.try_add_singleton();
         ec.add_use(key, be(i));
     }
     ec

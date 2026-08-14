@@ -142,7 +142,11 @@ splice_uses, the min-monomial pool family, set_atomic, verified ring and
 use-list iterators, and Phase-7 mark/restore whose joint archive also
 discharges SparseSet::restore's snapshot-wellformedness precondition.
 Behavioral and misuse tests in tests/eclasses_behavior.rs.
-THE SWAP IS DONE: egraph/src/classes.rs is now an adapter over the verified
+THE SWAP IS DONE, and since the parity pass, egraph/src/classes.rs and
+egraph/src/union_find.rs are TYPE ALIASES of the kernel (no adapter layer):
+the kernel carries J and PROOFS with the dual uncompressed proof forest
+in-struct (doc/design/12-egraph-class-layer-parity.md). Historical note,
+first landing was an adapter over the verified
 aggregate. The adapter adds only the proof forest (merge_justified/explain:
 the same two semi-persistent columns and re-rooting algorithm as before,
 verbatim), keeps production's signatures and pinned panic messages, and

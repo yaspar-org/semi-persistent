@@ -30,9 +30,21 @@
 //! from its two arenas (list.rs, Phase 7): one mark pushes one frame on each
 //! column and archives the ghost `(roots, dist)` pair; restore prevalidates
 //! both tokens, rolls both columns back, and reinstates the archived pair.
-//! Production's `PROOFS=true` columns (proof forest, justifications) are
-//! metadata with no bearing on W1-W6; they are postponed until a consumer
-//! needs `explain` from verified code.
+//!
+//! ## The dual structure (production parity)
+//!
+//! Like production's, the type is `UnionFind<T, J, TRACK, PROOFS>`: under
+//! `PROOFS` it carries the second, UNCOMPRESSED forest — `parent_proof` and
+//! `justification` columns recording the original merge edges — beside the
+//! compressed fast forest. The fast side is the verified partition (W1).
+//! The proof side is metadata no W-clause reads: its storage is verified
+//! (lengths track `n`, mark/restore compose through the archive), while the
+//! re-rooting and LCA `explain` logic is production's code verbatim,
+//! running as in-struct trusted glue over the verified columns — the same
+//! trust class it has in production, at the same structural address
+//! (doc/design/12-egraph-class-layer-parity.md). Verifying that logic
+//! means modeling proof-forest acyclicity through path reversal; postponed
+//! until a consumer needs `explain` under a proof.
 
 use vstd::prelude::*;
 
@@ -43,11 +55,14 @@ use crate::vec::{ShrinkPolicy, Vec as SpVec, VecToken};
 
 verus! {
 
-/// Token bundling the two column tokens (mirrors `ListArenaToken`).
+/// Token bundling the column tokens (production's shape: the proof pair is
+/// `Some` iff the union-find was built with `PROOFS`).
 #[derive(Copy, Clone)]
 pub struct UnionFindToken {
     pub(crate) parent: VecToken,
     pub(crate) rank: VecToken,
+    pub(crate) parent_proof: Option<VecToken>,
+    pub(crate) justification: Option<VecToken>,
 }
 
 impl UnionFindToken {
@@ -113,11 +128,77 @@ pub open(crate) spec fn uf_archive_agrees<T: DenseId>(
             ==> (#[trigger] rank_snaps[k]).len() == parent_snaps[k].len())
 }
 
-/// Verified union-find (production parity: the `PROOFS=false` column set of
-/// `egraph/src/union_find.rs`).
-pub struct UnionFind<T: DenseId, const TRACK: bool> {
+/// The trivial justification payload for `PROOFS = false` instantiations
+/// that still need a `J`. Verified `Tagged`: the repr pins its dead byte to
+/// zero, which is what makes extensionality hold.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NoJust;
+
+impl core::default::Default for NoJust {
+    fn default() -> (r: NoJust) {
+        NoJust
+    }
+}
+
+impl crate::tagged::Tagged for NoJust {
+    type Repr = crate::tagged::BoolTagged<u8>;
+    open spec fn value_of(_r: Self::Repr) -> Self {
+        NoJust
+    }
+    open spec fn tag_of(r: Self::Repr) -> bool {
+        r.tagged
+    }
+    open spec fn repr_wf(r: Self::Repr) -> bool {
+        r.value == 0u8
+    }
+    proof fn lemma_repr_extensional(_r1: Self::Repr, _r2: Self::Repr) {}
+    fn into_repr(self) -> (r: Self::Repr) {
+        crate::tagged::BoolTagged { tagged: false, value: 0u8 }
+    }
+    fn from_repr(_r: &Self::Repr) -> (v: Self) {
+        NoJust
+    }
+    fn tag(r: &Self::Repr) -> (b: bool) {
+        r.tagged
+    }
+    fn set_tag(r: &mut Self::Repr) {
+        r.tagged = true;
+    }
+    fn clear_tag(r: &mut Self::Repr) {
+        r.tagged = false;
+    }
+}
+
+/// Proof-column snapshot lockstep (Phase 7, PROOFS arm): the proof stacks
+/// have one frame per fast frame, each frame's columns as long as the fast
+/// parent's. Opaque like its siblings.
+#[verifier::opaque]
+pub open(crate) spec fn uf_proof_archive_agrees<T: DenseId, J: crate::tagged::Tagged>(
+    parent_snaps: Seq<Seq<T>>,
+    pp_snaps: Seq<Seq<T>>,
+    j_snaps: Seq<Seq<J>>,
+) -> bool {
+    &&& pp_snaps.len() == parent_snaps.len()
+    &&& j_snaps.len() == parent_snaps.len()
+    &&& (forall|k: int| 0 <= k < parent_snaps.len()
+            ==> (#[trigger] pp_snaps[k]).len() == parent_snaps[k].len())
+    &&& (forall|k: int| 0 <= k < parent_snaps.len()
+            ==> (#[trigger] j_snaps[k]).len() == parent_snaps[k].len())
+}
+
+/// Verified union-find (production parity: `UnionFind<T, J, TRACK, PROOFS>`
+/// with the dual fast/proof forests under `PROOFS`).
+pub struct UnionFind<T: DenseId, J, const TRACK: bool, const PROOFS: bool>
+where
+    J: crate::tagged::Tagged + Copy + core::default::Default,
+{
     pub(crate) parent: SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>,
     pub(crate) rank: SpVec<u8, T::Index, InlineStore<u8, T::Index>, TRACK>,
+    /// Proof forest: per-node ORIGINAL-edge parent, never compressed
+    /// (`Some` iff `PROOFS`). Production's `parent_proof`.
+    pub(crate) parent_proof: Option<SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>>,
+    /// Per-node justification of the proof edge (`Some` iff `PROOFS`).
+    pub(crate) justification: Option<SpVec<J, T::Index, InlineStore<J, T::Index>, TRACK>>,
     /// Ghost root map: `roots@[i]` is `i`'s canonical representative.
     pub(crate) roots: Ghost<Seq<usize>>,
     /// Ghost path-length measure (0 at roots, strictly decreasing toward them).
@@ -127,7 +208,10 @@ pub struct UnionFind<T: DenseId, const TRACK: bool> {
     pub(crate) dist_snapshots: Ghost<Seq<Seq<nat>>>,
 }
 
-impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
+impl<T: DenseId, J, const TRACK: bool, const PROOFS: bool> UnionFind<T, J, TRACK, PROOFS>
+where
+    J: crate::tagged::Tagged + Copy + core::default::Default,
+{
     pub open(crate) spec fn parent_view(&self) -> Seq<T> {
         self.parent.view()
     }
@@ -209,6 +293,23 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         &&& uf_model_wf(self.parent_view(), self.roots@, self.dist@)
         &&& uf_archive_agrees(self.roots_snapshots@, self.dist_snapshots@,
                 self.parent.snapshots_view(), self.rank.snapshots_view())
+        // dual-forest storage (production parity): under PROOFS the two
+        // proof columns exist, are well-formed, track n, and their snapshot
+        // stacks move in lockstep with the fast columns' so restore can
+        // re-establish this clause from the archive.
+        &&& (PROOFS ==> {
+                &&& self.parent_proof is Some
+                &&& self.justification is Some
+                &&& self.parent_proof->Some_0.wf()
+                &&& self.justification->Some_0.wf()
+                &&& self.parent_proof->Some_0.view().len() == self.n_spec()
+                &&& self.justification->Some_0.view().len() == self.n_spec()
+                &&& uf_proof_archive_agrees(
+                        self.parent.snapshots_view(),
+                        self.parent_proof->Some_0.snapshots_view(),
+                        self.justification->Some_0.snapshots_view())
+            })
+        &&& (!PROOFS ==> self.parent_proof is None && self.justification is None)
     }
 
     pub fn new() -> (u: Self)
@@ -220,12 +321,25 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         let u = UnionFind {
             parent: SpVec::<T, T::Index, InlineStore<T, T::Index>, TRACK>::new(),
             rank: SpVec::<u8, T::Index, InlineStore<u8, T::Index>, TRACK>::new(),
+            parent_proof: if PROOFS {
+                Some(SpVec::<T, T::Index, InlineStore<T, T::Index>, TRACK>::new())
+            } else {
+                None
+            },
+            justification: if PROOFS {
+                Some(SpVec::<J, T::Index, InlineStore<J, T::Index>, TRACK>::new())
+            } else {
+                None
+            },
             roots: Ghost(Seq::empty()),
             dist: Ghost(Seq::empty()),
             roots_snapshots: Ghost(Seq::empty()),
             dist_snapshots: Ghost(Seq::empty()),
         };
-        proof { reveal(uf_archive_agrees); }
+        proof {
+            reveal(uf_archive_agrees);
+            reveal(uf_proof_archive_agrees);
+        }
         u
     }
 
@@ -304,6 +418,14 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         let ghost old_dist = self.dist@;
         self.parent.push(id);
         self.rank.push(0u8);
+        // proof forest (production parity): the fresh node is its own proof
+        // root, with the Filler justification (J::default).
+        if let Some(pp) = &mut self.parent_proof {
+            pp.push(id);
+        }
+        if let Some(j) = &mut self.justification {
+            j.push(J::default());
+        }
         self.roots = Ghost(self.roots@.push(n));
         self.dist = Ghost(self.dist@.push(0));
         proof {
@@ -372,6 +494,35 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             assert(uf_model_wf(pv, roots, dist));
         }
         Ok(id)
+    }
+
+    /// Allocate `id` as its own singleton class (production's `make_set`:
+    /// the caller supplies the next dense id and the sequential contract is
+    /// checked). `try_make_set` is the minting total form.
+    pub fn make_set(&mut self, id: T)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            id.id_nat() == old(self).n_spec() ==> {
+                &&& final(self).n_spec() == old(self).n_spec() + 1
+                &&& final(self).roots_view()
+                    == old(self).roots_view().push(old(self).n_spec() as usize)
+            },
+    {
+        if !(id.to_usize() == self.parent.len().as_usize()) {
+            crate::guard::refuse("UnionFind::make_set: id must be sequential");
+        }
+        match self.try_make_set() {
+            Ok(minted) => {
+                proof {
+                    assert(minted.id_nat() == id.id_nat());
+                    T::lemma_id_injective(minted, id);
+                }
+            }
+            Err(_) => {
+                crate::guard::refuse("UnionFind::make_set: id range exhausted");
+            }
+        }
     }
 
     /// Canonical representative of `x`, read-only (no compression):
@@ -783,8 +934,43 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
 
     /// Union by rank: merge `a`'s and `b`'s classes, returning
     /// `Some((survivor_root, absorbed_root))`, or `None` if they were already
-    /// one class. Total-with-documented-panic on out-of-range ids.
+    /// one class. Only available when `PROOFS = false` (production's
+    /// contract and message); `union_justified` is the proofs form.
+    /// Total-with-documented-panic on out-of-range ids.
     pub fn union(&mut self, a: T, b: T) -> (r: Option<(T, T)>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).parent_snapshots_view() == old(self).parent_snapshots_view(),
+            final(self).rank_snapshots_view() == old(self).rank_snapshots_view(),
+            final(self).roots_snapshots_view() == old(self).roots_snapshots_view(),
+            final(self).dist_snapshots_view() == old(self).dist_snapshots_view(),
+            a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
+                let ra = old(self).roots_view()[a.id_nat() as int] as nat;
+                let rb = old(self).roots_view()[b.id_nat() as int] as nat;
+                &&& (r is None <==> ra == rb)
+                &&& (r is None ==> final(self).roots_view() == old(self).roots_view())
+                &&& (r matches Some((s, ab)) ==> {
+                        &&& ((s.id_nat() == ra && ab.id_nat() == rb)
+                            || (s.id_nat() == rb && ab.id_nat() == ra))
+                        &&& ra != rb
+                        &&& final(self).roots_view()
+                            == merge_roots(old(self).roots_view(), s.id_nat(), ab.id_nat())
+                    })
+            },
+    {
+        if PROOFS {
+            crate::guard::refuse(
+                "union() called on a PROOFS=true UnionFind; use union_justified() instead");
+        }
+        self.union_core(a, b)
+    }
+
+    /// The by-rank union body, without the PROOFS surface guard: what
+    /// `union` runs, and what `union_justified` runs before recording the
+    /// proof edge.
+    pub(crate) fn union_core(&mut self, a: T, b: T) -> (r: Option<(T, T)>)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -840,9 +1026,41 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
     }
 
     /// Directed union: the survivor is `a`'s root when `prefer_a`, else
-    /// `b`'s (production's `union_directed`, used by the parent-count
-    /// survivor policy). Rank is left untouched.
+    /// `b`'s. Only available when `PROOFS = false` (production's contract
+    /// and message); `union_justified_directed` is the proofs form.
     pub fn union_directed(&mut self, a: T, b: T, prefer_a: bool) -> (r: Option<(T, T)>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).parent_snapshots_view() == old(self).parent_snapshots_view(),
+            final(self).rank_snapshots_view() == old(self).rank_snapshots_view(),
+            final(self).roots_snapshots_view() == old(self).roots_snapshots_view(),
+            final(self).dist_snapshots_view() == old(self).dist_snapshots_view(),
+            a.id_nat() < old(self).n_spec() && b.id_nat() < old(self).n_spec() ==> {
+                let ra = old(self).roots_view()[a.id_nat() as int] as nat;
+                let rb = old(self).roots_view()[b.id_nat() as int] as nat;
+                &&& (r is None <==> ra == rb)
+                &&& (r is None ==> final(self).roots_view() == old(self).roots_view())
+                &&& (r matches Some((s, ab)) ==> {
+                        &&& s.id_nat() == (if prefer_a { ra } else { rb })
+                        &&& ab.id_nat() == (if prefer_a { rb } else { ra })
+                        &&& ra != rb
+                        &&& final(self).roots_view()
+                            == merge_roots(old(self).roots_view(), s.id_nat(), ab.id_nat())
+                    })
+            },
+    {
+        if PROOFS {
+            crate::guard::refuse(
+                "union_directed() called on a PROOFS=true UnionFind; use union_justified_directed()");
+        }
+        self.union_directed_core(a, b, prefer_a)
+    }
+
+    /// The directed union body, without the PROOFS surface guard.
+    pub(crate) fn union_directed_core(&mut self, a: T, b: T, prefer_a: bool)
+        -> (r: Option<(T, T)>)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -919,6 +1137,24 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
     {
         let parent_tok = self.parent.mark(shrink);
         let rank_tok = self.rank.mark(shrink);
+        // proof columns (production parity): marked through their total
+        // forms; depth exhaustion refuses with production's expect message.
+        let pp_tok = match &mut self.parent_proof {
+            Some(pp) => match pp.try_mark(shrink) {
+                Ok(t) => Some(t),
+                Err(_) => crate::guard::refuse(
+                    "mark: frame depth is bounded by the saturation driver"),
+            },
+            None => None,
+        };
+        let j_tok = match &mut self.justification {
+            Some(j) => match j.try_mark(shrink) {
+                Ok(t) => Some(t),
+                Err(_) => crate::guard::refuse(
+                    "mark: frame depth is bounded by the saturation driver"),
+            },
+            None => None,
+        };
         self.roots_snapshots = Ghost(self.roots_snapshots@.push(self.roots@));
         self.dist_snapshots = Ghost(self.dist_snapshots@.push(self.dist@));
         proof {
@@ -953,7 +1189,42 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             assert(uf_archive_agrees(self.roots_snapshots@, self.dist_snapshots@,
                 self.parent.snapshots_view(), self.rank.snapshots_view()));
         }
-        UnionFindToken { parent: parent_tok, rank: rank_tok }
+        proof {
+            if PROOFS {
+                reveal(uf_proof_archive_agrees);
+                let opps = old(self).parent_proof->Some_0.snapshots_view();
+                let ojs = old(self).justification->Some_0.snapshots_view();
+                assert(uf_proof_archive_agrees(old(self).parent.snapshots_view(), opps, ojs));
+                let pps = self.parent_proof->Some_0.snapshots_view();
+                let js = self.justification->Some_0.snapshots_view();
+                let k_new = self.parent.snapshots_view().len() - 1;
+                assert forall|k: int| 0 <= k < self.parent.snapshots_view().len()
+                    implies (#[trigger] pps[k]).len()
+                        == self.parent.snapshots_view()[k].len() by {
+                    if k < k_new {
+                        assert(pps[k] == opps[k]);
+                        assert(self.parent.snapshots_view()[k]
+                            == old(self).parent.snapshots_view()[k]);
+                    }
+                }
+                assert forall|k: int| 0 <= k < self.parent.snapshots_view().len()
+                    implies (#[trigger] js[k]).len()
+                        == self.parent.snapshots_view()[k].len() by {
+                    if k < k_new {
+                        assert(js[k] == ojs[k]);
+                        assert(self.parent.snapshots_view()[k]
+                            == old(self).parent.snapshots_view()[k]);
+                    }
+                }
+                assert(uf_proof_archive_agrees(self.parent.snapshots_view(), pps, js));
+            }
+        }
+        UnionFindToken {
+            parent: parent_tok,
+            rank: rank_tok,
+            parent_proof: pp_tok,
+            justification: j_tok,
+        }
     }
 
     /// Total mark (the composite of the two columns' `can_mark`).
@@ -992,6 +1263,34 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         ensures b == self.is_restorable_spec(*token),
     {
         self.parent.is_valid_token(&token.parent) && self.rank.is_valid_token(&token.rank)
+    }
+
+    /// The proof pair's validity and same-mark agreement (true vacuously
+    /// when `PROOFS = false`; the token must match the build).
+    fn proof_tokens_valid(&self, token: &UnionFindToken) -> (b: bool)
+        requires self.wf(),
+        ensures b && PROOFS ==> {
+            &&& token.parent_proof is Some
+            &&& token.justification is Some
+            &&& self.parent_proof->Some_0
+                .is_restorable_spec(token.parent_proof->Some_0)
+            &&& self.justification->Some_0
+                .is_restorable_spec(token.justification->Some_0)
+            &&& token.parent_proof->Some_0.frame_idx == token.parent.frame_idx
+            &&& token.justification->Some_0.frame_idx == token.parent.frame_idx
+        },
+    {
+        match (&self.parent_proof, &token.parent_proof, &self.justification, &token.justification)
+        {
+            (Some(pp), Some(pt), Some(j), Some(jt)) => {
+                pp.is_valid_token(pt)
+                    && j.is_valid_token(jt)
+                    && pt.frame_idx == token.parent.frame_idx
+                    && jt.frame_idx == token.parent.frame_idx
+            }
+            (None, None, None, None) => true,
+            _ => false,
+        }
     }
 
     pub(crate) fn restore(&mut self, token: UnionFindToken)
@@ -1033,13 +1332,66 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             assert(uf_archive_agrees(old(self).roots_snapshots@, old(self).dist_snapshots@,
                 old(self).parent.snapshots_view(), old(self).rank.snapshots_view()));
         }
+        if !self.proof_tokens_valid(&token) {
+            crate::guard::refuse(
+                "UnionFind::restore: proof-column token component invalid or from a different mark");
+        }
         self.parent.restore(token.parent);
         self.rank.restore(token.rank);
+        match (&mut self.parent_proof, token.parent_proof) {
+            (Some(pp), Some(t)) => match pp.try_restore(t) {
+                Ok(()) => (),
+                Err(_) => crate::guard::refuse("restore: own token"),
+            },
+            (None, None) => (),
+            _ => crate::guard::refuse(
+                "UnionFind::restore: proof-token shape does not match the build"),
+        }
+        match (&mut self.justification, token.justification) {
+            (Some(j), Some(t)) => match j.try_restore(t) {
+                Ok(()) => (),
+                Err(_) => crate::guard::refuse("restore: own token"),
+            },
+            (None, None) => (),
+            _ => crate::guard::refuse(
+                "UnionFind::restore: proof-token shape does not match the build"),
+        }
         self.roots = Ghost(snap_roots);
         self.dist = Ghost(snap_dist);
         self.roots_snapshots = Ghost(self.roots_snapshots@.subrange(0, f));
         self.dist_snapshots = Ghost(self.dist_snapshots@.subrange(0, f));
         proof {
+            if PROOFS {
+                reveal(uf_proof_archive_agrees);
+                let opps = old(self).parent_proof->Some_0.snapshots_view();
+                let ojs = old(self).justification->Some_0.snapshots_view();
+                assert(uf_proof_archive_agrees(
+                    old(self).parent.snapshots_view(), opps, ojs));
+                let pps = self.parent_proof->Some_0.snapshots_view();
+                let js = self.justification->Some_0.snapshots_view();
+                // restored views are frame f's; the archive equates their
+                // lengths with the fast parent's at every frame.
+                assert(self.parent_proof->Some_0.view() == opps[f]);
+                assert(self.justification->Some_0.view() == ojs[f]);
+                assert(opps[f].len() == old(self).parent.snapshots_view()[f].len());
+                assert(ojs[f].len() == old(self).parent.snapshots_view()[f].len());
+                assert forall|k: int| 0 <= k < self.parent.snapshots_view().len()
+                    implies (#[trigger] pps[k]).len()
+                        == self.parent.snapshots_view()[k].len() by {
+                    assert(pps[k] == opps[k]);
+                    assert(self.parent.snapshots_view()[k]
+                        == old(self).parent.snapshots_view()[k]);
+                }
+                assert forall|k: int| 0 <= k < self.parent.snapshots_view().len()
+                    implies (#[trigger] js[k]).len()
+                        == self.parent.snapshots_view()[k].len() by {
+                    assert(js[k] == ojs[k]);
+                    assert(self.parent.snapshots_view()[k]
+                        == old(self).parent.snapshots_view()[k]);
+                }
+                assert(uf_proof_archive_agrees(
+                    self.parent.snapshots_view(), pps, js));
+            }
             reveal(uf_archive_agrees);
             assert(uf_model_wf(old(self).parent.snapshots_view()[f], snap_roots, snap_dist));
             assert(self.parent_view() == old(self).parent.snapshots_view()[f]);
@@ -1110,12 +1462,199 @@ pub open(crate) spec fn parent_root_self_parent_clause<T: DenseId>(
 
 } // verus!
 
-// prod-parity: manual `Debug` (composes two `VecToken`s).
+// ---------------------------------------------------------------------------
+// Proof forest logic (trusted glue over the verified columns; production's
+// algorithms verbatim — see doc/design/12-egraph-class-layer-parity.md).
+// ---------------------------------------------------------------------------
+
+/// Reusable scratch buffers for proof extraction. Allocate once, reuse
+/// across queries (production's `ProofBuf`; the scratch fields are `pub`
+/// because the e-graph's deep-explain borrows them).
+pub struct ProofBuf<T: DenseId, J: Copy> {
+    pub steps: Vec<(T, T, J)>,
+    pub path_a: Vec<T>,
+    pub path_b: Vec<T>,
+    pub seen: std::collections::HashSet<usize>,
+    pub rev: Vec<(T, T, J)>,
+    pub children_a: Vec<T>,
+    pub children_b: Vec<T>,
+    pub group_a: Vec<T>,
+    pub group_b: Vec<T>,
+}
+
+impl<T: DenseId, J: Copy> Default for ProofBuf<T, J> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: DenseId, J: Copy> ProofBuf<T, J> {
+    pub fn new() -> Self {
+        Self {
+            steps: Vec::new(),
+            path_a: Vec::new(),
+            path_b: Vec::new(),
+            seen: std::collections::HashSet::new(),
+            rev: Vec::new(),
+            children_a: Vec::new(),
+            children_b: Vec::new(),
+            group_a: Vec::new(),
+            group_b: Vec::new(),
+        }
+    }
+    pub fn clear(&mut self) {
+        self.steps.clear();
+    }
+}
+
+impl<T: DenseId, J, const TRACK: bool, const PROOFS: bool> UnionFind<T, J, TRACK, PROOFS>
+where
+    J: crate::tagged::Tagged + Copy + core::default::Default,
+{
+    /// Union with justification. Only meaningful when `PROOFS = true`.
+    pub fn union_justified(&mut self, a: T, b: T, just: J) -> Option<(T, T)> {
+        let r = self.union_core(a, b);
+        if r.is_some() {
+            self.record_proof_edge(a, b, just);
+        }
+        r
+    }
+
+    /// Justified counterpart of `union_directed`.
+    pub fn union_justified_directed(
+        &mut self,
+        a: T,
+        b: T,
+        just: J,
+        prefer_a: bool,
+    ) -> Option<(T, T)> {
+        let r = self.union_directed_core(a, b, prefer_a);
+        if r.is_some() {
+            self.record_proof_edge(a, b, just);
+        }
+        r
+    }
+
+    /// Proof tree: link the ORIGINAL nodes, not representatives. Re-root
+    /// `b`'s proof tree so `b` becomes the child of `a`.
+    pub(crate) fn record_proof_edge(&mut self, a: T, b: T, just: J) {
+        if let (Some(pp), Some(j)) = (&mut self.parent_proof, &mut self.justification) {
+            Self::reroot_proof(pp, j, b);
+            pp.set(b, a);
+            j.set(b, just);
+        }
+    }
+
+    /// Reverse the parent_proof path from `x` to its root, making `x` the
+    /// new root (production's algorithm verbatim).
+    fn reroot_proof(
+        pp: &mut SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>,
+        j: &mut SpVec<J, T::Index, InlineStore<J, T::Index>, TRACK>,
+        x: T,
+    ) {
+        let mut path = vec![x];
+        let mut cur = x;
+        loop {
+            let p = pp.get(cur);
+            if p == cur {
+                break;
+            }
+            path.push(p);
+            cur = p;
+        }
+        // path = [x, ..., root]. Reverse the edges.
+        for i in (0..path.len() - 1).rev() {
+            let child = path[i + 1];
+            let parent = path[i];
+            pp.set(child, parent);
+            j.set(child, j.get(parent));
+        }
+        // x is now the root
+        pp.set(x, x);
+    }
+
+    /// Explain why `a ≡ b` by walking the proof tree. Appends steps to
+    /// `buf.steps`. Returns false if not equivalent or `PROOFS = false`.
+    pub fn explain(&self, a: T, b: T, buf: &mut ProofBuf<T, J>) -> bool {
+        if !PROOFS {
+            return false;
+        }
+        if self.find_const(a) != self.find_const(b) {
+            return false;
+        }
+        let pp = self.parent_proof.as_ref().unwrap();
+        let j = self.justification.as_ref().unwrap();
+
+        // Walk a → root into path_a
+        buf.path_a.clear();
+        Self::walk_to_root(pp, a, &mut buf.path_a);
+
+        // Walk b → root into path_b
+        buf.path_b.clear();
+        Self::walk_to_root(pp, b, &mut buf.path_b);
+
+        // Find LCA
+        buf.seen.clear();
+        for id in &buf.path_a {
+            buf.seen.insert(id.as_usize());
+        }
+        let mut lca = self.find_const(a);
+        for &node in &buf.path_b {
+            if buf.seen.contains(&node.as_usize()) {
+                lca = node;
+                break;
+            }
+        }
+
+        // a → lca
+        let mut cur = a;
+        while cur != lca {
+            let parent = pp.get(cur);
+            let just = j.get(cur);
+            buf.steps.push((cur, parent, just));
+            cur = parent;
+        }
+        // lca → b (collect reversed into rev, then extend steps)
+        let rev_start = buf.rev.len();
+        cur = b;
+        while cur != lca {
+            let parent = pp.get(cur);
+            let just = j.get(cur);
+            buf.rev.push((parent, cur, just));
+            cur = parent;
+        }
+        buf.rev[rev_start..].reverse();
+        buf.steps.extend_from_slice(&buf.rev[rev_start..]);
+        buf.rev.truncate(rev_start);
+        true
+    }
+
+    fn walk_to_root(
+        pp: &SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>,
+        x: T,
+        path: &mut Vec<T>,
+    ) {
+        path.push(x);
+        let mut cur = x;
+        loop {
+            let p = pp.get(cur);
+            if p == cur {
+                break;
+            }
+            path.push(p);
+            cur = p;
+        }
+    }
+}
+
+// prod-parity: manual `Debug` (composes the column tokens).
 impl core::fmt::Debug for UnionFindToken {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("UnionFindToken")
             .field("parent", &self.parent)
             .field("rank", &self.rank)
+            .field("parent_proof", &self.parent_proof)
+            .field("justification", &self.justification)
             .finish()
     }
 }

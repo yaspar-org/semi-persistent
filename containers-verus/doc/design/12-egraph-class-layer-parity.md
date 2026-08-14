@@ -91,6 +91,24 @@ E17's `MatchRow::clear` leaves a stale value where the owned `Match`
 re-arms a panic-on-read guard; equivalent for compiled action sequences
 (set-before-read), recorded in E17's file. Not part of the class layer.
 
+## Status
+
+The MUST-FIX list below is DONE: the kernel is
+`UnionFind<T, J, TRACK, PROOFS>` / `EClasses<T, L, N, J, TRACK, PROOFS>`
+with the dual uncompressed forest in-struct, `make_set(id)` and
+`add_singleton(id)` with production's messages, `union`/`merge` refusing
+under `PROOFS` with production's messages, the justified family and
+`explain` at their production addresses (partition work verified, proof
+logic in-struct glue), and the token carrying the option pair whose
+mark/restore lockstep is a wf clause re-established from the archive.
+`egraph::UnionFind`, `egraph::EClasses`, and `egraph::ProofBuf` are type
+aliases of the kernel; the adapter layer is gone. Coverage: the full proof
+suite (justified merges, deep congruence explains, proof restores) runs
+through the kernel forest; kernel-level PROOFS tests, a 63-bit behavior
+round trip, and a 63-bit conformance relation check exist beside the 31-bit
+differential. Verify 1632/0 both feature configurations; saturate_bench
+reads identical to the pre-refactor state.
+
 ## Bottom line
 
 Algorithms: equivalent everywhere, two deliberate exceptions (saturating
