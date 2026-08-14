@@ -568,6 +568,21 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         let span = self.mset_spans[j * self.mset_stride + v.idx()];
         &self.mset_pool[span_range::<Cfg>(span)]
     }
+
+    /// Drop the stored matches without releasing storage (the `MatchPool`
+    /// warm-reuse discipline, for consumers that keep a `MatchSet` across
+    /// queries).
+    pub fn clear(&mut self) {
+        self.count = 0;
+        self.nodes.clear();
+        self.mults.clear();
+        self.seq_spans.clear();
+        self.set_spans.clear();
+        self.mset_spans.clear();
+        self.seq_pool.clear();
+        self.set_pool.clear();
+        self.mset_pool.clear();
+    }
 }
 
 // ---------------------------------------------------------------------------

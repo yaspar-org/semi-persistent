@@ -62,6 +62,10 @@ name = "seek_microbench"
 harness = false
 
 [[bench]]
+name = "matchset_bench"
+harness = false
+
+[[bench]]
 name = "saturate_bench"
 harness = false
 
