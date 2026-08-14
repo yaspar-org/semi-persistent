@@ -178,3 +178,39 @@ fn differential_list_arena() {
         list_arena_trace(seed, 2000);
     }
 }
+
+prod::define_id7! { pub struct PTinyNode / StoredPTinyNode, "y"; }
+verus::define_id7! { pub struct VTinyNode / StoredVTinyNode, "y"; }
+
+/// Capacity parity at the id-range ceiling: both arenas hold the FULL 7-bit
+/// node-id range (128 nodes; production's own `len_has_headroom_above_the_full_arena`
+/// pins this on its side), and the 129th append is one past the id space on
+/// both sides - refused by the total form, a panic in production. Pins the
+/// per-family guard that replaced the blanket `len + 1 < id_bound`
+/// precondition (13-parity-matrix.md, section 3, finding 2).
+#[test]
+fn bits7_capacity_holds_the_full_id_range() {
+    let mut p: prod::ListArena<PElem, PList, PTinyNode, false> = prod::ListArena::new();
+    let mut v: verus::ListArena<VElem, VList, VTinyNode, false> = verus::ListArena::new();
+    let pl = p.new_list();
+    let vl = v.try_new_list().expect("first list id");
+    for i in 0..128u32 {
+        p.append(pl, PElem::new(i));
+        v.try_append(vl, VElem::new(i))
+            .expect("a 7-bit arena holds its full id range");
+    }
+    assert_eq!(usize::from(p.len(pl)), 128);
+    assert_eq!(usize::from(v.len(vl)), 128);
+    let pv: Vec<u32> = p.iter(pl).map(|e| e.raw()).collect();
+    let vv: Vec<u32> = v.iter(vl).map(|e| e.raw()).collect();
+    assert_eq!(pv, vv, "traversals agree over the full arena");
+    assert_eq!(
+        v.try_append(vl, VElem::new(128)),
+        Err(verus::error::ContainerError::CapacityExhausted),
+        "the 129th node is one past the 7-bit id space"
+    );
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        p.append(pl, PElem::new(128));
+    }));
+    assert!(r.is_err(), "production panics one past the id space");
+}

@@ -187,6 +187,21 @@ panicking narrowing for a masking one and compensates at call sites.
    refusing the final id slot production fills (production's own test
    fills all 128 of a 7-bit arena). Same off-by-one on `try_new_list`.
    The only capacity-boundary divergence found in any container.
+   FIXED — the blanket `len + 1 < id_bound` precondition split per id
+   family, the same split `UnionFind::try_make_set` already had: a
+   bit-stealing id holds its full range (the storage word has a spare
+   bit, so the word bound follows from `len < id_bound` alone); only
+   the verus-only full-range family (`DenseUsize`, word exactly as
+   wide as the id space) still needs the successor representable.
+   Applied to the list arena's two push-fits lemmas, five core
+   preconditions, two monitored guards, and three total guards, and to
+   the ring (`CircularList::add_singleton`), which had the same
+   blanket guard and would otherwise have kept the aggregate
+   `EClasses` capacity at `id_bound - 1`. Verify 1632/0 in both
+   feature configurations. Pinned by
+   `bits7_capacity_holds_the_full_id_range` (list arena, prod-vs-verus
+   differential) and `bits7_add_singleton_fills_the_full_id_range`
+   (aggregate, all component ceilings at once).
 3. **`from_sorted` builds a differently-shaped tree.** Production
    packs full leaf chunks (last leaf can hold one key); the twin
    balances (`ceil(n/cap)` groups of near-equal size, non-root leaves
@@ -200,6 +215,14 @@ panicking narrowing for a masking one and compensates at call sites.
    builds a wrong tree. Arena exhaustion: production asserts on every
    allocation in release; the twin has no runtime check (proved
    unreachable from the bit-stealing bound).
+   The all-builds sortedness check is deliberate and stays: the only
+   build path with a sortedness `requires` (`bulk_load`) is private,
+   so `from_sorted`/`try_from_sorted` are the whole public surface and
+   both re-check the erased precondition at runtime — unverified
+   callers cannot violate it. The check becomes removable when the
+   callers are themselves verified against `bulk_load`'s requires; the
+   O(n) cost against the build's O(n log n) is priced in the
+   `from_sorted_then_scan` ledger entry above.
 5. **Insert control flow.** Production descends iteratively with a
    24-entry path array and propagates splits in an upward loop; the
    twin recurses, returning the separator pair. Split points and the
@@ -287,6 +310,16 @@ recorded here as corrections to it.
    document 12's "same order"/"verbatim ordering" wording is not
    literally true of the shipped code. UNOBSERVABLE-completed /
    CONTROL-FLOW-mid-panic.
+   RESOLVED — the kernel order is kept, deliberately: `merge_with`
+   refuses only at its prevalidation boundary before any mutation, its
+   verified union-and-splice body has no panic path (every assert is
+   static), and `record_proof_edge`'s glue has no explicit panic site
+   over the already-validated ids — so no execution can stop between
+   the union and the record, and the intermediate state production's
+   record-first order protected against is unreachable. Production
+   needed record-first because its splice could panic mid-merge; the
+   verified core removed that panic, which removes the reason. Same
+   work either way, so no cost.
 2. **The accepted rank divergence is skip, not saturate.** At
    `rank_ab == 255` the kernel SKIPS the bump (survivor keeps its own
    rank) rather than clamping to 255 as document 12 says; identical

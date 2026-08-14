@@ -290,3 +290,34 @@ fn proofs_merge_unjustified_panics() {
     }));
     assert!(r.is_err(), "merge on PROOFS=true must refuse");
 }
+
+semi_persistent_containers_verus::define_id7! { pub struct TinyId / StoredTinyId, "t"; }
+
+type EcTiny = EClasses<TinyId, DenseId31, DenseId31, NoJust, true, false>;
+
+/// The aggregate holds the FULL 7-bit node-id range: every component ceiling
+/// (union-find, ring, repr set, use-list arena) admits all 128 ids, matching
+/// production, which fills a 7-bit arena completely. Pins the per-family
+/// capacity guards (13-parity-matrix.md, section 3, finding 2).
+#[test]
+fn bits7_add_singleton_fills_the_full_id_range() {
+    let mut ec = EcTiny::new();
+    for i in 0..128usize {
+        let (id, _key) = ec.try_add_singleton();
+        assert_eq!(id.to_usize(), i);
+    }
+    assert_eq!(ec.len().as_usize(), 128);
+    assert_eq!(ec.num_classes().as_usize(), 128);
+}
+
+/// One singleton past the id space refuses at the node-id ceiling rather
+/// than aliasing (production panics inside its id constructor at the same
+/// count).
+#[test]
+#[should_panic(expected = "EClasses::add_singleton: node-id range exhausted")]
+fn bits7_one_past_the_id_range_refuses() {
+    let mut ec = EcTiny::new();
+    for _ in 0..129usize {
+        ec.try_add_singleton();
+    }
+}

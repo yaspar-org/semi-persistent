@@ -708,26 +708,31 @@ where
         self.nodes.len().as_usize()
     }
 
-    /// Push headroom: an arena with room for one more id-representable node
-    /// also has room in the storage WORD. This is what lets the `push` sites
-    /// state ONE headroom precondition — the id-range one, which is the
-    /// meaningful bound (it limits what a `next` pointer can name) — rather than
-    /// a second, separate one about the storage word `N::Index`.
+    /// Push headroom, per id family: an arena with room for one more
+    /// id-representable node also has room in the storage WORD. This is what
+    /// lets the `push` sites state the id-range precondition — the meaningful
+    /// bound (it limits what a `next` pointer can name) — rather than a
+    /// second, separate one about the storage word `N::Index`.
     ///
-    /// Both arms of `lemma_id_bound_word_relation` give it:
+    /// The two arms of `lemma_id_bound_word_relation`:
     ///   - bit-stealing (Id31/Id63): `Index::max_nat() == 2 * id_bound`, and
-    ///     `len < id_bound` gives `len + 1 <= id_bound < 2 * id_bound`.
+    ///     `len < id_bound` gives `len + 1 <= id_bound < 2 * id_bound`. The
+    ///     arena therefore holds its FULL id range, `id_bound` nodes —
+    ///     production parity (production's own test fills all 128 slots of a
+    ///     7-bit arena).
     ///   - full-range (`DenseUsize`): `Index::max_nat() == id_bound ==
-    ///     usize::MAX + 1`, so the caller's `len + 1 < usize::MAX` already
-    ///     lands strictly below it.
+    ///     usize::MAX + 1`, no spare bit, so this family alone also needs the
+    ///     successor representable (the second hypothesis; same split as
+    ///     `UnionFind::try_make_set`).
     pub(crate) proof fn lemma_node_push_fits(len: nat)
-        requires len + 1 < N::id_bound(),
+        requires
+            len < N::id_bound(),
+            !N::is_bit_stealing() ==> len + 1 < N::id_bound(),
         ensures len + 1 < <N::Index as IndexLike>::max_nat(),
     {
         N::lemma_id_bound_word_relation();
         if N::is_bit_stealing() {
-            // max_nat == 2 * id_bound, and id_bound >= 1 (it exceeds len + 1),
-            // so id_bound < 2 * id_bound and the hypothesis carries through.
+            // max_nat == 2 * id_bound >= id_bound + 1 >= len + 2 > len + 1.
             assert(N::id_bound() >= 1);
             assert(N::id_bound() * 2 >= N::id_bound() + 1) by (nonlinear_arith)
                 requires N::id_bound() >= 1;
@@ -737,7 +742,9 @@ where
 
     /// The `heads` twin of `lemma_node_push_fits`, over `L`.
     pub(crate) proof fn lemma_head_push_fits(len: nat)
-        requires len + 1 < L::id_bound(),
+        requires
+            len < L::id_bound(),
+            !L::is_bit_stealing() ==> len + 1 < L::id_bound(),
         ensures len + 1 < <L::Index as IndexLike>::max_nat(),
     {
         L::lemma_id_bound_word_relation();
@@ -1080,11 +1087,13 @@ where
         requires
             old(self).wf(),
             old(self).heads_view().len() + 1 < usize::MAX,
-            // Row headroom in `L`'s id range. The heads column is indexed by
-            // `L::Index` (production parity), so growing it needs the WORD to
-            // have room; `lemma_head_push_fits` derives that from the id bound,
-            // which is the bound the typed `new_list` already demands.
-            old(self).heads_view().len() + 1 < L::id_bound(),
+            // Row headroom in `L`'s id range, per family. The heads column is
+            // indexed by `L::Index` (production parity), so growing it needs
+            // the WORD to have room; `lemma_head_push_fits` derives that from
+            // the id bound. A bit-stealing `L` holds its full id range; only
+            // the full-range family needs the successor representable too.
+            old(self).heads_view().len() < L::id_bound(),
+            !L::is_bit_stealing() ==> old(self).heads_view().len() + 1 < L::id_bound(),
         ensures
             final(self).wf(),
             l == old(self).heads_view().len(),
@@ -1128,10 +1137,13 @@ where
             old(self).wf(),
             (l as int) < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
-            // Packing headroom: the new slot's id must be representable, AND
-            // the node column's `N::Index` word must have room for one more row
-            // (`lemma_node_push_fits` derives the word bound from this one).
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // Packing headroom, per id family: the fresh slot's id must be
+            // representable, and `lemma_node_push_fits` derives the `N::Index`
+            // word bound from that. A bit-stealing `N` holds its full id range
+            // (production parity); only the full-range family also needs the
+            // successor representable, because its word has no spare bit.
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition. The count is `N::Index`-wide (the node
             // arena's own index type), so `len + 1` being representable follows from
             // `wf` — see the proof block below — rather than from anything the caller
@@ -1325,10 +1337,9 @@ where
             old(self).wf(),
             (l as int) < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
-            // Packing headroom: the new slot's id must be representable, AND
-            // the node column's `N::Index` word must have room for one more row
-            // (`lemma_node_push_fits` derives the word bound from this one).
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // Packing headroom, per id family; see `prepend_raw`.
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition; see `prepend_raw`. The count shares the node
             // index's width, so `wf` already bounds it.
         ensures
@@ -1888,7 +1899,10 @@ where
             final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         let n = self.heads.store.data.len();
-        if n < usize::MAX - 1 && L::try_new(n + 1).is_some() {
+        if n < usize::MAX - 1
+            && L::try_new(n).is_some()
+            && (L::bit_stealing() || L::try_new(n + 1).is_some())
+        {
             Ok(self.new_list())
         } else {
             Err(crate::error::ContainerError::CapacityExhausted)
@@ -1925,7 +1939,10 @@ where
             return Err(crate::error::ContainerError::IndexOutOfBounds);
         }
         let n = self.nodes.store.data.len();
-        if n < usize::MAX - 1 && N::try_new(n + 1).is_some() {
+        if n < usize::MAX - 1
+            && N::try_new(n).is_some()
+            && (N::bit_stealing() || N::try_new(n + 1).is_some())
+        {
             self.append(l, payload);
             Ok(())
         } else {
@@ -1948,7 +1965,10 @@ where
             return Err(crate::error::ContainerError::IndexOutOfBounds);
         }
         let n = self.nodes.store.data.len();
-        if n < usize::MAX - 1 && N::try_new(n + 1).is_some() {
+        if n < usize::MAX - 1
+            && N::try_new(n).is_some()
+            && (N::bit_stealing() || N::try_new(n + 1).is_some())
+        {
             self.prepend(l, payload);
             Ok(())
         } else {
@@ -2122,7 +2142,8 @@ where
         requires
             old(self).wf(),
             old(self).heads_view().len() + 1 < usize::MAX,
-            old(self).heads_view().len() + 1 < L::id_bound(),
+            old(self).heads_view().len() < L::id_bound(),
+            !L::is_bit_stealing() ==> old(self).heads_view().len() + 1 < L::id_bound(),
         ensures
             final(self).wf(),
             l.id_nat() == old(self).heads_view().len(),
@@ -2172,8 +2193,10 @@ where
             l.id_nat() < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
             // node allocation stays within N's id range (production's
-            // VecI<_, N::Index> capacity semantics).
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // VecI<_, N::Index> capacity semantics: the full range for a
+            // bit-stealing family).
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition. The cached count is `N::Index`-wide, so its
             // bound follows from `wf` at every id width — including 63-bit, where the old
             // `u32` cache was a real 4-billion ceiling the caller had to promise to stay
@@ -2187,13 +2210,14 @@ where
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
     {
         // Runtime guard: node-id headroom before allocating (N::try_new on
-        // the would-be node row; reject-before-mutate).
+        // the fresh node row; reject-before-mutate).
         crate::guard::check_precondition(
-            // Guards the row AFTER the new one: the precondition is
-            // `len + 1 < id_bound` (the node column is indexed by `N::Index`,
-            // so the push needs word headroom too — `lemma_node_push_fits`),
-            // and `try_new(n).is_some() <==> n < id_bound`.
-            N::try_new(self.nodes_len() + 1).is_some(),
+            // The fresh slot's id must be representable
+            // (`try_new(n).is_some() <==> n < id_bound`); the full-range
+            // family alone also needs the successor representable
+            // (`lemma_node_push_fits` derives the word bound).
+            N::try_new(self.nodes_len()).is_some()
+                && (N::bit_stealing() || N::try_new(self.nodes_len() + 1).is_some()),
             "ListArena::prepend: node-id range exhausted",
         );
         let lu = l.as_usize();
@@ -2213,8 +2237,9 @@ where
             old(self).wf(),
             l.id_nat() < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
-            // node allocation stays within N's id range.
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // node allocation stays within N's id range; see `prepend`.
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition; see `prepend`.
         ensures
             final(self).wf(),
@@ -2236,13 +2261,10 @@ where
             final(self).model_snapshots_view() == old(self).model_snapshots_view(),
             final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
-        // Runtime guard: node-id headroom before allocating.
+        // Runtime guard: node-id headroom before allocating; see `prepend`.
         crate::guard::check_precondition(
-            // Guards the row AFTER the new one: the precondition is
-            // `len + 1 < id_bound` (the node column is indexed by `N::Index`,
-            // so the push needs word headroom too — `lemma_node_push_fits`),
-            // and `try_new(n).is_some() <==> n < id_bound`.
-            N::try_new(self.nodes_len() + 1).is_some(),
+            N::try_new(self.nodes_len()).is_some()
+                && (N::bit_stealing() || N::try_new(self.nodes_len() + 1).is_some()),
             "ListArena::append: node-id range exhausted",
         );
         proof { l.lemma_as_nat_is_id_nat(); }  // as_usize -> id_nat bridge. prod-parity

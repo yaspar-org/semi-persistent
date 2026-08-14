@@ -501,7 +501,7 @@ where T: Sized + Copy + core::default::Default {
                 <N as DenseId>::Index::lemma_max_nat_fits_usize();
                 assert(n as nat == self.entries.view().len());
             }
-            if N::try_new(n + 1).is_some() {
+            if N::try_new(n).is_some() && (N::bit_stealing() || N::try_new(n + 1).is_some()) {
                 return Ok(self.add_singleton(payload));
             }
         }
@@ -512,7 +512,11 @@ where T: Sized + Copy + core::default::Default {
         requires
             old(self).wf(),
             old(self).n_spec() + 1 < <N as DenseId>::Index::max_nat(),
-            old(self).n_spec() + 1 < N::id_bound(),
+            // Per id family (production parity: a bit-stealing ring holds its
+            // full id range); only the full-range family needs the successor
+            // representable, its word having no spare bit.
+            old(self).n_spec() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).n_spec() + 1 < N::id_bound(),
         ensures
             final(self).wf(),
             nid.id_nat() == old(self).n_spec(),
@@ -536,11 +540,13 @@ where T: Sized + Copy + core::default::Default {
             <N as DenseId>::Index::lemma_max_nat_fits_usize();
         }
         crate::guard::check_precondition(
-            N::try_new(self.entries.len().as_usize() + 1).is_some(),
+            N::try_new(self.entries.len().as_usize()).is_some()
+                && (N::bit_stealing()
+                    || N::try_new(self.entries.len().as_usize() + 1).is_some()),
             "CircularList::add_singleton: node-id range exhausted",
         );
         // The new node's dense index is the pre-push length. It is representable
-        // in `N` (precondition `n_spec + 1 < id_bound`), so `from_usize`
+        // in `N` (precondition `n_spec < id_bound`), so `from_usize`
         // round-trips and the self-loop `next_seq()[id] == id` holds.
         let idw = self.entries.len();
         let nid = N::from_usize(idw.as_usize());
