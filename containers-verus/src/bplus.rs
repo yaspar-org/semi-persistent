@@ -991,8 +991,11 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     // The per-iteration ghost work (group wf, binds, footprint, regrouping,
     // ordering) is a lot of quantified reasoning for one loop body; a raised
     // rlimit is cheaper than splitting it into a lemma that would have to
-    // re-take fifteen hypotheses.
-    #[verifier::rlimit(200)]
+    // re-take fifteen hypotheses. spinoff isolates the query: at 200 without
+    // it, the group loop's query passes or exceeds the limit depending on
+    // unrelated context elsewhere in the module.
+    #[verifier::spinoff_prover]
+    #[verifier::rlimit(300)]
     fn bulk_build_level(
         &mut self,
         lo: usize,
@@ -2357,8 +2360,8 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             proof { assert(self.arena()[idx.as_nat() as int] == node); }
 
             if L::is_leaf(&node) {
-                // Leaf: binary-search it, then probe the boundary. Production:
-                // `S::find_ge` at bplus.rs:796.
+                // Leaf: search it through `S`, then probe the boundary.
+                // Production: `S::find_ge` at bplus.rs:796.
                 let ghost gkeys = crate::bplus_tree::tree_keys(cur);
                 proof {
                     match cur {
@@ -2453,8 +2456,8 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
                 assert(n as nat == L::count_spec(node));
             }
 
-            // cp = find_gt(seps, key), binary. Production: `S::find_gt` at
-            // bplus.rs:800.
+            // cp = find_gt(seps, key), through `S`. Production: `S::find_gt`
+            // at bplus.rs:800.
             proof { lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur, gid, node); }
             let cp = self.find_child(&node, kw);
             // The find_gt characterization on the ghost separators: [0..cp) <= k,
@@ -5932,7 +5935,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         let n = L::count(&leaf);
         let kw: L::Word = key.to_index();
 
-        // pos = find_ge(keys, target): the O(log cap) verified binary search,
+        // pos = find_ge(keys, target), through `S`: the verified in-node search,
         // whose postcondition is exactly the find-position characterization the
         // sorted-insert lemma needs. Production: `S::find_ge` at bplus.rs:661.
         proof {
@@ -9307,17 +9310,18 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     // on every `+`/`-`/`*` over machine integers, so the fact that `leaf_find_ge`,
     // `find_child`, `seek_leaf`, `seek` and `step` all verify already MEANS no
     // operation in the seek path can overflow. Concretely:
-    //   - Binary-search midpoint is `lo + (hi - lo) / 2` (here and in `find_child`,
-    //     bplus.rs:2451; also bplus_search.rs:83/120) — the canonical overflow-safe
-    //     form. The naive `(lo + hi) / 2` (which overflows once `lo + hi` exceeds
-    //     `usize::MAX`) appears NOWHERE in the crate. `lo <= hi <= count <= cap`,
-    //     so even the operands are tiny.
+    //   - In-node search arithmetic lives in bplus_search.rs (`leaf_find_ge` /
+    //     `find_child` dispatch to `S::find_ge` / `S::find_gt`). The bisection
+    //     midpoint there is `base + size / 2` with `base + size <= len`, the
+    //     canonical overflow-safe form. The naive `(lo + hi) / 2` (which overflows
+    //     once `lo + hi` exceeds `usize::MAX`) appears NOWHERE in the crate;
+    //     operands are bounded by `count <= cap` anyway.
     //   - Within-leaf / next-leaf advance (`pos + 1`, `step`'s `self.pos + 1`) is
     //     bounded by leaf capacity; the model-index bumps (`gidx + 1`, `gm + 1`,
     //     `acc + forest_keys(..)`) are GHOST `int` (unbounded — overflow is not even
     //     a category there).
     //   - Pivot/key values are never arithmetic operands: separators and keys are
-    //     read with `L::key(node, mid)` and only COMPARED (`kmid.le(word)`), never
+    //     read from `L::keys(node)` and only COMPARED (`km.le(word)`), never
     //     added/subtracted. The single value cast on the path is `key()`'s
     //     `K::from_usize(w.as_usize())`, proven to round-trip exactly because
     //     `model_bounded` keeps every stored word `< K::id_bound()`.
@@ -9432,14 +9436,16 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     }
 
     /// `find_ge` over a leaf node's keys: first index `r` with `keys[r] >= word`.
-    /// Binary search over the sorted key view; returns the split point: everything
-    /// left of `r` is `< word`, everything from `r` on is `>= word`. `r <= count`.
+    /// Dispatches to `S::find_ge` on the node's live key prefix (production's
+    /// `S::find_ge(&L::data(&leaf)[..n], word)`), then lifts the split point onto
+    /// the ghost key view: everything left of `r` is `< word`, everything from
+    /// `r` on is `>= word`. `r <= count`.
     fn leaf_find_ge(&self, node: &L::Node, word: L::Word) -> (r: usize)
         requires
             L::node_wf(*node),
             L::is_leaf_spec(*node),
-            // the leaf's keys are strictly sorted (its tree_wf leaf arm) — what
-            // lets the binary search extend keys[mid] >= word to all of keys[mid..].
+            // the leaf's keys are strictly sorted (its tree_wf leaf arm); implies
+            // the non-strict `sorted_le` that `S::find_ge` requires.
             crate::bplus_tree::strictly_sorted(
                 Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat())),
         ensures
@@ -9447,103 +9453,39 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|i: int| 0 <= i < r ==> (#[trigger] L::keys_view(*node)[i]).as_nat() < word.as_nat(),
             forall|i: int| r <= i < L::count_spec(*node) ==> word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat(),
     {
-        let n = L::count(node);
         let ghost ks = Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat());
-        proof { L::lemma_keys_view_len(*node); }
-        if n == 0 {
-            return 0;
-        }
-        // BRANCHLESS bisection, reproducing `slice::partition_point` — which is
-        // what production calls, and which we cannot (its closure carries no
-        // spec). Two things have to match, and only the first is about shape:
-        //
-        // 1. `size` shrinks by `half` UNCONDITIONALLY, so the trip count is
-        //    exactly `log2(n)`, independent of the data. The textbook
-        //    `while lo < hi` assigns `hi = mid` on one side only, which makes the
-        //    trip count data-dependent.
-        // 2. The `base` update goes through `sel_usize`, i.e.
-        //    `hint::select_unpredictable`, so it lowers to `cmov`. This is the
-        //    part that is easy to get wrong and invisible in the source: written
-        //    as `if lt { mid } else { base }` the code *reads* branchless, but
-        //    LLVM's if-conversion heuristic judges the compare predictable and
-        //    emits `ja`/`jmp` anyway (an arithmetic mask gets folded back to the
-        //    same branch). On shuffled keys that compare is a coin flip, so it
-        //    mispredicts at ~half the levels of every descent.
-        //
-        // Both together, measured on the 100k/400k descent benchmark: the
-        // verified descent went from +15..+21% slower than production to ~19%
-        // faster. Shape alone, with the `if` form, was worth <1% — the `cmov` is
-        // the whole effect, and the two arms' disassembly (`cmovbe` in
-        // production, `ja` here) was the only place the difference showed.
-        let mut base: usize = 0;
-        let mut size: usize = n;
-        while size > 1
-            invariant
-                1 <= size,
-                base + size <= n,
-                L::node_wf(*node),
-                n as nat == L::count_spec(*node),
-                L::keys_view(*node).len() == n as nat,
-                ks == Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat()),
-                ks.len() == n as nat,
-                crate::bplus_tree::strictly_sorted(ks),
-                forall|i: int| 0 <= i < n ==> ks[i] == (#[trigger] L::keys_view(*node)[i]).as_nat(),
-                // everything left of base is < word; everything from base+size on is >= word.
-                forall|i: int| 0 <= i < base ==> (#[trigger] L::keys_view(*node)[i]).as_nat() < word.as_nat(),
-                forall|i: int| base + size <= i < n ==> word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat(),
-            decreases size,
-        {
-            let half = size / 2;
-            let mid = base + half;  // base <= mid < base + size <= n, so mid < count.
-            assert(mid < n);
-            assert((mid as nat) < L::count_spec(*node));
-            let kmid = L::key(node, mid);
-            let lt = kmid.lt(word);
-            proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(kmid, word);
-                assert(kmid == L::keys_view(*node)[mid as int]);
-                if lt {
-                    // keys[mid] < word, sorted ⟹ keys[i] < word for i <= mid, so
-                    // moving `base` up to `mid` keeps the left arm.
-                    assert forall|i: int| 0 <= i < mid implies
-                        (#[trigger] L::keys_view(*node)[i]).as_nat() < word.as_nat() by {
-                        if i < mid { assert(ks[i] < ks[mid as int]); }  // strictly_sorted
-                    }
-                } else {
-                    // keys[mid] >= word, sorted ⟹ keys[i] >= word for i >= mid.
-                    // `base + (size - half) <= mid + 1`, so the right arm covers
-                    // the new tail whether or not `base` moved.
-                    assert forall|i: int| mid <= i < n implies
-                        word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat() by {
-                        if mid < i { assert(ks[mid as int] < ks[i]); }
-                    }
-                }
-            }
-            // `sel_usize`, not `if lt { mid } else { base }`: the plain `if` is
-            // what LLVM turns back into a mispredicting branch. See `sel_usize`.
-            base = crate::bplus_layout::sel_usize(lt, base, mid);
-            size = size - half;
-        }
-        // `size == 1`: one candidate left at `base`, and the invariant already
-        // places every index outside `[base, base+1)` on the correct side.
-        let kb = L::key(node, base);
-        let lt = kb.lt(word);
+        let keys = L::keys(node);
         proof {
-            <L::Word as IndexLike>::lemma_order_is_as_nat(kb, word);
-            assert(kb == L::keys_view(*node)[base as int]);
+            L::lemma_keys_view_len(*node);
+            // strict order (over as_nat) weakens to the sorted_le precondition.
+            assert forall|i: int, j: int| 0 <= i <= j < keys@.len() implies
+                (#[trigger] keys@[i].as_nat()) <= (#[trigger] keys@[j].as_nat()) by {
+                if i < j { assert(ks[i] < ks[j]); }  // strictly_sorted
+            }
+            assert(crate::bplus_search::sorted_le(keys@));
         }
-        // The final step stays a plain `if`, unlike the loop body: LLVM already
-        // lowers this one to `adc`/`sbb` (add-with-carry on the compare's own flag),
-        // which is what production's `partition_point` tail compiles to and is
-        // cheaper than the `cmov` `sel_usize` would force here.
-        base + if lt { 1usize } else { 0usize }
+        let r = S::find_ge(keys, word);
+        proof {
+            // `keys@ == keys_view(node)` (L::keys ensures), so S::find_ge's
+            // split-point ensures transfer to the ghost key view verbatim.
+            assert forall|i: int| 0 <= i < r implies
+                (#[trigger] L::keys_view(*node)[i]).as_nat() < word.as_nat() by {
+                assert(keys@[i].as_nat() < word.as_nat());
+            }
+            assert forall|i: int| r <= i < L::count_spec(*node) implies
+                word.as_nat() <= (#[trigger] L::keys_view(*node)[i]).as_nat() by {
+                assert(word.as_nat() <= keys@[i].as_nat());
+            }
+        }
+        r
     }
 
     /// `find_gt` over an internal node's separators: first child index `cp` such
-    /// that `word < seps[cp]` (descend there). Returns the descent child: every
-    /// separator left of `cp` is `<= word`, every one from `cp` on is `> word`,
-    /// `cp <= count` (a valid child index, since kids.len() == count + 1). Binary
-    /// search; mirrors `leaf_find_ge` with the `find_gt` (strict) boundary.
+    /// that `word < seps[cp]` (descend there). Dispatches to `S::find_gt` on the
+    /// node's live separator prefix (production's `S::find_gt(&L::data(&nd)[..n],
+    /// word)`); mirrors `leaf_find_ge` with the strict boundary. Every separator
+    /// left of `cp` is `<= word`, every one from `cp` on is `> word`, `cp <=
+    /// count` (a valid child index, since kids.len() == count + 1).
     fn find_child(&self, node: &L::Node, word: L::Word) -> (cp: usize)
         requires
             L::node_wf(*node),
@@ -9555,68 +9497,29 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             forall|j: int| 0 <= j < cp ==> (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat(),
             forall|j: int| cp <= j < L::count_spec(*node) ==> word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat(),
     {
-        let n = L::count(node);
         let ghost ks = Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat());
-        proof { L::lemma_keys_view_len(*node); }
-        if n == 0 {
-            return 0;
-        }
-        // Branchless bisection, same shape and same reason as `leaf_find_ge`'s —
-        // see the comment there. This one is the hotter of the two: it runs at
-        // every internal level of every descent.
-        let mut base: usize = 0;
-        let mut size: usize = n;
-        while size > 1
-            invariant
-                1 <= size,
-                base + size <= n,
-                L::node_wf(*node),
-                n as nat == L::count_spec(*node),
-                L::keys_view(*node).len() == n as nat,
-                ks == Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat()),
-                ks.len() == n as nat,
-                crate::bplus_tree::strictly_sorted(ks),
-                forall|i: int| 0 <= i < n ==> ks[i] == (#[trigger] L::keys_view(*node)[i]).as_nat(),
-                // left of base is <= word; from base+size on is > word.
-                forall|j: int| 0 <= j < base ==> (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat(),
-                forall|j: int| base + size <= j < n ==> word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat(),
-            decreases size,
-        {
-            let half = size / 2;
-            let mid = base + half;
-            assert(mid < n);
-            assert((mid as nat) < L::count_spec(*node));
-            let kmid = L::key(node, mid);
-            let le = kmid.le(word);
-            proof {
-                <L::Word as IndexLike>::lemma_order_is_as_nat(kmid, word);
-                assert(kmid == L::keys_view(*node)[mid as int]);
-                if le {
-                    // seps[mid] <= word; sorted ⟹ every sep left of mid is too.
-                    assert forall|j: int| 0 <= j < mid implies
-                        (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat() by {
-                        if j < mid { assert(ks[j] < ks[mid as int]); }
-                    }
-                } else {
-                    // seps[mid] > word; sorted ⟹ seps[j] > word for j >= mid.
-                    assert forall|j: int| mid <= j < n implies
-                        word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat() by {
-                        if mid < j { assert(ks[mid as int] < ks[j]); }
-                    }
-                }
-            }
-            base = crate::bplus_layout::sel_usize(le, base, mid);
-            size = size - half;
-        }
-        let kb = L::key(node, base);
-        let le = kb.le(word);
+        let keys = L::keys(node);
         proof {
-            <L::Word as IndexLike>::lemma_order_is_as_nat(kb, word);
-            assert(kb == L::keys_view(*node)[base as int]);
+            L::lemma_keys_view_len(*node);
+            assert forall|i: int, j: int| 0 <= i <= j < keys@.len() implies
+                (#[trigger] keys@[i].as_nat()) <= (#[trigger] keys@[j].as_nat()) by {
+                if i < j { assert(ks[i] < ks[j]); }  // strictly_sorted
+            }
+            assert(crate::bplus_search::sorted_le(keys@));
         }
-        // Plain `if` on the tail step — see `leaf_find_ge`'s note: this lowers to
-        // `adc`, which beats a forced `cmov`.
-        base + if le { 1usize } else { 0usize }
+        let cp = S::find_gt(keys, word);
+        proof {
+            // Same transfer as leaf_find_ge's, at the `<=` / `<` boundary.
+            assert forall|j: int| 0 <= j < cp implies
+                (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat() by {
+                assert(keys@[j].as_nat() <= word.as_nat());
+            }
+            assert forall|j: int| cp <= j < L::count_spec(*node) implies
+                word.as_nat() < (#[trigger] L::keys_view(*node)[j]).as_nat() by {
+                assert(word.as_nat() < keys@[j].as_nat());
+            }
+        }
+        cp
     }
 
     /// Descend root→leaf to the leaf that would hold `word`, returning

@@ -67,6 +67,7 @@ pub trait SearchKind {
 pub struct BinarySearch;
 
 impl SearchKind for BinarySearch {
+    #[inline(always)]
     fn find_ge<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
         let n = keys.len();
         if n == 0 {
@@ -77,8 +78,8 @@ impl SearchKind for BinarySearch {
         // data, and the only data-dependent value — `base` — is chosen by
         // `sel_usize`, which lowers to `cmov`. Both halves matter; see
         // `bplus_layout::sel_usize` for why the plain `if` form silently keeps the
-        // mispredicting branch, and `bplus.rs`'s `leaf_find_ge` for the measurement
-        // (the same change took the B+tree descent from +21% to -19% vs production).
+        // mispredicting branch. Measured on the B+tree descent (which routes here
+        // through `S`), the `cmov` form went from +21% to -19% vs production.
         let mut base: usize = 0;
         let mut size: usize = n;
         while size > 1
@@ -142,6 +143,7 @@ impl SearchKind for BinarySearch {
         base + if is_lt { 1usize } else { 0usize }
     }
 
+    #[inline(always)]
     fn find_gt<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
         let n = keys.len();
         if n == 0 {
@@ -204,13 +206,15 @@ impl SearchKind for BinarySearch {
 }
 
 /// Linear count search (production's `Branchless`): counts keys strictly
-/// below (`find_ge`) / at-or-below (`find_gt`) the target with a full scan.
-/// The name reflects production's intent (auto-vectorizable branch-free
-/// compare-accumulate); the verified body is the same linear scan with a
-/// counter — same result, same contracts as `BinarySearch`.
+/// below (`find_ge`) / at-or-below (`find_gt`) the target over the whole
+/// slice. The loop body is branch-free, matching production's: each compare
+/// widens to `0`/`1` and accumulates, so the only branch is the loop bound
+/// (data-independent) and LLVM can vectorize the compare-accumulate. Same
+/// contracts as `BinarySearch`.
 pub struct Branchless;
 
 impl SearchKind for Branchless {
+    #[inline(always)]
     fn find_ge<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
         let n = keys.len();
         let mut count: usize = 0;
@@ -230,9 +234,9 @@ impl SearchKind for Branchless {
             let ki = keys[i];
             assert(ki == keys@[i as int]);
             let is_lt = ki.lt(target);
-            proof { W::lemma_order_is_as_nat(ki, target); }
-            if is_lt {
-                proof {
+            proof {
+                W::lemma_order_is_as_nat(ki, target);
+                if is_lt {
                     // sorted: keys[i] < target forces every j <= i below
                     // target (keys[j] <= keys[i] < target)...
                     assert forall|j: int| 0 <= j <= i implies
@@ -247,13 +251,17 @@ impl SearchKind for Branchless {
                         assert(false);
                     }
                 }
-                count = count + 1;
             }
+            // The accumulate must stay a cast-and-add, never `if is_lt { count
+            // += 1 }`: a conditional here reintroduces the mispredicting branch
+            // and defeats vectorization, which is this impl's entire point.
+            count = count + (is_lt as usize);
             i = i + 1;
         }
         count
     }
 
+    #[inline(always)]
     fn find_gt<W: IndexLike>(keys: &[W], target: W) -> (r: usize) {
         let n = keys.len();
         let mut count: usize = 0;
@@ -271,9 +279,9 @@ impl SearchKind for Branchless {
             let ki = keys[i];
             assert(ki == keys@[i as int]);
             let is_le = ki.le(target);
-            proof { W::lemma_order_is_as_nat(ki, target); }
-            if is_le {
-                proof {
+            proof {
+                W::lemma_order_is_as_nat(ki, target);
+                if is_le {
                     assert forall|j: int| 0 <= j <= i implies
                         (#[trigger] keys@[j].as_nat()) <= target.as_nat() by {
                         lemma_sorted_le_at(keys@, j, i as int);
@@ -284,8 +292,9 @@ impl SearchKind for Branchless {
                         assert(false);
                     }
                 }
-                count = count + 1;
             }
+            // Cast-and-add, not a conditional: see `find_ge`.
+            count = count + (is_le as usize);
             i = i + 1;
         }
         count

@@ -343,6 +343,14 @@ pub trait NodeLayout: Sized {
         requires Self::node_wf(*n), i < Self::count_spec(*n),
         ensures k == Self::keys_view(*n)[i as int];
 
+    /// The live key prefix `data[0..count]` as one borrowed slice, refining
+    /// `keys_view` (production's `&L::data(n)[..count]`). This is what the
+    /// tree hands to `SearchKind::find_ge`/`find_gt`, whose contracts speak
+    /// about a `&[Word]` slice rather than a node.
+    fn keys(n: &Self::Node) -> (s: &[Self::Word])
+        requires Self::node_wf(*n),
+        ensures s@ == Self::keys_view(*n);
+
     /// `child_view(i)`, read from the packed array (internal nodes only). `i`
     /// ranges over `0 ..= count` (one more child than separators); `i == count
     /// <= key_cap` may be the `link`-held last child.
@@ -888,6 +896,14 @@ macro_rules! gen_layout_u32 {
             // so they take the unchecked path — see `arr_get`.
             #[inline(always)]
             fn key(n: &$node, i: usize) -> (k: u32) { arr_get(&n.data, i) }
+            // `node_wf` bounds `count` by `leaf_cap`/`key_cap`, both `<= data_len`,
+            // so the subrange is in bounds.
+            #[inline(always)]
+            fn keys(n: &$node) -> (s: &[u32]) {
+                let s = vstd::slice::slice_subrange(n.data.as_slice(), 0, n.count as usize);
+                proof { assert(s@ =~= Self::keys_view(*n)); }
+                s
+            }
             #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: u32) {
                 if i < $key_cap { arr_get(&n.data, $key_cap + i) } else { n.link }
@@ -1289,6 +1305,13 @@ macro_rules! gen_layout_u64 {
             // precondition, so the bounds check is dead. `arr_get`.
             #[inline(always)]
             fn key(n: &$node, i: usize) -> (k: u64) { arr_get(&n.data, i) }
+            // In-bounds for the same reason as the u32 `keys` above.
+            #[inline(always)]
+            fn keys(n: &$node) -> (s: &[u64]) {
+                let s = vstd::slice::slice_subrange(n.data.as_slice(), 0, n.count as usize);
+                proof { assert(s@ =~= Self::keys_view(*n)); }
+                s
+            }
 
             // u64 word -> usize arena index: the narrowing cast, lossless on a
             // 64-bit usize (the u64 layouts' declared target), proven via

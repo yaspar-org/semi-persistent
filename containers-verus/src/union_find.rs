@@ -580,7 +580,7 @@ where
         }
     }
 
-    /// Canonical representative of `x`, compressing by path halving.
+    /// Canonical representative of `x`, with two-pass full compression.
     /// Total-with-documented-panic: an out-of-range id refuses. The abstract
     /// state (`roots_view`) is unchanged — compression rewrites the cache,
     /// not the partition.

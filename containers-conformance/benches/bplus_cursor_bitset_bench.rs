@@ -25,6 +25,14 @@ type VerusTree = verus::bplus::BPlusTreeSet<
     verus::bplus_search::BinarySearch,
     false,
 >;
+type ProdTreeBr =
+    prod::bplus::BPlusTreeSet<PId, prod::bplus::Layout256, prod::bplus::Branchless, false>;
+type VerusTreeBr = verus::bplus::BPlusTreeSet<
+    VId,
+    verus::bplus_layout::Layout256,
+    verus::bplus_search::Branchless,
+    false,
+>;
 
 const N: u32 = 1 << 14;
 
@@ -141,6 +149,79 @@ fn bench_bplus_from_sorted_scan(c: &mut Criterion) {
     g.finish();
 }
 
+// Branchless arms mirror the BinarySearch groups above. The verified tree
+// dispatches in-node search through its `S` parameter (bplus.rs
+// leaf_find_ge/find_child route to S::find_ge/find_gt), so these arms
+// exercise the branch-free linear scan on both sides.
+fn bench_bplus_insert_branchless(c: &mut Criterion) {
+    let keys = shuffled(N);
+    let mut g = c.benchmark_group("bplus/insert_shuffled_branchless");
+    g.bench_function("prod", |b| {
+        b.iter_batched(
+            ProdTreeBr::new,
+            |mut t| {
+                for &k in &keys {
+                    t.insert(PId::new(k));
+                }
+                black_box(t.len())
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    g.bench_function("verus", |b| {
+        b.iter_batched(
+            VerusTreeBr::new,
+            |mut t| {
+                for &k in &keys {
+                    t.try_insert(VId::new(k)).expect("bench: within capacity");
+                }
+                black_box(t.len())
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    g.finish();
+}
+
+fn bench_bplus_seek_branchless(c: &mut Criterion) {
+    let keys = shuffled(N);
+    let mut pt = ProdTreeBr::new();
+    let mut vt = VerusTreeBr::new();
+    for &k in &keys {
+        pt.insert(PId::new(k));
+        vt.try_insert(VId::new(k)).expect("bench: within capacity");
+    }
+    let probes = shuffled(N);
+    let mut g = c.benchmark_group("bplus/cursor_seek_branchless");
+    g.bench_function("prod", |b| {
+        b.iter(|| {
+            let mut hits = 0u32;
+            for &k in &probes {
+                let mut c = pt.cursor();
+                c.seek(PId::new(k));
+                if c.key() == Some(PId::new(k)) {
+                    hits += 1;
+                }
+            }
+            black_box(hits)
+        })
+    });
+    g.bench_function("verus", |b| {
+        b.iter(|| {
+            let mut hits = 0u32;
+            for &k in &probes {
+                let mut c = vt.cursor();
+                c.seek(VId::new(k));
+                if c.key() == Some(VId::new(k)) {
+                    hits += 1;
+                }
+            }
+            black_box(hits)
+        })
+    });
+    g.finish();
+}
+
 fn bench_bitset(c: &mut Criterion) {
     let mut g = c.benchmark_group("bitset/set_test_churn");
     g.bench_function("prod", |b| {
@@ -189,6 +270,8 @@ criterion_group!(
     bench_bplus_insert,
     bench_bplus_seek,
     bench_bplus_from_sorted_scan,
+    bench_bplus_insert_branchless,
+    bench_bplus_seek_branchless,
     bench_bitset
 );
 criterion_main!(benches);

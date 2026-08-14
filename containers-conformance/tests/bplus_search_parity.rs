@@ -144,11 +144,13 @@ fn in_node_search_is_binary_not_linear() {
 /// *reachable* through the tree's type parameter.
 ///
 /// When the tree ignored `S`, `BinarySearch` and `Branchless` produced identical
-/// behavior *and* identical timings — the parameter was decorative. A
-/// pluggable-strategy A/B showing no difference is evidence that neither impl is
-/// running, not that they are equivalent. Only correctness is portably assertable
-/// here, but it does pin that both instantiate and agree with production, so a
-/// future genuine `S` dispatch has a contract to meet.
+/// behavior *and* identical timings — the parameter was decorative. Today the
+/// descent's `leaf_find_ge` / `find_child` dispatch through `S::find_ge` /
+/// `S::find_gt`, so the two instantiations run genuinely different search code
+/// against the same verified contracts; this test pins that both agree with
+/// production. The differential sweep below
+/// (`branchless_differential_prod_vs_verus`) extends the check to cursor
+/// traversal and seek.
 #[test]
 fn both_search_kinds_agree_with_production() {
     let keys = shuffled(4_000);
@@ -187,5 +189,137 @@ fn both_search_kinds_agree_with_production() {
     for k in (4_000u32..4_100).step_by(7) {
         assert!(!v_bin.contains(VId::new(k)), "BinarySearch: {k} absent");
         assert!(!v_lin.contains(VId::new(k)), "Branchless: {k} absent");
+    }
+}
+
+type ProdTreeBr =
+    prod::bplus::BPlusTreeSet<PId, prod::bplus::Layout256, prod::bplus::Branchless, false>;
+type VerusTreeBr = verus::bplus::BPlusTreeSet<
+    VId,
+    verus::bplus_layout::Layout256,
+    verus::bplus_search::Branchless,
+    false,
+>;
+
+/// Differential sweep over all four (implementation x strategy) instantiations:
+/// production/verus x BinarySearch/Branchless. Same shuffled inserts (with
+/// re-inserted duplicates), then agreement on `len`, `contains` (present and
+/// absent keys), full cursor traversal from `seek_first`, and cursor `seek` at
+/// present, absent, and past-the-end targets. Any divergence between the
+/// Branchless columns and the BinarySearch columns is a contract violation in
+/// one of the search impls; any divergence between prod and verus columns is a
+/// tree-level defect.
+#[test]
+fn branchless_differential_prod_vs_verus() {
+    let keys = shuffled(10_000);
+    let mut expected: Vec<u32> = keys.clone();
+    expected.sort_unstable();
+
+    let mut p_bin = ProdTree::new();
+    let mut p_br = ProdTreeBr::new();
+    let mut v_bin = VerusTree::new();
+    let mut v_br = VerusTreeBr::new();
+    for &k in &keys {
+        p_bin.insert(PId::new(k));
+        p_br.insert(PId::new(k));
+        v_bin.insert(VId::new(k));
+        v_br.insert(VId::new(k));
+    }
+    // Duplicate re-inserts must be no-ops in all four.
+    for &k in keys.iter().step_by(101) {
+        p_bin.insert(PId::new(k));
+        p_br.insert(PId::new(k));
+        v_bin.insert(VId::new(k));
+        v_br.insert(VId::new(k));
+    }
+
+    assert_eq!(p_bin.len(), expected.len());
+    assert_eq!(p_br.len(), expected.len());
+    assert_eq!(v_bin.len(), expected.len());
+    assert_eq!(v_br.len(), expected.len());
+
+    // Membership: verus has `contains`; production answers through a cursor
+    // (`seek` landing exactly on the key).
+    let mut pm_bin = p_bin.cursor();
+    let mut pm_br = p_br.cursor();
+    for k in (0u32..10_500).step_by(13) {
+        let want = (k as usize) < expected.len();
+        pm_bin.seek(PId::new(k));
+        pm_br.seek(PId::new(k));
+        assert_eq!(
+            pm_bin.key().map(|x| x.raw()) == Some(k),
+            want,
+            "prod/bin member {k}"
+        );
+        assert_eq!(
+            pm_br.key().map(|x| x.raw()) == Some(k),
+            want,
+            "prod/br member {k}"
+        );
+        assert_eq!(v_bin.contains(VId::new(k)), want, "verus/bin contains {k}");
+        assert_eq!(v_br.contains(VId::new(k)), want, "verus/br contains {k}");
+    }
+
+    // Full in-order traversal through each cursor.
+    let p_bin_walk: Vec<u32> = {
+        let mut c = p_bin.cursor();
+        c.seek_first();
+        let mut out = Vec::new();
+        while let Some(k) = c.key() {
+            out.push(k.raw());
+            c.step();
+        }
+        out
+    };
+    let p_br_walk: Vec<u32> = {
+        let mut c = p_br.cursor();
+        c.seek_first();
+        let mut out = Vec::new();
+        while let Some(k) = c.key() {
+            out.push(k.raw());
+            c.step();
+        }
+        out
+    };
+    let v_bin_walk: Vec<u32> = {
+        let mut c = v_bin.cursor();
+        c.seek_first();
+        let mut out = Vec::new();
+        while let Some(k) = c.key() {
+            out.push(k.raw());
+            c.step();
+        }
+        out
+    };
+    let v_br_walk: Vec<u32> = {
+        let mut c = v_br.cursor();
+        c.seek_first();
+        let mut out = Vec::new();
+        while let Some(k) = c.key() {
+            out.push(k.raw());
+            c.step();
+        }
+        out
+    };
+    assert_eq!(p_bin_walk, expected, "prod/bin traversal");
+    assert_eq!(p_br_walk, expected, "prod/br traversal");
+    assert_eq!(v_bin_walk, expected, "verus/bin traversal");
+    assert_eq!(v_br_walk, expected, "verus/br traversal");
+
+    // Cursor seek at present, absent-in-range, and past-the-end targets.
+    let mut pc_bin = p_bin.cursor();
+    let mut pc_br = p_br.cursor();
+    let mut vc_bin = v_bin.cursor();
+    let mut vc_br = v_br.cursor();
+    for t in (0u32..10_400).step_by(97) {
+        let want = expected.iter().copied().find(|&k| k >= t);
+        pc_bin.seek(PId::new(t));
+        pc_br.seek(PId::new(t));
+        vc_bin.seek(VId::new(t));
+        vc_br.seek(VId::new(t));
+        assert_eq!(pc_bin.key().map(|k| k.raw()), want, "prod/bin seek {t}");
+        assert_eq!(pc_br.key().map(|k| k.raw()), want, "prod/br seek {t}");
+        assert_eq!(vc_bin.key().map(|k| k.raw()), want, "verus/bin seek {t}");
+        assert_eq!(vc_br.key().map(|k| k.raw()), want, "verus/br seek {t}");
     }
 }
