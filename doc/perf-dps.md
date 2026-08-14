@@ -112,6 +112,32 @@ after full path compression the walks are one or two hops, so this is a
 micro item. Measure on `saturate_bench` only; discard on anything under a
 point.
 
+## D1 and the match store: landed
+
+D1 landed as E15 (ac10 −21.5%/−17.5%). The attribution follow-up reopened
+E16's flat store for the RESULTS role and landed as E17 (every
+match-emitting workload double-digit down, ac10 allocations and peak
+memory −64%). Post-E17 the allocator residue is 0.08-0.58 per step across
+the rewrite workloads; no attributed step-proportional class remains.
+
+## D7. Ring-cell shrink: discarded without an experiment
+
+Shrinking the class-ring cell from 12 to 8 bytes (bit-stealing `Opt<T>`
+payload instead of the `BoolTagged` key word) was nominated on a
+walk-density mechanism. `iter_class` has zero non-test consumers in the
+e-graph — rings are read one cell at a time (`repr_id`) and written by
+`splice` — so the mechanism has no workload and the change would buy only
+4 bytes per node of footprint against a full kernel payload refactor and a
+deliberate break of the layout-parity pins. Revisit only if a ring-walking
+consumer appears.
+
+## S1, closed by the swap
+
+The A-list's path-compression study ran itself during the verified-
+aggregate swap: path halving measured 3-5% slower than production's
+two-pass full compression on merge-heavy saturation, and the kernel now
+implements full compression, verified. No further study is warranted.
+
 ## Already destination-passing (the floor this analysis stands on)
 
 `canon.rs` normalizers (caller-owned ping-pong buffers), `seq_children`/
