@@ -56,6 +56,10 @@ name = "nested_mark_bench"
 harness = false
 
 [[bench]]
+name = "bplus_cursor_bitset_bench"
+harness = false
+
+[[bench]]
 name = "eclasses_bench"
 harness = false
 
