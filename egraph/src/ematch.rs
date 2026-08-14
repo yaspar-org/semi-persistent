@@ -301,6 +301,40 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
         self.mset_pool.truncate(s.as_usize());
         self.mset_spans[v.idx()] = empty_span::<Cfg>();
     }
+
+    /// Bind `v` to the still-available residual entries, writing them
+    /// straight onto the pool tail (E15). `push_mset` with a caller-built
+    /// slice re-bought a temporary per binding at every leaf of the AC
+    /// assignment search - 221k bindings per allocprobe run, three growth
+    /// allocations each; the pool was the destination all along.
+    pub fn push_mset_residual(&mut self, v: MsetVarId, residual: &[(Cfg::G, Cfg::M)]) {
+        let start = self.mset_pool.len();
+        let zero = Cfg::M::ZERO;
+        self.mset_pool.extend(
+            residual
+                .iter()
+                .filter(|&&(_, m)| m > zero)
+                .map(|&(g, m)| Cfg::mset_child_with_mult(g, m)),
+        );
+        self.mset_spans[v.idx()] =
+            pool_span::<Cfg>(start, self.mset_pool.len(), "Match::mset_pool");
+    }
+
+    /// The ACI twin: bind `v` to the residual ids not consumed by the
+    /// element assignment (same write-through mechanism).
+    pub fn push_set_residual(&mut self, v: SetVarId, residual: &[Cfg::G],
+        used: &crate::containers::bitset::BitSet) {
+        let start = self.set_pool.len();
+        self.set_pool.extend(
+            residual
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| !used.test(i))
+                .map(|(_, &g)| g),
+        );
+        self.set_spans[v.idx()] =
+            pool_span::<Cfg>(start, self.set_pool.len(), "Match::set_pool");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -956,12 +990,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let zero = Cfg::M::ZERO;
     if ei >= elems.len() {
         if let Some(rv) = rest {
-            let remaining: Vec<Cfg::C> = residual
-                .iter()
-                .filter(|&&(_, m)| m > zero)
-                .map(|&(g, m)| Cfg::mset_child_with_mult(g, m))
-                .collect();
-            env.push_mset(rv, &remaining);
+            env.push_mset_residual(rv, residual);
             run_step(plan, step_idx + 1, eg, index, globals, env, results);
             env.pop_mset(rv);
         } else if residual.iter().all(|&(_, m)| m == zero) {
@@ -1112,13 +1141,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     if ei >= elems.len() {
         if let Some(rv) = rest {
-            let remaining: Vec<Cfg::G> = residual
-                .iter()
-                .enumerate()
-                .filter(|&(i, _)| !used.test(i))
-                .map(|(_, &g)| g)
-                .collect();
-            env.push_set(rv, &remaining);
+            env.push_set_residual(rv, residual, used);
             run_step(plan, step_idx + 1, eg, index, globals, env, results);
             env.pop_set(rv);
         } else if (0..residual.len()).all(|i| used.test(i)) {
