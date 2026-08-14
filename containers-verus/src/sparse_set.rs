@@ -355,6 +355,49 @@ where
         self.dense.get_index(pos)
     }
 
+    /// Value of a live id whose liveness the caller has already established
+    /// (pub(crate): the aggregate checks once, or holds it as a proof fact,
+    /// and reads without the public form's re-check).
+    pub(crate) fn get_live(&self, id: Idx) -> (v: T)
+        requires
+            self.wf(),
+            self.contains_spec(id),
+        ensures
+            v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
+    {
+        let pos = self.sparse.get_index(id);
+        self.dense.get_index(pos)
+    }
+
+    /// Overwrite a live id's value, liveness already established (the
+    /// pub(crate) twin of `set`, same effects without the re-check).
+    pub(crate) fn set_live(&mut self, id: Idx, value: T)
+        requires
+            old(self).wf(),
+            old(self).contains_spec(id),
+        ensures
+            final(self).wf(),
+            final(self).cap_spec() == old(self).cap_spec(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).sparse_view() == old(self).sparse_view(),
+            final(self).indices_view() == old(self).indices_view(),
+            final(self).dense_view() == old(self).dense_view().update(
+                old(self).sparse_view()[id.as_nat() as int].as_nat() as int, value),
+            final(self).id_set() == old(self).id_set(),
+            final(self).free_pool() == old(self).free_pool(),
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
+    {
+        let pos = self.sparse.get_index(id);
+        self.dense.set_index(pos, value);
+        proof {
+            assert(self.sparse.view() == old(self).sparse.view());
+            assert(self.indices.view() == old(self).indices.view());
+            assert(self.dense.view().len() == old(self).dense.view().len());
+        }
+    }
+
     /// Overwrite a live id's value in place (position and id unchanged).
     pub fn set(&mut self, id: Idx, value: T)
         requires old(self).wf(),

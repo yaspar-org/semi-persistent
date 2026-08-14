@@ -141,7 +141,24 @@ inside merge_with - the WITNESS-PENDING argument as a theorem), add_use,
 splice_uses, the min-monomial pool family, set_atomic, verified ring and
 use-list iterators, and Phase-7 mark/restore whose joint archive also
 discharges SparseSet::restore's snapshot-wellformedness precondition.
-Behavioral and misuse tests in tests/eclasses_behavior.rs. The crate
+Behavioral and misuse tests in tests/eclasses_behavior.rs.
+THE SWAP IS DONE: egraph/src/classes.rs is now an adapter over the verified
+aggregate. The adapter adds only the proof forest (merge_justified/explain:
+the same two semi-persistent columns and re-rooting algorithm as before,
+verbatim), keeps production's signatures and pinned panic messages, and
+retires the stage-0 debug monitor - what it asserted per merge, the
+verifier now rejects at build time. Node caches and the routing table are
+untouched. Layout is compile-time asserted unchanged (12-byte ring cell,
+12-byte class slot at 31-bit ids); the kernel's find was aligned to
+production's two-pass full compression and its rank maintenance to the
+height-bound rule after the first benchmark comparison showed the halving
+variant 3-5% slower on merge-heavy saturation. Final numbers
+(saturate_bench, criterion save-baseline/baseline protocol per its module
+doc, two comparison runs): plain7 -1.0 to -1.7%, ac6/ac10 +0.8 to +1.6%,
+completion rows within +/-0.6% - inside the +/-3% environmental band
+BASELINE.md documents for this machine class, with both signs represented.
+The full egraph suite (917 tests: saturation, congruence proofs, restore)
+passes unchanged. The crate
 verifies clean with the aggregate included; the partial-api gate is
 unchanged at 35 (every new public fn is total). The public allowlist
 entries for splice_absorb and SparseSet::restore remain: they guard

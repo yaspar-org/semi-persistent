@@ -1354,7 +1354,7 @@ where
                 o.reprs.n_spec(), key.as_nat()));
             assert(self.reprs.contains_spec(key));
         }
-        let data = self.reprs.get(key);
+        let data = self.reprs.get_live(key);
         proof {
             assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                 key.as_nat()));
@@ -1420,7 +1420,7 @@ where
             crate::guard::refuse("EClasses::add_use: class key is not live");
         }
         let ghost o = *old(self);
-        let mut data = self.reprs.get(child_key);
+        let mut data = self.reprs.get_live(child_key);
         proof {
             crate::opt::lemma_id_nat_fits_usize(parent_node);
             assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
@@ -1438,7 +1438,7 @@ where
         let ghost mid_un = self.uses.nodes_view();
         if !data.atomic {
             data.atomic = true;
-            self.reprs.set(child_key, data);
+            self.reprs.set_live(child_key, data);
         }
         proof {
             let n = o.n_spec();
@@ -1697,7 +1697,7 @@ where
         if !self.reprs.contains(key) {
             crate::guard::refuse("EClasses::min_monomial: class key is not live");
         }
-        let data = self.reprs.get(key);
+        let data = self.reprs.get_live(key);
         match data.min_row {
             None => None,
             Some(row) => {
@@ -1745,7 +1745,7 @@ where
         }
         let ghost o = *old(self);
         let ghost w = o.min_width as nat;
-        let mut data = self.reprs.get(key);
+        let mut data = self.reprs.get_live(key);
         proof {
             assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
                 o.reprs.n_spec(), key.as_nat()));
@@ -1807,7 +1807,7 @@ where
                     i = i + 1;
                 }
                 data.min_row = Some(row);
-                self.reprs.set(key, data);
+                self.reprs.set_live(key, data);
                 proof {
                     let len1 = self.min_pool.view().len();
                     let dense = self.reprs.dense_view();
@@ -1999,7 +1999,7 @@ where
         if !self.reprs.contains(key) {
             crate::guard::refuse("EClasses::atomic: class key is not live");
         }
-        self.reprs.get(key).atomic
+        self.reprs.get_live(key).atomic
     }
 
     /// The use-list id of class `key`. Refuses a dead key.
@@ -2011,7 +2011,7 @@ where
         if !self.reprs.contains(key) {
             crate::guard::refuse("EClasses::use_list_id: class key is not live");
         }
-        self.reprs.get(key).use_list
+        self.reprs.get_live(key).use_list
     }
 
 
@@ -2029,12 +2029,12 @@ where
             crate::guard::refuse("EClasses::set_atomic: class key is not live");
         }
         let ghost o = *old(self);
-        let mut data = self.reprs.get(key);
+        let mut data = self.reprs.get_live(key);
         if data.atomic {
             return;
         }
         data.atomic = true;
-        self.reprs.set(key, data);
+        self.reprs.set_live(key, data);
         proof {
             let dense = self.reprs.dense_view();
             let sparse = self.reprs.sparse_view();
@@ -2101,7 +2101,7 @@ where
         if !self.reprs.contains(key) {
             crate::guard::refuse("EClasses::iter_uses: class key is not live");
         }
-        let l = self.reprs.get(key).use_list;
+        let l = self.reprs.get_live(key).use_list;
         proof {
             assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.reprs.n_spec(), key.as_nat()));
@@ -2119,7 +2119,7 @@ where
         if !self.reprs.contains(key) {
             crate::guard::refuse("EClasses::use_list_len: class key is not live");
         }
-        let l = self.reprs.get(key).use_list;
+        let l = self.reprs.get_live(key).use_list;
         proof {
             assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.reprs.n_spec(), key.as_nat()));

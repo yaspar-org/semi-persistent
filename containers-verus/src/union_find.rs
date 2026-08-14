@@ -453,8 +453,50 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             crate::guard::refuse("UnionFind::find: id out of range");
         }
         let ghost n = old(self).n_spec();
-        let mut cur = x;
+        // pass 1: locate the root (read-only walk; production's shape).
+        let mut root = x;
         loop
+            invariant
+                self.wf(),
+                *self == *old(self),
+                self.n_spec() == n,
+                root.id_nat() < n,
+                x.id_nat() < n,
+                self.roots@[root.id_nat() as int] == self.roots@[x.id_nat() as int],
+            ensures
+                *self == *old(self),
+                root.id_nat() < n,
+                self.roots@[root.id_nat() as int] == root.id_nat() as usize,
+                self.roots@[root.id_nat() as int] == self.roots@[x.id_nat() as int],
+            decreases self.dist@[root.id_nat() as int],
+        {
+            let p = self.parent.get_index(root.to_index());
+            proof {
+                assert(p == self.parent_view()[root.id_nat() as int]);
+                assert(p.id_nat() < n);
+            }
+            if p.to_usize() == root.to_usize() {
+                proof {
+                    T::lemma_id_injective(p, root);
+                    crate::opt::lemma_id_nat_fits_usize(root);
+                    assert(parent_self_root_clause(
+                        self.parent_view(), self.roots@, root.id_nat() as int));
+                    assert(self.parent_view()[root.id_nat() as int].id_nat() == root.id_nat());
+                    assert(self.roots@[root.id_nat() as int] == root.id_nat() as usize);
+                }
+                break;
+            }
+            proof { assert(p.id_nat() != root.id_nat()); }
+            root = p;
+        }
+        // pass 2: point every node on the walked path at the root
+        // (production's full compression). Each write lowers the written
+        // node's measure to 1 (the root's is 0), which preserves the strict
+        // decrease into it, and the cursor advances along parents read
+        // before their cell is overwritten.
+        proof { crate::opt::lemma_id_nat_fits_usize(root); }
+        let mut cur = x;
+        while cur.to_usize() != root.to_usize()
             invariant
                 self.wf(),
                 self.n_spec() == n,
@@ -467,54 +509,37 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 self.parent.snapshots_view() == old(self).parent.snapshots_view(),
                 cur.id_nat() < n,
                 x.id_nat() < n,
+                root.id_nat() < n,
                 self.roots@[cur.id_nat() as int] == self.roots@[x.id_nat() as int],
+                self.roots@[root.id_nat() as int] == root.id_nat() as usize,
+                self.roots@[root.id_nat() as int] == self.roots@[x.id_nat() as int],
             decreases self.dist@[cur.id_nat() as int],
         {
+            proof {
+                crate::opt::lemma_id_nat_fits_usize(cur);
+                assert(cur.id_nat() != root.id_nat()) by {
+                    if cur.id_nat() == root.id_nat() { T::lemma_id_injective(cur, root); }
+                }
+            }
             let p = self.parent.get_index(cur.to_index());
             proof {
                 assert(p == self.parent_view()[cur.id_nat() as int]);
                 assert(p.id_nat() < n);
-            }
-            if p.to_usize() == cur.to_usize() {
-                proof {
-                    T::lemma_id_injective(p, cur);
-                    crate::opt::lemma_id_nat_fits_usize(cur);
-                    assert(parent_self_root_clause(
-                        self.parent_view(), self.roots@, cur.id_nat() as int));
-                    assert(self.parent_view()[cur.id_nat() as int].id_nat() == cur.id_nat());
-                    assert(self.roots@[cur.id_nat() as int] == cur.id_nat() as usize);
-                }
-                return cur;
-            }
-            proof { assert(p.id_nat() != cur.id_nat()); }
-            let g = self.parent.get_index(p.to_index());
-            proof {
-                assert(g == self.parent_view()[p.id_nat() as int]);
-                assert(g.id_nat() < n);
-                // g != cur: otherwise dist[cur] < dist[p] < dist[cur] (when
-                // p is not self-parented) — and p != cur here.
-                if g.id_nat() == cur.id_nat() {
-                    if p.id_nat() != g.id_nat() {
-                        assert(self.dist@[g.id_nat() as int] < self.dist@[p.id_nat() as int]);
-                        assert(self.dist@[p.id_nat() as int] < self.dist@[cur.id_nat() as int]);
-                        assert(false);
-                    } else {
-                        // p self-parented would make p a root == cur's parent;
-                        // then parent[p] == p == g == cur contradicts p != cur.
-                        assert(false);
+                crate::opt::lemma_id_nat_fits_usize(p);
+                // cur is not a root: were parent[cur] == cur, roots[cur] == cur,
+                // but roots[cur] == roots[root] == root != cur.
+                assert(parent_self_root_clause(
+                    self.parent_view(), self.roots@, cur.id_nat() as int));
+                assert(self.parent_view()[cur.id_nat() as int].id_nat() != cur.id_nat()) by {
+                    if self.parent_view()[cur.id_nat() as int].id_nat() == cur.id_nat() {
+                        assert(self.roots@[cur.id_nat() as int] == cur.id_nat() as usize);
                     }
                 }
-            }
-            proof {
-                crate::opt::lemma_id_nat_fits_usize(cur);
-                crate::opt::lemma_id_nat_fits_usize(p);
-                crate::opt::lemma_id_nat_fits_usize(g);
+                assert(p.id_nat() != cur.id_nat());
             }
             let ghost pre = *self;
-            // the halving write: parent[cur] := grandparent
-            self.parent.set_index(cur.to_index(), g);
-            self.dist = Ghost(self.dist@.update(
-                cur.id_nat() as int, self.dist@[g.id_nat() as int] + 1));
+            self.parent.set_index(cur.to_index(), root);
+            self.dist = Ghost(self.dist@.update(cur.id_nat() as int, 1nat));
             proof {
                 let pv = self.parent_view();
                 let opv = pre.parent_view();
@@ -522,42 +547,25 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 let dist = self.dist@;
                 let odist = pre.dist@;
                 let ci = cur.id_nat() as int;
-                let pi = p.id_nat() as int;
-                let gi = g.id_nat() as int;
-                assert(pv == opv.update(ci, g));
-                assert(dist == odist.update(ci, odist[gi] + 1));
-                // cur is not a root (its parent differs), so no dist-zero or
-                // root-self-parent clause is disturbed, and cur is not any
-                // element's root value.
-                assert(roots[ci] != cur.id_nat() as usize) by {
-                    if roots[ci] == cur.id_nat() as usize {
-                        // root self-parent at i = ci contradicts p != cur
-                        assert(opv[ci].id_nat() == cur.id_nat());
-                    }
-                }
+                let ri = root.id_nat() as int;
+                assert(pv == opv.update(ci, root));
+                assert(dist == odist.update(ci, 1nat));
+                // cur is not any element's root value (it is not a root).
+                assert(roots[ci] != cur.id_nat() as usize);
                 assert forall|i: int| 0 <= i < n implies
                     (#[trigger] roots[i]) != cur.id_nat() as usize by {
                     if roots[i] == cur.id_nat() as usize {
-                        // roots are canonical: roots[roots[i]] == roots[i],
-                        // so cur would be its own root — refuted above.
                         assert(roots[ci] == roots[i]);
                     }
                 }
-                // dist[g] + 1 <= old dist[cur]: through p when g != p, or
-                // dist[p] == 0 when p == g (p a root).
-                assert(odist[gi] + 1 <= odist[ci]) by {
-                    if g.id_nat() == p.id_nat() {
-                        assert(opv[pi].id_nat() == p.id_nat());
-                        assert(parent_self_root_clause(opv, roots, pi));
-                        assert(roots[pi] == p.id_nat() as usize);
-                        assert(odist[pi] == 0);
-                        assert(odist[ci] >= 1);
-                    } else {
-                        assert(odist[gi] < odist[pi]);
-                        assert(odist[pi] < odist[ci]);
-                    }
+                // the root has measure 0 and stays a root.
+                assert(roots[ri] == root.id_nat() as usize);
+                assert(odist[ri] == 0);
+                // cur was not a root, so its old measure was at least 1.
+                assert(odist[ci] >= 1) by {
+                    assert(opv[ci].id_nat() != ci as nat);
+                    assert(odist[opv[ci].id_nat() as int] < odist[ci]);
                 }
-                // re-establish the model invariant clause by clause
                 assert forall|i: int| 0 <= i < n implies (#[trigger] pv[i]).id_nat() < n by {
                     if i != ci { assert(pv[i] == opv[i]); }
                 }
@@ -567,8 +575,7 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                         assert(pv[i] == opv[i]);
                         assert(parent_self_root_clause(opv, roots, i));
                     } else {
-                        // pv[ci] == g, and g != cur, so the clause is vacuous.
-                        assert(pv[ci] == g);
+                        assert(pv[ci] == root);
                         assert(pv[ci].id_nat() != ci as nat);
                     }
                 }
@@ -577,14 +584,11 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                     if i != ci {
                         assert(pv[i] == opv[i]);
                     } else {
-                        // two steps: roots[g] == roots[p] == roots[cur]
-                        assert(roots[gi] == roots[pi]);
-                        assert(roots[pi] == roots[ci]);
+                        assert(roots[ri] == roots[ci]);
                     }
                 }
                 assert forall|i: int| 0 <= i < n implies
                     parent_root_self_parent_clause(pv, roots, i) by {
-                    // pv changed only at ci, and no roots[i] equals cur's id.
                     assert(roots[i] != cur.id_nat() as usize);
                     assert(pv[roots[i] as int] == opv[roots[i] as int]);
                 }
@@ -595,36 +599,40 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 }
                 assert forall|i: int| 0 <= i < n && (#[trigger] pv[i]).id_nat() != i as nat
                     implies dist[pv[i].id_nat() as int] < dist[i] by {
-                    {
-                        if i == ci {
-                            // new edge cur -> g: dist[g] unchanged, new
-                            // dist[cur] is dist[g] + 1.
-                            assert(dist[gi] == odist[gi]);
-                            assert(dist[ci] == odist[gi] + 1);
-                        } else if opv[i].id_nat() == cur.id_nat() {
-                            // an edge into cur: its head's dist shrank.
-                            assert(dist[ci] <= odist[ci]);
-                            assert(odist[ci] < odist[i]);
-                            assert(dist[i] == odist[i]);
-                        } else {
-                            assert(pv[i] == opv[i]);
-                            assert(dist[pv[i].id_nat() as int]
-                                == odist[opv[i].id_nat() as int]);
-                            assert(dist[i] == odist[i]);
-                        }
+                    if i == ci {
+                        // new edge cur -> root: measure 0 < 1.
+                        assert(dist[ri] == odist[ri]);
+                        assert(dist[ci] == 1);
+                    } else if opv[i].id_nat() == cur.id_nat() {
+                        // an edge into cur: its head's measure fell to 1, and
+                        // the tail's was strictly above cur's old (>= 1) one.
+                        assert(dist[ci] == 1);
+                        assert(odist[ci] < odist[i]);
+                        assert(dist[i] == odist[i]);
+                    } else {
+                        assert(pv[i] == opv[i]);
+                        assert(dist[pv[i].id_nat() as int]
+                            == odist[opv[i].id_nat() as int]);
+                        assert(dist[i] == odist[i]);
                     }
                 }
                 assert(uf_model_wf(pv, roots, dist));
-                // archive agreement: snapshots unchanged, congruence.
                 assert(self.parent.snapshots_view() == pre.parent.snapshots_view());
             }
             proof {
-                // the measure decreases: dist[g] is unchanged by the update
-                // (g != cur) and was strictly below dist[cur].
-                assert(self.dist@[g.id_nat() as int] < pre.dist@[cur.id_nat() as int]);
+                // measure: the next cursor's cell is unwritten (it is ahead of
+                // the walk), so its measure is the old one, strictly below.
+                assert(p.id_nat() != cur.id_nat());
+                assert(self.dist@[p.id_nat() as int] == pre.dist@[p.id_nat() as int] || p.id_nat() == cur.id_nat());
+                assert(pre.dist@[p.id_nat() as int] < pre.dist@[cur.id_nat() as int]);
             }
-            cur = g;
+            cur = p;
         }
+        proof {
+            crate::opt::lemma_id_nat_fits_usize(root);
+            assert(root.id_nat() == old(self).roots_view()[x.id_nat() as int] as nat);
+        }
+        root
     }
 
     /// Attach root `ab`'s class under root `s` (the link step of union).

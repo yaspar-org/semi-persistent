@@ -56,5 +56,9 @@ name = "nested_mark_bench"
 harness = false
 
 [[bench]]
+name = "eclasses_bench"
+harness = false
+
+[[bench]]
 name = "perf_gate"
 harness = false
