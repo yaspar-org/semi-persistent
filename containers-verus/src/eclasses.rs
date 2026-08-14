@@ -180,7 +180,7 @@ pub open(crate) spec fn ss_value<V, Idx: IndexLike>(
 /// the pool geometry.
 pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>(
     ring_model: Seq<Seq<usize>>,
-    payloads: Seq<Opt<T>>,
+    payloads: Seq<Opt<<T as DenseId>::Index>>,
     roots: Seq<usize>,
     reprs_dense: Seq<ClassData<L, T>>,
     reprs_sparse: Seq<<T as DenseId>::Index>,
@@ -206,17 +206,17 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
     // stored data names an allocated use-list
     &&& (forall|x: int| 0 <= x < n && (#[trigger] roots[x]) == x as usize
             ==> ss_contains(reprs_sparse, reprs_indices, live,
-                    payloads[x].get_spec()->Some_0.id_nat()))
+                    payloads[x].get_spec()->Some_0.as_nat()))
     // W2c: keys are injective across roots
     &&& (forall|x: int, y: int|
             0 <= x < n && 0 <= y < n && x != y
                 && (#[trigger] roots[x]) == x as usize && (#[trigger] roots[y]) == y as usize
-                ==> payloads[x].get_spec()->Some_0.id_nat()
-                    != payloads[y].get_spec()->Some_0.id_nat())
+                ==> payloads[x].get_spec()->Some_0.as_nat()
+                    != payloads[y].get_spec()->Some_0.as_nat())
     // W2d (the other direction): every live key is some root's key
     &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
             ==> exists|x: int| 0 <= x < n && roots[x] == x as usize
-                && (#[trigger] payloads[x]).get_spec()->Some_0.id_nat() == id)
+                && (#[trigger] payloads[x]).get_spec()->Some_0.as_nat() == id)
     // W3a: same ring implies same root
     &&& (forall|c: int, p: int, q: int|
             0 <= c < ring_model.len() && 0 <= p < ring_model[c].len()
@@ -265,8 +265,8 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
 
 /// The payload column of a ring snapshot.
 pub open(crate) spec fn ring_payloads<T: DenseId>(
-    cells: Seq<CircularListNode<Opt<T>, T>>,
-) -> Seq<Opt<T>> {
+    cells: Seq<CircularListNode<Opt<<T as DenseId>::Index>, T>>,
+) -> Seq<Opt<<T as DenseId>::Index>> {
     Seq::new(cells.len(), |i: int| cells[i].payload)
 }
 
@@ -281,7 +281,7 @@ pub open(crate) spec fn ring_payloads<T: DenseId>(
 #[verifier::opaque]
 pub open(crate) spec fn eg_archive_agrees<T: DenseId, L: DenseId, N: DenseId + Tagged>(
     ring_models: Seq<Seq<Seq<usize>>>,
-    ring_cells: Seq<Seq<CircularListNode<Opt<T>, T>>>,
+    ring_cells: Seq<Seq<CircularListNode<Opt<<T as DenseId>::Index>, T>>>,
     roots_arch: Seq<Seq<usize>>,
     dense_snaps: Seq<Seq<ClassData<L, T>>>,
     sparse_snaps: Seq<Seq<<T as DenseId>::Index>>,
@@ -324,7 +324,7 @@ where
 {
     /// The class ring; each cell carries the class's repr key (as a
     /// node-typed dense id) while the class is live, absent once absorbed.
-    pub(crate) entries: CircularList<Opt<T>, T, TRACK>,
+    pub(crate) entries: CircularList<Opt<<T as DenseId>::Index>, T, TRACK>,
     /// Per-class data, keyed by repr id.
     pub(crate) reprs: SparseSet<ClassData<L, T>, <T as DenseId>::Index,
         InlineStore<ClassData<L, T>, <T as DenseId>::Index>, TRACK>,
@@ -367,7 +367,7 @@ where
 
     /// The repr key stored in `x`'s ring cell (meaningful when `x` is a root).
     pub open(crate) spec fn key_of(&self, x: int) -> nat {
-        self.entries.payload_seq()[x].get_spec()->Some_0.id_nat()
+        self.entries.payload_seq()[x].get_spec()->Some_0.as_nat()
     }
 
     /// The class data of live key `id` (spec).
@@ -381,7 +381,8 @@ where
     }
 
     /// The ring component (spec ref, for iterator ensures).
-    pub open(crate) spec fn entries_ref(&self) -> &CircularList<Opt<T>, T, TRACK> {
+    pub open(crate) spec fn entries_ref(&self)
+        -> &CircularList<Opt<<T as DenseId>::Index>, T, TRACK> {
         &self.entries
     }
 
@@ -542,17 +543,7 @@ where
             assert(p == self.entries.payload_seq()[idx.id_nat() as int]);
             assert(p.wf());
         }
-        match p.to_option() {
-            Some(k) => {
-                proof {
-                    if idx.id_nat() < self.n_spec() {
-                        k.lemma_as_nat_is_id_nat();
-                    }
-                }
-                Some(k.to_index())
-            }
-            None => None,
-        }
+        p.to_option()
     }
 
     /// Allocate a fresh node as its own singleton class; returns the node id
@@ -589,25 +580,14 @@ where
             Ok(k) => k,
             Err(_) => crate::guard::refuse("EClasses::add_singleton: repr capacity exhausted"),
         };
-        // the key is representable as a node-typed id: a fresh key is the old
-        // capacity (<= old n < id_bound after make_set), a recycled key is
-        // below it.
         proof {
             crate::opt::lemma_id_nat_fits_usize(id);
             id.lemma_id_nat_bounded();
             assert(key.as_nat() <= old(self).reprs.cap_spec());
             assert(old(self).reprs.cap_spec() <= n0);
-            assert(n0 < T::id_bound());
         }
-        let key_t = match T::try_new(key.as_usize()) {
-            Some(k) => k,
-            None => {
-                proof { assert(false); }
-                crate::guard::refuse("EClasses::add_singleton: unreachable key mint")
-            }
-        };
-        // 4. ring cell
-        let opt_key = Opt::some(key_t);
+        // 4. ring cell: the key word is the payload, as production stores it.
+        let opt_key = Opt::some(key);
         let ring_id = match self.entries.try_add_singleton(opt_key) {
             Ok(rid) => rid,
             Err(_) => crate::guard::refuse("EClasses::add_singleton: ring capacity exhausted"),
@@ -639,13 +619,12 @@ where
             let kn = key.as_nat();
 
             assert(pay == opay.push(opt_key));
-            assert(opt_key.get_spec() == Some(key_t));
+            assert(opt_key.get_spec() == Some(key));
             assert(rm == orm.push(seq![n0 as usize]));
             assert(roots == oroots.push(n0 as usize));
             assert(um == oum.push(Seq::<usize>::empty()));
             assert(un == o.uses.nodes_view());
             assert(pay.len() == n1);
-            assert(key_t.id_nat() == kn);
             crate::opt::lemma_id_nat_fits_usize(id);
 
             // the new key is live, with the fresh ClassData
@@ -698,10 +677,10 @@ where
             // --- W2b
             assert forall|x: int| 0 <= x < n1 && (#[trigger] roots[x]) == x as usize
                 implies ss_contains(sparse, indices, live,
-                    pay[x].get_spec()->Some_0.id_nat()) by {
+                    pay[x].get_spec()->Some_0.as_nat()) by {
                 if x < n0 {
                     assert(ss_contains(osparse, oindices, olive,
-                        opay[x].get_spec()->Some_0.id_nat()));
+                        opay[x].get_spec()->Some_0.as_nat()));
                     assert(pay[x] == opay[x]);
                 }
             }
@@ -710,8 +689,8 @@ where
                 0 <= x < n1 && 0 <= y < n1 && x != y
                     && (#[trigger] roots[x]) == x as usize
                     && (#[trigger] roots[y]) == y as usize
-                implies pay[x].get_spec()->Some_0.id_nat()
-                    != pay[y].get_spec()->Some_0.id_nat() by {
+                implies pay[x].get_spec()->Some_0.as_nat()
+                    != pay[y].get_spec()->Some_0.as_nat() by {
                 if x < n0 && y < n0 {
                     assert(pay[x] == opay[x] && pay[y] == opay[y]);
                 } else if x == n0 as int && y < n0 {
@@ -719,26 +698,26 @@ where
                     // is live in the OLD set.
                     assert(pay[y] == opay[y]);
                     assert(ss_contains(osparse, oindices, olive,
-                        opay[y].get_spec()->Some_0.id_nat()));
+                        opay[y].get_spec()->Some_0.as_nat()));
                 } else if y == n0 as int && x < n0 {
                     assert(pay[x] == opay[x]);
                     assert(ss_contains(osparse, oindices, olive,
-                        opay[x].get_spec()->Some_0.id_nat()));
+                        opay[x].get_spec()->Some_0.as_nat()));
                 }
             }
             // --- W2d
             assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
                 implies exists|x: int| 0 <= x < n1 && roots[x] == x as usize
-                    && (#[trigger] pay[x]).get_spec()->Some_0.id_nat() == kk by {
+                    && (#[trigger] pay[x]).get_spec()->Some_0.as_nat() == kk by {
                 if kk == kn {
                     assert(roots[n0 as int] == n0 as usize);
-                    assert(pay[n0 as int].get_spec()->Some_0.id_nat() == kk);
+                    assert(pay[n0 as int].get_spec()->Some_0.as_nat() == kk);
                 } else {
                     assert(ss_contains(osparse, oindices, olive, kk));
                     let x = choose|x: int| 0 <= x < n0 && oroots[x] == x as usize
-                        && (#[trigger] opay[x]).get_spec()->Some_0.id_nat() == kk;
+                        && (#[trigger] opay[x]).get_spec()->Some_0.as_nat() == kk;
                     assert(roots[x] == x as usize);
-                    assert(pay[x].get_spec()->Some_0.id_nat() == kk);
+                    assert(pay[x].get_spec()->Some_0.as_nat() == kk);
                 }
             }
             // --- W3a / W3b (rings gained the singleton [n0])
@@ -947,8 +926,8 @@ where
     /// ring splice with payload clear, repr removal). Extracted for the same
     /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
     /// and root quantifiers e-match against both states' full `wf`.
-    proof fn lemma_merge_wf(&self, o: Self, s: T, ab: T, key_ab: nat, ab_pay: Opt<T>,
-        cs: int, ps: int, ca: int, pa: int)
+    proof fn lemma_merge_wf(&self, o: Self, s: T, ab: T, key_ab: nat,
+        ab_pay: Opt<<T as DenseId>::Index>, cs: int, ps: int, ca: int, pa: int)
         requires
             o.wf(),
             self.uf.wf(),
@@ -1145,22 +1124,22 @@ where
         // --- W2b
         assert forall|x: int| 0 <= x < n && (#[trigger] roots[x]) == x as usize
             implies ss_contains(sparse, indices, live,
-                pay[x].get_spec()->Some_0.id_nat()) by {
+                pay[x].get_spec()->Some_0.as_nat()) by {
             assert(x != abn as int);
             assert(pay[x] == opay[x]);
             assert(oroots[x] == x as usize);
             assert(ss_contains(osparse, oindices, olive,
-                opay[x].get_spec()->Some_0.id_nat()));
+                opay[x].get_spec()->Some_0.as_nat()));
             // x's key is not ab's key: W2c injectivity in the old state.
-            assert(opay[x].get_spec()->Some_0.id_nat() != key_ab);
+            assert(opay[x].get_spec()->Some_0.as_nat() != key_ab);
         }
         // --- W2c
         assert forall|x: int, y: int|
             0 <= x < n && 0 <= y < n && x != y
                 && (#[trigger] roots[x]) == x as usize
                 && (#[trigger] roots[y]) == y as usize
-            implies pay[x].get_spec()->Some_0.id_nat()
-                != pay[y].get_spec()->Some_0.id_nat() by {
+            implies pay[x].get_spec()->Some_0.as_nat()
+                != pay[y].get_spec()->Some_0.as_nat() by {
             assert(x != abn as int && y != abn as int);
             assert(pay[x] == opay[x] && pay[y] == opay[y]);
             assert(oroots[x] == x as usize && oroots[y] == y as usize);
@@ -1168,10 +1147,10 @@ where
         // --- W2d
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             implies exists|x: int| 0 <= x < n && roots[x] == x as usize
-                && (#[trigger] pay[x]).get_spec()->Some_0.id_nat() == kk by {
+                && (#[trigger] pay[x]).get_spec()->Some_0.as_nat() == kk by {
             assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
             let x = choose|x: int| 0 <= x < n && oroots[x] == x as usize
-                && (#[trigger] opay[x]).get_spec()->Some_0.id_nat() == kk;
+                && (#[trigger] opay[x]).get_spec()->Some_0.as_nat() == kk;
             // x is an old root with key kk != key_ab, so x != ab, so x keeps
             // its payload; and x's class was not ab's (both were roots), so
             // its root stays x.
@@ -1368,10 +1347,8 @@ where
             assert(pay_ab.wf());
             assert(pay_ab.get_spec() is Some);
         }
-        let key_t = pay_ab.get();
-        let key = key_t.to_index();
+        let key = pay_ab.get();
         proof {
-            key_t.lemma_as_nat_is_id_nat();
             assert(key.as_nat() == o.key_of(ab.id_nat() as int));
             assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
                 o.reprs.n_spec(), key.as_nat()));
@@ -1403,7 +1380,7 @@ where
                 assert(false);
             }
         }
-        let none_pay = Opt::<T>::none();
+        let none_pay = Opt::<<T as DenseId>::Index>::none();
         self.entries.splice_absorb(s, ab, none_pay);
         self.reprs.remove(key);
         proof {
@@ -2095,7 +2072,7 @@ where
     /// Iterate `start`'s class ring (the verified `RingIter`: exactly the
     /// ring's nodes, each once, in successor order).
     pub fn iter_class(&self, start: T)
-        -> (it: crate::circular_list::RingIter<'_, Opt<T>, T, TRACK>)
+        -> (it: crate::circular_list::RingIter<'_, Opt<<T as DenseId>::Index>, T, TRACK>)
         requires self.wf(),
         ensures start.id_nat() < self.n_spec() ==> ({
             &&& it.list_ref() == self.entries_ref()
@@ -2131,6 +2108,68 @@ where
             assert(l.id_nat() < self.uses.model_view().len());
         }
         self.uses.iter(l)
+    }
+
+
+    /// O(1) length of class `key`'s use-list, widened to `usize` at the
+    /// boundary (production's `use_list_len`). Refuses a dead key.
+    pub fn use_list_len(&self, key: <T as DenseId>::Index) -> (n: usize)
+        requires self.wf(),
+    {
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::use_list_len: class key is not live");
+        }
+        let l = self.reprs.get(key).use_list;
+        proof {
+            assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
+                self.reprs.n_spec(), key.as_nat()));
+            assert(l.id_nat() < self.uses.model_view().len());
+        }
+        self.uses.len(l).as_usize()
+    }
+
+    /// Read completion column `col` of a pool row number carried in
+    /// `MergeInfo` (production's `min_monomial_at_row`): `None` when the row
+    /// is absent or the cell is empty. Refuses an out-of-range column or an
+    /// unallocated row number.
+    pub fn min_monomial_at_row(&self, row: Option<<T as DenseId>::Index>, col: usize)
+        -> (r: Option<T>)
+        requires self.wf(),
+    {
+        if !(col < self.min_width) {
+            crate::guard::refuse("EClasses::min_monomial_at_row: completion column out of range");
+        }
+        let row = match row {
+            None => {
+                return None;
+            }
+            Some(row) => row,
+        };
+        proof { <T::Index as IndexLike>::lemma_max_nat_fits_usize(); }
+        let base = match crate::index_like::checked_mul(row.as_usize(), self.min_width) {
+            Some(b) => b,
+            None => crate::guard::refuse(
+                "EClasses::min_monomial_at_row: row offset overflows"),
+        };
+        let len = self.min_pool.len();
+        if !(base < len && col < len - base) {
+            crate::guard::refuse("EClasses::min_monomial_at_row: row is not allocated");
+        }
+        let cell = self.min_pool.get_index(base + col);
+        proof {
+            assert(cell == self.min_pool.view()[(base + col) as int]);
+            assert(cell.wf());
+        }
+        cell.to_option()
+    }
+
+    /// Direct read access to the use-list arena (production's `uses`; the
+    /// rebuild loop iterates an absorbed list by id).
+    pub fn uses(&self) -> (a: &ListArena<T, L, N, TRACK>)
+        requires self.wf(),
+        ensures a == self.uses_ref(), a.wf(),
+    {
+        &self.uses
     }
 
     /// Union-by-rank merge (production's `merge`, minus the proof-forest

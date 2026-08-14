@@ -69,7 +69,7 @@ trait CollectIndices {
 impl<'a, const TRACK: bool> CollectIndices
     for semi_persistent_containers_verus::circular_list::RingIter<
         'a,
-        semi_persistent_containers_verus::opt::Opt<DenseId31>,
+        semi_persistent_containers_verus::opt::Opt<u32>,
         DenseId31,
         TRACK,
     >
