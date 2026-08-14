@@ -2592,3 +2592,17 @@ where
 }
 
 } // verus!
+
+// prod-parity: the consumer's adapter token derives `Debug` and bundles this
+// one; manual because deriving inside `verus!{}` is unsupported.
+impl core::fmt::Debug for EClassesToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EClassesToken")
+            .field("entries", &self.entries)
+            .field("reprs", &self.reprs)
+            .field("uf", &self.uf)
+            .field("uses", &self.uses)
+            .field("pool", &self.pool)
+            .finish()
+    }
+}

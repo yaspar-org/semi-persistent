@@ -819,9 +819,13 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         let rank_a = self.rank.get_index(ra.to_index());
         let rank_b = self.rank.get_index(rb.to_index());
         let (s, ab) = if rank_a < rank_b { (rb, ra) } else { (ra, rb) };
-        if rank_a == rank_b && rank_a < 255u8 {
-            // saturating bump; no wf clause reads rank values.
-            self.rank.set_index(s.to_index(), rank_a + 1);
+        // keep rank[survivor] a height upper bound (production's rule: bump
+        // whenever the absorbed tree is at least as tall); saturating, since
+        // no wf clause reads rank values.
+        let rank_s = if rank_a < rank_b { rank_b } else { rank_a };
+        let rank_ab = if rank_a < rank_b { rank_a } else { rank_b };
+        if rank_s <= rank_ab && rank_ab < 255u8 {
+            self.rank.set_index(s.to_index(), rank_ab + 1);
         }
         self.link(s, ab);
         Some((s, ab))
@@ -835,7 +839,6 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
         ensures
             final(self).wf(),
             final(self).n_spec() == old(self).n_spec(),
-            final(self).rank_view() == old(self).rank_view(),
             final(self).parent_snapshots_view() == old(self).parent_snapshots_view(),
             final(self).rank_snapshots_view() == old(self).rank_snapshots_view(),
             final(self).roots_snapshots_view() == old(self).roots_snapshots_view(),
@@ -871,6 +874,13 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
             assert(self.roots@[rb.id_nat() as int] as nat == rb.id_nat());
         }
         let (s, ab) = if prefer_a { (ra, rb) } else { (rb, ra) };
+        // production maintains the rank height bound on directed unions too:
+        // a forced survivor may be the shorter tree.
+        let rank_s = self.rank.get_index(s.to_index());
+        let rank_ab = self.rank.get_index(ab.to_index());
+        if rank_s <= rank_ab && rank_ab < 255u8 {
+            self.rank.set_index(s.to_index(), rank_ab + 1);
+        }
         self.link(s, ab);
         Some((s, ab))
     }

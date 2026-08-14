@@ -11,10 +11,10 @@ use std::collections::HashSet;
 /// Reusable scratch buffers for proof extraction. Allocate once, reuse across queries.
 pub struct ProofBuf<T: DenseId> {
     pub steps: Vec<(T, T, Justification<T>)>,
-    path_a: Vec<T>,
-    path_b: Vec<T>,
-    seen: HashSet<usize>,
-    rev: Vec<(T, T, Justification<T>)>,
+    pub(crate) path_a: Vec<T>,
+    pub(crate) path_b: Vec<T>,
+    pub(crate) seen: HashSet<usize>,
+    pub(crate) rev: Vec<(T, T, Justification<T>)>,
     // explain_deep scratch
     pub(crate) children_a: Vec<T>,
     pub(crate) children_b: Vec<T>,
