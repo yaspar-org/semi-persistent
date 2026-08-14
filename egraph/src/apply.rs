@@ -395,7 +395,7 @@ where
 use crate::EGraphConfig;
 use crate::canon::{MSetCanon, VarCanon};
 use crate::egraph::EGraph;
-use crate::ematch::{Match, MatchPool, run_query_into};
+use crate::ematch::{MatchPool, run_query_into};
 use crate::index::IndexStore;
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
@@ -425,9 +425,9 @@ type ChildVec<Cfg> = SmallVec<[<Cfg as EGraphConfig>::G; 16]>;
 /// are arithmetic and comparison, so two covers all of them.
 const PRIM_ARGS: usize = 2;
 
-pub fn eval<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
+pub fn eval<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
-    m: &mut Match<Cfg>,
+    m: &mut V,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -436,6 +436,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
+    V: crate::ematch::MatchView<Cfg>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match op {
@@ -479,9 +480,9 @@ where
     }
 }
 
-fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
+fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     arg: &RhsArg<Cfg::O, L>,
-    m: &mut Match<Cfg>,
+    m: &mut V,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -490,6 +491,7 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
+    V: crate::ematch::MatchView<Cfg>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match arg {
@@ -604,9 +606,9 @@ where
     }
 }
 
-pub fn apply_action<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
+pub fn apply_action<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     action: &CompiledAction<Cfg::O, L>,
-    m: &mut Match<Cfg>,
+    m: &mut V,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -615,6 +617,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
+    V: crate::ematch::MatchView<Cfg>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match action {
@@ -706,9 +709,10 @@ where
     let vindex = crate::index::VariantIndex::naive(index);
     run_query_into(&plan, eg, &vindex, globals, pool);
     let mut changes = 0;
-    for m in pool.matches_mut() {
+    for j in 0..pool.len() {
+        let mut row = pool.row_mut(j);
         for action in &rule.actions {
-            changes += apply_action(action, m, eg, model, globals);
+            changes += apply_action(action, &mut row, eg, model, globals);
         }
     }
     changes

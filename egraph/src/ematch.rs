@@ -365,8 +365,10 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
 /// `seq_children`/`set_children`/`mset_children` all begin with `buf.clear()` —
 /// so surviving a `clear` is the whole point of them.
 pub struct MatchPool<Cfg: EGraphConfig> {
-    slots: Vec<Match<Cfg>>,
-    len: usize,
+    /// Flat stride-packed storage (E17): the per-slot form allocated ~5 vecs
+    /// per fresh slot up to the query's high-water — 76k slots and ~380k
+    /// allocations on ac10/naive — where the flat arrays grow amortized.
+    set: MatchSet<Cfg>,
     /// Retired child-id buffers, lent to the `ExpandA`/`DecomposeACI` steps.
     id_bufs: Vec<Vec<Cfg::G>>,
     /// Retired `(id, multiplicity)` buffers, lent to the `DecomposeAC` step.
@@ -382,11 +384,61 @@ impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
 impl<Cfg: EGraphConfig> MatchPool<Cfg> {
     pub fn new() -> Self {
         Self {
-            slots: Vec::new(),
-            len: 0,
+            set: MatchSet::empty(),
             id_bufs: Vec::new(),
             mset_bufs: Vec::new(),
         }
+    }
+
+    /// Adopt a query's shape, dropping stored matches and keeping every flat
+    /// allocation warm.
+    pub fn reshape(&mut self, shape: &crate::resolve::MatchShape) {
+        self.set.reshape(shape);
+    }
+
+    /// One stored match, by row.
+    #[inline]
+    pub fn row_mut(&mut self, j: usize) -> MatchRow<'_, Cfg> {
+        MatchRow { set: &mut self.set, j }
+    }
+
+    /// Reconstruct row `j` as an owned `Match` (tests and diagnostics; this
+    /// allocates and the hot paths never call it).
+    pub fn clone_match(&self, j: usize) -> Match<Cfg> {
+        let s = &self.set;
+        let mut m = Match {
+            nodes: (0..s.node_stride)
+                .map(|i| Some(s.nodes[j * s.node_stride + i]))
+                .collect(),
+            mults: s.mults[j * s.mult_stride..(j + 1) * s.mult_stride].to_vec(),
+            lit_vals: s.lit_vals[j * s.lit_stride..(j + 1) * s.lit_stride].to_vec(),
+            seq_pool: Vec::new(),
+            seq_spans: vec![empty_span::<Cfg>(); s.seq_stride],
+            set_pool: Vec::new(),
+            set_spans: vec![empty_span::<Cfg>(); s.set_stride],
+            mset_pool: Vec::new(),
+            mset_spans: vec![empty_span::<Cfg>(); s.mset_stride],
+        };
+        for i in 0..s.seq_stride {
+            let span = s.seq_spans[j * s.seq_stride + i];
+            let start = m.seq_pool.len();
+            m.seq_pool.extend_from_slice(&s.seq_pool[span_range::<Cfg>(span)]);
+            m.seq_spans[i] = pool_span::<Cfg>(start, m.seq_pool.len(), "clone_match:seq");
+        }
+        for i in 0..s.set_stride {
+            let span = s.set_spans[j * s.set_stride + i];
+            let start = m.set_pool.len();
+            m.set_pool.extend_from_slice(&s.set_pool[span_range::<Cfg>(span)]);
+            m.set_spans[i] = pool_span::<Cfg>(start, m.set_pool.len(), "clone_match:set");
+        }
+        for i in 0..s.mset_stride {
+            let span = s.mset_spans[j * s.mset_stride + i];
+            let start = m.mset_pool.len();
+            m.mset_pool
+                .extend_from_slice(&s.mset_pool[span_range::<Cfg>(span)]);
+            m.mset_spans[i] = pool_span::<Cfg>(start, m.mset_pool.len(), "clone_match:mset");
+        }
+        m
     }
 
     /// Borrow a child-id buffer, by move.
@@ -418,40 +470,23 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
     /// Drop the previous query's results without releasing their storage.
     #[inline]
     pub fn clear(&mut self) {
-        self.len = 0;
+        self.set.clear();
     }
 
-    /// Append a copy of `env`, reusing a retired slot when one exists.
+    /// Append a copy of `env` into the flat store.
     #[inline]
     pub fn push(&mut self, env: &Match<Cfg>) {
-        if self.len < self.slots.len() {
-            self.slots[self.len].clone_from(env);
-        } else {
-            self.slots.push(env.clone());
-        }
-        self.len += 1;
+        self.set.push(env);
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.len
+        self.set.len()
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// The matches of the last query, mutably — `apply_action` binds RHS
-    /// comprehension variables into the match it is applying.
-    #[inline]
-    pub fn matches_mut(&mut self) -> &mut [Match<Cfg>] {
-        &mut self.slots[..self.len]
-    }
-
-    #[inline]
-    pub fn matches(&self) -> &[Match<Cfg>] {
-        &self.slots[..self.len]
+        self.set.is_empty()
     }
 }
 
@@ -468,11 +503,13 @@ pub struct MatchSet<Cfg: EGraphConfig> {
     pub count: usize,
     node_stride: usize,
     mult_stride: usize,
+    lit_stride: usize,
     seq_stride: usize,
     set_stride: usize,
     mset_stride: usize,
     nodes: Vec<Cfg::G>,
     mults: Vec<Cfg::M>,
+    lit_vals: Vec<Cfg::V>,
     seq_spans: Vec<PoolSpan<Cfg>>,
     set_spans: Vec<PoolSpan<Cfg>>,
     mset_spans: Vec<PoolSpan<Cfg>>,
@@ -487,11 +524,13 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
             count: 0,
             node_stride: shape.num_vars(),
             mult_stride: shape.num_mult_vars(),
+            lit_stride: shape.num_lit_val_vars(),
             seq_stride: shape.num_seq_vars(),
             set_stride: shape.num_set_vars(),
             mset_stride: shape.num_mset_vars(),
             nodes: Vec::new(),
             mults: Vec::new(),
+            lit_vals: Vec::new(),
             seq_spans: Vec::new(),
             set_spans: Vec::new(),
             mset_spans: Vec::new(),
@@ -501,6 +540,51 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         }
     }
 
+    /// A shapeless set (every stride zero); given a real shape by
+    /// [`Self::reshape`] before first use. What lets one warm store serve
+    /// queries of different shapes across a whole saturation.
+    pub fn empty() -> Self {
+        Self {
+            count: 0,
+            node_stride: 0,
+            mult_stride: 0,
+            lit_stride: 0,
+            seq_stride: 0,
+            set_stride: 0,
+            mset_stride: 0,
+            nodes: Vec::new(),
+            mults: Vec::new(),
+            lit_vals: Vec::new(),
+            seq_spans: Vec::new(),
+            set_spans: Vec::new(),
+            mset_spans: Vec::new(),
+            seq_pool: Vec::new(),
+            set_pool: Vec::new(),
+            mset_pool: Vec::new(),
+        }
+    }
+
+    /// Adopt a query's shape: set the strides and drop stored matches, keeping
+    /// every flat allocation (the warm-reuse discipline across queries).
+    pub fn reshape(&mut self, shape: &crate::resolve::MatchShape) {
+        self.node_stride = shape.num_vars();
+        self.mult_stride = shape.num_mult_vars();
+        self.lit_stride = shape.num_lit_val_vars();
+        self.seq_stride = shape.num_seq_vars();
+        self.set_stride = shape.num_set_vars();
+        self.mset_stride = shape.num_mset_vars();
+        self.count = 0;
+        self.nodes.clear();
+        self.mults.clear();
+        self.lit_vals.clear();
+        self.seq_spans.clear();
+        self.set_spans.clear();
+        self.mset_spans.clear();
+        self.seq_pool.clear();
+        self.set_pool.clear();
+        self.mset_pool.clear();
+    }
+
     /// Append one match.
     pub fn push(&mut self, m: &Match<Cfg>) {
         for i in 0..self.node_stride {
@@ -508,6 +592,9 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         }
         if !m.mults.is_empty() {
             self.mults.extend_from_slice(&m.mults);
+        }
+        if !m.lit_vals.is_empty() {
+            self.lit_vals.extend_from_slice(&m.lit_vals);
         }
         for &span in &m.seq_spans {
             let start = self.seq_pool.len();
@@ -556,6 +643,15 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
     pub fn get_mult(&self, v: MultVarId, j: usize) -> Cfg::M {
         self.mults[j * self.mult_stride + v.idx()]
     }
+    pub fn get_lit_val(&self, v: LitValVarId, j: usize) -> Cfg::V {
+        self.lit_vals[j * self.lit_stride + v.idx()]
+    }
+    pub fn set_node(&mut self, v: VarId, j: usize, val: Cfg::G) {
+        self.nodes[j * self.node_stride + v.idx()] = val;
+    }
+    pub fn set_mult(&mut self, v: MultVarId, j: usize, val: Cfg::M) {
+        self.mults[j * self.mult_stride + v.idx()] = val;
+    }
     pub fn seq_slice(&self, v: SeqVarId, j: usize) -> &[Cfg::G] {
         let span = self.seq_spans[j * self.seq_stride + v.idx()];
         &self.seq_pool[span_range::<Cfg>(span)]
@@ -576,6 +672,7 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         self.count = 0;
         self.nodes.clear();
         self.mults.clear();
+        self.lit_vals.clear();
         self.seq_spans.clear();
         self.set_spans.clear();
         self.mset_spans.clear();
@@ -583,6 +680,94 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         self.set_pool.clear();
         self.mset_pool.clear();
     }
+}
+
+// ---------------------------------------------------------------------------
+// MatchView — one access surface over an owned Match and a MatchSet row
+// ---------------------------------------------------------------------------
+
+/// The binding-access surface `apply` consumes: reads of every variable kind
+/// plus the two scalar writes RHS comprehensions perform. Implemented by the
+/// in-progress `Match` and by [`MatchRow`], so the apply loop is agnostic to
+/// whether matches live in per-slot vectors or the flat store.
+pub trait MatchView<Cfg: EGraphConfig> {
+    fn get(&self, v: VarId) -> Cfg::G;
+    fn get_mult(&self, v: MultVarId) -> Cfg::M;
+    fn get_lit_val(&self, v: LitValVarId) -> Cfg::V;
+    fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G];
+    fn set_slice(&self, v: SetVarId) -> &[Cfg::G];
+    fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C];
+    fn set(&mut self, v: VarId, val: Cfg::G);
+    fn set_mult(&mut self, v: MultVarId, val: Cfg::M);
+    /// Unbind `v` after a comprehension. On the owned `Match` this restores
+    /// the panic-on-read guard; the flat store holds no unbound state, so a
+    /// row leaves the stale value in place — equivalent for every compiled
+    /// action sequence, which sets a comprehension variable before each read.
+    fn clear(&mut self, v: VarId);
+}
+
+impl<Cfg: EGraphConfig> MatchView<Cfg> for Match<Cfg> {
+    fn get(&self, v: VarId) -> Cfg::G {
+        Match::get(self, v)
+    }
+    fn get_mult(&self, v: MultVarId) -> Cfg::M {
+        Match::get_mult(self, v)
+    }
+    fn get_lit_val(&self, v: LitValVarId) -> Cfg::V {
+        Match::get_lit_val(self, v)
+    }
+    fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G] {
+        Match::seq_slice(self, v)
+    }
+    fn set_slice(&self, v: SetVarId) -> &[Cfg::G] {
+        Match::set_slice(self, v)
+    }
+    fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
+        Match::mset_slice(self, v)
+    }
+    fn set(&mut self, v: VarId, val: Cfg::G) {
+        Match::set(self, v, val)
+    }
+    fn set_mult(&mut self, v: MultVarId, val: Cfg::M) {
+        Match::set_mult(self, v, val)
+    }
+    fn clear(&mut self, v: VarId) {
+        Match::clear(self, v)
+    }
+}
+
+/// One match of a [`MatchSet`], by row index.
+pub struct MatchRow<'a, Cfg: EGraphConfig> {
+    set: &'a mut MatchSet<Cfg>,
+    j: usize,
+}
+
+impl<'a, Cfg: EGraphConfig> MatchView<Cfg> for MatchRow<'a, Cfg> {
+    fn get(&self, v: VarId) -> Cfg::G {
+        self.set.get_node(v, self.j)
+    }
+    fn get_mult(&self, v: MultVarId) -> Cfg::M {
+        self.set.get_mult(v, self.j)
+    }
+    fn get_lit_val(&self, v: LitValVarId) -> Cfg::V {
+        self.set.get_lit_val(v, self.j)
+    }
+    fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G] {
+        self.set.seq_slice(v, self.j)
+    }
+    fn set_slice(&self, v: SetVarId) -> &[Cfg::G] {
+        self.set.set_slice(v, self.j)
+    }
+    fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
+        self.set.mset_slice(v, self.j)
+    }
+    fn set(&mut self, v: VarId, val: Cfg::G) {
+        self.set.set_node(v, self.j, val);
+    }
+    fn set_mult(&mut self, v: MultVarId, val: Cfg::M) {
+        self.set.set_mult(v, self.j, val);
+    }
+    fn clear(&mut self, _v: VarId) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -634,8 +819,7 @@ where
 {
     let mut pool = MatchPool::new();
     run_query_into(plan, eg, index, globals, &mut pool);
-    pool.slots.truncate(pool.len);
-    pool.slots
+    (0..pool.len()).map(|j| pool.clone_match(j)).collect()
 }
 
 /// Collect all matches of `plan` into `pool`, reusing its storage.
@@ -653,7 +837,7 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    pool.clear();
+    pool.reshape(&plan.shape);
     let mut env = Match::new(&plan.shape);
     run_step(plan, 0, eg, index, globals, &mut env, pool);
 }
@@ -2485,8 +2669,12 @@ mod tests {
                 run_query_into(plan, &eg, &index, &ng, &mut shared);
 
                 assert_eq!(shared.len(), fresh.len(), "match count diverged");
-                let expect: Vec<_> = fresh.matches().iter().map(|m| env_key(m, &eg)).collect();
-                let got: Vec<_> = shared.matches().iter().map(|m| env_key(m, &eg)).collect();
+                let expect: Vec<_> = (0..fresh.len())
+                    .map(|j| env_key(&fresh.clone_match(j), &eg))
+                    .collect();
+                let got: Vec<_> = (0..shared.len())
+                    .map(|j| env_key(&shared.clone_match(j), &eg))
+                    .collect();
                 assert_eq!(got, expect, "reused pool produced different bindings");
             }
         }

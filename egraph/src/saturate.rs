@@ -204,9 +204,10 @@ where
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     crate::ematch::run_query_into(&plan, eg, vindex, globals, pool);
     let mut changes = 0;
-    for m in pool.matches_mut() {
+    for j in 0..pool.len() {
+        let mut row = pool.row_mut(j);
         for action in &rule.actions {
-            changes += crate::apply::apply_action(action, m, eg, model, globals);
+            changes += crate::apply::apply_action(action, &mut row, eg, model, globals);
         }
     }
     changes
