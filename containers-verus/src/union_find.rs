@@ -570,7 +570,7 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                     if i != ci { assert(pv[i] == opv[i]); }
                 }
                 assert forall|i: int| 0 <= i < n implies
-                    parent_self_root_clause(pv, roots, i) by {
+                    #[trigger] parent_self_root_clause(pv, roots, i) by {
                     if i != ci {
                         assert(pv[i] == opv[i]);
                         assert(parent_self_root_clause(opv, roots, i));
@@ -588,7 +588,7 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                     }
                 }
                 assert forall|i: int| 0 <= i < n implies
-                    parent_root_self_parent_clause(pv, roots, i) by {
+                    #[trigger] parent_root_self_parent_clause(pv, roots, i) by {
                     assert(roots[i] != cur.id_nat() as usize);
                     assert(pv[roots[i] as int] == opv[roots[i] as int]);
                 }
@@ -705,7 +705,7 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 }
             }
             assert forall|i: int| 0 <= i < n implies
-                parent_root_self_parent_clause(pv, roots, i) by {
+                #[trigger] parent_root_self_parent_clause(pv, roots, i) by {
                 if oroots[i] == ab.id_nat() as usize {
                     // new root is s, which is not ab, so its parent cell is
                     // untouched and s was self-parented as a root.
@@ -729,7 +729,7 @@ impl<T: DenseId, const TRACK: bool> UnionFind<T, TRACK> {
                 }
             }
             assert forall|i: int| 0 <= i < n implies
-                parent_self_root_clause(pv, roots, i) by {
+                #[trigger] parent_self_root_clause(pv, roots, i) by {
                 if pv[i].id_nat() == i as nat {
                     if i == abi {
                         // pv[abi] == s and s != ab: the antecedent refutes.

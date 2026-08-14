@@ -1022,7 +1022,8 @@ where
         // every merged-ring element is an element of one of the two old rings
         assert forall|q: int| 0 <= q < merged.len() implies
             exists|c0: int, j: int| (c0 == cs || c0 == ca)
-                && 0 <= j < orm[c0].len() && orm[c0][j] == #[trigger] merged[q] by {
+                && 0 <= j < orm[c0].len()
+                && (#[trigger] orm[c0][j]) == #[trigger] merged[q] by {
             let lcs = orm[cs].len() as int;
             if q < lcs {
                 let j = if ps + 1 + q < lcs { ps + 1 + q } else { ps + 1 + q - lcs };
@@ -1177,9 +1178,9 @@ where
                 // both elements come from the two old rings; either way the
                 // new root is s.
                 let (c1, j1) = choose|c0: int, j: int| (c0 == cs || c0 == ca)
-                    && 0 <= j < orm[c0].len() && orm[c0][j] == merged[p];
+                    && 0 <= j < orm[c0].len() && (#[trigger] orm[c0][j]) == merged[p];
                 let (c2, j2) = choose|c0: int, j: int| (c0 == cs || c0 == ca)
-                    && 0 <= j < orm[c0].len() && orm[c0][j] == merged[q];
+                    && 0 <= j < orm[c0].len() && (#[trigger] orm[c0][j]) == merged[q];
                 assert(roots[merged[p] as int] == su);
                 assert(roots[merged[q] as int] == su);
             } else if c == ca {
