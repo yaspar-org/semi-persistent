@@ -24,11 +24,11 @@
 //!   - W6: the pool is whole rows of `min_width`, live row numbers are
 //!     allocated and pairwise distinct.
 //!
-//! The key stored in a ring payload is `Opt<T>` — the repr-set id carried as
-//! a node-typed dense id, whose packed word is the same one production's
-//! `Opt<T::Index>` cell holds at a bit-stealing family. This kernel does not
-//! replace production (`do not touch prod`); it is the verified twin the
-//! consumer migrates to when its API is complete.
+//! The key stored in a ring payload is production's `Opt<T::Index>` — the
+//! repr-set id as an index-typed cell, 12 bytes at a bit-stealing family
+//! (pinned by the consumer's compile-time asserts). This kernel IS the
+//! production e-graph class layer: `egraph::EClasses` and
+//! `egraph::UnionFind` are type aliases of it since the swap.
 
 use vstd::prelude::*;
 

@@ -17,13 +17,14 @@
 //!     step — W1's acyclicity in the form a `decreases` clause consumes, so
 //!     `find` terminates without rank arithmetic.
 //!
-//! `find` compresses by path halving: each visited node's parent is rewritten
-//! to its grandparent, and the ghost `dist[cur]` is rewritten to
-//! `dist[grandparent] + 1`, which is strictly below the old `dist[cur]`, so
-//! edges into `cur` keep decreasing and the invariant survives each write
-//! locally. `union` attaches the absorbed root under the survivor and remaps
-//! the ghost roots in one `Seq::new` (`merge_roots`). The rank bump saturates
-//! at `u8::MAX` instead of carrying the `rank <= log2(n)` argument: rank is a
+//! `find` compresses in production's two passes: a read-only walk to the
+//! root, then a second pass pointing every path node at the root. Each pass-2
+//! write lowers the written node's ghost `dist` to 1 (the root's is 0), which
+//! preserves the strict decrease into it, so the invariant survives each
+//! write locally (path halving was measured 3-5% slower and rejected).
+//! `union` attaches the absorbed root under the survivor and remaps the ghost
+//! roots in one `Seq::new` (`merge_roots`). The rank bump is skipped at
+//! `u8::MAX` instead of carrying the `rank <= log2(n)` argument: rank is a
 //! survivor-selection heuristic and no `wf` clause reads its value.
 //!
 //! Semi-persistence composes from the two columns the way `ListArena`'s does

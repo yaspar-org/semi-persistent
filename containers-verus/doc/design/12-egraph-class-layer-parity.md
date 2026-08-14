@@ -14,6 +14,16 @@ against `containers-verus/src/{union_find,eclasses}.rs` and the post-swap
 adapter. This document drives the PROOFS-parity refactor; its MUST-FIX
 list is that work's specification.
 
+A later validation pass re-checked every claim here against the shipped
+code and found corrections: the proof-edge recording order in
+`merge_justified` is NOT production's ("same order" below is wrong for
+the shipped code), the accepted rank divergence skips the bump at 255
+rather than saturating, and several divergences this document does not
+record (a `min_monomial` guard-order inversion, dropped `Default`
+impls, `mark`/`restore` visibility, refuse-path message texts). Do not
+cite the affected rows without reading
+`13-parity-matrix.md` section 4, which records the corrections.
+
 ## Union-find
 
 ### State
