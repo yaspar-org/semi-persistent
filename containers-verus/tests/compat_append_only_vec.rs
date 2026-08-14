@@ -30,7 +30,7 @@ fn run_ops(ops: Vec<Op>) {
     for op in ops {
         match op {
             Op::Push(val) => {
-                v.push(val);
+                v.try_push(val).expect("compat: within capacity");
                 oracle.push(val);
             }
             Op::Get(idx) => {
@@ -44,7 +44,9 @@ fn run_ops(ops: Vec<Op>) {
                 if snapshots.len() >= 20 {
                     continue;
                 }
-                let token = v.mark(ShrinkPolicy::Never);
+                let token = v
+                    .try_mark(ShrinkPolicy::Never)
+                    .expect("compat: depth in bounds");
                 snapshots.push((token, oracle.clone()));
             }
             Op::Restore(idx) => {
@@ -53,7 +55,7 @@ fn run_ops(ops: Vec<Op>) {
                 }
                 let idx = idx % snapshots.len();
                 let (token, snap) = snapshots[idx].clone();
-                v.restore(token);
+                v.try_restore(token).expect("compat: own live token");
                 oracle = snap;
                 snapshots.truncate(idx);
             }

@@ -25,7 +25,7 @@ fn run_stress<T: Tagged + Clone + Default, I: IndexLike + Tagged>(
     let mut v: VecI<T, I, true> = VecI::new();
     let zero = make_val(0);
     for _ in 0..n {
-        v.push(zero);
+        v.try_push(zero).expect("compat: within capacity");
     }
 
     fn xorshift(state: &mut u64) -> u64 {
@@ -37,7 +37,10 @@ fn run_stress<T: Tagged + Clone + Default, I: IndexLike + Tagged>(
 
     let mut tokens = Vec::new();
     for frame in 1..=frames {
-        tokens.push(v.mark(ShrinkPolicy::Never));
+        tokens.push(
+            v.try_mark(ShrinkPolicy::Never)
+                .expect("compat: depth in bounds"),
+        );
         let mut rng = 0xDEAD_BEEF_0000_0000u64 | frame as u64;
         for _ in 0..sprinkle {
             let idx = I::try_from_usize((xorshift(&mut rng) % n as u64) as usize).unwrap();
@@ -47,7 +50,7 @@ fn run_stress<T: Tagged + Clone + Default, I: IndexLike + Tagged>(
 
     for frame in (1..=frames).rev() {
         let tok = tokens.pop().unwrap();
-        v.restore(tok);
+        v.try_restore(tok).expect("compat: own live token");
         let mut rng = 0xDEAD_BEEF_0000_0000u64 | frame as u64;
         for _ in 0..sprinkle {
             let idx = I::try_from_usize((xorshift(&mut rng) % n as u64) as usize).unwrap();

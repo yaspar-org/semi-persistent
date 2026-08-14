@@ -107,9 +107,7 @@ fn use_lists_append_and_splice() {
     assert_eq!(parents, vec![p.to_usize()]);
     // merge b into a's class, then splice b's (empty) use list onto a's.
     let mi = ec.merge_directed(a, b, true).expect("merges");
-    let survivor_key = ec
-        .repr_id(mi.survivor)
-        .expect("survivor keeps its key");
+    let survivor_key = ec.repr_id(mi.survivor).expect("survivor keeps its key");
     let survivor_list = ec.use_list_id(survivor_key);
     ec.splice_uses(survivor_list, mi.absorbed_uses);
     let parents_after: Vec<usize> = ec.iter_uses(survivor_key).map(|n| n.to_usize()).collect();
@@ -125,14 +123,23 @@ fn min_pool_round_trip() {
     assert_eq!(ec.min_width(), 3);
     assert_eq!(ec.min_monomial(ka, 1), None);
     ec.set_min_monomial(ka, 1, m);
-    assert_eq!(ec.min_monomial(ka, 1).map(|n| n.to_usize()), Some(m.to_usize()));
+    assert_eq!(
+        ec.min_monomial(ka, 1).map(|n| n.to_usize()),
+        Some(m.to_usize())
+    );
     assert_eq!(ec.min_monomial(ka, 0), None);
     assert_eq!(ec.min_monomial(ka, 2), None);
     // a second class allocates its own row.
     let (_b, kb) = ec.add_singleton();
     ec.set_min_monomial(kb, 0, a);
-    assert_eq!(ec.min_monomial(kb, 0).map(|n| n.to_usize()), Some(a.to_usize()));
-    assert_eq!(ec.min_monomial(ka, 1).map(|n| n.to_usize()), Some(m.to_usize()));
+    assert_eq!(
+        ec.min_monomial(kb, 0).map(|n| n.to_usize()),
+        Some(a.to_usize())
+    );
+    assert_eq!(
+        ec.min_monomial(ka, 1).map(|n| n.to_usize()),
+        Some(m.to_usize())
+    );
 }
 
 #[test]
@@ -153,7 +160,10 @@ fn mark_restore_round_trip() {
     assert_ne!(ec.find(a).to_usize(), ec.find(b).to_usize());
     assert!(ec.repr_id(a).is_some() && ec.repr_id(b).is_some());
     // the token is consumed.
-    assert_eq!(ec.try_restore(token).unwrap_err(), ContainerError::InvalidToken);
+    assert_eq!(
+        ec.try_restore(token).unwrap_err(),
+        ContainerError::InvalidToken
+    );
 }
 
 #[test]
@@ -183,7 +193,10 @@ fn foreign_token_refuses_as_err() {
     let _ = ec1.add_singleton();
     let _ = ec2.add_singleton();
     let t1 = ec1.mark(ShrinkPolicy::Never);
-    assert_eq!(ec2.try_restore(t1).unwrap_err(), ContainerError::InvalidToken);
+    assert_eq!(
+        ec2.try_restore(t1).unwrap_err(),
+        ContainerError::InvalidToken
+    );
 }
 
 #[test]

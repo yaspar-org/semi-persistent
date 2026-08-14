@@ -322,8 +322,12 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
 
     /// The ACI twin: bind `v` to the residual ids not consumed by the
     /// element assignment (same write-through mechanism).
-    pub fn push_set_residual(&mut self, v: SetVarId, residual: &[Cfg::G],
-        used: &crate::containers::bitset::BitSet) {
+    pub fn push_set_residual(
+        &mut self,
+        v: SetVarId,
+        residual: &[Cfg::G],
+        used: &crate::containers::bitset::BitSet,
+    ) {
         let start = self.set_pool.len();
         self.set_pool.extend(
             residual
@@ -332,8 +336,7 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
                 .filter(|&(i, _)| !used.test(i))
                 .map(|(_, &g)| g),
         );
-        self.set_spans[v.idx()] =
-            pool_span::<Cfg>(start, self.set_pool.len(), "Match::set_pool");
+        self.set_spans[v.idx()] = pool_span::<Cfg>(start, self.set_pool.len(), "Match::set_pool");
     }
 }
 
@@ -399,7 +402,10 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
     /// One stored match, by row.
     #[inline]
     pub fn row_mut(&mut self, j: usize) -> MatchRow<'_, Cfg> {
-        MatchRow { set: &mut self.set, j }
+        MatchRow {
+            set: &mut self.set,
+            j,
+        }
     }
 
     /// Reconstruct row `j` as an owned `Match` (tests and diagnostics; this
@@ -422,13 +428,15 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
         for i in 0..s.seq_stride {
             let span = s.seq_spans[j * s.seq_stride + i];
             let start = m.seq_pool.len();
-            m.seq_pool.extend_from_slice(&s.seq_pool[span_range::<Cfg>(span)]);
+            m.seq_pool
+                .extend_from_slice(&s.seq_pool[span_range::<Cfg>(span)]);
             m.seq_spans[i] = pool_span::<Cfg>(start, m.seq_pool.len(), "clone_match:seq");
         }
         for i in 0..s.set_stride {
             let span = s.set_spans[j * s.set_stride + i];
             let start = m.set_pool.len();
-            m.set_pool.extend_from_slice(&s.set_pool[span_range::<Cfg>(span)]);
+            m.set_pool
+                .extend_from_slice(&s.set_pool[span_range::<Cfg>(span)]);
             m.set_spans[i] = pool_span::<Cfg>(start, m.set_pool.len(), "clone_match:set");
         }
         for i in 0..s.mset_stride {

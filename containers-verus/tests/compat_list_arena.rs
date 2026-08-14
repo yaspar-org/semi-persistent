@@ -69,7 +69,7 @@ fn run_ops(ops: Vec<Op>) {
     for op in ops {
         match op {
             Op::NewList => {
-                let id = arena.new_list();
+                let id = arena.try_new_list().expect("compat: id range");
                 list_ids.push(id);
                 oracle.new_list();
             }
@@ -78,7 +78,9 @@ fn run_ops(ops: Vec<Op>) {
                     continue;
                 }
                 let l = l % list_ids.len();
-                arena.prepend(list_ids[l], TestElem::new(val));
+                arena
+                    .try_prepend(list_ids[l], TestElem::new(val))
+                    .expect("compat: node range");
                 oracle.prepend(l, val);
             }
             Op::CheckIter(l) => {
@@ -94,7 +96,9 @@ fn run_ops(ops: Vec<Op>) {
                 if snapshots.len() >= 10 {
                     continue;
                 }
-                let token = arena.mark(ShrinkPolicy::Never);
+                let token = arena
+                    .try_mark(ShrinkPolicy::Never)
+                    .expect("compat: depth in bounds");
                 snapshots.push((token, oracle.clone(), list_ids.clone()));
             }
             Op::Restore(idx) => {
@@ -103,7 +107,7 @@ fn run_ops(ops: Vec<Op>) {
                 }
                 let idx = idx % snapshots.len();
                 let (token, snap_oracle, snap_ids) = snapshots[idx].clone();
-                arena.restore(token);
+                arena.try_restore(token).expect("compat: own live token");
                 oracle = snap_oracle;
                 list_ids = snap_ids;
                 snapshots.truncate(idx);

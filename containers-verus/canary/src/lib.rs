@@ -305,7 +305,7 @@ mod id_macro_shapes {
         assert_eq!(format!("{}", a), "e0");
         // VecI over a macro-generated id: index AND payload.
         let mut v: cv::VecI<ENodeIdShaped, u32, true> = cv::VecI::new();
-        v.push(a);
+        v.try_push(a).expect("canary: capacity");
         assert_eq!(v.get(0u32), a);
     }
 }
@@ -342,27 +342,38 @@ mod clone_key_maps {
             by_structure: cv::map::SpMap::new(),
             ctx_index: cv::map::SpMap::new(),
         };
-        r.sorts.insert("Int".to_string(), ());
-        let idx = r.ops.insert(
-            "+".to_string(),
-            OpInfoShaped {
-                name: "+".to_string(),
-                args: vec![0, 0],
-                unit: None,
-                is_constructor: false,
-            },
-        );
+        r.sorts
+            .try_insert("Int".to_string(), ())
+            .expect("canary: capacity");
+        let idx = r
+            .ops
+            .try_insert(
+                "+".to_string(),
+                OpInfoShaped {
+                    name: "+".to_string(),
+                    args: vec![0, 0],
+                    unit: None,
+                    is_constructor: false,
+                },
+            )
+            .expect("canary: capacity");
         // Production get_mut pattern is REMOVED: constructor-ness is decided
         // at registration; a late change is read-clone-modify-insert (shadow).
         let mut updated = r.ops.get_val(idx).clone();
         updated.is_constructor = true;
-        r.ops.insert("+".to_string(), updated);
+        r.ops
+            .try_insert("+".to_string(), updated)
+            .expect("canary: capacity");
         assert!(r.ops.get_by_key(&"+".to_string()).unwrap().is_constructor);
         assert_eq!(r.ops.len(), 1, "shadow overwrite keeps one live key");
 
-        r.by_structure.insert((3, vec![1, 2]), 9);
+        r.by_structure
+            .try_insert((3, vec![1, 2]), 9)
+            .expect("canary: capacity");
         assert_eq!(r.by_structure.id_of(&(3, vec![1, 2])), Some(0));
-        r.ctx_index.insert(vec![4, 5, 6], 1);
+        r.ctx_index
+            .try_insert(vec![4, 5, 6], 1)
+            .expect("canary: capacity");
         assert!(r.ctx_index.contains_key(&vec![4, 5, 6]));
     }
 }
@@ -387,11 +398,17 @@ mod eclasses_shaped {
             uses: cv::ListArena::new(),
             reprs: cv::SparseSet::new_inline(),
         };
-        let l1 = e.uses.new_list();
-        let l2 = e.uses.new_list();
-        e.uses.append(l1, ClassIdShaped::new(1));
-        e.uses.append(l1, ClassIdShaped::new(2));
-        e.uses.append(l2, ClassIdShaped::new(3));
+        let l1 = e.uses.try_new_list().expect("canary: id range");
+        let l2 = e.uses.try_new_list().expect("canary: id range");
+        e.uses
+            .try_append(l1, ClassIdShaped::new(1))
+            .expect("canary: node range");
+        e.uses
+            .try_append(l1, ClassIdShaped::new(2))
+            .expect("canary: node range");
+        e.uses
+            .try_append(l2, ClassIdShaped::new(3))
+            .expect("canary: node range");
         // O(1) splice: l1 := l1 ++ l2, l2 cleared but valid.
         e.uses.splice(l1, l2);
         assert_eq!(e.uses.len(l1), 3);
@@ -399,7 +416,7 @@ mod eclasses_shaped {
         let collected: Vec<u32> = e.uses.iter(l1).map(|c| c.raw()).collect();
         assert_eq!(collected.len(), 3);
 
-        let id = e.reprs.add(77);
+        let id = e.reprs.try_add(77).expect("canary: capacity");
         assert!(e.reprs.contains(id));
     }
 }

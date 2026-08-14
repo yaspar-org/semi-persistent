@@ -20,7 +20,7 @@
 //! `saturate_bench` pre/post comparison, recorded in
 //! `containers-verus/doc/future/egraph-wf.md`.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use semi_persistent_containers_verus as verus;
 use std::hint::black_box;
 use verus::eclasses::EClasses;

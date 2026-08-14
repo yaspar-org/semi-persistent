@@ -155,11 +155,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool>
 
     /// Read completion column `col` of a row number (as carried in
     /// `MergeInfo`), for the merge fold.
-    pub fn min_monomial_at_row(
-        &self,
-        row: Option<<T as DenseId>::Index>,
-        col: usize,
-    ) -> Option<T> {
+    pub fn min_monomial_at_row(&self, row: Option<<T as DenseId>::Index>, col: usize) -> Option<T> {
         self.kernel.min_monomial_at_row(row, col)
     }
 

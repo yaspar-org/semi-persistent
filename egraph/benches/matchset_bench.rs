@@ -12,7 +12,7 @@
 //! cross-arm reading, so treat the pool-vs-set gap as the signal and the
 //! absolute times as machine-local.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use semi_persistent_egraph::ematch::{Match, MatchPool, MatchSet};
 use semi_persistent_egraph::id::ENodeId;
 use semi_persistent_egraph::multiplicity::MultiplicityLike;
@@ -50,7 +50,10 @@ fn env_for(shape: &MatchShape, j: usize) -> Match<Cfg> {
         env.set(v, id(j * NODE_VARS + k));
     }
     for v in shape.mult_var_ids() {
-        env.set_mult(v, <Cfg as semi_persistent_egraph::config::EGraphConfig>::M::ONE);
+        env.set_mult(
+            v,
+            <Cfg as semi_persistent_egraph::config::EGraphConfig>::M::ONE,
+        );
     }
     let rv = shape.mset_var_ids().next().unwrap();
     let rest: Vec<_> = (0..REST_LEN)

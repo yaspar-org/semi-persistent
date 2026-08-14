@@ -97,7 +97,9 @@ impl Model {
     }
     fn class_members(&self, x: usize) -> Vec<usize> {
         let r = self.find(x);
-        let mut m: Vec<usize> = (0..self.parent.len()).filter(|&y| self.find(y) == r).collect();
+        let mut m: Vec<usize> = (0..self.parent.len())
+            .filter(|&y| self.find(y) == r)
+            .collect();
         m.sort_unstable();
         m
     }
@@ -186,7 +188,11 @@ fn trace(seed: u64, steps: usize) {
                         .merge_directed(ce(a), ce(b), prefer_a)
                         .expect("distinct classes merge");
                     let expect_s = if prefer_a { ra } else { rb };
-                    assert_eq!(mi.survivor.to_usize(), expect_s, "step {step}: directed survivor");
+                    assert_eq!(
+                        mi.survivor.to_usize(),
+                        expect_s,
+                        "step {step}: directed survivor"
+                    );
                     let ab = mi.absorbed.to_usize();
                     let abs_key = m.key_of_root.remove(&ab).unwrap();
                     m.parent[ab] = expect_s;
@@ -205,10 +211,7 @@ fn trace(seed: u64, steps: usize) {
                 let parent_node = rng.below(n);
                 let root = m.find(x);
                 let key = m.key_of_root[&root];
-                ec.add_use(
-                    ec.repr_id(ce(root)).unwrap(),
-                    ce(parent_node),
-                );
+                ec.add_use(ec.repr_id(ce(root)).unwrap(), ce(parent_node));
                 m.uses[key].push(parent_node);
             }
             // mark
@@ -238,8 +241,7 @@ fn trace(seed: u64, steps: usize) {
                     "step {step}: key presence iff root"
                 );
                 // ring membership matches the class.
-                let mut ring: Vec<usize> =
-                    ec.iter_class(ca).map(|x: CE| x.to_usize()).collect();
+                let mut ring: Vec<usize> = ec.iter_class(ca).map(|x: CE| x.to_usize()).collect();
                 ring.sort_unstable();
                 assert_eq!(ring, m.class_members(a), "step {step}: ring == class");
                 // use-list contents (as multisets) match.
@@ -261,7 +263,11 @@ fn trace(seed: u64, steps: usize) {
             }
             _ => {}
         }
-        assert_eq!(ec.len().as_usize(), m.parent.len(), "step {step}: node count");
+        assert_eq!(
+            ec.len().as_usize(),
+            m.parent.len(),
+            "step {step}: node count"
+        );
         assert_eq!(
             ec.num_classes().as_usize(),
             m.key_of_root.len(),
