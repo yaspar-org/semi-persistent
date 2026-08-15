@@ -58,7 +58,7 @@
 
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{env, fs};
 
 use semi_persistent_egraph::EGraph31;
@@ -885,6 +885,82 @@ fn differential_matches_golden() {
         text.lines().count(),
         golden.lines().count(),
         "fixture line count changed; the corpus definition moved; {REGEN_HINT}"
+    );
+}
+
+/// A2's flag-on check per the module-doc protocol for pruning changes: the
+/// exact solver with `exact_pruning: true` must report, on every corpus
+/// instance, the same quality tuple the committed fixture's `exact` line
+/// pins — the fixture was captured with the flag off, so equality here is
+/// the claim that pruning discards only provably non-optimal candidates.
+/// Also times the exact-only corpus with the flag off and on and prints
+/// both totals (visible under `--nocapture`) as the broad-speedup signal.
+#[test]
+fn pruned_exact_matches_reference() {
+    let golden = read_golden();
+    let mut checked = 0usize;
+    let mut reference_total = Duration::ZERO;
+    let mut pruned_total = Duration::ZERO;
+    for spec in full_specs() {
+        let id = spec.id();
+        let inst = spec.build();
+        let snap = AuSnapshot::new(&inst.eg).unwrap();
+
+        let start = Instant::now();
+        let reference = anti_unify(
+            &snap,
+            inst.left,
+            inst.right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Exact,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        reference_total += start.elapsed();
+
+        let start = Instant::now();
+        let pruned = anti_unify(
+            &snap,
+            inst.left,
+            inst.right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Exact,
+                exact_pruning: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        pruned_total += start.elapsed();
+
+        let key = format!("{id} exact");
+        let want = golden
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key} :: ")))
+            .unwrap_or_else(|| panic!("{key}: no exact line in the golden fixture; {REGEN_HINT}"));
+        let got = format!(
+            "size={} vmass={}",
+            pruned.size,
+            pruned.pool.variant_mass(pruned.term_id)
+        );
+        assert_eq!(
+            got, want,
+            "{id}: pruned exact quality diverges from the fixture's exact line; \
+             exact_pruning discarded an optimal candidate"
+        );
+        assert_eq!(
+            (
+                reference.size,
+                reference.pool.variant_mass(reference.term_id)
+            ),
+            (pruned.size, pruned.pool.variant_mass(pruned.term_id)),
+            "{id}: flag-off and flag-on exact qualities diverge in-process"
+        );
+        checked += 1;
+    }
+    println!(
+        "pruned_exact_matches_reference: {checked} instances, exact corpus wall time \
+         flag-off {reference_total:.2?} -> flag-on {pruned_total:.2?}"
     );
 }
 

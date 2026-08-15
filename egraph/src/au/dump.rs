@@ -517,7 +517,7 @@ mod tests {
         let l = snap.class_of(left).unwrap();
         let r = snap.class_of(right).unwrap();
         let mut run =
-            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None).unwrap();
+            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false).unwrap();
 
         let label = format!("crossover depth={depth} width={width} cycles={cycles}");
         let n_nodes = run.space.or_arena.len().as_usize();
@@ -574,7 +574,7 @@ mod tests {
         let l = snap.class_of(left).unwrap();
         let r = snap.class_of(right).unwrap();
         let mut run =
-            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None).unwrap();
+            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false).unwrap();
         let dump = dump_search_graph(&snap, &mut run, "consistency", true);
         assert!(dump.n_nodes > 0);
         assert!(dump.n_edges >= dump.n_nodes - 1);

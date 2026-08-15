@@ -79,6 +79,19 @@ Lexicographic care: prune only on strict size inequality, because an equal
 size can still win on variant mass. Acceptance: crossover cycles=10 from
 49.2 s to milliseconds; a differential flag runs pruned vs unpruned exact on
 the metamorphic corpus and asserts equal qualities. About a week.
+Done 2026-08-15 (`AuConfig::exact_pruning`, default false: the unpruned
+search stays the default and is what the differential fixture pins): the
+frame loop bounds each structural action by `1 + sum count * lb_pair` before
+descending, re-checks with each solved child's true size substituted for its
+bound, and bounds each AC representation pair by a min-cost flow over
+`lb_pair` cell costs; every comparison is strict, size-only, and against the
+node's own incumbent, so each memo entry stays the exact optimum of its
+state. Flag off, the fixture is byte-identical; flag on, the exact qualities
+equal the fixture's on all 211 corpus instances
+(`au_differential.rs::pruned_exact_matches_reference`). Crossover cycles=10
+completes in 0.19 ms at the measured optimum 39 against 49.2 s unpruned
+(`au_scaling_crossover.rs::pruned_exact_crossover_c10`, release), and the
+exact-only corpus drops from 65.7 ms to 31.7 ms release.
 
 **A3. Best-first ordering and the anytime incumbent.** Sort actions by the
 lazy-completion estimate (the MCGS rollout ranking) so good incumbents arrive

@@ -14,9 +14,9 @@ use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
 
 use super::ac_repr;
-use super::actions::{ActionCache, generate_actions};
+use super::actions::{ActionCache, ActionPair, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
-use super::estimates::static_generalize_quality;
+use super::estimates::{lb_pair, static_generalize_quality};
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
@@ -47,7 +47,10 @@ pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let run = run_exact(snap, l_root, r_root, cycle_mode, None)?;
+    // No deadline, no pruning: this entry point is the reference search the
+    // differential fixture pins; `AuConfig::exact_pruning` opts in via
+    // `run_exact`.
+    let run = run_exact(snap, l_root, r_root, cycle_mode, None, false)?;
     Ok((run.term, run.pool))
 }
 
@@ -77,12 +80,16 @@ pub(crate) struct ExactRun<Cfg: EGraphConfig> {
 /// incumbent — at minimum the generalize seed, better if completed actions
 /// improved it — with `complete: false`. Expiry is polled every
 /// [`DEADLINE_CHECK_INTERVAL`] node entries.
+///
+/// `pruning`: branch-and-bound on the projection lower bound (plan item A2);
+/// see [`solve_iterative`]. `false` is the reference search.
 pub(crate) fn run_exact<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l_root: ClassOf<Cfg>,
     r_root: ClassOf<Cfg>,
     cycle_mode: CycleMode,
     deadline: Option<std::time::Duration>,
+    pruning: bool,
 ) -> Result<ExactRun<Cfg>, super::AuError>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -115,6 +122,7 @@ where
         &mut memo,
         root_or,
         deadline.map(|d| std::time::Instant::now() + d),
+        pruning,
     );
 
     Ok(ExactRun {
@@ -140,6 +148,39 @@ fn ensure_memo<T: Copy, O: DenseId>(memo: &mut Vec<MemoState<T>>, or_id: O) {
     if idx >= memo.len() {
         memo.resize(idx + 1, MemoState::Empty);
     }
+}
+
+/// Lower bound on the size of one structural action's completion: 1 for the
+/// operator, each solved child at its true size, each unsolved pair (from
+/// `next_pair` on) at its projection bound (`lb_pair`). A solved child's true
+/// size dominates its bound, so substituting it only raises the total: the
+/// partial-sum re-check is at least as tight as the initial one.
+///
+/// `u64` saturating accumulation. Saturating keeps the total a lower bound
+/// (`saturating_add <=` the exact sum), and a saturated `u64::MAX` still
+/// strictly exceeds every `u32` incumbent, so the caller's `bound > incumbent`
+/// comparison then discards the action — sound, because the true value is at
+/// least the exact sum, which reached `u64::MAX`.
+fn action_size_bound<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    pool: &TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    pairs: &[ActionPair<Cfg::Au, Cfg::M>],
+    solved: &[(<Cfg::Au as AuIds>::Term, u64)],
+    next_pair: usize,
+) -> u64
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut bound: u64 = 1;
+    for &(term, count) in solved {
+        bound = bound.saturating_add(u64::from(pool.size(term)).saturating_mul(count));
+    }
+    for pair in &pairs[next_pair..] {
+        bound = bound.saturating_add(
+            u64::from(lb_pair(snap, pair.left, pair.right).0).saturating_mul(pair.count.to_u64()),
+        );
+    }
+    bound
 }
 
 /// Stage of one in-progress OR-node solve (one frame of the explicit stack).
@@ -225,6 +266,23 @@ struct SolveFrame<Cfg: EGraphConfig> {
 /// `Visiting` memo entry is published and no `mark_exact` is issued for
 /// abandoned frames, so nothing claims optimality it does not have.
 ///
+/// `pruning` enables branch-and-bound on the projection lower bound
+/// (`estimates::lb_pair`, plan item A2 and its soundness argument in
+/// doc/au-solver-plan.md): a structural action is skipped when
+/// `1 + sum count * lb_pair(pair)` strictly exceeds the frame's incumbent
+/// size, re-checked with each solved child's true size substituted for its
+/// bound (`action_size_bound`); an AC representation pair is skipped when the
+/// min-cost flow over `lb_pair` cell costs plus 1 strictly exceeds it. Both
+/// comparisons are size-only (an equal size can still win on variant mass)
+/// and always against the frame's OWN incumbent, never an inherited ancestor
+/// bound: pruned candidates are provably non-optimal at this node, so the min
+/// over the survivors — and therefore every memo entry — is still the exact
+/// optimum of its state, and memo reuse stays valid. The generalize incumbent
+/// is evaluated before any action, so a bound to compare against always
+/// exists. Children solved before an abandoned action stay in the memo:
+/// their entries are exact optima of their own states regardless of why the
+/// parent stopped.
+///
 /// Returns `(term, complete)`; `complete` is false only on deadline expiry.
 #[allow(clippy::too_many_arguments)]
 fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
@@ -236,6 +294,7 @@ fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     memo: &mut Vec<MemoState<<Cfg::Au as AuIds>::Term>>,
     root_or: <Cfg::Au as AuIds>::Or,
     deadline: Option<std::time::Instant>,
+    pruning: bool,
 ) -> (<Cfg::Au as AuIds>::Term, bool)
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -408,6 +467,29 @@ where
                                 *action_idx += 1;
                                 continue;
                             }
+                            // Branch-and-bound (A2): skip the action before any
+                            // descent when its projection bound already strictly
+                            // exceeds this frame's incumbent size.
+                            if pruning
+                                && action_size_bound(snap, pool, &action.pairs, &[], 0)
+                                    > u64::from(frame.best_quality.0)
+                            {
+                                *action_idx += 1;
+                                continue;
+                            }
+                        } else if pruning
+                            && *pair_idx < action.pairs.len()
+                            && action_size_bound(snap, pool, &action.pairs, child_terms, *pair_idx)
+                                > u64::from(frame.best_quality.0)
+                        {
+                            // Partial-sum tightening (A2): solved children at
+                            // their true sizes, the rest at their bounds. The
+                            // children already solved stay in the memo — each is
+                            // the exact optimum of its own state.
+                            *action_idx += 1;
+                            *pair_idx = 0;
+                            child_terms.clear();
+                            continue;
                         }
                         if *pair_idx < action.pairs.len() {
                             // Solve the next child pair: derive child contexts
@@ -558,6 +640,44 @@ where
                             let (lm, rm, pad_identity) = pairs[*pair_idx].clone();
                             let rows = lm.len();
                             let cols = rm.len();
+                            // Branch-and-bound (A2) on the whole representation
+                            // pair: the min-cost flow over `lb_pair` cell costs
+                            // is a lower bound on the pair's achievable size,
+                            // because every true cell value dominates its bound
+                            // and the true optimal flow is feasible here. The
+                            // Forbidden pattern and the supplies are identical
+                            // to the real solve below, so an infeasible bound
+                            // problem means the real pair contributes no
+                            // candidate either. Strict size-only comparison
+                            // against this frame's own incumbent, as for
+                            // structural actions.
+                            if pruning {
+                                let mut cost = vec![vec![Cell::Forbidden; cols]; rows];
+                                for (i, &(lc, _)) in lm.iter().enumerate() {
+                                    for (j, &(rc, _)) in rm.iter().enumerate() {
+                                        if !space.is_cycle_blocked(frame.or_id, lc, rc) {
+                                            let (s, v) = lb_pair(snap, lc, rc);
+                                            cost[i][j] = Cell::Cost(s, v);
+                                        }
+                                    }
+                                }
+                                let problem = TransportProblem::narrowed(
+                                    &lm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
+                                    &rm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
+                                    cost,
+                                );
+                                let prune = match problem.as_ref().and_then(solve_transport) {
+                                    None => true,
+                                    Some(solution) => {
+                                        solution.total.0.saturating_add(1)
+                                            > u128::from(frame.best_quality.0)
+                                    }
+                                };
+                                if prune {
+                                    *pair_idx += 1;
+                                    continue;
+                                }
+                            }
                             *cells = Some(CellState {
                                 lm,
                                 rm,

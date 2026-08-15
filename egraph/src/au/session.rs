@@ -48,6 +48,19 @@ pub struct AuConfig {
     /// `Completion::BudgetExhausted`, never claiming optimality. Ignored by
     /// the UCT algorithm, whose budget is `playouts`.
     pub exact_deadline: Option<std::time::Duration>,
+    /// Branch-and-bound in the exact solver (plan item A2,
+    /// doc/au-solver-plan.md): skip a structural action or an AC
+    /// representation pair when its projection lower bound
+    /// (`estimates::lb_pair`) strictly exceeds the node's own incumbent
+    /// size, and re-check with partial sums as child values return. The
+    /// comparison is size-only and strict because an equal size can still
+    /// win on variant mass, and it is always against the node's own
+    /// incumbent, never an ancestor's, so every memo entry stays the exact
+    /// optimum of its state. Default `false`: the unpruned search is the
+    /// reference the differential fixture was captured against;
+    /// `au_differential.rs::pruned_exact_matches_reference` asserts the
+    /// flag-on qualities equal that fixture. Ignored by the UCT algorithm.
+    pub exact_pruning: bool,
 }
 
 impl Default for AuConfig {
@@ -60,6 +73,7 @@ impl Default for AuConfig {
             x_target: 0.8,
             and_selector: AndSelector::default(),
             exact_deadline: None,
+            exact_pruning: false,
         }
     }
 }
@@ -149,7 +163,14 @@ where
 
     match config.algorithm {
         AuAlgorithm::Exact => {
-            let run = exact::run_exact(snap, l, r, config.cycle_mode, config.exact_deadline)?;
+            let run = exact::run_exact(
+                snap,
+                l,
+                r,
+                config.cycle_mode,
+                config.exact_deadline,
+                config.exact_pruning,
+            )?;
             let size = run.pool.size(run.term);
             // A deadline expiry surfaces the root incumbent uncertified:
             // feasible by construction, optimal only on completion. The
