@@ -34,6 +34,8 @@
 
 pub mod ac_repr;
 pub mod actions;
+#[cfg(test)]
+mod dump;
 pub mod egraph_api;
 pub mod exact;
 pub mod mcgs;

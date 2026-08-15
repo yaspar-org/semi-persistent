@@ -46,6 +46,34 @@ pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let run = run_exact(snap, l_root, r_root, cycle_mode)?;
+    Ok((run.term, run.pool))
+}
+
+/// Everything one exact solve builds: the optimal term plus the search space,
+/// action cache, and best-result table it was derived from. `eager_with_memo`
+/// exposes the term and pool; the test-only search-graph dump (`au::dump`)
+/// reads the rest, so the extra fields are unused outside `cfg(test)`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct ExactRun<Cfg: EGraphConfig> {
+    pub(crate) term: <Cfg::Au as AuIds>::Term,
+    pub(crate) pool: TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    pub(crate) space: SearchSpace<Cfg::Au>,
+    pub(crate) cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
+    pub(crate) results: BestResults<Cfg::Au>,
+    pub(crate) root_or: <Cfg::Au as AuIds>::Or,
+}
+
+/// [`eager_with_memo`] with the full solver state returned instead of dropped.
+pub(crate) fn run_exact<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    l_root: ClassOf<Cfg>,
+    r_root: ClassOf<Cfg>,
+    cycle_mode: CycleMode,
+) -> Result<ExactRun<Cfg>, super::AuError>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     snap.validate_finite_from(l_root)?;
     snap.validate_finite_from(r_root)?;
 
@@ -65,7 +93,7 @@ where
 
     let mut memo: Vec<MemoState<<Cfg::Au as AuIds>::Term>> = Vec::new();
 
-    let result = solve_iterative(
+    let term = solve_iterative(
         snap,
         &mut space,
         &mut pool,
@@ -75,7 +103,14 @@ where
         root_or,
     );
 
-    Ok((result, pool))
+    Ok(ExactRun {
+        term,
+        pool,
+        space,
+        cache,
+        results,
+        root_or,
+    })
 }
 
 fn ensure_memo<T: Copy, O: DenseId>(memo: &mut Vec<MemoState<T>>, or_id: O) {
