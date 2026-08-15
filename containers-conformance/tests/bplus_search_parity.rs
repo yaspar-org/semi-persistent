@@ -323,3 +323,44 @@ fn branchless_differential_prod_vs_verus() {
         assert_eq!(vc_br.key().map(|k| k.raw()), want, "verus/br seek {t}");
     }
 }
+
+/// Backward seeks on a positioned cursor: production's current-leaf fast
+/// path answered from the current leaf whenever `target <= leaf last key`,
+/// so a target below the leaf's FIRST key returned the leaf's first
+/// position instead of the true global position (the twin always descends
+/// and is absolute). Pins the corrected lower bound: both sides now agree
+/// on random forward/backward seek sequences, checked against the sorted
+/// key set directly.
+#[test]
+fn seek_backward_on_positioned_cursor_is_absolute() {
+    const N: u32 = 200;
+    let pkeys: Vec<PId> = (0..N).map(|i| PId::new(2 * i)).collect();
+    let vkeys: Vec<VId> = (0..N).map(|i| VId::new(2 * i)).collect();
+    let pt = ProdTree::from_sorted(&pkeys);
+    let vt = VerusTree::try_from_sorted(&vkeys).expect("sorted");
+
+    let mut pc = pt.cursor();
+    let mut vc = vt.cursor();
+    // Deterministic forward/backward pattern crossing leaf boundaries both
+    // ways, including exact hits, gaps (odd targets), 0, and past-the-end.
+    let mut st = 0x9E37_79B9u64;
+    let mut targets: Vec<u32> = Vec::new();
+    for _ in 0..400 {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        targets.push((st % (2 * N as u64 + 8)) as u32);
+    }
+    targets.extend_from_slice(&[3, 0, 2 * N - 1, 1, 2 * N, 7, 6, 5, 4, 0]);
+    for &t in &targets {
+        pc.seek(PId::new(t));
+        vc.seek(VId::new(t));
+        // Oracle: first even key >= t, i.e. 2*ceil(t/2) while it exists.
+        let expect = {
+            let e = t.div_ceil(2) * 2;
+            if e <= 2 * (N - 1) { Some(e) } else { None }
+        };
+        assert_eq!(pc.key().map(|k| k.raw()), expect, "prod seek({t})");
+        assert_eq!(vc.key().map(|k| k.raw()), expect, "verus seek({t})");
+    }
+}
