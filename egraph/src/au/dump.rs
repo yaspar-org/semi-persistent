@@ -517,7 +517,8 @@ mod tests {
         let l = snap.class_of(left).unwrap();
         let r = snap.class_of(right).unwrap();
         let mut run =
-            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false).unwrap();
+            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false, false)
+                .unwrap();
 
         let label = format!("crossover depth={depth} width={width} cycles={cycles}");
         let n_nodes = run.space.or_arena.len().as_usize();
@@ -564,6 +565,67 @@ mod tests {
         dump_case(4, 9, 2, "au-summary-d4w9c2.json", dir);
     }
 
+    /// A6 acceptance on the c3 dump instance (depth=2 width=2 cycles=3, the
+    /// `au-graph-c3.json` case): context subsumption shrinks the OR-state
+    /// count from 23 to 19 at unchanged optimal quality, and the counts are
+    /// pinned for all four flag combinations so a regression in the reuse
+    /// condition (too strict: count rises; unsound: the quality assert in
+    /// `au_differential.rs` catches it) fails here.
+    ///
+    /// The plan predicted 23 -> 14 (one state per distinct class pair). That
+    /// is not reachable by entry-time reuse: four of the nine duplicate
+    /// states are context variants nested inside the first occurrence's own
+    /// solve (a W pair's self-re-entry through its `h` member), entered
+    /// while that first occurrence is still `Visiting`, so no completed
+    /// bare-pair result exists to reuse; one more is a duplicated terminal,
+    /// which has no children to save. The remaining four collapse (23 -> 19,
+    /// one reuse of the (w2, w0) pair dropping its whole subtree). A2
+    /// pruning removes the self-re-entry descents outright (bound 3 > the
+    /// generalize incumbent 2) and collapses the instance to 6 states with
+    /// or without subsumption, which is the plan's "after A2" note in
+    /// numbers: at this scale pruning subsumes the win.
+    ///
+    /// The dump replay is not run on the subsumed solve: reused states have
+    /// no expanded children to replay.
+    #[test]
+    fn context_subsumption_collapses_c3_states() {
+        let (eg, left, right) = build_crossover(2, 2, 3);
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let l = snap.class_of(left).unwrap();
+        let r = snap.class_of(right).unwrap();
+        let reference =
+            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false, false)
+                .unwrap();
+        let reference_quality = reference.pool.quality(reference.term);
+        for (pruning, subsumption, states) in [
+            (false, false, 23),
+            (false, true, 19),
+            (true, false, 6),
+            (true, true, 6),
+        ] {
+            let run = crate::au::exact::run_exact(
+                &snap,
+                l,
+                r,
+                CycleMode::AncestorOnly,
+                None,
+                pruning,
+                subsumption,
+            )
+            .unwrap();
+            assert_eq!(
+                run.pool.quality(run.term),
+                reference_quality,
+                "pruning={pruning} subsumption={subsumption}: exact optimum changed"
+            );
+            assert_eq!(
+                run.space.or_arena.len().as_usize(),
+                states,
+                "pruning={pruning} subsumption={subsumption}: OR-state count moved"
+            );
+        }
+    }
+
     /// The dump machinery itself stays green in CI: non-empty JSON, node
     /// count matching the arena, and a replay that neither creates OR nodes
     /// nor beats the memoized optimum (both asserted inside the dump).
@@ -574,7 +636,8 @@ mod tests {
         let l = snap.class_of(left).unwrap();
         let r = snap.class_of(right).unwrap();
         let mut run =
-            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false).unwrap();
+            crate::au::exact::run_exact(&snap, l, r, CycleMode::AncestorOnly, None, false, false)
+                .unwrap();
         let dump = dump_search_graph(&snap, &mut run, "consistency", true);
         assert!(dump.n_nodes > 0);
         assert!(dump.n_edges >= dump.n_nodes - 1);

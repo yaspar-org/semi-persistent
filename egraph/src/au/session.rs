@@ -61,6 +61,23 @@ pub struct AuConfig {
     /// `au_differential.rs::pruned_exact_matches_reference` asserts the
     /// flag-on qualities equal that fixture. Ignored by the UCT algorithm.
     pub exact_pruning: bool,
+    /// Context subsumption in the exact solver (plan item A6,
+    /// doc/au-solver-plan.md): a solve on which the entry contexts removed
+    /// no candidate that could have mattered (every cycle-blocked candidate
+    /// was provably non-optimal under every context, transitively through
+    /// every child it solved) computes the context-free optimum, and
+    /// its result is memoized on the bare class pair together with the
+    /// support of its winning derivation (the classes it descends through).
+    /// A later state on the same pair reuses the stored term without
+    /// expanding when the support is disjoint from both of its entry
+    /// contexts: the stored derivation then re-executes unblocked (upper
+    /// bound) and contexts only remove candidates (lower bound), so reuse is
+    /// equality; the argument is on `exact::SubsumptionState`. Default
+    /// `false`: the reference search the differential fixture was captured
+    /// against; `au_differential.rs::subsumed_exact_matches_reference`
+    /// asserts the flag-on qualities equal that fixture, alone and combined
+    /// with `exact_pruning`. Ignored by the UCT algorithm.
+    pub context_subsumption: bool,
     /// Dominance pruning in the UCT/MCGS solver (plan item A5,
     /// doc/au-solver-plan.md): at OR-stats creation, drop every action whose
     /// projection lower bound strictly exceeds the node's generalize value —
@@ -87,6 +104,7 @@ impl Default for AuConfig {
             and_selector: AndSelector::default(),
             exact_deadline: None,
             exact_pruning: false,
+            context_subsumption: false,
             dominance_pruning: false,
         }
     }
@@ -184,6 +202,7 @@ where
                 config.cycle_mode,
                 config.exact_deadline,
                 config.exact_pruning,
+                config.context_subsumption,
             )?;
             let size = run.pool.size(run.term);
             // A deadline expiry surfaces the root incumbent uncertified:

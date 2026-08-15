@@ -7,6 +7,8 @@
 //! subproblem once, then finds the optimal matching via min-cost transportation.
 //! Memoization on states = node sharing: each distinct subproblem is solved once.
 
+use std::collections::HashMap;
+
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::{AuIds, EGraphConfig};
 use crate::containers::DenseId;
@@ -30,6 +32,92 @@ enum MemoState<T> {
     Solved(T),
 }
 
+/// Per-side support of a completed derivation: the left classes and the right
+/// classes of every child pair the winning action tree descends through,
+/// collected transitively and published sorted and deduplicated.
+type Support<C> = (Vec<C>, Vec<C>);
+
+/// One bare-pair memo entry for context subsumption (plan item A6,
+/// doc/au-solver-plan.md): the optimal term of a context-clean solve of
+/// `(l, r)` plus the support of its winning derivation.
+struct CleanEntry<T, C> {
+    term: T,
+    support: Support<C>,
+}
+
+/// Context-subsumption state (`AuConfig::context_subsumption`). A solve of an
+/// OR state is context-clean when the entry context removed no candidate
+/// that could have mattered: every structural action skipped by cycle
+/// blocking had a projection bound strictly above the incumbent size (so it
+/// is non-optimal under EVERY context, the A2 argument), no transport cell
+/// was skipped by cycle blocking, and every child OR the frame solved was
+/// clean itself. By induction over completion order a clean value equals the
+/// context-free optimum `V(empty)`: clean children deliver their `V(empty)`,
+/// surviving candidates therefore evaluate to their context-free values, and
+/// every removed candidate (cycle-blocked above the incumbent, or A2-pruned)
+/// has a context-free value strictly above the frame's result.
+///
+/// Reuse argument, recorded here because both memo maps rely on it. Contexts
+/// only remove candidates, so `V` is monotone non-decreasing in the entry
+/// context and `V(ctx') >= V(empty)` for every `ctx'`. For the upper bound,
+/// the stored derivation re-executes unblocked under `ctx'` whenever its
+/// support is disjoint from `ctx'`: every context along the re-execution is
+/// the union of a derivation-intrinsic part (path classes filtered by
+/// reachability, identical to the clean solve, where every descent of this
+/// derivation executed unblocked) and a subset of `ctx'`, and no descent
+/// class is in `ctx'` by disjointness. The
+/// stored term is then feasible under `ctx'`, so
+/// `V(ctx') <= V(empty) <= V(ctx')`: reuse is equality, and the memo entry
+/// stays the exact optimum of the reusing state.
+struct SubsumptionState<T, C> {
+    /// Bare-pair memo: `(l, r)` as raw indices -> the first clean solve's
+    /// term and support. First writer wins; every clean solve of the same
+    /// pair has the same value (`V(empty)`), so which term is kept only
+    /// picks among tied optima, deterministically.
+    by_pair: HashMap<(usize, usize), CleanEntry<T, C>>,
+    /// Per solved OR id: `Some(support)` iff the solve was context-clean.
+    /// Parents read this on tuple-memo hits to propagate cleanliness.
+    clean: Vec<Option<Support<C>>>,
+}
+
+impl<T, C> SubsumptionState<T, C> {
+    fn new() -> Self {
+        SubsumptionState {
+            by_pair: HashMap::new(),
+            clean: Vec::new(),
+        }
+    }
+
+    fn set_clean<O: DenseId>(&mut self, or_id: O, value: Option<Support<C>>) {
+        let idx = or_id.to_usize();
+        if idx >= self.clean.len() {
+            self.clean.resize_with(idx + 1, || None);
+        }
+        self.clean[idx] = value;
+    }
+
+    fn clean_of<O: DenseId>(&self, or_id: O) -> Option<Support<C>>
+    where
+        C: Clone,
+    {
+        self.clean.get(or_id.to_usize()).cloned().flatten()
+    }
+}
+
+/// Do two ascending-sorted slices share no element? Merge scan; the context
+/// interner stores contexts sorted and supports are sorted at publication.
+fn sorted_disjoint<C: Ord>(a: &[C], b: &[C]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => return false,
+        }
+    }
+    true
+}
+
 /// Run the exact solver from a root class pair, returning the optimal anti-unifier.
 ///
 /// Errors with `AuError::NoFiniteRepresentative` if either root (or any class
@@ -47,10 +135,10 @@ pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    // No deadline, no pruning: this entry point is the reference search the
-    // differential fixture pins; `AuConfig::exact_pruning` opts in via
-    // `run_exact`.
-    let run = run_exact(snap, l_root, r_root, cycle_mode, None, false)?;
+    // No deadline, no pruning, no subsumption: this entry point is the
+    // reference search the differential fixture pins; `AuConfig`'s
+    // `exact_pruning` and `context_subsumption` opt in via `run_exact`.
+    let run = run_exact(snap, l_root, r_root, cycle_mode, None, false, false)?;
     Ok((run.term, run.pool))
 }
 
@@ -83,6 +171,10 @@ pub(crate) struct ExactRun<Cfg: EGraphConfig> {
 ///
 /// `pruning`: branch-and-bound on the projection lower bound (plan item A2);
 /// see [`solve_iterative`]. `false` is the reference search.
+///
+/// `subsumption`: bare-pair reuse of context-clean results (plan item A6);
+/// see [`SubsumptionState`] and [`solve_iterative`]. `false` is the
+/// reference search.
 pub(crate) fn run_exact<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l_root: ClassOf<Cfg>,
@@ -90,6 +182,7 @@ pub(crate) fn run_exact<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     cycle_mode: CycleMode,
     deadline: Option<std::time::Duration>,
     pruning: bool,
+    subsumption: bool,
 ) -> Result<ExactRun<Cfg>, super::AuError>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -123,6 +216,7 @@ where
         root_or,
         deadline.map(|d| std::time::Instant::now() + d),
         pruning,
+        subsumption,
     );
 
     Ok(ExactRun {
@@ -220,6 +314,10 @@ struct CellState<Cfg: EGraphConfig> {
     j: usize,
     cost: Vec<Vec<Cell>>,
     cell_term: Vec<Vec<Option<<Cfg::Au as AuIds>::Term>>>,
+    /// Per-cell child support, recorded at delivery (context subsumption
+    /// only; empty otherwise). `None` in a delivered cell means the child
+    /// was not context-clean, which already tainted the frame.
+    cell_support: Vec<Vec<Option<Support<ClassOf<Cfg>>>>>,
 }
 
 /// One frame of the explicit solve stack: an OR node whose actions are being
@@ -235,6 +333,15 @@ struct SolveFrame<Cfg: EGraphConfig> {
     best: <Cfg::Au as AuIds>::Term,
     best_quality: (u32, u32),
     stage: Stage<Cfg>,
+    /// Context subsumption only (untouched otherwise). `clean` starts true
+    /// and is cleared when cycle blocking removes a candidate that is not
+    /// provably non-optimal under every context, or a delivered child was
+    /// not clean itself; `cur_support` accumulates the
+    /// support of the action currently being evaluated; `best_support` holds
+    /// the winning candidate's support, published on clean completion.
+    clean: bool,
+    cur_support: Support<ClassOf<Cfg>>,
+    best_support: Support<ClassOf<Cfg>>,
 }
 
 /// Iterative memoized solve (explicit frame stack). Semantics are those of the
@@ -283,6 +390,26 @@ struct SolveFrame<Cfg: EGraphConfig> {
 /// their entries are exact optima of their own states regardless of why the
 /// parent stopped.
 ///
+/// `subsumption` enables context-subsumption reuse (plan item A6 and its
+/// soundness argument in doc/au-solver-plan.md; the reuse argument and the
+/// cleanliness definition are on [`SubsumptionState`]). Each frame tracks
+/// whether its evaluation was context-clean: every cycle-blocked structural
+/// action was provably non-optimal under every context (projection bound
+/// strictly above the incumbent), no transport cell was blocked, and every
+/// child OR it solved was clean itself. A clean completion publishes its term and the
+/// winning derivation's support in a bare `(l, r)` map; a later OR entry on
+/// the same pair reuses the stored term without expanding, provided the
+/// stored support is disjoint from both of its entry contexts. The reused
+/// term is offered and marked exact for the new OR id, so the results table
+/// serves downstream consumers exactly as if the node had been solved.
+/// A2-pruned candidates do NOT taint cleanliness: their bounds are built
+/// from `lb_pair`, which is context-independent, and (when the frame is
+/// still clean) from solved child values that equal their `V(empty)`, so a
+/// pruned candidate is provably non-optimal under EVERY entry context, per
+/// the A2 argument. The one exception is a pruned AC representation pair
+/// whose lower-bound flow problem forbade a cycle-blocked cell: that prune
+/// decision is context-dependent, so it taints.
+///
 /// Returns `(term, complete)`; `complete` is false only on deadline expiry.
 #[allow(clippy::too_many_arguments)]
 fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
@@ -295,11 +422,13 @@ fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     root_or: <Cfg::Au as AuIds>::Or,
     deadline: Option<std::time::Instant>,
     pruning: bool,
+    subsumption: bool,
 ) -> (<Cfg::Au as AuIds>::Term, bool)
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let mut stack: Vec<SolveFrame<Cfg>> = Vec::new();
+    let mut sub: SubsumptionState<<Cfg::Au as AuIds>::Term, ClassOf<Cfg>> = SubsumptionState::new();
     let mut pending = root_or;
     let mut entries: u32 = 0;
     loop {
@@ -320,8 +449,17 @@ where
         let or_id = pending;
         ensure_memo(memo, or_id);
         let mut done: Option<<Cfg::Au as AuIds>::Term> = None;
+        // `Some(support)` iff the delivered child solved context-clean;
+        // set and taken in lockstep with `done`. Always `None` with the
+        // subsumption flag off (never read then).
+        let mut done_support: Option<Support<ClassOf<Cfg>>> = None;
         match memo[or_id.to_usize()] {
-            MemoState::Solved(term) => done = Some(term),
+            MemoState::Solved(term) => {
+                done = Some(term);
+                if subsumption {
+                    done_support = sub.clean_of(or_id);
+                }
+            }
             MemoState::Visiting => {
                 // Unreachable by the cycle-mode rank argument (§3.2): every child
                 // state either strictly shrinks the reachable-class budget or is
@@ -339,13 +477,47 @@ where
                 let r = *space.or_arena.right.get(or_id.to_index());
 
                 if l == r {
-                    // Terminal case: l == r.
+                    // Terminal case: l == r. Trivially context-clean with an
+                    // empty support: the evaluation consults no context.
                     let term = build_best_term(snap, pool, l);
                     memo[or_id.to_usize()] = MemoState::Solved(term);
                     results.ensure_capacity(or_id);
                     results.offer(or_id, term, pool.quality(term));
                     results.mark_exact(or_id);
                     done = Some(term);
+                    if subsumption {
+                        sub.set_clean(or_id, Some((Vec::new(), Vec::new())));
+                        done_support = Some((Vec::new(), Vec::new()));
+                    }
+                } else if subsumption
+                    && let Some(entry) = sub.by_pair.get(&(l.to_usize(), r.to_usize()))
+                    && sorted_disjoint(
+                        &entry.support.0,
+                        space
+                            .contexts
+                            .get(*space.or_arena.left_ctx.get(or_id.to_index())),
+                    )
+                    && sorted_disjoint(
+                        &entry.support.1,
+                        space
+                            .contexts
+                            .get(*space.or_arena.right_ctx.get(or_id.to_index())),
+                    )
+                {
+                    // Bare-pair reuse: a clean solve of (l, r) exists and its
+                    // support is disjoint from both entry contexts, so its
+                    // term is this state's exact optimum too (argument on
+                    // `SubsumptionState`). Offer + mark_exact under the new
+                    // OR id so the results table serves it downstream.
+                    let term = entry.term;
+                    let support = entry.support.clone();
+                    memo[or_id.to_usize()] = MemoState::Solved(term);
+                    results.ensure_capacity(or_id);
+                    results.offer(or_id, term, pool.quality(term));
+                    results.mark_exact(or_id);
+                    sub.set_clean(or_id, Some(support.clone()));
+                    done = Some(term);
+                    done_support = Some(support);
                 } else {
                     // The terminal generalize action is part of the shared action
                     // space. Eagerly evaluate it as a valid incumbent before
@@ -395,6 +567,9 @@ where
                             pair_idx: 0,
                             child_terms: Vec::new(),
                         },
+                        clean: true,
+                        cur_support: (Vec::new(), Vec::new()),
+                        best_support: (Vec::new(), Vec::new()),
                     });
                 }
             }
@@ -419,8 +594,21 @@ where
                     } => {
                         // Widening to the surface width, which `intern_action_result`
                         // takes so the structural and transport paths can share it.
-                        let count = frame.actions[*action_idx].pairs[*pair_idx].count;
-                        child_terms.push((term, count.to_u64()));
+                        let pair = frame.actions[*action_idx].pairs[*pair_idx];
+                        if subsumption {
+                            match done_support.take() {
+                                Some((sl, sr)) => {
+                                    if frame.clean {
+                                        frame.cur_support.0.push(pair.left);
+                                        frame.cur_support.0.extend(sl);
+                                        frame.cur_support.1.push(pair.right);
+                                        frame.cur_support.1.extend(sr);
+                                    }
+                                }
+                                None => frame.clean = false,
+                            }
+                        }
+                        child_terms.push((term, pair.count.to_u64()));
                         *pair_idx += 1;
                     }
                     Stage::Transport { cells, .. } => {
@@ -430,6 +618,13 @@ where
                         let (s, v) = pool.quality(term);
                         cell.cost[cell.i][cell.j] = Cell::Cost(s, v);
                         cell.cell_term[cell.i][cell.j] = Some(term);
+                        if subsumption {
+                            let support = done_support.take();
+                            if support.is_none() {
+                                frame.clean = false;
+                            }
+                            cell.cell_support[cell.i][cell.j] = support;
+                        }
                         cell.j += 1;
                     }
                 }
@@ -459,17 +654,48 @@ where
                         // Starting this action: check cycle filtering for each
                         // pair (before any child of this action is solved).
                         if *pair_idx == 0 && child_terms.is_empty() {
+                            if subsumption {
+                                frame.cur_support.0.clear();
+                                frame.cur_support.1.clear();
+                            }
                             let blocked = action
                                 .pairs
                                 .iter()
                                 .any(|p| space.is_cycle_blocked(frame.or_id, p.left, p.right));
                             if blocked {
+                                // The entry context removed a candidate.
+                                // That taints cleanliness UNLESS the
+                                // candidate is provably non-optimal under
+                                // every entry context anyway: its projection
+                                // bound (`action_size_bound`, valid under
+                                // every context per the A2 argument)
+                                // strictly exceeds the incumbent size, which
+                                // is at least the frame's final value. Such
+                                // a candidate cannot lower the context-free
+                                // optimum, so skipping it keeps the value
+                                // context-free. Strict comparison only: at
+                                // equal size the candidate could still win
+                                // on variant mass (the A2 guardrail).
+                                // Without this test every cyclic class pair
+                                // taints its whole subtree through its
+                                // self-re-entry action and no bare-pair
+                                // entry is ever published.
+                                if subsumption
+                                    && action_size_bound(snap, pool, &action.pairs, &[], 0)
+                                        <= u64::from(frame.best_quality.0)
+                                {
+                                    frame.clean = false;
+                                }
                                 *action_idx += 1;
                                 continue;
                             }
                             // Branch-and-bound (A2): skip the action before any
                             // descent when its projection bound already strictly
-                            // exceeds this frame's incumbent size.
+                            // exceeds this frame's incumbent size. Does not
+                            // taint cleanliness: the bound is `lb_pair` only,
+                            // which is context-independent, so the skipped
+                            // candidate is non-optimal under EVERY entry
+                            // context (A2 argument).
                             if pruning
                                 && action_size_bound(snap, pool, &action.pairs, &[], 0)
                                     > u64::from(frame.best_quality.0)
@@ -485,7 +711,11 @@ where
                             // Partial-sum tightening (A2): solved children at
                             // their true sizes, the rest at their bounds. The
                             // children already solved stay in the memo — each is
-                            // the exact optimum of its own state.
+                            // the exact optimum of its own state. No cleanliness
+                            // taint: while the frame is clean, every solved
+                            // child's value equals its context-free optimum, so
+                            // the tightened bound is context-independent too;
+                            // an unclean child already tainted at delivery.
                             *action_idx += 1;
                             *pair_idx = 0;
                             child_terms.clear();
@@ -528,6 +758,9 @@ where
                         if candidate_quality < frame.best_quality {
                             frame.best = candidate;
                             frame.best_quality = candidate_quality;
+                            if subsumption {
+                                frame.best_support = std::mem::take(&mut frame.cur_support);
+                            }
                         }
                         *action_idx += 1;
                         *pair_idx = 0;
@@ -558,6 +791,12 @@ where
                                 let (lc, _) = cell.lm[cell.i];
                                 let (rc, _) = cell.rm[cell.j];
                                 if space.is_cycle_blocked(frame.or_id, lc, rc) {
+                                    // A transport edge removed by the entry
+                                    // context: same taint as a blocked
+                                    // structural action.
+                                    if subsumption {
+                                        frame.clean = false;
+                                    }
                                     cell.j += 1;
                                     continue;
                                 }
@@ -594,7 +833,7 @@ where
                             // transportation solve returns the optimal matching
                             // directly (§3.4.4). Infeasible pairs contribute no
                             // candidate.
-                            let cell = cells.take().expect("cell state present");
+                            let mut cell = cells.take().expect("cell state present");
                             // Monomials carry surface-width multiplicities; the
                             // solver's supply vectors are narrower. A pair it
                             // cannot represent contributes no candidate, exactly
@@ -609,6 +848,7 @@ where
                                 // kinds are commutative: canonical child order.
                                 let mut child_terms: Vec<(<Cfg::Au as AuIds>::Term, u64)> =
                                     Vec::new();
+                                let mut support: Support<ClassOf<Cfg>> = (Vec::new(), Vec::new());
                                 for (i, row) in solution.flow.iter().enumerate() {
                                     for (j, &x) in row.iter().enumerate() {
                                         if x > 0 {
@@ -616,6 +856,17 @@ where
                                                 cell.cell_term[i][j].unwrap(),
                                                 u64::from(x),
                                             ));
+                                            if subsumption && frame.clean {
+                                                let (csl, csr) =
+                                                    cell.cell_support[i][j].take().expect(
+                                                        "clean frame composed a transport cell \
+                                                         without a recorded support",
+                                                    );
+                                                support.0.push(cell.lm[i].0);
+                                                support.0.extend(csl);
+                                                support.1.push(cell.rm[j].0);
+                                                support.1.extend(csr);
+                                            }
                                         }
                                     }
                                 }
@@ -629,6 +880,9 @@ where
                                 if candidate_quality < frame.best_quality {
                                     frame.best = candidate;
                                     frame.best_quality = candidate_quality;
+                                    if subsumption {
+                                        frame.best_support = support;
+                                    }
                                 }
                             }
                             *pair_idx += 1;
@@ -659,6 +913,22 @@ where
                                     Some(b) => b > u128::from(frame.best_quality.0),
                                 };
                                 if prune {
+                                    // Unlike the structural A2 prunes, this
+                                    // bound's Forbidden pattern comes from
+                                    // cycle blocking: if any cell of the pair
+                                    // is blocked, the prune decision is
+                                    // context-dependent and taints. With no
+                                    // blocked cell the bound is `lb_pair`
+                                    // flow only, context-independent.
+                                    if subsumption
+                                        && lm.iter().any(|&(lc, _)| {
+                                            rm.iter().any(|&(rc, _)| {
+                                                space.is_cycle_blocked(or_id, lc, rc)
+                                            })
+                                        })
+                                    {
+                                        frame.clean = false;
+                                    }
                                     *pair_idx += 1;
                                     continue;
                                 }
@@ -671,6 +941,11 @@ where
                                 j: 0,
                                 cost: vec![vec![Cell::Forbidden; cols]; rows],
                                 cell_term: vec![vec![None; cols]; rows],
+                                cell_support: if subsumption {
+                                    vec![vec![None; cols]; rows]
+                                } else {
+                                    Vec::new()
+                                },
                             });
                             continue;
                         }
@@ -689,6 +964,24 @@ where
                         results.ensure_capacity(frame.or_id);
                         results.offer(frame.or_id, frame.best, frame.best_quality);
                         results.mark_exact(frame.or_id);
+                        if subsumption && frame.clean {
+                            // Clean completion: publish the winning
+                            // derivation's support per side, sorted for the
+                            // disjointness scan, and memoize the bare pair.
+                            let (mut sl, mut sr) = frame.best_support;
+                            sl.sort_unstable();
+                            sl.dedup();
+                            sr.sort_unstable();
+                            sr.dedup();
+                            sub.set_clean(frame.or_id, Some((sl.clone(), sr.clone())));
+                            sub.by_pair
+                                .entry((frame.l.to_usize(), frame.r.to_usize()))
+                                .or_insert(CleanEntry {
+                                    term: frame.best,
+                                    support: (sl.clone(), sr.clone()),
+                                });
+                            done_support = Some((sl, sr));
+                        }
                         done = Some(frame.best);
                         continue 'advance; // deliver to the parent frame
                     }

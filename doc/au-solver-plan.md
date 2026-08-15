@@ -150,6 +150,32 @@ result untouched by blocking is context-free and memoizes on the bare
 `(l, r)` pair. Acceptance: the c3 dump's 23 states collapse to 14; rand
 stratum exact times drop. After A2, because A2 already neutralizes the
 families where blocking is the only cost driver. About a week.
+Done 2026-08-15, directly as the support-set tier (the blocked-nothing flag
+alone is not simpler than the disjointness check, and the support is cheap
+to collect from the frames): `context_subsumption` (`AuConfig`, default
+false) marks a frame context-clean when every cycle-blocked structural
+action's projection bound strictly exceeded the incumbent size (non-optimal
+under every context, the A2 argument; without this exemption a cyclic
+pair's self-re-entry action taints its whole subtree and nothing ever
+memoizes), no transport cell was blocked, and every solved child was clean;
+a clean completion memoizes its term plus the per-side support of the
+winning derivation on the bare pair, and a later state on the same pair
+reuses at entry iff the support is disjoint from both entry contexts
+(argument on `exact::SubsumptionState`). Flag off, the fixture is
+byte-identical; flag on, `subsumed_exact_matches_reference` pins the exact
+qualities to the fixture on the full corpus, alone and combined with
+`exact_pruning`. The c3 acceptance fell short of the prediction: 23 -> 19,
+not 14 (`dump.rs::context_subsumption_collapses_c3_states`), because four
+of the nine duplicate states are context variants nested inside the first
+occurrence's own solve, entered while it is still `Visiting`, so no
+completed result exists to reuse, and one is a duplicated terminal with no
+children to save; A2 pruning removes those self-re-entry descents outright
+and collapses the same instance to 6 states with or without subsumption.
+At scale the reuse wins on its own
+(`au_scaling_crossover.rs::subsumed_exact_crossover_c8_c10`, release,
+Apple Silicon): exact times c8 788 ms -> 1.5 ms, c9 9.08 s -> 2.3 ms,
+c10 TIMEOUT(30 s) -> 3.6 ms with subsumption alone, and 59/103/113 us at
+c8/c9/c10 with both flags on.
 
 **A7. Hybrid MCGS + exact below a threshold.** The consumer hook exists:
 `results.mark_exact` already makes an OR node terminal for certification

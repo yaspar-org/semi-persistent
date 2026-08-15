@@ -512,18 +512,21 @@ fn run_exact_guarded(p: Params, timeout: Duration) -> ExactOutcome {
         move || build_instance(p),
         timeout,
         false,
+        false,
     )
 }
 
 /// Generic form of the guard for the other instance families: the builder
 /// runs on the worker thread so a timeout abandons the build too. `pruning`
-/// sets `AuConfig::exact_pruning` (A2's branch-and-bound); the sweeps pass
-/// false to keep measuring the reference search.
+/// sets `AuConfig::exact_pruning` (A2's branch-and-bound), `subsumption`
+/// sets `AuConfig::context_subsumption` (A6's bare-pair reuse); the sweeps
+/// pass false for both to keep measuring the reference search.
 fn run_exact_guarded_with<F>(
     label: &str,
     build: F,
     timeout: Duration,
     pruning: bool,
+    subsumption: bool,
 ) -> ExactOutcome
 where
     F: FnOnce() -> Instance + Send + 'static,
@@ -542,6 +545,7 @@ where
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
                     exact_pruning: pruning,
+                    context_subsumption: subsumption,
                     ..Default::default()
                 },
             )
@@ -752,6 +756,7 @@ fn pruned_exact_crossover_c10() {
         move || build_instance(p),
         EXACT_TIMEOUT,
         true,
+        false,
     );
     match pruned {
         ExactOutcome::Done { size, elapsed } => {
@@ -766,6 +771,48 @@ fn pruned_exact_crossover_c10() {
              longer exceeds the guard, re-baseline this acceptance test"
         ),
         ExactOutcome::Timeout => {}
+    }
+}
+
+/// A6 measurement: exact times on the cyclic family at cycles 8..=10
+/// (depth 4, width cycles-1) for context subsumption alone, subsumption
+/// combined with A2 pruning, and the reference search. The reference runs
+/// last because its cycles=10 level exceeds the 30 s guard and leaks a
+/// spinning worker, which must not share the machine with the measurements.
+/// Run with:
+/// `cargo test -p semi-persistent-egraph --release --test au_scaling_crossover -- --ignored --nocapture subsumed_exact_crossover_c8_c10`
+#[test]
+#[ignore = "manual measurement: run in release"]
+fn subsumed_exact_crossover_c8_c10() {
+    let levels: Vec<Params> = (8..=10)
+        .map(|c| Params {
+            depth: 4,
+            width: c - 1,
+            cycles: c,
+        })
+        .collect();
+    for (label, pruning, subsumption) in [
+        ("subsumption", false, true),
+        ("subsumption+pruning", true, true),
+        ("reference", false, false),
+    ] {
+        for &p in &levels {
+            let outcome = run_exact_guarded_with(
+                &format!("{label}-c{}k{}d{}", p.cycles, p.width, p.depth),
+                move || build_instance(p),
+                EXACT_TIMEOUT,
+                pruning,
+                subsumption,
+            );
+            match outcome {
+                ExactOutcome::Done { size, elapsed } => {
+                    println!("{label} c{}: size={size} elapsed={elapsed:.2?}", p.cycles);
+                }
+                ExactOutcome::Timeout => {
+                    println!("{label} c{}: TIMEOUT({EXACT_TIMEOUT:?})", p.cycles);
+                }
+            }
+        }
     }
 }
 
@@ -906,6 +953,7 @@ fn sweep_width_only() {
             move || build_width_instance(p),
             EXACT_TIMEOUT,
             false,
+            false,
         );
         let mut inst = build_width_instance(p);
         let mcgs = run_mcgs(&inst, MCGS_PLAYOUTS);
@@ -979,6 +1027,7 @@ fn sweep_ac_members() {
             &format!("ac-m{}c{}", p.members, p.children),
             move || build_ac_instance(p),
             EXACT_TIMEOUT,
+            false,
             false,
         );
         let mut inst = build_ac_instance(p);

@@ -964,6 +964,84 @@ fn pruned_exact_matches_reference() {
     );
 }
 
+/// A6's flag-on check per the module-doc protocol for pruning changes: the
+/// exact solver with `context_subsumption: true` must report, on every
+/// corpus instance, the same quality tuple the committed fixture's `exact`
+/// line pins. The fixture was captured with the flag off, so equality here
+/// is the claim that bare-pair reuse of context-clean results returns the
+/// exact optimum of every reusing state. Runs twice per instance: the flag
+/// alone with `exact_pruning` off, to isolate the reuse rule, and both
+/// flags on, the combination production uses. Prints the exact-only corpus
+/// wall time for the reference and both flag-on configurations (visible
+/// under `--nocapture`).
+#[test]
+fn subsumed_exact_matches_reference() {
+    let golden = read_golden();
+    let mut checked = 0usize;
+    let mut reference_total = Duration::ZERO;
+    let mut subsumed_total = Duration::ZERO;
+    let mut combined_total = Duration::ZERO;
+    for spec in full_specs() {
+        let id = spec.id();
+        let inst = spec.build();
+        let snap = AuSnapshot::new(&inst.eg).unwrap();
+
+        let key = format!("{id} exact");
+        let want = golden
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key} :: ")))
+            .unwrap_or_else(|| panic!("{key}: no exact line in the golden fixture; {REGEN_HINT}"));
+
+        let start = Instant::now();
+        anti_unify(
+            &snap,
+            inst.left,
+            inst.right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Exact,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        reference_total += start.elapsed();
+
+        for (exact_pruning, total) in [(false, &mut subsumed_total), (true, &mut combined_total)] {
+            let start = Instant::now();
+            let subsumed = anti_unify(
+                &snap,
+                inst.left,
+                inst.right,
+                &AuConfig {
+                    algorithm: AuAlgorithm::Exact,
+                    context_subsumption: true,
+                    exact_pruning,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            *total += start.elapsed();
+
+            let got = format!(
+                "size={} vmass={}",
+                subsumed.size,
+                subsumed.pool.variant_mass(subsumed.term_id)
+            );
+            assert_eq!(
+                got, want,
+                "{id} (exact_pruning={exact_pruning}): subsumed exact quality diverges from \
+                 the fixture's exact line; context_subsumption reused a result that is not \
+                 the exact optimum of the reusing state"
+            );
+            checked += 1;
+        }
+    }
+    println!(
+        "subsumed_exact_matches_reference: {checked} runs, exact corpus wall time reference \
+         {reference_total:.2?} -> subsumption {subsumed_total:.2?} -> subsumption+pruning \
+         {combined_total:.2?}"
+    );
+}
+
 /// A5's flag-on check per the module-doc protocol for pruning changes: MCGS
 /// with `dominance_pruning: true` must stay sound on every corpus instance —
 /// never beat the fixture's exact size, and a `Completion::Exact` certificate
