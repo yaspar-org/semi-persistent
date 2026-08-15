@@ -41,10 +41,11 @@ allowlist-driven surface and listed once per type.
 | BitSet | bitset/set_test_churn | 24.0 µs | 24.2 µs | +0.7% |
 | EClasses/UnionFind | no in-tree production twin (replaced); end-to-end evidence is the saturate_bench pre/post protocol in egraph-wf.md | | | −1.7% to +1.6% at the swap |
 
-Open performance items from this ledger: the three B+ tree deltas, and
-the vec/try_extend gate row (measured over its ceiling at HEAD in two
-quiet sessions; bisection in progress - the regression predates the
-2026-08-14 fixes). from_sorted_then_scan moved +74% to +86% when the
+Open performance items from this ledger: the three B+ tree deltas.
+The vec/try_extend gate scare resolved as machine-state contamination
+(bisection: no first bad commit, byte-identical body across the range,
+mean +0.7% on a quiet machine; 14-parity-audit-2.md section 5); the
+row's single-run baseline needs a spread-based re-record. from_sorted_then_scan moved +74% to +86% when the
 NodeLayout release guards landed: one guard per leaf_push during the
 bulk build and one per cursor key read during the scan, about 50ps per
 call, visible only on this microsecond-scale microbench (insert and

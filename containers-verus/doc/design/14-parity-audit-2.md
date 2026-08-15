@@ -280,12 +280,22 @@ Two passes, quiet windows, ratios reproducing within about one point.
 
 ### Regressions at HEAD (verus slower than production beyond +3%)
 
-1. **vec/try_extend +7.6% then +9.0%, and the perf_gate row FAILS its
-   +9.0 ceiling.** The ledger recorded -18.5%; a ~27-point move on an
-   interleaved row is real, and the gate is red at HEAD. Open
-   attribution: no vec runtime path changed in the parity batch;
-   candidates are the workspace dependency update and codegen drift.
-   Bisection owed before any fix.
+1. **vec/try_extend: RECLASSIFIED, not a regression.** The bisection
+   found no first bad commit: the function body is byte-identical
+   across the candidate range, no in-range commit touches Cargo.lock,
+   and on a genuinely quiet machine the tip measures mean +0.7% over
+   six runs - indistinguishable from the row's original +1.6%
+   recording - while the ceiling-setting commit itself trips its own
+   +9.0% ceiling in 4 of 16 runs under contention. The audit's two
+   "quiet sessions" shared contaminated machine state (real-time
+   audio threads, and this session's own background miri
+   interpreter at 100% CPU); single-run ratios under that state span
+   -39% to +64%. Consequences adopted: the row's PROVISIONAL
+   single-run baseline needs a spread-based re-record, the ledger's
+   absolute columns are non-reproducible (already noted), and every
+   sub-10-point delta measured in those sessions (tracked_veci +4-6%,
+   the +86% from_sorted magnitude - the guard MECHANISM stands, the
+   magnitude needs a controlled re-measure) carries the same caveat.
 2. **bplus/from_sorted_then_scan +86% (ledger +74%).** The ~13-point
    worsening is attributed to the NodeLayout release guards: the
    bulk build pays a guard per leaf_push and the scan a guard per
