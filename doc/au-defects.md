@@ -81,6 +81,36 @@ deleted instead of patched. Land fix 3's budget as a debug assert in
 the same commit so any future negative-cycle regression fails loudly
 in tests instead of hanging.
 
+**DECIDED 2026-08-14: fix 1.** Ecosystem precedent supports it: the
+major exact min-cost-flow implementations refuse float costs at the
+API (OR-Tools SimpleMinCostFlow is int64-only; LEMON's cost-scaling
+needs integrality for its epsilon-termination argument; NetworkX
+documents that float weights void its guarantees). The alternatives
+stay recorded with their revisit conditions:
+
+- *Potentials with Dijkstra (fix 2).* Scipy's assignment solver runs
+  this architecture on f64 safely because assignment structure
+  precludes cycling; general transport cells lack that shield and the
+  clamp needs a starvation argument. Revisit if the quantization is
+  MEASURED to distort MCGS selection (a playout-decision differential
+  against an exact-rational oracle would show it), or if Q values
+  ever leave their bounded range so a fixed grid loses relative
+  precision.
+- *Interval costs with outward rounding.* Sound enclosures require
+  propagating intervals through the whole Q pipeline (wrapping point
+  values at the solver door is unsound), and on contested comparisons
+  the algorithm still chooses arbitrarily, so decisions do not
+  improve. Revisit only if a consumer wants certified per-decision
+  optimality gaps.
+- *Entropic regularization (Sinkhorn).* Unconditionally FP-robust
+  fixed-point iteration; changes semantics (approximate, temperature
+  parameter). Revisit if the transport solve remains the dominant
+  profile cost after the buffer-reuse and dirty-flag work
+  (au-review.md performance items 2-3) and the consumer is confirmed
+  heuristic-only.
+- *Relaxation budget alone (fix 3).* No optimality guarantee on
+  breach; lands as the debug assert only, never as the fix.
+
 **Regression test.** The five-node graph above as an in-tree test
 running `anti_unify(n4, n8)` under UCT with a wall-clock bound (the
 release-codegen timing-canary pattern from

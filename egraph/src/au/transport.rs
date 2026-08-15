@@ -23,6 +23,11 @@
 //! order with strict-less updates, so equal-cost ties resolve to the first
 //! (lowest-index) candidate; the returned matrix is a deterministic function
 //! of the input.
+//!
+//! Every entry point solves in exact integer arithmetic. MCGS Q estimates
+//! arrive pre-quantized through [`solve_transport_quantized`]; the successive
+//! shortest-paths termination argument requires exact cost comparisons, so
+//! this module accepts no float costs.
 
 /// One cell of the transportation cost matrix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,210 +133,29 @@ impl Network {
     }
 }
 
-/// A float-cost transportation problem (for MCGS Q estimates). Costs must be
-/// finite; non-finite cells must be passed as `None` (Forbidden).
+/// Solve a transportation problem whose cell costs are already signed
+/// integers (quantized MCGS Q values). `Some(cost)` marks an allowed cell,
+/// `None` a forbidden one. Returns only the argmin flow matrix; the caller
+/// re-derives its objective from the flow at whatever precision it owns.
 ///
-/// Deliberately has no `narrowed` constructor to match [`TransportProblem::narrowed`].
-/// This solver only ever re-solves margins that the integer solver already accepted:
-/// the sole caller reads them back out of the AND node's stored `transport_rows` /
-/// `transport_cols`, which were moved out of the very [`TransportProblem`] the
-/// feasibility gate ran, so they are `u32` because they already passed the one
-/// narrowing check and not because anything narrows here. A constructor taking `u64`
-/// would invite a *second* narrowing point that could disagree with the gate about
-/// which instance was declared feasible.
-#[derive(Clone, Debug)]
-pub struct TransportProblemF64 {
-    /// Already at the solver's width; see the type doc.
-    pub row_supply: Vec<u32>,
-    /// Already at the solver's width; see the type doc.
-    pub col_demand: Vec<u32>,
-    /// `cost[i][j]`: `Some(finite f64)` = allowed, `None` = forbidden.
-    pub cost: Vec<Vec<Option<f64>>>,
-}
-
-/// Solution of a float-cost transport: flow matrix and total cost.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TransportSolutionF64 {
-    pub flow: Vec<Vec<u32>>,
-    pub total: f64,
-}
-
-/// Solve a float-cost transportation problem with the same SPFA successive
-/// shortest augmenting path algorithm, using native f64 cost arithmetic.
-/// Finite costs only (asserted unconditionally: NaN would silently corrupt
-/// the relaxation); ties resolve deterministically to the first
-/// (lowest-index) candidate. No scalarization or rounding: the exact argmin
-/// over the represented f64 values is preserved.
-pub fn solve_transport_f64(p: &TransportProblemF64) -> Option<TransportSolutionF64> {
-    // Validate ALL costs before any early return: a non-finite cost is a
-    // caller bug and must panic in every build and on every input shape
-    // (zero-flow and mismatched-margin instances included), never be
-    // conflated with infeasibility (None) or absorbed by a trivial solution.
-    for row in &p.cost {
-        for c in row.iter().flatten() {
-            assert!(c.is_finite(), "transport f64 cost must be finite");
-        }
-    }
-
-    let rows = p.row_supply.len();
-    let cols = p.col_demand.len();
-    if rows == 0 || cols == 0 {
-        return None;
-    }
-    let total_supply: u64 = p.row_supply.iter().map(|&m| m as u64).sum();
-    let total_demand: u64 = p.col_demand.iter().map(|&n| n as u64).sum();
-    if total_supply != total_demand {
-        return None;
-    }
-    if total_supply == 0 {
-        return Some(TransportSolutionF64 {
-            flow: vec![vec![0; cols]; rows],
-            total: 0.0,
-        });
-    }
-
-    let source = 0usize;
-    let sink = rows + cols + 1;
-    let mut net = NetworkF64::new(rows + cols + 2);
-    for (i, &m) in p.row_supply.iter().enumerate() {
-        net.add_edge(source, 1 + i, m, 0.0);
-    }
-    for (j, &n) in p.col_demand.iter().enumerate() {
-        net.add_edge(1 + rows + j, sink, n, 0.0);
-    }
-    let mut cell_edge: Vec<Vec<Option<usize>>> = vec![vec![None; cols]; rows];
-    for i in 0..rows {
-        for j in 0..cols {
-            if let Some(c) = p.cost[i][j] {
-                let cap = p.row_supply[i].min(p.col_demand[j]);
-                if cap > 0 {
-                    cell_edge[i][j] = Some(net.edges.len());
-                    net.add_edge(1 + i, 1 + rows + j, cap, c);
-                }
-            }
-        }
-    }
-
-    let n_nodes = rows + cols + 2;
-    let mut pushed_total: u64 = 0;
-    loop {
-        let mut dist: Vec<Option<f64>> = vec![None; n_nodes];
-        let mut parent_edge: Vec<Option<usize>> = vec![None; n_nodes];
-        let mut in_queue = vec![false; n_nodes];
-        let mut queue = std::collections::VecDeque::new();
-        dist[source] = Some(0.0);
-        queue.push_back(source);
-        in_queue[source] = true;
-
-        while let Some(u) = queue.pop_front() {
-            in_queue[u] = false;
-            let du = dist[u].unwrap();
-            for &e in &net.adj[u] {
-                if net.residual(e) == 0 {
-                    continue;
-                }
-                let v = net.edges[e].to;
-                let nd = du + net.edges[e].cost;
-                if dist[v].is_none() || nd < dist[v].unwrap() {
-                    dist[v] = Some(nd);
-                    parent_edge[v] = Some(e);
-                    if !in_queue[v] {
-                        queue.push_back(v);
-                        in_queue[v] = true;
-                    }
-                }
-            }
-        }
-
-        if dist[sink].is_none() {
-            break;
-        }
-        let mut bottleneck = i64::MAX;
-        let mut node = sink;
-        while node != source {
-            let e = parent_edge[node].unwrap();
-            bottleneck = bottleneck.min(net.residual(e));
-            node = net.edges[e ^ 1].to;
-        }
-        debug_assert!(bottleneck > 0);
-        let mut node = sink;
-        while node != source {
-            let e = parent_edge[node].unwrap();
-            net.edges[e].flow += bottleneck;
-            net.edges[e ^ 1].flow -= bottleneck;
-            node = net.edges[e ^ 1].to;
-        }
-        pushed_total += bottleneck as u64;
-        if pushed_total == total_supply {
-            break;
-        }
-    }
-
-    if pushed_total != total_supply {
-        return None;
-    }
-
-    let mut flow = vec![vec![0u32; cols]; rows];
-    let mut total = 0.0f64;
-    for i in 0..rows {
-        for j in 0..cols {
-            if let Some(e) = cell_edge[i][j] {
-                let x = net.edges[e].flow;
-                debug_assert!(x >= 0);
-                if x > 0 {
-                    let x = u32::try_from(x).expect("cell flow exceeds u32");
-                    flow[i][j] = x;
-                    if let Some(c) = p.cost[i][j] {
-                        total += x as f64 * c;
-                    }
-                }
-            }
-        }
-    }
-    Some(TransportSolutionF64 { flow, total })
-}
-
-struct EdgeF64 {
-    to: usize,
-    cap: i64,
-    cost: f64,
-    flow: i64,
-}
-
-struct NetworkF64 {
-    edges: Vec<EdgeF64>,
-    adj: Vec<Vec<usize>>,
-}
-
-impl NetworkF64 {
-    fn new(nodes: usize) -> Self {
-        NetworkF64 {
-            edges: Vec::new(),
-            adj: vec![Vec::new(); nodes],
-        }
-    }
-
-    fn add_edge(&mut self, from: usize, to: usize, cap: u32, cost: f64) {
-        let idx = self.edges.len();
-        self.edges.push(EdgeF64 {
-            to,
-            cap: cap as i64,
-            cost,
-            flow: 0,
-        });
-        self.edges.push(EdgeF64 {
-            to: from,
-            cap: 0,
-            cost: -cost,
-            flow: 0,
-        });
-        self.adj[from].push(idx);
-        self.adj[to].push(idx + 1);
-    }
-
-    fn residual(&self, e: usize) -> i64 {
-        self.edges[e].cap - self.edges[e].flow
-    }
+/// Margins are `u32` for the same reason [`TransportProblem`]'s are: the sole
+/// caller reads them back out of the AND node's stored `transport_rows` /
+/// `transport_cols`, which were moved out of the very [`TransportProblem`]
+/// the feasibility gate ran, so they already passed the one narrowing check.
+///
+/// Exact `i128` arithmetic is a termination requirement, not a precision
+/// nicety: with f64 costs, two mathematically-equal path sums can differ by
+/// one ulp, an augmentation along such a path leaves a residual cycle whose
+/// computed cost is negative, and SPFA's strict-less relaxation then
+/// decreases `dist` around that cycle forever. Integer costs make every
+/// augmentation a true shortest path, so the residual graph stays free of
+/// negative cycles and the successive-shortest-paths argument holds.
+pub fn solve_transport_quantized(
+    row_supply: &[u32],
+    col_demand: &[u32],
+    cost: &[Vec<Option<i128>>],
+) -> Option<Vec<Vec<u32>>> {
+    solve_cells(row_supply, col_demand, cost)
 }
 
 /// Solve the transportation problem. Returns `None` if infeasible (the margins
@@ -340,23 +164,10 @@ impl NetworkF64 {
 pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
     let rows = p.row_supply.len();
     let cols = p.col_demand.len();
-    if rows == 0 || cols == 0 {
-        return None;
-    }
-    let total_supply: u64 = p.row_supply.iter().map(|&m| m as u64).sum();
-    let total_demand: u64 = p.col_demand.iter().map(|&n| n as u64).sum();
-    if total_supply != total_demand {
-        return None;
-    }
-    if total_supply == 0 {
-        return Some(TransportSolution {
-            flow: vec![vec![0; cols]; rows],
-            total: (0, 0),
-        });
-    }
 
-    // Scalarization constants (checked).
-    let f: u128 = total_supply as u128;
+    // Scalarization constants (checked). `f` uses the row total; on
+    // mismatched margins the core returns None before any cost is read.
+    let f: u128 = p.row_supply.iter().map(|&m| m as u128).sum();
     let v_max: u128 = p
         .cost
         .iter()
@@ -372,19 +183,7 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
         .and_then(|x| x.checked_add(1))
         .expect("transport scalarization overflow (W)");
 
-    // Nodes: source=0, rows 1..=rows, cols rows+1..=rows+cols, sink=rows+cols+1.
-    let source = 0usize;
-    let sink = rows + cols + 1;
-    let mut net = Network::new(rows + cols + 2);
-
-    for (i, &m) in p.row_supply.iter().enumerate() {
-        net.add_edge(source, 1 + i, m, 0);
-    }
-    for (j, &n) in p.col_demand.iter().enumerate() {
-        net.add_edge(1 + rows + j, sink, n, 0);
-    }
-    // Remember the edge index of each (i,j) cell for flow extraction.
-    let mut cell_edge: Vec<Vec<Option<usize>>> = vec![vec![None; cols]; rows];
+    let mut cost: Vec<Vec<Option<i128>>> = vec![vec![None; cols]; rows];
     for i in 0..rows {
         for j in 0..cols {
             if let Cell::Cost(s, v) = p.cost[i][j] {
@@ -392,12 +191,79 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
                     .checked_mul(w)
                     .and_then(|x| x.checked_add(v as u128))
                     .expect("transport scalarization overflow (cell)");
-                let cap = p.row_supply[i].min(p.col_demand[j]);
+                cost[i][j] =
+                    Some(i128::try_from(scalar).expect("transport scalar cost exceeds i128"));
+            }
+        }
+    }
+
+    let flow = solve_cells(&p.row_supply, &p.col_demand, &cost)?;
+
+    // Extract the total quality from the flow.
+    let mut total_s: u128 = 0;
+    let mut total_v: u128 = 0;
+    for i in 0..rows {
+        for j in 0..cols {
+            let x = flow[i][j];
+            if x > 0
+                && let Cell::Cost(s, v) = p.cost[i][j]
+            {
+                total_s += x as u128 * s as u128;
+                total_v += x as u128 * v as u128;
+            }
+        }
+    }
+
+    Some(TransportSolution {
+        flow,
+        total: (total_s, total_v),
+    })
+}
+
+/// Successive shortest augmenting paths over integer cell costs: the shared
+/// core of [`solve_transport`] and [`solve_transport_quantized`]. Returns the
+/// min-cost flow matrix meeting every margin, or `None` if the margins cannot
+/// be met using only allowed cells. Panics on distance overflow (checked
+/// `i128` adds).
+fn solve_cells(
+    row_supply: &[u32],
+    col_demand: &[u32],
+    cost: &[Vec<Option<i128>>],
+) -> Option<Vec<Vec<u32>>> {
+    let rows = row_supply.len();
+    let cols = col_demand.len();
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+    let total_supply: u64 = row_supply.iter().map(|&m| m as u64).sum();
+    let total_demand: u64 = col_demand.iter().map(|&n| n as u64).sum();
+    if total_supply != total_demand {
+        return None;
+    }
+    if total_supply == 0 {
+        return Some(vec![vec![0; cols]; rows]);
+    }
+
+    // Nodes: source=0, rows 1..=rows, cols rows+1..=rows+cols, sink=rows+cols+1.
+    let source = 0usize;
+    let sink = rows + cols + 1;
+    let mut net = Network::new(rows + cols + 2);
+
+    for (i, &m) in row_supply.iter().enumerate() {
+        net.add_edge(source, 1 + i, m, 0);
+    }
+    for (j, &n) in col_demand.iter().enumerate() {
+        net.add_edge(1 + rows + j, sink, n, 0);
+    }
+    // Remember the edge index of each (i,j) cell for flow extraction.
+    let mut cell_edge: Vec<Vec<Option<usize>>> = vec![vec![None; cols]; rows];
+    for i in 0..rows {
+        for j in 0..cols {
+            if let Some(c) = cost[i][j] {
+                let cap = row_supply[i].min(col_demand[j]);
                 if cap > 0 {
                     cell_edge[i][j] = Some(net.edges.len());
-                    let cost_i128 =
-                        i128::try_from(scalar).expect("transport scalar cost exceeds i128");
-                    net.add_edge(1 + i, 1 + rows + j, cap, cost_i128);
+                    net.add_edge(1 + i, 1 + rows + j, cap, c);
                 }
             }
         }
@@ -405,6 +271,11 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
 
     // Successive shortest augmenting paths with SPFA and bottleneck augmentation.
     let n_nodes = rows + cols + 2;
+    // Debug-build relaxation budget: without negative residual cycles, SPFA's
+    // successful relaxations per solve stay within the Bellman-Ford count
+    // (n_nodes passes over every edge). A breach means the exact-arithmetic
+    // invariant broke and the loop would otherwise spin; fail loudly instead.
+    let relaxation_budget = (n_nodes as u64).saturating_mul(net.edges.len() as u64);
     let mut pushed_total: u64 = 0;
     loop {
         // SPFA from source: dist, parent edge.
@@ -416,6 +287,7 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
         queue.push_back(source);
         in_queue[source] = true;
 
+        let mut relaxations: u64 = 0;
         while let Some(u) = queue.pop_front() {
             in_queue[u] = false;
             let du = dist[u].unwrap();
@@ -429,6 +301,12 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
                     .expect("transport distance overflow");
                 // Strict-less relaxation: deterministic first-found ties.
                 if dist[v].is_none() || nd < dist[v].unwrap() {
+                    relaxations += 1;
+                    debug_assert!(
+                        relaxations <= relaxation_budget,
+                        "SPFA relaxations exceeded the Bellman-Ford bound: \
+                         negative residual cycle (broken cost invariant)"
+                    );
                     dist[v] = Some(nd);
                     parent_edge[v] = Some(e);
                     if !in_queue[v] {
@@ -474,87 +352,25 @@ pub fn solve_transport(p: &TransportProblem) -> Option<TransportSolution> {
         return None; // infeasible: margins cannot be met with allowed cells
     }
 
-    // Extract the flow matrix and total quality.
+    // Extract the flow matrix.
     let mut flow = vec![vec![0u32; cols]; rows];
-    let mut total_s: u128 = 0;
-    let mut total_v: u128 = 0;
     for i in 0..rows {
         for j in 0..cols {
             if let Some(e) = cell_edge[i][j] {
                 let x = net.edges[e].flow;
                 debug_assert!(x >= 0, "forward cell edge cannot end with negative flow");
                 if x > 0 {
-                    let x = u32::try_from(x).expect("cell flow exceeds u32");
-                    flow[i][j] = x;
-                    if let Cell::Cost(s, v) = p.cost[i][j] {
-                        total_s += x as u128 * s as u128;
-                        total_v += x as u128 * v as u128;
-                    }
+                    flow[i][j] = u32::try_from(x).expect("cell flow exceeds u32");
                 }
             }
         }
     }
-
-    Some(TransportSolution {
-        flow,
-        total: (total_s, total_v),
-    })
+    Some(flow)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Non-finite f64 costs are a caller bug and must panic in ALL builds
-    /// (a NaN would silently corrupt the SPFA relaxation), never be
-    /// conflated with transport infeasibility (which returns None).
-    #[test]
-    #[should_panic(expected = "transport f64 cost must be finite")]
-    fn f64_nan_cost_panics() {
-        let p = TransportProblemF64 {
-            row_supply: vec![1],
-            col_demand: vec![1],
-            cost: vec![vec![Some(f64::NAN)]],
-        };
-        let _ = solve_transport_f64(&p);
-    }
-
-    #[test]
-    #[should_panic(expected = "transport f64 cost must be finite")]
-    fn f64_infinite_cost_panics() {
-        let p = TransportProblemF64 {
-            row_supply: vec![1],
-            col_demand: vec![1],
-            cost: vec![vec![Some(f64::INFINITY)]],
-        };
-        let _ = solve_transport_f64(&p);
-    }
-
-    /// The finiteness contract holds on every input shape: a zero-flow
-    /// instance must not absorb a NaN into a trivial solution.
-    #[test]
-    #[should_panic(expected = "transport f64 cost must be finite")]
-    fn f64_nan_cost_panics_on_zero_flow() {
-        let p = TransportProblemF64 {
-            row_supply: vec![0],
-            col_demand: vec![0],
-            cost: vec![vec![Some(f64::NAN)]],
-        };
-        let _ = solve_transport_f64(&p);
-    }
-
-    /// ... and a mismatched-margin instance must not conflate the NaN with
-    /// infeasibility (None).
-    #[test]
-    #[should_panic(expected = "transport f64 cost must be finite")]
-    fn f64_infinite_cost_panics_on_mismatched_margins() {
-        let p = TransportProblemF64 {
-            row_supply: vec![2],
-            col_demand: vec![1],
-            cost: vec![vec![Some(f64::INFINITY)]],
-        };
-        let _ = solve_transport_f64(&p);
-    }
 
     /// Exhaustive reference: enumerate every feasible integer matrix, return
     /// the lexicographic minimum total quality (or None if infeasible).

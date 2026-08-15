@@ -31,9 +31,7 @@ use super::egraph_api::{AuSnapshot, ClassOf};
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
-use super::transport::{
-    Cell, TransportProblem, TransportProblemF64, solve_transport, solve_transport_f64,
-};
+use super::transport::{Cell, TransportProblem, solve_transport, solve_transport_quantized};
 use crate::config::AuIds;
 
 /// Effort-allocation selector at AND nodes (§3.3.5). An AND node does not
@@ -1554,6 +1552,15 @@ fn recompute_and_value<A: AuIds, O: DenseId>(state: &mut McgsState<A, O>, and_id
     }
 }
 
+/// Fixed-point denominator for quantizing f64 cell Q values to integer
+/// transport costs: costs enter the solver as `round(q * 2^20)`. Rounding to
+/// this grid perturbs each arc cost by at most 2^-21; a flow of total supply
+/// S therefore has an objective within S * 2^-20 of the unquantized one,
+/// below the noise floor of the search (Q is a selection heuristic, and
+/// nothing downstream consumes its low bits). The integer solve carries the
+/// exact-arithmetic termination argument that f64 costs lack.
+const Q_COST_SCALE: f64 = (1u64 << 20) as f64;
+
 /// Transport-AND value recomputation: solve min-cost flow over current cell Qs,
 /// update child_counts to the argmin flow, and set Q accordingly.
 fn recompute_transport_and_value<A: AuIds, O: DenseId>(
@@ -1565,28 +1572,29 @@ fn recompute_transport_and_value<A: AuIds, O: DenseId>(
     let n_rows = rows.len();
     let n_cols = cols.len();
 
-    // Build the float cost matrix from current child Q values via the typed cell map.
-    // Native f64 costs: no scalarization or rounding, the exact Q argmin over
-    // the represented values is preserved. Non-finite Qs are Forbidden.
+    // Build the integer cost matrix from current child Q values via the typed
+    // cell map, quantized at Q_COST_SCALE. Non-finite Qs are Forbidden.
     let cell_map = state.and_stat(and_idx).transport_cell_map.to_vec();
-    let mut cost: Vec<Vec<Option<f64>>> = vec![vec![None; n_cols]; n_rows];
+    let mut cost: Vec<Vec<Option<i128>>> = vec![vec![None; n_cols]; n_rows];
     for flat in 0..(n_rows * n_cols) {
         if let Some(child) = cell_map[flat] {
             let q = state.or_stat(state.and_stats.child_or(child)).value;
             if q.is_finite() {
-                cost[flat / n_cols][flat % n_cols] = Some(q);
+                let scaled = (q * Q_COST_SCALE).round();
+                // The solver's checked i128 adds need headroom for path sums;
+                // 2^96 leaves 31 bits of it. Q values are node counts scaled
+                // by 2^20, so a breach means a corrupted Q, not a large input.
+                debug_assert!(
+                    scaled.abs() < 2f64.powi(96),
+                    "quantized transport cost magnitude exceeds i128 headroom"
+                );
+                cost[flat / n_cols][flat % n_cols] = Some(scaled as i128);
             }
         }
     }
 
-    let problem = TransportProblemF64 {
-        row_supply: rows,
-        col_demand: cols,
-        cost,
-    };
-
-    match solve_transport_f64(&problem) {
-        Some(solution) => {
+    match solve_transport_quantized(&rows, &cols, &cost) {
+        Some(flow) => {
             // Zero out child counts, then fill them from the selected flow.
             for position in 0..state.and_stat(and_idx).child_counts.len() {
                 if state.and_stat(and_idx).child_counts[position] != 0 {
@@ -1594,11 +1602,13 @@ fn recompute_transport_and_value<A: AuIds, O: DenseId>(
                     state.set_and_child_count(child, 0);
                 }
             }
+            // Q recomputes from the unquantized child values: quantization
+            // decides the argmin flow only, never the reported value.
             let mut q = 1.0;
             for flat in 0..(n_rows * n_cols) {
                 let i = flat / n_cols;
                 let j = flat % n_cols;
-                let x = solution.flow[i][j];
+                let x = flow[i][j];
                 if x > 0
                     && let Some(child) = cell_map[flat]
                 {
@@ -3252,6 +3262,152 @@ mod tests {
             state.or_stats.value.diff_log_len(),
             0,
             "without a live mark, VecP must not accumulate restore history"
+        );
+    }
+
+    /// Run `body` on a separate thread and fail the test if it does not
+    /// finish within `timeout`. A watchdog is the only way a hang surfaces as
+    /// a test failure instead of a stuck CI job: the D1 defect class (f64
+    /// transport costs feeding SPFA) spun forever inside a library call.
+    fn assert_terminates(
+        timeout: std::time::Duration,
+        name: &str,
+        body: impl FnOnce() + Send + 'static,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            body();
+            let _ = tx.send(());
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(()) => handle.join().expect("watchdog body panicked"),
+            Err(_) => panic!("{name} did not terminate within {timeout:?}"),
+        }
+    }
+
+    /// D1 regression: the five-node graph whose transport-AND Q costs made
+    /// the former f64 SPFA relax a negative residual cycle forever. The
+    /// quantized integer solve must return; the exact solver answers the same
+    /// pair in under a millisecond, so 60 seconds is generous for 3000
+    /// playouts.
+    #[test]
+    fn uct_terminates_on_shared_subterm_unit_mset_graph() {
+        assert_terminates(
+            std::time::Duration::from_secs(60),
+            "anti_unify(n4, n8) under UCT with 3000 playouts",
+            || {
+                let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+                let int = eg.intern_sort("Int");
+                let k0_op = eg.register_op0("k0", int);
+                let k1_op = eg.register_op0("k1", int);
+                let k2_op = eg.register_op0("k2", int);
+                let k3_op = eg.register_op0("k3", int);
+                let u_op = eg.register_op1("u", int, int);
+                let f_op = eg.register_op2("f", int, int, int);
+                let plus_op = eg.register_mset("plus", int, int);
+                let and_op = eg.register_set("and", int, int);
+
+                let k0 = eg.add(k0_op, &[]);
+                let k1 = eg.add(k1_op, &[]);
+                let k2 = eg.add(k2_op, &[]);
+                let k3 = eg.add(k3_op, &[]);
+                eg.set_unit_node(plus_op, k0);
+                eg.set_unit_node(and_op, k1);
+
+                let n4 = eg.add(u_op, &[k2]);
+                let n5 = eg.add(f_op, &[n4, k0]);
+                let n6 = eg.add(and_op, &[n5, k3]);
+                let n7 = eg.add(plus_op, &[n6, n6]);
+                let n8 = eg.add(plus_op, &[n7, k3]);
+                eg.rebuild();
+
+                let snap = AuSnapshot::new(&eg).unwrap();
+                let lc = snap.class_of(n4).unwrap();
+                let rc = snap.class_of(n8).unwrap();
+
+                let config = McgsConfig {
+                    playouts: 3000,
+                    cycle_mode: CycleMode::AncestorOnly,
+                    ..Default::default()
+                };
+                let (term, pool, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
+                assert!(pool.size(term) >= 1);
+            },
+        );
+    }
+
+    /// D1 property run: UCT terminates over the review fuzzer's graph
+    /// distribution (leaves, u/1, f/2, mset and set operators with units,
+    /// random merges) at reduced case count. Only termination is asserted;
+    /// result quality is covered by the differential tests.
+    #[test]
+    fn uct_terminates_on_random_unit_mset_set_graphs() {
+        assert_terminates(
+            std::time::Duration::from_secs(120),
+            "randomized UCT termination sweep",
+            || {
+                let mut seed: u64 = 0x9E3779B97F4A7C15;
+                let mut next = move || {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    seed
+                };
+                for _case in 0..30 {
+                    let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+                    let int = eg.intern_sort("Int");
+                    let leaf_ops = [
+                        eg.register_op0("k0", int),
+                        eg.register_op0("k1", int),
+                        eg.register_op0("k2", int),
+                        eg.register_op0("k3", int),
+                    ];
+                    let u_op = eg.register_op1("u", int, int);
+                    let f_op = eg.register_op2("f", int, int, int);
+                    let plus_op = eg.register_mset("plus", int, int);
+                    let and_op = eg.register_set("and", int, int);
+
+                    let mut nodes: Vec<_> = leaf_ops.iter().map(|&op| eg.add(op, &[])).collect();
+                    eg.set_unit_node(plus_op, nodes[0]);
+                    eg.set_unit_node(and_op, nodes[1]);
+
+                    let extra = 4 + (next() % 5) as usize;
+                    for _ in 0..extra {
+                        let a = nodes[(next() as usize) % nodes.len()];
+                        let b = nodes[(next() as usize) % nodes.len()];
+                        let node = match next() % 4 {
+                            0 => eg.add(u_op, &[a]),
+                            1 => eg.add(f_op, &[a, b]),
+                            2 => eg.add(plus_op, &[a, b]),
+                            _ => eg.add(and_op, &[a, b]),
+                        };
+                        nodes.push(node);
+                    }
+                    for _ in 0..(next() % 3) {
+                        let a = nodes[(next() as usize) % nodes.len()];
+                        let b = nodes[(next() as usize) % nodes.len()];
+                        eg.merge(a, b);
+                    }
+                    eg.rebuild();
+
+                    let Ok(snap) = AuSnapshot::new(&eg) else {
+                        continue;
+                    };
+                    let l = nodes[(next() as usize) % nodes.len()];
+                    let r = nodes[(next() as usize) % nodes.len()];
+                    let (Some(lc), Some(rc)) = (snap.class_of(l), snap.class_of(r)) else {
+                        continue;
+                    };
+                    let config = McgsConfig {
+                        playouts: 200,
+                        cycle_mode: CycleMode::AncestorOnly,
+                        ..Default::default()
+                    };
+                    // Termination is the property; an Err (for example a class
+                    // without a finite representative) also terminates.
+                    let _ = run_mcgs(&snap, lc, rc, &config);
+                }
+            },
         );
     }
 }
