@@ -5,6 +5,8 @@
 //! All names are strings at this stage; resolution to OpId/SortId/VarId
 //! happens in a later pass.
 
+use crate::registry::OpMeta;
+
 macro_rules! typed_var_id {
     ($(#[doc = $doc:expr] pub struct $name:ident;)*) => {$(
         #[doc = $doc]
@@ -289,18 +291,34 @@ pub enum AlgTag {
     Inverse(String),
 }
 
+/// One `(datatype …)` variant: a constructor declaration whose return sort is the datatype.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Variant {
+    pub name: String,
+    pub arg_sorts: Vec<String>,
+    pub tags: Vec<AlgTag>,
+    /// Always has `is_constructor: true` — a datatype variant is a constructor by
+    /// construction — plus whatever `:cost` / `:unextractable` the variant declared.
+    pub meta: OpMeta,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Sort(String),
+    /// `(function …)` and `(constructor …)`: the same declaration, distinguished only by
+    /// `meta.is_constructor`. Both register an operator with identical congruence and
+    /// matching behavior; a constructor additionally carries the extraction semantics
+    /// (`FLAG_CONSTRUCTOR` on its nodes, `:cost`, `:unextractable`).
     Function {
         name: String,
         arg_sorts: Vec<String>,
         ret_sort: String,
         tags: Vec<AlgTag>,
+        meta: OpMeta,
     },
     Datatype {
         name: String,
-        variants: Vec<(String, Vec<String>, Vec<AlgTag>)>,
+        variants: Vec<Variant>,
     },
     Rewrite {
         lhs: Pattern,

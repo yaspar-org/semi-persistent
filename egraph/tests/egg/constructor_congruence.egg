@@ -1,0 +1,27 @@
+;; EXPECT: ok
+;; Tests (constructor …): a constructor is a term former with the same congruence and
+;; matching behavior as a function. Merging two constructor leaves makes the terms that
+;; contain them congruent, and a rewrite over a constructor pattern fires.
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+(constructor f (E E) E)
+(constructor g (E) E)
+
+;; A plain function coexists with constructors and behaves identically for congruence.
+(function h (E) E)
+
+(union (a) (b))
+;; Congruence: a = b, so f(a,c) = f(b,c).
+(check (= (f (a) (c)) (f (b) (c))))
+(check (= (h (a)) (h (b))))
+
+;; Constructors match on the LHS of a rewrite like any other op. The `g` node has to exist
+;; before the run for the rule to have anything to match.
+(let x (g (a)))
+(rewrite (g (a)) (c))
+(run 10)
+(check (= x (c)))
+;; a = b, so the same node is reached through either leaf.
+(check (= (g (b)) (c)))

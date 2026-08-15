@@ -101,7 +101,7 @@ fn bench_extract(c: &mut Criterion) {
         let (eg, root) = tree(depth);
         let mut group = c.benchmark_group(format!("extract/{id}"));
         group.bench_function("run", |b| {
-            b.iter(|| std::hint::black_box(extract_best(&eg, root).is_some()));
+            b.iter(|| std::hint::black_box(extract_best(&eg, root).is_ok()));
         });
         group.finish();
     }
@@ -115,7 +115,7 @@ fn bench_extract(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("extract/{id}"));
         group.sample_size(20);
         group.bench_function("run", |b| {
-            b.iter(|| std::hint::black_box(extract_best(&eg, root).is_some()));
+            b.iter(|| std::hint::black_box(extract_best(&eg, root).is_ok()));
         });
         group.finish();
     }
@@ -124,7 +124,7 @@ fn bench_extract(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("extract/{id}"));
         group.sample_size(20);
         group.bench_function("run", |b| {
-            b.iter(|| std::hint::black_box(extract_best(&eg, root).is_some()));
+            b.iter(|| std::hint::black_box(extract_best(&eg, root).is_ok()));
         });
         group.finish();
     }

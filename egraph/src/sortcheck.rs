@@ -812,6 +812,7 @@ where
             arg_sorts,
             ret_sort,
             tags,
+            meta,
         } => {
             let ret = eg
                 .sorts()
@@ -825,13 +826,14 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
-            register_op(eg, name, &args, ret, tags, model, globals)?;
+            register_op(eg, name, &args, ret, tags, *meta, model, globals)?;
         }
         Command::Datatype { name, variants } => {
             eg.intern_sort(name);
             let sid = eg.sorts().id_by_name(name).unwrap();
-            for (ctor, arg_names, tags) in variants {
-                let arg_ids: Vec<Cfg::S> = arg_names
+            for v in variants {
+                let arg_ids: Vec<Cfg::S> = v
+                    .arg_sorts
                     .iter()
                     .map(|s| {
                         eg.sorts()
@@ -839,8 +841,7 @@ where
                             .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                     })
                     .collect::<Result<_, _>>()?;
-                let oid = register_op(eg, ctor, &arg_ids, sid, tags, model, globals)?;
-                eg.ops_mut().set_constructor(oid);
+                register_op(eg, &v.name, &arg_ids, sid, &v.tags, v.meta, model, globals)?;
             }
         }
         _ => {}
@@ -860,6 +861,7 @@ fn register_op<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     args: &[Cfg::S],
     ret: Cfg::S,
     tags: &[AlgTag],
+    meta: crate::registry::OpMeta,
     model: &M,
     globals: &GlobalCtx<Cfg::S>,
 ) -> Result<Cfg::O, SortError>
@@ -872,9 +874,17 @@ where
 {
     use crate::registry::{AssocDir, Clamp, OpKind, UnitRef};
 
-    // No tags → plain op.
+    // No algebra tags → plain op. (`meta` still applies: `:cost` / `:unextractable` /
+    // constructor-ness are orthogonal to the algebraic kind.)
     if tags.is_empty() {
-        return Ok(eg.register_opn(name, args, ret));
+        return Ok(eg.register_kind_meta(
+            name,
+            ret,
+            OpKind::Normal {
+                arg_sorts: args.to_vec(),
+            },
+            meta,
+        ));
     }
 
     // Collect the tag set into flags. Duplicate/conflicting basic tags are folded; direction
@@ -1005,7 +1015,7 @@ where
                     cancellative,
                 }
             };
-            let op = eg.register_kind(name, ret, kind);
+            let op = eg.register_kind_meta(name, ret, kind, meta);
             // Resolve `:identity e` to a real node NOW (sortcheck has the model to parse the
             // term; the node id is stored in the egraph's per-op unit map — `OpKind<S>` cannot
             // carry a `Cfg::G`). The unit must sort-check to the op's return sort and be a
@@ -1062,7 +1072,15 @@ where
             if args.len() != 1 {
                 return Err(serr(":assoc requires 1 argument sort", Span::Dummy));
             }
-            Ok(eg.register_a(name, args[0], ret, dir.unwrap_or(AssocDir::Left)))
+            Ok(eg.register_kind_meta(
+                name,
+                ret,
+                OpKind::A {
+                    arg_sort: args[0],
+                    dir: dir.unwrap_or(AssocDir::Left),
+                },
+                meta,
+            ))
         }
         // Commutative-only (C): binary.
         (false, true) => {
@@ -1075,7 +1093,14 @@ where
             if args.len() != 2 {
                 return Err(serr(":comm requires 2 argument sorts", Span::Dummy));
             }
-            Ok(eg.register_c(name, [args[0], args[1]], ret))
+            Ok(eg.register_kind_meta(
+                name,
+                ret,
+                OpKind::Commutative {
+                    arg_sorts: [args[0], args[1]],
+                },
+                meta,
+            ))
         }
         // No structural tag but property tags present → error (idempotent-only etc. is meaningless).
         (false, false) => Err(serr(

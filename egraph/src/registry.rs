@@ -109,6 +109,38 @@ pub enum OpKind<S: DenseId> {
     Lit,
 }
 
+/// Non-algebraic registration metadata for an operator: whether it was declared as a
+/// constructor, and the two extraction knobs. Separate from [`OpKind`], which carries only
+/// the algebraic shape. The surface layer parses this straight out of a declaration's tag
+/// list (`ast::Command::Function`, `ast::Variant`) and hands it to
+/// [`OpRegistry::register_kind_meta`], so there is one representation from parse to registry.
+///
+/// `Default` is the undeclared case: a plain `(function …)` — not a constructor, cost 1,
+/// extractable. Cost 1 is what the extractor charged for every node before per-op costs
+/// existed, so a program that declares no `:cost` extracts exactly as it did before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpMeta {
+    /// Declared with `(constructor …)`, or a `(datatype …)` variant. A constructor is a term
+    /// former: it behaves like a function for congruence and matching, and additionally
+    /// stamps [`FLAG_CONSTRUCTOR`](crate::node_types::FLAG_CONSTRUCTOR) on its nodes.
+    pub is_constructor: bool,
+    /// Per-node extraction cost (`:cost n`). The cost of a term is the sum over its nodes,
+    /// with an AC child of multiplicity k counted k times.
+    pub cost: u32,
+    /// `:unextractable` — the extractor never selects a node of this op.
+    pub unextractable: bool,
+}
+
+impl Default for OpMeta {
+    fn default() -> Self {
+        Self {
+            is_constructor: false,
+            cost: 1,
+            unextractable: false,
+        }
+    }
+}
+
 /// Metadata for a registered operator.
 #[derive(Clone, Debug)]
 pub struct OpInfo<S: DenseId> {
@@ -116,6 +148,10 @@ pub struct OpInfo<S: DenseId> {
     pub return_sort: S,
     pub kind: OpKind<S>,
     pub is_constructor: bool,
+    /// Per-node extraction cost, default 1. See [`OpMeta::cost`].
+    pub cost: u32,
+    /// Excluded from extraction. See [`OpMeta::unextractable`].
+    pub unextractable: bool,
 }
 
 impl<S: DenseId> OpInfo<S> {
@@ -292,13 +328,18 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                     op_desc.ret_sort, op_desc.name
                 )
             });
-            self.insert(op_desc.name, ret_sort, OpKind::Normal { arg_sorts });
+            self.insert(
+                op_desc.name,
+                ret_sort,
+                OpKind::Normal { arg_sorts },
+                OpMeta::default(),
+            );
         }
         // Auto-register a LitNode op for each concrete sort.
         for sort_desc in model.sorts() {
             let sort_id = sorts.id_by_name(sort_desc.name).unwrap();
             let lit_name = format!("@{}", sort_desc.name);
-            self.insert(&lit_name, sort_id, OpKind::Lit);
+            self.insert(&lit_name, sort_id, OpKind::Lit, OpMeta::default());
         }
         self.builtin_count = self.map.log_len().as_usize();
         self.concrete_sort_count = sorts.concrete_count();
@@ -321,15 +362,26 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             OpKind::Normal {
                 arg_sorts: arg_sorts.to_vec(),
             },
+            OpMeta::default(),
         )
     }
 
     pub fn register_c(&mut self, name: &str, arg_sorts: [S; 2], return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::Commutative { arg_sorts })
+        self.insert(
+            name,
+            return_sort,
+            OpKind::Commutative { arg_sorts },
+            OpMeta::default(),
+        )
     }
 
     pub fn register_a(&mut self, name: &str, arg_sort: S, return_sort: S, dir: AssocDir) -> O {
-        self.insert(name, return_sort, OpKind::A { arg_sort, dir })
+        self.insert(
+            name,
+            return_sort,
+            OpKind::A { arg_sort, dir },
+            OpMeta::default(),
+        )
     }
 
     /// Register a plain AC (multiset) op: no identity, not cancellative. Richer algebra
@@ -344,6 +396,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 identity: None,
                 cancellative: false,
             },
+            OpMeta::default(),
         )
     }
 
@@ -359,11 +412,12 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 identity: None,
                 cancellative: false,
             },
+            OpMeta::default(),
         )
     }
 
     pub fn register_lit(&mut self, name: &str, return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::Lit)
+        self.insert(name, return_sort, OpKind::Lit, OpMeta::default())
     }
 
     /// Register an op from a fully-resolved `OpKind`. Used by the property-tag resolver
@@ -371,11 +425,41 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     /// from the parsed tag set. The plain `register_mset`/`register_set` are the default-filled
     /// special cases of this.
     pub fn register_kind(&mut self, name: &str, return_sort: S, kind: OpKind<S>) -> O {
-        self.insert(name, return_sort, kind)
+        self.insert(name, return_sort, kind, OpMeta::default())
+    }
+
+    /// Register an op from a fully-resolved `OpKind` plus its non-algebraic metadata
+    /// (constructor-ness, `:cost`, `:unextractable`). This is the surface layer's single
+    /// registration entry point: `sortcheck::register_op` builds both descriptors from the
+    /// declaration and calls this, so constructor-ness is registration-time data rather than
+    /// a post-hoc mutation (the backing `SpMap` is append-only and has no `get_mut`).
+    pub fn register_kind_meta(
+        &mut self,
+        name: &str,
+        return_sort: S,
+        kind: OpKind<S>,
+        meta: OpMeta,
+    ) -> O {
+        self.insert(name, return_sort, kind, meta)
     }
 
     pub fn info(&self, id: O) -> &OpInfo<S> {
         self.map.get_val(id.to_index())
+    }
+
+    /// The non-algebraic metadata ([`OpMeta`]) of every registered op, in op-id order. Lets a
+    /// consumer index by op id instead of calling [`info`](Self::info) per node; the extractor
+    /// hoists this out of its fixpoint loop, where the per-node lookup would otherwise repeat
+    /// on every pass.
+    pub fn meta_table(&self) -> Vec<OpMeta> {
+        self.map
+            .iter()
+            .map(|(_, i)| OpMeta {
+                is_constructor: i.is_constructor,
+                cost: i.cost,
+                unextractable: i.unextractable,
+            })
+            .collect()
     }
 
     /// Is this op associative-commutative (`OpKind::MSet`)? Note this is `false`
@@ -474,7 +558,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             .map(|(i, _)| id_at::<O>(i))
     }
 
-    fn insert(&mut self, name: &str, return_sort: S, kind: OpKind<S>) -> O {
+    fn insert(&mut self, name: &str, return_sort: S, kind: OpKind<S>, meta: OpMeta) -> O {
         assert!(
             !self.map.contains_key(&name.to_owned()),
             "operator '{name}' already registered"
@@ -493,24 +577,14 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                     name: name.to_owned(),
                     return_sort,
                     kind,
-                    is_constructor: false,
+                    is_constructor: meta.is_constructor,
+                    cost: meta.cost,
+                    unextractable: meta.unextractable,
                 },
             )
             .expect("registry id space exhausted for its index word");
         id_at::<O>(id.as_usize())
     }
-
-    /// Mark an op as a constructor.
-    ///
-    /// prod-parity: the verified `SpMap` has no `get_mut` (its contract is
-    /// append-only with shadow-on-overwrite), so constructor-ness is meant to
-    /// become registration-time metadata. `is_constructor`
-    /// is currently **write-only** — set here but read nowhere in the egraph —
-    /// so this is a no-op that preserves observable behavior. When the flag
-    /// gains a reader it must be threaded through `insert` (the value is known
-    /// at registration; see `register_op` in `sortcheck.rs`) rather than mutated
-    /// after the fact.
-    pub fn set_constructor(&mut self, _id: O) {}
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> OpRegistryToken {
         OpRegistryToken(

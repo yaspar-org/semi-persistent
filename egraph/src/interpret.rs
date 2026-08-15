@@ -27,6 +27,8 @@ pub enum InterpError {
     CompileError(crate::resolve::ResolveError),
     /// `(check ...)` assertion failed.
     CheckFailed(String),
+    /// `(extract ...)` could not produce a term from the named class.
+    ExtractFailed(crate::extract::ExtractError),
     /// `(pop)` without matching `(push)`.
     PopWithoutPush,
 }
@@ -45,6 +47,7 @@ impl std::fmt::Display for InterpError {
             InterpError::DeclError(s) => write!(f, "declaration error: {s}"),
             InterpError::CompileError(e) => write!(f, "compile error: {e}"),
             InterpError::CheckFailed(s) => write!(f, "check failed: {s}"),
+            InterpError::ExtractFailed(e) => write!(f, "extract failed: {e}"),
             InterpError::PopWithoutPush => write!(f, "pop without matching push"),
         }
     }
@@ -239,9 +242,12 @@ where
                 if self.eg.node_count() > before {
                     self.eg.rebuild();
                 }
+                // An extract that cannot produce a term is a program error, not a printed
+                // remark: the class is named and the reason distinguished (every node
+                // `:unextractable`, versus no grounded node at all).
                 match crate::extract::extract_best(&self.eg, id) {
-                    Some(t) => println!("{t}"),
-                    None => println!("(extract: no term found)"),
+                    Ok(t) => println!("{t}"),
+                    Err(e) => return Err(InterpError::ExtractFailed(e)),
                 }
             }
             CCommand::Rewrite {

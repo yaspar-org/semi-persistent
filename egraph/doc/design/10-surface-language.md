@@ -79,8 +79,9 @@ enum Term {
 
 ```
 (sort Name)
-(function Name (ArgSort...) RetSort [:comm | :assoc | :assoc-comm | :assoc-comm-idem])
-(datatype Name (Ctor ArgSort...)...)
+(function Name (ArgSort...) RetSort [algebra-tags] [extraction-tags])
+(constructor Name (ArgSort...) RetSort [algebra-tags] [extraction-tags])
+(datatype Name (Ctor ArgSort... [algebra-tags] [extraction-tags])...)
 (let name term)
 (union term term)
 (insert term)
@@ -91,6 +92,27 @@ enum Term {
 (check term) (check (= a b)) (check (!= a b))
 (extract term)
 ```
+
+algebra-tags: `:comm` `:assoc` `:assoc-left` `:assoc-right` `:idempotent`
+`:nilpotent [n]` `:identity term` `:cancellative` `:inverse Op`, plus the
+pre-combined aliases `:assoc-comm` and `:assoc-comm-idem`.
+
+extraction-tags: `:cost n` (default 1) and `:unextractable`.
+
+## Functions and Constructors
+
+`(function …)` and `(constructor …)` parse to the same command and register the
+same operator; the keyword sets one bit. A constructor is a term former: its
+nodes carry `FLAG_CONSTRUCTOR`, and it is the declaration form that the
+extraction tags are meant for. Every variant of a `(datatype …)` is a
+constructor. Congruence, matching, and canonization treat the two identically —
+unlike egglog, where `function` is a partial map with a mandatory merge lattice
+and `constructor` is the eqsort term former.
+
+The extraction tags are accepted on either form, because extraction is a
+property of the operator rather than of the declaration keyword: `:cost n` sets
+the per-node cost the extractor charges, and `:unextractable` removes the op's
+nodes from the extractor's candidate set (Chapter 16).
 
 ---
 [← Ch 9: Pattern Matching](09-pattern-matching.md) · [Table of Contents](00-table-of-contents.md) · [Ch 11: Sortcheck and Resolution →](11-sortcheck-and-resolution.md)

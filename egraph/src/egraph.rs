@@ -332,6 +332,18 @@ where
     pub fn register_c(&mut self, name: &str, arg_sorts: [Cfg::S; 2], ret: Cfg::S) -> Cfg::O {
         self.ops.register_c(name, arg_sorts, ret)
     }
+    /// Register an op from a resolved kind plus its non-algebraic metadata (constructor-ness,
+    /// `:cost`, `:unextractable`). The surface layer's single registration entry point — see
+    /// [`crate::registry::OpRegistry::register_kind_meta`].
+    pub fn register_kind_meta(
+        &mut self,
+        name: &str,
+        ret: Cfg::S,
+        kind: crate::registry::OpKind<Cfg::S>,
+        meta: crate::registry::OpMeta,
+    ) -> Cfg::O {
+        self.ops.register_kind_meta(name, ret, kind, meta)
+    }
     pub fn register_a(
         &mut self,
         name: &str,
@@ -678,6 +690,13 @@ where
 
         let id = self.register_if_fresh(result);
         if result.is_fresh() {
+            // Stamp constructor-ness onto the node at creation. Redundant with the op's
+            // `is_constructor` (the op is recoverable from the node), but the flag is what
+            // node-level consumers read — they already hold `flags` for `FLAG_SUBSUMED` and
+            // would otherwise need a registry lookup per node.
+            if self.ops.info(op).is_constructor {
+                self.set_node_flag(id, crate::node_types::FLAG_CONSTRUCTOR);
+            }
             match self.ops.info(op).kind {
                 OpKind::MSet { .. } => {
                     for c in &self.mset_buf {

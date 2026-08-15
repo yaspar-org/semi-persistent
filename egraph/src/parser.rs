@@ -6,6 +6,7 @@
 //! dispatch. Everything is `(op pat_child*)`.
 
 use crate::ast::*;
+use crate::registry::OpMeta;
 use crate::surface_ast::*;
 use winnow::ascii::multispace0;
 use winnow::combinator::cut_err;
@@ -682,7 +683,10 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
             let name = ident(input)?.to_owned();
             SurfaceCommand::Pass(Command::Sort(name))
         }
-        "function" => {
+        // `(function …)` and `(constructor …)` share a shape; the keyword decides only
+        // whether the declared op is a constructor (a term former, extraction-eligible with
+        // a `:cost`) or a plain function.
+        "function" | "constructor" => {
             let name = ident(input)?.to_owned();
             cut_char(input, '(')?;
             let mut arg_sorts = Vec::new();
@@ -695,12 +699,14 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
             }
             cut_char(input, ')')?;
             let ret_sort = ident(input)?.to_owned();
-            let tags = parse_alg_tags(input, base)?;
+            let (tags, mut meta) = parse_decl_tags(input, base)?;
+            meta.is_constructor = kw == "constructor";
             SurfaceCommand::Pass(Command::Function {
                 name,
                 arg_sorts,
                 ret_sort,
                 tags,
+                meta,
             })
         }
         "datatype" => {
@@ -721,9 +727,16 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
                     }
                     args.push(ident(input)?.to_owned());
                 }
-                let tags = parse_alg_tags(input, base)?;
+                let (tags, mut meta) = parse_decl_tags(input, base)?;
+                // A datatype variant is a constructor by construction.
+                meta.is_constructor = true;
                 cut_char(input, ')')?;
-                variants.push((ctor, args, tags));
+                variants.push(Variant {
+                    name: ctor,
+                    arg_sorts: args,
+                    tags,
+                    meta,
+                });
             }
             SurfaceCommand::Pass(Command::Datatype { name, variants })
         }
@@ -876,15 +889,38 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
     Ok(cmd)
 }
 
-/// Parse zero or more composable algebra tags. Loops until no tag keyword matches, so tags
-/// combine freely (`:assoc :comm :idempotent`). Longer keywords are tried before their prefixes
+/// Parse a declaration's tag list: the composable algebra tags plus the two extraction tags
+/// (`:cost n`, `:unextractable`). Loops until no tag keyword matches, so tags combine freely
+/// and in any order (`:assoc :comm :cost 3`). Longer keywords are tried before their prefixes
 /// (`:assoc-comm-idem` before `:assoc-comm` before `:assoc`). The pre-combined `:assoc-comm` /
 /// `:assoc-comm-idem` are accepted as aliases that expand into the basic tags. Value-taking tags
 /// parse a following argument. `base` is the source-start pointer for `:identity`'s term spans.
-fn parse_alg_tags(input: &mut &str, base: usize) -> ModalResult<Vec<AlgTag>> {
+///
+/// The returned `OpMeta` has `is_constructor: false`; the caller sets it, since that comes from
+/// the declaration keyword (`constructor` / `datatype`), not from a tag.
+fn parse_decl_tags(input: &mut &str, base: usize) -> ModalResult<(Vec<AlgTag>, OpMeta)> {
     let mut tags = Vec::new();
+    let mut meta = OpMeta::default();
     loop {
         ws_inner(input);
+        // Extraction tags first: neither prefixes nor is prefixed by an algebra tag.
+        if input.starts_with(":cost") {
+            *input = &input[":cost".len()..];
+            let n = number(input)?;
+            meta.cost = u32::try_from(n).map_err(|_| {
+                let mut e = ContextError::new();
+                e.push(StrContext::Expected(StrContextValue::Description(
+                    ":cost must fit in u32",
+                )));
+                ErrMode::Cut(e)
+            })?;
+            continue;
+        }
+        if input.starts_with(":unextractable") {
+            *input = &input[":unextractable".len()..];
+            meta.unextractable = true;
+            continue;
+        }
         // Alias expansion first (longest match), then basic tags.
         if input.starts_with(":assoc-comm-idem") {
             *input = &input[":assoc-comm-idem".len()..];
@@ -948,7 +984,7 @@ fn parse_alg_tags(input: &mut &str, base: usize) -> ModalResult<Vec<AlgTag>> {
             break;
         }
     }
-    Ok(tags)
+    Ok((tags, meta))
 }
 
 fn ws_inner(input: &mut &str) {
@@ -1078,6 +1114,51 @@ mod alg_tag_tests {
             AlgTag::Identity(Term::App { op, .. }) => assert_eq!(op, "zero"),
             other => panic!("expected Identity(App), got {other:?}"),
         }
+    }
+
+    /// Parse a single declaration and return its `OpMeta`.
+    fn meta_of(src: &str) -> OpMeta {
+        let cmds = parse_program_v2(src).expect("parse");
+        match &cmds[0] {
+            SurfaceCommand::Pass(Command::Function { meta, .. }) => *meta,
+            other => panic!("expected function/constructor decl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn function_is_not_a_constructor() {
+        assert_eq!(meta_of("(function f (E E) E)"), OpMeta::default());
+    }
+
+    #[test]
+    fn constructor_sets_the_flag() {
+        let m = meta_of("(constructor f (E E) E)");
+        assert!(m.is_constructor);
+        assert_eq!(m.cost, 1);
+        assert!(!m.unextractable);
+    }
+
+    #[test]
+    fn extraction_tags_parse_and_mix_with_algebra_tags() {
+        let m = meta_of("(constructor add (E) E :cost 7 :assoc :comm :unextractable)");
+        assert!(m.is_constructor);
+        assert_eq!(m.cost, 7);
+        assert!(m.unextractable);
+        assert_eq!(
+            tags_of("(constructor add (E) E :cost 7 :assoc :comm :unextractable)"),
+            vec![AlgTag::Assoc, AlgTag::Comm]
+        );
+    }
+
+    #[test]
+    fn datatype_variants_are_constructors() {
+        let cmds = parse_program_v2("(datatype M (Num) (Add M M :cost 4))").expect("parse");
+        let SurfaceCommand::Pass(Command::Datatype { variants, .. }) = &cmds[0] else {
+            panic!("expected datatype");
+        };
+        assert!(variants.iter().all(|v| v.meta.is_constructor));
+        assert_eq!(variants[0].meta.cost, 1);
+        assert_eq!(variants[1].meta.cost, 4);
     }
 
     #[test]

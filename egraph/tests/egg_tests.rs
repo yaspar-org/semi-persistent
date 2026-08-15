@@ -300,6 +300,21 @@ egg_test!(globals_in_patterns, "globals_in_patterns.egg");
 egg_test!(extract_basic, "extract_basic.egg");
 egg_test!(extract_aci, "extract_aci.egg");
 
+// ── Constructors (`(constructor …)`, `:cost`, `:unextractable`) ──
+// A constructor is a function for congruence and matching; the difference is extraction.
+egg_test!(constructor_congruence, "constructor_congruence.egg");
+egg_test!(constructor_cost, "constructor_cost.egg");
+// A class whose every node is `:unextractable` is an extract error naming the class.
+egg_test!(constructor_unextractable, "constructor_unextractable.egg");
+egg_test!(
+    constructor_unextractable_alternative,
+    "constructor_unextractable_alternative.egg"
+);
+egg_test!(
+    datatype_variants_are_constructors,
+    "datatype_variants_are_constructors.egg"
+);
+
 // ── Deep multi-level constant folding ──
 egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 
