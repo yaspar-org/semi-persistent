@@ -263,7 +263,14 @@ and debug monitors.
    BPlusToken's header copies are inert. The twin's SparseSet is the
    one aggregate without a cross-component same-mark check, defended
    by per-component genealogy plus external unconstructibility.
-7. **Monitor inventory.** Debug-only: layout primitive bounds, ring
+7. **Miri.** Viable on this crate and adopted as a probe: the misuse
+   suite (the guard paths, including the new NodeLayout mirrors) runs
+   under `cargo +nightly miri test` clean - 21/21, no undefined
+   behavior, 3.9s interpreted. The contract-fuzz suite is impractical
+   under interpretation at its native iteration counts and needs an
+   env-reduced mode before it can join a scheduled miri job; recorded
+   as the follow-up.
+8. **Monitor inventory.** Debug-only: layout primitive bounds, ring
    same-ring walk, std-Vec capacity assumption, ContainerId wrap.
    Release-checked: all 124 guards, token validation, from_sorted
    ascent, egraph Director asserts. Silently trusted in release:
