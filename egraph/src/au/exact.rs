@@ -16,7 +16,7 @@ use crate::multiplicity::MultiplicityLike;
 use super::ac_repr;
 use super::actions::{ActionCache, ActionPair, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
-use super::estimates::{lb_pair, static_generalize_quality};
+use super::estimates::{lb_pair, static_generalize_quality, transport_pair_lb};
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
@@ -641,37 +641,22 @@ where
                             let rows = lm.len();
                             let cols = rm.len();
                             // Branch-and-bound (A2) on the whole representation
-                            // pair: the min-cost flow over `lb_pair` cell costs
-                            // is a lower bound on the pair's achievable size,
-                            // because every true cell value dominates its bound
-                            // and the true optimal flow is feasible here. The
-                            // Forbidden pattern and the supplies are identical
-                            // to the real solve below, so an infeasible bound
-                            // problem means the real pair contributes no
-                            // candidate either. Strict size-only comparison
-                            // against this frame's own incumbent, as for
-                            // structural actions.
+                            // pair: `transport_pair_lb` (shared with MCGS
+                            // dominance pruning, A5) is a lower bound on the
+                            // pair's achievable size, with the same Forbidden
+                            // pattern and supplies as the real solve below, so
+                            // an infeasible bound problem (`None`) means the
+                            // real pair contributes no candidate either.
+                            // Strict size-only comparison against this frame's
+                            // own incumbent, as for structural actions.
                             if pruning {
-                                let mut cost = vec![vec![Cell::Forbidden; cols]; rows];
-                                for (i, &(lc, _)) in lm.iter().enumerate() {
-                                    for (j, &(rc, _)) in rm.iter().enumerate() {
-                                        if !space.is_cycle_blocked(frame.or_id, lc, rc) {
-                                            let (s, v) = lb_pair(snap, lc, rc);
-                                            cost[i][j] = Cell::Cost(s, v);
-                                        }
-                                    }
-                                }
-                                let problem = TransportProblem::narrowed(
-                                    &lm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
-                                    &rm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
-                                    cost,
-                                );
-                                let prune = match problem.as_ref().and_then(solve_transport) {
+                                let or_id = frame.or_id;
+                                let bound = transport_pair_lb(snap, &lm, &rm, |i, j| {
+                                    !space.is_cycle_blocked(or_id, lm[i].0, rm[j].0)
+                                });
+                                let prune = match bound {
                                     None => true,
-                                    Some(solution) => {
-                                        solution.total.0.saturating_add(1)
-                                            > u128::from(frame.best_quality.0)
-                                    }
+                                    Some(b) => b > u128::from(frame.best_quality.0),
                                 };
                                 if prune {
                                     *pair_idx += 1;

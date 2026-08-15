@@ -26,9 +26,9 @@ use crate::multiplicity::MultiplicityLike;
 
 use super::AuIds31;
 use super::ac_repr;
-use super::actions::{ActionCache, generate_actions};
+use super::actions::{Action, ActionCache, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
-use super::estimates::static_generalize_quality;
+use super::estimates::{lb_pair, static_generalize_quality, transport_pair_lb};
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
@@ -74,6 +74,21 @@ pub struct McgsConfig {
     pub x_target: f64,
     /// Effort allocation at AND nodes (§3.3.5). Default `LctAnd`.
     pub and_selector: AndSelector,
+    /// Dominance pruning against the generalize value (plan item A5,
+    /// doc/au-solver-plan.md): at OR-stats creation, drop every action whose
+    /// projection lower bound (`estimates::lb_pair`; for transport actions
+    /// the min-cost flow of `estimates::transport_pair_lb`) strictly exceeds
+    /// the node's generalize value. The generalize value is the exact value
+    /// of an always-available alternative, so a dropped action can never be
+    /// optimal at that node; the certificate's claim becomes "every action
+    /// was realized or proven non-optimal", the same claim exact-side
+    /// pruning makes. A node whose every action is dropped closes
+    /// (`terminal`) at its stored best result, seeded with the generalize
+    /// term at node creation. Default `false`: the unpruned search is the
+    /// reference the differential fixture was captured against;
+    /// `au_differential.rs::dominant_pruned_mcgs_is_sound` gates the flag-on
+    /// behavior.
+    pub dominance_pruning: bool,
 }
 
 impl Default for McgsConfig {
@@ -84,6 +99,7 @@ impl Default for McgsConfig {
             exploration_constant: std::f64::consts::SQRT_2,
             x_target: 0.8,
             and_selector: AndSelector::default(),
+            dominance_pruning: false,
         }
     }
 }
@@ -1036,7 +1052,15 @@ where
     results.ensure_capacity(root_or);
     results.offer(root_or, seed, pool.quality(seed));
 
-    let root_idx = ensure_or_stats(snap, space, action_cache, results, state, root_or);
+    let root_idx = ensure_or_stats(
+        snap,
+        space,
+        action_cache,
+        results,
+        state,
+        root_or,
+        config.dominance_pruning,
+    );
 
     if !state.or_stat(root_idx).terminal {
         // First estimate U(root) from the initial rollout; its term is also a
@@ -1329,10 +1353,46 @@ where
     out
 }
 
+/// Dominance pruning (plan item A5, doc/au-solver-plan.md): true when the
+/// structural action's projection lower bound — 1 for the operator plus
+/// `count * lb_pair(pair)` per child pair — strictly exceeds the node's
+/// generalize value `gen_size`. The generalize value is the exact value of an
+/// always-available alternative, so a dominated action loses under every
+/// completion and can never be optimal at the node. Size-only and strict: an
+/// equal size can still win on variant mass. `u64` saturating accumulation
+/// keeps the total a lower bound, and a saturated total still strictly
+/// exceeds every `u32` generalize value, which discards the action — sound,
+/// because the true value is at least the exact sum (the same argument as
+/// `exact::action_size_bound`).
+fn structural_action_dominated<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    action: &Action<Cfg::O, Cfg::Au, Cfg::M>,
+    gen_size: u32,
+) -> bool
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut bound: u64 = 1;
+    for pair in &action.pairs {
+        bound = bound.saturating_add(
+            u64::from(lb_pair(snap, pair.left, pair.right).0).saturating_mul(pair.count.to_u64()),
+        );
+    }
+    bound > u64::from(gen_size)
+}
+
 /// Look up or create the statistics struct for an OR node. Fresh structs know
-/// their action count (cycle-filtered), terminal flag, and normalization sizes;
-/// values start at the node's stored best-result size (terminal) or infinity
-/// (awaiting a rollout estimate).
+/// their action count (cycle-filtered; additionally dominance-filtered when
+/// `dominance` is set, see [`structural_action_dominated`]), terminal flag,
+/// and normalization sizes; values start at the node's stored best-result
+/// size (terminal) or infinity (awaiting a rollout estimate).
+///
+/// With `dominance` on, a node whose every action is dropped has
+/// `num_actions == 0` and closes through the existing terminal condition
+/// below, at its stored best result — at worst the generalize value, whose
+/// term every creation site offers before calling here (the root seed in
+/// `run_mcgs_in`, `child_seed` in `expand_action`, and the rollout offers) —
+/// which is then exact, because every alternative was proven non-optimal.
 fn ensure_or_stats<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
@@ -1340,6 +1400,7 @@ fn ensure_or_stats<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     results: &mut BestResults<Cfg::Au>,
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     or_id: <Cfg::Au as AuIds>::Or,
+    dominance: bool,
 ) -> <Cfg::Au as AuIds>::OrStats
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -1356,6 +1417,7 @@ where
     let (num_actions, descs) = if l == r {
         (0, Vec::new())
     } else {
+        let gen_size = static_generalize_quality(snap, l, r).0;
         generate_actions(snap, action_cache, l, r);
         let actions = action_cache.get(l, r).unwrap();
         let mut count = 0;
@@ -1364,14 +1426,29 @@ where
                 .pairs
                 .iter()
                 .any(|p| space.is_cycle_blocked(or_id, p.left, p.right));
-            if !blocked {
+            if !blocked && !(dominance && structural_action_dominated(snap, action, gen_size)) {
                 count += 1;
             }
         }
         // One edge per feasible AC/ACI transport action (flow-verified).
         // Descriptors are computed once here and cached on the stats entry;
         // expansion reads the cache instead of re-solving feasibility.
-        let descs = transport_actions(snap, space, or_id, l, r);
+        let mut descs = transport_actions(snap, space, or_id, l, r);
+        if dominance {
+            // Same dominance screen for transport actions, on the shared
+            // lb-cost flow bound. `None` (infeasible) cannot occur here —
+            // every descriptor passed the zero-cost feasibility gate on the
+            // same mask and supplies — but dropping it would be sound too.
+            descs.retain(|desc| {
+                let n_cols = desc.right.len();
+                match transport_pair_lb(snap, &desc.left, &desc.right, |i, j| {
+                    desc.legal_cells[i * n_cols + j]
+                }) {
+                    None => false,
+                    Some(bound) => bound <= u128::from(gen_size),
+                }
+            });
+        }
         count += descs.len();
         (count, descs)
     };
@@ -1454,6 +1531,7 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
                 state,
                 current,
                 action_idx,
+                config.dominance_pruning,
             );
             state.set_or_edge_and(current, action_idx, Some(and_idx));
             state.advance_or_first_unrealized(current);
@@ -1816,7 +1894,11 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
 
 /// Realize one edge: allocate the AND statistics struct and all child OR nodes.
 /// `action_idx` indexes first over non-AC cached actions, then over AC/ACI
-/// representation pairs (transport-AND-nodes).
+/// representation pairs (transport-AND-nodes). `dominance` must equal the flag
+/// `ensure_or_stats` sized this node's edge arrays with: the surviving-action
+/// subsequence is recomputed here from the same deterministic predicates
+/// (cycle blocking, then dominance against the static generalize value), so
+/// indices agree and edges stay hole-free.
 #[allow(clippy::too_many_arguments)]
 fn expand_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
@@ -1827,6 +1909,7 @@ fn expand_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     or_idx: <Cfg::Au as AuIds>::OrStats,
     action_idx: usize,
+    dominance: bool,
 ) -> <Cfg::Au as AuIds>::AndStats
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -1843,6 +1926,7 @@ where
     // expansion realizes; the cached vector itself is read in place. The
     // count still walks every cached action because `action_idx` indexes the
     // surviving subsequence and the transport range starts after it.
+    let gen_size = static_generalize_quality(snap, l, r).0;
     let (non_ac_count, selected) = {
         let actions = action_cache.get(l, r).unwrap();
         let mut count = 0usize;
@@ -1852,7 +1936,7 @@ where
                 .pairs
                 .iter()
                 .any(|p| space.is_cycle_blocked(or_id, p.left, p.right));
-            if !blocked {
+            if !blocked && !(dominance && structural_action_dominated(snap, action, gen_size)) {
                 if count == action_idx {
                     selected = Some(action.clone());
                 }
@@ -1886,7 +1970,15 @@ where
             let child_seed = evaluate_generalize_action(snap, pool, pair.left, pair.right);
             results.ensure_capacity(child_or);
             results.offer(child_or, child_seed, pool.quality(child_seed));
-            let child_idx = ensure_or_stats(snap, space, action_cache, results, state, child_or);
+            let child_idx = ensure_or_stats(
+                snap,
+                space,
+                action_cache,
+                results,
+                state,
+                child_or,
+                dominance,
+            );
             child_or_stats.push(child_idx);
             // Widening a structural multiplicity to the surface width `child_counts`
             // keeps; see `AndStatsData::child_counts`.
@@ -1944,8 +2036,15 @@ where
                 let child_seed = evaluate_generalize_action(snap, pool, *lc, *rc);
                 results.ensure_capacity(child_or);
                 results.offer(child_or, child_seed, pool.quality(child_seed));
-                let child_idx =
-                    ensure_or_stats(snap, space, action_cache, results, state, child_or);
+                let child_idx = ensure_or_stats(
+                    snap,
+                    space,
+                    action_cache,
+                    results,
+                    state,
+                    child_or,
+                    dominance,
+                );
                 cell_map.push(Some(filtered_children.len()));
                 filtered_children.push(child_idx);
             }

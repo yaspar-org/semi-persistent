@@ -12,7 +12,9 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::literal::LitVal;
 
+use super::ac_repr;
 use super::egraph_api::{AuSnapshot, ClassOf};
+use super::transport::{Cell, TransportProblem, solve_transport};
 
 /// Exact quality of the terminal generalize action without interning its term.
 /// The MCGS initial rollout ranks actions with it, and the exact solver's
@@ -80,4 +82,45 @@ where
         let floor = snap.best_size(l).max(snap.best_size(r));
         (floor.saturating_add(1), 0)
     }
+}
+
+/// Admissible lower bound on the size of any term one AC/ACI representation
+/// pair `(lm, rm)` can produce: the min-cost flow over `lb_pair` cell costs
+/// (illegal cells `Forbidden`) plus 1 for the operator. Sound because every
+/// true cell value dominates its `lb_pair` bound and the true optimal flow is
+/// feasible in the bound problem. `legal(i, j)` must be the same cell mask the
+/// real solve uses; the supplies are the monomials' own multiplicities, so an
+/// infeasible bound problem (`None` — Hall-infeasible, or multiplicities the
+/// transport solver cannot represent) means the real pair contributes no
+/// candidate either. Shared by the exact solver's representation-pair
+/// pre-screen (plan item A2) and MCGS dominance pruning (A5).
+///
+/// `saturating_add` keeps a `u128::MAX` total a lower bound; a saturated
+/// value still strictly exceeds every `u32` comparison target, so the caller's
+/// `bound > target` prune stays sound.
+pub(crate) fn transport_pair_lb<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    lm: &ac_repr::Monomial<ClassOf<Cfg>>,
+    rm: &ac_repr::Monomial<ClassOf<Cfg>>,
+    legal: impl Fn(usize, usize) -> bool,
+) -> Option<u128>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut cost = vec![vec![Cell::Forbidden; rm.len()]; lm.len()];
+    for (i, &(lc, _)) in lm.iter().enumerate() {
+        for (j, &(rc, _)) in rm.iter().enumerate() {
+            if legal(i, j) {
+                let (s, v) = lb_pair(snap, lc, rc);
+                cost[i][j] = Cell::Cost(s, v);
+            }
+        }
+    }
+    let problem = TransportProblem::narrowed(
+        &lm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
+        &rm.iter().map(|&(_, k)| k).collect::<Vec<_>>(),
+        cost,
+    )?;
+    let solution = solve_transport(&problem)?;
+    Some(solution.total.0.saturating_add(1))
 }

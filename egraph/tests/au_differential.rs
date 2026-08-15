@@ -964,6 +964,119 @@ fn pruned_exact_matches_reference() {
     );
 }
 
+/// A5's flag-on check per the module-doc protocol for pruning changes: MCGS
+/// with `dominance_pruning: true` must stay sound on every corpus instance —
+/// never beat the fixture's exact size, and a `Completion::Exact` certificate
+/// must come with the exact quality tuple. Dominance pruning drops actions
+/// whose lower bound strictly exceeds the node's generalize value (an exact,
+/// always-available alternative), so soundness must hold line for line; the
+/// MCGS lines themselves MAY move against the flag-off fixture (freed budget
+/// explores differently), and this test prints how many moved and in which
+/// direction (better / worse / certified earlier / certified lost) as the
+/// explicit-review record.
+#[test]
+fn dominant_pruned_mcgs_is_sound() {
+    fn field(value: &str, key: &str) -> String {
+        value
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("no field {key} in fixture value {value:?}"))
+            .to_string()
+    }
+
+    let golden = read_golden();
+    let find = |key: &str| -> String {
+        golden
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key} :: ")))
+            .unwrap_or_else(|| panic!("{key}: no line in the golden fixture; {REGEN_HINT}"))
+            .to_string()
+    };
+
+    let mut checked = 0usize;
+    let mut moved = 0usize;
+    let mut better = 0usize;
+    let mut worse = 0usize;
+    let mut certified_earlier = 0usize;
+    let mut certified_lost = 0usize;
+    for spec in full_specs() {
+        let id = spec.id();
+        let inst = spec.build();
+        let snap = AuSnapshot::new(&inst.eg).unwrap();
+
+        let exact_line = find(&format!("{id} exact"));
+        let exact_size: u32 = field(&exact_line, "size").parse().unwrap();
+        let exact_vmass: u32 = field(&exact_line, "vmass").parse().unwrap();
+
+        for playouts in PLAYOUT_BUDGETS {
+            let mcgs = anti_unify(
+                &snap,
+                inst.left,
+                inst.right,
+                &AuConfig {
+                    algorithm: AuAlgorithm::Uct,
+                    playouts,
+                    dominance_pruning: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let quality = (mcgs.size, mcgs.pool.variant_mass(mcgs.term_id));
+            let certified = mcgs.completion == Completion::Exact;
+
+            assert!(
+                quality.0 >= exact_size,
+                "{id}: dominance-pruned MCGS at {playouts} playouts reports size {}, beating \
+                 the exact optimum {exact_size}; the pruning rule is unsound",
+                quality.0
+            );
+            if certified {
+                assert_eq!(
+                    quality,
+                    (exact_size, exact_vmass),
+                    "{id}: dominance-pruned MCGS at {playouts} playouts reports \
+                     Completion::Exact off the exact optimum; the certificate is unsound"
+                );
+            }
+
+            let golden_line = find(&format!("{id} mcgs p{playouts}"));
+            let golden_quality: (u32, u32) = (
+                field(&golden_line, "size").parse().unwrap(),
+                field(&golden_line, "vmass").parse().unwrap(),
+            );
+            let golden_certified = field(&golden_line, "certified") == "yes";
+            if (quality, certified) != (golden_quality, golden_certified) {
+                moved += 1;
+                println!(
+                    "{id} mcgs p{playouts}: size={} vmass={} certified={} (fixture: size={} \
+                     vmass={} certified={})",
+                    quality.0,
+                    quality.1,
+                    if certified { "yes" } else { "no" },
+                    golden_quality.0,
+                    golden_quality.1,
+                    if golden_certified { "yes" } else { "no" }
+                );
+                if quality < golden_quality {
+                    better += 1;
+                } else if quality > golden_quality {
+                    worse += 1;
+                } else if certified && !golden_certified {
+                    certified_earlier += 1;
+                } else {
+                    certified_lost += 1;
+                }
+            }
+            checked += 1;
+        }
+    }
+    println!(
+        "dominant_pruned_mcgs_is_sound: {checked} mcgs lines checked, {moved} moved vs the \
+         flag-off fixture: {better} better, {worse} worse, {certified_earlier} certified \
+         earlier, {certified_lost} certified lost"
+    );
+}
+
 /// Builds the corpus twice in-process and asserts the generated fixture
 /// text is identical, so a fixture mismatch in the gate above can always be
 /// attributed to a code change rather than harness nondeterminism.

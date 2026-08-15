@@ -130,6 +130,19 @@ is against an exact alternative, not an estimate. Note the honest limit: on
 the width family the actions are genuinely under the generalize value, so
 A(v) stays width^2 there; the win is on cycle-heavy and mutation-heavy
 shapes. About a week.
+Done 2026-08-15 (both uses; the closing rule needed no new code — it falls
+out of the existing `num_actions == 0` terminal condition, and the
+generalize seed is offered at every node-creation site): `dominance_pruning`
+(`AuConfig`/`McgsConfig`, default false) drops, at OR-stats creation, every
+structural action whose bound `1 + sum count * lb_pair(pair)` and every
+transport descriptor whose lb-cost flow bound (A2's pre-screen, moved to
+`estimates::transport_pair_lb` and shared with exact) strictly exceeds the
+node's generalize value. Flag off, the fixture is byte-identical; flag on,
+`au_differential.rs::dominant_pruned_mcgs_is_sound` moves 7 of 422 mcgs
+lines, all certified-earlier at unchanged quality (xover c3..c6, both
+budgets). Playouts to certification, flag off -> on: dump instance c3
+(d2w2c3) 36 -> 3, xover c4 275 -> 5, c5 24801 -> 12, c6 uncertified at
+2^20 -> 10; width d4w64 stays 16384, the honest limit above.
 
 **A6. Context-independence subsumption in exact.** Track per OR state
 whether any action was cycle-blocked, transitively through children; a

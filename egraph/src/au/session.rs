@@ -61,6 +61,19 @@ pub struct AuConfig {
     /// `au_differential.rs::pruned_exact_matches_reference` asserts the
     /// flag-on qualities equal that fixture. Ignored by the UCT algorithm.
     pub exact_pruning: bool,
+    /// Dominance pruning in the UCT/MCGS solver (plan item A5,
+    /// doc/au-solver-plan.md): at OR-stats creation, drop every action whose
+    /// projection lower bound strictly exceeds the node's generalize value —
+    /// the exact value of an always-available alternative — so a dropped
+    /// action can never be optimal at that node, and a node whose every
+    /// action is dropped closes at its generalize value. Shrinks the
+    /// certification budget without touching soundness: the certificate's
+    /// claim becomes "every action was realized or proven non-optimal", the
+    /// same claim exact-side pruning makes. Default `false`: the unpruned
+    /// search is the reference the differential fixture was captured
+    /// against; `au_differential.rs::dominant_pruned_mcgs_is_sound` gates
+    /// the flag-on behavior. Ignored by the exact algorithm.
+    pub dominance_pruning: bool,
 }
 
 impl Default for AuConfig {
@@ -74,6 +87,7 @@ impl Default for AuConfig {
             and_selector: AndSelector::default(),
             exact_deadline: None,
             exact_pruning: false,
+            dominance_pruning: false,
         }
     }
 }
@@ -195,6 +209,7 @@ where
                 exploration_constant: config.exploration_constant,
                 x_target: config.x_target,
                 and_selector: config.and_selector,
+                dominance_pruning: config.dominance_pruning,
             };
             let (term_id, pool, completion) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
             let size = pool.size(term_id);
