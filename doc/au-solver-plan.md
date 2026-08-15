@@ -35,6 +35,16 @@ the search-graph dump (`egraph/src/au/dump.rs`), and the anytime pilot
   rebuilt the flattened child list per iteration; fixed with a regression
   canary, ac p=4096 from >6 min to 1.29 s at identical quality.
 
+- The optimum can require suboptimal representatives. With
+  `L = {k(k(k(p))), f(S, s1)}` and `R = {j(j(j(q))), f(S, s2)}`, `bs = 4` on
+  both sides via the chains, which share no operator: the best combination
+  of the optimal representatives is the bare variable at 8. Pairing the
+  size-5 members yields `f(S_term, Variants(s1, s2))` at `1 + 3 + 2 = 6`.
+  This is why actions range over the full member cross product rather than
+  representative pairs, why the generalize value is only an upper bound, and
+  why the projection bound is unaffected: a term's projections are some
+  members of the classes, and `bs` floors all members.
+
 ## A. Algorithm work items
 
 **A0. MCGS expansion cost: single-descriptor clone (and cursor at scale).**
@@ -102,6 +112,98 @@ accelerates certification, and commitment-style variants become safe when
 gated on certified children only. 1-2 weeks, after A0 and A2.
 
 Order: A0, A1, A2, then A3 and A4 in parallel, then A5, A6, A7.
+
+## Soundness arguments, per item
+
+Every rule below compares against an exact quantity: a fixpoint size, the
+generalize value, or a proven subproblem optimum. No rule compares against a
+sampled estimate.
+
+**A0.** No semantic content. The cloned vector is read at one index, so
+cloning that descriptor is observationally identical. The cursor relies on
+an existing invariant: expansion fills the first empty slot, so realized
+slots form a prefix of the action indices and the first empty slot is a
+counter. Determinism gives a total check: identical answers before and
+after.
+
+**A1.** The bound is a theorem over all AU terms for a pair, independent of
+any search. `bs(c)` is the least fixpoint of the extraction recurrence,
+hence the true minimum over ground member terms, not an incumbent. For
+distinct classes every valid term contains a `Variants` node, because a
+`Variants`-free term projects to itself on both sides and one term
+inhabits one class, and distinct classes are disjoint. The identity
+`size = proj_L + proj_R - backbone` with `proj_R >= backbone + #Variants`
+forces `size >= bs(l) + 1`, symmetrically. The bound therefore holds at
+every node under every context, and does not assume the projections are
+optimal representatives (standing fact above).
+
+**A2.** An action's value is `1 + sum count * V(child)` and
+`V(child) >= LB(child)` under any context, because contexts only remove
+candidates, so V is monotone non-decreasing in context. Discarding an
+action whose bound strictly exceeds the node's incumbent size discards only
+provably non-optimal actions, so the min over the survivors is unchanged.
+Two guardrails: prune only on strict size excess, because an equal size can
+still win on variant mass; and compare only against the node's own
+incumbent, never a bound inherited from ancestors, so every memo entry
+remains the exact optimum of its state and memo reuse stays valid.
+Inherited alpha-beta bounds would make memo entries upper bounds and are
+out of scope. Partial-sum tightening replaces a child's LB with its solved
+value, which only raises a lower bound.
+
+**A3.** Reordering permutes the operands of a min, and the min is
+order-invariant, so the final value cannot change; ordering only moves when
+the incumbent improves. The anytime return is sound because every incumbent
+is feasible by construction (generalize is valid, and a composed action
+term is valid because its children are valid inductively and projections
+compose), and it is labeled uncertified: feasibility is the claim,
+optimality only on completion.
+
+**A4.** `build_best_term` is a deterministic pure function of the immutable
+snapshot, and interning is idempotent, so the cache can only return the id
+the computation would produce. The hazard is lifetime, not value: entries
+must not outlive a restore that truncates the pool. Storing the cache in
+the same semi-persistent storage, truncated by the same token bundle, makes
+invalidation structurally identical to the pool's own.
+
+**A5.** The comparison is against the generalize value, the exact value of
+an always-available alternative. An action whose lower bound strictly
+exceeds it loses under every completion, so removing it changes neither the
+node's optimum nor any reachable best term. The certificate's claim becomes
+"every action was realized or proven non-optimal", which is the same claim
+exact-side pruning makes; cycle blocking already removes actions from
+`num_actions`, so the certificate machinery handles filtered action sets. A
+node whose every action is dominated closes at the generalize value, which
+is then exact.
+
+**A6.** Two tiers. Downward reuse: if a node solved under `ctx` had nothing
+blocked anywhere in its derivation, its value equals the unconstrained
+optimum `V(empty)`; for `ctx' subset of ctx`, monotonicity pins
+`V(ctx')` between `V(empty)` and `V(ctx) = V(empty)`, so reuse is equality.
+General reuse needs the support of the optimal derivation (the classes it
+re-enters): reuse under `ctx'` iff the support is disjoint from `ctx'`,
+because the stored term then survives unblocked (upper bound) while
+monotonicity gives the lower bound. The blocked-nothing flag alone is sound
+only for the downward case; implement the flag first, the support set if
+the general case is measured to matter.
+
+**A7.** Exact run on a frontier subproblem with that node's context and
+cycle mode computes the identical quantity the MCGS certificate is defined
+over, so `mark_exact` plus the value slots into backup and certification as
+a truthful proven value. Term validity is independent of contexts (contexts
+exist for termination of the search, not validity: any finite term whose
+projections land in the classes is valid), so an exact-solved term is
+always safe to offer; the write-once exact flag and `offer`'s
+strict-improvement rule prevent silent degradation afterward.
+
+For the benchmark program, soundness means the measurement supports the
+claim: B1's knee prediction uses `sum of A(v)` computed by the dump,
+independent of the measured run; B2 verifies the misranking per instance
+against exact's ground truth instead of assuming it; B3 states its
+selection rule and separates the zero-inflated gap mass from the mean among
+nonzero gaps; B4's chain holds because the constructed oracle bounds
+recoverable sharing from above, sort-checking rejects ill-typed formalizer
+output before it reaches AU, and canonization-absorbed variability is
+reported separately from search-recovered variability.
 
 ## B. Benchmark program
 
