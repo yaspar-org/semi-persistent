@@ -139,13 +139,18 @@ witness-pending trio. Per floor:
   key-model TCB; unchanged.
 - **Hot sorted-input contracts (`bplus_search::{find_ge,find_gt}`,
   `sorted_vec_cursor::{new,seek}`): convert to requires-free
-  conditional contracts.** The bodies are total already (a bisection
-  or gallop on unsorted input returns some index in `[0, len]` without
-  panicking); the sortedness hypothesis moves from `requires` into the
-  ensures as an implication (`sorted(keys) ==> characterization`).
-  Zero runtime cost, public signature unchanged, verified callers keep
-  the full contract by discharging the hypothesis. This replaces the
-  declined O(n) runtime check with a weakening, not a wrapper.
+  conditional contracts. DONE.** The bodies are total already (a
+  bisection or gallop on unsorted input returns some index in
+  `[0, len]` without panicking); the sortedness hypothesis moved from
+  `requires` into the ensures as an implication
+  (`sorted(keys) ==> characterization`), with `r <= keys.len()` and
+  the cursor's position bounds kept unconditional. Zero runtime cost,
+  public signatures unchanged; `leaf_find_ge`/`find_child` and the
+  cursor theorems discharge the hypothesis and keep the full
+  contract. `key` also dropped its `cursor_wf` requires (its runtime
+  refusal already covers exhaustion). This replaced the declined O(n)
+  runtime check with a weakening, not a wrapper; the
+  DOCUMENTED-UNCHECKED allowlist floor is empty.
 - **Measured-decline NodeLayout calculus (10 bplus_layout entries):
   split visibility instead of adding refuse-branches.** The public
   `NodeLayout` name stays (consumers must name layout types as

@@ -9445,7 +9445,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
             L::node_wf(*node),
             L::is_leaf_spec(*node),
             // the leaf's keys are strictly sorted (its tree_wf leaf arm); implies
-            // the non-strict `sorted_le` that `S::find_ge` requires.
+            // the non-strict `sorted_le` hypothesis in `S::find_ge`'s ensures.
             crate::bplus_tree::strictly_sorted(
                 Seq::new(L::keys_view(*node).len(), |i: int| L::keys_view(*node)[i].as_nat())),
         ensures
@@ -9466,6 +9466,10 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         }
         let r = S::find_ge(keys, word);
         proof {
+            // `sorted_le(keys@)` was proven above, so it discharges the
+            // hypothesis in `S::find_ge`'s conditional ensures and the full
+            // split-point characterization is available.
+            assert(crate::bplus_search::sorted_le(keys@));
             // `keys@ == keys_view(node)` (L::keys ensures), so S::find_ge's
             // split-point ensures transfer to the ghost key view verbatim.
             assert forall|i: int| 0 <= i < r implies
@@ -9509,7 +9513,9 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         }
         let cp = S::find_gt(keys, word);
         proof {
-            // Same transfer as leaf_find_ge's, at the `<=` / `<` boundary.
+            // Same transfer as leaf_find_ge's, at the `<=` / `<` boundary;
+            // `sorted_le(keys@)` again discharges the conditional ensures.
+            assert(crate::bplus_search::sorted_le(keys@));
             assert forall|j: int| 0 <= j < cp implies
                 (#[trigger] L::keys_view(*node)[j]).as_nat() <= word.as_nat() by {
                 assert(keys@[j].as_nat() <= word.as_nat());

@@ -12,9 +12,13 @@
 # unobtainable outside the crate (constructors and with_store pub(crate)),
 # so no external caller can hold a receiver. Compiler-enforced.
 #
-# DOCUMENTED-UNCHECKED floor (hot sorted-input contracts; an exec check
-# would be O(n) on the join/search hot path; debug builds assert):
-#   sorted_vec_cursor.rs::{new, seek}, bplus_search.rs::{find_ge, find_gt}.
+# The DOCUMENTED-UNCHECKED floor (hot sorted-input contracts) is empty:
+# bplus_search.rs::{find_ge, find_gt} and sorted_vec_cursor.rs::{new, seek}
+# converted to requires-free conditional contracts - the sortedness
+# hypothesis moved from `requires` into the ensures as an implication
+# (`sorted ==> characterization`), with the in-bounds guarantees kept
+# unconditional. Zero runtime cost; verified callers discharge the
+# hypothesis and keep the full contract.
 #
 # WITNESS-PENDING (drains when the ring-id witness / snapshot-wf archival
 # land - plan doc phase-3 deferrals):
@@ -36,12 +40,11 @@ bplus_layout.rs::internal_insert_at
 bplus_layout.rs::internal_key_insert
 bplus_layout.rs::internal_split_at
 bplus_layout.rs::key
+bplus_layout.rs::keys
 bplus_layout.rs::leaf_insert_at
 bplus_layout.rs::leaf_push
 bplus_layout.rs::leaf_split_at
 bplus_layout.rs::set_internal_child
-bplus_search.rs::find_ge
-bplus_search.rs::find_gt
 capture_bits.rs::set_true
 circular_list.rs::splice
 circular_list.rs::splice_absorb
@@ -59,7 +62,6 @@ diff_store.rs::set_raw
 diff_store.rs::truncate
 guard.rs::check_precondition
 map.rs::new
-sorted_vec_cursor.rs::new
 sparse_set.rs::restore
 tagged.rs::clear_tag
 tagged.rs::from_repr

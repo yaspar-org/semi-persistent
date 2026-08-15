@@ -84,10 +84,11 @@ where
 {
     type Key = K;
 
-    /// The verified `key` has `idx() < model().len()` as a *precondition* rather
-    /// than returning `Option`, because production's does (`data[pos]`, which
-    /// panics past the end). The `is_valid` guard here is what discharges it, and
-    /// it is the only thing these three bodies add over the `BPlusCursor` ones.
+    /// The verified `key` refuses at runtime on an exhausted cursor rather than
+    /// returning `Option`, because production's panics there (`data[pos]` past
+    /// the end). The `is_valid` guard here is what keeps that refusal
+    /// unreachable, and it is the only thing these three bodies add over the
+    /// `BPlusCursor` ones.
     #[inline(always)]
     fn key(&self) -> Option<K> {
         if SortedVecCursor::is_valid(self) {
