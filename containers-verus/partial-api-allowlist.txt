@@ -20,13 +20,16 @@
 # land - plan doc phase-3 deferrals):
 #   circular_list.rs::{splice, splice_absorb}, sparse_set.rs::restore.
 #
-# MEASURED-DECLINE floor: bplus_layout.rs's NodeLayout methods are the
-# B+tree's internal node calculus. Refuse-branches here would reinstate the
-# per-probe and per-shift bounds checks the bounds-elision work removed and
-# priced (doc/design/10-bplus-tree.md, 11-layout-parity.md); the unsafe
-# primitives beneath are pub(crate) and debug-monitored, so external misuse
-# of the trait surface cannot reach undefined behavior. Conversion declined
-# on measured-performance grounds, revisitable with a new measurement.
+# RECHECKED floor: bplus_layout.rs's NodeLayout methods keep their requires
+# (verified callers consume the obligations) but every impl body now opens
+# with a check_precondition mirror, provably dead for verified callers and
+# a release panic for unverified misuse - the second audit found the
+# previous debug-only monitoring left get_unchecked reachable as UB from
+# safe external code (14-parity-audit-2.md, section 4, finding 1). The
+# entries stay listed because the requires clauses remain on the public
+# trait; none is a soundness hole. Guard cost on the hot paths: measured
+# under machine load as inconclusive; the quiet-machine perf audit rerun
+# owns the number, and #[cold] refuse arms are the fallback if it shows.
 bplus_layout.rs::child
 bplus_layout.rs::first_key
 bplus_layout.rs::internal_insert_at

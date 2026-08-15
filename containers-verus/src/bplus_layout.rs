@@ -707,6 +707,10 @@ pub fn internal_insert_at<L: NodeLayout>(n: &mut L::Node, cp: usize, sep: L::Wor
             L::child_view(*final(n), j) == L::child_view(*old(n), (j - 1)),
 {
     let ghost old_n = *n;
+    crate::guard::check_precondition(
+        !L::is_leaf(n) && L::count(n) < L::key_cap() && cp <= L::count(n),
+        "bplus_layout::internal_insert_at: malformed node or child position past count",
+    );
     let cnt = L::count(n);
     let kc = L::key_cap();  // exec key_cap; cnt < kc, so m+1, cp+1 <= kc.
     // Phase A: shift children [cp+1..=cnt] up to [cp+2..=cnt+1], descending.
@@ -895,17 +899,35 @@ macro_rules! gen_layout_u32 {
             // are the hottest reads in the crate (one per binary-search probe),
             // so they take the unchecked path — see `arr_get`.
             #[inline(always)]
-            fn key(n: &$node, i: usize) -> (k: u32) { arr_get(&n.data, i) }
+            fn key(n: &$node, i: usize) -> (k: u32) {
+                // Runtime guard for UNVERIFIED callers on the erased requires
+                // (provably dead for verified ones): the unchecked read below
+                // leaves the array exactly when this fails.
+                crate::guard::check_precondition(
+                    (if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap })
+                        && i < n.count as usize,
+                    "NodeLayout::key: malformed node or index past count",
+                );
+                arr_get(&n.data, i)
+            }
             // `node_wf` bounds `count` by `leaf_cap`/`key_cap`, both `<= data_len`,
             // so the subrange is in bounds.
             #[inline(always)]
             fn keys(n: &$node) -> (s: &[u32]) {
+                crate::guard::check_precondition(
+                    if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap },
+                    "NodeLayout::keys: malformed node",
+                );
                 let s = vstd::slice::slice_subrange(n.data.as_slice(), 0, n.count as usize);
                 proof { assert(s@ =~= Self::keys_view(*n)); }
                 s
             }
             #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: u32) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= n.count as usize,
+                    "NodeLayout::child: malformed node or child index past count",
+                );
                 if i < $key_cap { arr_get(&n.data, $key_cap + i) } else { n.link }
             }
             #[inline(always)]
@@ -917,6 +939,10 @@ macro_rules! gen_layout_u32 {
 
             #[inline(always)]
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u32) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap && pos <= n.count as usize,
+                    "NodeLayout::leaf_insert_at: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // one call, length-dispatched: the scalar walk for short tails,
@@ -929,6 +955,10 @@ macro_rules! gen_layout_u32 {
 
             #[inline(always)]
             fn leaf_push(n: &mut $node, w: u32) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap,
+                    "NodeLayout::leaf_push: malformed or full node",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // No shift and no length dispatch: the hole is already at `cnt`.
@@ -943,6 +973,10 @@ macro_rules! gen_layout_u32 {
 
             #[inline(always)]
             fn leaf_split_at(n: &$node, pos: usize, w: u32) -> (res: ($node, $node)) {
+                crate::guard::check_precondition(
+                    n.is_leaf && n.count as usize == $leaf_cap && pos <= $leaf_cap,
+                    "NodeLayout::leaf_split_at: node is not a full leaf or position out of range",
+                );
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
                 let rc: usize = $leaf_cap + 1 - mid;
@@ -1015,6 +1049,10 @@ macro_rules! gen_layout_u32 {
             }
             #[inline(always)]
             fn internal_key_insert(n: &mut $node, pos: usize, w: u32) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && (n.count as usize) < $key_cap && pos <= n.count as usize,
+                    "NodeLayout::internal_key_insert: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // see `arr_shift_up`: length-dispatched, and its postcondition
@@ -1029,6 +1067,10 @@ macro_rules! gen_layout_u32 {
             }
             #[inline(always)]
             fn set_internal_child(n: &mut $node, i: usize, v: u32) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= $key_cap,
+                    "NodeLayout::set_internal_child: malformed node or child index out of range",
+                );
                 let ghost old_n = *n;
                 if i < $key_cap {
                     // i < key_cap and 2*key_cap <= data_len ⟹ key_cap + i in bounds.
@@ -1055,6 +1097,10 @@ macro_rules! gen_layout_u32 {
             fn internal_split_at(n: &$node, cp: usize, new_sep: u32, new_child: u32)
                 -> (res: ($node, $node, u32))
             {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize == $key_cap && cp <= $key_cap,
+                    "NodeLayout::internal_split_at: node is not a full internal or position out of range",
+                );
                 let imid: usize = $key_cap / 2;
                 let kc: usize = $key_cap;
                 let ghost cseps = Self::keys_view(*n).insert(cp as int, new_sep);
@@ -1304,10 +1350,24 @@ macro_rules! gen_layout_u64 {
             // See the u32 `key` above: `i < count <= data_len` is a proven
             // precondition, so the bounds check is dead. `arr_get`.
             #[inline(always)]
-            fn key(n: &$node, i: usize) -> (k: u64) { arr_get(&n.data, i) }
+            fn key(n: &$node, i: usize) -> (k: u64) {
+                // Runtime guard for UNVERIFIED callers on the erased requires
+                // (provably dead for verified ones): the unchecked read below
+                // leaves the array exactly when this fails.
+                crate::guard::check_precondition(
+                    (if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap })
+                        && i < n.count as usize,
+                    "NodeLayout::key: malformed node or index past count",
+                );
+                arr_get(&n.data, i)
+            }
             // In-bounds for the same reason as the u32 `keys` above.
             #[inline(always)]
             fn keys(n: &$node) -> (s: &[u64]) {
+                crate::guard::check_precondition(
+                    if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap },
+                    "NodeLayout::keys: malformed node",
+                );
                 let s = vstd::slice::slice_subrange(n.data.as_slice(), 0, n.count as usize);
                 proof { assert(s@ =~= Self::keys_view(*n)); }
                 s
@@ -1321,6 +1381,10 @@ macro_rules! gen_layout_u64 {
             // inherited.
             #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: usize) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= n.count as usize,
+                    "NodeLayout::child: malformed node or child index past count",
+                );
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
                     let c = arr_get(&n.data, $key_cap + i) as usize;
@@ -1339,6 +1403,10 @@ macro_rules! gen_layout_u64 {
 
             #[inline(always)]
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u64) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap && pos <= n.count as usize,
+                    "NodeLayout::leaf_insert_at: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // one call, length-dispatched: the scalar walk for short tails,
@@ -1351,6 +1419,10 @@ macro_rules! gen_layout_u64 {
 
             #[inline(always)]
             fn leaf_push(n: &mut $node, w: u64) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap,
+                    "NodeLayout::leaf_push: malformed or full node",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // No shift and no length dispatch: the hole is already at `cnt`.
@@ -1365,6 +1437,10 @@ macro_rules! gen_layout_u64 {
 
             #[inline(always)]
             fn leaf_split_at(n: &$node, pos: usize, w: u64) -> (res: ($node, $node)) {
+                crate::guard::check_precondition(
+                    n.is_leaf && n.count as usize == $leaf_cap && pos <= $leaf_cap,
+                    "NodeLayout::leaf_split_at: node is not a full leaf or position out of range",
+                );
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
                 let rc: usize = $leaf_cap + 1 - mid;
@@ -1457,6 +1533,10 @@ macro_rules! gen_layout_u64 {
             }
             #[inline(always)]
             fn internal_key_insert(n: &mut $node, pos: usize, w: u64) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && (n.count as usize) < $key_cap && pos <= n.count as usize,
+                    "NodeLayout::internal_key_insert: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // see `arr_shift_up`: length-dispatched, and its postcondition
@@ -1485,6 +1565,10 @@ macro_rules! gen_layout_u64 {
                         Self::child_view(*final(n), j) == Self::child_view(*old(n), j),
             {
                 let ghost old_n = *n;
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= $key_cap,
+                    "NodeLayout::set_internal_child: malformed node or child index out of range",
+                );
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
                     arr_set(&mut n.data, $key_cap + i, v as u64);
@@ -1508,6 +1592,10 @@ macro_rules! gen_layout_u64 {
             fn internal_split_at(n: &$node, cp: usize, new_sep: u64, new_child: usize)
                 -> (res: ($node, $node, u64))
             {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize == $key_cap && cp <= $key_cap,
+                    "NodeLayout::internal_split_at: node is not a full internal or position out of range",
+                );
                 let imid: usize = $key_cap / 2;
                 let kc: usize = $key_cap;
                 let ghost cseps = Self::keys_view(*n).insert(cp as int, new_sep);
