@@ -64,6 +64,12 @@ cursor column restored with the other stats; width d4w512 at 4096 playouts
 **A1. The projection bound as a primitive.** `lb_pair(l, r)` beside
 `static_generalize_quality`, plus a randomized test asserting the projection
 identity on metamorphic terms. Days.
+Done 2026-08-15: both helpers live in `egraph/src/au/estimates.rs` (moved
+from mcgs.rs; the solvers import from there), and
+`au_projection_bound.rs` pins the projection identity
+`size = proj_L + proj_R - #backbone` and `size >= lb_pair` against the exact
+solver's returned term on 200 seeded metamorphic instances; the differential
+fixture is byte-identical.
 
 **A2. Branch-and-bound in the exact solver.** Seed the incumbent with
 generalize (already first), bound each action by

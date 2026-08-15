@@ -28,6 +28,7 @@ use super::AuIds31;
 use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
+use super::estimates::static_generalize_quality;
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
@@ -1977,34 +1978,6 @@ enum InitialRolloutChoice {
         descriptor: usize,
         flow: Vec<Vec<u32>>,
     },
-}
-
-/// Exact quality of the terminal generalize action without interning its term.
-/// Shared with the exact solver (exact.rs), whose best-first action ordering
-/// ranks structural actions by the same lazy-completion estimate the initial
-/// rollout uses.
-pub(crate) fn static_generalize_quality<
-    Cfg: EGraphConfig,
-    L: LitVal,
-    const T: bool,
-    const P: bool,
->(
-    snap: &AuSnapshot<Cfg, L, T, P>,
-    l: ClassOf<Cfg>,
-    r: ClassOf<Cfg>,
-) -> (u32, u32)
-where
-    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
-{
-    if l == r {
-        (snap.best_size(l), 0)
-    } else {
-        let size = snap
-            .best_size(l)
-            .checked_add(snap.best_size(r))
-            .expect("generalize estimate exceeds u32 term-size capacity");
-        (size, size)
-    }
 }
 
 #[inline]

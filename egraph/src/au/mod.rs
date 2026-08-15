@@ -37,6 +37,7 @@ pub mod actions;
 #[cfg(test)]
 mod dump;
 pub mod egraph_api;
+pub mod estimates;
 pub mod exact;
 pub mod mcgs;
 pub mod pretty;

@@ -16,7 +16,7 @@ use crate::multiplicity::MultiplicityLike;
 use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
-use super::mcgs::static_generalize_quality;
+use super::estimates::static_generalize_quality;
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
