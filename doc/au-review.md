@@ -11,6 +11,9 @@ profiles. The library's own au tests pass (106/106); every finding
 below reproduces from a repro binary. Harness code lives outside the
 repo (session scratchpad, crate `aucheck`); nothing in-tree changed.
 
+Detailed per-defect accounts with minimal triggers and the chosen fix
+directions are in `au-defects.md`.
+
 ## Bugs, ranked
 
 **P0-1. MCGS hangs: `solve_transport_f64` loops forever.**
