@@ -272,4 +272,65 @@ and debug monitors.
 
 ## 5. Performance
 
-(Pending reader report; includes the post-dispatch B+ tree numbers.)
+Reader's summary: within-run prod/verus ratios are the only comparable
+quantity (unchanged code moved 49% in absolute microseconds between
+quiet windows); the interleaved perf_gate rows are the confound-free
+evidence, and criterion pairs carry a documented arm-order penalty.
+Two passes, quiet windows, ratios reproducing within about one point.
+
+### Regressions at HEAD (verus slower than production beyond +3%)
+
+1. **vec/try_extend +7.6% then +9.0%, and the perf_gate row FAILS its
+   +9.0 ceiling.** The ledger recorded -18.5%; a ~27-point move on an
+   interleaved row is real, and the gate is red at HEAD. Open
+   attribution: no vec runtime path changed in the parity batch;
+   candidates are the workspace dependency update and codegen drift.
+   Bisection owed before any fix.
+2. **bplus/from_sorted_then_scan +86% (ledger +74%).** The ~13-point
+   worsening is attributed to the NodeLayout release guards: the
+   bulk build pays a guard per leaf_push and the scan a guard per
+   cursor key read. Mitigation identified: pub(crate) unguarded twins
+   for VERIFIED internal callers (the cursor and loader prove the
+   requires), guards stay on the public boundary.
+3. **bplus/insert_shuffled +12.5%** (known, ledgered at +13.7%,
+   stable through dispatch + guards).
+4. **bplus/insert_shuffled_branchless +6%** (new row; smaller gap
+   than the BinarySearch arm).
+5. **tracked_veci mark-churn +4-6%**, flat in n, reproduced at three
+   sizes twice; no ledger row; near the layout-noise floor but
+   consistent.
+
+### Moves in the verus favor and stable rows
+
+map/intern moved 25-33 points to verus-faster (-24.7%/-33.1% vs the
+ledger's parity; hasher seeding and dependency drift on the production
+arm are the suspected cause - the arms use different table
+implementations by design). cursor_seek improved to near parity after
+the dispatch commit and the production fast-path fix. The class-ring
+rows (-20%), list rows, sparse churn, aov, bitset: stable or
+verus-faster. mark_set_restore's criterion arm-order artifact (+8.2%
+then -2.9%) resolves to verus-faster on the interleaved gate
+(-16 to -36%).
+
+### Coverage gaps (no bench pair exists)
+
+B+ tree TRACK=true mark/restore; SpMap miss-heavy lookup; tracked
+ListArena; SortedVecCursor prod-vs-verus A/B; use-list-heavy EClasses
+group; Vec iteration pair (relevant to the size_hint restoration); and
+NO allocation-parity harness for any container pair - the parity
+matrix's claim that the twin's splits are allocation-free against
+production's per-split to_vec is directly checkable with a counting
+allocator and currently is not checked.
+
+### Bench-validity findings
+
+The criterion arm-order confound (~+18% second-arm penalty) applies to
+every pair without an interleaved twin; cursor_seek's
+fresh-cursor-per-probe shape suppresses production's locality fast
+path entirely; from_sorted_then_scan conflates the deliberate
+all-builds sortedness check with build-shape differences; every verus
+arm pays a Result discriminant per op (`try_*().expect()`) - the real
+total-API cost, present systematically; the ledger's absolute columns
+are not reproducible across machine states and should be re-recorded
+ratio-first. incremental_vs_rebuild was skipped (over the time
+budget); its one prod-vs-verus pair remains unmeasured at HEAD.
