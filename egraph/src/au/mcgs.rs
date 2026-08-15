@@ -1033,32 +1033,61 @@ fn or_postorder<A: AuIds, O: DenseId>(
     state: &McgsState<A, O>,
     root_idx: A::OrStats,
 ) -> Vec<A::OrStats> {
-    let mut postorder: Vec<A::OrStats> = Vec::new();
-    let mut mark: Vec<u8> = vec![0; state.or_stats.len().as_usize()]; // 0 unseen, 1 active, 2 done
-    let mut stack: Vec<(A::OrStats, usize)> = vec![(root_idx, 0)]; // (or id, child cursor)
-    while let Some(&mut (or_idx, ref mut cursor)) = stack.last_mut() {
-        if mark[or_idx.to_usize()] == 2 {
-            stack.pop();
-            continue;
-        }
-        mark[or_idx.to_usize()] = 1;
-        let children: Vec<A::OrStats> = state
+    // One node's flattened child OR list (every expanded AND-node's children,
+    // in edge then child order). Computed once per frame, at push time: a
+    // fully expanded node with e edges of arity k has e*k children and its
+    // frame stays on the stack for e*k cursor steps, so recollecting the list
+    // at every step (as this function did before 2026-08-15) is quadratic in
+    // the fan-out. On the anytime pilot's ac m64c16 root (4096 transport
+    // edges x 289 cells) that recollection copied ~1.4e12 ids inside
+    // `close_completed_dag`, a multi-minute stall at the first budget that
+    // completes expansion (playouts = members^2 = 4096); computed once, the
+    // same closure finishes in under a second. Pinned by
+    // `or_postorder_is_linear_in_the_expanded_fan_out`.
+    let children_of = |or_idx: A::OrStats| -> Vec<A::OrStats> {
+        state
             .or_stat(or_idx)
             .edge_and
             .iter()
             .flatten()
             .flat_map(|&a| state.and_stat(a).child_or_stats.iter().copied())
-            .collect();
-        if *cursor < children.len() {
-            let child = children[*cursor];
-            *cursor += 1;
-            if mark[child.to_usize()] == 0 {
-                stack.push((child, 0));
+            .collect()
+    };
+
+    let mut postorder: Vec<A::OrStats> = Vec::new();
+    let mut mark: Vec<u8> = vec![0; state.or_stats.len().as_usize()]; // 0 unseen, 1 active, 2 done
+    // Frame: (or id, children computed once, child cursor).
+    let mut stack: Vec<(A::OrStats, Vec<A::OrStats>, usize)> =
+        vec![(root_idx, children_of(root_idx), 0)];
+    mark[root_idx.to_usize()] = 1;
+    loop {
+        let next = {
+            let Some((_, children, cursor)) = stack.last_mut() else {
+                break;
+            };
+            if *cursor < children.len() {
+                let child = children[*cursor];
+                *cursor += 1;
+                Some(child)
+            } else {
+                None
             }
-        } else {
-            mark[or_idx.to_usize()] = 2;
-            postorder.push(or_idx);
-            stack.pop();
+        };
+        match next {
+            // Unseen child: descend. Active (1) children are back edges and
+            // done (2) children are shared; neither is revisited.
+            Some(child) => {
+                if mark[child.to_usize()] == 0 {
+                    mark[child.to_usize()] = 1;
+                    let child_children = children_of(child);
+                    stack.push((child, child_children, 0));
+                }
+            }
+            None => {
+                let (done, _, _) = stack.pop().expect("postorder stack cannot be empty");
+                mark[done.to_usize()] = 2;
+                postorder.push(done);
+            }
         }
     }
     postorder
@@ -2804,6 +2833,89 @@ mod tests {
             state.or_stat(os(0)).value,
             "Exact certification must close values/results through every incoming parent"
         );
+    }
+
+    /// `or_postorder` on a single OR node with a wide expanded fan (E edges of
+    /// arity K): each node exactly once, children before the parent, and the
+    /// traversal is linear in the E*K fan-out. The linearity half is a
+    /// release-only timing canary because the traversal recollected the
+    /// parent's full flattened child list on every cursor step before
+    /// 2026-08-15, quadratic in E*K, which stalled `close_completed_dag` for
+    /// minutes on the anytime pilot's ac m64c16 root (4096 edges x 289 cells)
+    /// at the first budget that completes expansion. At E=1024, K=64 that
+    /// recollection copies ~4e9 ids (seconds under release codegen); the
+    /// per-frame collection finishes in milliseconds.
+    #[test]
+    fn or_postorder_is_linear_in_the_expanded_fan_out() {
+        const E: usize = 1024;
+        const K: usize = 64;
+        let mut state: McgsState = McgsState::new();
+        push_or(
+            &mut state,
+            OrStatsData {
+                initial_value: 10.0,
+                value: 10.0,
+                min_size: 1.0,
+                max_size: 20.0,
+                terminal: false,
+                edge_visits: vec![1; E],
+                edge_and: (0..E).map(|e| Some(asid(e))).collect(),
+            },
+        );
+        for _ in 0..E * K {
+            push_or(
+                &mut state,
+                OrStatsData {
+                    initial_value: 1.0,
+                    value: 1.0,
+                    min_size: 1.0,
+                    max_size: 20.0,
+                    terminal: true,
+                    edge_visits: Vec::new(),
+                    edge_and: Vec::new(),
+                },
+            );
+        }
+        for e in 0..E {
+            push_and(
+                &mut state,
+                AndStatsData {
+                    parent: os(0),
+                    op: crate::id::OpId::from_usize(0),
+                    commutative: false,
+                    value: 1.0 + K as f64,
+                    child_or_stats: (0..K).map(|k| os(1 + e * K + k)).collect(),
+                    child_counts: vec![1; K],
+                    child_visits: vec![1; K],
+                    round_robin: 0,
+                    transport_rows: Vec::new(),
+                    transport_cols: Vec::new(),
+                    transport_cell_map: Vec::new(),
+                },
+            );
+        }
+
+        let start = std::time::Instant::now();
+        let postorder = or_postorder(&state, os(0));
+        let elapsed = start.elapsed();
+
+        assert_eq!(postorder.len(), 1 + E * K, "each node exactly once");
+        assert_eq!(*postorder.last().unwrap(), os(0), "children before parent");
+        let mut seen = vec![false; 1 + E * K];
+        for &or_idx in &postorder {
+            assert!(!seen[or_idx.to_usize()], "no node repeats");
+            seen[or_idx.to_usize()] = true;
+        }
+        // Timing canary, calibrated for release codegen only (same policy as
+        // in_node_search_is_binary_not_linear): unoptimized or instrumented
+        // builds pay real call boundaries everywhere and the margin shrinks.
+        if !cfg!(debug_assertions) {
+            assert!(
+                elapsed < std::time::Duration::from_secs(2),
+                "or_postorder took {elapsed:?} on a {E}x{K} fan; the traversal \
+                 must stay linear in the expanded fan-out"
+            );
+        }
     }
 
     #[test]

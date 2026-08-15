@@ -25,18 +25,27 @@ the search-graph dump (`egraph/src/au/dump.rs`), and the anytime pilot
   every reachable OR node realized, so the budget is `sum of A(v)`;
   the pilot's hardness filter selected instances where that sum is 1e4-1e6
   against a 4096 ladder, hence 0/263 certifications.
-- Realizing all A edges of a node costs Theta(A^2) today: a linear
-  first-empty-slot scan per visit plus a full action-vector clone per
-  expansion (`mcgs.rs:1364-1369`, `:1766-1767`).
+- Measured MCGS cost attribution (profiled on width d4w512 and ac m64c16):
+  the full action-vector clone per expansion (`mcgs.rs:1753`) is 75-77% of
+  playout runtime (removing it measures 4.3x at 4096 playouts); the
+  first-empty-slot scan is refuted as a contributor at practical budgets
+  (8.4e6 checks at p=4096, invisible in a 4300-sample profile) and only
+  matters at certification-scale p close to A. The ac cliff at p=4096 was a
+  separate quadratic defect in `close_completed_dag`'s postorder, which
+  rebuilt the flattened child list per iteration; fixed with a regression
+  canary, ac p=4096 from >6 min to 1.29 s at identical quality.
 
 ## A. Algorithm work items
 
-**A0. MCGS expansion cost: cursor and single-descriptor clone.** Replace the
-first-empty-slot scan with a per-node cursor (slots fill in ascending order)
-and clone one action descriptor instead of the whole vector. Acceptance: the
-width d4w512 ladder at 4096 playouts drops from 20 s+ and 1.7 GB to linear
-cost; the anytime ladder extends to 2^16 without guards tripping. Blocked on
-the profiler's attribution only for confirmation, not for design.
+**A0. MCGS expansion cost: single-descriptor clone (and cursor at scale).**
+Clone one action descriptor instead of the whole cached vector at expansion
+(`mcgs.rs:1753`): measured 4.3x on width d4w512 at 4096 playouts (30.0 s to
+7.0 s). The per-node cursor for the first-empty-slot scan is worthwhile only
+for certification-scale budgets where p approaches A; implement it with the
+same change but do not expect it to move the pilot numbers. The 1.7 GB pilot
+peak was process-cumulative across ladders plus leaked guard workers, not a
+per-run property; the anytime harness should recycle processes or subtract
+leaked workers when reporting memory.
 
 **A1. The projection bound as a primitive.** `lb_pair(l, r)` beside
 `static_generalize_quality`, plus a randomized test asserting the projection
