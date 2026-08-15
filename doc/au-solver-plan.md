@@ -56,6 +56,10 @@ same change but do not expect it to move the pilot numbers. The 1.7 GB pilot
 peak was process-cumulative across ladders plus leaked guard workers, not a
 per-run property; the anytime harness should recycle processes or subtract
 leaked workers when reporting memory.
+Done 2026-08-15: expansion clones only the selected descriptor, the initial
+rollout reads the cache in place, and each OR node keeps a first-unrealized
+cursor column restored with the other stats; width d4w512 at 4096 playouts
+30.7 s to 7.8 s (4.0x, 1024: 8.0 s to 2.1 s), golden fixture unchanged.
 
 **A1. The projection bound as a primitive.** `lb_pair(l, r)` beside
 `static_generalize_quality`, plus a randomized test asserting the projection

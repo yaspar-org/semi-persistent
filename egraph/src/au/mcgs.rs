@@ -179,6 +179,7 @@ struct OrStatsToken {
     value: VecToken,
     edge_visits: VecToken,
     edge_and: VecToken,
+    first_unrealized: VecToken,
     transport_descs: VecToken,
 }
 
@@ -197,6 +198,12 @@ struct OrStatsArena<A: AuIds, O: DenseId> {
     value: VecP<f64, A::Index>,
     edge_visits: VecP<u64, A::Index>,
     edge_and: VecP<Option<A::AndStats>, A::Index>,
+    /// Index of the node's first unrealized action. Playout expansion is the
+    /// only writer of `edge_and`, and it always realizes this index, so the
+    /// realized slots form a prefix and the cursor advances monotonically.
+    /// A restore rewinds it together with `edge_and` to the same mark, which
+    /// keeps the prefix invariant.
+    first_unrealized: VecP<A::Index, A::Index>,
     transport_descs: AppendOnlyVec<Vec<TransportActionDesc<O, A::Class>>, A::Index>,
 }
 
@@ -233,6 +240,7 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
             value: VecP::new(),
             edge_visits: VecP::new(),
             edge_and: VecP::new(),
+            first_unrealized: VecP::new(),
             transport_descs: AppendOnlyVec::new(),
         }
     }
@@ -263,6 +271,7 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         assert_eq!(self.edge_spans.len(), node_len);
         assert_eq!(self.initial_value.len(), node_len);
         assert_eq!(self.value.len(), node_len);
+        assert_eq!(self.first_unrealized.len(), node_len);
         assert_eq!(self.transport_descs.len(), node_len);
 
         let edge_start = self.edge_visits.len().as_usize();
@@ -308,6 +317,9 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
             .expect("AU arena sized by its index word");
         self.value
             .try_push(data.value)
+            .expect("AU arena sized by its index word");
+        self.first_unrealized
+            .try_push(A::Index::try_from_usize(0).expect("zero fits every index word"))
             .expect("AU arena sized by its index word");
         self.transport_descs
             .try_push(transport_descs)
@@ -370,6 +382,25 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         self.edge_and.set(edge, value);
     }
 
+    /// The node's first unrealized action index (== its edge count when every
+    /// action is realized).
+    #[inline]
+    fn first_unrealized(&self, id: A::OrStats) -> usize {
+        self.first_unrealized.get(Self::index(id)).as_usize()
+    }
+
+    /// Advance the cursor past a just-realized slot. Valid only from the
+    /// expansion path, which realizes exactly the cursor's slot.
+    fn advance_first_unrealized(&mut self, id: A::OrStats) {
+        let node = Self::index(id);
+        let next = self.first_unrealized.get(node).as_usize() + 1;
+        debug_assert!(next <= self.edge_span(id).len_usize());
+        self.first_unrealized.set(
+            node,
+            A::Index::try_from_usize(next).expect("cursor bounded by the node's edge span"),
+        );
+    }
+
     fn mark(&mut self) -> OrStatsToken {
         OrStatsToken {
             or_ids: self
@@ -408,6 +439,10 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
                 .edge_and
                 .try_mark(ShrinkPolicy::Never)
                 .expect("mark: depth bounded by the search driver"),
+            first_unrealized: self
+                .first_unrealized
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
             transport_descs: self
                 .transport_descs
                 .try_mark(ShrinkPolicy::Never)
@@ -425,6 +460,7 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
             && self.value.is_valid_token(&token.value)
             && self.edge_visits.is_valid_token(&token.edge_visits)
             && self.edge_and.is_valid_token(&token.edge_and)
+            && self.first_unrealized.is_valid_token(&token.first_unrealized)
             && self.transport_descs.is_valid_token(&token.transport_descs)
     }
 
@@ -432,6 +468,9 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         assert!(self.is_valid_token(&token), "OrStatsArena: invalid token");
         self.transport_descs
             .try_restore(token.transport_descs)
+            .expect("restore: token minted by this container's own mark");
+        self.first_unrealized
+            .try_restore(token.first_unrealized)
             .expect("restore: token minted by this container's own mark");
         self.edge_and
             .try_restore(token.edge_and)
@@ -892,6 +931,14 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
 
     fn set_or_edge_and(&mut self, id: A::OrStats, action: usize, value: Option<A::AndStats>) {
         self.or_stats.set_edge_and(id, action, value);
+    }
+
+    fn or_first_unrealized(&self, id: A::OrStats) -> usize {
+        self.or_stats.first_unrealized(id)
+    }
+
+    fn advance_or_first_unrealized(&mut self, id: A::OrStats) {
+        self.or_stats.advance_first_unrealized(id);
     }
 
     fn set_and_value(&mut self, id: A::AndStats, value: f64) {
@@ -1376,12 +1423,20 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
             break;
         }
 
-        // First unrealized action, in ascending action order (UCT expansion §3.3.4).
-        let unrealized = state
-            .or_stat(current)
-            .edge_and
-            .iter()
-            .position(|e| e.is_none());
+        // First unrealized action, in ascending action order (UCT expansion
+        // §3.3.4). Realized slots form a prefix (this is the only writer and
+        // it fills slots in index order), so the per-node cursor replaces the
+        // linear scan.
+        let cursor = state.or_first_unrealized(current);
+        let unrealized = {
+            let stats = state.or_stat(current);
+            debug_assert_eq!(
+                stats.edge_and.iter().position(|e| e.is_none()),
+                (cursor < stats.edge_and.len()).then_some(cursor),
+                "first-unrealized cursor diverged from the edge scan"
+            );
+            (cursor < stats.edge_and.len()).then_some(cursor)
+        };
 
         if let Some(action_idx) = unrealized {
             // Edge visit is counted before the realization check, so the new
@@ -1398,6 +1453,7 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
                 action_idx,
             );
             state.set_or_edge_and(current, action_idx, Some(and_idx));
+            state.advance_or_first_unrealized(current);
             path.push(and_idx);
 
             // Rollout: first estimate for fresh children (§3.3.2).
@@ -1779,29 +1835,34 @@ where
     let ctx_r = *space.or_arena.right_ctx.get(or_id.to_index());
 
     generate_actions(snap, action_cache, l, r);
-    let actions = action_cache.get(l, r).unwrap().to_vec();
 
-    // Count non-AC surviving actions.
-    let non_ac_count = actions
-        .iter()
-        .filter(|a| {
-            !a.pairs
+    // Count non-AC surviving actions and clone only the descriptor this
+    // expansion realizes; the cached vector itself is read in place. The
+    // count still walks every cached action because `action_idx` indexes the
+    // surviving subsequence and the transport range starts after it.
+    let (non_ac_count, selected) = {
+        let actions = action_cache.get(l, r).unwrap();
+        let mut count = 0usize;
+        let mut selected = None;
+        for action in actions {
+            let blocked = action
+                .pairs
                 .iter()
-                .any(|p| space.is_cycle_blocked(or_id, p.left, p.right))
-        })
-        .count();
+                .any(|p| space.is_cycle_blocked(or_id, p.left, p.right));
+            if !blocked {
+                if count == action_idx {
+                    selected = Some(action.clone());
+                }
+                count += 1;
+            }
+        }
+        (count, selected)
+    };
 
     if action_idx < non_ac_count {
         // Non-AC action: fixed-weight AND-node.
-        let action = actions
-            .iter()
-            .filter(|a| {
-                !a.pairs
-                    .iter()
-                    .any(|p| space.is_cycle_blocked(or_id, p.left, p.right))
-            })
-            .nth(action_idx)
-            .unwrap();
+        let action = selected.expect("surviving action at index below the surviving count");
+        let action = &action;
 
         let mut child_or_stats = Vec::with_capacity(action.pairs.len());
         let mut child_counts: Vec<u64> = Vec::with_capacity(action.pairs.len());
@@ -1993,7 +2054,10 @@ where
             done = Some(build_best_term(snap, pool, l));
         } else {
             generate_actions(snap, action_cache, l, r);
-            let actions = action_cache.get(l, r).unwrap().to_vec();
+            // Borrowed in place: nothing below this point in the iteration
+            // touches the cache, and the borrow ends before the next node's
+            // `generate_actions`.
+            let actions = action_cache.get(l, r).unwrap();
             let transport = transport_actions(snap, space, current, l, r);
             let ctx_l = *space.or_arena.left_ctx.get(current.to_index());
             let ctx_r = *space.or_arena.right_ctx.get(current.to_index());
