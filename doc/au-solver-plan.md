@@ -80,6 +80,17 @@ early and A2's pruning bites sooner; surface the incumbent on guard timeout
 so exact degrades to anytime-with-proof-on-completion instead of
 all-or-nothing. The remaining computation after the optimum is found is then
 exactly the proof of optimality. Days, after A2.
+Done 2026-08-15 (ordering and the anytime incumbent; A2's pruning is still
+pending, so ordering is not yet expected to move runtime): exact sorts each
+frame's structural actions by the lazy-completion estimate shared with the
+MCGS initial rollout (`static_generalize_quality`), and
+`AuConfig::exact_deadline` (default `None`) makes exact anytime — on expiry
+it unwinds and returns the root incumbent as
+`Completion::BudgetExhausted`, never claiming `Exact`. The differential
+fixture is byte-identical (exact lines included), no tie-dependent
+term-shape test needed adjustment, and the corpus release runtime is
+unchanged (~0.9 s before and after), as expected without pruning;
+`au_exact_anytime.rs` pins the deadline behavior on crossover cycles=8.
 
 **A4. Memoize extracted terms per class.** Cache the interned minimal term
 per class in the semi-persistent pool (restore truncates the cache with the

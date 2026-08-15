@@ -41,6 +41,13 @@ pub struct AuConfig {
     pub x_target: f64,
     /// Effort allocation at AND nodes (§3.3.5). Default `AndSelector::LctAnd`.
     pub and_selector: AndSelector,
+    /// Wall-clock budget for the exact solver. `None` (the default) runs to
+    /// completion and returns `Completion::Exact`. `Some(d)` makes exact
+    /// anytime: on expiry it returns the root's best incumbent so far — at
+    /// minimum the generalize seed, always a feasible anti-unifier — with
+    /// `Completion::BudgetExhausted`, never claiming optimality. Ignored by
+    /// the UCT algorithm, whose budget is `playouts`.
+    pub exact_deadline: Option<std::time::Duration>,
 }
 
 impl Default for AuConfig {
@@ -52,6 +59,7 @@ impl Default for AuConfig {
             exploration_constant: std::f64::consts::SQRT_2,
             x_target: 0.8,
             and_selector: AndSelector::default(),
+            exact_deadline: None,
         }
     }
 }
@@ -141,14 +149,22 @@ where
 
     match config.algorithm {
         AuAlgorithm::Exact => {
-            let (term_id, pool) = exact::eager_with_memo(snap, l, r, config.cycle_mode)?;
-            let size = pool.size(term_id);
+            let run = exact::run_exact(snap, l, r, config.cycle_mode, config.exact_deadline)?;
+            let size = run.pool.size(run.term);
+            // A deadline expiry surfaces the root incumbent uncertified:
+            // feasible by construction, optimal only on completion. The
+            // budget the exact solver exhausts is wall clock, not playouts.
+            let completion = if run.complete {
+                Completion::Exact
+            } else {
+                Completion::BudgetExhausted { playouts_used: 0 }
+            };
             Ok(AuResult {
-                term_id,
-                pool,
+                term_id: run.term,
+                pool: run.pool,
                 size,
                 algorithm: AuAlgorithm::Exact,
-                completion: Completion::Exact,
+                completion,
             })
         }
         AuAlgorithm::Uct => {

@@ -460,7 +460,9 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
             && self.value.is_valid_token(&token.value)
             && self.edge_visits.is_valid_token(&token.edge_visits)
             && self.edge_and.is_valid_token(&token.edge_and)
-            && self.first_unrealized.is_valid_token(&token.first_unrealized)
+            && self
+                .first_unrealized
+                .is_valid_token(&token.first_unrealized)
             && self.transport_descs.is_valid_token(&token.transport_descs)
     }
 
@@ -1978,7 +1980,15 @@ enum InitialRolloutChoice {
 }
 
 /// Exact quality of the terminal generalize action without interning its term.
-fn static_generalize_quality<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+/// Shared with the exact solver (exact.rs), whose best-first action ordering
+/// ranks structural actions by the same lazy-completion estimate the initial
+/// rollout uses.
+pub(crate) fn static_generalize_quality<
+    Cfg: EGraphConfig,
+    L: LitVal,
+    const T: bool,
+    const P: bool,
+>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l: ClassOf<Cfg>,
     r: ClassOf<Cfg>,

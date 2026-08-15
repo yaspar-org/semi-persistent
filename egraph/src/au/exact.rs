@@ -16,6 +16,7 @@ use crate::multiplicity::MultiplicityLike;
 use super::ac_repr;
 use super::actions::{ActionCache, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
+use super::mcgs::static_generalize_quality;
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
@@ -46,7 +47,7 @@ pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let run = run_exact(snap, l_root, r_root, cycle_mode)?;
+    let run = run_exact(snap, l_root, r_root, cycle_mode, None)?;
     Ok((run.term, run.pool))
 }
 
@@ -62,14 +63,26 @@ pub(crate) struct ExactRun<Cfg: EGraphConfig> {
     pub(crate) cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     pub(crate) results: BestResults<Cfg::Au>,
     pub(crate) root_or: <Cfg::Au as AuIds>::Or,
+    /// True when the solve ran to completion (the term is the proven
+    /// optimum); false when a deadline expired and `term` is the root
+    /// frame's incumbent — feasible by construction, optimal only if the
+    /// completed actions happened to include the optimum.
+    pub(crate) complete: bool,
 }
 
 /// [`eager_with_memo`] with the full solver state returned instead of dropped.
+///
+/// `deadline`: `None` runs to completion (today's behavior). `Some(d)` makes
+/// the solve anytime: on expiry the loop unwinds and returns the root frame's
+/// incumbent — at minimum the generalize seed, better if completed actions
+/// improved it — with `complete: false`. Expiry is polled every
+/// [`DEADLINE_CHECK_INTERVAL`] node entries.
 pub(crate) fn run_exact<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l_root: ClassOf<Cfg>,
     r_root: ClassOf<Cfg>,
     cycle_mode: CycleMode,
+    deadline: Option<std::time::Duration>,
 ) -> Result<ExactRun<Cfg>, super::AuError>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -93,7 +106,7 @@ where
 
     let mut memo: Vec<MemoState<<Cfg::Au as AuIds>::Term>> = Vec::new();
 
-    let term = solve_iterative(
+    let (term, complete) = solve_iterative(
         snap,
         &mut space,
         &mut pool,
@@ -101,6 +114,7 @@ where
         &mut results,
         &mut memo,
         root_or,
+        deadline.map(|d| std::time::Instant::now() + d),
     );
 
     Ok(ExactRun {
@@ -110,8 +124,16 @@ where
         cache,
         results,
         root_or,
+        complete,
     })
 }
+
+/// How many OR-node entries pass between two `Instant::now()` deadline polls.
+/// 1024 keeps the poll off the per-node hot path (one syscall-free clock read
+/// per ~1024 entries, negligible against per-entry solver work) while an
+/// expired deadline is still noticed within milliseconds even in debug
+/// builds, where 1024 entries are well under a millisecond of work.
+const DEADLINE_CHECK_INTERVAL: u32 = 1024;
 
 fn ensure_memo<T: Copy, O: DenseId>(memo: &mut Vec<MemoState<T>>, or_id: O) {
     let idx = or_id.to_usize();
@@ -192,6 +214,18 @@ struct SolveFrame<Cfg: EGraphConfig> {
 ///
 /// State is re-fetched from the arenas at each step (no borrow is held across
 /// a child evaluation), mirroring the recursive code's re-fetch pattern.
+///
+/// `deadline` makes the solve anytime: expiry is polled with `Instant::now()`
+/// once every [`DEADLINE_CHECK_INTERVAL`] node entries (the outer loop, one
+/// iteration per OR-node entry — the natural unit of solver progress, and
+/// each entry does bounded work before the next). On expiry the whole stack
+/// is abandoned and the ROOT frame's incumbent is returned with `false`:
+/// feasible by construction (the generalize seed is valid, and every
+/// improvement came from a fully completed action), uncertified. No
+/// `Visiting` memo entry is published and no `mark_exact` is issued for
+/// abandoned frames, so nothing claims optimality it does not have.
+///
+/// Returns `(term, complete)`; `complete` is false only on deadline expiry.
 #[allow(clippy::too_many_arguments)]
 fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
@@ -201,13 +235,28 @@ fn solve_iterative<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     results: &mut BestResults<Cfg::Au>,
     memo: &mut Vec<MemoState<<Cfg::Au as AuIds>::Term>>,
     root_or: <Cfg::Au as AuIds>::Or,
-) -> <Cfg::Au as AuIds>::Term
+    deadline: Option<std::time::Instant>,
+) -> (<Cfg::Au as AuIds>::Term, bool)
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let mut stack: Vec<SolveFrame<Cfg>> = Vec::new();
     let mut pending = root_or;
+    let mut entries: u32 = 0;
     loop {
+        // ── Deadline poll: every DEADLINE_CHECK_INTERVAL node entries ──
+        if let Some(expiry) = deadline {
+            entries = entries.wrapping_add(1);
+            if entries.is_multiple_of(DEADLINE_CHECK_INTERVAL)
+                && std::time::Instant::now() >= expiry
+                && !stack.is_empty()
+            {
+                // Unwind: abandon all in-progress frames and surface the
+                // root frame's incumbent, uncertified.
+                return (stack[0].best, false);
+            }
+        }
+
         // ── Enter `pending`: memo check, terminal case, or a new frame ──
         let or_id = pending;
         ensure_memo(memo, or_id);
@@ -245,9 +294,30 @@ where
                     let generalize = evaluate_generalize_action(snap, pool, l, r);
                     let best_quality = pool.quality(generalize);
 
-                    // Generate actions for this class pair.
+                    // Generate actions for this class pair, then order the
+                    // frame's copy best-first by the lazy-completion estimate
+                    // the MCGS initial rollout ranks with:
+                    // `(1 + sum count * generalize_size(pair), sum count *
+                    // generalize_vmass(pair))`, ascending. Reordering permutes
+                    // the operands of a min, so the optimal quality is
+                    // unchanged; because the incumbent comparison below is
+                    // strict `<`, the FIRST candidate evaluated wins exact
+                    // quality ties, so ordering may change which term
+                    // represents a tied optimum, never its quality. The sort
+                    // is on the frame's local copy; the shared cache keeps
+                    // generation order.
                     generate_actions(snap, cache, l, r);
-                    let actions = cache.get(l, r).unwrap().to_vec();
+                    let mut actions = cache.get(l, r).unwrap().to_vec();
+                    actions.sort_by_cached_key(|action| {
+                        let mut size = 1u128;
+                        let mut vmass = 0u128;
+                        for pair in &action.pairs {
+                            let (s, v) = static_generalize_quality(snap, pair.left, pair.right);
+                            size += u128::from(s) * u128::from(pair.count.to_u64());
+                            vmass += u128::from(v) * u128::from(pair.count.to_u64());
+                        }
+                        (size, vmass)
+                    });
 
                     let ctx_l = *space.or_arena.left_ctx.get(or_id.to_index());
                     let ctx_r = *space.or_arena.right_ctx.get(or_id.to_index());
@@ -274,7 +344,10 @@ where
         // ── Advance the top frame until it descends or completes ──
         'advance: loop {
             let Some(frame) = stack.last_mut() else {
-                return done.expect("exact solve must produce a term for the root");
+                return (
+                    done.expect("exact solve must produce a term for the root"),
+                    true,
+                );
             };
 
             // Deliver a completed child term to the frame's current stage.
