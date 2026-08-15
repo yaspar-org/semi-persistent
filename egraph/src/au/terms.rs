@@ -50,6 +50,22 @@ pub struct TermPool<O: DenseId, V: DenseId, A: AuIds = AuIds31> {
     sizes: AppendOnlyVec<u32, A::Index>,
     vmasses: AppendOnlyVec<u32, A::Index>,
     by_structure: SpMap<(TermOp<O, V>, Vec<A::Term>), A::Term, A::Index>,
+    /// Memoized [`build_best_term`] result per snapshot class (plan item A4).
+    ///
+    /// A class's minimal member is fixed by the snapshot, so its extracted term
+    /// is a pure function of the class id; caching it makes `build_best_term`
+    /// amortized O(1) per class after the first build instead of re-walking the
+    /// member tree on every call (quadratic on deep chains). The cache lives in
+    /// the same semi-persistent storage as the term columns and is truncated by
+    /// the same token bundle, so a surviving entry always names a surviving
+    /// term: the entry was appended after its term was interned, and restore
+    /// truncates both logs at the same mark.
+    ///
+    /// Class ids are snapshot-relative, so the cache assumes every
+    /// `build_best_term` call on this pool uses the same snapshot. That holds
+    /// by construction: every pool is created next to one snapshot
+    /// (`session.rs`, `exact.rs`, `mcgs.rs`) and never outlives it.
+    best_terms: SpMap<A::Class, A::Term, A::Index>,
 }
 
 /// Token for restoring a `TermPool` to a previous state.
@@ -61,6 +77,7 @@ pub struct TermPoolToken {
     sizes: VecToken,
     vmasses: VecToken,
     by_structure: MapToken,
+    best_terms: MapToken,
 }
 
 impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> TermPool<O, V, A> {
@@ -72,6 +89,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             sizes: AppendOnlyVec::new(),
             vmasses: AppendOnlyVec::new(),
             by_structure: SpMap::new(),
+            best_terms: SpMap::new(),
         }
     }
 
@@ -290,6 +308,25 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
         &self.child_pool.as_slice()[start..start + len]
     }
 
+    /// The memoized minimal term for a snapshot class, if one was built since
+    /// the last surviving mark (see `best_terms`).
+    #[inline]
+    fn cached_best_term(&self, class: A::Class) -> Option<A::Term> {
+        self.best_terms.get_by_key(&class).copied()
+    }
+
+    /// Record the minimal term extracted for a snapshot class. Callers check
+    /// the cache first, so a key is never overwritten (no shadow log entries).
+    fn cache_best_term(&mut self, class: A::Class, term: A::Term) {
+        debug_assert!(
+            self.best_terms.id_of(&class).is_none(),
+            "best-term cache entries are written at most once per class"
+        );
+        self.best_terms
+            .try_insert(class, term)
+            .expect("AU arena sized by its index word");
+    }
+
     pub fn mark(&mut self) -> TermPoolToken {
         TermPoolToken {
             ops: self
@@ -316,6 +353,10 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
                 .by_structure
                 .try_mark(ShrinkPolicy::Never)
                 .expect("mark: depth bounded by the search driver"),
+            best_terms: self
+                .best_terms
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -328,9 +369,13 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
             && self.sizes.is_valid_token(&token.sizes)
             && self.vmasses.is_valid_token(&token.vmasses)
             && self.by_structure.is_valid_token(&token.by_structure)
+            && self.best_terms.is_valid_token(&token.best_terms)
     }
 
     pub fn restore(&mut self, token: TermPoolToken) {
+        self.best_terms
+            .try_restore(token.best_terms)
+            .expect("restore: token minted by this container's own mark");
         self.by_structure
             .try_restore(token.by_structure)
             .expect("restore: token minted by this container's own mark");
@@ -476,6 +521,15 @@ where
 /// `for_each_child` order, repeating AC children per multiplicity), then
 /// interns — the same interning order as the recursive definition. Depth is
 /// heap-bounded, not call-stack-bounded.
+///
+/// Memoized per class in the pool (plan item A4): the result is a pure
+/// function of `(snap, class)` and the pool binds to one snapshot, so a
+/// completed class's term is cached and later builds return it without
+/// re-walking the member tree — amortized O(1) per class after the first
+/// build. The cache changes nothing observable: interning is idempotent, so
+/// the uncached walk would re-intern the identical ids in the identical
+/// order; only the redundant walk is skipped. Restore truncates the cache
+/// with the pool's other columns, so an entry never outlives its term.
 pub fn build_best_term<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
@@ -485,6 +539,8 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     struct Frame<O, C, M, Term> {
+        /// The class this frame extracts, cached when the frame completes.
+        class: C,
         op: O,
         /// Child classes with multiplicities, in `for_each_child` order.
         child_classes: Vec<(C, M)>,
@@ -495,24 +551,31 @@ where
     let mut stack: Vec<Frame<Cfg::O, ClassOf<Cfg>, Cfg::M, <Cfg::Au as AuIds>::Term>> = Vec::new();
     let mut pending = class;
     loop {
-        // Enter: resolve the class's best node; literals complete immediately,
-        // other nodes get a frame.
-        let best_id = snap.best_node(pending);
-        let op = eg.node_op(best_id);
+        // Enter: cached classes complete immediately, as do literals; other
+        // nodes resolve the class's best node and get a frame.
         let mut done: Option<<Cfg::Au as AuIds>::Term> = None;
-        if let Some(val_id) = eg.get_lit_val_id(best_id) {
-            done = Some(pool.intern(TermOp::Literal(op, val_id), &[]));
+        if let Some(term) = pool.cached_best_term(pending) {
+            done = Some(term);
         } else {
-            let mut child_classes: Vec<(ClassOf<Cfg>, Cfg::M)> = Vec::new();
-            eg.for_each_child(best_id, |child, mult| {
-                child_classes.push((snap.class_of(child).unwrap(), mult));
-            });
-            stack.push(Frame {
-                op,
-                child_classes,
-                cursor: 0,
-                children: Vec::new(),
-            });
+            let best_id = snap.best_node(pending);
+            let op = eg.node_op(best_id);
+            if let Some(val_id) = eg.get_lit_val_id(best_id) {
+                let term = pool.intern(TermOp::Literal(op, val_id), &[]);
+                pool.cache_best_term(pending, term);
+                done = Some(term);
+            } else {
+                let mut child_classes: Vec<(ClassOf<Cfg>, Cfg::M)> = Vec::new();
+                eg.for_each_child(best_id, |child, mult| {
+                    child_classes.push((snap.class_of(child).unwrap(), mult));
+                });
+                stack.push(Frame {
+                    class: pending,
+                    op,
+                    child_classes,
+                    cursor: 0,
+                    children: Vec::new(),
+                });
+            }
         }
         // Advance: deliver any completed term upward, then descend or compose.
         loop {
@@ -534,7 +597,9 @@ where
                 break; // descend into the next child class
             }
             let frame = stack.pop().expect("build_best_term stack cannot be empty");
-            done = Some(pool.intern(TermOp::EGraph(frame.op), &frame.children));
+            let term = pool.intern(TermOp::EGraph(frame.op), &frame.children);
+            pool.cache_best_term(frame.class, term);
+            done = Some(term);
         }
     }
 }
@@ -742,5 +807,60 @@ mod tests {
         assert_eq!(arms.len(), 2);
         assert_eq!(*pool.op(arms[0]), TermOp::EGraph(f_op));
         assert_eq!(*pool.op(arms[1]), TermOp::EGraph(f_op));
+    }
+
+    /// A4 lifetime hazard: the best-term cache must be truncated by restore
+    /// exactly like the term columns, so a cache entry never names a truncated
+    /// term id. Build (pre-mark entries), mark, build more (post-mark entries),
+    /// restore, then re-build both classes: the pre-mark class must return its
+    /// surviving id without growing the pool, and the post-mark class must be
+    /// rebuilt from scratch into an in-bounds id — identical to the pre-restore
+    /// build, because the replayed interning order is identical.
+    #[test]
+    fn best_term_cache_is_truncated_by_restore() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let sort = eg.intern_sort("E");
+        let a_op = eg.register_op0("a", sort);
+        let f_op = eg.register_op1("f", sort, sort);
+        let g_op = eg.register_op1("g", sort, sort);
+        let a = eg.add(a_op, &[]);
+        let fa = eg.add(f_op, &[a]);
+        let gfa = eg.add(g_op, &[fa]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let fa_class = snap.class_of(fa).unwrap();
+        let gfa_class = snap.class_of(gfa).unwrap();
+
+        let mut pool = TermPool::new();
+        let t_fa = build_best_term(&snap, &mut pool, fa_class);
+        assert_eq!(pool.size(t_fa), 2);
+
+        let len_at_mark = pool.len();
+        let token = pool.mark();
+
+        // Post-mark: caches the gfa class and interns the g term.
+        let t_gfa = build_best_term(&snap, &mut pool, gfa_class);
+        assert_eq!(pool.size(t_gfa), 3);
+        assert_eq!(pool.children(t_gfa), &[t_fa]);
+        assert!(pool.len() > len_at_mark);
+
+        pool.restore(token);
+        assert_eq!(pool.len(), len_at_mark);
+
+        // Pre-mark entry survives: cache hit on the surviving id, no growth.
+        let t_fa2 = build_best_term(&snap, &mut pool, fa_class);
+        assert_eq!(t_fa2, t_fa);
+        assert_eq!(pool.len(), len_at_mark);
+
+        // Post-mark entry is gone: the class rebuilds from scratch into an
+        // in-bounds id — numerically equal to the pre-restore build, because
+        // restore rewound the pool to the same state it was built from.
+        let t_gfa2 = build_best_term(&snap, &mut pool, gfa_class);
+        assert_eq!(t_gfa2, t_gfa);
+        assert!(t_gfa2.to_usize() < pool.len().as_usize());
+        assert_eq!(pool.size(t_gfa2), 3);
+        assert_eq!(*pool.op(t_gfa2), TermOp::EGraph(g_op));
+        assert_eq!(pool.children(t_gfa2), &[t_fa]);
     }
 }

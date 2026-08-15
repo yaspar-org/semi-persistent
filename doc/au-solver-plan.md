@@ -82,6 +82,9 @@ per class in the semi-persistent pool (restore truncates the cache with the
 usual tokens); `build_best_term` becomes amortized O(1) after first build.
 Acceptance: `au_deep_term_stress` depth-6000 from ~15 s debug to well under
 a second; closes AU review perf item 5. 2-4 days.
+Done: depth-6000 measures 0.16 s debug and 13 ms release (from ~15.5 s and
+3.3 s); the differential fixture is unchanged, and a pool test pins that
+restore truncates the cache with the term columns.
 
 **A5. The bound inside MCGS.** Two sound uses. Dominance pruning at
 expansion: an action whose bound strictly exceeds the node's generalize
