@@ -417,6 +417,25 @@ impl<A: AuIds> SearchSpace<A> {
         self.contexts.intern(&result)
     }
 
+    /// Intern `ctx` extended with `class` (no-op when already present).
+    ///
+    /// Identity padding needs this: the injected identity class is not a
+    /// structural child of any member, so [`Self::derive_child_context`]'s
+    /// reachability filter records nothing for it, and without the extension
+    /// a padding-created cell can repeat its ancestor's OR key
+    /// `(l, r, ctxL, ctxR)` exactly. Extending the padded cell's contexts
+    /// restores the rank argument's "context grows" disjunct (§3.2):
+    /// contexts are bounded by the class count, so the recursion terminates.
+    pub fn extend_context(&mut self, ctx: A::Context, class: A::Class) -> A::Context {
+        if self.contexts.contains(ctx, class) {
+            return ctx;
+        }
+        let mut classes: Vec<A::Class> = self.contexts.get(ctx).to_vec();
+        classes.push(class);
+        classes.sort_unstable();
+        self.contexts.intern(&classes)
+    }
+
     /// Check if an action's child pair is blocked by the cycle mode filter.
     pub fn is_cycle_blocked(&self, or_id: A::Or, child_l: A::Class, child_r: A::Class) -> bool {
         let ctx_l = *self.or_arena.left_ctx.get(or_id.to_index());

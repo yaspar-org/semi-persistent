@@ -101,10 +101,7 @@ enum Stage<Cfg: EGraphConfig> {
     Transport {
         ops: Vec<Cfg::O>,
         op_idx: usize,
-        pairs: Vec<(
-            ac_repr::Monomial<ClassOf<Cfg>>,
-            ac_repr::Monomial<ClassOf<Cfg>>,
-        )>,
+        pairs: Vec<ac_repr::PaddedPair<ClassOf<Cfg>>>,
         pair_idx: usize,
         cells: Option<CellState<Cfg>>,
     },
@@ -115,6 +112,12 @@ enum Stage<Cfg: EGraphConfig> {
 struct CellState<Cfg: EGraphConfig> {
     lm: ac_repr::Monomial<ClassOf<Cfg>>,
     rm: ac_repr::Monomial<ClassOf<Cfg>>,
+    /// The identity class when padding injected it into this pair (§3.4.4).
+    /// Every cell of a padded pair carries child contexts extended with this
+    /// class: the injection is not structural, so reachability-based
+    /// derivation alone would let a cell repeat its ancestor's OR key and
+    /// break the rank invariant the `Visiting` re-entry check enforces.
+    pad_identity: Option<ClassOf<Cfg>>,
     i: usize,
     j: usize,
     cost: Vec<Vec<Cell>>,
@@ -370,12 +373,18 @@ where
                                 }
                                 let (l, r, ctx_l, ctx_r) =
                                     (frame.l, frame.r, frame.ctx_l, frame.ctx_r);
-                                let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
+                                let mut child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
                                     snap.reachability().is_reachable(lc, c)
                                 });
-                                let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
+                                let mut child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
                                     snap.reachability().is_reachable(rc, c)
                                 });
+                                // Padded pair: extend both child contexts with
+                                // the injected identity class (see CellState).
+                                if let Some(id_class) = cell.pad_identity {
+                                    child_ctx_l = space.extend_context(child_ctx_l, id_class);
+                                    child_ctx_r = space.extend_context(child_ctx_r, id_class);
+                                }
                                 let (child_or, _) = space.get_or_insert_or_node(
                                     lc,
                                     rc,
@@ -438,12 +447,13 @@ where
                         if *pair_idx < pairs.len() {
                             // Begin the next representation pair: fresh cost and
                             // term matrices, all cells Forbidden until solved.
-                            let (lm, rm) = pairs[*pair_idx].clone();
+                            let (lm, rm, pad_identity) = pairs[*pair_idx].clone();
                             let rows = lm.len();
                             let cols = rm.len();
                             *cells = Some(CellState {
                                 lm,
                                 rm,
+                                pad_identity,
                                 i: 0,
                                 j: 0,
                                 cost: vec![vec![Cell::Forbidden; cols]; rows],
@@ -766,5 +776,125 @@ mod tests {
         // combine(X, Variants(e, c)): 1 + 3 + 0 + 1 + 1 = 6, vmass 2.
         assert_eq!(pool.size(term), 6);
         assert_eq!(pool.variant_mass(term), 2);
+    }
+
+    /// D2 regression: an identity class that itself contains an AC member
+    /// (merge(e, plus{a,b}), so the theory reads a + b = 0). Padding injects
+    /// the identity CLASS as a transport-cell child; without the padded-cell
+    /// context extension the OR key repeats beneath itself while Visiting and
+    /// the solver panics with "cycle-mode rank invariant violated".
+    #[test]
+    fn exact_identity_class_with_ac_member_terminates() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let e_op = eg.register_op0("e", int);
+        let plus_op = eg.register_mset("plus", int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let e = eg.add(e_op, &[]);
+        eg.set_unit_node(plus_op, e);
+        let plus_ab = eg.add(plus_op, &[a, b]);
+        eg.merge(e, plus_ab);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let cc = snap.class_of(c).unwrap();
+        let ec = snap.class_of(e).unwrap();
+
+        let (term, pool) = eager_with_memo(&snap, cc, ec, CycleMode::AncestorOnly).unwrap();
+        assert!(pool.size(term) >= 1);
+    }
+
+    /// D2 variant: the left class is a member child of the degenerate
+    /// identity class (AU(a, e) also triggered the panic).
+    #[test]
+    fn exact_identity_class_with_ac_member_terminates_on_member_child() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let e_op = eg.register_op0("e", int);
+        let plus_op = eg.register_mset("plus", int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let e = eg.add(e_op, &[]);
+        eg.set_unit_node(plus_op, e);
+        let plus_ab = eg.add(plus_op, &[a, b]);
+        eg.merge(e, plus_ab);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let ac = snap.class_of(a).unwrap();
+        let ec = snap.class_of(e).unwrap();
+
+        let (term, pool) = eager_with_memo(&snap, ac, ec, CycleMode::AncestorOnly).unwrap();
+        assert!(pool.size(term) >= 1);
+    }
+
+    /// D2 skeleton: three-child merge (merge(e, plus{a,b,c})) and both query
+    /// orientations.
+    #[test]
+    fn exact_identity_class_with_wider_ac_member_terminates() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let d_op = eg.register_op0("d", int);
+        let e_op = eg.register_op0("e", int);
+        let plus_op = eg.register_mset("plus", int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let d = eg.add(d_op, &[]);
+        let e = eg.add(e_op, &[]);
+        eg.set_unit_node(plus_op, e);
+        let plus_abc = eg.add(plus_op, &[a, b, c]);
+        eg.merge(e, plus_abc);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let dc = snap.class_of(d).unwrap();
+        let ec = snap.class_of(e).unwrap();
+
+        let (t1, p1) = eager_with_memo(&snap, dc, ec, CycleMode::AncestorOnly).unwrap();
+        assert!(p1.size(t1) >= 1);
+        let (t2, p2) = eager_with_memo(&snap, ec, dc, CycleMode::AncestorOnly).unwrap();
+        assert!(p2.size(t2) >= 1);
+    }
+
+    /// D2 skeleton: set operator with its own unit (merge(t, and{a,b})).
+    #[test]
+    fn exact_identity_class_with_set_member_terminates() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let t_op = eg.register_op0("t", int);
+        let and_op = eg.register_set("and", int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let t = eg.add(t_op, &[]);
+        eg.set_unit_node(and_op, t);
+        let and_ab = eg.add(and_op, &[a, b]);
+        eg.merge(t, and_ab);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let cc = snap.class_of(c).unwrap();
+        let tc = snap.class_of(t).unwrap();
+
+        let (term, pool) = eager_with_memo(&snap, cc, tc, CycleMode::AncestorOnly).unwrap();
+        assert!(pool.size(term) >= 1);
     }
 }

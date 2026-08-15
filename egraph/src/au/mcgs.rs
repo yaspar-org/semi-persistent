@@ -1210,7 +1210,10 @@ where
 {
     let mut out = Vec::new();
     for op in ac_repr::common_ac_ops(snap, l, r) {
-        for (lm, rm) in ac_repr::representation_pairs(snap, l, r, op) {
+        // MCGS ignores the padding annotation: its playout loop has no
+        // memo-key rank requirement, so padded identities need no context
+        // extension here (the exact solver is the consumer that does).
+        for (lm, rm, _pad_identity) in ac_repr::representation_pairs(snap, l, r, op) {
             let n_cols = rm.len();
             let mut legal_cells = vec![false; lm.len() * n_cols];
             let mut cost = vec![vec![Cell::Forbidden; n_cols]; lm.len()];
