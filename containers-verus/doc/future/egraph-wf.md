@@ -106,6 +106,83 @@ the partition, and every archived snapshot tells the same kind of story; it
 says nothing about terms. The semantic layer, which nodes are congruent and
 which entries are stale, starts at stage 3.
 
+## What each clause excludes: the corruption classes
+
+The clauses are structural-integrity invariants: each one rules out a
+specific corruption class, not "the e-graph computes the right thing".
+The mapping, clause by clause:
+
+**W1, the union-find measure (`dist` strictly decreasing along a parent
+step, 0 exactly at roots, self-parent iff root).** Excludes
+parent-pointer cycles, the standard aftermath of a wrong union or a bad
+restore. A cycle makes `find` loop forever; the proved measure is the
+termination argument itself, so a state where `find` hangs is
+unrepresentable. The companion clauses (a parent step preserves the
+root, roots are canonical) make `find` well-defined: two calls agree,
+and path compression cannot change which representative a node maps to.
+Without them, canonicalization is nondeterministic, which is the bug
+where a cached key is computed against one representative and looked up
+against another.
+
+**W2 and W3 (rings partition the live nodes; ring membership agrees
+with union-find components).** These two jointly discharge
+`splice_absorb`'s distinct-rings precondition, the one whose violation
+destroys data: splicing a circular list with itself severs it, so
+members silently vanish from iteration or iteration fails to terminate.
+The triggering state, `merge` called on two nodes already in one class
+through a stale path, arises rarely and unreproducibly, which is what
+made this class of bug expensive before the proof. W2 and W3 also
+exclude cross-contamination: a node present in two class rings, or a
+ring holding a node whose union-find component is a different class.
+Either makes `iter_class` report wrong members to rebuild.
+
+**W4 (live classes own pairwise-distinct, allocated use-lists).**
+Excludes use-list aliasing: two classes sharing one parent list, so
+congruence repair processes parents against the wrong class or
+processes them twice after a merge.
+
+**W5 (every use-list entry is an allocated node id).** Excludes
+dangling parent references, which read garbage node ids during repair:
+an out-of-bounds panic at best, a silent match against an unrelated
+node at worst. This clause is why the kernel's `add_use` refuses an
+out-of-range parent that production stored silently.
+
+**W6 (the pool is whole rows of `min_width`; live row numbers are
+allocated and pairwise distinct).** Excludes exactly the defect the
+parity audit found production could commit in release builds
+(13-parity-matrix.md, section 4): a column index past `min_width` whose
+flat pool offset is still in range silently reads another class's
+min-monomial cell. Whole-row ownership makes a cross-row read
+unprovable, hence refused.
+
+**The Phase-7 archive clauses (`eg_archive_agrees`, the nine-way frame
+agreement on restore).** Protect the semi-persistence itself: restore
+is proved to re-establish `wf` from the snapshot, and mixed tokens (one
+component's token from a different mark, or from a different container)
+are refused before any column mutates. That excludes partial-rollback
+states: rings rolled back while the union-find was not, lengths
+disagreeing across columns, resurrected dangling ids. Production
+restored column by column and could panic halfway with exactly that
+torn state observable.
+
+**The id-range guards feeding these proofs.** The verus `from_usize`
+masks rather than panics, so an unguarded mint one past `id_bound`
+would alias id `n - id_bound`: a fresh node whose ring self-loop points
+into an unrelated ring. The capacity guards make that window
+unreachable, and since the per-family split (13-parity-matrix.md,
+section 3, finding 2) they do so without giving up the last legitimate
+slot.
+
+The boundary, restated: none of this is congruence. W7 (no two live
+rows congruent at the fixpoint) and hash-cons agreement are the
+N-series work (node-store-plan.md) and remain unproved. What the
+current proofs establish is that merge, splice, path compression, and
+mark/restore cannot corrupt the REPRESENTATION: no hangs, no lost or
+duplicated class members, no dangling ids, no cross-class storage
+reads, no torn rollbacks. Rank is the one field deliberately outside
+the guarantee: it is a survivor-selection heuristic, and nothing
+soundness-relevant reads it.
+
 ## Stages
 
 **Stage 0: monitor W2, W3 and W6 in debug builds.** Extend the runtime-monitor

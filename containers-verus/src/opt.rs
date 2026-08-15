@@ -496,3 +496,13 @@ impl core::fmt::Debug for DenseUsize {
         write!(f, "DenseUsize({})", self.raw)
     }
 }
+
+// Production-surface parity: production prints `Some(v)` / `None`.
+impl<T> core::fmt::Debug for Opt<T>
+where
+    T: crate::tagged::Tagged + Copy + core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.to_option(), f)
+    }
+}

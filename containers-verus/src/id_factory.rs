@@ -132,7 +132,11 @@ pub struct IdRangeError {
 
 impl core::fmt::Display for IdRangeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "value out of range for {}", self.type_name)
+        write!(
+            f,
+            "{}: value exceeds range (MSB must be zero)",
+            self.type_name
+        )
     }
 }
 

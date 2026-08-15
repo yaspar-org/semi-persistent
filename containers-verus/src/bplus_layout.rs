@@ -1678,3 +1678,12 @@ pub fn first_key<L: NodeLayout>(n: &L::Node) -> (k: L::Word)
 }
 
 } // verus!
+
+// Compile-time node-size pins (production parity): repr(C, align(N)) makes
+// each node exactly one arena cell of its layout's size.
+const _: () = assert!(core::mem::size_of::<Node64U32>() == 64);
+const _: () = assert!(core::mem::size_of::<Node128U32>() == 128);
+const _: () = assert!(core::mem::size_of::<Node256U32>() == 256);
+const _: () = assert!(core::mem::size_of::<Node128U64>() == 128);
+const _: () = assert!(core::mem::size_of::<Node256U64>() == 256);
+const _: () = assert!(core::mem::size_of::<Node512U64>() == 512);

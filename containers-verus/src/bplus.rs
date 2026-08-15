@@ -10593,3 +10593,15 @@ where
         self.root
     }
 }
+
+// Production-surface parity (production ships Default).
+impl<K, L, S, const TRACK: bool> Default for BPlusTreeSet<K, L, S, TRACK>
+where
+    K: DenseId,
+    L: NodeLayout<Word = K::Index>,
+    S: SearchKind,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}

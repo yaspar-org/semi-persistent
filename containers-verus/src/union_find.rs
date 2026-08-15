@@ -189,7 +189,7 @@ pub open(crate) spec fn uf_proof_archive_agrees<T: DenseId, J: crate::tagged::Ta
 
 /// Verified union-find (production parity: `UnionFind<T, J, TRACK, PROOFS>`
 /// with the dual fast/proof forests under `PROOFS`).
-pub struct UnionFind<T: DenseId, J, const TRACK: bool, const PROOFS: bool>
+pub struct UnionFind<T: DenseId, J, const TRACK: bool = true, const PROOFS: bool = false>
 where
     J: crate::tagged::Tagged + Copy + core::default::Default,
 {
@@ -1657,5 +1657,16 @@ impl core::fmt::Debug for UnionFindToken {
             .field("parent_proof", &self.parent_proof)
             .field("justification", &self.justification)
             .finish()
+    }
+}
+
+// Production-surface parity (production shipped Default).
+impl<T: DenseId, J, const TRACK: bool, const PROOFS: bool> Default
+    for UnionFind<T, J, TRACK, PROOFS>
+where
+    J: crate::tagged::Tagged + Copy + core::default::Default,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }

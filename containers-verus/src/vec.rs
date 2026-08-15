@@ -3497,6 +3497,12 @@ where
         // explicitly to avoid trait-method recursion).
         VecViewIter::next(self)
     }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.vec.len().as_usize().saturating_sub(self.pos);
+        (n, Some(n))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3652,5 +3658,67 @@ mod mixed_component_token_tests {
         assert!(!s.contains(id3));
         assert_eq!(s.get(id1), 10);
         assert_eq!(s.get(id2), 20);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Production-surface parity impls (plain Rust, outside verus!): the derive
+// set production ships. Default mirrors the two concrete `new()` impls;
+// token equality compares all four fields.
+// ---------------------------------------------------------------------------
+
+impl core::fmt::Debug for ShrinkPolicy {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ShrinkPolicy::Never => f.write_str("Never"),
+            ShrinkPolicy::IfOverallocated { factor, headroom } => f
+                .debug_struct("IfOverallocated")
+                .field("factor", factor)
+                .field("headroom", headroom)
+                .finish(),
+        }
+    }
+}
+
+impl<T, I, const TRACK: bool> Default
+    for Vec<T, I, crate::parallel_store::ParallelStore<T, I>, TRACK>
+where
+    T: Sized + Copy,
+    I: crate::index_like::IndexLike,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T, I, const TRACK: bool> Default for Vec<T, I, crate::inline_store::InlineStore<T, I>, TRACK>
+where
+    T: crate::tagged::Tagged,
+    I: crate::index_like::IndexLike,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for VecToken {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.frame_idx == other.frame_idx
+            && self.branch_id == other.branch_id
+            && self.depth == other.depth
+            && self.container_id == other.container_id
+    }
+}
+impl Eq for VecToken {}
+
+impl<'a, T, I, S, const TRACK: bool> ExactSizeIterator for VecViewIter<'a, T, I, S, TRACK>
+where
+    T: Sized + Copy,
+    I: crate::index_like::IndexLike,
+    S: crate::diff_store::DiffStore<T, I, TRACK>,
+{
+    fn len(&self) -> usize {
+        self.vec.len().as_usize().saturating_sub(self.pos)
     }
 }

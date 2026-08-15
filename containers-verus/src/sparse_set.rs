@@ -349,7 +349,7 @@ where
         // id previously read a stale dense slot silently (production asserts;
         // the verified core relied on the erased requires).
         if !self.contains(id) {
-            crate::guard::refuse("SparseSet::get: id is not live");
+            crate::guard::refuse("SparseSet::get: id not present");
         }
         let pos = self.sparse.get_index(id);
         self.dense.get_index(pos)
@@ -421,7 +421,7 @@ where
     {
         // Total-with-documented-panic: see `get`.
         if !self.contains(id) {
-            crate::guard::refuse("SparseSet::set: id is not live");
+            crate::guard::refuse("SparseSet::set: id not present");
         }
         let pos = self.sparse.get_index(id);
         self.dense.set_index(pos, value);
@@ -684,7 +684,7 @@ where
     {
         // Total-with-documented-panic: see `get`.
         if !self.contains(id) {
-            crate::guard::refuse("SparseSet::remove: id is not live");
+            crate::guard::refuse("SparseSet::remove: id not present");
         }
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -1374,5 +1374,17 @@ impl core::fmt::Debug for SparseSetToken {
             .field("sparse", &self.sparse)
             .field("indices", &self.indices)
             .finish()
+    }
+}
+
+// Production-surface parity (production ships Default on this variant).
+impl<T, Idx, const TRACK: bool> Default
+    for SparseSet<T, Idx, crate::parallel_store::ParallelStore<T, Idx>, TRACK>
+where
+    T: Sized + Copy,
+    Idx: IndexLike + Tagged,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -2735,3 +2735,17 @@ impl core::fmt::Debug for EClassesToken {
             .finish()
     }
 }
+
+// Production-surface parity (the pre-swap class layer shipped Default).
+impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> Default
+    for EClasses<T, L, N, J, TRACK, PROOFS>
+where
+    T: DenseId,
+    L: DenseId,
+    N: DenseId + Tagged + core::default::Default,
+    J: Tagged + Copy + core::default::Default,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}

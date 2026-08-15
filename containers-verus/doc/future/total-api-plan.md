@@ -118,6 +118,55 @@ priced-out bounds checks). Everything drainable has drained: 81 → 35 across
 eleven batches, each landing verified and workspace-green. The gate forbids
 new entries and reports drained ones for removal.
 
+## Drain to zero callable-partial (directive of 2026-08-14)
+
+The standing requirement tightens: no public method with a `requires`
+clause may be INVOKABLE from unverified Rust. This re-disposes two
+floors that the 35-entry state treated as closed and prioritizes the
+witness-pending trio. Per floor:
+
+- **Unreachable receivers (12 diff_store entries): already satisfy the
+  requirement.** No external caller can hold a receiver
+  (constructors and `with_store` are pub(crate)); compiler-enforced,
+  nothing to change.
+- **Uninterp type-class obligations (`map.rs::new`'s key-model law,
+  `tagged.rs` laws, `guard::check_precondition`,
+  `capture_bits::set_true`): no exec twin is expressible.** These are
+  trait-law trust items of the same kind as `Ord` for a sorted map:
+  the requires binds the TYPE's laws, not a runtime condition a
+  wrapper could test. `check_precondition` is itself the
+  panic-on-violation wrapper the directive asks for. Documented in the
+  key-model TCB; unchanged.
+- **Hot sorted-input contracts (`bplus_search::{find_ge,find_gt}`,
+  `sorted_vec_cursor::{new,seek}`): convert to requires-free
+  conditional contracts.** The bodies are total already (a bisection
+  or gallop on unsorted input returns some index in `[0, len]` without
+  panicking); the sortedness hypothesis moves from `requires` into the
+  ensures as an implication (`sorted(keys) ==> characterization`).
+  Zero runtime cost, public signature unchanged, verified callers keep
+  the full contract by discharging the hypothesis. This replaces the
+  declined O(n) runtime check with a weakening, not a wrapper.
+- **Measured-decline NodeLayout calculus (10 bplus_layout entries):
+  split visibility instead of adding refuse-branches.** The public
+  `NodeLayout` name stays (consumers must name layout types as
+  parameters) but becomes consts/types only; the requires-carrying
+  node operations move behind pub(crate) (a crate-internal operations
+  trait), which the tree consumes as today. External code loses only
+  calls it could never make soundly; the priced-out bounds checks stay
+  out. Interface divergence from production (whose layout methods are
+  public) recorded in the parity matrix when it lands.
+- **Witness-pending trio: implement, not wait.**
+  `circular_list::{splice,splice_absorb}` get the O(1) ring-id witness
+  (the phase-3 designed item) so a total form can refuse same-ring
+  arguments at O(1); `sparse_set::restore` gets the archive clause in
+  its own `wf` so restore re-establishes snapshot well-formedness the
+  way the aggregate already does, and a total `try_restore` becomes
+  expressible.
+
+End state: the allowlist holds only the compiler-enforced and
+type-class floors, and every entry in it is provably not invokable
+from unverified Rust or not a runtime-testable condition at all.
+
 ## Out of scope, tracked
 
 - `next_id_from`'s release-mode id-exhaustion guard stays disclosed-and-priced

@@ -28,18 +28,21 @@ fn container_id_new_is_distinct() {
     let ids: Vec<ContainerId> = (0..2000).map(|_| ContainerId::new()).collect();
     for (i, a) in ids.iter().enumerate() {
         // reflexive: an id equals itself.
-        assert!(a.eq(*a), "ContainerId::eq not reflexive at {i}");
+        assert!(
+            ContainerId::eq(*a, *a),
+            "ContainerId::eq not reflexive at {i}"
+        );
         // distinct from every other mint.
         for (j, b) in ids.iter().enumerate() {
             if i != j {
                 assert!(
-                    !a.eq(*b),
+                    !ContainerId::eq(*a, *b),
                     "ContainerId::new() returned equal ids at {i} and {j}"
                 );
                 // symmetric.
                 assert_eq!(
-                    a.eq(*b),
-                    b.eq(*a),
+                    ContainerId::eq(*a, *b),
+                    ContainerId::eq(*b, *a),
                     "ContainerId::eq not symmetric at {i},{j}"
                 );
             }
@@ -99,7 +102,7 @@ fn container_id_no_collisions_in_batch() {
     // count distinct eq-classes by greedy partitioning.
     let mut reps: Vec<ContainerId> = Vec::new();
     for &id in &ids {
-        if !reps.iter().any(|r| r.eq(id)) {
+        if !reps.iter().any(|r| ContainerId::eq(*r, id)) {
             reps.push(id);
         }
     }

@@ -363,6 +363,19 @@ macro_rules! define_id_impl {
         // keeps the MSB clear), prefix Debug/Display, integer conversions.
         // ------------------------------------------------------------------
 
+        impl $Name {
+            /// Largest storable raw payload (production surface).
+            pub const MAX_RAW: $Int = $MASK;
+
+            /// Test-only constructor bypassing the range check (production
+            /// surface; `cfg(test)` on both sides).
+            #[cfg(test)]
+            #[allow(dead_code)]
+            pub fn from_raw_unchecked(raw: $Int) -> Self {
+                $Name { raw }
+            }
+        }
+
         impl PartialEq for $Name {
             #[inline(always)]
             fn eq(&self, other: &Self) -> bool {

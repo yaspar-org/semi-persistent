@@ -670,9 +670,21 @@ where
     V: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_map()
-            .entries(self.iter().map(|(k, v)| (k, v)))
+        // Production's shape: counters, not entries. (Printing entries walks
+        // the log and shows shadowed keys twice; production avoids both.)
+        f.debug_struct("SpMap")
+            .field("len", &self.len())
+            .field("log_len", &self.log_len().as_usize())
             .finish()
+    }
+}
+
+impl<K, V, I: IndexLike, const TRACK: bool> Default for SpMap<K, V, I, TRACK>
+where
+    K: Clone + core::hash::Hash + Eq,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

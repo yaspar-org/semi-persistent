@@ -439,3 +439,31 @@ pub(crate) proof fn lemma_branch_cut(
 }
 
 } // verus!
+
+// Production-surface parity impls (production derives these).
+impl core::fmt::Debug for ForkOrigin {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ForkOrigin")
+            .field("parent_branch_id", &self.parent_branch_id)
+            .field("fork_depth", &self.fork_depth)
+            .finish()
+    }
+}
+
+impl Clone for ForkHistory {
+    fn clone(&self) -> Self {
+        ForkHistory {
+            current_branch_id: self.current_branch_id,
+            origins: self.origins.clone(),
+        }
+    }
+}
+
+impl core::fmt::Debug for ForkHistory {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ForkHistory")
+            .field("current_branch_id", &self.current_branch_id)
+            .field("origins", &self.origins)
+            .finish()
+    }
+}

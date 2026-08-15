@@ -2911,3 +2911,15 @@ where
         ListIter::next(self)
     }
 }
+
+// Production-surface parity (production ships Default).
+impl<T, L, N, const TRACK: bool> Default for ListArena<T, L, N, TRACK>
+where
+    T: Sized + Copy + core::default::Default + Tagged,
+    L: DenseId,
+    N: DenseId + Tagged + core::default::Default,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -41,3 +41,13 @@ impl<I: IndexLike> Clone for Frame<I> {
 }
 
 } // verus!
+
+// Production-surface parity (production derives Debug).
+impl<I: crate::index_like::IndexLike + core::fmt::Debug> core::fmt::Debug for Frame<I> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Frame")
+            .field("saved_len", &self.saved_len)
+            .field("diff_start", &self.diff_start)
+            .finish()
+    }
+}

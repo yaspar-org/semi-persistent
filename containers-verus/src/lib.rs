@@ -140,6 +140,17 @@ pub use sparse_set::{SparseSet, SparseSetToken};
 pub use tagged::{BoolTagged, Pair, Tagged};
 pub use vec::{ShrinkPolicy, Vec, VecToken, VecView, VecViewIter};
 
+// Production-root parity: names production exports at its crate root, under
+// production's spellings (`Map`/`View`/`ViewIter` alias the renamed types).
+pub use bplus_layout::{
+    BPlusNode, BPlusNode64, BPlusNode64U32, BPlusNode128, BPlusNode128U32, BPlusNode128U64,
+    BPlusNode256, BPlusNode256U32, BPlusNode256U64, BPlusNode512U64, Layout64, Layout128,
+    Layout256,
+};
+pub use list::ListIter;
+pub use map::SpMap as Map;
+pub use vec::{VecView as View, VecViewIter as ViewIter};
+
 // A compact bitset utility, kept outside the container proofs (production
 // exposes it too). Permanent — not part of the retired compat-gate surface.
 pub mod bitset;

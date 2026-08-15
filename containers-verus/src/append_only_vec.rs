@@ -446,7 +446,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         // the proven requires for unverified callers, BEFORE reading
         // frames[token.frame_idx] or mutating anything. Production message
         // parity for the token cases.
-        crate::guard::check_precondition(TRACK, "restore() called on untracked vec");
+        crate::guard::check_precondition(TRACK, "restore() called on untracked AppendOnlyVec");
         crate::guard::check_precondition(
             token.container_id.eq(self.id),
             "token belongs to a different container",
@@ -468,7 +468,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
                 let cur_depth = self.frames.len() as u32;
                 self.forks.is_valid(token.branch_id, token.depth, cur_depth)
             },
-            "invalid restore token (abandoned future)",
+            "invalid token (abandoned future)",
         );
 
         let target = token.frame_idx;
@@ -587,5 +587,21 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     #[inline(always)]
     pub fn iter(&self) -> core::slice::Iter<'_, T> {
         self.as_slice().iter()
+    }
+}
+
+// Production-surface parity impls (production derives/ships these).
+impl<T, I: IndexLike, const TRACK: bool> core::fmt::Debug for AppendOnlyVec<T, I, TRACK> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AppendOnlyVec")
+            .field("len", &self.len().as_usize())
+            .field("depth", &self.depth())
+            .finish()
+    }
+}
+
+impl<T, I: IndexLike, const TRACK: bool> Default for AppendOnlyVec<T, I, TRACK> {
+    fn default() -> Self {
+        Self::new()
     }
 }

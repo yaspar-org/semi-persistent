@@ -187,6 +187,16 @@ fn next_id_from(counter: &core::sync::atomic::AtomicU64) -> u64 {
     prev
 }
 
+// Production-surface parity: derived equality on the raw counter value (the
+// inherent `eq` is the verified spelling; this is the operator form).
+impl PartialEq for ContainerId {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+impl Eq for ContainerId {}
+
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::AtomicU64;
