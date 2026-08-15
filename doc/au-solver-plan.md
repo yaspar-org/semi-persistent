@@ -119,6 +119,11 @@ Every rule below compares against an exact quantity: a fixpoint size, the
 generalize value, or a proven subproblem optimum. No rule compares against a
 sampled estimate.
 
+The standing gate for every item is `egraph/tests/au_differential.rs`, which
+pins both solvers' outputs on a fixed corpus as a committed golden fixture
+(`egraph/tests/au_golden/differential.txt`); its module doc states the
+per-change protocol.
+
 **A0.** No semantic content. The cloned vector is read at one index, so
 cloning that descriptor is observationally identical. The cursor relies on
 an existing invariant: expansion fills the first empty slot, so realized
