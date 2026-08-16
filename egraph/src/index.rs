@@ -7,6 +7,7 @@ use crate::config::EGraphConfig;
 use crate::containers::{DenseId, IndexLike};
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
+use crate::span_proto::{self, Family};
 use semi_persistent_containers::DenseSpanMap;
 use std::collections::HashMap;
 
@@ -151,11 +152,11 @@ impl<Cfg: EGraphConfig> IndexScratch<Cfg> {
 /// per-key push it replaces.
 pub struct IndexStore<Cfg: EGraphConfig> {
     /// `by_op[op]` -> node ids with that operator, keyed by the op's dense id.
-    pub by_op: DenseSpanMap<Cfg::G>,
+    pub by_op: Family<Cfg::G>,
     /// `by_repr[repr]` -> node ids in that e-class, keyed by the class
     /// representative's id (see [`repr`](Self::repr) for which
     /// canonicalization).
-    pub by_repr: DenseSpanMap<Cfg::G>,
+    pub by_repr: Family<Cfg::G>,
     /// `by_child_pos[pos * stride + child_repr]` -> parent node ids with
     /// `child_repr` at `pos`.
     ///
@@ -172,9 +173,9 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     /// child pool, which that word already sizes. See [`IndexLookup::ByChildPos`].
     ///
     /// [`IndexLookup::ByChildPos`]: crate::schedule::IndexLookup::ByChildPos
-    pub by_child_pos: DenseSpanMap<Cfg::G>,
+    pub by_child_pos: Family<Cfg::G>,
     /// `by_contains[child_repr]` -> variadic parent node ids (A/AC/ACI/PlainN).
-    pub by_contains: DenseSpanMap<Cfg::G>,
+    pub by_contains: Family<Cfg::G>,
     /// Stride of the [`by_child_pos`](Self::by_child_pos) composite key: the
     /// node bound this index was built at. A probe class at or above it belongs
     /// to no bucket of this build and resolves to the empty slice, which is what
@@ -223,9 +224,8 @@ pub struct IndexStore<Cfg: EGraphConfig> {
 /// stream is written, so `try_build`'s range check cannot fail and the span
 /// table is no longer than the keys in use. A family whose stream is empty gets
 /// no span table at all, and every probe into it takes `try_get`'s `None` path.
-fn build_family<G: DenseId>(stream: &[(usize, G)], num_keys: usize) -> DenseSpanMap<G> {
-    DenseSpanMap::try_build(stream, num_keys)
-        .expect("num_keys is the stream's own key bound, accumulated as it was written")
+fn build_family<G: DenseId>(stream: &[(usize, G)], num_keys: usize) -> Family<G> {
+    span_proto::build(stream, num_keys)
 }
 
 /// Debug-only check that every bucket is ascending in node id.
@@ -240,15 +240,15 @@ fn build_family<G: DenseId>(stream: &[(usize, G)], num_keys: usize) -> DenseSpan
 /// records that no node is filed under one key twice, which is what makes the
 /// per-bucket `dedup` this build no longer performs unnecessary.
 #[inline]
-fn debug_assert_id_sorted<G: DenseId>(m: &DenseSpanMap<G>, family: &str) {
+fn debug_assert_id_sorted<G: DenseId>(m: &Family<G>, family: &str) {
     #[cfg(debug_assertions)]
-    for k in 0..m.len() {
+    span_proto::for_each_occupied(m, |k, b| {
         debug_assert!(
-            m.get(k).windows(2).all(|w| w[0] < w[1]),
+            b.windows(2).all(|w| w[0] < w[1]),
             "{family}: bucket {k} is not strictly ascending in node id \
              (lemma_view_sorted's hypothesis, the ascending build stream, was violated)"
         );
-    }
+    });
     #[cfg(not(debug_assertions))]
     let _ = (m, family);
 }
@@ -301,9 +301,13 @@ where
         touched: &[Cfg::G],
         scratch: &mut IndexScratch<Cfg>,
     ) -> Self {
-        let mut ids: Vec<Cfg::G> = touched.to_vec();
-        ids.sort_unstable();
-        ids.dedup();
+        let ids: Vec<Cfg::G> = {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::DELTA_DEDUP);
+            let mut ids: Vec<Cfg::G> = touched.to_vec();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
         Self::build_from(eg, ids.into_iter(), false, scratch)
     }
 
@@ -349,6 +353,19 @@ where
             repr_tab.reserve(eg.node_count());
             op_tab.reserve(eg.node_count());
         }
+
+        let (walk_slot, span_base) = if full {
+            (
+                crate::phase_timing::FULL_WALK,
+                crate::phase_timing::FULL_SPAN_OP,
+            )
+        } else {
+            (
+                crate::phase_timing::DELTA_WALK,
+                crate::phase_timing::DELTA_SPAN_OP,
+            )
+        };
+        let walk_timer = crate::phase_timing::Timer::start(walk_slot);
 
         for gid in ids {
             let op = eg.node_op(gid);
@@ -415,16 +432,32 @@ where
             }
         }
 
-        let by_op = build_family(&scratch.by_op, op_keys);
-        let by_repr = build_family(&scratch.by_repr, repr_keys);
-        let by_child_pos = build_family(&scratch.by_child_pos, cp_keys);
-        let by_contains = build_family(&scratch.by_contains, ct_keys);
+        walk_timer.stop();
+
+        let by_op = {
+            let _t = crate::phase_timing::Timer::start(span_base);
+            build_family(&scratch.by_op, op_keys)
+        };
+        let by_repr = {
+            let _t = crate::phase_timing::Timer::start(span_base + 1);
+            build_family(&scratch.by_repr, repr_keys)
+        };
+        let by_child_pos = {
+            let _t = crate::phase_timing::Timer::start(span_base + 2);
+            build_family(&scratch.by_child_pos, cp_keys)
+        };
+        let by_contains = {
+            let _t = crate::phase_timing::Timer::start(span_base + 3);
+            build_family(&scratch.by_contains, ct_keys)
+        };
+        Self::record_shape(full, indexed, &by_child_pos);
         debug_assert_id_sorted(&by_op, "by_op");
         debug_assert_id_sorted(&by_repr, "by_repr");
         debug_assert_id_sorted(&by_child_pos, "by_child_pos");
         debug_assert_id_sorted(&by_contains, "by_contains");
 
         let fanouts = if full {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL_FANOUTS);
             Self::measure_fanouts(
                 &op_tab,
                 &by_repr,
@@ -449,6 +482,42 @@ where
         }
     }
 
+    /// Record the `by_child_pos` key-space shape for `phase_timing`.
+    ///
+    /// The span table is dense over the composite key space, so its length is
+    /// what a build pays whether or not the keys occur, and the ratio of that
+    /// length to the values it addresses is the sparsity this measures. The
+    /// occupied-key count needs its own pass over the span table, so the whole
+    /// helper is skipped unless the accounting is switched on.
+    #[inline]
+    fn record_shape(full: bool, indexed: usize, by_child_pos: &Family<Cfg::G>) {
+        use crate::phase_timing as pt;
+        if !pt::enabled() {
+            return;
+        }
+        let (nodes, keys, values, nonempty) = if full {
+            (
+                pt::C_FULL_NODES,
+                pt::C_FULL_CP_KEYS,
+                pt::C_FULL_CP_VALUES,
+                pt::C_FULL_CP_NONEMPTY,
+            )
+        } else {
+            (
+                pt::C_DELTA_IDS,
+                pt::C_DELTA_CP_KEYS,
+                pt::C_DELTA_CP_VALUES,
+                pt::C_DELTA_CP_NONEMPTY,
+            )
+        };
+        pt::count(nodes, indexed as u64);
+        pt::count(keys, span_proto::num_keys(by_child_pos) as u64);
+        pt::count(values, span_proto::total(by_child_pos) as u64);
+        let mut occupied = 0u64;
+        span_proto::for_each_occupied(by_child_pos, |_, _| occupied += 1);
+        pt::count(nonempty, occupied);
+    }
+
     /// Measure each access path's size-biased mean bucket size from the
     /// finished families.
     ///
@@ -470,9 +539,9 @@ where
     /// pass visits every bucket entry, which is several times the node count.
     fn measure_fanouts(
         op_tab: &[Cfg::O],
-        by_repr: &DenseSpanMap<Cfg::G>,
-        by_child_pos: &DenseSpanMap<Cfg::G>,
-        by_contains: &DenseSpanMap<Cfg::G>,
+        by_repr: &Family<Cfg::G>,
+        by_child_pos: &Family<Cfg::G>,
+        by_contains: &Family<Cfg::G>,
         stride: usize,
         indexed: usize,
     ) -> FanOuts<Cfg::O> {
@@ -499,11 +568,7 @@ where
             }
         };
 
-        for k in 0..by_child_pos.len() {
-            let bucket = by_child_pos.get(k);
-            if bucket.is_empty() {
-                continue;
-            }
+        span_proto::for_each_occupied(by_child_pos, |k, bucket| {
             // Position-major key: the position is the quotient, and `stride` is
             // nonzero because a non-empty bucket means the graph has a node.
             let pos = k / stride;
@@ -515,12 +580,8 @@ where
                 e.1 += c * c;
                 tally[o] = 0;
             }
-        }
-        for k in 0..by_contains.len() {
-            let bucket = by_contains.get(k);
-            if bucket.is_empty() {
-                continue;
-            }
+        });
+        span_proto::for_each_occupied(by_contains, |_, bucket| {
             tally_bucket(bucket, &mut tally, &mut touched);
             for &o in touched.iter() {
                 let c = u128::from(tally[o]);
@@ -529,7 +590,7 @@ where
                 e.1 += c * c;
                 tally[o] = 0;
             }
-        }
+        });
 
         let biased = |(sum, sq): &(u128, u128)| -> f64 {
             if *sum == 0 {
@@ -538,9 +599,11 @@ where
                 *sq as f64 / *sum as f64
             }
         };
-        let (class_sum, class_sq) = (0..by_repr.len()).fold((0u128, 0u128), |(s, q), k| {
-            let c = by_repr.key_len(k) as u128;
-            (s + c, q + c * c)
+        let (mut class_sum, mut class_sq) = (0u128, 0u128);
+        span_proto::for_each_occupied(by_repr, |_, b| {
+            let c = b.len() as u128;
+            class_sum += c;
+            class_sq += c * c;
         });
 
         FanOuts {
@@ -569,13 +632,13 @@ where
     /// Nodes with the given operator; empty when the operator files no node.
     #[inline]
     pub fn nodes_by_op(&self, op: Cfg::O) -> &[Cfg::G] {
-        self.by_op.try_get(op.to_usize()).unwrap_or(&[])
+        span_proto::get(&self.by_op, op.to_usize())
     }
 
     /// Nodes in the given e-class, as this build canonicalized it.
     #[inline]
     pub fn nodes_by_repr(&self, repr: Cfg::G) -> &[Cfg::G] {
-        self.by_repr.try_get(repr.to_usize()).unwrap_or(&[])
+        span_proto::get(&self.by_repr, repr.to_usize())
     }
 
     /// Parent nodes that have `child_repr` at position `pos`.
@@ -590,7 +653,7 @@ where
             child_repr.to_usize(),
             self.child_pos_stride,
         ) {
-            Some(k) => self.by_child_pos.try_get(k).unwrap_or(&[]),
+            Some(k) => span_proto::get(&self.by_child_pos, k),
             None => &[],
         }
     }
@@ -598,9 +661,7 @@ where
     /// Variadic nodes containing `child_repr`.
     #[inline]
     pub fn nodes_by_contains(&self, child_repr: Cfg::G) -> &[Cfg::G] {
-        self.by_contains
-            .try_get(child_repr.to_usize())
-            .unwrap_or(&[])
+        span_proto::get(&self.by_contains, child_repr.to_usize())
     }
 
     /// Get an iterator over nodes with the given operator.
@@ -634,8 +695,8 @@ where
     /// operator stays absent rather than arriving with a zero, which is the
     /// distinction the cost model's `or_else` chain reads.
     pub fn op_cardinalities(&self) -> impl Iterator<Item = (Cfg::O, usize)> + '_ {
-        (0..self.by_op.len()).filter_map(|k| {
-            let n = self.by_op.key_len(k);
+        (0..span_proto::num_keys(&self.by_op)).filter_map(|k| {
+            let n = span_proto::key_len(&self.by_op, k);
             (n > 0).then(|| (Cfg::O::from_usize(k), n))
         })
     }
