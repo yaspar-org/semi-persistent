@@ -27,11 +27,17 @@ use crate::schedule::{IndexLookup, QueryPlan, Step};
 // bindings the join machinery walks, which is exactly what semi-naive (and
 // driver-narrowing lookups like `ByContains`) aim to reduce.
 //
-// Counting is gated at runtime by a thread-local flag, off by default, so a
+// The hot path does not touch the thread-local at all. `run_step` increments a
+// plain `u64` on the `MatchPool` it already carries by `&mut`, and
+// `run_query_into` folds that into the thread-local once per query, if counting
+// is enabled. A thread-local read is an out-of-line call to `_tlv_get_addr` on
+// Apple targets and the compiler hoists it out of nothing, so the earlier
+// "one bool load per step" claim understated it: doing the read per step cost
+// 1.2% of the run on `comparison/math-microbenchmark.rules.egg`.
+//
+// Counting stays gated at runtime by a thread-local flag, off by default, so a
 // normal (release) run can be profiled by flipping the flag — e.g. the
-// `--count-match-steps` CLI flag — with no test-mode rebuild. When disabled the
-// hot path pays a single thread-local bool load per step and nothing else; the
-// counter is never touched, so its cost is zero in production runs.
+// `--count-match-steps` CLI flag — with no test-mode rebuild.
 //
 // Use `set_match_step_counting(true)` to enable, `reset_match_steps()` before a
 // measured region, and `match_steps()` after to read the delta.
@@ -66,10 +72,11 @@ pub fn match_steps() -> u64 {
     MATCH_STEPS.with(|c| c.get())
 }
 
+/// Fold a query's step tally into the thread-local counter, if counting is on.
 #[inline]
-fn bump_match_steps() {
+fn add_match_steps(n: u64) {
     if COUNTING.with(|c| c.get()) {
-        MATCH_STEPS.with(|c| c.set(c.get() + 1));
+        MATCH_STEPS.with(|c| c.set(c.get() + n));
     }
 }
 
@@ -376,6 +383,11 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     id_bufs: Vec<Vec<Cfg::G>>,
     /// Retired `(id, multiplicity)` buffers, lent to the `DecomposeAC` step.
     mset_bufs: Vec<Vec<(Cfg::G, Cfg::M)>>,
+    /// Partial-match extensions the current query has explored — one per
+    /// `run_step` entry. Reset by `run_query_into` and folded into the
+    /// thread-local match-step counter when the query finishes; see the
+    /// match-work instrumentation notes at the top of this file.
+    steps: u64,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -390,6 +402,7 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             set: MatchSet::empty(),
             id_bufs: Vec::new(),
             mset_bufs: Vec::new(),
+            steps: 0,
         }
     }
 
@@ -882,8 +895,10 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pool.reshape(&plan.shape);
+    pool.steps = 0;
     let mut env = Match::new(&plan.shape);
     run_step(plan, 0, eg, index, globals, &mut env, pool);
+    add_match_steps(pool.steps);
 }
 
 fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
@@ -899,7 +914,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    bump_match_steps();
+    results.steps += 1;
     if step_idx >= plan.steps.len() {
         results.push(env);
         return;
