@@ -180,6 +180,96 @@ mechanism that neutralizes skew: hub bindings and leaf bindings get
 different drivers automatically, per binding, with no cost model at all.
 S1 fixes the average; S3 fixes the variance.
 
+**Landed 2026-08-16: the operator restriction is chosen per binding.** The
+first per-binding choice in the seek is not which iterator drives but whether
+a `ByOp` lookup joins the ring at all. `790ba05` demoted it to a per-candidate
+operator test whenever the atom had another lookup, unconditionally, and
+measured 19% of cycles on math-microbenchmark. The demotion is right when the
+candidate set is small and wrong when the operator relation is: the test costs
+`m` loads into the round's `op` table whatever the intersection turns out to
+be, while the operand costs `min(m, n)` leapfrog iterations, so a hub class
+with 262 144 parents read against a 26-node relation runs 600x slower under
+the test than under the operand. `run_join` now reads both lengths before it
+opens either cursor: `m`, the smallest of the atom's other buckets, and
+`n = |by_op[op]|`. Both are `len` calls on buckets the join is opening anyway.
+It takes the test when
+
+```
+n >= min(512 * m, 131_072)   and   m <= 2 * n
+```
+
+`egraph/tests/ematch_op_filter.rs::sweep` regenerates the measurement. It
+builds `hubs` child classes with `m` parents each spread over eight operators,
+holds `hubs * m` at 262 144 so that the test's cost per query is the same
+262 144 loads in every case, and varies the `f0` relation `n` against it.
+Median wall per query, release, Apple M4 Pro, empty intersection so that no
+match construction is in either column; entries are leapfrog over filter, so
+below 1 means the operand won.
+
+| m | n = 2 621 | 16 384 | 53 710 | 131 072 | 262 144 |
+|---|---|---|---|---|---|
+| 8 | 0.75 | 0.96 | 1.34 | 1.67 | 1.98 |
+| 16 | 0.52 | 0.73 | 1.05 | 1.43 | 1.71 |
+| 64 | 0.20 | 0.35 | 0.61 | 1.12 | 1.57 |
+| 4 096 | 0.04 | 0.13 | 0.43 | 0.99 | 1.52 |
+| 262 144 | 0.03 | 0.13 | 0.44 | 0.99 | 1.49 |
+
+The filter column is flat at 2.3 ms across the whole table, 8.8 ns per
+candidate for a random load into a table of `4 * node_count` bytes, so every
+movement is the operand's. An iteration costs 0.5 to 2 ns against a relation
+that fits in cache and 13 to 17 ns against one that does not, and there are
+`min(m, n)` of them rather than `m`: both effects favour the operand as `n`
+falls, and past 131 072 neither rescues it at any bucket size. That is the
+ceiling in the rule. The same shape at the intersection densities the bucket
+sizes admit, `n` set to the hub-parent population scaled by the density:
+
+| m | n = 262 144 (dense) | n = 2 621 (1%) | n = 26 (0.01%) |
+|---|---|---|---|
+| 16 | 1.08 | 0.51 | 0.46 |
+| 256 | 1.07 | 0.12 | 0.04 |
+| 4 096 | 1.04 | 0.09 | 0.003 |
+| 65 536 | 1.05 | 0.09 | 0.002 |
+| 262 144 | 1.06 | 0.08 | 0.002 |
+
+**The slope and the ceiling come from different instruments, because the two
+disagree.** Fitting the rows above gives a threshold that climbs with `m` at
+about 4 096 per candidate: a small bucket cannot amortize the operand's
+start-up, which is a sort of the ring plus a gallop to the bucket's first key
+and does not depend on `m`. math-microbenchmark says otherwise. Its joins run
+with `m` between 2 and 128 against relations of 8 k to 131 k, which is exactly
+the window the fit governs, and the whole-benchmark wall against the slope
+constant is
+
+| per candidate | 0 | 64 | 128 | 256 | 512 | 1 024 | 4 096 |
+|---|---|---|---|---|---|---|---|
+| rules encoding, ms | 562.0 | 565.4 | 559.1 | 568.7 | 565.1 | 582.1 | 636.3 |
+
+against 562.0 ms for the unconditional demotion, medians of nine interleaved
+runs. Anything at or below 512 is inside the run-to-run spread and 4 096 costs
+13%. The sweep is the optimistic instrument in that window: one of its queries
+probes a single `by_op` vector 16 384 times with nothing else touching memory
+in between, so the operand's seeks run against a cache-resident relation,
+where real matching interleaves several relations, the `op` table, the child
+pool and match construction between joins. The slope is therefore set from the
+workload at 512 and the ceiling from the sweep at 131 072. The price is paid in
+the sweep's `m = 16` to `m = 64` rows just above the threshold, where the rule
+takes the test and the operand was up to 2.0x better; whether a workload exists
+that spends its time there is a measurement nobody has made.
+
+Three conditions fence the policy. `ematch::tests::op_restriction_rule_reads_both_lengths`
+states the rule against the two lengths directly, including the corners no
+e-graph test can reach at a reasonable size.
+`ematch::tests::op_restriction_policy_is_taken_per_binding` asserts which
+mechanism ran on two bindings of one join, and
+`ematch::tests::op_restriction_mechanisms_agree_on_the_match_set` asserts that
+pinning either mechanism returns the same matches; both are timing-free and run
+in every build profile. `ematch_op_filter::adaptive_policy_is_within_1_2x_of_the_better_mechanism`
+holds the policy to within 1.2x of the better mechanism at both extremes and
+runs only under release codegen, following the binary-search canary in
+`containers-conformance`. Match steps and final node counts are identical to
+`e2eb260` on all twenty programs under `comparison/` in both the naive and the
+semi-naive driver.
+
 ## S4. Postponed: stage-level re-sorting (free-join style)
 
 Re-sorting whole join stages by live candidate size, as egglog does before
@@ -260,7 +350,10 @@ random memory accesses where a prepend does one. The prepend is measured
 at 552 ms, 1.054 of egglog, and is blocked on re-verifying
 `EClasses::add_use`, whose proof body asserts the appended list shape.
 
-S3 (per-binding driver selection inside the leapfrog seek) is still
-unmeasured and still the right next matching change, but it now attacks a
-smaller target: after `790ba05` the leapfrog seek is 5.2% of the profile
-where the audit measured it at 26.3%.
+S3's first half is now measured and landed: the operator restriction is
+chosen per binding from the two bucket lengths, which corrects `790ba05`'s
+unconditional demotion without giving back its 19% (math-microbenchmark
+rules 565.1 ms against 562.0 ms, inside the run-to-run spread). S3's second
+half, per-binding selection of which iterator drives the seek, is still
+unmeasured, and it attacks a smaller target than the audit's: after `790ba05`
+the leapfrog seek is 5.2% of the profile where the audit measured it at 26.3%.
