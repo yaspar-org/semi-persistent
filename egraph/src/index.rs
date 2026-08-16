@@ -97,6 +97,21 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     pub by_child_pos: FastMap<(Cfg::G, Cfg::Index), SortedVec<Cfg::G>>,
     /// by_contains[child_repr] → sorted vec of variadic parent node ids (A/AC/ACI/PlainN)
     pub by_contains: FastMap<Cfg::G, SortedVec<Cfg::G>>,
+    /// `repr[id]` — the class representative of every node id as of this build.
+    ///
+    /// The three keyed maps above are keyed by *this* canonicalization, and it
+    /// stops being the e-graph's the moment the round's first rule merges a
+    /// class. A matcher that canonicalizes a lookup key with the live
+    /// union-find and then probes a bucket keyed at build time reads a bucket
+    /// that belongs to some other class, so the answer depends on which access
+    /// path the join order happened to use. Keeping the build's mapping makes
+    /// every access path agree; see [`round_repr`](Self::round_repr) and
+    /// chapter 09's snapshot contract.
+    ///
+    /// Filled by [`build`](Self::build) only. [`build_delta`](Self::build_delta)
+    /// leaves it empty: a delta is built in the same instant as its full index
+    /// and shares that index's canonicalization, so the mapping is stored once.
+    pub repr: Vec<Cfg::G>,
 }
 
 impl<Cfg: EGraphConfig> IndexStore<Cfg>
@@ -112,7 +127,9 @@ where
         // routing entry was minted through `TypedRouting::reserve`'s checked
         // path) lives with `node_ids`; an inline scan here would restate the
         // unchecked spelling without the justification.
-        Self::build_from(eg, eg.node_ids())
+        let mut store = Self::build_from(eg, eg.node_ids());
+        store.repr = eg.node_ids().map(|g| eg.class_repr(g)).collect();
+        store
     }
 
     /// Build the per-round **delta** index from the touched-node log: the
@@ -204,7 +221,16 @@ where
             by_repr: finalize(by_repr),
             by_child_pos: finalize(by_child_pos),
             by_contains: finalize(by_contains),
+            repr: Vec::new(),
         }
+    }
+
+    /// This build's class representative for `id`, or `None` for an id minted
+    /// after the build (and so present in no bucket) or on a delta store, which
+    /// defers the mapping to its full index.
+    #[inline]
+    pub fn round_repr(&self, id: Cfg::G) -> Option<Cfg::G> {
+        self.repr.get(id.to_usize()).copied()
     }
 
     /// Get an iterator over nodes with the given operator.

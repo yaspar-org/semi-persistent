@@ -830,6 +830,42 @@ where
     (0..pool.len()).map(|j| pool.clone_match(j)).collect()
 }
 
+/// The round's class representative for `id` — the one the index snapshot was
+/// built with, not the e-graph's live one.
+///
+/// Matching is specified against the e-graph as of the round's index build
+/// (chapter 09). The e-graph keeps changing inside a round: every rule's
+/// actions merge classes and add nodes before the next rule matches, while the
+/// index buckets stay keyed by the reprs of the build. Canonicalizing with the
+/// live union-find and then probing a bucket keyed at build time therefore
+/// reads a bucket belonging to a different class — `ByRepr` and `ByChildPos`
+/// go wrong in opposite directions on the same merge — and `CheckChildEq`
+/// accepts pairs that the snapshot kept apart. Which of those a query performs
+/// is decided by the join order, so the match set became a function of the
+/// plan (measured at 2.9% on `comparison/math-microbenchmark.rules.egg`).
+/// Every canonicalization in the matcher goes through here instead.
+///
+/// The fallback covers ids the snapshot does not know: a delta store defers to
+/// its full index (which is where the mapping is kept), and a global may be
+/// bound to a node minted after the build. Bindings never need it — each one
+/// descends from a snapshot bucket.
+#[inline]
+fn canon<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    index: &VariantIndex<'_, Cfg>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    id: Cfg::G,
+) -> Cfg::G
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    match index.full.round_repr(id) {
+        Some(r) => r,
+        None => eg.find_const(id),
+    }
+}
+
 /// Collect all matches of `plan` into `pool`, reusing its storage.
 ///
 /// The pool is cleared first, so a caller may hand the same pool to every query
@@ -898,22 +934,22 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let parent_id = env.get(*parent);
             let child = eg.child_at(parent_id, *pos);
             let exp = env.resolve_pv(*expected, globals);
-            if eg.find_const(child) == eg.find_const(exp) {
+            if canon(index, eg, child) == canon(index, eg, exp) {
                 run_step(plan, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckEq { a, b } => {
-            if eg.find_const(env.get(*a)) == eg.find_const(env.get(*b)) {
+            if canon(index, eg, env.get(*a)) == canon(index, eg, env.get(*b)) {
                 run_step(plan, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckEqGlobal { local, global } => {
-            if eg.find_const(env.get(*local)) == eg.find_const(globals.binding(*global)) {
+            if canon(index, eg, env.get(*local)) == canon(index, eg, globals.binding(*global)) {
                 run_step(plan, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CopyBinding { target, other } => {
-            let val = eg.find_const(env.get(*other));
+            let val = canon(index, eg, env.get(*other));
             env.set(*target, val);
             run_step(plan, step_idx + 1, eg, index, globals, env, results);
             env.clear(*target);
@@ -944,7 +980,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let mut residual = results.take_mset_buf();
             eg.mset_children(node_id, &mut residual);
             for entry in &mut residual {
-                entry.0 = eg.find_const(entry.0);
+                entry.0 = canon(index, eg, entry.0);
             }
             run_decompose_ac(
                 plan,
@@ -965,7 +1001,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let mut residual = results.take_id_buf();
             eg.set_children(node_id, &mut residual);
             for entry in &mut residual {
-                *entry = eg.find_const(*entry);
+                *entry = canon(index, eg, *entry);
             }
             run_decompose_aci(
                 plan, step_idx, elems, *rest, &residual, eg, index, globals, env, results,
@@ -1083,13 +1119,13 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
         let val = seq[offset + i];
         match cv {
             PatVar::Global(gid) => {
-                if eg.find_const(globals.binding(gid)) != eg.find_const(val) {
+                if canon(index, eg, globals.binding(gid)) != canon(index, eg, val) {
                     return;
                 }
             }
             PatVar::Local(vid) => {
                 if let Some(existing) = env.nodes[vid.idx()] {
-                    if eg.find_const(existing) != eg.find_const(val) {
+                    if canon(index, eg, existing) != canon(index, eg, val) {
                         return;
                     }
                 } else {
@@ -1215,8 +1251,8 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let (var, mult) = &elems[ei];
 
     let bound_repr = match *var {
-        PatVar::Global(gid) => Some(eg.find_const(globals.binding(gid))),
-        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| eg.find_const(v)),
+        PatVar::Global(gid) => Some(canon(index, eg, globals.binding(gid))),
+        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| canon(index, eg, v)),
     };
 
     if let Some(repr) = bound_repr {
@@ -1365,8 +1401,8 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 
     let var = elems[ei];
     let bound_repr = match var {
-        PatVar::Global(gid) => Some(eg.find_const(globals.binding(gid))),
-        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| eg.find_const(v)),
+        PatVar::Global(gid) => Some(canon(index, eg, globals.binding(gid))),
+        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| canon(index, eg, v)),
     };
 
     if let Some(repr) = bound_repr {
@@ -1454,7 +1490,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         IndexMode::Full => {
             let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
                 .iter()
-                .map(|l| cursor_in(index.full, l, eg, globals, env))
+                .map(|l| cursor_in(index.full, index, l, eg, globals, env))
                 .collect();
             leapfrog_join(
                 cursors, plan, step_idx, target, eg, index, globals, env, results,
@@ -1463,7 +1499,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         IndexMode::Delta => {
             let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
                 .iter()
-                .map(|l| cursor_in(index.delta, l, eg, globals, env))
+                .map(|l| cursor_in(index.delta, index, l, eg, globals, env))
                 .collect();
             leapfrog_join(
                 cursors, plan, step_idx, target, eg, index, globals, env, results,
@@ -1476,8 +1512,8 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 .iter()
                 .map(|l| {
                     Difference::new(
-                        cursor_in(index.full, l, eg, globals, env),
-                        cursor_in(index.delta, l, eg, globals, env),
+                        cursor_in(index.full, index, l, eg, globals, env),
+                        cursor_in(index.delta, index, l, eg, globals, env),
                     )
                 })
                 .collect();
@@ -1490,8 +1526,13 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 
 /// Resolve one lookup's key against a single index store, returning a cursor
 /// over the matching bucket (empty if the key is absent).
+///
+/// `store` is the slice this atom's mode reads (full or delta); `index` is the
+/// round's view, consulted only for the canonicalization the buckets are keyed
+/// by (see [`canon`]).
 fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     store: &'a IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1505,15 +1546,15 @@ where
     let sv: Option<&SortedVec<Cfg::G>> = match l {
         IndexLookup::ByOp { op } => store.by_op.get(op),
         IndexLookup::ByChildPos { child, pos } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
             store.by_child_pos.get(&(r, *pos))
         }
         IndexLookup::ByRepr { repr } => {
-            let r = eg.find_const(env.get(*repr));
+            let r = canon(index, eg, env.get(*repr));
             store.by_repr.get(&r)
         }
         IndexLookup::ByContains { child } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
             store.by_contains.get(&r)
         }
     };
@@ -1578,15 +1619,15 @@ where
     match l {
         IndexLookup::ByOp { op } => index.full.by_op.get(op),
         IndexLookup::ByChildPos { child, pos } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
             index.full.by_child_pos.get(&(r, *pos))
         }
         IndexLookup::ByRepr { repr } => {
-            let r = eg.find_const(env.get(*repr));
+            let r = canon(index, eg, env.get(*repr));
             index.full.by_repr.get(&r)
         }
         IndexLookup::ByContains { child } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
             index.full.by_contains.get(&r)
         }
     }
@@ -1742,10 +1783,12 @@ where
                 expected,
             } => {
                 let child = self.eg.child_at(self.env.get(*parent), *pos);
-                if self.eg.find_const(child)
-                    == self
-                        .eg
-                        .find_const(self.env.resolve_pv(*expected, self.globals))
+                if canon(self.index, self.eg, child)
+                    == canon(
+                        self.index,
+                        self.eg,
+                        self.env.resolve_pv(*expected, self.globals),
+                    )
                 {
                     self.cursor += 1;
                     Enter::Advanced
@@ -1754,7 +1797,9 @@ where
                 }
             }
             Step::CheckEq { a, b } => {
-                if self.eg.find_const(self.env.get(*a)) == self.eg.find_const(self.env.get(*b)) {
+                if canon(self.index, self.eg, self.env.get(*a))
+                    == canon(self.index, self.eg, self.env.get(*b))
+                {
                     self.cursor += 1;
                     Enter::Advanced
                 } else {
@@ -1762,8 +1807,8 @@ where
                 }
             }
             Step::CheckEqGlobal { local, global } => {
-                if self.eg.find_const(self.env.get(*local))
-                    == self.eg.find_const(self.globals.binding(*global))
+                if canon(self.index, self.eg, self.env.get(*local))
+                    == canon(self.index, self.eg, self.globals.binding(*global))
                 {
                     self.cursor += 1;
                     Enter::Advanced
@@ -1773,7 +1818,7 @@ where
             }
             Step::CopyBinding { target, other } => {
                 self.env
-                    .set(*target, self.eg.find_const(self.env.get(*other)));
+                    .set(*target, canon(self.index, self.eg, self.env.get(*other)));
                 self.cursor += 1;
                 Enter::Advanced
             }
@@ -1805,7 +1850,7 @@ where
                 let mut residual = Vec::new();
                 self.eg.mset_children(node_id, &mut residual);
                 for e in &mut residual {
-                    e.0 = self.eg.find_const(e.0);
+                    e.0 = canon(self.index, self.eg, e.0);
                 }
                 let elems = elems.clone();
                 let rest = *rest;
@@ -1816,7 +1861,7 @@ where
                 let mut residual = Vec::new();
                 self.eg.set_children(node_id, &mut residual);
                 for e in &mut residual {
-                    *e = self.eg.find_const(*e);
+                    *e = canon(self.index, self.eg, *e);
                 }
                 let elems = elems.clone();
                 let rest = *rest;
@@ -2062,7 +2107,9 @@ where
             let val = seq[offset + i];
             match cv {
                 PatVar::Global(gid) => {
-                    if self.eg.find_const(self.globals.binding(gid)) != self.eg.find_const(val) {
+                    if canon(self.index, self.eg, self.globals.binding(gid))
+                        != canon(self.index, self.eg, val)
+                    {
                         for &cv2 in &children[..i] {
                             if let PatVar::Local(v) = cv2 {
                                 self.env.clear(v);
@@ -2073,7 +2120,7 @@ where
                 }
                 PatVar::Local(vid) => {
                     if let Some(existing) = self.env.nodes[vid.idx()] {
-                        if self.eg.find_const(existing) != self.eg.find_const(val) {
+                        if canon(self.index, self.eg, existing) != canon(self.index, self.eg, val) {
                             for &cv2 in &children[..i] {
                                 if let PatVar::Local(v) = cv2 {
                                     self.env.clear(v);
@@ -2269,8 +2316,8 @@ where
         let (var, mult) = &elems[ei];
 
         let bound_repr = match *var {
-            PatVar::Global(gid) => Some(self.eg.find_const(self.globals.binding(gid))),
-            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| self.eg.find_const(v)),
+            PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
+            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| canon(self.index, self.eg, v)),
         };
 
         if let Some(repr) = bound_repr {
@@ -2454,8 +2501,8 @@ where
     ) -> Option<usize> {
         let var = elems[ei];
         let bound_repr = match var {
-            PatVar::Global(gid) => Some(self.eg.find_const(self.globals.binding(gid))),
-            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| self.eg.find_const(v)),
+            PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
+            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| canon(self.index, self.eg, v)),
         };
         if let Some(repr) = bound_repr {
             for ri in start..residual.len() {
@@ -4502,5 +4549,181 @@ mod tests {
         // b has mult 2 (in [2,3]), c has mult 3 (in [2,3]), but 2≠3 → non-linear fails
         // a has mult 1 (not in [2,3])
         assert_eq!(matches.len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshot semantics: the match set does not depend on the join order
+    // -----------------------------------------------------------------------
+
+    /// Schedule `srcs` with `first`'s operator forced to the front of the
+    /// greedy order, by handing the scheduler a cardinality of 0 for it.
+    /// The other operators get an equal, large cardinality, so nothing but the
+    /// pin decides the first atom.
+    fn plan_driven_from(
+        eg: &EG,
+        srcs: &[&str],
+        first: &str,
+        ops_in_query: &[&str],
+    ) -> (QueryPlan<OpId, u32, NiraLitVal>, MatchShape) {
+        let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
+        let fq = flatten(&pats, eg.ops()).unwrap();
+        let rq = resolve(
+            &fq,
+            eg.ops(),
+            eg.sorts(),
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<_, ()>::new(),
+        )
+        .unwrap();
+        let mut stats = crate::schedule::IndexStats::<OpId>::new();
+        for name in ops_in_query {
+            stats
+                .op_card
+                .insert(eg.ops().id_by_name(name).unwrap(), 1000);
+        }
+        stats.op_card.insert(eg.ops().id_by_name(first).unwrap(), 0);
+        (crate::schedule::schedule_with_stats(&rq, &stats), rq.shape)
+    }
+
+    /// Run `plan` through both matcher engines and return the match set as a
+    /// sorted list of binding keys. The two engines must agree; a divergence
+    /// here is a bug in its own right, so it is asserted rather than hidden.
+    fn match_keys(
+        eg: &EG,
+        plan: &QueryPlan<OpId, u32, NiraLitVal>,
+        index: &IndexStore<DefaultConfig>,
+    ) -> Vec<Vec<Option<u32>>> {
+        let vindex = VariantIndex::naive(index);
+        let ng = crate::resolve::GlobalCtx::<(), _>::new();
+
+        let key = |m: &Match<DefaultConfig>| -> Vec<Option<u32>> {
+            m.nodes
+                .iter()
+                .map(|o| o.map(|g| index.round_repr(g).unwrap_or(g).raw()))
+                .collect()
+        };
+
+        let mut recursive: Vec<_> = run_query(plan, eg, &vindex, &ng).iter().map(key).collect();
+        let mut it = MatchIterator::new(plan, eg, &vindex, &ng);
+        let mut pull = Vec::new();
+        while it.next_match() {
+            pull.push(key(it.env()));
+        }
+        recursive.sort();
+        pull.sort();
+        assert_eq!(recursive, pull, "the two matcher engines disagree");
+        recursive
+    }
+
+    /// `(f b c)` and `(g a)`, with `c` and `(g a)` in different classes at the
+    /// index build and merged afterwards — the shape of a mid-round merge by an
+    /// earlier rule's actions. `tall_g_class` decides which of the two classes
+    /// the union-find keeps as representative, by giving the `g`-node's class a
+    /// second member (hence a taller tree) before the build.
+    ///
+    /// The snapshot answer for `(f x (g y))` is *no match*: at the build,
+    /// `(f b c)`'s second child was alone in its class and that class held no
+    /// `g`-node.
+    fn mid_round_merge(tall_g_class: bool) -> (EG, IndexStore<DefaultConfig>) {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let ga = eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+        if tall_g_class {
+            let haa = eg.add(eg.ops().id_by_name("h").unwrap(), &[a, a]);
+            eg.merge(ga, haa);
+        }
+        eg.rebuild();
+
+        // The round's index. Everything after this point is what a rule's
+        // actions do to the e-graph while later rules of the same round match.
+        let index = IndexStore::build(&eg);
+        eg.merge(c, ga);
+        (eg, index)
+    }
+
+    /// The match set is a function of the e-graph the round's index was built
+    /// from, not of the join order the scheduler happened to choose.
+    ///
+    /// Both orders below reach the `g` atom by a different access path — from
+    /// the `f` atom it is `ByRepr` on the extracted child, from the `g` atom it
+    /// is `ByChildPos` on the bound `g`-node — and a mid-round merge moves the
+    /// two paths in opposite directions: whichever class the union-find keeps,
+    /// exactly one of the two paths lands on a bucket that the merge made
+    /// reachable. Canonicalizing with the live union-find therefore made one
+    /// order report a match and the other none, on the same e-graph. Both
+    /// parameterizations are here because they disagree in opposite directions;
+    /// which one a given union-by-rank policy produces is not this test's
+    /// business.
+    #[test]
+    fn match_set_is_independent_of_join_order() {
+        for tall_g_class in [false, true] {
+            let (eg, index) = mid_round_merge(tall_g_class);
+            let from_f = plan_driven_from(&eg, &["(f x (g y))"], "f", &["f", "g"]);
+            let from_g = plan_driven_from(&eg, &["(f x (g y))"], "g", &["f", "g"]);
+
+            // The pin is worth nothing if both orders compile to the same plan.
+            assert_ne!(
+                from_f.0.steps, from_g.0.steps,
+                "the two pins produced the same plan (tall_g_class={tall_g_class})"
+            );
+
+            let mf = match_keys(&eg, &from_f.0, &index);
+            let mg = match_keys(&eg, &from_g.0, &index);
+            assert_eq!(
+                mf, mg,
+                "join order changed the match set (tall_g_class={tall_g_class})"
+            );
+            assert!(
+                mf.is_empty(),
+                "matched a class membership the round's index does not have \
+                 (tall_g_class={tall_g_class}): {mf:?}"
+            );
+        }
+    }
+
+    /// The other half of the same contract, on the equality-check path rather
+    /// than the index path: two children that the round's index kept apart do
+    /// not satisfy a non-linear pattern just because a later merge joined them.
+    /// `CheckChildEq` used to test live equality, which admitted the match.
+    #[test]
+    fn nonlinear_check_uses_the_rounds_classes() {
+        let mut eg = make_eg();
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+        eg.merge(b, c);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        assert_eq!(
+            match_keys(
+                &eg,
+                &plan_driven_from(&eg, &["(f x x)"], "f", &["f"]).0,
+                &index
+            )
+            .len(),
+            1,
+            "control: a merge the index build can see does make the pattern match"
+        );
+
+        let mut eg = make_eg();
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+        eg.rebuild();
+        let index = IndexStore::build(&eg);
+        eg.merge(b, c);
+        let matches = match_keys(
+            &eg,
+            &plan_driven_from(&eg, &["(f x x)"], "f", &["f"]).0,
+            &index,
+        );
+        assert!(
+            matches.is_empty(),
+            "a merge after the index build made `(f x x)` match: {matches:?}"
+        );
     }
 }
