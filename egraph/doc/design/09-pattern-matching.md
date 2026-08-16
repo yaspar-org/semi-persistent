@@ -14,6 +14,46 @@ interns new literal values. All mutations happen during RHS application
 (Chapter 12). Matching sees a frozen snapshot of the e-graph, which is critical
 for soundness.
 
+## Which Snapshot: the Round's Index Build
+
+The snapshot is the e-graph as of the round's `IndexStore::build`, and it stays
+that snapshot for every rule of the round. It is not the e-graph as of the
+query: a round runs each rule's actions before the next rule matches, so by the
+time the last rule of a round runs, the e-graph holds nodes and class merges
+the index does not.
+
+This matters because canonicalization has to agree with the buckets. The three
+keyed indexes are keyed by `class_repr` as of the build, so a matcher that
+canonicalizes a lookup key with the live union-find and then probes those
+buckets reads a bucket belonging to a different class. A merge of classes `c1`
+and `c2` after the build moves `ByRepr` and `ByChildPos` in opposite
+directions: a `ByRepr` probe for a node of `c1` lands on the surviving repr's
+bucket, which holds only the nodes that were already there, and a `ByChildPos`
+probe for a child of `c1` misses every parent filed under the absorbed repr.
+`CheckChildEq` had the third behaviour, accepting any pair the live union-find
+had joined. Which of the three a query performs is decided by the join order,
+so the match set was a function of the plan: 69,312 matches against 67,293 for
+two orders on one e-graph (`comparison/throughput-gap-ours.md`, Q2).
+
+`IndexStore::repr` therefore records the build's canonicalization and every
+canonicalization the matcher performs reads it (`ematch::canon`). Three
+properties follow, and `ematch::match_set_is_independent_of_join_order` and
+`nonlinear_check_uses_the_rounds_classes` pin the first two:
+
+- **Order independence.** The match set is a function of the round's index and
+  the query, so changing the scheduler's variable order cannot change which
+  matches a rule finds. This is what makes a planner change a performance
+  change and nothing else, and what makes semi-naive's delta accounting
+  (Chapter 18) mean what it says: a variant's match count is comparable across
+  variants and across rounds.
+- **Soundness.** Class merges only grow classes within a round, so two nodes
+  the snapshot calls equal are equal in the live e-graph too. Every match found
+  is a match of the e-graph at the moment the actions run.
+- **Deferral, not loss.** A match created by an earlier rule of the same round
+  is found in the next round rather than this one: its nodes are in the touched
+  log, so both the naive rebuild and the semi-naive delta see them. The
+  fixpoint is unchanged; the round it is reached in can differ.
+
 ## `Match` — Binding Environment
 
 The binding environment separates variables by kind. Node bindings

@@ -548,6 +548,16 @@ end of each round:
    into `full` naturally since `full` already contains these nodes by
    the time we reach matching).
 
+`delta` is built in the same instant as `full`, from the same e-graph, so
+the two agree on every key and `delta ⊆ full` per key holds for the whole
+round. The canonicalization behind those keys is stored once, on `full`
+(`IndexStore::repr`), and every canonicalization the matcher performs reads
+it rather than the live union-find — including the ones inside a variant's
+`Difference` cursors, which would otherwise subtract a delta bucket from a
+full bucket that a mid-round merge had moved. Chapter 09, "Which Snapshot",
+states the contract and why it is what makes a variant's match count
+comparable across variants and across rounds.
+
 The touched log is a single `Vec<Cfg::G>` field on `EGraph`,
 populated during rebuild via an out-param threaded through
 `recanonize_node` (one push per genuinely-changed node) and in
