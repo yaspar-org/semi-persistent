@@ -62,6 +62,75 @@ Acceptance: math-microbenchmark rules encoding under 1 s with no
 hand-pinned orders (measured headroom says ~0.89 s); the full egg fixture
 suite green; the benchmark equivalence check of `comparison/` reproduced.
 
+**Done (2026-08-15).** `IndexStore::fanouts` measures the three access
+paths per round and `schedule::estimate_cost` multiplies one measured
+fraction per bound key. Match steps on math-microbenchmark, the
+load-independent measure, over the same eleven iterations:
+
+| encoding, strategy | before | after | ratio |
+|---|---|---|---|
+| rules, naive | 218,567,542 | 7,284,276 | 30.0x |
+| rules, semi-naive | 216,654,595 | 7,191,713 | 30.1x |
+| native, naive | 3,074,117 | 3,074,106 | 1.00x |
+| native, semi-naive | 198,571,597 | 3,167,101 | 62.7x |
+
+The rules encoding runs in 0.89 s against 10.7 s measured on this change
+alone, and the comparison pilot re-run after `registry: memoize
+completion_column` landed puts it at 747.8 ms against egglog's 523.9 ms in
+the same run, 1.4x from 22.7x. Semi-naive under native AC was the second
+defect the constants fixed: it cost 64.6x naive's match steps on that
+encoding and now costs 1.03x, from the same mispricing on `by_contains`
+rather than `by_child_pos`.
+
+The backward-distributivity rule no longer drives from a `Mul` atom into a
+`Mul`-`Mul` join, which is what the acceptance asked for, but it does not
+drive from the `Add` atom either. It scans `Mul`, the smaller relation, and
+joins `Add` second through `by_child_pos`, which leaves the second `Mul` a
+`by_repr` re-join within the class the `Add` bound:
+
+```
+Join(a0 v0<-[op104])                     scan every Mul
+Extract(v1<-v0.0) Extract(v2<-v0.1)      bind a, b
+Join(a2 v5<-[op102&pos0=v0])             Add nodes over that Mul
+CheckChild(v5.0==v0) Extract(v3<-v5.1)   bind the sibling class
+Join(a1 v3<-[repr=v3&op104])             Mul nodes in that class
+CheckChild(v3.0==v1) Extract(v4<-v3.1)   check the shared a, bind c
+```
+
+That order measures 7,284,276 steps over the whole run against the
+hand-pinned `Add`-first counterfactual's 7,395,846, so the plan the
+constants choose is the better of the two and the acceptance's plan shape
+was the wrong target: what mattered was ending the 66.98 M intermediate,
+not which atom drives.
+
+Three departures from the plan above, all measured.
+
+**Size-biased means, not plain means.** The estimator is
+`sum(b^2) / sum(b)` over a path's buckets, not `sum(b) / count(b)`. A
+probe key is a variable the join bound from the data, so it lands in a
+bucket with probability proportional to that bucket's size; the plain mean
+answers a question no probe asks, and on a distribution with one hub bucket
+of size H among K singletons it reports about 1 where the size-biased mean
+reports about H. The two agree on the four measurements above to within
+0.1% except under the delta-seeding experiment below, where the plain mean
+costs 49.5 M match steps against the size-biased mean's 10.0 M. Chapter 20's
+Fact 2 is unchanged: one number per path prices the expected probe, not the
+individual one, and S3 is what prices the individual one.
+
+**A third path, `by_contains`, is measured too.** The plan named `ByRepr`
+and `ByChildPos`; the variadic atoms (A/AC/ACI) drive from `by_contains`
+per bound element, and that is the path the native encoding's factoring
+rule `(Add (Mul a ..p) (Mul a ..q) ..rest)` mispriced into a Mul-Mul
+self-join on a shared factor.
+
+**The plain mean cannot be read off the existing aggregates, and neither
+can the size-biased one.** `by_child_pos` and `by_contains` are keyed by
+child class alone while every join intersects them with `by_op[op]`, so the
+quantity the scheduler needs is a bucket restricted to one operator, which
+no total the build already keeps can produce. It is one pass over the two
+finished maps, tallying each bucket's parents into an array indexed by the
+operator's dense id.
+
 ## S2. Watermark delta suffixes: deltas on every access path
 
 Nodes have dense allocation-ordered ids, and an iteration's delta is
@@ -80,6 +149,25 @@ and still touch only new tuples, and the semi-naive variant costs stop
 depending on the variant's atom being schedulable first. The per-variant
 planner then prices the delta atom by its true (suffix) cardinality, which
 S1's constants make meaningful.
+
+**Rejected on measurement: pinning the delta atom to the front of the
+order.** The shortcut S2 would make unnecessary is to seed each variant's
+plan from its delta atom, so that "match over the delta and propagate
+outward" is an invariant rather than a property that emerges when the delta
+happens to be the cheapest relation. Implemented and measured on
+math-microbenchmark, it costs match steps in both encodings: rules
+semi-naive 7,191,713 -> 10,011,574, native semi-naive 3,167,101 ->
+5,852,891. The delta atom is not the same choice as the cheapest *first*
+atom: pinning it fixes the driver but leaves the rest of the order to be
+built from a worse prefix, and on this workload the driver's fan-out
+matters more than its base size. The cost model already reaches the
+intended behaviour where it pays, because `variant_stats` gives the delta
+atom the delta's cardinality: when the delta is small the delta atom is the
+cheapest atom and wins on cost, and when it is large (62-90% here) driving
+from it is measurably worse. Revisit under S2, where a delta atom placed
+anywhere in the order costs its suffix rather than its bucket, or on a
+workload measured to keep `|delta|/|full|` small for several consecutive
+rounds.
 
 ## S3. Per-binding driver selection in the leapfrog seek
 
