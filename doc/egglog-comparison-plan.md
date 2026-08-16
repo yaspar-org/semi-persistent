@@ -102,8 +102,30 @@ runs, 3 warmups, hyperfine-style), matched budgets, JSON/CSV rows
 per benchmark. Their machine-readable stats via `print-stats :file`; ours
 via E2's stats output.
 
+**E5. Quantify the value of AC canonization.** Already partially done:
+the width sweep (flat 4n-3 nodes and one iteration against staircase
+growth, 199x wall at n=28) and the mixed-workload deltas
+(native vs our rules: 10.3x wall, 72x match steps on
+math-microbenchmark). Remaining: re-run the mixed-workload comparison at
+the post-fix engine commit so the native-vs-fixed-rules delta is honest,
+and state the qualitative exhibit (their multiset emulation cannot match
+inside multisets) with citations to their files.
+
+**E6. Quantify the value of semi-persistence.** Not yet measured at all.
+Design: (i) survey how egglog implements push/pop (snapshot copy?
+rebuild? journal?) - the mechanism determines the expected separation
+shape; (ii) micro-benchmark: base e-graph of S nodes (S in 1e4..1e6),
+then N rounds of push, small assertion batch, run, check, pop; ours via
+mark/restore (O(touched) by design) vs egglog's push/pop; report cost per
+round vs S; (iii) macro: herbie.egg's fifteen push/run/check/pop blocks,
+timed per block on both engines; (iv) internal baseline without egglog:
+restore-to-mark vs re-running the program prefix from scratch, which is
+the honest "what would you do without semi-persistence" comparison.
+Deviation rules of methodology.md apply throughout.
+
 Order: E1 and E2 (our-side features, one agent, two commits), then E3, then
-E4 with a pilot on benchmarks 1, 2, 8 before the full set.
+E4 with a pilot on benchmarks 1, 2, 8 before the full set; E5/E6 after the
+in-flight engine fixes land, at one pinned commit.
 
 Status 2026-08-15: E1, E2 done. E3 and E4 landed as the pilot on benchmarks 1,
 2 and 8 in `comparison/` (three configurations each, both of our saturation
