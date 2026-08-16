@@ -98,7 +98,7 @@ fn merge_directed_pins_survivor() {
 }
 
 #[test]
-fn use_lists_append_and_splice() {
+fn use_lists_register_and_splice() {
     let mut ec = EC::new();
     let (a, ka) = ec.try_add_singleton();
     let (b, kb) = ec.try_add_singleton();

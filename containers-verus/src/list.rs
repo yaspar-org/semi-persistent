@@ -1154,6 +1154,20 @@ where
             final(self).list_seq(l as int) == seq![payload] + old(self).list_seq(l as int),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects, for aggregate invariants stated over the model
+            // (egraph-wf W5): the model gains exactly the fresh node at the
+            // list's front, and no stored payload changes.
+            final(self).model_view() == old(self).model_view().update(l as int,
+                seq![old(self).nodes_view().len() as usize]
+                    + old(self).model_view()[l as int]),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Bound the old list length BEFORE mutating: a list is no longer than the arena
         // (`lemma_len_bounded`, from disjointness + in-range by pigeonhole). Combined with
@@ -1316,6 +1330,13 @@ where
                     assert(model[l2] == old_model[l2]);
                 }
             }
+
+            // --- raw effects: the model in one `update`, and the node prefix's
+            // payloads untouched. Both are restatements of the two facts
+            // established at the top of this block; the extensional equality is
+            // what a caller reasoning over the whole model needs.
+            assert(model =~= old_model.update(l as int, seq![slot] + old_model[l as int]));
+            assert(nodes[slot as int].payload == payload);
         }
     }
 
@@ -1959,7 +1980,22 @@ where
             final(self).wf(),
             r is Ok ==> final(self).list_seq(l.id_nat() as int)
                 == seq![payload] + old(self).list_seq(l.id_nat() as int),
-            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r is Ok ==> {
+                &&& final(self).model_view() == old(self).model_view().update(
+                        l.id_nat() as int, seq![old(self).nodes_view().len() as usize]
+                            + old(self).model_view()[l.id_nat() as int])
+                &&& final(self).nodes_view().len() == old(self).nodes_view().len() + 1
+                &&& (forall|k: int| 0 <= k < old(self).nodes_view().len()
+                        ==> (#[trigger] final(self).nodes_view()[k]).payload
+                            == old(self).nodes_view()[k].payload)
+                &&& final(self).nodes_view()[old(self).nodes_view().len() as int].payload
+                    == payload
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).nodes_view() == old(self).nodes_view(),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         if !(l.to_usize() < self.heads.store.data.len()) {
             return Err(crate::error::ContainerError::IndexOutOfBounds);
@@ -2208,6 +2244,18 @@ where
                 == seq![payload] + old(self).list_seq(l.id_nat() as int),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects (egraph-wf W5), inherited from `prepend_raw`.
+            final(self).model_view() == old(self).model_view().update(l.id_nat() as int,
+                seq![old(self).nodes_view().len() as usize]
+                    + old(self).model_view()[l.id_nat() as int]),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Runtime guard: node-id headroom before allocating (N::try_new on
         // the fresh node row; reject-before-mutate).

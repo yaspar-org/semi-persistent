@@ -94,6 +94,17 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   workaround runs exactly (node counts to the digit; the 2-node delta is
   the dropped let commands). History kept in the ledger.
 
+- **Class counts at truncated budgets are order-sensitive under
+  incomplete closure.** The add_use prepend (use-list registration order
+  reversed) leaves every saturating program byte-identical (congruence
+  closure is confluent at a fixpoint) and nodes/match-steps identical
+  everywhere, but math-microbenchmark's `(run 11)` stops mid-closure and
+  its class count moves 507,992 -> 507,995 (+3, 6 ppm): the final round's
+  rebuild had discharged three fewer pending merges when the budget
+  expired. Both partitions are sound. Consequence: class counts on
+  non-saturating programs are reported with this caveat, and final tables
+  re-run at one pinned commit as already required.
+
 ## 5. Benchmark selection and exclusions
 
 The intersection principle: both systems must express the problem without
