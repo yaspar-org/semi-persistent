@@ -1623,7 +1623,8 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     let mut join = LeapfrogJoin::new(cursors);
     while join.is_valid() {
         let id = join.key();
-        if op_filter.is_none_or(|o| eg.node_op(id) == o) {
+        if op_filter.is_none_or(|o| index.full.round_op(id).unwrap_or_else(|| eg.node_op(id)) == o)
+        {
             env.set(target, id);
             run_step(plan, step_idx + 1, eg, index, globals, env, results);
         }
