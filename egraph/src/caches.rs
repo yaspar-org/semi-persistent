@@ -42,15 +42,49 @@ impl BuildHasher for PassthroughBuildHasher {
     }
 }
 
+/// A node's content hash, folded to 32 bits.
+///
+/// The index stores the fingerprint rather than the whole 64-bit hash. It is
+/// not a filter that has to be exact — every candidate the table returns is
+/// still confirmed against the node's operator and children — so its only job
+/// is to keep the table from reading the node arena on a near-miss, and 32
+/// bits do that: at a million nodes the expected number of colliding pairs in
+/// the whole table is under two hundred.
+///
+/// What the width buys is the entry: `(StoredKey<u32>, ())` is eight bytes
+/// where `(StoredKey<u64>, G)` was sixteen, so a probe of a million-node table
+/// touches half as many cache lines and a growth rehashes half as much memory.
+type Fingerprint = u32;
+
+/// Fold a 64-bit content hash into a fingerprint, mixing the high half in so
+/// every input bit reaches the result.
+#[inline]
+fn fold32(h: u64) -> Fingerprint {
+    (h ^ (h >> 32)) as Fingerprint
+}
+
+/// Spread a fingerprint over the 64 bits hashbrown reads.
+///
+/// hashbrown takes the bucket index from the low bits and the control byte
+/// from the top seven, so a fingerprint zero-extended into a `u64` would file
+/// every entry under the same control byte and turn each probe into a scan.
+/// Multiplying by an odd constant is a bijection on `u64`, so distinct
+/// fingerprints keep distinct hashes and equal ones keep equal hashes — which
+/// is what lets `remove` find an entry from its stored fingerprint.
+#[inline]
+fn spread(fp: Fingerprint) -> u64 {
+    (fp as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct StoredKey<L> {
-    content_hash: u64,
+    fp: Fingerprint,
     local_id: L,
 }
 
 impl<L> Hash for StoredKey<L> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.content_hash);
+        state.write_u64(spread(self.fp));
     }
 }
 impl<L: PartialEq> PartialEq for StoredKey<L> {
@@ -94,7 +128,7 @@ pub struct FixedArityCache<
 > {
     /// One entry per node, so `L` (a local node id) is the index width.
     nodes: VecI<FixedArityNode<G, O, K>, L, TRACK>,
-    index: hashbrown::HashMap<StoredKey<L>, G, PassthroughBuildHasher>,
+    index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
     /// Recanonicalization history, indexed at `usize`: its population is the number of
     /// rewrites performed, not the number of nodes, and a single node can be recanonicalized
     /// arbitrarily many times — so no id capacity bounds it and `L` here would be a cap.
@@ -149,30 +183,24 @@ impl<
     }
 
     pub fn probe(&self, op: &O, children: &[G; K]) -> Option<G> {
-        let h = self.hash_content(op, children);
+        let fp = self.fingerprint(op, children);
         self.index
             .raw_entry()
-            .from_hash(h, |sk| {
-                sk.content_hash == h && {
+            .from_hash(spread(fp), |sk| {
+                sk.fp == fp && {
                     let n = self.nodes.get(sk.local_id);
                     n.op() == *op && n.children == *children
                 }
             })
-            .map(|(_, &gid)| gid)
+            .map(|(sk, _)| self.nodes.get(sk.local_id).global_id())
     }
 
     pub fn insert(&mut self, global_id: G, op: O, children: [G; K]) -> L {
         let node = FixedArityNode::new(global_id, op, children);
-        let h = self.hash_content(&op, &children);
+        let fp = self.fingerprint(&op, &children);
         let lid = self.nodes.len();
         self.nodes.try_push(node).expect("push: within index word");
-        self.index.insert(
-            StoredKey {
-                content_hash: h,
-                local_id: lid,
-            },
-            global_id,
-        );
+        self.index.insert(StoredKey { fp, local_id: lid }, ());
         lid
     }
 
@@ -203,12 +231,12 @@ impl<
         touched: &mut Vec<G>,
     ) {
         let mut node = self.nodes.get(local_id);
-        let old_hash = self.hash_content(&node.op(), &node.children);
+        let old_fp = self.fingerprint(&node.op(), &node.children);
 
         F::canonize(&mut node.children, &find);
 
-        let new_hash = self.hash_content(&node.op(), &node.children);
-        if new_hash == old_hash {
+        let new_fp = self.fingerprint(&node.op(), &node.children);
+        if new_fp == old_fp {
             let old = self.nodes.get(local_id);
             if old.children == node.children {
                 return;
@@ -228,7 +256,7 @@ impl<
         }
 
         self.index.remove(&StoredKey {
-            content_hash: old_hash,
+            fp: old_fp,
             local_id,
         });
 
@@ -245,10 +273,10 @@ impl<
 
         self.index.insert(
             StoredKey {
-                content_hash: new_hash,
+                fp: new_fp,
                 local_id,
             },
-            gid,
+            (),
         );
     }
 
@@ -301,22 +329,21 @@ impl<
         for i in 0..count {
             let lid = L::from_usize(i);
             let n = self.nodes.get(lid);
-            let h = n.content_hash();
             self.index.insert(
                 StoredKey {
-                    content_hash: h,
+                    fp: fold32(n.content_hash()),
                     local_id: lid,
                 },
-                n.global_id(),
+                (),
             );
         }
     }
 
-    fn hash_content(&self, op: &O, children: &[G; K]) -> u64 {
+    fn fingerprint(&self, op: &O, children: &[G; K]) -> Fingerprint {
         let mut h = rapidhash::fast::RapidHasher::default();
         op.hash(&mut h);
         children.hash(&mut h);
-        h.finish()
+        fold32(h.finish())
     }
 }
 
@@ -339,7 +366,7 @@ pub struct VariableArityCache<
     /// nodes, which neither `L`'s nor `G`'s capacity bounds, so an id-width index here would
     /// be a new cap rather than a narrowing. See [`VariableArityNode::start`].
     children: VecI<C, usize, TRACK>,
-    index: hashbrown::HashMap<StoredKey<L>, G, PassthroughBuildHasher>,
+    index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
     /// Recanonicalization history. `usize` for a different reason than `children`: the
     /// population here is the number of *rewrites* the run has performed, which is unbounded
     /// by any id capacity — a single node can be recanonicalized arbitrarily many times.
@@ -412,16 +439,16 @@ impl<
     }
 
     pub fn probe(&self, op: O, elems: &[C]) -> Option<G> {
-        let h = self.hash_content(&op, elems);
+        let fp = self.fingerprint(&op, elems);
         self.index
             .raw_entry()
-            .from_hash(h, |sk| {
-                sk.content_hash == h && {
+            .from_hash(spread(fp), |sk| {
+                sk.fp == fp && {
                     let n = self.nodes.get(sk.local_id);
                     n.op() == op && self.children_eq(&n, elems)
                 }
             })
-            .map(|(_, &gid)| gid)
+            .map(|(sk, _)| self.nodes.get(sk.local_id).global_id())
     }
 
     pub fn insert(&mut self, global_id: G, op: O, elems: &[C]) -> L {
@@ -431,16 +458,10 @@ impl<
         }
         let end = self.children.len();
         let node = VariableArityNode::make(global_id, op, start, end);
-        let h = self.hash_content(&op, elems);
+        let fp = self.fingerprint(&op, elems);
         let lid = self.nodes.len();
         self.nodes.try_push(node).expect("push: within index word");
-        self.index.insert(
-            StoredKey {
-                content_hash: h,
-                local_id: lid,
-            },
-            global_id,
-        );
+        self.index.insert(StoredKey { fp, local_id: lid }, ());
         lid
     }
 
@@ -475,7 +496,7 @@ impl<
     ) {
         let node = self.nodes.get(local_id);
         let (start, end) = node.span();
-        let old_hash = self.hash_children(&node);
+        let old_fp = self.children_fingerprint(&node);
 
         buf.clear();
         V::canonize(buf, start, end, |i| self.children.get(i), &find, mode);
@@ -519,7 +540,7 @@ impl<
         }
 
         self.index.remove(&StoredKey {
-            content_hash: old_hash,
+            fp: old_fp,
             local_id,
         });
 
@@ -537,7 +558,7 @@ impl<
             self.nodes.set(local_id, updated);
         }
 
-        let new_hash = self.hash_content(&node.op(), &buf[..new_len]);
+        let new_fp = self.fingerprint(&node.op(), &buf[..new_len]);
 
         if let Some(existing_gid) = self.probe(node.op(), &buf[..new_len]) {
             collisions.push((gid, existing_gid));
@@ -545,10 +566,10 @@ impl<
 
         self.index.insert(
             StoredKey {
-                content_hash: new_hash,
+                fp: new_fp,
                 local_id,
             },
-            gid,
+            (),
         );
     }
 
@@ -632,25 +653,19 @@ impl<
         for i in 0..count {
             let lid = L::from_usize(i);
             let n = self.nodes.get(lid);
-            let h = self.hash_children(&n);
-            self.index.insert(
-                StoredKey {
-                    content_hash: h,
-                    local_id: lid,
-                },
-                n.global_id(),
-            );
+            let fp = self.children_fingerprint(&n);
+            self.index.insert(StoredKey { fp, local_id: lid }, ());
         }
     }
 
-    fn hash_content(&self, op: &O, elems: &[C]) -> u64 {
+    fn fingerprint(&self, op: &O, elems: &[C]) -> Fingerprint {
         let mut h = rapidhash::fast::RapidHasher::default();
         op.hash(&mut h);
         elems.hash(&mut h);
-        h.finish()
+        fold32(h.finish())
     }
 
-    fn hash_children(&self, node: &VariableArityNode<G, O>) -> u64 {
+    fn children_fingerprint(&self, node: &VariableArityNode<G, O>) -> Fingerprint {
         let mut h = rapidhash::fast::RapidHasher::default();
         node.op().hash(&mut h);
         let (start, end) = node.span();
@@ -658,7 +673,7 @@ impl<
         for i in start..end {
             self.children.get(i).hash(&mut h);
         }
-        h.finish()
+        fold32(h.finish())
     }
 }
 
@@ -668,7 +683,7 @@ impl<
 
 pub struct LitCache<G: DenseId, O: DenseId, V: DenseId, L: DenseId, const TRACK: bool = true> {
     nodes: VecI<LitNode<G, O, V>, L, TRACK>,
-    index: hashbrown::HashMap<StoredKey<L>, G, PassthroughBuildHasher>,
+    index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
 }
 
 impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const TRACK: bool> Default
@@ -706,30 +721,24 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
     }
 
     pub fn probe(&self, op: O, lit: V) -> Option<G> {
-        let h = self.hash_content(&op, &lit);
+        let fp = self.fingerprint(&op, &lit);
         self.index
             .raw_entry()
-            .from_hash(h, |sk| {
-                sk.content_hash == h && {
+            .from_hash(spread(fp), |sk| {
+                sk.fp == fp && {
                     let n = self.nodes.get(sk.local_id);
                     n.op() == op && n.lit == lit
                 }
             })
-            .map(|(_, &gid)| gid)
+            .map(|(sk, _)| self.nodes.get(sk.local_id).global_id())
     }
 
     pub fn insert(&mut self, global_id: G, op: O, lit: V) -> L {
         let node = LitNode::new(global_id, op, lit);
-        let h = self.hash_content(&op, &lit);
+        let fp = self.fingerprint(&op, &lit);
         let lid = self.nodes.len();
         self.nodes.try_push(node).expect("push: within index word");
-        self.index.insert(
-            StoredKey {
-                content_hash: h,
-                local_id: lid,
-            },
-            global_id,
-        );
+        self.index.insert(StoredKey { fp, local_id: lid }, ());
         lid
     }
 
@@ -769,22 +778,21 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
         for i in 0..count {
             let lid = L::from_usize(i);
             let n = self.nodes.get(lid);
-            let h = n.content_hash();
             self.index.insert(
                 StoredKey {
-                    content_hash: h,
+                    fp: fold32(n.content_hash()),
                     local_id: lid,
                 },
-                n.global_id(),
+                (),
             );
         }
     }
 
-    fn hash_content(&self, op: &O, lit: &V) -> u64 {
+    fn fingerprint(&self, op: &O, lit: &V) -> Fingerprint {
         let mut h = rapidhash::fast::RapidHasher::default();
         op.hash(&mut h);
         lit.hash(&mut h);
-        h.finish()
+        fold32(h.finish())
     }
 }
 
