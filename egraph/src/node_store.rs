@@ -139,14 +139,15 @@ where
         op: O,
         children: &[G],
         ops: &OpRegistry<O, S, TRACK>,
+        flags: u8,
     ) -> Added<G> {
         match ops.info(op).kind {
             OpKind::Normal { .. } => match children.len() {
-                0 => self.add_plain0(op),
-                1 => self.add_plain1(op, children[0]),
-                2 => self.add_plain2(op, [children[0], children[1]]),
-                3 => self.add_plain3(op, [children[0], children[1], children[2]]),
-                _ => self.add_plain_n(op, children),
+                0 => self.add_plain0(op, flags),
+                1 => self.add_plain1(op, children[0], flags),
+                2 => self.add_plain2(op, [children[0], children[1]], flags),
+                3 => self.add_plain3(op, [children[0], children[1], children[2]], flags),
+                _ => self.add_plain_n(op, children, flags),
             },
             OpKind::Commutative { .. } => {
                 assert_eq!(children.len(), 2);
@@ -155,9 +156,9 @@ where
                 } else {
                     [children[1], children[0]]
                 };
-                self.add_c(op, pair)
+                self.add_c(op, pair, flags)
             }
-            OpKind::A { .. } => self.add_a(op, children),
+            OpKind::A { .. } => self.add_a(op, children, flags),
             OpKind::MSet { .. } => panic!("use add_mset with pre-canonicalized children"),
             OpKind::Set { .. } => panic!("use add_set with pre-canonicalized children"),
             OpKind::Lit => panic!("use add_lit for literal operators"),
@@ -168,7 +169,7 @@ where
     // Per-kind insertion
     // -----------------------------------------------------------------------
 
-    pub fn add_plain0(&mut self, op: O) -> Added<G> {
+    pub fn add_plain0(&mut self, op: O, flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.plain0.probe_or_insert(fresh, op, []) {
             InsertResult::Hit { global_id } => {
@@ -176,13 +177,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.plain0.get(local_id);
+                    n.flags |= flags;
+                    self.plain0.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Plain0(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_plain1(&mut self, op: O, child: G) -> Added<G> {
+    pub fn add_plain1(&mut self, op: O, child: G, flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.plain1.probe_or_insert(fresh, op, [child]) {
             InsertResult::Hit { global_id } => {
@@ -190,13 +196,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.plain1.get(local_id);
+                    n.flags |= flags;
+                    self.plain1.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Plain1(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_plain2(&mut self, op: O, children: [G; 2]) -> Added<G> {
+    pub fn add_plain2(&mut self, op: O, children: [G; 2], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.plain2.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -204,13 +215,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.plain2.get(local_id);
+                    n.flags |= flags;
+                    self.plain2.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Plain2(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_plain3(&mut self, op: O, children: [G; 3]) -> Added<G> {
+    pub fn add_plain3(&mut self, op: O, children: [G; 3], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.plain3.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -218,13 +234,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.plain3.get(local_id);
+                    n.flags |= flags;
+                    self.plain3.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Plain3(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_c(&mut self, op: O, children: [G; 2]) -> Added<G> {
+    pub fn add_c(&mut self, op: O, children: [G; 2], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.spair.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -232,13 +253,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.spair.get(local_id);
+                    n.flags |= flags;
+                    self.spair.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::SPair(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_plain_n(&mut self, op: O, children: &[G]) -> Added<G> {
+    pub fn add_plain_n(&mut self, op: O, children: &[G], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.plain_n.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -246,13 +272,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.plain_n.get(local_id);
+                    n.flags |= flags;
+                    self.plain_n.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::PlainN(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_a(&mut self, op: O, children: &[G]) -> Added<G> {
+    pub fn add_a(&mut self, op: O, children: &[G], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.seq.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -260,13 +291,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.seq.get(local_id);
+                    n.flags |= flags;
+                    self.seq.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Seq(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_mset(&mut self, op: O, children: &[C]) -> Added<G> {
+    pub fn add_mset(&mut self, op: O, children: &[C], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.mset.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -274,13 +310,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.mset.get(local_id);
+                    n.flags |= flags;
+                    self.mset.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::MSet(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_set(&mut self, op: O, children: &[G]) -> Added<G> {
+    pub fn add_set(&mut self, op: O, children: &[G], flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.set.probe_or_insert(fresh, op, children) {
             InsertResult::Hit { global_id } => {
@@ -288,13 +329,18 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.set.get(local_id);
+                    n.flags |= flags;
+                    self.set.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Set(local_id));
                 Added::Fresh(fresh)
             }
         }
     }
 
-    pub fn add_lit(&mut self, op: O, lit: V) -> Added<G> {
+    pub fn add_lit(&mut self, op: O, lit: V, flags: u8) -> Added<G> {
         let fresh = self.routing.reserve();
         match self.lit.probe_or_insert(fresh, op, lit) {
             InsertResult::Hit { global_id } => {
@@ -302,6 +348,11 @@ where
                 Added::Existing(global_id)
             }
             InsertResult::Inserted { local_id } => {
+                if flags != 0 {
+                    let mut n = self.lit.get(local_id);
+                    n.flags |= flags;
+                    self.lit.set(local_id, n);
+                }
                 self.routing.finalize(fresh, NodeRef::Lit(local_id));
                 Added::Fresh(fresh)
             }
@@ -542,9 +593,9 @@ mod tests {
         let (mut ns, ops) = setup();
         let zero = ops.id_by_name("Zero").unwrap();
 
-        let a = ns.add(zero, &[], &ops);
+        let a = ns.add(zero, &[], &ops, 0);
         assert!(a.is_fresh());
-        let b = ns.add(zero, &[], &ops);
+        let b = ns.add(zero, &[], &ops, 0);
         assert!(!b.is_fresh());
         assert_eq!(a.id(), b.id());
         assert_eq!(ns.len(), 1);
@@ -556,11 +607,11 @@ mod tests {
         let eq = ops.id_by_name("Eq").unwrap();
         let ilit = ops.id_by_name("ILit").unwrap();
 
-        let a = ns.add_lit(ilit, LitValId::new(0));
-        let b = ns.add_lit(ilit, LitValId::new(1));
+        let a = ns.add_lit(ilit, LitValId::new(0), 0);
+        let b = ns.add_lit(ilit, LitValId::new(1), 0);
 
-        let e1 = ns.add(eq, &[a.id(), b.id()], &ops);
-        let e2 = ns.add(eq, &[b.id(), a.id()], &ops);
+        let e1 = ns.add(eq, &[a.id(), b.id()], &ops, 0);
+        let e2 = ns.add(eq, &[b.id(), a.id()], &ops, 0);
         assert!(e1.is_fresh());
         assert!(!e2.is_fresh());
         assert_eq!(e1.id(), e2.id());
@@ -572,8 +623,8 @@ mod tests {
         let neg = ops.id_by_name("Neg").unwrap();
         let ilit = ops.id_by_name("ILit").unwrap();
 
-        let lit = ns.add_lit(ilit, LitValId::new(42));
-        let n = ns.add(neg, &[lit.id()], &ops);
+        let lit = ns.add_lit(ilit, LitValId::new(42), 0);
+        let n = ns.add(neg, &[lit.id()], &ops, 0);
         let r = ns.routing().get(n.id());
         assert!(matches!(r, NodeRef::Plain1(_)));
     }
@@ -584,10 +635,10 @@ mod tests {
         let neg = ops.id_by_name("Neg").unwrap();
         let ilit = ops.id_by_name("ILit").unwrap();
 
-        let a = ns.add_lit(ilit, LitValId::new(0)).id(); // e0
-        let b = ns.add_lit(ilit, LitValId::new(1)).id(); // e1
-        let na = ns.add(neg, &[a], &ops).id(); // neg(e0) = e2
-        let nb = ns.add(neg, &[b], &ops).id(); // neg(e1) = e3
+        let a = ns.add_lit(ilit, LitValId::new(0), 0).id(); // e0
+        let b = ns.add_lit(ilit, LitValId::new(1), 0).id(); // e1
+        let na = ns.add(neg, &[a], &ops, 0).id(); // neg(e0) = e2
+        let nb = ns.add(neg, &[b], &ops, 0).id(); // neg(e1) = e3
 
         // simulate union(a, b) → find(b) = a
         let mut g_buf = Vec::new();
@@ -613,8 +664,8 @@ mod tests {
         let neg = ops.id_by_name("Neg").unwrap();
         let ilit = ops.id_by_name("ILit").unwrap();
 
-        let a = ns.add_lit(ilit, LitValId::new(0)).id();
-        let _na = ns.add(neg, &[a], &ops).id();
+        let a = ns.add_lit(ilit, LitValId::new(0), 0).id();
+        let _na = ns.add(neg, &[a], &ops, 0).id();
 
         let mut g_buf = Vec::new();
         let mut mset_buf = Vec::new();

@@ -635,9 +635,20 @@ where
         //   - single mult-1    ⇒ the term IS that child (`+(a, e) → {a} = a`, `and(a,a) → {a} = a`)
         // These hold with completion off; completion only adds the cross-rule (superposition)
         // consequences. `find_unit`/degeneracy read `unit_node`, resolved at registration.
-        let unit = self.unit_node(op);
+        // The constructor bit is stamped at creation, not written back after:
+        // `set_node_flag` would have to resolve the routing table and dispatch
+        // on the node kind again, for a node the store has just built.
+        let node_flags = if self.ops.info(op).is_constructor {
+            crate::node_types::FLAG_CONSTRUCTOR
+        } else {
+            0
+        };
         let result = match self.ops.info(op).kind {
             OpKind::MSet { .. } => {
+                // Only the two completion arms read the identity, and looking it
+                // up is a hash probe of the semi-persistent unit map — a cost the
+                // plain-op path used to pay on every `add`.
+                let unit = self.unit_node(op);
                 self.g_buf.sort_by_key(|id| id.to_usize());
                 self.mset_buf.clear();
                 for &id in &self.g_buf {
@@ -712,10 +723,11 @@ where
                     1 if Cfg::mset_child_mult(&self.mset_buf[0]) == Cfg::M::ONE => {
                         return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
                     }
-                    _ => self.nodes.add_mset(op, &self.mset_buf),
+                    _ => self.nodes.add_mset(op, &self.mset_buf, node_flags),
                 }
             }
             OpKind::Set { .. } => {
+                let unit = self.unit_node(op);
                 self.g_buf.sort_by_key(|id| id.to_usize());
                 self.g_buf.dedup();
                 // Identity: drop the unit's class (`and(a, unit) → {a}`).
@@ -736,21 +748,14 @@ where
                         ),
                     },
                     1 => return self.classes.find(self.g_buf[0]),
-                    _ => self.nodes.add_set(op, &self.g_buf),
+                    _ => self.nodes.add_set(op, &self.g_buf, node_flags),
                 }
             }
-            _ => self.nodes.add(op, &self.g_buf, &self.ops),
+            _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
         };
 
-        let id = self.register_if_fresh(result);
+        let id = self.register_if_fresh(result, op);
         if result.is_fresh() {
-            // Stamp constructor-ness onto the node at creation. Redundant with the op's
-            // `is_constructor` (the op is recoverable from the node), but the flag is what
-            // node-level consumers read — they already hold `flags` for `FLAG_SUBSUMED` and
-            // would otherwise need a registry lookup per node.
-            if self.ops.info(op).is_constructor {
-                self.set_node_flag(id, crate::node_types::FLAG_CONSTRUCTOR);
-            }
             match self.ops.info(op).kind {
                 OpKind::MSet { .. } => {
                     for c in &self.mset_buf {
@@ -773,8 +778,8 @@ where
     }
 
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
-        let result = self.nodes.add_lit(op, lit);
-        self.register_if_fresh(result)
+        let result = self.nodes.add_lit(op, lit, 0);
+        self.register_if_fresh(result, op)
     }
 
     /// Build a *ground* checked term (a literal or a constructor applied to ground args) into a
@@ -2247,7 +2252,7 @@ where
         self.touched.clear();
     }
 
-    fn register_if_fresh(&mut self, result: Added<Cfg::G>) -> Cfg::G {
+    fn register_if_fresh(&mut self, result: Added<Cfg::G>, op: Cfg::O) -> Cfg::G {
         if result.is_fresh() {
             let id = result.id();
             let repr = self.classes.add_singleton(id);
@@ -2257,7 +2262,7 @@ where
             // that is not a monomial, so the size-1 monomial `{class}` is its normal-form
             // representative (the completion rule RHS, §9a). Completion nodes are not atomic
             // by themselves; they become atomic only when referenced as a child (`add_use`).
-            match self.completion_column(id) {
+            match self.ops.completion_column(op) {
                 Some(col) => {
                     // Fix the pool row width to nb_completion on first completion-node seed.
                     // Ops are declared before terms (declare-before-build), so the count is
