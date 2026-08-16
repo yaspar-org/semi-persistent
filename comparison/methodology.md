@@ -88,6 +88,26 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   (untagged rules), egglog-style; the alternative (run everything) would
   let scoped AC rules fire in main runs and destroy the isolated add-ac
   experiment.
+- **calc.egg substitutes for herbie.egg in the E6 macro exhibit.** Their
+  `tests/web-demo/herbie.egg` needs `BigRat`, two `:merge` lattice functions
+  and one relation, all outside the intersection set, and the analysis they
+  support gates a large share of its 180 rewrites. `calc.egg` translates
+  with two renamings and nothing else: `(datatype G)` with no variants
+  becomes `(sort G)`, and identifiers outside our lexical class are renamed
+  (`g*` -> `gmul`, `$X` -> `gX`). Measured consequence: none on cost, all
+  four blocks run under 1 ms on both engines, which is the finding
+  (comparison/semi-persistence/semi-persistence.md section 7).
+- **E6 reports the minimum of the timed runs, not the median.** Its
+  cost-per-cycle numbers are differences of two wall times whose delta is a
+  fraction of either term, and this pass ran with a user application holding
+  roughly half a core; a median of either term leaks that noise into the
+  difference and produced negative per-cycle costs. The CSV keeps every run,
+  so a median is recomputable. Applies only to E6.
+- **E6's binaries are pinned copies, not a commit.** Another agent rebuilt
+  the shared `target/` mid-sweep, so the tables were re-run against copies at
+  recorded md5s; the doc states them and states that the first, mixed pass
+  reproduces sections 3, 4 and 6 within 8%, which bounds what the in-flight
+  engine changes could have moved.
 - **Literal-matcher workaround, since withdrawn.** Six math-microbenchmark
   rules used let-bound globals while a matcher defect made LHS literals
   dead (section 6); after the fix, direct literals reproduce the

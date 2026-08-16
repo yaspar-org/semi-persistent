@@ -140,3 +140,19 @@ traced to the planner's selectivity constants and fixed (ch 20 S1, commits
 (165cc9f) and the workaround withdrawn with exact node-count equivalence.
 Post-fix pilot tables are in comparison/; the full set runs at one pinned
 commit per methodology.md.
+
+Status 2026-08-16: E6 measured, in `comparison/semi-persistence/`. Their push
+deep-copies the e-graph (`egglog src/lib.rs:697`, down to the row buffers and
+hash index at `core-relations/src/table/mod.rs:154`), so both engines are
+linear in base size S per cycle and the expected flat-versus-linear separation
+does not appear: our pop rebuilds ten hashcons indexes from scratch
+(`egraph/src/caches.rs:318, 634, 767`), which is the only O(S) term on the
+path and the condition that would revive the separation if removed. What holds
+at S = 1e6: our assume/derive/retract cycle costs 12.6 ms against their 33.0 ms
+(2.6x), our in-scope work is O(touched) where theirs is not, and restoring to a
+mark beats re-running the base 102x on that cycle, 4.5x once the cycle also
+saturates. Against that, egglog finishes the full cycle 10.5x faster, because
+one incremental round costs them 1.8 ms and costs our naive matcher 353 ms:
+that gap, not push/pop, decides the workload. herbie.egg is out of the
+intersection set (BigRat, lattice merges, one relation) so calc.egg is the
+macro exhibit, and every block of it is under 1 ms on both engines.

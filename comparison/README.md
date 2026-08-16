@@ -38,6 +38,15 @@ encoding reaches 37 902 nodes at n = 20; read `addac-sweep.md` for the shape of 
 growth, for the goal-binding deviation that makes the three programs the same problem,
 and for the timing trap that erases the result.
 
+`semi-persistence/` holds work item E6, which quantifies what push/pop is worth:
+the survey of how each engine implements it, a micro-benchmark of push/assert/
+run/check/pop cycles over bases of 1e4 to 1e6 nodes on both engines, the
+internal restore-versus-re-run baseline that needs no cross-engine caveat, and
+`calc.egg` as the multi-block macro exhibit. Read
+`semi-persistence/semi-persistence.md`; its section 8 states what the numbers do
+not establish, which includes the asymptotic separation the experiment was
+designed to find.
+
 Read the ledgers before the numbers. `math-microbenchmark.deviations.md` in particular
 records a deviation large enough to change how its native column may be read: eleven of
 its rules are restated in n-ary form, because a binary pattern against a variadic AC
