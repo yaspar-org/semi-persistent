@@ -65,6 +65,9 @@ contracts.)
 12. **[The Sorted-Vec Cursor](12-sorted-vec-cursor.md)**: the galloping seek,
     verified. The first proof here whose subject is a query-engine algorithm
     rather than a container; reuses the B+tree's `seek_target_idx` unchanged.
+15. **[The Dense-Span Multimap](15-dense-span-map.md)**: the build-once index
+    behind the e-graph's per-round index families: a two-pass counting build
+    refined to the per-key filter of its input stream, with no mark/restore.
 
 ## Techniques: reusable lessons (chapters 03–08)
 
