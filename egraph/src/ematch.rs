@@ -608,9 +608,10 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
 
     /// Append one match.
     pub fn push(&mut self, m: &Match<Cfg>) {
-        for i in 0..self.node_stride {
-            self.nodes.push(m.nodes[i].unwrap());
-        }
+        // `extend` over a sized iterator, not a `push` per variable: the
+        // capacity check moves out of the loop, and this runs once per match.
+        self.nodes
+            .extend(m.nodes[..self.node_stride].iter().map(|v| v.unwrap()));
         if !m.mults.is_empty() {
             self.mults.extend_from_slice(&m.mults);
         }
