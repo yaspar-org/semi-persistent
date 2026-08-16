@@ -1,0 +1,27 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/eqsat-basic.egg (7b1adf2).
+;; Config: native. Add is declared :comm and its commutativity rewrite rule is deleted.
+;; The original has no associativity rule for Add, so the native dual is C, not AC;
+;; see eqsat-basic.deviations.md.
+(datatype Math
+  (Num i64)
+  (Var String)
+  (Add Math Math :comm)
+  (Mul Math Math))
+
+;; expr1 = 2 * (x + 3)
+(let expr1 (Mul (Num 2) (Add (Var "x") (Num 3))))
+;; expr2 = 6 + 2 * x
+(let expr2 (Add (Num 6) (Mul (Num 2) (Var "x"))))
+
+(rewrite (Mul a (Add b c))
+         (Add (Mul a b) (Mul a c)))
+(rewrite (Add (Num a) (Num b))
+         (Num (i64::+ a b)))
+(rewrite (Mul (Num a) (Num b))
+         (Num (i64::* a b)))
+
+(run 10)
+(check (= expr1 expr2))
+(print-size)
+(print-stats :file "eqsat-basic.native.stats.json")

@@ -104,3 +104,15 @@ via E2's stats output.
 
 Order: E1 and E2 (our-side features, one agent, two commits), then E3, then
 E4 with a pilot on benchmarks 1, 2, 8 before the full set.
+
+Status 2026-08-15: E1, E2 done. E3 and E4 landed as the pilot on benchmarks 1,
+2 and 8 in `comparison/` (three configurations each, both of our saturation
+strategies, protocol and per-benchmark deviation ledgers in that directory).
+Native AC beats our own rules encoding 10.3x on math-microbenchmark and 3.6x on
+the add-ac block. egglog runs math-microbenchmark 22.7x faster than our rules
+encoding runs the same rules to the same 11 iterations, which 18% more nodes
+does not explain: that is a matching-throughput gap to explain before the full
+set. Semi-naive is 13.9x slower than naive on math-microbenchmark under native
+AC for the same final e-graph. Translation also found a matcher defect: a
+concrete literal in a rule LHS never matches, killing six of that benchmark's
+24 rules until worked around with let-bound globals.

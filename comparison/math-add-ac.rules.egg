@@ -1,0 +1,32 @@
+;; TYPES: machine
+;; Translation of the `add-ac` ruleset block of egglog tests/web-demo/math.egg
+;; (7b1adf2, lines 138-160), extracted standalone.
+;; Config: AC modelled as explicit rewrite rules, egglog's own encoding.
+;; See math-add-ac.deviations.md.
+(datatype Math
+    (Add Math Math)
+    (Const f64))
+
+(ruleset add_ac)
+(rewrite (Add a b) (Add b a) :ruleset add_ac)
+(rewrite (Add a (Add b c)) (Add (Add a b) c) :ruleset add_ac)
+;; Add one through seven
+(let res
+  (Add (Const 1.0)
+       (Add (Const 2.0)
+            (Add (Const 3.0)
+                 (Add (Const 4.0)
+                      (Add (Const 5.0)
+                           (Add (Const 6.0)
+                                (Const 7.0))))))))
+(run add_ac 7)
+(check (= res
+  (Add (Const 7.0)
+       (Add (Const 6.0)
+            (Add (Const 5.0)
+                 (Add (Const 4.0)
+                      (Add (Const 3.0)
+                           (Add (Const 2.0)
+                                (Const 1.0)))))))))
+(print-size)
+(print-stats :file "math-add-ac.rules.stats.json")
