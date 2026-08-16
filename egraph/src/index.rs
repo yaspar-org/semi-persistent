@@ -82,6 +82,56 @@ impl<G: DenseId> SortedVec<G> {
     }
 }
 
+/// Mean fan-out of each access path, measured on the nodes this index holds.
+///
+/// The scheduler charges a join by how many candidate nodes one probe yields,
+/// and the three probe kinds differ by orders of magnitude on the same
+/// e-graph: on `math-microbenchmark` at iteration 8, enumerating a bound
+/// class's nodes yields 2.51 and enumerating a bound child's parents yields
+/// 1,239 (`comparison/throughput-gap-ours.md`, Q2). Charging both the same
+/// fixed halving underestimated one join by 2,479x and cost 95.3% of an
+/// 11.6 s run. These are the measured replacements; chapter 20 states the
+/// model they feed.
+///
+/// Each number is the **size-biased** mean bucket size, `sum(b^2) / sum(b)`
+/// over the path's buckets, not the plain mean `sum(b) / count(b)`. A probe key
+/// is a variable the join bound from the data, so it lands in a bucket with
+/// probability proportional to that bucket's size: a class that is the child of
+/// a thousand nodes is probed a thousand times and a class that is the child of
+/// one is probed once. The plain mean answers "how big is a bucket picked at
+/// random", which no probe does, and on a distribution with one hub bucket of
+/// size H among K singletons it reports about 1 where the size-biased mean
+/// reports about H. Chapter 20's Fact 2 still applies: this is one number per
+/// path, so it prices the *expected* probe and not the individual one, and the
+/// variance is what per-binding driver selection (S3) is for.
+#[derive(Clone, Debug)]
+pub struct FanOuts<O> {
+    /// Nodes in the class a `ByRepr` probe lands in.
+    pub by_repr: f64,
+    /// `(op, position)` -> `op`-nodes in the bucket a `ByChildPos` probe lands
+    /// in, after its intersection with `by_op[op]`. Keyed per op because the
+    /// whole defect is that the two ops of one query differ here by three
+    /// orders of magnitude, and per position because an operator's arguments
+    /// are not drawn from the same classes.
+    pub by_child_pos: FastMap<(O, usize), f64>,
+    /// `op` -> variadic `op`-nodes in the bucket a `ByContains` probe lands in.
+    pub by_contains: FastMap<O, f64>,
+    /// Nodes the index holds, the denominator [`by_repr`](Self::by_repr) is a
+    /// fraction of.
+    pub nodes: usize,
+}
+
+impl<O> Default for FanOuts<O> {
+    fn default() -> Self {
+        Self {
+            by_repr: 1.0,
+            by_child_pos: FastMap::default(),
+            by_contains: FastMap::default(),
+            nodes: 0,
+        }
+    }
+}
+
 /// All sorted indices for leapfrog join, bulk-rebuilt after each e-graph rebuild.
 pub struct IndexStore<Cfg: EGraphConfig> {
     /// by_op[op] → sorted vec of node ids with that operator
@@ -112,6 +162,14 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     /// leaves it empty: a delta is built in the same instant as its full index
     /// and shares that index's canonicalization, so the mapping is stored once.
     pub repr: Vec<Cfg::G>,
+    /// Measured selectivity of each access path, read by the scheduler through
+    /// [`IndexStats::from_index`](crate::schedule::IndexStats::from_index).
+    ///
+    /// Filled by [`build`](Self::build) only, for the same reason as
+    /// [`repr`](Self::repr): a variant prices its delta atom by the delta's
+    /// cardinality against the full index's fan-outs, so measuring the delta's
+    /// own would buy nothing and cost a pass per round.
+    pub fanouts: FanOuts<Cfg::O>,
 }
 
 impl<Cfg: EGraphConfig> IndexStore<Cfg>
@@ -127,7 +185,7 @@ where
         // routing entry was minted through `TypedRouting::reserve`'s checked
         // path) lives with `node_ids`; an inline scan here would restate the
         // unchecked spelling without the justification.
-        let mut store = Self::build_from(eg, eg.node_ids());
+        let mut store = Self::build_from(eg, eg.node_ids(), true);
         store.repr = eg.node_ids().map(|g| eg.class_repr(g)).collect();
         store
     }
@@ -147,20 +205,23 @@ where
         let mut ids: Vec<Cfg::G> = touched.to_vec();
         ids.sort_unstable();
         ids.dedup();
-        Self::build_from(eg, ids.into_iter())
+        Self::build_from(eg, ids.into_iter(), false)
     }
 
     /// Shared bucketing core for [`build`](Self::build) and
     /// [`build_delta`](Self::build_delta): index the given node ids into the
-    /// four crosscutting maps. Skips subsumed nodes.
+    /// four crosscutting maps. Skips subsumed nodes. `measure` additionally
+    /// accumulates [`FanOuts`], which only the full index needs.
     fn build_from<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
         ids: impl Iterator<Item = Cfg::G>,
+        measure: bool,
     ) -> Self {
         let mut by_op: FastMap<Cfg::O, Vec<Cfg::G>> = FastMap::default();
         let mut by_repr: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
         let mut by_child_pos: FastMap<(Cfg::G, Cfg::Index), Vec<Cfg::G>> = FastMap::default();
         let mut by_contains: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
+        let mut indexed = 0usize;
 
         for gid in ids {
             if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
@@ -171,6 +232,7 @@ where
 
             by_op.entry(op).or_default().push(gid);
             by_repr.entry(repr).or_default().push(gid);
+            indexed += 1;
 
             // The counter is `Cfg::Index`-wide and checked. A variadic node's arity is
             // a span in the child pool, so it is bounded by this word and by nothing
@@ -216,12 +278,108 @@ where
                 .collect()
         }
 
+        let by_op = finalize(by_op);
+        let by_repr = finalize(by_repr);
+        let by_child_pos = finalize(by_child_pos);
+        let by_contains = finalize(by_contains);
+        let fanouts = if measure {
+            Self::measure_fanouts(eg, &by_repr, &by_child_pos, &by_contains, indexed)
+        } else {
+            FanOuts::default()
+        };
+
         Self {
-            by_op: finalize(by_op),
-            by_repr: finalize(by_repr),
-            by_child_pos: finalize(by_child_pos),
-            by_contains: finalize(by_contains),
+            by_op,
+            by_repr,
+            by_child_pos,
+            by_contains,
             repr: Vec::new(),
+            fanouts,
+        }
+    }
+
+    /// Measure each access path's size-biased mean bucket size from the
+    /// finished buckets.
+    ///
+    /// One pass over `by_child_pos` and `by_contains`, tallying each bucket's
+    /// parents by operator, because those two maps are keyed by child class
+    /// alone while the join always intersects them with `by_op[op]`: the
+    /// quantity the scheduler needs is the bucket restricted to one operator,
+    /// and on `math-microbenchmark` the two operators of one query differ in it
+    /// by three orders of magnitude. The tally is an array indexed by the
+    /// operator's dense id, so a bucket costs one increment per parent and no
+    /// hashing.
+    fn measure_fanouts<L: LitVal, const TRACK: bool, const PROOFS: bool>(
+        eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+        by_repr: &FastMap<Cfg::G, SortedVec<Cfg::G>>,
+        by_child_pos: &FastMap<(Cfg::G, Cfg::Index), SortedVec<Cfg::G>>,
+        by_contains: &FastMap<Cfg::G, SortedVec<Cfg::G>>,
+        indexed: usize,
+    ) -> FanOuts<Cfg::O> {
+        // (sum of bucket sizes, sum of their squares) per key set.
+        let mut cp: FastMap<(Cfg::O, usize), (u128, u128)> = FastMap::default();
+        let mut ct: FastMap<Cfg::O, (u128, u128)> = FastMap::default();
+        // Indexed by the operator's dense id, grown on demand rather than sized
+        // from the registry: the registry exposes no count, and the ids that
+        // occur here are exactly the ones the buckets hold.
+        let mut tally: Vec<u32> = Vec::new();
+        let mut touched: Vec<usize> = Vec::new();
+
+        let tally_bucket =
+            |bucket: &SortedVec<Cfg::G>, tally: &mut Vec<u32>, touched: &mut Vec<usize>| {
+                touched.clear();
+                for &gid in bucket.as_slice() {
+                    let o = eg.node_op(gid).to_usize();
+                    if o >= tally.len() {
+                        tally.resize(o + 1, 0);
+                    }
+                    if tally[o] == 0 {
+                        touched.push(o);
+                    }
+                    tally[o] += 1;
+                }
+            };
+
+        for (&(_child, pos), bucket) in by_child_pos.iter() {
+            tally_bucket(bucket, &mut tally, &mut touched);
+            for &o in touched.iter() {
+                let c = u128::from(tally[o]);
+                let e = cp
+                    .entry((Cfg::O::from_usize(o), pos.as_usize()))
+                    .or_insert((0, 0));
+                e.0 += c;
+                e.1 += c * c;
+                tally[o] = 0;
+            }
+        }
+        for bucket in by_contains.values() {
+            tally_bucket(bucket, &mut tally, &mut touched);
+            for &o in touched.iter() {
+                let c = u128::from(tally[o]);
+                let e = ct.entry(Cfg::O::from_usize(o)).or_insert((0, 0));
+                e.0 += c;
+                e.1 += c * c;
+                tally[o] = 0;
+            }
+        }
+
+        let biased = |(sum, sq): &(u128, u128)| -> f64 {
+            if *sum == 0 {
+                1.0
+            } else {
+                *sq as f64 / *sum as f64
+            }
+        };
+        let (class_sum, class_sq) = by_repr.values().fold((0u128, 0u128), |(s, q), b| {
+            let c = b.len() as u128;
+            (s + c, q + c * c)
+        });
+
+        FanOuts {
+            by_repr: biased(&(class_sum, class_sq)),
+            by_child_pos: cp.iter().map(|(&k, v)| (k, biased(v))).collect(),
+            by_contains: ct.iter().map(|(&k, v)| (k, biased(v))).collect(),
+            nodes: indexed,
         }
     }
 

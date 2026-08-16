@@ -49,32 +49,48 @@ or more.
 Median wall time over 10 runs after 2 warmups, and the node count each engine reports.
 Regenerate with `run-pilot.py`; the per-run values are in `pilot-results.csv`.
 
+This run followed `registry: memoize completion_column`, so it measures that change and
+chapter 20's S1 together, and egglog's own median calibrates the machine at 523.9 ms
+against the previous run's 508.3 ms on an unchanged binary.
+
 | benchmark | config | median wall | nodes | classes | iterations |
 |---|---|---|---|---|---|
-| eqsat-basic | egglog | 5.8 ms | 11 | not reported | 3 |
+| eqsat-basic | egglog | 6.6 ms | 11 | not reported | 3 |
 | eqsat-basic | ours, rules, naive | 3.3 ms | 17 | 11 | 3 |
-| eqsat-basic | ours, rules, semi-naive | 3.3 ms | 17 | 11 | 3 |
-| eqsat-basic | ours, native, naive | 3.1 ms | 14 | 11 | 3 |
-| eqsat-basic | ours, native, semi-naive | 3.2 ms | 14 | 11 | 3 |
-| math-add-ac | egglog | 9.6 ms | 1 939 | not reported | 7 |
-| math-add-ac | ours, rules, naive | 10.7 ms | 3 256 | 148 | 7 |
-| math-add-ac | ours, rules, semi-naive | 10.0 ms | 3 304 | 134 | 7 |
+| eqsat-basic | ours, rules, semi-naive | 3.4 ms | 17 | 11 | 3 |
+| eqsat-basic | ours, native, naive | 3.2 ms | 14 | 11 | 3 |
+| eqsat-basic | ours, native, semi-naive | 3.3 ms | 14 | 11 | 3 |
+| math-add-ac | egglog | 10.7 ms | 1 939 | not reported | 7 |
+| math-add-ac | ours, rules, naive | 10.8 ms | 3 317 | 159 | 7 |
+| math-add-ac | ours, rules, semi-naive | 10.0 ms | 3 359 | 136 | 7 |
 | math-add-ac | ours, native, naive | 3.0 ms | 25 | 25 | 1 |
 | math-add-ac | ours, native, semi-naive | 3.0 ms | 25 | 25 | 1 |
-| math-microbenchmark | egglog | 508.3 ms | 1 047 896 | not reported | 11 |
-| math-microbenchmark | ours, rules, naive | 11 561.8 ms | 1 234 680 | 506 565 | 11 |
-| math-microbenchmark | ours, rules, semi-naive | 11 299.2 ms | 1 251 193 | 515 357 | 11 |
-| math-microbenchmark | ours, native, naive | 1 118.4 ms | 755 928 | 446 917 | 11 |
-| math-microbenchmark | ours, native, semi-naive | 15 539.4 ms | 755 919 | 446 917 | 11 |
+| math-microbenchmark | egglog | 523.9 ms | 1 047 896 | not reported | 11 |
+| math-microbenchmark | ours, rules, naive | 747.8 ms | 1 233 013 | 507 992 | 11 |
+| math-microbenchmark | ours, rules, semi-naive | 945.3 ms | 1 254 916 | 518 063 | 11 |
+| math-microbenchmark | ours, native, naive | 644.9 ms | 755 926 | 446 915 | 11 |
+| math-microbenchmark | ours, native, semi-naive | 761.7 ms | 755 917 | 446 915 | 11 |
 
-Three results carry the pilot. Native AC beats our own rules encoding by 10.3x on
-`math-microbenchmark` and by 3.6x on `math-add-ac`, at 39% and 99% fewer nodes, which is
-the property the comparison exists to measure. egglog runs `math-microbenchmark` 22.7x
-faster than our rules encoding runs the same program with the same rules to the same
-11 iterations, a gap 18% more nodes does not explain, so it is a matching-throughput
-result and the pilot's main negative finding. Our semi-naive strategy is 13.9x slower than
-naive on `math-microbenchmark` under native AC for the same final e-graph, which is why
-both strategies are reported rather than one.
+Three results carry the pilot, and chapter 20's S1 has moved two of them since the first
+run. egglog runs `math-microbenchmark` 1.4x faster than our rules encoding runs the same
+program with the same rules to the same 11 iterations, against 22.7x before: the gap was
+one join order on one rule and not per-match throughput, which `throughput-gap-ours.md`
+establishes and this table now confirms end to end. The load-independent control is the
+e-matching step count, which the same change takes from 218,567,542 to 7,284,276 on that
+benchmark. Native AC still beats our rules encoding on `math-add-ac`, by 3.6x at 99%
+fewer nodes, and on `math-microbenchmark` it keeps the node-count result (39% fewer) but
+holds only 1.16x of the wall time against 10.3x, because the rules encoding is the
+configuration S1 sped up. Our semi-naive strategy on `math-microbenchmark` under native AC
+was 13.9x slower than naive and is now 1.18x, from the same fix: its variant plans
+mispriced `by_contains` and drove a Mul-Mul self-join on a shared factor, which cost
+198,571,597 match steps against naive's 3,074,117 and now costs 3,167,101.
+
+Node counts moved slightly against the first run, in the second decimal place, because
+matching now reads the round's index snapshot rather than the live union-find
+(chapter 09, "Which Snapshot"): a match an earlier rule of a round creates is found in the
+next round instead of that one, so a run stopped at a fixed iteration budget ends a little
+differently. `math-add-ac` under the rules encoding ends at 3 317 nodes against 3 256, and
+`math-microbenchmark` under the rules encoding at 1 233 013 against 1 234 680.
 
 Translating `math-microbenchmark` also exposed a matcher defect: a concrete literal inside
 a rule's left-hand side never matches, so `(rewrite (Add a (Const 0)) a)` is dead while

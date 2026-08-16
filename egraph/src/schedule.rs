@@ -118,6 +118,10 @@ pub struct IndexStats<O: Eq + Hash> {
     /// atom when no per-atom override is present — correct for naive matching,
     /// where every atom of an op reads the same full bucket.
     pub op_card: std::collections::HashMap<O, usize>,
+    /// Measured mean fan-out of each access path, from the round's index build.
+    /// The default is all-unmeasured, which prices every bound key at the fixed
+    /// halving this model replaces; see [`path_selectivity`].
+    pub fanouts: crate::index::FanOuts<O>,
     /// Per-atom (`atom_id`) driver-scan cardinality, overriding `op_card` for
     /// that atom. Needed for semi-naive: an atom's base cardinality is set by
     /// its **mode** (delta / full / full∖delta), which is per-atom, not per-op —
@@ -138,6 +142,7 @@ impl<O: Eq + Hash> IndexStats<O> {
         Self {
             op_card: std::collections::HashMap::new(),
             atom_card: std::collections::HashMap::new(),
+            fanouts: crate::index::FanOuts::default(),
         }
     }
 }
@@ -151,6 +156,7 @@ impl<O: Eq + Hash + Copy> IndexStats<O> {
         Self {
             op_card: index.by_op.iter().map(|(&op, v)| (op, v.len())).collect(),
             atom_card: std::collections::HashMap::new(),
+            fanouts: index.fanouts.clone(),
         }
     }
 }
@@ -199,48 +205,123 @@ fn base_card<O: Eq + Hash>(op: &O, atom_id: usize, stats: &IndexStats<O>) -> usi
         .unwrap_or(usize::MAX)
 }
 
-/// Halve `base` once per bound key, modelling each bound child/element as an
-/// index intersection that narrows the driver. Mirrors the discount the join
-/// actually applies: `Plain`/`AExact` intersect `by_child_pos` per bound child;
-/// the variadic atoms (A*/AC*/ACI*) intersect `by_contains` per bound element
-/// (see `emit_variadic_join`). Without this, a fully-bound variadic atom is
-/// mis-costed as a full `by_op` scan and the scheduler may refuse to drive from
-/// it even though `by_contains` makes it the cheapest atom.
-fn cost_discounted<O: Eq + Hash>(
-    op: &O,
-    atom_id: usize,
-    n_bound: usize,
-    stats: &IndexStats<O>,
-) -> usize {
-    base_card(op, atom_id, stats) >> n_bound.min(16)
+/// Fraction of an atom's relation that survives intersecting one index bucket.
+///
+/// `fanout` is the bucket size a probe on that path lands in, measured by
+/// [`FanOuts`](crate::index::FanOuts), and `denom` the relation the bucket
+/// filters: `|by_op[op]|` for `by_child_pos` and `by_contains`, the whole
+/// indexed node count for `by_repr`. The ratio is what the halving it replaces
+/// guessed at, and the guess was wrong in both directions at once: measured on
+/// `math-microbenchmark` at iteration 8, a `ByRepr` probe returns 2.51 nodes
+/// and a `ByChildPos` probe 1,239, so charging both a half underestimated one
+/// join by 2,479x (`comparison/throughput-gap-ours.md`, Q2).
+///
+/// Falls back to the halving when the path was never measured, which is every
+/// call from [`schedule`], the stats-free entry point.
+fn path_selectivity(fanout: Option<f64>, denom: usize) -> f64 {
+    match fanout {
+        Some(f) if denom > 0 => (f / denom as f64).clamp(0.0, 1.0),
+        _ => 0.5,
+    }
 }
 
+/// Expected number of candidate nodes an atom's join enumerates, given which
+/// of its keys the scheduler has already bound.
+///
+/// The join drives from `by_op[op]` — or, under semi-naive, from the slice of
+/// it the atom's mode reads, which is what [`base_card`] returns — and
+/// intersects one bucket per bound key. Each intersection multiplies in the
+/// measured selectivity of its access path, so `k` bound keys multiply `k`
+/// measured fractions where the previous model multiplied `k` halves. Two
+/// consequences the halving did not have: the estimate for one bound key is
+/// the size of the bucket that key's probe lands in rather than half the
+/// relation, and a delta-restricted atom is priced by the delta's cardinality
+/// at any position of the order, not only when it drives the scan.
+///
+/// The three paths follow `emit_atom`: a `Plain` atom intersects
+/// `by_child_pos` per bound child, every variadic atom (A*/AC*/ACI*, including
+/// `AExact`) intersects `by_contains` per bound element, and an atom whose
+/// node variable is already bound re-joins within its class through `by_repr`.
 fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
     bound: &[bool],
     stats: &IndexStats<O>,
-) -> usize {
-    let bound_count = |pvs: &[PatVar]| pvs.iter().filter(|p| pv_is_bound(p, bound)).count();
+) -> f64 {
     match atom {
-        RAtom::Plain { op, children, .. } | RAtom::AExact { op, children, .. } => {
-            cost_discounted(op, atom_id, bound_count(children), stats)
+        RAtom::Plain { node, op, children } => {
+            if bound[(*node).idx()] {
+                return by_repr_cost(op, atom_id, stats);
+            }
+            let full = stats.op_card.get(op).copied().unwrap_or(0);
+            let mut cost = base_card(op, atom_id, stats) as f64;
+            for (pos, cv) in children.iter().enumerate() {
+                if pv_is_bound(cv, bound) {
+                    let f = stats.fanouts.by_child_pos.get(&(*op, pos)).copied();
+                    cost *= path_selectivity(f, full);
+                }
+            }
+            cost
         }
-        // Variadic atoms narrow via `by_contains` per bound element, exactly
-        // like Plain's `by_child_pos` — so apply the same per-bound discount.
-        RAtom::APrefix { op, fixed, .. }
-        | RAtom::ASuffix { op, fixed, .. }
-        | RAtom::ABoth { op, fixed, .. } => cost_discounted(op, atom_id, bound_count(fixed), stats),
-        RAtom::ACExact { op, elems, .. } | RAtom::ACSub { op, elems, .. } => {
-            let nb = elems.iter().filter(|(p, _)| pv_is_bound(p, bound)).count();
-            cost_discounted(op, atom_id, nb, stats)
+        RAtom::AExact { node, op, children } => {
+            by_contains_cost(node, op, atom_id, children, bound, stats)
         }
-        RAtom::ACIExact { op, elems, .. } | RAtom::ACISub { op, elems, .. } => {
-            cost_discounted(op, atom_id, bound_count(elems), stats)
+        RAtom::APrefix {
+            node, op, fixed, ..
         }
-        RAtom::Lit { op, .. } | RAtom::LitBind { op, .. } => base_card(op, atom_id, stats),
-        RAtom::Eq(..) | RAtom::EqGlobal(..) => 0,
+        | RAtom::ASuffix {
+            node, op, fixed, ..
+        }
+        | RAtom::ABoth {
+            node, op, fixed, ..
+        } => by_contains_cost(node, op, atom_id, fixed, bound, stats),
+        RAtom::ACExact { node, op, elems }
+        | RAtom::ACSub {
+            node, op, elems, ..
+        } => {
+            let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
+            by_contains_cost(node, op, atom_id, &evs, bound, stats)
+        }
+        RAtom::ACIExact { node, op, elems }
+        | RAtom::ACISub {
+            node, op, elems, ..
+        } => by_contains_cost(node, op, atom_id, elems, bound, stats),
+        RAtom::Lit { op, .. } | RAtom::LitBind { op, .. } => base_card(op, atom_id, stats) as f64,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) => 0.0,
     }
+}
+
+/// Cost of re-joining an atom whose node variable is already bound: the class's
+/// nodes, intersected with the op's. The denominator is every indexed node,
+/// because a class holds nodes of every op.
+fn by_repr_cost<O: Eq + Hash>(op: &O, atom_id: usize, stats: &IndexStats<O>) -> f64 {
+    let sel = path_selectivity(Some(stats.fanouts.by_repr), stats.fanouts.nodes);
+    base_card(op, atom_id, stats) as f64 * sel
+}
+
+/// Cost of a variadic atom's join: `by_contains` per bound element, or the
+/// class re-join when the node variable itself is bound (`emit_variadic_join`
+/// emits one or the other).
+fn by_contains_cost<O: Eq + Hash + Copy>(
+    node: &VarId,
+    op: &O,
+    atom_id: usize,
+    elems: &[PatVar],
+    bound: &[bool],
+    stats: &IndexStats<O>,
+) -> f64 {
+    if bound[(*node).idx()] {
+        return by_repr_cost(op, atom_id, stats);
+    }
+    let full = stats.op_card.get(op).copied().unwrap_or(0);
+    let sel = path_selectivity(stats.fanouts.by_contains.get(op).copied(), full);
+    let mut cost = base_card(op, atom_id, stats) as f64;
+    for e in elems {
+        if pv_is_bound(e, bound) {
+            cost *= sel;
+        }
+    }
+    cost
 }
 
 pub fn schedule<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: IndexLike>(
@@ -256,7 +337,6 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone
     let mut bound = vec![false; rq.shape.num_vars()];
     let mut steps = Vec::new();
     let mut used = vec![false; rq.atoms.len()];
-
     loop {
         // Eager pass: Eq, Lit, already-bound nodes.
         let mut progress = true;
@@ -275,11 +355,20 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone
         }
 
         // Pick cheapest unprocessed atom.
+        // `min_by` over an `f64` cost: the estimate is an expected cardinality,
+        // and rounding it to an integer would tie every selective atom at 0.
+        // Every value is finite (`path_selectivity` guards its divisor), and
+        // `min_by` keeps the first of equal minima, so the choice is a function
+        // of the atom order.
         let best = (0..rq.atoms.len())
             .filter(|&ai| {
                 !used[ai] && !matches!(&rq.atoms[ai], RAtom::Eq(..) | RAtom::EqGlobal(..))
             })
-            .min_by_key(|&ai| estimate_cost(&rq.atoms[ai], ai, &bound, stats));
+            .min_by(|&a, &b| {
+                estimate_cost(&rq.atoms[a], a, &bound, stats)
+                    .partial_cmp(&estimate_cost(&rq.atoms[b], b, &bound, stats))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
         let Some(ai) = best else { break };
         emit_atom(&rq.atoms[ai], ai, &mut bound, &mut steps);
@@ -922,6 +1011,77 @@ mod tests {
         }
     }
 
+    /// The measured constants, not the atoms' cardinalities, decide which atom
+    /// is joined second. This is the shape that cost 95.3% of an 11.6 s run:
+    /// two `f` atoms sharing a child and joined only through their common `h`
+    /// parent (`comparison/throughput-gap-ours.md`, Q2, with `f` = Mul and
+    /// `h` = Add). Both candidates have one bound child once the first `f` is
+    /// scanned, so the fixed halving compared 54,051/2 against 86,061/2 and
+    /// took the `f` atom, whose `by_child_pos` probe returns 1,239 nodes
+    /// instead of the 43,030 charged. With the fan-outs measured, the `h` atom
+    /// is charged 1.5 and wins, and the second `f` then costs a `ByRepr`
+    /// re-join within the class the `h` atom bound.
+    #[test]
+    fn measured_fanouts_beat_cardinalities_on_sibling_atoms() {
+        let (ops, _, _) = setup();
+        let f = ops.id_by_name("f").unwrap();
+        let h = ops.id_by_name("h").unwrap();
+
+        let mut stats = IndexStats::<OpId>::new();
+        stats.op_card.insert(f, 54_051);
+        stats.op_card.insert(h, 86_061);
+        stats.fanouts.nodes = 216_061;
+        stats.fanouts.by_repr = 2.51;
+        // `f` nodes share their first child with 1,239 siblings on average;
+        // `h` nodes almost never share theirs.
+        stats.fanouts.by_child_pos.insert((f, 0), 1_239.0);
+        stats.fanouts.by_child_pos.insert((f, 1), 1_239.0);
+        stats.fanouts.by_child_pos.insert((h, 0), 1.5);
+        stats.fanouts.by_child_pos.insert((h, 1), 1.5);
+
+        let join_ops = |stats: &IndexStats<OpId>| -> Vec<OpId> {
+            let (ops, sorts, _) = setup();
+            let pats = [parse_pattern("(h (f a b) (f a c))")];
+            let fq = flatten(&pats, &ops).unwrap();
+            let rq = resolve(
+                &fq,
+                &ops,
+                &sorts,
+                &NiraModel,
+                &crate::resolve::GlobalCtx::<_, ()>::new(),
+            )
+            .unwrap();
+            let qp: QueryPlan<OpId, u32, NiraLitVal> = schedule_with_stats(&rq, stats);
+            qp.steps
+                .iter()
+                .filter_map(|s| match s {
+                    Step::Join { lookups, .. } => lookups.iter().find_map(|l| match l {
+                        IndexLookup::ByOp { op } => Some(*op),
+                        _ => None,
+                    }),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        // Control: the same cardinalities with no measurements reproduce the
+        // defect, so the assertion below is about the constants and not about
+        // some other difference between the two runs.
+        let mut halving = IndexStats::<OpId>::new();
+        halving.op_card.insert(f, 54_051);
+        halving.op_card.insert(h, 86_061);
+        assert_eq!(
+            join_ops(&halving),
+            [f, f, h],
+            "the fixed halving should still join the second f before h"
+        );
+        assert_eq!(
+            join_ops(&stats),
+            [f, h, f],
+            "measured fan-outs should join h second, leaving the second f a class re-join"
+        );
+    }
+
     /// A bound element discounts a variadic atom's cost, just as a bound child
     /// discounts a `Plain` atom — so `estimate_cost` reflects the `by_contains`
     /// narrowing that `emit_variadic_join` performs. Without the discount a
@@ -944,17 +1104,20 @@ mod tests {
         // x unbound → full op cardinality. (atom_id 0; no per-atom override,
         // so it falls back to op_card.)
         let bound_none = [false, false];
-        assert_eq!(estimate_cost(&atom, 0, &bound_none, &stats), 1000);
+        assert_eq!(estimate_cost(&atom, 0, &bound_none, &stats), 1000.0);
 
         // x bound → discounted (halved per bound element), reflecting the
         // `by_contains[x]` intersection the join will apply.
         let bound_x = [true, false];
         let cost_bound = estimate_cost(&atom, 0, &bound_x, &stats);
         assert!(
-            cost_bound < 1000,
+            cost_bound < 1000.0,
             "binding an element must discount a variadic atom's cost, got {cost_bound}"
         );
-        assert_eq!(cost_bound, 500, "one bound element halves the estimate");
+        assert_eq!(
+            cost_bound, 500.0,
+            "with no measured fan-out one bound element halves the estimate"
+        );
     }
 
     /// End-to-end: with a bound element, the scheduler must be willing to drive
