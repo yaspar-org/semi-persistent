@@ -16,6 +16,7 @@ use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
 use crate::resolve::{PatVar, RMult};
 use crate::schedule::{IndexLookup, QueryPlan, Step};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
 // Match-work instrumentation
@@ -388,6 +389,10 @@ pub struct MatchPool<Cfg: EGraphConfig> {
     /// thread-local match-step counter when the query finishes; see the
     /// match-work instrumentation notes at the top of this file.
     steps: u64,
+    /// [`op_filter_policy`] as of this query's start. Carried on the pool
+    /// because it is the only per-query state `run_join` already receives; see
+    /// [`OP_FILTER_POLICY`] for why it is not read per join.
+    op_filter_policy: OpFilterPolicy,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -403,6 +408,7 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
             id_bufs: Vec::new(),
             mset_bufs: Vec::new(),
             steps: 0,
+            op_filter_policy: OpFilterPolicy::Adaptive,
         }
     }
 
@@ -897,6 +903,7 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     pool.reshape(&plan.shape);
     pool.steps = 0;
+    pool.op_filter_policy = op_filter_policy();
     let mut env = Match::new(&plan.shape);
     run_step(plan, 0, eg, index, globals, &mut env, pool);
     add_match_steps(pool.steps);
@@ -1479,6 +1486,207 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // Join — leapfrog intersection of index lookups
 // ---------------------------------------------------------------------------
 
+/// Relation size per candidate above which a join applies its operator
+/// restriction as a per-candidate test rather than as a leapfrog operand, and
+/// the ceiling that threshold stops climbing at.
+///
+/// The two mechanisms are priced by two lengths the join reads before it opens
+/// anything: `m`, the smallest of the atom's other buckets, which bounds the
+/// candidates the ring will propose, and `n = |by_op[op]|`. The test costs `m`
+/// random loads into the round's `op` table. The operand costs a fixed start-up,
+/// a sort of the ring plus a gallop of the `by_op` cursor to the bucket's first
+/// key, plus one iteration per element of the smaller side, `min(m, n)`. The
+/// rule is
+///
+/// ```text
+/// filter  iff  n >= min(512 * m, 131_072)  and  m <= 2 * n
+/// ```
+///
+/// **Where the ceiling comes from.** `tests/ematch_op_filter.rs::sweep` builds
+/// `hubs` child classes with `m` parents each spread over eight operators,
+/// `hubs * m` held at 262 144, against an `f0` relation of `n` with an empty
+/// intersection, so no match construction is in either column. Median wall per
+/// query, release, Apple M4 Pro; entries are `leapfrog / filter`, so below 1
+/// means the operand won.
+///
+/// | m | n = 2 621 | 16 384 | 53 710 | 131 072 | 262 144 |
+/// |---|---|---|---|---|---|
+/// | 8 | 0.75 | 0.96 | 1.34 | 1.67 | 1.98 |
+/// | 16 | 0.52 | 0.73 | 1.05 | 1.43 | 1.71 |
+/// | 64 | 0.20 | 0.35 | 0.61 | 1.12 | 1.57 |
+/// | 4 096 | 0.04 | 0.13 | 0.43 | 0.99 | 1.52 |
+/// | 262 144 | 0.03 | 0.13 | 0.44 | 0.99 | 1.49 |
+///
+/// The test's cost per candidate is flat at 8.8 ns across the whole table: a
+/// random load into a table of `4 * node_count` bytes, which no parameter here
+/// changes. The filter column is therefore the same 2.3 ms of work everywhere and
+/// only the operand moves. An iteration costs 0.5-2 ns against a relation that
+/// fits in cache and 13-17 ns against one that does not, and the operand pays
+/// for `min(m, n)` of them rather than `m`. Both effects favour the operand as
+/// `n` falls, and past `n = 131 072` neither rescues it at any bucket size: that
+/// is the ceiling. The same shape at the intersection densities the bucket sizes
+/// admit, `n` set to the hub-parent population scaled by the density, says the
+/// same thing and adds the extreme this policy exists for:
+///
+/// | m | n = 262 144 (dense) | n = 2 621 (1%) | n = 26 (0.01%) |
+/// |---|---|---|---|
+/// | 16 | 1.08 | 0.51 | 0.46 |
+/// | 256 | 1.07 | 0.12 | 0.04 |
+/// | 4 096 | 1.04 | 0.09 | 0.003 |
+/// | 65 536 | 1.05 | 0.09 | 0.002 |
+/// | 262 144 | 1.06 | 0.08 | 0.002 |
+///
+/// The bottom-right cell is 2.32 ms against 4 µs: a hub class with a quarter of
+/// a million parents and a 26-node operator relation, which the unconditional
+/// demotion this replaced ran 600x slower than it had to.
+///
+/// **Where the slope comes from, and where the two measurements disagree.** The
+/// sweep says the threshold climbs with `m`, because a small bucket cannot
+/// amortize the operand's start-up and so crosses over at a smaller `n`, and
+/// fitting the rows above gives about 4 096 per candidate. `comparison/math-microbenchmark`
+/// says otherwise. Its joins run with `m` between 2 and 128 against relations of
+/// 8 k to 131 k, exactly the disputed window, and the whole-benchmark wall
+/// against the slope constant is
+///
+/// | per candidate | 0 | 64 | 128 | 256 | 512 | 1 024 | 4 096 |
+/// |---|---|---|---|---|---|---|---|
+/// | rules encoding | 562.0 | 565.4 | 559.1 | 568.7 | 565.1 | 582.1 | 636.3 |
+///
+/// against 562.0 ms for the unconditional demotion, medians of nine interleaved
+/// runs. Anything at or below 512 is inside the run-to-run spread; 4 096, the
+/// value the sweep fits, costs 13%.
+///
+/// The sweep is the optimistic instrument in that window and the workload is the
+/// realistic one. A sweep query probes one `by_op` vector 16 384 times with
+/// nothing else touching memory in between, so the operand's seeks run against a
+/// cache-resident relation; real matching interleaves several relations, the
+/// `op` table, the child pool and match construction between joins, and the
+/// relation is cold when the next join reaches it. That is exactly the `n`
+/// range where the sweep measured 0.5-2 ns per iteration, and it is why the
+/// slope is set from the workload at 512 rather than from the fit at 4 096. The
+/// price is paid in the sweep's `m = 16` to `m = 64` rows just above the
+/// threshold, where the rule takes the test and the operand was up to 2.0x
+/// better; the extremes both instruments agree on are fenced by
+/// `tests/ematch_op_filter.rs::adaptive_policy_is_within_1_2x_of_the_better_mechanism`.
+const OP_FILTER_RELATION_PER_CANDIDATE: usize = 512;
+
+/// Ceiling on the fitted threshold; see [`OP_FILTER_RELATION_PER_CANDIDATE`].
+pub const OP_FILTER_MIN_RELATION: usize = 131_072;
+
+/// How much a leapfrog iteration costs against one `op` table load, rounded up
+/// from the 8.8 ns and 13-17 ns the sweep measured for the two.
+///
+/// Only binds when the bucket is more than twice the relation, which is past the
+/// largest bucket the sweep covers: there `min(m, n) = n` makes the operand's
+/// work independent of how far the bucket grows while the test's stays linear in
+/// it, so the ceiling above would otherwise keep choosing the test forever.
+const OP_FILTER_SEEK_COST: usize = 2;
+
+/// Which mechanism a join uses for its `ByOp` restriction.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OpFilterPolicy {
+    /// Decide per binding from the two bucket lengths. The shipped policy; see
+    /// [`OP_FILTER_MIN_RELATION`].
+    Adaptive,
+    /// Always demote `ByOp` to a per-candidate operator test.
+    AlwaysFilter,
+    /// Always keep `ByOp` in the leapfrog ring.
+    AlwaysLeapfrog,
+}
+
+/// The live policy. A `static` rather than a constant so a measurement harness
+/// can pin either mechanism without a rebuild; read once per query into
+/// [`MatchPool`], never per join, because an atomic load inside `run_join` would
+/// sit on the per-partial-match path for the benefit of a knob nothing turns.
+static OP_FILTER_POLICY: AtomicUsize = AtomicUsize::new(0);
+
+/// Pin the operator-restriction policy for subsequent queries. Process-wide, and
+/// read at query start.
+pub fn set_op_filter_policy(p: OpFilterPolicy) {
+    OP_FILTER_POLICY.store(
+        match p {
+            OpFilterPolicy::Adaptive => 0,
+            OpFilterPolicy::AlwaysFilter => 1,
+            OpFilterPolicy::AlwaysLeapfrog => 2,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+/// The operator-restriction policy in force.
+pub fn op_filter_policy() -> OpFilterPolicy {
+    match OP_FILTER_POLICY.load(Ordering::Relaxed) {
+        1 => OpFilterPolicy::AlwaysFilter,
+        2 => OpFilterPolicy::AlwaysLeapfrog,
+        _ => OpFilterPolicy::Adaptive,
+    }
+}
+
+/// Which mechanism a join applied its `ByOp` restriction with. Recorded per
+/// join execution in test builds only; release has no probe on the path.
+#[cfg(test)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum OpRestriction {
+    /// `ByOp` stayed in the leapfrog ring as an intersection operand.
+    Leapfrog,
+    /// `ByOp` was demoted to a per-candidate `op[id]` test.
+    Filter,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One entry per join execution that had a `ByOp` restriction to place.
+    /// Drained by the policy tests; see `op_restriction_log`.
+    static OP_RESTRICTION_LOG: std::cell::RefCell<Vec<OpRestriction>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take and clear this thread's record of per-join restriction decisions.
+#[cfg(test)]
+pub(crate) fn take_op_restriction_log() -> Vec<OpRestriction> {
+    OP_RESTRICTION_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// Decide how this join places its `ByOp` restriction: `true` to demote it to a
+/// per-candidate operator test, `false` to keep it as a leapfrog operand.
+///
+/// `m` is the smallest of the atom's other buckets, `usize::MAX` when it has
+/// none; `n` is `|by_op[op]|`, or `None` when the join has no `ByOp` to place,
+/// which is a single-lookup `ByOp` scan: it has to stay a cursor because it is
+/// the only thing enumerating anything. Two compares and a shift on values already
+/// in registers; see [`OP_FILTER_RELATION_PER_CANDIDATE`] for where they come
+/// from.
+#[inline]
+fn demote_by_op(m: usize, n: Option<usize>, policy: OpFilterPolicy) -> bool {
+    let Some(n) = n else { return false };
+    let demote = match policy {
+        OpFilterPolicy::AlwaysFilter => true,
+        OpFilterPolicy::AlwaysLeapfrog => false,
+        OpFilterPolicy::Adaptive => {
+            n >= OP_FILTER_MIN_RELATION.min(m.saturating_mul(OP_FILTER_RELATION_PER_CANDIDATE))
+                && m <= n.saturating_mul(OP_FILTER_SEEK_COST)
+        }
+    };
+    #[cfg(test)]
+    OP_RESTRICTION_LOG.with(|l| {
+        l.borrow_mut().push(if demote {
+            OpRestriction::Filter
+        } else {
+            OpRestriction::Leapfrog
+        })
+    });
+    demote
+}
+
+/// Turn a resolved bucket into a cursor; an absent key is an empty cursor.
+#[inline]
+fn cursor_of<G: crate::containers::DenseId>(b: Option<&SortedVec<G>>) -> SortedVecCursor<'_, G> {
+    match b {
+        Some(v) => v.iter(),
+        None => SortedVecCursor::new(&[]),
+    }
+}
+
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
@@ -1499,93 +1707,134 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         // No constraints — preserve original behavior (no match emitted).
         return;
     }
-    // A whole-relation `ByOp` cursor is redundant in any join that also has a
-    // narrower lookup, so it is demoted to a per-candidate operator test.
+    // Every `Step::Join` the scheduler emits carries exactly one `ByOp`: it is
+    // the first lookup at all eight emission sites in `schedule.rs`, and none of
+    // them appends a second. The demotion below relies on that: it takes one
+    // `ByOp` out of the ring and covers it with the per-candidate test, so a
+    // second one would silently stay a cursor while the first became a filter,
+    // which is a different split, still sound but unpriced.
+    debug_assert_eq!(
+        lookups
+            .iter()
+            .filter(|l| matches!(l, IndexLookup::ByOp { .. }))
+            .count(),
+        1,
+        "a join's lookups must carry exactly one ByOp"
+    );
+    // A `ByOp` lookup in a join that has a narrower lookup too can be applied
+    // two ways, and which is cheaper depends on the binding, not on the atom.
     //
     // `IndexStore::build_from` files every non-subsumed node into `by_op` and
     // into its `by_repr` / `by_child_pos` / `by_contains` buckets from one id
     // stream, so for any other bucket `B` of the same store
-    // `by_op[o] ∩ B = { n ∈ B : op(n) = o }`. Replacing the intersection with
-    // the test trades one leapfrog seek over a relation-sized sorted vector per
-    // partial match — the seek is a doubling gallop plus a bisection, ~2 log|B|
-    // branchy iterations — for one `node_op` read per surviving candidate, and
-    // it takes one cursor out of the leapfrog ring.
+    // `by_op[o] ∩ B = { n ∈ B : op(n) = o }`: the intersection and the test are
+    // the same set. They are not the same cost. Demoting `by_op[o]` to a test
+    // costs one `op[id]` load per element of `B`, whatever the intersection
+    // turns out to be. Keeping it in the leapfrog ring costs one iteration per
+    // element of the *smaller* of `B` and `by_op[o]`, because a seek from either
+    // side clears every key of the other side below it in one step, and each is a
+    // doubling gallop plus a bisection over the two vectors. So the ring wins when
+    // `by_op[o]` is small, both because it does less work and because its
+    // working set stays in cache, and `|B|` and `|by_op[o]|` are `len` reads on
+    // buckets the join is opening anyway (see `OP_FILTER_RELATION_PER_CANDIDATE`
+    // for the measured crossover and the rule fitted to it).
     //
-    // The identity holds in each of the three modes because the delta store is
-    // built by the same `build_from` over the same e-graph: a node in
+    // The set identity holds in each of the three modes because the delta store
+    // is built by the same `build_from` over the same e-graph: a node in
     // `full.B ∖ delta.B` cannot be in the delta id stream at all (if it were,
     // the same child/class/op reads that put it in `full.B` would have put it
     // in `delta.B`), so it is not in `delta.by_op[o]` either.
-    let op_filter = if lookups.len() > 1 {
-        lookups.iter().find_map(|l| match l {
-            IndexLookup::ByOp { op } => Some(*op),
-            _ => None,
-        })
+    let op_pos = if lookups.len() > 1 {
+        lookups
+            .iter()
+            .position(|l| matches!(l, IndexLookup::ByOp { .. }))
     } else {
         None
     };
-    let cursor_lookups = lookups
-        .iter()
-        .filter(|l| op_filter.is_none() || !matches!(l, IndexLookup::ByOp { .. }));
+    let policy = results.op_filter_policy;
 
-    // Build a homogeneous cursor vector for this atom's mode, then run the
-    // generic leapfrog. The mode is fixed for the whole atom (all its
-    // lookups read the same flavor); see design doc "How a Variant Executes".
+    // One pass per mode: resolve the `ByOp` bucket for its length, then resolve
+    // and open the other lookups while tracking the smallest of them, and put
+    // the `ByOp` cursor back in the ring only if the decision keeps it. The ring
+    // is sorted by key at construction, so appending it last is the same join.
+    //
+    // The mode is fixed for the whole atom (all its lookups read the same
+    // flavor); see design doc "How a Variant Executes".
+    macro_rules! dispatch {
+        ($store:expr, $open:expr) => {{
+            let store = $store;
+            let mut m = usize::MAX;
+            let mut cursors = CursorVec::new();
+            for (i, l) in lookups.iter().enumerate() {
+                if Some(i) == op_pos {
+                    continue;
+                }
+                let b = bucket_in(store, index, l, eg, globals, env);
+                let len = bucket_len(&b);
+                if len < m {
+                    m = len;
+                }
+                cursors.push($open(b, l));
+            }
+            let op_bucket = op_pos.map(|p| bucket_in(store, index, &lookups[p], eg, globals, env));
+            let op_filter = if demote_by_op(m, op_bucket.map(|b| bucket_len(&b)), policy) {
+                match &lookups[op_pos.expect("a demoted join has a ByOp lookup")] {
+                    IndexLookup::ByOp { op } => Some(*op),
+                    _ => unreachable!("op_pos indexes a ByOp lookup"),
+                }
+            } else {
+                if let (Some(b), Some(p)) = (op_bucket, op_pos) {
+                    cursors.push($open(b, &lookups[p]));
+                }
+                None
+            };
+            leapfrog_join(
+                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
+            );
+        }};
+    }
+
     match index.mode(atom_id) {
-        IndexMode::Full => {
-            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = cursor_lookups
-                .map(|l| cursor_in(index.full, index, l, eg, globals, env))
-                .collect();
-            leapfrog_join(
-                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
-            );
-        }
-        IndexMode::Delta => {
-            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = cursor_lookups
-                .map(|l| cursor_in(index.delta, index, l, eg, globals, env))
-                .collect();
-            leapfrog_join(
-                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
-            );
-        }
-        IndexMode::FullMinusDelta => {
-            let cursors: CursorVec<
-                Difference<SortedVecCursor<'_, Cfg::G>, SortedVecCursor<'_, Cfg::G>>,
-            > = cursor_lookups
-                .map(|l| {
-                    Difference::new(
-                        cursor_in(index.full, index, l, eg, globals, env),
-                        cursor_in(index.delta, index, l, eg, globals, env),
-                    )
-                })
-                .collect();
-            leapfrog_join(
-                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
-            );
-        }
+        IndexMode::Full => dispatch!(index.full, |b, _l| cursor_of(b)),
+        IndexMode::Delta => dispatch!(index.delta, |b, _l| cursor_of(b)),
+        // The candidate set is `full ∖ delta`, so the full-side length is an
+        // upper bound on it and the decision reads that. A tighter estimate
+        // would need the delta bucket's overlap, which is the work being priced.
+        IndexMode::FullMinusDelta => dispatch!(index.full, |b, l| Difference::new(
+            cursor_of(b),
+            cursor_in(index.delta, index, l, eg, globals, env)
+        )),
     }
 }
 
-/// Resolve one lookup's key against a single index store, returning a cursor
-/// over the matching bucket (empty if the key is absent).
+/// Length of a resolved bucket; an absent key contributes zero candidates.
+#[inline]
+fn bucket_len<G: crate::containers::DenseId>(b: &Option<&SortedVec<G>>) -> usize {
+    b.map_or(0, |v| v.len())
+}
+
+/// Resolve one lookup's key against a single index store, returning the bucket
+/// it selects (`None` if the key is absent).
 ///
 /// `store` is the slice this atom's mode reads (full or delta); `index` is the
 /// round's view, consulted only for the canonicalization the buckets are keyed
-/// by (see [`canon`]).
-fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+/// by (see [`canon`]). Kept apart from [`cursor_of`] because `run_join` reads
+/// each bucket's length before it decides which buckets become cursors, and
+/// resolving twice would repeat the canonicalization and the hash probe.
+fn bucket_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     store: &'a IndexStore<Cfg>,
     index: &VariantIndex<'_, Cfg>,
     l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
-) -> SortedVecCursor<'a, Cfg::G>
+) -> Option<&'a SortedVec<Cfg::G>>
 where
     Cfg: EGraphConfig,
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let sv: Option<&SortedVec<Cfg::G>> = match l {
+    match l {
         IndexLookup::ByOp { op } => store.by_op.get(op),
         IndexLookup::ByChildPos { child, pos } => {
             let r = canon(index, eg, env.resolve_pv(*child, globals));
@@ -1599,11 +1848,26 @@ where
             let r = canon(index, eg, env.resolve_pv(*child, globals));
             store.by_contains.get(&r)
         }
-    };
-    match sv {
-        Some(v) => v.iter(),
-        None => SortedVecCursor::new(&[]),
     }
+}
+
+/// [`bucket_in`] followed by [`cursor_of`], for the one caller that needs no
+/// length: the delta side of a `FullMinusDelta` cursor, which is subtracted
+/// rather than enumerated.
+fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    store: &'a IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
+    l: &IndexLookup<Cfg::O, Cfg::Index>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> SortedVecCursor<'a, Cfg::G>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    cursor_of(bucket_in(store, index, l, eg, globals, env))
 }
 
 /// Run a leapfrog intersection over `cursors` (any `SortedCursor` flavor),
@@ -2668,7 +2932,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::id::{OpId, SortId};
+    use crate::id::{ENodeId, OpId, SortId};
     use crate::literal::{NiraLitVal, NiraModel};
     use crate::nodes::DefaultConfig;
     use crate::registry::{OpRegistry, SortRegistry};
@@ -4775,5 +5039,225 @@ mod tests {
             matches.is_empty(),
             "a merge after the index build made `(f x x)` match: {matches:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Operator-restriction policy
+    // -----------------------------------------------------------------------
+
+    /// The policy is process-wide, so the tests that pin it take turns.
+    static OP_FILTER_PIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The rule of `demote_by_op`, stated against the two lengths directly.
+    ///
+    /// Exhaustive where the e-graph tests cannot be: the filter branch needs a
+    /// relation of [`OP_FILTER_MIN_RELATION`], and materializing one at every
+    /// corner would cost a hundred thousand nodes per case.
+    #[test]
+    fn op_restriction_rule_reads_both_lengths() {
+        let c = OP_FILTER_MIN_RELATION;
+        let k = OP_FILTER_RELATION_PER_CANDIDATE;
+        // (m, n, expected demotion)
+        let cases = [
+            // The threshold on the relation climbs with the bucket, so a small
+            // bucket filters against a relation a large one would leapfrog.
+            (1, k - 1, false),
+            (1, k, true),
+            (16, 16 * k - 1, false),
+            (16, 16 * k, true),
+            // Until it reaches the ceiling, past which no bucket size matters.
+            (c / k, c, true),
+            (c, c - 1, false),
+            (c, c, true),
+            // The hub shape: a quarter of a million parents against a relation
+            // of twenty-six. This is the case the unconditional filter lost on.
+            (262_144, 26, false),
+            // The guard: once the bucket outgrows twice the relation, the
+            // operand's `min(m, n)` work stops growing and the test's does not.
+            (2 * c, c, true),
+            (2 * c + 1, c, false),
+            // Saturating arithmetic at both ends rather than wrapping.
+            (usize::MAX, c, false),
+            (usize::MAX, usize::MAX, true),
+            (0, 1, true),
+        ];
+        for (m, n, expect) in cases {
+            assert_eq!(
+                demote_by_op(m, Some(n), OpFilterPolicy::Adaptive),
+                expect,
+                "m={m} n={n}"
+            );
+            // The pins ignore the lengths.
+            assert!(demote_by_op(m, Some(n), OpFilterPolicy::AlwaysFilter));
+            assert!(!demote_by_op(m, Some(n), OpFilterPolicy::AlwaysLeapfrog));
+        }
+        // A join with no `ByOp` to place decides nothing under any policy: its
+        // single lookup is the only thing enumerating candidates.
+        for p in [
+            OpFilterPolicy::Adaptive,
+            OpFilterPolicy::AlwaysFilter,
+            OpFilterPolicy::AlwaysLeapfrog,
+        ] {
+            assert!(!demote_by_op(3, None, p));
+        }
+        take_op_restriction_log();
+    }
+
+    /// Two hub classes, one whose `f0` parents are read against a relation above
+    /// the threshold and one whose `f1` parents are read against a relation of
+    /// forty, so one query per operator drives the decision both ways.
+    ///
+    /// `f0`'s relation is sized from the rule's own constant rather than written
+    /// down, so it stays on the filter side of the threshold if the constant
+    /// moves: four parents against `4 * OP_FILTER_RELATION_PER_CANDIDATE` is
+    /// exactly at it. The ceiling and the bucket guard are corners this shape
+    /// cannot reach at a scale worth building; `op_restriction_rule_reads_both_lengths`
+    /// covers them.
+    fn op_restriction_eg() -> (EG, ENodeId, ENodeId) {
+        let mut eg = EG::from_model(&NiraModel);
+        let e = eg.intern_sort("IExpr");
+        eg.register_op0("z", e);
+        eg.register_op1("s", e, e);
+        eg.register_op1("hub", e, e);
+        eg.register_op2("f0", e, e, e);
+        eg.register_op2("f1", e, e, e);
+        let s = eg.ops().id_by_name("s").unwrap();
+        let hub = eg.ops().id_by_name("hub").unwrap();
+        let f0 = eg.ops().id_by_name("f0").unwrap();
+        let f1 = eg.ops().id_by_name("f1").unwrap();
+
+        // Enough distinct classes that `side * side` distinct `f0` child pairs
+        // reach the relation size.
+        let relation = 4 * OP_FILTER_RELATION_PER_CANDIDATE;
+        let side = (relation as f64).sqrt().ceil() as usize + 1;
+        let mut leaves = vec![eg.add(eg.ops().id_by_name("z").unwrap(), &[])];
+        for i in 1..side {
+            let prev = leaves[i - 1];
+            leaves.push(eg.add(s, &[prev]));
+        }
+        let hub_a = eg.add(hub, &[leaves[0]]);
+        let hub_b = eg.add(hub, &[leaves[1]]);
+
+        // `by_op[f0]`: four parents of `hub_a` and the rest off the hubs.
+        for k in 0..4 {
+            eg.add(f0, &[hub_a, leaves[k]]);
+        }
+        let mut made = 4;
+        'fill: for i in 0..side {
+            for j in 0..side {
+                if made >= relation {
+                    break 'fill;
+                }
+                eg.add(f0, &[leaves[i], leaves[j]]);
+                made += 1;
+            }
+        }
+        // `by_op[f1]`: forty parents of `hub_b` and nothing else.
+        for k in 0..40 {
+            eg.add(f1, &[hub_b, leaves[k]]);
+        }
+        eg.rebuild();
+        (eg, hub_a, hub_b)
+    }
+
+    /// Run `src` against `eg` under `policy` and return the decisions the joins
+    /// made together with the match set, keyed so it can be compared across
+    /// policies.
+    fn op_restriction_run(
+        eg: &EG,
+        src: &str,
+        policy: OpFilterPolicy,
+    ) -> (Vec<OpRestriction>, Vec<Vec<ENodeId>>) {
+        set_op_filter_policy(policy);
+        let pats = [parse_pattern(src)];
+        let fq = flatten(&pats, eg.ops()).unwrap();
+        let rq = resolve(
+            &fq,
+            eg.ops(),
+            eg.sorts(),
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<_, ()>::new(),
+        )
+        .unwrap();
+        let plan = schedule(&rq);
+        let store = IndexStore::build(eg);
+        let index = VariantIndex::naive(&store);
+        take_op_restriction_log();
+        let ms = run_query(
+            &plan,
+            eg,
+            &index,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        let log = take_op_restriction_log();
+        let mut keys: Vec<Vec<ENodeId>> = ms
+            .iter()
+            .map(|m| {
+                (0..plan.shape.num_vars())
+                    .map(|v| m.get(VarId(v as u16)))
+                    .collect()
+            })
+            .collect();
+        keys.sort();
+        (log, keys)
+    }
+
+    /// The shipped rule decides per binding, not per atom: one query, two
+    /// bindings of the same join, two mechanisms.
+    ///
+    /// `hub_a` has four `f0` parents and is read against the whole `f0`
+    /// relation, the shape the demotion was landed for — a handful of
+    /// candidates and a relation two orders larger, where the test wins.
+    /// `hub_b`'s bucket holds its forty `f1` parents, which is the same
+    /// position-0 bucket the `f0` join probes, and against a relation of that
+    /// size the operand wins. Both decisions are taken inside one `run_query`.
+    ///
+    /// This is the decision gate: it asserts which mechanism ran, not how long
+    /// it took, so it holds in every build profile. The timing half is
+    /// `tests/ematch_op_filter.rs`.
+    #[test]
+    fn op_restriction_policy_is_taken_per_binding() {
+        let _pin = OP_FILTER_PIN.lock().unwrap_or_else(|e| e.into_inner());
+        let (eg, _, _) = op_restriction_eg();
+
+        let (log, _) = op_restriction_run(&eg, "(f0 (hub z) y)", OpFilterPolicy::Adaptive);
+        assert_eq!(
+            log,
+            vec![OpRestriction::Filter, OpRestriction::Leapfrog],
+            "4 parents against a relation of {} must filter and 40 must not",
+            4 * OP_FILTER_RELATION_PER_CANDIDATE
+        );
+
+        // Against a relation of forty, neither bucket is small enough to make
+        // the test worth its per-candidate load.
+        let (log, _) = op_restriction_run(&eg, "(f1 (hub z) y)", OpFilterPolicy::Adaptive);
+        assert_eq!(log, vec![OpRestriction::Leapfrog; 2]);
+
+        set_op_filter_policy(OpFilterPolicy::Adaptive);
+    }
+
+    /// The two mechanisms return the same match set on both shapes.
+    ///
+    /// The demotion's soundness argument is the identity
+    /// `by_op[o] ∩ B = { n ∈ B : op(n) = o }` over one index build; this is that
+    /// identity checked on the shapes the policy sends each way, so a change
+    /// that moves the rule cannot also change what the matcher returns.
+    #[test]
+    fn op_restriction_mechanisms_agree_on_the_match_set() {
+        let _pin = OP_FILTER_PIN.lock().unwrap_or_else(|e| e.into_inner());
+        let (eg, _, _) = op_restriction_eg();
+        for src in ["(f0 (hub z) y)", "(f1 (hub z) y)", "(f0 x y)"] {
+            let (_, adaptive) = op_restriction_run(&eg, src, OpFilterPolicy::Adaptive);
+            let (fl, filter) = op_restriction_run(&eg, src, OpFilterPolicy::AlwaysFilter);
+            let (ll, leapfrog) = op_restriction_run(&eg, src, OpFilterPolicy::AlwaysLeapfrog);
+            assert_eq!(adaptive, filter, "{src}: filter changed the match set");
+            assert_eq!(adaptive, leapfrog, "{src}: leapfrog changed the match set");
+            assert!(!adaptive.is_empty(), "{src}: shape must match something");
+            // `(f0 x y)` is a one-lookup join: no `ByOp` to place, no decision.
+            if src == "(f0 x y)" {
+                assert!(fl.is_empty() && ll.is_empty());
+            }
+        }
+        set_op_filter_policy(OpFilterPolicy::Adaptive);
     }
 }
