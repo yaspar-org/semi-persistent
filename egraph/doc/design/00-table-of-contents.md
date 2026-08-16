@@ -167,6 +167,13 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     min-cost transportation, semi-persistent `SearchSession`
     mark/restore, `(antiunify)` / `(checkau)` commands.
 
+20. **[Index Selectivity and Delta Suffixes](20-index-selectivity-and-delta-suffixes.md)**
+    The matching-throughput plan from the egglog comparison: measured
+    per-access-path selectivity constants replacing the fixed-halving
+    cost model, watermark node-id suffixes making semi-naive deltas a
+    range constraint on every index, per-binding driver selection in
+    the leapfrog seek, and the postponed free-join stage re-sorting.
+
 ---
 
 ## See Also
