@@ -1,0 +1,9 @@
+# Generated programs. `gen-semipersistence.py` reproduces them byte for byte from
+# the pinned seed; only the smallest size is committed, because the full set is
+# 87 MB. `gen-calc.py` cuts the calc prefixes from the two committed sources.
+sp-t2650.*.egg
+sp-t8900.*.egg
+sp-t27000.*.egg
+sp-t100000.*.egg
+calc.*-p[0-9].egg
+*.stats.json

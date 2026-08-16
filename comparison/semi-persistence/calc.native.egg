@@ -1,0 +1,72 @@
+;; Translation of egglog tests/calc.egg (7b1adf2), rules encoding.
+;; Deviations (semi-persistence.md, "calc translation"):
+;;   - `(datatype G)` with no variants becomes `(sort G)`; the separate
+;;     `(constructor ...)` declarations carry over unchanged.
+;;   - identifiers are renamed to our lexical class: `g*` -> `gmul`, `$X` -> `gX`.
+;;     Pure renaming; the term structure is identical.
+;; Nothing else changes: same rules, same blocks, same `:until` goals, same checks.
+(sort G)
+(constructor IConst () G)
+(let gI (IConst))
+(constructor AConst () G)
+(let gA (AConst))
+(constructor BConst () G)
+(let gB (BConst))
+(constructor gmul (G G) G)
+(constructor inv (G) G)
+(birewrite (gmul (gmul a b) c) (gmul a (gmul b c))) ; assoc
+(rewrite (gmul gI a) a) ; idl
+(rewrite (gmul a gI) a) ; idr
+(rewrite (gmul (inv a) a) gI) ; invl
+(rewrite (gmul a (inv a)) gI) ; invr
+
+; gA is cyclic of period 4
+(rewrite (gmul gA (gmul gA (gmul gA gA))) gI)
+
+(let gA2 (gmul gA gA))
+(let gA4 (gmul gA2 gA2))
+(let gA8 (gmul gA4 gA4))
+
+;; --- block 1 ---
+(push)
+(gmul gA4 gA4)
+
+(run 10000 :until (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+
+(check (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+(pop)
+
+;; --- block 2 ---
+(push)
+(gmul (gmul gA2 gA2) (gmul gA2 gA2))
+
+(run 10000 :until (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+(gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
+(check (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+(gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
+(pop)
+
+
+(constructor aConst () G)
+(constructor bConst () G)
+(let ga (aConst))
+(let gb (bConst))
+
+;; --- block 3 ---
+(push)
+
+(gmul (gmul gb (gmul (inv ga) ga)) (inv gb))
+
+(run 100000 :until (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+
+(check (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+
+(pop)
+
+;; --- block 4 ---
+(push)
+(gmul gb (inv gb))
+(run 100000 :until (= (gmul gb (inv gb)) gI))
+(check (= (gmul gb (inv gb)) gI))
+
+(pop)
