@@ -115,7 +115,9 @@ reports about H. The two agree on the four measurements above to within
 0.1% except under the delta-seeding experiment below, where the plain mean
 costs 49.5 M match steps against the size-biased mean's 10.0 M. Chapter 20's
 Fact 2 is unchanged: one number per path prices the expected probe, not the
-individual one, and S3 is what prices the individual one.
+individual one. S3 prices the individual one at execution; S5 prices the
+expected probe of a *particular* driver at plan time, which is the other
+half of what one number cannot say.
 
 **A third path, `by_contains`, is measured too.** The plan named `ByRepr`
 and `ByChildPos`; the variadic atoms (A/AC/ACI) drive from `by_contains`
@@ -373,6 +375,203 @@ invariant there is the match set, and that is what
 What is still not implemented is what S4 originally named: egglog's
 re-sorting of whole stages, which would reorder the variables inside an
 atom's join and not just the atoms. Nothing measured so far asks for it.
+
+## S5. Sampled cross-index selectivity
+
+S1 prices a bound key by one number per access path, and Fact 2 is the
+limit on what one number can say. The size-biased mean is the bucket a
+probe lands in when the probe's key is drawn from that index's own
+marginal, and a join does not draw its keys that way: the key is a class
+the previous atom bound out of its own relation, so what decides the
+probe is the joint distribution over (emitter node, probe bucket). The
+two disagree whenever the emitter's nodes avoid the hub classes that set
+the mean, and then the mean over-prices the probe by the hub's size.
+
+**Implemented 2026-08-16, flag-guarded, default off.**
+`schedule::set_sampled_selectivity`, or `--sampled-selectivity` on the
+CLI, with `--sampler-k`, `--sampler-bootstrap` and `--sampler-cv` for the
+three fields of `SamplerConfig`. With the flag off,
+`schedule_with_stats_sampled` is `schedule_with_stats`, the sampler is
+never consulted (`schedule::tests::the_flag_off_path_never_samples`), and
+every corpus number below is unchanged to the digit.
+
+**What it does.** The greedy loop already tracks which variables are
+bound. It now also tracks which atom bound each one and where in that
+atom's node the variable sits: `KeySite` is the node's own class, a child
+position, or an element of a variadic node, which is what the runtime
+extraction reads. Costing a candidate atom on a bound key, the loop draws
+`k` nodes (default 32) from the emitter atom's relation, computes from
+each the class the candidate would probe with, and reads the candidate's
+bucket for that class. The mean of those lengths replaces the path's
+size-biased fan-out in the same cost expression, and the remaining
+unbound keys keep their mean factors, so the estimate is the mean model
+with one number substituted. A key no scheduled atom bound, a global or a
+variable an eager `CopyBinding` propagated from one, has no emitter and
+keeps the mean.
+
+Three implementation decisions worth recording.
+
+**The draw is an even stride over the sorted bucket, not a random
+sample.** A plan has to be a function of the e-graph and the rule and
+nothing else, so that a run reproduces and the differential tests can put
+two engines on one order. The stride runs over node id, which is
+allocation order, so it samples across the graph's construction history.
+
+**The bucket length is restricted to the candidate's operator, by a scan
+capped at 256 entries.** `by_child_pos` and `by_contains` are keyed by
+child class alone while every join intersects them with `by_op[op]`, so
+the length the scheduler needs is the bucket restricted to one operator:
+the quantity `measure_fanouts` already tallies once per round, for the
+reason S1 gives, that the two operators of one query differ in it by
+three orders of magnitude. Counting it exactly is a pass over the bucket,
+which on a hub class is hundreds of thousands of loads for one sampled
+key. Past the cap the count is taken over a strided subsample of the
+bucket and scaled to its length, which is the estimator the draw already
+is, applied once more.
+
+**The emitter's draw comes from the slice its semi-naive mode reads; the
+probe's bucket comes from the full index in every mode.** The emitter
+enumerates its mode's slice, so those are the keys that arise. The
+probe's mode is already priced into the candidate's base cardinality
+through `variant_stats`, and reading its delta bucket as well would
+charge the restriction twice. `FullMinusDelta` draws from the full side,
+an upper bound on `full ∖ delta`, for the reason `ematch::cursor_len`
+gives.
+
+**The bootstrap guard.** With `bootstrap = B > 0` the estimator resamples
+the `k` draws with replacement `B` times and discards the estimate when
+the standard deviation of the resampled means exceeds `cv_threshold`
+times the estimate, leaving the size-biased mean in place. The stride is
+deterministic but arbitrary with respect to the key distribution, so a
+draw can miss a mode that carries the true mean, and the bootstrap prices
+that risk out of the draw itself; the generator is a fixed-seed
+SplitMix64, so the verdict stays a function of the draw.
+`ematch_sampled_selectivity::the_bootstrap_guard_rejects_a_draw_one_sample_decides`
+states it on a draw where one of the 32 samples sets the estimate. It is
+off by default, and on the corpus it is close to inert: at `B = 200,
+cv_threshold = 1.0` it fires once in the whole corpus, on one of the 382
+estimates math-microbenchmark's native semi-naive run takes, and the step
+counts are identical to `B = 0` on all forty configurations including
+that one. That is a measurement of this corpus rather than of the guard,
+and it says the same thing the corpus table below says: these drivers'
+keys select buckets of nearly uniform size, which is why the mean was
+already right on them.
+
+**Where it wins.** The workload the mean cannot price:
+`tests/ematch_sampled_selectivity.rs` builds `(d v) (pr v z) (alt v w)`
+over 1 024 classes. The selective atom `pr` has one node over each of the
+first 32 classes and nothing over the rest, plus 4 096 nodes hanging off
+one hub class the driver `d` never points at. Those 4 096 never take part
+in a match, and they are what the size-biased mean of `pr`'s
+`by_child_pos` measures, so the mean prices `pr`'s probe at 4 088 where
+its value from this driver is 0.031. The unselective atom `alt` is priced
+honestly at `fan`. The mean therefore takes `alt` second and walks `fan`
+of its nodes on each of the 992 bindings that cannot match; sampling
+takes `pr` second and opens an empty bucket. Match steps, 32 matches in
+every case:
+
+| fan | steps, mean | steps, sampled | ratio |
+|---|---|---|---|
+| 1 | 5 217 | 2 241 | 2.33 |
+| 4 | 14 145 | 2 241 | 6.31 |
+| 16 | 49 857 | 2 241 | 22.25 |
+| 64 | 192 705 | 2 241 | 85.99 |
+| 256 | 764 097 | 2 241 | 340.96 |
+
+The sampled column is flat because the order it picks does not depend on
+`alt`'s size. The condition asserted is the step count at `fan = 64`,
+stated at 3x against the measured 86x so that it fails on a regression
+rather than on noise; it is timing-free and runs in every build profile,
+following S4's. The sweep regenerates the table.
+
+**Where it does not.** The corpus, which is what S1's constants were
+fitted to. Final node counts are identical to `dd20d36` on all twenty
+programs under `comparison/` in both the naive and the semi-naive driver,
+and match steps are identical on thirty-four of the forty (program,
+driver) configurations. The six that move all move down:
+
+| program, encoding, driver | steps, mean | steps, sampled |
+|---|---|---|
+| eqsat-basic, native, naive | 195 | 143 |
+| eqsat-basic, rules, naive | 255 | 203 |
+| math-microbenchmark, native, naive | 3 074 106 | 3 074 017 |
+| math-microbenchmark, native, semi-naive | 3 167 101 | 3 166 994 |
+| math-microbenchmark, rules, naive | 7 284 276 | 7 284 249 |
+| math-microbenchmark, rules, semi-naive | 7 191 713 | 7 182 477 |
+
+The largest of those is 0.13%. Wall clock on math-microbenchmark, medians
+of seven interleaved runs, follows the steps into the run-to-run spread:
+rules naive 590.0 ms against 594.5, rules semi-naive 637.8 against 641.7,
+native naive 563.3 against 560.8, native semi-naive 576.7 against 583.2.
+
+The reading is that S1's mean was already the right number on this
+corpus, which is the case the size-biased estimator was derived for: a
+probe key lands in a bucket with probability proportional to that
+bucket's size, and on math-microbenchmark the drivers' keys do land that
+way. The mispricing S5 removes needs an emitter whose keys are drawn from
+a different distribution than the probed index's marginal, and no rule in
+the corpus has one. Whether a real workload does is a measurement nobody
+has made; the synthetic one above shows what it would cost if it did.
+
+**Plan-time cost.** Scheduling is not on the per-binding path, so the
+sampler's price is bounded by the number of estimates a run takes, and
+that number is small: 217 to 416 for a whole math-microbenchmark run,
+because a query costs each candidate atom once per pass and the estimates
+are memoized per (emitter, site, probe). Total time inside
+`schedule_inner` over the whole run, eleven rounds, medians of five:
+
+| encoding, driver | mean | sampled | estimates |
+|---|---|---|---|
+| rules, naive | 241.5 µs | 541.8 µs | 246 |
+| rules, semi-naive | 459.7 µs | 999.5 µs | 416 |
+| native, naive | 251.1 µs | 397.6 µs | 217 |
+| native, semi-naive | 467.6 µs | 1 109.1 µs | 382 |
+
+That is 13 to 58 µs per round of added scheduling against a 560 to 640 ms
+run, under 0.1%, which is why the wall-clock column above is spread and
+not cost. Per query on the three-atom synthetic shape, medians of 201:
+0.709 µs for the mean model against 2.125 µs at `k = 8`, 5.500 µs at
+`k = 32` and 19.417 µs at `k = 128`, so the cost is linear in `k` as the
+draw is. The numbers were taken with `schedule_inner` wrapped in an
+`Instant` pair, which is not in the committed code.
+
+**The flag changes no match set.** An atom order is a permutation of the
+same conjunction evaluated against the same index snapshot, which is the
+property chapter 09's snapshot contract states and
+`saturate::variants_disjoint_and_complete` asserts under both scheduling
+modes; S4 relies on the same thing for a stronger reason, because it
+re-permutes per binding. Node counts identical on all twenty corpus
+programs in both drivers is the end-to-end check.
+
+## S6. Feedback from execution, and profiles that outlive a round
+
+Neither is implemented, and S5 supersedes part of what motivated them.
+
+The motivation S5 answers is that the planner's inputs are aggregates,
+one number per access path per round, and cannot express which keys a
+particular driver produces. Feeding back the join sizes a round actually
+observed, or carrying a trained per-rule profile across rounds, were the
+two ways to get that information without sampling. Sampling gets it
+directly and at plan time, from the joint distribution rather than from a
+record of past runs, so it does not need a round of history to be right
+on the first round and it does not need the workload to be stationary.
+
+What remains for S6 is the part sampling cannot reach. A sampled estimate
+prices the candidates a probe proposes, not the partial matches the
+intersection survives: it reads one side of the join, and the other side
+is the leapfrog, whose output is what the next atom's cost depends on.
+Nothing at plan time reads that, and both of the mechanisms above would.
+The same holds downstream of matching: the cost of applying a rule's
+actions is not in any index, and a plan that minimized match steps is not
+the same plan as one that minimized the round.
+
+Postponed rather than closed, on both counts. Revisit online feedback on
+a workload measured to spend a large fraction of a round in one rule
+whose intersections are far smaller than either side, which is the case
+where the probe estimate and the join output diverge; revisit trained
+profiles on a workload measured to run the same ruleset over many
+similar e-graphs, which is the case where a profile amortizes. Neither
+condition holds on the twenty programs under `comparison/`.
 
 ## Convergence target (2026-08-15)
 

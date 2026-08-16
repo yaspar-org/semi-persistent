@@ -8,6 +8,7 @@
 use crate::ast::{GlobalVarId, LitValVarId, MsetVarId, SeqVarId, SetVarId, VarId};
 use crate::containers::{DenseId, IndexLike};
 use crate::resolve::{MatchShape, PatVar, RAtom, RMult, ResolvedQuery};
+use std::cell::Cell;
 use std::hash::Hash;
 
 // ---------------------------------------------------------------------------
@@ -225,6 +226,419 @@ fn path_selectivity(fanout: Option<f64>, denom: usize) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sampled cross-index selectivity
+// ---------------------------------------------------------------------------
+
+/// Where in an emitter atom's node a variable that atom bound sits.
+///
+/// The scheduler needs it to reproduce, at plan time, the key a later atom's
+/// probe will be handed at run time: the runtime key is the class of the
+/// emitter node's child at some position, so a sample of emitter nodes plus a
+/// site is a sample of probe keys.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeySite {
+    /// The node variable itself; the key is the node's own class.
+    Node,
+    /// The child at this position of a fixed-arity node.
+    Child(usize),
+    /// An element of a variadic node, which has no fixed position: the
+    /// decomposition binds the variable to each element in turn, so every
+    /// child of the node is an equally likely key.
+    Element,
+}
+
+/// The access path a candidate atom's join opens for one bound key.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProbePath {
+    /// `by_child_pos[(key, pos)]`, restricted to the atom's operator.
+    ChildPos(usize),
+    /// `by_contains[key]`, restricted to the atom's operator.
+    Contains,
+}
+
+/// Knobs for sampled cross-index selectivity; see [`set_sampled_selectivity`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SamplerConfig {
+    /// Emitter nodes drawn per estimate.
+    pub k: usize,
+    /// Bootstrap resamples used to guard the estimate. `0` disables the guard.
+    pub bootstrap: usize,
+    /// Coefficient of variation of the bootstrap mean above which the estimate
+    /// is discarded for the size-biased mean.
+    pub cv_threshold: f64,
+}
+
+impl Default for SamplerConfig {
+    fn default() -> Self {
+        Self {
+            k: 32,
+            bootstrap: 0,
+            cv_threshold: 1.0,
+        }
+    }
+}
+
+thread_local! {
+    /// Sampling configuration, or `None` for the size-biased mean model.
+    ///
+    /// Thread-local for the same reason as `ematch::RUNTIME_SCHEDULING`: it is
+    /// read once per scheduled query rather than on a per-candidate path, and
+    /// the differential tests run one plan with it on against another with it
+    /// off, which a process-wide flag would make order-dependent under the test
+    /// harness's thread pool.
+    static SAMPLED_SELECTIVITY: Cell<Option<SamplerConfig>> = const { Cell::new(None) };
+}
+
+/// Price a bound key by sampling the emitter's relation instead of by the
+/// round's size-biased mean fan-out. Off by default.
+///
+/// The mean assumes the emitter's key distribution mirrors the probed index's
+/// marginal. It does not have to: an emitter whose nodes point only at leaf
+/// classes never probes the hub buckets that dominate the mean, and the mean
+/// then over-prices the probe by the hub's size. Sampling reads the joint
+/// distribution directly — draw emitter nodes, extract the keys they expose,
+/// read the buckets those keys actually select. Design chapter 20, S5.
+pub fn set_sampled_selectivity(cfg: Option<SamplerConfig>) {
+    SAMPLED_SELECTIVITY.with(|c| c.set(cfg));
+}
+
+/// The sampling configuration in force on this thread, if any.
+pub fn sampled_selectivity() -> Option<SamplerConfig> {
+    SAMPLED_SELECTIVITY.with(|c| c.get())
+}
+
+thread_local! {
+    /// Estimates taken, and estimates the bootstrap guard sent back to the
+    /// size-biased mean.
+    static SAMPLE_TALLY: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+}
+
+/// `(estimates taken, estimates the bootstrap guard rejected)` since the last
+/// [`reset_sample_tally`].
+///
+/// The guard is the only part of the estimator whose effect is invisible in the
+/// plan — a rejected estimate produces the order the mean model would have
+/// produced anyway — so whether it fires on a given workload is a question only
+/// a counter answers. Incremented on the sampling path alone, so the flag-off
+/// scheduler does not touch it.
+pub fn sample_tally() -> (u64, u64) {
+    SAMPLE_TALLY.with(|c| c.get())
+}
+
+/// Zero the counters [`sample_tally`] reports.
+pub fn reset_sample_tally() {
+    SAMPLE_TALLY.with(|c| c.set((0, 0)));
+}
+
+fn tally(rejected: bool) {
+    SAMPLE_TALLY.with(|c| {
+        let (t, r) = c.get();
+        c.set((t + 1, r + u64::from(rejected)));
+    });
+}
+
+/// Plan-time read access to the round's buckets, for sampled selectivity.
+///
+/// A trait, and phrased in `usize` ids, so that the scheduler stays generic
+/// over the operator alone: threading the e-graph's whole configuration through
+/// [`IndexStats`] would put a second type parameter and a lifetime on every
+/// signature that carries stats. [`IndexSampler`](crate::index::IndexSampler)
+/// is the one implementation.
+pub trait CrossSampler<O> {
+    /// Up to `k` node ids of the slice atom `atom_id` will enumerate, in
+    /// ascending id order.
+    ///
+    /// The draw is an even stride over the sorted bucket rather than a random
+    /// sample: a plan must be a function of the e-graph and the rule, and
+    /// nothing else, so that a run is reproducible and a differential test can
+    /// compare two engines on the same order.
+    fn driver_sample(&self, atom_id: usize, op: O, k: usize, out: &mut Vec<usize>);
+
+    /// The classes a variable bound at `site` takes for emitter node `node`.
+    /// One class for [`KeySite::Node`] and [`KeySite::Child`]; for
+    /// [`KeySite::Element`], every distinct class among the node's children.
+    fn key_classes(&self, node: usize, site: KeySite, out: &mut Vec<usize>);
+
+    /// Nodes of operator `op` in the bucket `path` selects for `class` — the
+    /// candidate count the join's intersection with `by_op[op]` can propose.
+    fn probe_len(&self, class: usize, path: ProbePath, op: O) -> usize;
+}
+
+/// One sampled estimate's cache key: emitter atom, the site it binds the
+/// variable at, and the probe the candidate atom would make.
+type SampleKey = (usize, KeySite, usize, ProbePath);
+
+/// Sampling state for one [`schedule_with_stats_sampled`] call: the emitter
+/// draws and the finished estimates, both memoized because the greedy loop
+/// re-costs every unused atom after each choice and the index does not move
+/// underneath it.
+struct Sampling<'a, O> {
+    sampler: &'a dyn CrossSampler<O>,
+    cfg: SamplerConfig,
+    drivers: Vec<(usize, Vec<usize>)>,
+    memo: Vec<(SampleKey, Option<f64>)>,
+    classes: Vec<usize>,
+    draws: Vec<f64>,
+    means: Vec<f64>,
+}
+
+impl<'a, O: DenseId + Copy> Sampling<'a, O> {
+    fn new(sampler: &'a dyn CrossSampler<O>, cfg: SamplerConfig) -> Self {
+        Self {
+            sampler,
+            cfg,
+            drivers: Vec::new(),
+            memo: Vec::new(),
+            classes: Vec::new(),
+            draws: Vec::new(),
+            means: Vec::new(),
+        }
+    }
+
+    /// Index of `atom_id`'s emitter draw, taking it if this is the first ask.
+    fn driver(&mut self, atom_id: usize, op: O) -> usize {
+        if let Some(i) = self.drivers.iter().position(|(a, _)| *a == atom_id) {
+            return i;
+        }
+        let mut nodes = Vec::new();
+        self.sampler
+            .driver_sample(atom_id, op, self.cfg.k, &mut nodes);
+        self.drivers.push((atom_id, nodes));
+        self.drivers.len() - 1
+    }
+
+    /// Mean bucket length the candidate's probe returns over the emitter's
+    /// sampled keys, or `None` when the emitter's slice is empty or the
+    /// bootstrap guard rejects the draw.
+    fn estimate(
+        &mut self,
+        emitter: usize,
+        emitter_op: O,
+        site: KeySite,
+        path: ProbePath,
+        probe_op: O,
+    ) -> Option<f64> {
+        let key: SampleKey = (emitter, site, probe_op.to_usize(), path);
+        if let Some((_, v)) = self.memo.iter().find(|(k, _)| *k == key) {
+            return *v;
+        }
+        let v = self.measure(emitter, emitter_op, site, path, probe_op);
+        self.memo.push((key, v));
+        v
+    }
+
+    fn measure(
+        &mut self,
+        emitter: usize,
+        emitter_op: O,
+        site: KeySite,
+        path: ProbePath,
+        probe_op: O,
+    ) -> Option<f64> {
+        let di = self.driver(emitter, emitter_op);
+        // Taken out and put back so the per-sample scratch below can be
+        // borrowed mutably while the draw is read.
+        let nodes = std::mem::take(&mut self.drivers[di].1);
+        let out = self.sample_draws(&nodes, site, path, probe_op);
+        self.drivers[di].1 = nodes;
+        out
+    }
+
+    fn sample_draws(
+        &mut self,
+        nodes: &[usize],
+        site: KeySite,
+        path: ProbePath,
+        probe_op: O,
+    ) -> Option<f64> {
+        if nodes.is_empty() {
+            return None;
+        }
+        self.draws.clear();
+        for &n in nodes {
+            self.classes.clear();
+            self.sampler.key_classes(n, site, &mut self.classes);
+            if self.classes.is_empty() {
+                continue;
+            }
+            // Every class the site can take is an equally likely key, which is
+            // one class except under `Element`, where the decomposition binds
+            // the variable to each element of the node in turn.
+            let sum: usize = self
+                .classes
+                .iter()
+                .map(|&c| self.sampler.probe_len(c, path, probe_op))
+                .sum();
+            self.draws.push(sum as f64 / self.classes.len() as f64);
+        }
+        if self.draws.is_empty() {
+            return None;
+        }
+        let mean = self.draws.iter().sum::<f64>() / self.draws.len() as f64;
+        let rejected = self.cfg.bootstrap > 0 && !self.bootstrap_ok(mean);
+        tally(rejected);
+        if rejected { None } else { Some(mean) }
+    }
+
+    /// Resample the draws with replacement and reject the estimate when the
+    /// resampled means scatter too far.
+    ///
+    /// The stride is deterministic but arbitrary with respect to the key
+    /// distribution, so a draw can miss a mode that dominates the true mean.
+    /// The bootstrap prices that risk from the draw itself: a sample whose mean
+    /// is stable under resampling is one the stride did not decide. The
+    /// generator is a fixed-seed SplitMix64, so the verdict is a function of the
+    /// draw and plans stay reproducible.
+    fn bootstrap_ok(&mut self, mean: f64) -> bool {
+        if mean <= 0.0 {
+            // A draw of all zeros has no scale to be uncertain on, and its
+            // relative spread is 0/0. The estimate is exact: no key the emitter
+            // produces selects anything.
+            return self.draws.iter().all(|&d| d == 0.0);
+        }
+        let n = self.draws.len();
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        self.means.clear();
+        for _ in 0..self.cfg.bootstrap {
+            let mut acc = 0.0;
+            for _ in 0..n {
+                acc += self.draws[(splitmix64(&mut state) % n as u64) as usize];
+            }
+            self.means.push(acc / n as f64);
+        }
+        let b = self.means.len() as f64;
+        let bmean = self.means.iter().sum::<f64>() / b;
+        let var = self
+            .means
+            .iter()
+            .map(|m| (m - bmean) * (m - bmean))
+            .sum::<f64>()
+            / b;
+        var.sqrt() / mean <= self.cfg.cv_threshold
+    }
+}
+
+/// SplitMix64, the reference generator for the bootstrap resample.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The atom each variable was bound by, and where in that atom's node it sits.
+type Emitters = Vec<Option<(usize, KeySite)>>;
+
+/// Record every variable the atoms newly lowered by this step bind, first
+/// writer winning — the atom that binds a variable is the first lowered atom
+/// that mentions it, and later atoms only re-check it.
+fn record_emitters<O, S, V>(
+    atoms: &[RAtom<O, S, V>],
+    before: &[bool],
+    used: &[bool],
+    em: &mut Emitters,
+) {
+    fn set(em: &mut Emitters, v: usize, src: (usize, KeySite)) {
+        if em[v].is_none() {
+            em[v] = Some(src);
+        }
+    }
+    fn set_pv(em: &mut Emitters, pv: &PatVar, src: (usize, KeySite)) {
+        if let PatVar::Local(v) = pv {
+            set(em, v.idx(), src);
+        }
+    }
+    for (ai, atom) in atoms.iter().enumerate() {
+        if used[ai] == before[ai] {
+            continue;
+        }
+        match atom {
+            RAtom::Plain { node, children, .. } => {
+                set(em, (*node).idx(), (ai, KeySite::Node));
+                for (pos, cv) in children.iter().enumerate() {
+                    set_pv(em, cv, (ai, KeySite::Child(pos)));
+                }
+            }
+            RAtom::AExact { node, children, .. } => {
+                set(em, (*node).idx(), (ai, KeySite::Node));
+                for cv in children {
+                    set_pv(em, cv, (ai, KeySite::Element));
+                }
+            }
+            RAtom::APrefix { node, fixed, .. }
+            | RAtom::ASuffix { node, fixed, .. }
+            | RAtom::ABoth { node, fixed, .. } => {
+                set(em, (*node).idx(), (ai, KeySite::Node));
+                for cv in fixed {
+                    set_pv(em, cv, (ai, KeySite::Element));
+                }
+            }
+            RAtom::ACExact { node, elems, .. } | RAtom::ACSub { node, elems, .. } => {
+                set(em, (*node).idx(), (ai, KeySite::Node));
+                for (ev, _) in elems {
+                    set_pv(em, ev, (ai, KeySite::Element));
+                }
+            }
+            RAtom::ACIExact { node, elems, .. } | RAtom::ACISub { node, elems, .. } => {
+                set(em, (*node).idx(), (ai, KeySite::Node));
+                for ev in elems {
+                    set_pv(em, ev, (ai, KeySite::Element));
+                }
+            }
+            RAtom::Lit { node, .. } | RAtom::LitBind { node, .. } => {
+                set(em, (*node).idx(), (ai, KeySite::Node))
+            }
+            // `CopyBinding` propagates a binding rather than producing one, so
+            // the copy's emitter is the original's.
+            RAtom::Eq(a, b) => {
+                if em[(*a).idx()].is_none() {
+                    em[(*a).idx()] = em[(*b).idx()];
+                } else if em[(*b).idx()].is_none() {
+                    em[(*b).idx()] = em[(*a).idx()];
+                }
+            }
+            RAtom::EqGlobal(..) => {}
+        }
+    }
+}
+
+/// The relation an atom scans, for the emitter draw. Mirrors
+/// [`saturate::atom_op`](crate::saturate::atom_op) — the same partition into
+/// scanning and non-scanning atoms the semi-naive decomposition uses.
+fn emitter_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
+    crate::saturate::atom_op(atom)
+}
+
+/// Everything the cost model reads: the round's aggregates, which atom bound
+/// each variable, and the sampler when it is on.
+struct Cost<'a, O: Eq + Hash> {
+    stats: &'a IndexStats<O>,
+    emitters: Emitters,
+    sampling: Option<Sampling<'a, O>>,
+}
+
+impl<'a, O: DenseId + Hash + Copy> Cost<'a, O> {
+    /// Sampled fan-out of one bound key of a candidate atom, or `None` when
+    /// sampling is off, the key was not bound by a scheduled atom (a global, or
+    /// a variable an eager step produced from one), or the guard rejected it.
+    fn sampled<S, V>(
+        &mut self,
+        atoms: &[RAtom<O, S, V>],
+        key: &PatVar,
+        path: ProbePath,
+        probe_op: O,
+    ) -> Option<f64> {
+        let PatVar::Local(v) = key else { return None };
+        let (emitter, site) = (*self.emitters.get(v.idx())?)?;
+        let emitter_op = emitter_op(atoms.get(emitter)?)?;
+        self.sampling
+            .as_mut()?
+            .estimate(emitter, emitter_op, site, path, probe_op)
+    }
+}
+
 /// Expected number of candidate nodes an atom's join enumerates, given which
 /// of its keys the scheduler has already bound.
 ///
@@ -243,11 +657,13 @@ fn path_selectivity(fanout: Option<f64>, denom: usize) -> f64 {
 /// `AExact`) intersects `by_contains` per bound element, and an atom whose
 /// node variable is already bound re-joins within its class through `by_repr`.
 fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
-    atom: &RAtom<O, S, V>,
+    atoms: &[RAtom<O, S, V>],
     atom_id: usize,
     bound: &[bool],
-    stats: &IndexStats<O>,
+    ctx: &mut Cost<'_, O>,
 ) -> f64 {
+    let atom = &atoms[atom_id];
+    let stats = ctx.stats;
     match atom {
         RAtom::Plain { node, op, children } => {
             if bound[(*node).idx()] {
@@ -257,14 +673,16 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
             let mut cost = base_card(op, atom_id, stats) as f64;
             for (pos, cv) in children.iter().enumerate() {
                 if pv_is_bound(cv, bound) {
-                    let f = stats.fanouts.by_child_pos.get(&(*op, pos)).copied();
+                    let f = ctx
+                        .sampled(atoms, cv, ProbePath::ChildPos(pos), *op)
+                        .or_else(|| ctx.stats.fanouts.by_child_pos.get(&(*op, pos)).copied());
                     cost *= path_selectivity(f, full);
                 }
             }
             cost
         }
         RAtom::AExact { node, op, children } => {
-            by_contains_cost(node, op, atom_id, children, bound, stats)
+            by_contains_cost(atoms, node, op, atom_id, children, bound, ctx)
         }
         RAtom::APrefix {
             node, op, fixed, ..
@@ -274,18 +692,18 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
         }
         | RAtom::ABoth {
             node, op, fixed, ..
-        } => by_contains_cost(node, op, atom_id, fixed, bound, stats),
+        } => by_contains_cost(atoms, node, op, atom_id, fixed, bound, ctx),
         RAtom::ACExact { node, op, elems }
         | RAtom::ACSub {
             node, op, elems, ..
         } => {
             let evs: Vec<PatVar> = elems.iter().map(|(ev, _)| *ev).collect();
-            by_contains_cost(node, op, atom_id, &evs, bound, stats)
+            by_contains_cost(atoms, node, op, atom_id, &evs, bound, ctx)
         }
         RAtom::ACIExact { node, op, elems }
         | RAtom::ACISub {
             node, op, elems, ..
-        } => by_contains_cost(node, op, atom_id, elems, bound, stats),
+        } => by_contains_cost(atoms, node, op, atom_id, elems, bound, ctx),
         RAtom::Lit { op, .. } | RAtom::LitBind { op, .. } => base_card(op, atom_id, stats) as f64,
         RAtom::Eq(..) | RAtom::EqGlobal(..) => 0.0,
     }
@@ -302,23 +720,27 @@ fn by_repr_cost<O: Eq + Hash>(op: &O, atom_id: usize, stats: &IndexStats<O>) -> 
 /// Cost of a variadic atom's join: `by_contains` per bound element, or the
 /// class re-join when the node variable itself is bound (`emit_variadic_join`
 /// emits one or the other).
-fn by_contains_cost<O: Eq + Hash + Copy>(
+#[allow(clippy::too_many_arguments)]
+fn by_contains_cost<O: DenseId + Hash + Copy, S, V>(
+    atoms: &[RAtom<O, S, V>],
     node: &VarId,
     op: &O,
     atom_id: usize,
     elems: &[PatVar],
     bound: &[bool],
-    stats: &IndexStats<O>,
+    ctx: &mut Cost<'_, O>,
 ) -> f64 {
     if bound[(*node).idx()] {
-        return by_repr_cost(op, atom_id, stats);
+        return by_repr_cost(op, atom_id, ctx.stats);
     }
-    let full = stats.op_card.get(op).copied().unwrap_or(0);
-    let sel = path_selectivity(stats.fanouts.by_contains.get(op).copied(), full);
-    let mut cost = base_card(op, atom_id, stats) as f64;
+    let full = ctx.stats.op_card.get(op).copied().unwrap_or(0);
+    let mut cost = base_card(op, atom_id, ctx.stats) as f64;
     for e in elems {
         if pv_is_bound(e, bound) {
-            cost *= sel;
+            let f = ctx
+                .sampled(atoms, e, ProbePath::Contains, *op)
+                .or_else(|| ctx.stats.fanouts.by_contains.get(op).copied());
+            cost *= path_selectivity(f, full);
         }
     }
     cost
@@ -334,32 +756,73 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone
     rq: &ResolvedQuery<O, S, V>,
     stats: &IndexStats<O>,
 ) -> QueryPlan<O, I, V> {
+    schedule_inner(rq, stats, None)
+}
+
+/// [`schedule_with_stats`] with plan-time access to the round's buckets, so
+/// that a bound key can be priced by sampling the emitter's relation rather
+/// than by the round's mean fan-out.
+///
+/// Whether it does is [`set_sampled_selectivity`]'s to decide: with the flag
+/// off this is `schedule_with_stats` and `sampler` is never called, so a caller
+/// that always has a sampler in hand needs no branch of its own.
+pub fn schedule_with_stats_sampled<
+    O: DenseId + Hash + Copy,
+    S: DenseId + Copy,
+    V: Clone,
+    I: IndexLike,
+>(
+    rq: &ResolvedQuery<O, S, V>,
+    stats: &IndexStats<O>,
+    sampler: &dyn CrossSampler<O>,
+) -> QueryPlan<O, I, V> {
+    schedule_inner(rq, stats, sampled_selectivity().map(|cfg| (sampler, cfg)))
+}
+
+fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: IndexLike>(
+    rq: &ResolvedQuery<O, S, V>,
+    stats: &IndexStats<O>,
+    sampling: Option<(&dyn CrossSampler<O>, SamplerConfig)>,
+) -> QueryPlan<O, I, V> {
     let mut bound = vec![false; rq.shape.num_vars()];
     let mut steps = Vec::new();
     let mut used = vec![false; rq.atoms.len()];
+    let mut ctx = Cost {
+        stats,
+        emitters: vec![None; rq.shape.num_vars()],
+        sampling: sampling.map(|(s, cfg)| Sampling::new(s, cfg)),
+    };
+    let mut before = used.clone();
     loop {
         // Eager pass: Eq, Lit, already-bound nodes.
         lower_eager(&rq.atoms, &mut used, &mut bound, &mut steps);
+        record_emitters(&rq.atoms, &before, &used, &mut ctx.emitters);
+        before.copy_from_slice(&used);
 
-        // Pick cheapest unprocessed atom.
-        // `min_by` over an `f64` cost: the estimate is an expected cardinality,
-        // and rounding it to an integer would tie every selective atom at 0.
-        // Every value is finite (`path_selectivity` guards its divisor), and
-        // `min_by` keeps the first of equal minima, so the choice is a function
-        // of the atom order.
-        let best = (0..rq.atoms.len())
-            .filter(|&ai| {
-                !used[ai] && !matches!(&rq.atoms[ai], RAtom::Eq(..) | RAtom::EqGlobal(..))
-            })
-            .min_by(|&a, &b| {
-                estimate_cost(&rq.atoms[a], a, &bound, stats)
-                    .partial_cmp(&estimate_cost(&rq.atoms[b], b, &bound, stats))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+        // Pick the cheapest unprocessed atom.
+        // The estimate is an expected cardinality, so it is compared as an
+        // `f64`: rounding it to an integer would tie every selective atom at 0.
+        // Every value is finite (`path_selectivity` guards its divisor), and the
+        // fold replaces only on a strict improvement, so equal minima keep the
+        // lowest atom index and the choice is a function of the atom order.
+        // Costs are taken once per atom per pass rather than inside a
+        // comparator, which under sampling would redraw them per comparison.
+        let mut best: Option<(usize, f64)> = None;
+        for ai in 0..rq.atoms.len() {
+            if used[ai] || matches!(&rq.atoms[ai], RAtom::Eq(..) | RAtom::EqGlobal(..)) {
+                continue;
+            }
+            let c = estimate_cost(&rq.atoms, ai, &bound, &mut ctx);
+            if best.is_none_or(|(_, b)| c < b) {
+                best = Some((ai, c));
+            }
+        }
 
-        let Some(ai) = best else { break };
+        let Some((ai, _)) = best else { break };
         emit_atom(&rq.atoms[ai], ai, &mut bound, &mut steps);
         used[ai] = true;
+        record_emitters(&rq.atoms, &before, &used, &mut ctx.emitters);
+        before.copy_from_slice(&used);
     }
 
     QueryPlan {
@@ -1117,15 +1580,24 @@ mod tests {
             rest: crate::ast::MsetVarId::new(0),
         };
 
+        let cost_of = |bound: &[bool]| {
+            let mut ctx = Cost {
+                stats: &stats,
+                emitters: vec![None; bound.len()],
+                sampling: None,
+            };
+            estimate_cost(std::slice::from_ref(&atom), 0, bound, &mut ctx)
+        };
+
         // x unbound → full op cardinality. (atom_id 0; no per-atom override,
         // so it falls back to op_card.)
         let bound_none = [false, false];
-        assert_eq!(estimate_cost(&atom, 0, &bound_none, &stats), 1000.0);
+        assert_eq!(cost_of(&bound_none), 1000.0);
 
         // x bound → discounted (halved per bound element), reflecting the
         // `by_contains[x]` intersection the join will apply.
         let bound_x = [true, false];
-        let cost_bound = estimate_cost(&atom, 0, &bound_x, &stats);
+        let cost_bound = cost_of(&bound_x);
         assert!(
             cost_bound < 1000.0,
             "binding an element must discount a variadic atom's cost, got {cost_bound}"
@@ -1134,6 +1606,133 @@ mod tests {
             cost_bound, 500.0,
             "with no measured fan-out one bound element halves the estimate"
         );
+    }
+
+    /// A sampler that answers every probe with a per-operator constant, and
+    /// records which atom it was asked to draw from.
+    struct StubSampler {
+        lens: std::collections::HashMap<OpId, usize>,
+        drawn: std::cell::RefCell<Vec<usize>>,
+    }
+
+    impl CrossSampler<OpId> for StubSampler {
+        fn driver_sample(&self, atom_id: usize, _op: OpId, k: usize, out: &mut Vec<usize>) {
+            self.drawn.borrow_mut().push(atom_id);
+            out.clear();
+            out.extend(0..k);
+        }
+        fn key_classes(&self, node: usize, _site: KeySite, out: &mut Vec<usize>) {
+            out.push(node);
+        }
+        fn probe_len(&self, _class: usize, _path: ProbePath, op: OpId) -> usize {
+            self.lens.get(&op).copied().unwrap_or(0)
+        }
+    }
+
+    /// The sampled bucket length replaces the round's mean fan-out in the cost,
+    /// and the draw is taken from the atom that bound the key.
+    ///
+    /// `(f x y) (g y) (h y w)` with `f` cheapest, so both estimators drive from
+    /// it and both then choose between `g` and `h` on the same bound `y`. The
+    /// mean has `g`'s probe returning 1 node and `h`'s 500, and orders `g`
+    /// second. The sampler reverses the two numbers on the same statistics, and
+    /// the order reverses with them — which is only possible if the fan-out is
+    /// what the sample displaces. The draw must come from atom 0: `y` is `f`'s
+    /// second child, and no other scheduled atom binds it.
+    #[test]
+    fn a_sampled_bucket_displaces_the_mean_fanout() {
+        let (ops, sorts, _) = setup();
+        let (f, g, h) = (
+            ops.id_by_name("f").unwrap(),
+            ops.id_by_name("g").unwrap(),
+            ops.id_by_name("h").unwrap(),
+        );
+        let mut stats = IndexStats::<OpId>::new();
+        stats.op_card.insert(f, 10);
+        stats.op_card.insert(g, 1_000);
+        stats.op_card.insert(h, 1_000);
+        stats.fanouts.by_child_pos.insert((g, 0), 1.0);
+        stats.fanouts.by_child_pos.insert((h, 0), 500.0);
+
+        let pats: Vec<_> = ["(f x y)", "(g y)", "(h y w)"]
+            .iter()
+            .map(|s| parse_pattern(s))
+            .collect();
+        let fq = flatten(&pats, &ops).unwrap();
+        let rq = resolve(
+            &fq,
+            &ops,
+            &sorts,
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<_, ()>::new(),
+        )
+        .unwrap();
+        let join_ops = |plan: &QueryPlan<OpId, u32, NiraLitVal>| -> Vec<OpId> {
+            plan.steps
+                .iter()
+                .filter_map(|s| match s {
+                    Step::Join { lookups, .. } => lookups.iter().find_map(|l| match l {
+                        IndexLookup::ByOp { op } => Some(*op),
+                        _ => None,
+                    }),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            join_ops(&schedule_with_stats(&rq, &stats)),
+            [f, g, h],
+            "the mean should join g second"
+        );
+
+        let stub = StubSampler {
+            lens: [(g, 400usize), (h, 2usize)].into_iter().collect(),
+            drawn: std::cell::RefCell::new(Vec::new()),
+        };
+        let cfg = SamplerConfig::default();
+        let plan: QueryPlan<OpId, u32, NiraLitVal> =
+            schedule_inner(&rq, &stats, Some((&stub, cfg)));
+        assert_eq!(
+            join_ops(&plan),
+            [f, h, g],
+            "the sampled lengths should join h second"
+        );
+        let drawn = stub.drawn.into_inner();
+        assert_eq!(
+            drawn,
+            vec![0],
+            "the draw must come once from the atom that bound the key"
+        );
+    }
+
+    /// With sampling off the sampler is never consulted, so a caller may hold
+    /// one unconditionally: the flag alone decides.
+    #[test]
+    fn the_flag_off_path_never_samples() {
+        let (ops, sorts, _) = setup();
+        let pats = [parse_pattern("(f x y)"), parse_pattern("(g y)")];
+        let fq = flatten(&pats, &ops).unwrap();
+        let rq = resolve(
+            &fq,
+            &ops,
+            &sorts,
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<_, ()>::new(),
+        )
+        .unwrap();
+        let stub = StubSampler {
+            lens: std::collections::HashMap::new(),
+            drawn: std::cell::RefCell::new(Vec::new()),
+        };
+        assert_eq!(sampled_selectivity(), None, "the flag defaults to off");
+        let plan: QueryPlan<OpId, u32, NiraLitVal> =
+            schedule_with_stats_sampled(&rq, &IndexStats::new(), &stub);
+        assert_eq!(
+            plan.steps,
+            schedule_with_stats::<_, _, _, u32>(&rq, &IndexStats::new()).steps
+        );
+        assert!(stub.drawn.into_inner().is_empty());
     }
 
     /// End-to-end: with a bound element, the scheduler must be willing to drive

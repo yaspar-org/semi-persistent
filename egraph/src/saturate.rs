@@ -185,7 +185,7 @@ use std::hash::Hash;
 /// (it is that scan filtered to one payload), so it is a position too: a match
 /// whose only new tuple is a freshly interned literal node needs a variant that
 /// reads the literal atom's delta.
-fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
+pub(crate) fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
     match atom {
         RAtom::Plain { op, .. }
         | RAtom::AExact { op, .. }
@@ -295,7 +295,8 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
+    let sampler = crate::index::IndexSampler::new(eg, *vindex);
+    let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);
     let mut changes = 0;
     for j in 0..pool.len() {
