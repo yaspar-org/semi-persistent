@@ -42,7 +42,8 @@ impl Oracle {
     }
 
     fn add_use(&mut self, repr: ENodeId, parent: ENodeId) {
-        self.uses.get_mut(&repr).unwrap().push(parent);
+        // `EClasses::add_use` prepends, so a new use lands at the front.
+        self.uses.get_mut(&repr).unwrap().insert(0, parent);
     }
 
     fn get_uses(&self, repr: ENodeId) -> Vec<ENodeId> {

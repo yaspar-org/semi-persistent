@@ -1438,6 +1438,12 @@ where
     /// Record that `parent_node` uses class `child_key` as a child, marking
     /// the class atomic (production's `add_use`). Refuses a dead key, an
     /// out-of-range parent id, or node exhaustion.
+    ///
+    /// Prepends. W5 constrains the use-list's contents, not its order, and no
+    /// consumer reads the order: the rebuild sweep recanonizes each parent
+    /// independently, and critical-pair partner discovery sorts and dedups what
+    /// it collects. Prepending touches one memory location (the list head)
+    /// where appending touches two (the head and the old tail node).
     pub fn add_use(&mut self, child_key: <T as DenseId>::Index, parent_node: T)
         requires old(self).wf(),
         ensures
@@ -1463,7 +1469,7 @@ where
             // W4a: the class's list handle is allocated.
             assert(data.use_list.id_nat() < o.uses.model_view().len());
         }
-        match self.uses.try_append(data.use_list, parent_node) {
+        match self.uses.try_prepend(data.use_list, parent_node) {
             Ok(()) => (),
             Err(_) => crate::guard::refuse("EClasses::add_use: use-list node range exhausted"),
         }
@@ -1513,15 +1519,22 @@ where
             o.uses.lemma_nodes_len_fits();
             <N as DenseId>::Index::lemma_max_nat_fits_usize();
             assert(oun.len() <= usize::MAX as nat);
-            assert(um == oum.update(li, oum[li].push(oun.len() as usize)));
+            assert(um == oum.update(li, seq![oun.len() as usize] + oum[li]));
             assert(un.len() == oun.len() + 1);
             assert(un[oun.len() as int].payload == parent_node);
 
             assert forall|l: int, p: int|
                 0 <= l < um.len() && 0 <= p < (#[trigger] um[l]).len()
                 implies un[#[trigger] um[l][p] as int].payload.id_nat() < n by {
-                if l == li && p == um[l].len() - 1 {
+                if l == li && p == 0 {
+                    // the fresh node, at the front: it names `parent_node`,
+                    // whose id the entry guard bounded by `n`.
                     assert(um[l][p] == oun.len() as usize);
+                } else if l == li {
+                    // an old entry of this list, shifted one right by the prepend.
+                    assert(um[l][p] == oum[l][p - 1]);
+                    assert(oum[l][p - 1] < oun.len());
+                    assert(un[um[l][p] as int].payload == oun[oum[l][p - 1] as int].payload);
                 } else {
                     assert(um[l][p] == oum[l][p]);
                     assert(oum[l][p] < oun.len());
