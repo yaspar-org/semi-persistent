@@ -7,6 +7,7 @@
 use crate::apply::PreparedRule;
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
+use crate::containers::DenseId;
 use crate::containers::ShrinkPolicy;
 use crate::egraph::{EGraph, EGraphToken};
 use crate::lit_model::LitModel;
@@ -77,6 +78,8 @@ pub struct Interpreter<
     /// Outcome of the most recent `(run …)` command (iterations, saturated, match steps).
     /// `None` until the first run. Exposed for diagnostics and benchmarking.
     last_sat: Option<crate::saturate::SatResult>,
+    /// Wall time of the most recent `(run …)`, measured around the driver call.
+    last_run_time: Option<std::time::Duration>,
 }
 
 impl<Cfg: EGraphConfig, L: LitVal, M: LitModel<Value = L>, const TRACK: bool, const PROOFS: bool>
@@ -96,6 +99,7 @@ where
             shrink_policy: ShrinkPolicy::Never,
             strategy: crate::saturate::SaturationStrategy::default(),
             last_sat: None,
+            last_run_time: None,
         }
     }
 
@@ -115,6 +119,7 @@ where
             shrink_policy: ShrinkPolicy::Never,
             strategy: crate::saturate::SaturationStrategy::default(),
             last_sat: None,
+            last_run_time: None,
         }
     }
 
@@ -131,6 +136,12 @@ where
     /// Outcome of the most recent `(run …)` command, or `None` if none has run.
     pub fn last_sat(&self) -> Option<&crate::saturate::SatResult> {
         self.last_sat.as_ref()
+    }
+
+    /// Wall time of the most recent `(run …)`, or `None` if none has run. Measured around
+    /// the saturation driver only — building the `:until` goal's terms is not included.
+    pub fn last_run_time(&self) -> Option<std::time::Duration> {
+        self.last_run_time
     }
 
     /// Enable/disable the AC congruence-completion pass (default off; see
@@ -165,6 +176,12 @@ where
 
     /// Run a pre-checked program (output of `sortcheck_program`).
     pub fn run_checked(&mut self, cmds: &[CCommand<Cfg::O, Cfg::S, L>]) -> Result<(), InterpError> {
+        // Match steps are only counted while the (thread-local) counter is armed, and it is
+        // off by default because arming it costs a load per match step. A program that asks
+        // for stats has asked to pay that.
+        if cmds.iter().any(|c| matches!(c, CCommand::PrintStats(_))) {
+            crate::ematch::set_match_step_counting(true);
+        }
         for cmd in cmds {
             self.exec_checked(cmd)?;
         }
@@ -255,6 +272,7 @@ where
                 rhs,
                 root_vid,
                 subsume,
+                ruleset,
             } => {
                 let name = format!("rewrite_{}", self.eg.rules().len());
                 let rule_id = self.eg.register_rule(&name, "", "");
@@ -271,11 +289,16 @@ where
                     rule_id,
                     query: query.clone(),
                     actions,
+                    ruleset: *ruleset,
                 };
                 Self::check_rule_mults(&name, &rule)?;
                 self.rules.push(rule);
             }
-            CCommand::Rule { query, actions } => {
+            CCommand::Rule {
+                query,
+                actions,
+                ruleset,
+            } => {
                 let name = format!("rule_{}", self.eg.rules().len());
                 let rule_id = self.eg.register_rule(&name, "", "");
                 let compiled: Vec<_> = actions
@@ -286,23 +309,80 @@ where
                     rule_id,
                     query: query.clone(),
                     actions: compiled,
+                    ruleset: *ruleset,
                 };
                 Self::check_rule_mults(&name, &rule)?;
                 self.rules.push(rule);
             }
-            CCommand::Run(n) => {
-                let limit = *n as usize;
+            CCommand::Run {
+                ruleset,
+                limit,
+                until,
+            } => {
+                // A `:until` goal is over ground terms, so it is built once, before the run,
+                // and only its classes move afterwards. Building it can add nodes, which is
+                // why the graph is rebuilt before the driver sees it.
+                let goal = match until {
+                    None => None,
+                    Some(g) => {
+                        let before = self.eg.node_count();
+                        let (l, _) = self.build_cterm(&g.left);
+                        let (r, _) = self.build_cterm(&g.right);
+                        if self.eg.node_count() > before {
+                            self.eg.rebuild();
+                        }
+                        Some(crate::saturate::RunGoal {
+                            left: l,
+                            right: r,
+                            equal: g.equal,
+                        })
+                    }
+                };
+                let spec = crate::saturate::RunSpec {
+                    limit: *limit as usize,
+                    ruleset: *ruleset,
+                    until: goal,
+                };
+                let t0 = std::time::Instant::now();
                 let result = match self.strategy {
                     crate::saturate::SaturationStrategy::Naive => {
                         self.eg
-                            .saturate(&self.rules, &self.model, limit, &self.globals)
+                            .saturate_spec(&self.rules, &self.model, &spec, &self.globals)
                     }
                     crate::saturate::SaturationStrategy::SemiNaive => {
                         self.eg
-                            .saturate_semi(&self.rules, &self.model, limit, &self.globals)
+                            .saturate_semi_spec(&self.rules, &self.model, &spec, &self.globals)
                     }
                 };
+                self.last_run_time = Some(t0.elapsed());
                 self.last_sat = Some(result);
+            }
+            CCommand::PrintSize(op) => {
+                let counts = self.eg.op_node_counts();
+                match op {
+                    Some(o) => println!("{}", counts[o.to_usize()]),
+                    None => {
+                        // Ops with no nodes are omitted: the builtin literal and primitive
+                        // ops would otherwise dominate the listing on every program.
+                        let mut total = 0;
+                        for (name, n) in self.eg.ops().names().zip(counts.iter()) {
+                            if *n > 0 {
+                                println!("{name}: {n}");
+                            }
+                            total += n;
+                        }
+                        println!("total: {total}");
+                    }
+                }
+            }
+            CCommand::PrintStats(file) => {
+                let stats = self.stats_snapshot();
+                match file {
+                    None => print!("{}", stats.render_text()),
+                    Some(path) => std::fs::write(path, stats.render_json()).map_err(|e| {
+                        InterpError::DeclError(format!("print-stats :file '{path}': {e}"))
+                    })?,
+                }
             }
             CCommand::Push(shrink) => {
                 let policy = if *shrink {
@@ -435,6 +515,21 @@ where
         Ok(())
     }
 
+    /// The numbers `(print-stats)` reports: the graph as it stands now, plus the counters of
+    /// the most recent run (zeroed when no run has happened).
+    fn stats_snapshot(&self) -> RunStats {
+        let sat = self.last_sat.as_ref();
+        RunStats {
+            nodes: self.eg.len(),
+            classes: self.eg.class_count(),
+            iterations: sat.map_or(0, |s| s.iterations),
+            match_steps: sat.map_or(0, |s| s.match_steps),
+            wall_time_ms: self.last_run_time.map_or(0.0, |d| d.as_secs_f64() * 1000.0),
+            saturated: sat.is_some_and(|s| s.saturated),
+            goal_met: sat.is_some_and(|s| s.goal_met),
+        }
+    }
+
     /// Build a `CTerm` in the e-graph. No string lookups, no sort checks.
     fn build_cterm(&mut self, ct: &CTerm<Cfg::O, Cfg::S, L>) -> (Cfg::G, Cfg::S) {
         match ct {
@@ -455,5 +550,51 @@ where
                 (self.eg.find(id), *sort)
             }
         }
+    }
+}
+
+/// The `(print-stats)` reading: e-graph size now, and the last run's counters.
+///
+/// Both renderings are hand-rolled. The text form is for a human reading a terminal; the
+/// JSON form is what the comparison harness parses, and it is small and fixed enough that a
+/// serialization dependency would buy nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RunStats {
+    pub nodes: usize,
+    pub classes: usize,
+    pub iterations: usize,
+    pub match_steps: u64,
+    pub wall_time_ms: f64,
+    pub saturated: bool,
+    pub goal_met: bool,
+}
+
+impl RunStats {
+    pub fn render_text(&self) -> String {
+        format!(
+            "nodes: {}\nclasses: {}\niterations: {}\nmatch-steps: {}\nwall-time-ms: {:.3}\n\
+             saturated: {}\ngoal-met: {}\n",
+            self.nodes,
+            self.classes,
+            self.iterations,
+            self.match_steps,
+            self.wall_time_ms,
+            self.saturated,
+            self.goal_met,
+        )
+    }
+
+    pub fn render_json(&self) -> String {
+        format!(
+            "{{\"nodes\":{},\"classes\":{},\"iterations\":{},\"match_steps\":{},\
+             \"wall_time_ms\":{:.3},\"saturated\":{},\"goal_met\":{}}}\n",
+            self.nodes,
+            self.classes,
+            self.iterations,
+            self.match_steps,
+            self.wall_time_ms,
+            self.saturated,
+            self.goal_met,
+        )
     }
 }

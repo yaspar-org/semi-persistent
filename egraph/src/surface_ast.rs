@@ -51,10 +51,14 @@ pub enum SurfaceCommand {
         rhs: RhsTerm,
         when: Vec<SurfacePattern>,
         subsume: bool,
+        /// `:ruleset name`, or `None` for the default ruleset.
+        ruleset: Option<String>,
     },
     Rule {
         body: Vec<SurfacePattern>,
         head: Vec<Action>,
+        /// `:ruleset name`, or `None` for the default ruleset.
+        ruleset: Option<String>,
     },
     Pass(Command),
 }

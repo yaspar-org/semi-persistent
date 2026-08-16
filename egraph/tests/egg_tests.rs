@@ -315,6 +315,12 @@ egg_test!(
     "datatype_variants_are_constructors.egg"
 );
 
+// ── Rulesets, run goals, birewrite, stats ──
+egg_test!(ruleset_scoping, "ruleset_scoping.egg");
+egg_test!(birewrite_both_directions, "birewrite_both_directions.egg");
+egg_test!(run_until_goal, "run_until_goal.egg");
+egg_test!(print_size_and_stats, "print_size_and_stats.egg");
+
 // ── Deep multi-level constant folding ──
 egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 

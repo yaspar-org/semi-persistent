@@ -1,0 +1,12 @@
+;; EXPECT: ok
+;; Tests (run N :until (= a b)): the goal is checked before every iteration and stops the
+;; run once it holds. The iteration count is asserted in tests/surface_runtime.rs
+;; (`until_stops_before_the_budget`); here the fixture pins the surface form and the result.
+(sort E)
+(constructor a () E)
+(constructor s (E) E)
+
+(rewrite (s x) (s (s x)))
+(let start (s (a)))
+(run 100 :until (= start (s (s (a)))))
+(check (= start (s (s (a)))))

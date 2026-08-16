@@ -55,9 +55,11 @@ declarations made inside the scope are undone too.
 | `CheckEq(a, b)` | Build both → verify find(a) == find(b) |
 | `CheckNeq(a, b)` | Build both → verify find(a) != find(b) |
 | `Extract(ct)` | Build → extract_best → print |
-| `Rewrite { query, rhs, .. }` | Compile RHS → push to rules |
-| `Rule { query, actions }` | Compile actions → push to rules |
-| `Run(n)` | Saturate for n iterations |
+| `Rewrite { query, rhs, .. }` | Compile RHS → push to rules (with its ruleset) |
+| `Rule { query, actions, .. }` | Compile actions → push to rules (with its ruleset) |
+| `Run { ruleset, limit, until }` | Build the goal terms → saturate under a `RunSpec` |
+| `PrintSize(op)` | Per-op node counts and total, or one op's count |
+| `PrintStats(file)` | Last run's counters, as text or JSON |
 | `Push(shrink)` | Snapshot e-graph + rules count (`:shrink` reclaims capacity) |
 | `Pop` | Restore e-graph + truncate rules |
 
@@ -145,6 +147,46 @@ so existing programs behave identically. Semi-naive is sound,
 fixpoint-equivalent to naive, and has no automatic fallback. Its
 mechanism — the `touched` log, delta index, `VariantIndex`, and the
 k-variant fan-out — is the subject of Chapter 18.
+
+## Run Control: Rulesets and Goals
+
+`(run N)` runs the **default** ruleset — the rules with no `:ruleset` tag
+— exactly as before rulesets existed. `(run name N)` runs the rules
+tagged `:ruleset name` and nothing else. Both directions of that scoping
+matter: a scoped experiment (an AC block, say) must not fire under the
+main run, and the main run's rules must not fire under it. Ruleset ids
+are assigned by sortcheck in declaration order and stored on the
+`PreparedRule`, so the driver's filter is one integer comparison per
+rule per round.
+
+Rulesets are static: they are not scoped by `(push)`/`(pop)`, and the
+name table lives for one `sortcheck_program` call.
+
+`(run [ruleset] N :until (= a b))` — or `(!= a b)` — stops the run as
+soon as the goal holds. The goal's terms are ground, so they are built
+once, before the run; only their classes move afterwards, and the check
+is two `find`s. It runs **before** every iteration, including the first,
+so a goal that already holds costs zero iterations. `SatResult.goal_met`
+distinguishes stopping on the goal from reaching a fixpoint: the goal
+can be met with rules still firing.
+
+Building the goal's terms adds those nodes to the e-graph, which is
+observable — the same nodes a `(check …)` of the goal would add.
+
+## Statistics
+
+`(print-size)` lists the node count of every operator that has nodes,
+then the total; `(print-size Op)` prints one operator's count as a bare
+integer. `(print-stats)` reports the e-graph's current size and the
+counters of the most recent run: nodes, classes, iterations, match
+steps, wall time, whether it saturated, and whether its goal was met.
+`(print-stats :file "p.json")` writes the same numbers as a flat JSON
+object for a harness to parse.
+
+Match steps are only counted while the thread-local counter is armed
+(off by default, since arming it costs a load per step). The interpreter
+arms it when the program contains a `print-stats`, so asking for stats
+is enough to get a real number.
 
 ## Push/Pop Scoping
 

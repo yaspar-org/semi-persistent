@@ -153,11 +153,19 @@ pub enum CompiledAction<O, V> {
     Subsume(crate::ast::VarId),
 }
 
+/// Identifier of a declared ruleset: its index in the program's declaration order. `None`
+/// wherever a `RulesetId` is optional means the default ruleset — the one an untagged rule
+/// joins and a bare `(run N)` runs.
+pub type RulesetId = u32;
+
 #[derive(Clone, Debug)]
 pub struct PreparedRule<O, S, V> {
     pub rule_id: crate::id::RuleId,
     pub query: crate::resolve::ResolvedQuery<O, S, V>,
     pub actions: Vec<CompiledAction<O, V>>,
+    /// The ruleset this rule belongs to (`:ruleset name`), or `None` for the default one.
+    /// The saturation driver runs the rules whose ruleset equals the one asked for.
+    pub ruleset: Option<RulesetId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +351,7 @@ where
         rule_id,
         query: rq,
         actions,
+        ruleset: None,
     })
 }
 
@@ -385,6 +394,7 @@ where
         rule_id,
         query: rq,
         actions,
+        ruleset: None,
     })
 }
 

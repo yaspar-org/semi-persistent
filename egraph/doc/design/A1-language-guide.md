@@ -42,8 +42,22 @@ Operators map argument sorts to a return sort:
 (function Mul (Expr Expr) Expr)
 ```
 
+`(constructor …)` declares the same operator as `(function …)` — same
+congruence, same matching — and additionally marks it a term former,
+which is the declaration extraction tags belong on:
+
+```
+(constructor Num (IBig) Expr)
+(constructor Add (Expr Expr) Expr :cost 3)  ;; costs 3 per node when extracting
+(function    Tmp (Expr) Expr :unextractable) ;; never selected by (extract …)
+```
+
+`:cost n` defaults to 1, which is the unweighted node-count model, so a
+program that declares no cost extracts exactly as before. See Chapter 16
+for the cost model.
+
 The `datatype` command is sugar for a sort declaration plus one
-operator per variant:
+constructor per variant:
 
 ```
 (datatype Expr
@@ -449,6 +463,50 @@ Each iteration: rebuild (propagate merges, re-canonicalize) → build
 indexes → schedule each rule → match via leapfrog join → apply
 actions. If no new facts are derived, saturation stops early.
 
+### Rulesets
+
+A run fires one ruleset. Untagged rules are in the default ruleset,
+which is what `(run N)` runs; `:ruleset name` puts a rule in a declared
+ruleset, which only `(run name N)` runs:
+
+```
+(ruleset expensive)
+(rewrite (Add x y) (Add y x))                  ;; default ruleset
+(rewrite (Mul (Add x y) z)
+         (Add (Mul x z) (Mul y z)) :ruleset expensive)
+
+(run 10)            ;; commutativity only
+(run expensive 2)   ;; distribution only
+```
+
+Rulesets are static: they are not scoped by `(push)`/`(pop)`.
+
+### Run Goals
+
+`:until` stops a run as soon as a goal over two ground terms holds,
+which is how a search reports time-to-goal rather than time-to-budget:
+
+```
+(run 1000 :until (= lhs rhs))
+(run fast 50 :until (!= a b))
+```
+
+The goal is checked before every iteration, including the first, so a
+goal that already holds costs no iterations. Its terms are built once,
+before the run — the same nodes a `(check …)` of the goal would add.
+
+## Statistics
+
+```
+(print-size)                      ;; node count per operator, then the total
+(print-size Add)                  ;; one operator's node count
+(print-stats)                     ;; last run's counters, on stdout
+(print-stats :file "stats.json")  ;; the same numbers, as JSON
+```
+
+`print-stats` reports nodes, classes, iterations, match steps, wall
+time, whether the run saturated, and whether its `:until` goal was met.
+
 ## Compilation Pipeline
 
 Source text passes through three phases before execution:
@@ -608,26 +666,42 @@ filter      = 'if' , rhs ;
 program     = command* ;
 
 command     = '(' , 'sort' , ident , ')'
-            | '(' , 'function' , op , '(' , ident* , ')' , ident , alg_attr? , ')'
+            | '(' , 'function' , op , '(' , ident* , ')' , ident , decl_tag* , ')'
+            | '(' , 'constructor' , op , '(' , ident* , ')' , ident , decl_tag* , ')'
             | '(' , 'datatype' , ident , variant* , ')'
-            | '(' , 'rewrite' , pattern , rhs , when_clause? , subsume? , ')'
-            | '(' , 'rule' , '(' , pattern* , ')' , '(' , action* , ')' , ')'
+            | '(' , 'ruleset' , ident , ')'
+            | '(' , 'rewrite' , pattern , rhs , rule_tag* , ')'
+            | '(' , 'birewrite' , pattern , pattern , rule_tag* , ')'
+            | '(' , 'rule' , '(' , pattern* , ')' , '(' , action* , ')' ,
+                    rule_tag* , ')'
             | '(' , 'let' , ident , term , ')'
             | '(' , 'union' , term , term , ')'
-            | '(' , 'run' , int_lit , ')'
+            | '(' , 'run' , ident? , int_lit , until? , ')'
             | '(' , 'check' , check_body , ')'
             | '(' , 'extract' , term , ')'
+            | '(' , 'print-size' , op? , ')'
+            | '(' , 'print-stats' , ( ':file' , string_lit )? , ')'
             | '(' , 'push' , ':shrink'? , ')'
             | '(' , 'pop' , ')'
             | '(' , op , term* , ')' ;                    (* sugar: ground term insertion *)
 
-variant     = '(' , ident , ident* , alg_attr? , ')' ;
+variant     = '(' , ident , ident* , decl_tag* , ')' ;
+
+decl_tag    = alg_attr | extract_tag ;
 
 alg_attr    = ':assoc-comm-idem' | ':assoc-comm' | ':assoc-left'
-            | ':assoc-right' | ':assoc' | ':comm' ;
+            | ':assoc-right' | ':assoc' | ':comm' | ':idempotent'
+            | ':nilpotent' , int_lit? | ':identity' , term
+            | ':cancellative' | ':inverse' , ident ;
 
+extract_tag = ':cost' , int_lit | ':unextractable' ;
+
+rule_tag    = when_clause | subsume | ruleset_tag ;
 when_clause = ':when' , '(' , pattern* , ')' ;
-subsume     = ':subsume' ;
+subsume     = ':subsume' ;                                (* not on birewrite *)
+ruleset_tag = ':ruleset' , ident ;
+
+until       = ':until' , '(' , ( '=' | '!=' ) , term , term , ')' ;
 
 check_body  = '(' , '='  , term , term , ')'
             | '(' , '!=' , term , term , ')'

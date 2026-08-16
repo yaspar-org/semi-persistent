@@ -12,6 +12,54 @@ use crate::index::IndexStore;
 use crate::lit_model::LitModel;
 use crate::literal::LitVal;
 
+/// The goal of a `(run … :until …)`: two already-built class ids and the relation that has
+/// to hold between them for the run to stop. The terms are ground, so they are built once
+/// before the run and only their classes move.
+#[derive(Clone, Copy, Debug)]
+pub struct RunGoal<G> {
+    pub left: G,
+    pub right: G,
+    /// `true` for `:until (= a b)`, `false` for `:until (!= a b)`.
+    pub equal: bool,
+}
+
+impl<G: DenseId> RunGoal<G> {
+    /// Does the goal hold right now? Reads the union-find directly, so it is valid at any
+    /// point — a pending rebuild changes which nodes exist, not which classes are merged.
+    fn holds<Cfg, L, const T: bool, const P: bool>(&self, eg: &EGraph<Cfg, L, T, P>) -> bool
+    where
+        Cfg: EGraphConfig<G = G>,
+        L: LitVal,
+        MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    {
+        (eg.find_const(self.left) == eg.find_const(self.right)) == self.equal
+    }
+}
+
+/// What a `(run …)` asks for beyond the iteration budget: which ruleset to run, and an
+/// optional goal that stops it early.
+#[derive(Clone, Copy, Debug)]
+pub struct RunSpec<G> {
+    /// Iteration budget.
+    pub limit: usize,
+    /// Run only the rules in this ruleset. `None` is the default ruleset — the one untagged
+    /// rules join — so a program that declares no ruleset behaves exactly as before.
+    pub ruleset: Option<crate::apply::RulesetId>,
+    /// Checked before every iteration, including the first; the run stops as soon as it holds.
+    pub until: Option<RunGoal<G>>,
+}
+
+impl<G> RunSpec<G> {
+    /// A plain `(run N)`: default ruleset, no goal.
+    pub fn budget(limit: usize) -> Self {
+        Self {
+            limit,
+            ruleset: None,
+            until: None,
+        }
+    }
+}
+
 /// Result of a saturation run.
 #[derive(Clone, Debug)]
 pub struct SatResult {
@@ -19,6 +67,9 @@ pub struct SatResult {
     pub iterations: usize,
     /// Whether a fixpoint was reached (no new merges/insertions).
     pub saturated: bool,
+    /// Whether the run stopped because its `:until` goal held. Distinct from `saturated`:
+    /// the goal can be met with rules still firing.
+    pub goal_met: bool,
     /// Total e-matching steps (partial-match extensions) across all rounds and
     /// rules — see [`crate::ematch::match_steps`]. This is the direct measure
     /// of match work; comparing it between [`saturate`] and [`saturate_semi`]
@@ -37,7 +88,7 @@ pub enum SaturationStrategy {
     SemiNaive,
 }
 
-/// Run equality saturation for up to `limit` iterations.
+/// Run equality saturation for up to `limit` iterations, over every rule given.
 pub fn saturate<Cfg, L, M, S, const T: bool, const P: bool>(
     rules: &[PreparedRule<Cfg::O, S, L>],
     eg: &mut EGraph<Cfg, L, T, P>,
@@ -52,28 +103,67 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    saturate_spec(rules, eg, model, &RunSpec::budget(limit), globals)
+}
+
+/// Run equality saturation under a full [`RunSpec`]: the iteration budget, the ruleset to
+/// run, and an optional `:until` goal checked before each iteration.
+pub fn saturate_spec<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
-    for i in 0..limit {
+    for i in 0..spec.limit {
+        if goal_met(spec, eg) {
+            return sat_result(i, false, true, steps_base);
+        }
         eg.rebuild();
         let index = IndexStore::build(eg);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let mut changes = 0;
-        for rule in rules {
+        for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
             changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
         }
         if changes == 0 {
-            return SatResult {
-                iterations: i + 1,
-                saturated: true,
-                match_steps: crate::ematch::match_steps() - steps_base,
-            };
+            return sat_result(i + 1, true, false, steps_base);
         }
     }
+    // The budget is spent, but a goal met by the last iteration's work should still be
+    // reported as met — the caller's question is whether the goal holds, not when it started.
+    let met = goal_met(spec, eg);
+    sat_result(spec.limit, false, met, steps_base)
+}
+
+/// Does the run's `:until` goal hold? Always false when there is no goal.
+fn goal_met<Cfg, L, const T: bool, const P: bool>(
+    spec: &RunSpec<Cfg::G>,
+    eg: &EGraph<Cfg, L, T, P>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    spec.until.is_some_and(|g| g.holds(eg))
+}
+
+fn sat_result(iterations: usize, saturated: bool, goal_met: bool, steps_base: u64) -> SatResult {
     SatResult {
-        iterations: limit,
-        saturated: false,
+        iterations,
+        saturated,
+        goal_met,
         match_steps: crate::ematch::match_steps() - steps_base,
     }
 }
@@ -235,11 +325,34 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    saturate_semi_spec(rules, eg, model, &RunSpec::budget(limit), globals)
+}
+
+/// Semi-naive saturation under a full [`RunSpec`] — the delta-driven twin of
+/// [`saturate_spec`].
+pub fn saturate_semi_spec<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let limit = spec.limit;
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
     for i in 0..limit {
+        if goal_met(spec, eg) {
+            return sat_result(i, false, true, steps_base);
+        }
         eg.rebuild();
         let full = IndexStore::build(eg);
         // delta = everything touched since the previous round's index build
@@ -257,7 +370,7 @@ where
             None => {
                 let stats = IndexStats::from_index(&full);
                 let vindex = VariantIndex::naive(&full);
-                for rule in rules {
+                for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     changes +=
                         run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
                 }
@@ -265,7 +378,7 @@ where
             // Rounds ≥ 1: one variant per join atom.
             Some(delta) => {
                 let full_stats = IndexStats::from_index(&full);
-                for rule in rules {
+                for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     let jatoms = join_atom_indices(&rule.query);
                     if jatoms.is_empty() {
                         // No scanning atoms (e.g. a bare-literal rule): run it
@@ -293,18 +406,11 @@ where
         }
 
         if changes == 0 {
-            return SatResult {
-                iterations: i + 1,
-                saturated: true,
-                match_steps: crate::ematch::match_steps() - steps_base,
-            };
+            return sat_result(i + 1, true, false, steps_base);
         }
     }
-    SatResult {
-        iterations: limit,
-        saturated: false,
-        match_steps: crate::ematch::match_steps() - steps_base,
-    }
+    let met = goal_met(spec, eg);
+    sat_result(limit, false, met, steps_base)
 }
 
 /// Like `saturate`, but prints each match and union when `labels` is provided.
@@ -370,19 +476,11 @@ where
         }
         if changes == 0 {
             eprintln!("-- fixpoint after {total_iter} iterations --");
-            return SatResult {
-                iterations: total_iter,
-                saturated: true,
-                match_steps: crate::ematch::match_steps() - steps_base,
-            };
+            return sat_result(total_iter, true, false, steps_base);
         }
         eprintln!("-- iteration {total_iter}: {changes} changes --");
     }
-    SatResult {
-        iterations: total_iter,
-        saturated: false,
-        match_steps: crate::ematch::match_steps() - steps_base,
-    }
+    sat_result(total_iter, false, false, steps_base)
 }
 
 #[cfg(test)]

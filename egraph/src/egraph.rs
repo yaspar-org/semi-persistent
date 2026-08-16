@@ -480,6 +480,60 @@ where
         crate::saturate::saturate_semi(rules, self, model, limit, globals)
     }
 
+    /// Saturate under a full [`RunSpec`](crate::saturate::RunSpec) — budget, ruleset, and
+    /// `:until` goal. The interpreter's `(run …)` path.
+    pub fn saturate_spec<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_spec(rules, self, model, spec, globals)
+    }
+
+    /// Semi-naive twin of [`saturate_spec`](Self::saturate_spec).
+    pub fn saturate_semi_spec<
+        M: crate::lit_model::LitModel<Value = L>,
+        S: crate::DenseId + Copy,
+    >(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_semi_spec(rules, self, model, spec, globals)
+    }
+
+    /// The number of distinct e-classes over the current node set. A scan, not a maintained
+    /// counter: `(print-size)` / `(print-stats)` ask for it a handful of times per program.
+    pub fn class_count(&self) -> usize {
+        let n = self.len();
+        let mut seen = vec![false; n];
+        let mut count = 0;
+        for id in self.node_ids() {
+            let r = self.find_const(id).to_usize();
+            if !seen[r] {
+                seen[r] = true;
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Node counts per operator, indexed by op id (ops with no nodes read 0).
+    pub fn op_node_counts(&self) -> Vec<usize> {
+        let mut counts = vec![0usize; self.ops.meta_table().len()];
+        for id in self.node_ids() {
+            let op = self.node_op(id).to_usize();
+            if op < counts.len() {
+                counts[op] += 1;
+            }
+        }
+        counts
+    }
+
     pub fn find(&mut self, x: Cfg::G) -> Cfg::G {
         self.classes.find(x)
     }

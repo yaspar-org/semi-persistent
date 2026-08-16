@@ -1,0 +1,26 @@
+;; EXPECT: ok
+;; Tests rulesets. `(run name N)` runs only the rules tagged `:ruleset name`; an untagged
+;; rule belongs to the default ruleset and fires only under a bare `(run N)`.
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+
+(ruleset extra)
+;; Default ruleset (untagged).
+(rewrite (a) (b))
+;; Named ruleset.
+(rewrite (b) (c) :ruleset extra)
+
+(let x (a))
+(let y (b))
+
+(run extra 10)
+;; The named rule fired ...
+(check (= y (c)))
+;; ... and the untagged one did not: x is still alone in its class.
+(check (!= x y))
+
+(run 10)
+;; The default run fires the untagged rule.
+(check (= x y))

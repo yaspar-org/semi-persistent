@@ -1,0 +1,15 @@
+;; EXPECT: ok
+;; Tests the stats commands. Their output goes to stdout, which this harness does not
+;; capture; tests/surface_runtime.rs asserts the numbers. This pins that they parse, resolve
+;; their operator argument, and run.
+(sort E)
+(constructor a () E)
+(constructor f (E) E)
+(constructor g (E) E)
+
+(rewrite (f x) (g x))
+(let x (f (a)))
+(run 5)
+(print-size)
+(print-size f)
+(print-stats)

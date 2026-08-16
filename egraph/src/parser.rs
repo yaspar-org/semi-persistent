@@ -99,6 +99,26 @@ fn op_token<'s>(input: &mut &'s str) -> ModalResult<&'s str> {
     Ok(tok)
 }
 
+/// Command-head keyword. Like [`ident`], but `-` is part of the token, so `print-size`
+/// and `print-stats` lex as one word instead of `print` followed by a stray `-size`.
+fn kw_token<'s>(input: &mut &'s str) -> ModalResult<&'s str> {
+    ws(input)?;
+    let s = *input;
+    if s.is_empty() || !s.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+        let mut e = ContextError::new();
+        e.push(StrContext::Expected(StrContextValue::Description(
+            "command keyword",
+        )));
+        return Err(ErrMode::Backtrack(e));
+    }
+    let len = s
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(s.len());
+    let tok = &s[..len];
+    *input = &s[len..];
+    Ok(tok)
+}
+
 fn op_expr(input: &mut &str) -> ModalResult<String> {
     ws(input)?;
     if input.starts_with(|c: char| c.is_alphabetic() || c == '_') {
@@ -619,41 +639,164 @@ fn parse_action(input: &mut &str, base: usize) -> ModalResult<Action> {
 
 // ── Commands ──
 
-fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
+/// Trailing tags shared by `(rewrite …)`, `(birewrite …)` and `(rule …)`. Parsed as a loop,
+/// so they may appear in any order.
+struct RuleTags {
+    when: Vec<SurfacePattern>,
+    subsume: bool,
+    ruleset: Option<String>,
+}
+
+fn parse_rule_tags(input: &mut &str, base: usize) -> ModalResult<RuleTags> {
+    let mut t = RuleTags {
+        when: Vec::new(),
+        subsume: false,
+        ruleset: None,
+    };
+    loop {
+        ws(input)?;
+        if input.starts_with(":when") {
+            *input = &input[":when".len()..];
+            cut_char(input, '(')?;
+            loop {
+                ws(input)?;
+                if input.starts_with(')') {
+                    break;
+                }
+                t.when.push(parse_pattern(input, base)?);
+            }
+            cut_char(input, ')')?;
+        } else if input.starts_with(":subsume") {
+            *input = &input[":subsume".len()..];
+            t.subsume = true;
+        } else if input.starts_with(":ruleset") {
+            *input = &input[":ruleset".len()..];
+            t.ruleset = Some(ident(input)?.to_owned());
+        } else {
+            break;
+        }
+    }
+    Ok(t)
+}
+
+/// Read a pattern as an RHS term — the conversion `(birewrite …)` needs to use each side as
+/// the other direction's right-hand side. A rest variable becomes a splice; a `:mult`
+/// annotation has no RHS spelling and is rejected.
+fn pattern_as_rhs(p: &SurfacePattern) -> ModalResult<RhsTerm> {
+    match p {
+        SurfacePattern::Var(n, s) => Ok(RhsTerm::Var(n.clone(), *s)),
+        SurfacePattern::Lit(v, s) => Ok(RhsTerm::Lit(v.clone(), *s)),
+        SurfacePattern::App {
+            op,
+            prefix,
+            children,
+            suffix,
+            span,
+        } => {
+            let mut cs = Vec::with_capacity(children.len() + 2);
+            if let Some((n, s)) = prefix {
+                cs.push(RhsChild::Splice(n.clone(), *s));
+            }
+            for c in children {
+                match c {
+                    SurfacePatChild::Elem(p) => cs.push(RhsChild::Term(pattern_as_rhs(p)?)),
+                    SurfacePatChild::ElemMult(..) => {
+                        let mut e = ContextError::new();
+                        e.push(StrContext::Label(
+                            "birewrite side cannot carry a :mult annotation",
+                        ));
+                        return Err(ErrMode::Cut(e));
+                    }
+                }
+            }
+            if let Some((n, s)) = suffix {
+                cs.push(RhsChild::Splice(n.clone(), *s));
+            }
+            Ok(RhsTerm::App {
+                op: op.clone(),
+                children: cs,
+                span: *span,
+            })
+        }
+    }
+}
+
+/// `:until (= a b)` / `:until (!= a b)` — two ground terms and the relation that stops the run.
+fn parse_run_goal(input: &mut &str, base: usize) -> ModalResult<RunGoal> {
+    cut_char(input, '(')?;
+    ws(input)?;
+    let equal = if input.starts_with("!=") {
+        *input = &input[2..];
+        false
+    } else if input.starts_with('=') {
+        *input = &input[1..];
+        true
+    } else {
+        let mut e = ContextError::new();
+        e.push(StrContext::Expected(StrContextValue::Description(
+            ":until goal must be (= a b) or (!= a b)",
+        )));
+        return Err(ErrMode::Cut(e));
+    };
+    let left = parse_term_inner(input, base)?;
+    let right = parse_term_inner(input, base)?;
+    cut_char(input, ')')?;
+    Ok(RunGoal { left, right, equal })
+}
+
+/// Parse one command. `desugared` collects the *extra* commands a surface form expands
+/// into — today only `(birewrite …)`, which is two rewrites; the caller appends them after
+/// the returned command.
+fn parse_command(
+    input: &mut &str,
+    base: usize,
+    desugared: &mut Vec<SurfaceCommand>,
+) -> ModalResult<SurfaceCommand> {
     ws(input)?;
     let start = input.as_ptr() as usize;
     expect_char(input, '(')?;
-    let kw = cut_err(ident).parse_next(input)?;
+    let kw = cut_err(kw_token).parse_next(input)?;
     let cmd = match kw {
         "rewrite" => {
             let lhs = parse_pattern(input, base)?;
             let rhs = parse_rhs(input, base)?;
-            let mut when = Vec::new();
-            ws(input)?;
-            if input.starts_with(":when") {
-                *input = &input[5..];
-                cut_char(input, '(')?;
-                loop {
-                    ws(input)?;
-                    if input.starts_with(')') {
-                        break;
-                    }
-                    when.push(parse_pattern(input, base)?);
-                }
-                cut_char(input, ')')?;
-            }
-            ws(input)?;
-            let subsume = if input.starts_with(":subsume") {
-                *input = &input[8..];
-                true
-            } else {
-                false
-            };
+            let t = parse_rule_tags(input, base)?;
             SurfaceCommand::Rewrite {
                 lhs,
                 rhs,
-                when,
-                subsume,
+                when: t.when,
+                subsume: t.subsume,
+                ruleset: t.ruleset,
+            }
+        }
+        // `(birewrite a b …)` is exactly the two rewrites `a -> b` and `b -> a`, so it is
+        // desugared here rather than carried through the pipeline. Both sides parse as
+        // patterns and each is converted to an RHS term for the opposite direction.
+        "birewrite" => {
+            let lhs = parse_pattern(input, base)?;
+            let rhs = parse_pattern(input, base)?;
+            let t = parse_rule_tags(input, base)?;
+            if t.subsume {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(
+                    "birewrite cannot be :subsume (it would subsume the node the reverse \
+                     direction has to match)",
+                ));
+                return Err(ErrMode::Cut(e));
+            }
+            desugared.push(SurfaceCommand::Rewrite {
+                lhs: rhs.clone(),
+                rhs: pattern_as_rhs(&lhs)?,
+                when: t.when.clone(),
+                subsume: false,
+                ruleset: t.ruleset.clone(),
+            });
+            SurfaceCommand::Rewrite {
+                rhs: pattern_as_rhs(&rhs)?,
+                lhs,
+                when: t.when,
+                subsume: false,
+                ruleset: t.ruleset,
             }
         }
         "rule" => {
@@ -677,7 +820,12 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
                 head.push(parse_action(input, base)?);
             }
             cut_char(input, ')')?;
-            SurfaceCommand::Rule { body, head }
+            let t = parse_rule_tags(input, base)?;
+            SurfaceCommand::Rule {
+                body,
+                head,
+                ruleset: t.ruleset,
+            }
         }
         "sort" => {
             let name = ident(input)?.to_owned();
@@ -750,9 +898,53 @@ fn parse_command(input: &mut &str, base: usize) -> ModalResult<SurfaceCommand> {
             let t = parse_term_inner(input, base)?;
             SurfaceCommand::Pass(Command::Let(name, t))
         }
+        "ruleset" => {
+            let name = ident(input)?.to_owned();
+            SurfaceCommand::Pass(Command::Ruleset(name))
+        }
         "run" => {
-            let n = number(input)?;
-            SurfaceCommand::Pass(Command::Run(n))
+            // `(run N)` / `(run ruleset N)`: the optional leading identifier names the
+            // ruleset, so the budget is whichever of the two tokens is a number.
+            ws(input)?;
+            let ruleset = if input.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+                Some(ident(input)?.to_owned())
+            } else {
+                None
+            };
+            let limit = number(input)?;
+            ws(input)?;
+            let until = if input.starts_with(":until") {
+                *input = &input[":until".len()..];
+                Some(parse_run_goal(input, base)?)
+            } else {
+                None
+            };
+            SurfaceCommand::Pass(Command::Run {
+                ruleset,
+                limit,
+                until,
+            })
+        }
+        "print-size" => {
+            ws(input)?;
+            let op = if input.starts_with(')') {
+                None
+            } else {
+                Some(op_expr(input)?)
+            };
+            SurfaceCommand::Pass(Command::PrintSize(op))
+        }
+        "print-stats" => {
+            ws(input)?;
+            let file = if input.starts_with(":file") {
+                *input = &input[":file".len()..];
+                let quoted = parse_quoted_string(input)?;
+                // `parse_quoted_string` keeps the surrounding quotes; the path does not.
+                Some(quoted[1..quoted.len() - 1].to_owned())
+            } else {
+                None
+            };
+            SurfaceCommand::Pass(Command::PrintStats(file))
         }
         "check" => {
             ws(input)?;
@@ -1011,12 +1203,16 @@ pub fn parse_program_v2(input: &str) -> Result<Vec<SurfaceCommand>, ParseError> 
     let base = input.as_ptr() as usize;
     let mut rest = input;
     let mut cmds = Vec::new();
+    let mut desugared = Vec::new();
     loop {
         ws(&mut rest).map_err(|e| format!("{e}"))?;
         if rest.is_empty() {
             break;
         }
-        cmds.push(parse_command(&mut rest, base).map_err(|e| format!("{e}"))?);
+        desugared.clear();
+        let cmd = parse_command(&mut rest, base, &mut desugared).map_err(|e| format!("{e}"))?;
+        cmds.push(cmd);
+        cmds.append(&mut desugared);
     }
     Ok(cmds)
 }
@@ -1159,6 +1355,76 @@ mod alg_tag_tests {
         assert!(variants.iter().all(|v| v.meta.is_constructor));
         assert_eq!(variants[0].meta.cost, 1);
         assert_eq!(variants[1].meta.cost, 4);
+    }
+
+    #[test]
+    fn birewrite_expands_to_two_rewrites() {
+        let cmds = parse_program_v2("(birewrite (f x) (g x) :ruleset r)").expect("parse");
+        assert_eq!(cmds.len(), 2);
+        let ops = |c: &SurfaceCommand| match c {
+            SurfaceCommand::Rewrite {
+                lhs, rhs, ruleset, ..
+            } => {
+                let l = match lhs {
+                    SurfacePattern::App { op, .. } => op.clone(),
+                    other => panic!("expected app lhs, got {other:?}"),
+                };
+                let r = match rhs {
+                    RhsTerm::App { op, .. } => op.clone(),
+                    other => panic!("expected app rhs, got {other:?}"),
+                };
+                (l, r, ruleset.clone())
+            }
+            other => panic!("expected rewrite, got {other:?}"),
+        };
+        assert_eq!(
+            ops(&cmds[0]),
+            ("f".into(), "g".into(), Some("r".to_string()))
+        );
+        assert_eq!(
+            ops(&cmds[1]),
+            ("g".into(), "f".into(), Some("r".to_string()))
+        );
+    }
+
+    #[test]
+    fn run_forms() {
+        let one = |src: &str| match &parse_program_v2(src).expect("parse")[0] {
+            SurfaceCommand::Pass(Command::Run {
+                ruleset,
+                limit,
+                until,
+            }) => (ruleset.clone(), *limit, until.clone()),
+            other => panic!("expected run, got {other:?}"),
+        };
+        assert_eq!(one("(run 12)"), (None, 12, None));
+        assert_eq!(one("(run fast 3)"), (Some("fast".to_string()), 3, None));
+        let (rs, limit, until) = one("(run fast 3 :until (!= a b))");
+        assert_eq!((rs, limit), (Some("fast".to_string()), 3));
+        assert!(!until.expect("goal").equal);
+        assert!(one("(run 5 :until (= a b))").2.expect("goal").equal);
+    }
+
+    #[test]
+    fn stats_commands_lex_their_hyphenated_keywords() {
+        let cmds = parse_program_v2(
+            "(print-size) (print-size Add) (print-stats) (print-stats :file \"x.json\")",
+        )
+        .expect("parse");
+        assert!(matches!(
+            &cmds[0],
+            SurfaceCommand::Pass(Command::PrintSize(None))
+        ));
+        assert!(
+            matches!(&cmds[1], SurfaceCommand::Pass(Command::PrintSize(Some(op))) if op == "Add")
+        );
+        assert!(matches!(
+            &cmds[2],
+            SurfaceCommand::Pass(Command::PrintStats(None))
+        ));
+        assert!(
+            matches!(&cmds[3], SurfaceCommand::Pass(Command::PrintStats(Some(p))) if p == "x.json")
+        );
     }
 
     #[test]

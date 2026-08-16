@@ -85,12 +85,16 @@ enum Term {
 (let name term)
 (union term term)
 (insert term)
-(rewrite lhs rhs [:when (guard...)] [:subsume])
-(rule ((pattern...) [:when (guard...)]) ((action...)))
-(run N)
+(ruleset name)
+(rewrite lhs rhs [:when (guard...)] [:subsume] [:ruleset name])
+(birewrite lhs rhs [:when (guard...)] [:ruleset name])
+(rule ((pattern...) [:when (guard...)]) ((action...)) [:ruleset name])
+(run [ruleset] N [:until (= a b) | :until (!= a b)])
 (push) (push :shrink) (pop)
 (check term) (check (= a b)) (check (!= a b))
 (extract term)
+(print-size) (print-size Op)
+(print-stats) (print-stats :file "path.json")
 ```
 
 algebra-tags: `:comm` `:assoc` `:assoc-left` `:assoc-right` `:idempotent`
@@ -98,6 +102,18 @@ algebra-tags: `:comm` `:assoc` `:assoc-left` `:assoc-right` `:idempotent`
 pre-combined aliases `:assoc-comm` and `:assoc-comm-idem`.
 
 extraction-tags: `:cost n` (default 1) and `:unextractable`.
+
+`(birewrite a b)` is sugar, expanded by the parser into the two rewrites
+`a -> b` and `b -> a`; both sides parse as patterns, and each is read
+back as the other direction's right-hand side. A `:mult` annotation has
+no right-hand-side spelling, so it is rejected on a birewrite side, and
+`:subsume` is rejected because subsuming the node the reverse direction
+has to match would make the pair asymmetric.
+
+Rulesets scope which rules a run fires: an untagged rule is in the
+default ruleset that `(run N)` runs, and `:ruleset name` puts a rule in
+the ruleset that `(run name N)` runs. See Chapter 17 for the run
+semantics, the `:until` goal, and the statistics commands.
 
 ## Functions and Constructors
 

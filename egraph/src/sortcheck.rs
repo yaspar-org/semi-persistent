@@ -69,12 +69,22 @@ pub enum CCommand<O, S, L> {
         rhs: crate::resolve::RRhsTerm<O, S, L>,
         root_vid: crate::ast::VarId,
         subsume: bool,
+        ruleset: Option<crate::apply::RulesetId>,
     },
     Rule {
         query: ResolvedQuery<O, S, L>,
         actions: Vec<crate::resolve::ResolvedAction<O, S, L>>,
+        ruleset: Option<crate::apply::RulesetId>,
     },
-    Run(u64),
+    Run {
+        ruleset: Option<crate::apply::RulesetId>,
+        limit: u64,
+        until: Option<CGoal<O, S, L>>,
+    },
+    /// `(print-size [Op])` — `None` is every op plus the total.
+    PrintSize(Option<O>),
+    /// `(print-stats [:file path])`.
+    PrintStats(Option<String>),
     AntiUnify {
         left: CTerm<O, S, L>,
         right: CTerm<O, S, L>,
@@ -90,6 +100,58 @@ pub enum CCommand<O, S, L> {
     },
     Push(bool), // true = shrink on mark
     Pop,
+}
+
+/// A sort-checked `:until` goal: the two ground terms, and whether the run stops when their
+/// classes are equal or when they are distinct.
+#[derive(Clone, Debug)]
+pub struct CGoal<O, S, L> {
+    pub left: CTerm<O, S, L>,
+    pub right: CTerm<O, S, L>,
+    pub equal: bool,
+}
+
+/// Ruleset names in declaration order; a name's index is its
+/// [`RulesetId`](crate::apply::RulesetId). Local to one `sortcheck_program` call, which is
+/// how a whole program is checked — rulesets are static, so they are neither scoped by
+/// `(push)`/`(pop)` nor carried between calls.
+#[derive(Debug, Default)]
+struct RulesetTable {
+    names: Vec<String>,
+}
+
+impl RulesetTable {
+    /// Declare a ruleset, or return the existing id if the name was already declared.
+    fn declare(&mut self, name: &str) -> crate::apply::RulesetId {
+        match self.id_of(name) {
+            Some(id) => id,
+            None => {
+                self.names.push(name.to_owned());
+                (self.names.len() - 1) as crate::apply::RulesetId
+            }
+        }
+    }
+
+    fn id_of(&self, name: &str) -> Option<crate::apply::RulesetId> {
+        self.names
+            .iter()
+            .position(|n| n == name)
+            .map(|i| i as crate::apply::RulesetId)
+    }
+
+    /// Resolve a declared ruleset name, naming the undeclared ones rather than silently
+    /// running an empty rule set.
+    fn resolve(&self, name: &Option<String>) -> Result<Option<crate::apply::RulesetId>, SortError> {
+        match name {
+            None => Ok(None),
+            Some(n) => self.id_of(n).map(Some).ok_or_else(|| {
+                serr(
+                    format!("unknown ruleset '{n}' (declare it with `(ruleset {n})`)"),
+                    Span::Dummy,
+                )
+            }),
+        }
+    }
 }
 
 // ── Sort-check a Term ──
@@ -619,8 +681,9 @@ where
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     let mut out = Vec::with_capacity(cmds.len());
+    let mut rulesets = RulesetTable::default();
     for cmd in cmds {
-        out.push(sortcheck_one(cmd, eg, model, globals)?);
+        out.push(sortcheck_one(cmd, eg, model, globals, &mut rulesets)?);
     }
     Ok(out)
 }
@@ -630,6 +693,7 @@ fn sortcheck_one<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     model: &M,
     globals: &mut GlobalCtx<Cfg::S>,
+    rulesets: &mut RulesetTable,
 ) -> Result<CCommand<Cfg::O, Cfg::S, L>, SortError>
 where
     Cfg: crate::config::EGraphConfig,
@@ -639,13 +703,15 @@ where
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
-        SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals),
+        SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals, rulesets),
         SurfaceCommand::Rewrite {
             lhs,
             rhs,
             when,
             subsume,
+            ruleset,
         } => {
+            let ruleset = rulesets.resolve(&ruleset)?;
             let mut pats = vec![lhs];
             pats.extend(when);
             let fq = flatten_surface(&pats, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
@@ -672,9 +738,15 @@ where
                 rhs: resolved_rhs,
                 root_vid,
                 subsume,
+                ruleset,
             })
         }
-        SurfaceCommand::Rule { body, head } => {
+        SurfaceCommand::Rule {
+            body,
+            head,
+            ruleset,
+        } => {
+            let ruleset = rulesets.resolve(&ruleset)?;
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
@@ -687,7 +759,11 @@ where
                         .map_err(|e| serr(e.to_string(), Span::Dummy))?;
                 actions.push(ra);
             }
-            Ok(CCommand::Rule { query: rq, actions })
+            Ok(CCommand::Rule {
+                query: rq,
+                actions,
+                ruleset,
+            })
         }
     }
 }
@@ -697,6 +773,7 @@ fn sortcheck_pass<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     model: &M,
     globals: &mut GlobalCtx<Cfg::S>,
+    rulesets: &mut RulesetTable,
 ) -> Result<CCommand<Cfg::O, Cfg::S, L>, SortError>
 where
     Cfg: crate::config::EGraphConfig,
@@ -749,7 +826,43 @@ where
             let ct = check_term(&t, None, eg.ops(), eg.sorts(), model, globals)?;
             Ok(CCommand::Extract(ct))
         }
-        Command::Run(n) => Ok(CCommand::Run(n)),
+        Command::Ruleset(name) => {
+            rulesets.declare(&name);
+            Ok(CCommand::Decl(Command::Ruleset(name)))
+        }
+        Command::Run {
+            ruleset,
+            limit,
+            until,
+        } => {
+            let rid = rulesets.resolve(&ruleset)?;
+            // The goal's terms are sort-checked here and built once at run time; they are
+            // ground, so nothing about them changes between iterations.
+            let cgoal = match until {
+                None => None,
+                Some(g) => Some(CGoal {
+                    left: check_term(&g.left, None, eg.ops(), eg.sorts(), model, globals)?,
+                    right: check_term(&g.right, None, eg.ops(), eg.sorts(), model, globals)?,
+                    equal: g.equal,
+                }),
+            };
+            Ok(CCommand::Run {
+                ruleset: rid,
+                limit,
+                until: cgoal,
+            })
+        }
+        Command::PrintSize(op) => match op {
+            None => Ok(CCommand::PrintSize(None)),
+            Some(name) => {
+                let id = eg
+                    .ops()
+                    .id_by_name(&name)
+                    .ok_or_else(|| serr(format!("unknown operator '{name}'"), Span::Dummy))?;
+                Ok(CCommand::PrintSize(Some(id)))
+            }
+        },
+        Command::PrintStats(file) => Ok(CCommand::PrintStats(file)),
         Command::AntiUnify {
             left,
             right,

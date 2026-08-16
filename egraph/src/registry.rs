@@ -447,6 +447,13 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
         self.map.get_val(id.to_index())
     }
 
+    /// The names of every registered op, in op-id order — the same order as
+    /// [`meta_table`](Self::meta_table) and `EGraph::op_node_counts`, so the three index
+    /// together.
+    pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
+        self.map.iter().map(|(_, i)| i.name.as_str())
+    }
+
     /// The non-algebraic metadata ([`OpMeta`]) of every registered op, in op-id order. Lets a
     /// consumer index by op id instead of calling [`info`](Self::info) per node; the extractor
     /// hoists this out of its fixpoint loop, where the per-node lookup would otherwise repeat

@@ -291,6 +291,15 @@ pub enum AlgTag {
     Inverse(String),
 }
 
+/// The `:until` goal of a `(run …)`: two ground terms and the relation that has to hold
+/// between their classes for the run to stop. `equal` distinguishes `(= a b)` from `(!= a b)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunGoal {
+    pub left: Term,
+    pub right: Term,
+    pub equal: bool,
+}
+
 /// One `(datatype …)` variant: a constructor declaration whose return sort is the datatype.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant {
@@ -320,20 +329,27 @@ pub enum Command {
         name: String,
         variants: Vec<Variant>,
     },
-    Rewrite {
-        lhs: Pattern,
-        rhs: RhsTerm,
-        when: Vec<Pattern>,
-        subsume: bool,
-    },
-    Rule {
-        body: Vec<Pattern>,
-        head: Vec<Action>,
-    },
+    /// `(ruleset name)` — declares a ruleset. Rules tagged `:ruleset name` join it, and
+    /// `(run name N)` runs exactly those rules.
+    Ruleset(String),
     Let(String, Term),
     Union(Term, Term),
     Insert(Term),
-    Run(u64),
+    /// `(run [ruleset] N [:until (= a b) | :until (!= a b)])`.
+    Run {
+        /// The ruleset to run, or `None` for the default one (rules with no `:ruleset` tag).
+        ruleset: Option<String>,
+        /// Iteration budget.
+        limit: u64,
+        /// Goal that stops the run early once it holds.
+        until: Option<RunGoal>,
+    },
+    /// `(print-size)` — per-operator node counts and the total — or `(print-size Op)`, the
+    /// count for one operator.
+    PrintSize(Option<String>),
+    /// `(print-stats)` — the last run's counters on stdout — or `(print-stats :file "p.json")`,
+    /// the same numbers as JSON in a file.
+    PrintStats(Option<String>),
     Check(Term),
     CheckEq(Term, Term),
     CheckNeq(Term, Term),
