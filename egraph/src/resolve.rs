@@ -110,8 +110,13 @@ pub enum RAtom<O, S, L> {
         op: O,
         children: Vec<PatVar>,
     },
+    /// A ground literal in a pattern: `node` is the `@sort` literal node whose payload
+    /// equals `value`. `op` is that `@sort` constructor — carried so the scheduler can
+    /// emit a real index lookup for this atom. Without it the atom had no lookup to
+    /// scan and compiled to an unsatisfiable join.
     Lit {
         node: VarId,
+        op: O,
         sort: S,
         value: L,
     },
@@ -728,8 +733,18 @@ where
                 .id_by_name(sort_name)
                 .ok_or_else(|| err(format!("unknown literal sort '{sort_name}'"), *span))?;
             unify_var(nid, lit_sort, var_sorts, &shape.nodes, sorts, *span)?;
+            let lit_op = ops.lit_op_for_sort(lit_sort).ok_or_else(|| {
+                err(
+                    format!(
+                        "sort '{}' has no literal constructor, so '{text}' cannot appear in a pattern",
+                        sorts.name(lit_sort)
+                    ),
+                    *span,
+                )
+            })?;
             Ok(vec![RAtom::Lit {
                 node: nid,
+                op: lit_op,
                 sort: lit_sort,
                 value: val,
             }])

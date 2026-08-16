@@ -1,0 +1,18 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A concrete literal written inside a rule's left-hand side must match. The rule below
+;; is dead unless the `0` in `(Const 0)` compiles to a constraint the matcher can satisfy:
+;; before the fix the literal atom compiled to a join with no index lookup, which yields
+;; no candidates and aborts the whole query, so the rule never fired.
+(datatype Math (Add Math Math) (Const i64) (Var String))
+(rewrite (Add a (Const 0)) a)
+
+(let t (Add (Var "p") (Const 0)))
+(run 5)
+(check (= t (Var "p")))
+
+;; Soundness twin: the literal pins the payload, it does not merely reach the `@i64`
+;; nodes. A different constant in the same position must not match.
+(let u (Add (Var "q") (Const 5)))
+(run 5)
+(check (!= u (Var "q")))

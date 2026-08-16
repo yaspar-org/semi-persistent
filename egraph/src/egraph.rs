@@ -449,7 +449,7 @@ where
     /// Run a compiled query plan against this e-graph.
     pub fn run_query(
         &self,
-        plan: &crate::schedule::QueryPlan<Cfg::O, Cfg::Index>,
+        plan: &crate::schedule::QueryPlan<Cfg::O, Cfg::Index, L>,
     ) -> Vec<crate::ematch::Match<Cfg>> {
         let index = crate::index::IndexStore::build(self);
         let vindex = crate::index::VariantIndex::naive(&index);

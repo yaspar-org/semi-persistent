@@ -290,6 +290,23 @@ egg_test!(push_pop, "push_pop.egg");
 egg_test!(rewrite_commute, "rewrite_commute.egg");
 egg_test!(rewrite_constant_fold, "rewrite_constant_fold.egg");
 
+// ── Ground literals in patterns ──
+// A literal written inside a pattern resolves to an `RAtom::Lit`, which used to compile
+// to a `Step::Join` with no index lookup; that join yields nothing, so every rule holding
+// one was dead. The first seven files all failed before the fix and cover the positions a
+// literal can occupy; the eighth is the boundary, and passed before it too.
+egg_test!(lit_pattern_ground, "lit_pattern_ground.egg");
+egg_test!(lit_pattern_depth2, "lit_pattern_depth2.egg");
+egg_test!(lit_pattern_when_guard, "lit_pattern_when_guard.egg");
+egg_test!(lit_pattern_multi_body, "lit_pattern_multi_body.egg");
+egg_test!(lit_pattern_string, "lit_pattern_string.egg");
+egg_test!(lit_pattern_bignum, "lit_pattern_bignum.egg");
+egg_test!(lit_pattern_rhs, "lit_pattern_rhs.egg");
+egg_test!(
+    lit_pattern_term_paths_unaffected,
+    "lit_pattern_term_paths_unaffected.egg"
+);
+
 // ── Subsumption ──
 egg_test!(subsume, "subsume.egg");
 

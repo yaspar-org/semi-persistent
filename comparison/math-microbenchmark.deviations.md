@@ -30,21 +30,30 @@ No other change; the program is otherwise byte-identical to theirs.
 2. **Statistics.** `(print-stats)` becomes `(print-stats :file "…")`. The three
    `print-size` commands and their positions are kept.
 
-3. **Six left-hand sides rewritten to use let-bound globals**, to work around the engine
-   defect below. `(rewrite (Add a (Const 0)) a)` becomes `(rewrite (Add a c0) a)` after
-   `(let c0 (Const 0))`, and likewise for `(Mul a (Const 0))`, `(Mul a (Const 1))`,
-   `(Pow x (Const 1))`, `(Pow x (Const 2))` and `(Integral (Const 1) x)` with `c0`, `c1`,
-   `c2`. Right-hand sides keep the literal form. A global in a pattern position means
-   "the child at this position is in the same e-class as this binding", which is the
-   intended reading of the ground sub-pattern, so the rules match what egglog's match.
-   Side effect: the three `(let …)` commands insert `(Const 0)`, `(Const 1)` and
-   `(Const 2)` before the run. `(Const 1)` and `(Const 2)` are in the seed terms anyway;
-   `(Const 0)` is one node egglog creates only once `(Sub a a)` fires.
+3. **Withdrawn 2026-08-15. Six left-hand sides used let-bound globals**, to work around
+   the engine defect below. The defect is fixed, the six rules are back to the literal
+   form egglog writes, and the shipped files carry no globals. Do not cite this item as a
+   live deviation; it is kept because the pilot's first published numbers were measured
+   under it. What it said: `(rewrite (Add a (Const 0)) a)` was written
+   `(rewrite (Add a c0) a)` after `(let c0 (Const 0))`, and likewise for
+   `(Mul a (Const 0))`, `(Mul a (Const 1))`, `(Pow x (Const 1))`, `(Pow x (Const 2))` and
+   `(Integral (Const 1) x)` with `c0`, `c1`, `c2`. Right-hand sides kept the literal form.
+   The substitution was sound, because a global in a pattern position means "the child at
+   this position is in the same e-class as this binding", which is the reading of the
+   ground sub-pattern. Its one side effect was that the three `(let …)` commands inserted
+   `(Const 0)`, `(Const 1)` and `(Const 2)` before the run. `(Const 1)` and `(Const 2)`
+   are in the seed terms anyway; `(Const 0)` is not, and at this budget the run never
+   builds it, so removing the workaround removes exactly two nodes and two classes from
+   each configuration's totals. The tables below are the post-fix numbers.
 
 Everything else is copied verbatim: all 24 rules, all seven seed terms, `(run 11)`.
 No rule dropped, no check weakened (the benchmark has no checks), no schedule change.
 
-## Engine defect found while translating: ground literal sub-patterns never match
+## Engine defect found while translating: ground literal sub-patterns never match (fixed)
+
+Fixed 2026-08-15 in `egraph/src/schedule.rs` and `egraph/src/resolve.rs`; the description
+below is the state at the time of translation, kept because it is what the workaround
+above was written against.
 
 A concrete literal written inside a rule's left-hand side does not match. The whole of it:
 
@@ -70,6 +79,34 @@ six rules matching 0, 0, 0, 0, 1 and 0 times; the node count moved from 1 234 18
 1 234 680 in the rules encoding and from 755 925 to 755 928 in the native one. The defect
 is recorded here because it is a correctness bug in the matcher, not a benchmarking
 detail, and because any translated program that folds constants by pattern will hit it.
+
+**Cause and fix.** The third guess was the right one: the compiled atom did not constrain
+the child. `resolve` turned a pattern literal into an `RAtom::Lit` carrying the literal's
+sort and value but not the `@sort` constructor that owns the literal nodes, so the
+scheduler had no key to look the atom up by and emitted `Step::Join { lookups: [] }` from
+`schedule::emit_atom` and `schedule::try_eager_lower`. An empty lookup list makes both
+matcher engines abandon the query (`ematch::run_join` returns before binding anything, and
+`MatchIterator::enter_join` reports failure), and because the scheduler estimated that atom's
+cardinality at 1 it ran first, so the rule produced no matches at all rather than too
+many. The fix carries the `@sort` op in `RAtom::Lit` and lowers the atom the way
+`RAtom::LitBind` is already lowered: join `by_op[@sort]`, then a new `Step::CheckLit` that
+keeps the candidate only if its payload equals the pattern's value. The atom is now a
+scanning position, so `saturate::atom_op` reports its op and semi-naive gives it a
+variant. Regression tests: `egraph/tests/egg/lit_pattern_*.egg` and
+`schedule::tests::literal_atom_joins_and_checks_payload`.
+
+**Equivalence check on this benchmark.** Rewriting the six rules back to literals and
+keeping the three `(let …)` commands reproduces the workaround's run exactly: 1 234 680
+nodes, 506 565 classes, 11 iterations in the rules encoding, and 755 928 / 446 917 / 11 in
+the native one, the same totals the globals produced. Dropping the `(let …)` commands as
+well, which is what the shipped files now do, subtracts the two nodes and two classes
+those commands inserted: 1 234 678 / 506 563 and 755 926 / 446 915, iterations unchanged.
+Wall time is unchanged within run-to-run spread (11 597 ms against 11 642 ms for the rules
+encoding, 1 097 ms against 1 136 ms for the native one), and match steps move by 0.0003%,
+because the literal atom now costs a join and a payload check where the global cost an
+equality check. The identical totals under identical seeding are the semantic statement:
+a ground literal in a pattern derives the same e-graph as the let-bound global that stood
+in for it.
 
 ## Deviations specific to the native configuration
 
@@ -107,10 +144,10 @@ are enumerated). The eleven restatements:
 | `(Integral (Mul a b) x)` | `(Integral (Mul a ..s) x)` → `(Sub (Mul a (Integral (Mul ..s) x)) (Integral (Mul (Diff x a) (Integral (Mul ..s) x)) x))` | integration by parts, peeling |
 | `(Pow x (Const 2))` → `(Mul x x)` | unchanged | RHS builds the multiset `{x:2}` |
 
-The first three rows are written with the globals `c0` and `c1` in the shipped file, for
-the same defect workaround the rules configuration needs: `(Add c0 ..rest)`,
-`(Mul c0 ..rest)`, `(Mul c1 ..rest)`. The table shows the literal form to keep the
-correspondence with egglog's rules readable.
+The first three lines were written with the globals `c0` and `c1` until 2026-08-15, for
+the same defect workaround the rules configuration needed: `(Add c0 ..rest)`,
+`(Mul c0 ..rest)`, `(Mul c1 ..rest)`. The shipped file now carries the literal form the
+table shows, which also exercises a literal in an AC element position.
 
 Each restatement degenerates to the original binary rule when the rest variable binds a
 single element, and a one-element AC node collapses to that element (verified: with
@@ -150,10 +187,16 @@ of 11 iterations, which all five configurations reach without saturating.
 
 | | egglog | ours, rules (naive) | ours, native (naive) |
 |---|---|---|---|
-| total | 1 047 896 | 1 234 680 | 755 928 |
-| classes | not reported | 506 565 | 446 917 |
+| total | 1 047 896 | 1 234 678 | 755 926 |
+| classes | not reported | 506 563 | 446 915 |
 | iterations | 11 | 11 | 11 |
 | median wall time | 508 ms | 11 562 ms | 1 118 ms |
+
+Our two node counts each dropped by 2 on 2026-08-15, when the ground-literal workaround
+was withdrawn and its three `(let …)` commands with it. The wall times are the pilot's
+medians, taken under the workaround; the post-fix single runs land inside their spread
+(11 597 ms and 1 097 ms), so they are not restated here. Re-run `run-pilot.py` to refresh
+the medians.
 
 Per operator, in the same three configurations (the counts below predate the global-constant
 workaround by at most a few hundred nodes; the totals above are the current ones):
@@ -189,7 +232,7 @@ Reading the differences:
   220 M): the AC node is matched once where the rules encoding matches every
   rearrangement of it.
 - **Our two strategies.** Semi-naive and naive agree to within 1.4% on node count in the
-  rules encoding (1 234 680 vs. 1 251 193) and to 9 nodes in the native encoding, and cost
+  rules encoding (1 234 678 vs. 1 251 191) and to 9 nodes in the native encoding, and cost
   the same in the rules encoding (11 562 ms naive, 11 299 ms semi-naive). Under native AC
   they diverge sharply: 1 118 ms naive against 15 539 ms semi-naive, 13.9x, for the same
   final e-graph. Semi-naive delta tracking over variadic AC nodes is the suspect; that is a

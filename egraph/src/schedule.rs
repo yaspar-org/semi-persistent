@@ -38,7 +38,7 @@ pub enum IndexLookup<O, I> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Step<O, I> {
+pub enum Step<O, I, V> {
     Join {
         target: VarId,
         lookups: Vec<IndexLookup<O, I>>,
@@ -94,11 +94,18 @@ pub enum Step<O, I> {
         node: VarId,
         val: LitValVarId,
     },
+    /// Keep the match only if `node`'s literal payload equals `value`. The constant
+    /// counterpart of [`Step::ExtractLitVal`]: that one binds the payload to a pattern
+    /// variable, this one pins it to a literal written in the pattern.
+    CheckLit {
+        node: VarId,
+        value: V,
+    },
 }
 
 #[derive(Clone, Debug)]
-pub struct QueryPlan<O, I> {
-    pub steps: Vec<Step<O, I>>,
+pub struct QueryPlan<O, I, V> {
+    pub steps: Vec<Step<O, I, V>>,
     pub shape: MatchShape,
 }
 
@@ -231,22 +238,21 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
         RAtom::ACIExact { op, elems, .. } | RAtom::ACISub { op, elems, .. } => {
             cost_discounted(op, atom_id, bound_count(elems), stats)
         }
-        RAtom::Lit { .. } => 1,
-        RAtom::LitBind { op, .. } => base_card(op, atom_id, stats),
+        RAtom::Lit { op, .. } | RAtom::LitBind { op, .. } => base_card(op, atom_id, stats),
         RAtom::Eq(..) | RAtom::EqGlobal(..) => 0,
     }
 }
 
-pub fn schedule<O: DenseId + Hash + Copy, S: DenseId + Copy, V, I: IndexLike>(
+pub fn schedule<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: IndexLike>(
     rq: &ResolvedQuery<O, S, V>,
-) -> QueryPlan<O, I> {
+) -> QueryPlan<O, I, V> {
     schedule_with_stats(rq, &IndexStats::new())
 }
 
-pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V, I: IndexLike>(
+pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: IndexLike>(
     rq: &ResolvedQuery<O, S, V>,
     stats: &IndexStats<O>,
-) -> QueryPlan<O, I> {
+) -> QueryPlan<O, I, V> {
     let mut bound = vec![false; rq.shape.num_vars()];
     let mut steps = Vec::new();
     let mut used = vec![false; rq.atoms.len()];
@@ -289,7 +295,7 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V, I: In
 fn emit_read_children<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     bound: &mut [bool],
-    steps: &mut Vec<Step<O, I>>,
+    steps: &mut Vec<Step<O, I, V>>,
 ) {
     if let RAtom::Plain { node, children, .. } = atom {
         for (pos, &cv) in children.iter().enumerate() {
@@ -314,11 +320,11 @@ fn emit_read_children<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     }
 }
 
-fn emit_atom<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
+fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
     bound: &mut [bool],
-    steps: &mut Vec<Step<O, I>>,
+    steps: &mut Vec<Step<O, I, V>>,
 ) {
     match atom {
         RAtom::Plain { node, op, children } => {
@@ -357,15 +363,21 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
                 }
             }
         }
-        RAtom::Lit { node, .. } => {
+        RAtom::Lit {
+            node, op, value, ..
+        } => {
             if !bound[(*node).idx()] {
                 steps.push(Step::Join {
                     target: *node,
-                    lookups: vec![],
+                    lookups: vec![IndexLookup::ByOp { op: *op }],
                     atom_id,
                 });
                 bound[(*node).idx()] = true;
             }
+            steps.push(Step::CheckLit {
+                node: *node,
+                value: value.clone(),
+            });
         }
         RAtom::LitBind { node, op, val } => {
             if !bound[(*node).idx()] {
@@ -509,17 +521,17 @@ fn emit_atom<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
 
 /// Try to lower an atom that is *forced or free* given the current bindings —
 /// the "eager pass" cases that cost nothing to resolve and only shrink the
-/// problem: `Eq`/`EqGlobal` constraints between bound vars, `Lit` (always),
-/// and `LitBind`/`Plain` whose node var is already bound (re-join within its
+/// problem: `Eq`/`EqGlobal` constraints between bound vars, and
+/// `Lit`/`LitBind`/`Plain` whose node var is already bound (re-join within its
 /// class). Returns `Some(steps)` and marks newly-bound vars if the atom is
 /// eagerly resolvable now; `None` if it must wait for cost-based selection
 /// (an unbound scanning atom). Single source of truth shared by the static
 /// scheduler's eager pass and the runtime-adaptive matcher.
-pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
+pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
     bound: &mut [bool],
-) -> Option<Vec<Step<O, I>>> {
+) -> Option<Vec<Step<O, I, V>>> {
     let mut steps = Vec::new();
     match atom {
         RAtom::Eq(a, b) => {
@@ -547,15 +559,21 @@ pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
                 global: *global,
             });
         }
-        RAtom::Lit { node, .. } => {
-            if !bound[(*node).idx()] {
-                steps.push(Step::Join {
-                    target: *node,
-                    lookups: vec![],
-                    atom_id,
-                });
-                bound[(*node).idx()] = true;
-            }
+        RAtom::Lit {
+            node, op, value, ..
+        } if bound[(*node).idx()] => {
+            steps.push(Step::Join {
+                target: *node,
+                lookups: vec![
+                    IndexLookup::ByRepr { repr: *node },
+                    IndexLookup::ByOp { op: *op },
+                ],
+                atom_id,
+            });
+            steps.push(Step::CheckLit {
+                node: *node,
+                value: value.clone(),
+            });
         }
         RAtom::LitBind { node, op, val } if bound[(*node).idx()] => {
             steps.push(Step::Join {
@@ -587,13 +605,13 @@ pub(crate) fn try_eager_lower<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     Some(steps)
 }
 
-fn emit_variadic_join<O: DenseId + Hash + Copy, I: IndexLike>(
+fn emit_variadic_join<O: DenseId + Hash + Copy, I: IndexLike, V>(
     node: &VarId,
     op: O,
     atom_id: usize,
     elems: &[PatVar],
     bound: &mut [bool],
-    steps: &mut Vec<Step<O, I>>,
+    steps: &mut Vec<Step<O, I, V>>,
 ) {
     if !bound[(*node).idx()] {
         // Drive from `by_op[op]`, intersected with `by_contains[e]` for every
@@ -668,10 +686,12 @@ mod tests {
         ops.register_a("concat", e, e, crate::registry::AssocDir::Right);
         ops.register_mset("add", e, e);
         ops.register_set("union", e, e);
+        let ibig = sorts.id_by_name("IBig").expect("IBig builtin");
+        ops.register("ILit", &[ibig], e);
         (ops, sorts, LitValStore::new())
     }
 
-    fn do_plan(src: &str) -> (QueryPlan<OpId, u32>, MatchShape) {
+    fn do_plan(src: &str) -> (QueryPlan<OpId, u32, NiraLitVal>, MatchShape) {
         let (ops, sorts, _) = setup();
         let model = NiraModel;
         let pat = parse_pattern(src);
@@ -687,7 +707,7 @@ mod tests {
         (schedule(&rq), rq.shape)
     }
 
-    fn do_plan_multi(srcs: &[&str]) -> (QueryPlan<OpId, u32>, MatchShape) {
+    fn do_plan_multi(srcs: &[&str]) -> (QueryPlan<OpId, u32, NiraLitVal>, MatchShape) {
         let (ops, sorts, _) = setup();
         let model = NiraModel;
         let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
@@ -706,7 +726,7 @@ mod tests {
     fn do_plan_with_stats(
         srcs: &[&str],
         card: &[(&str, usize)],
-    ) -> (QueryPlan<OpId, u32>, MatchShape) {
+    ) -> (QueryPlan<OpId, u32, NiraLitVal>, MatchShape) {
         let (ops, sorts, _) = setup();
         let model = NiraModel;
         let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
@@ -765,6 +785,34 @@ mod tests {
                     .any(|l| matches!(l, IndexLookup::ByChildPos { child, pos: 0 } if *child == PatVar::Local(y)))
             );
         }
+    }
+
+    /// A ground literal in a pattern must compile to a *satisfiable* plan: a join that
+    /// actually reads an index, followed by the payload check that pins the value.
+    /// Regression for the dead-literal defect — the literal atom used to emit
+    /// `Join { lookups: [] }`, and an empty lookup vector makes both matcher engines
+    /// abandon the query, so the whole rule was inert.
+    #[test]
+    fn literal_atom_joins_and_checks_payload() {
+        let (qp, _) = do_plan("(f (ILit 42) x)");
+        for step in &qp.steps {
+            if let Step::Join { lookups, .. } = step {
+                assert!(
+                    !lookups.is_empty(),
+                    "a join with no lookups yields no candidates: {qp:?}"
+                );
+            }
+        }
+        let checks: Vec<_> = qp
+            .steps
+            .iter()
+            .filter(|s| matches!(s, Step::CheckLit { .. }))
+            .collect();
+        assert_eq!(checks.len(), 1, "expected one payload check in {qp:?}");
+        assert!(
+            matches!(checks[0], Step::CheckLit { value, .. } if value.to_string() == "42"),
+            "payload check does not carry the pattern's literal: {qp:?}"
+        );
     }
 
     #[test]

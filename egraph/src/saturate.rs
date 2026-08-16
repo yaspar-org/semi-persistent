@@ -178,10 +178,13 @@ use crate::schedule::IndexStats;
 use std::hash::Hash;
 
 /// The op a join atom scans, or `None` for atoms that don't scan an index
-/// (`Lit`, `Eq`, `EqGlobal`). Atoms with an op are the ones that participate
+/// (`Eq`, `EqGlobal`). Atoms with an op are the ones that participate
 /// in the semi-naive variant decomposition — see the design doc, "Which Atoms
 /// Count as Positions": only relation-scanning atoms generate candidate nodes;
-/// built-in constraints have no delta.
+/// built-in constraints have no delta. `Lit` scans `@sort` like `LitBind` does
+/// (it is that scan filtered to one payload), so it is a position too: a match
+/// whose only new tuple is a freshly interned literal node needs a variant that
+/// reads the literal atom's delta.
 fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
     match atom {
         RAtom::Plain { op, .. }
@@ -193,13 +196,14 @@ fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
         | RAtom::ACSub { op, .. }
         | RAtom::ACIExact { op, .. }
         | RAtom::ACISub { op, .. }
+        | RAtom::Lit { op, .. }
         | RAtom::LitBind { op, .. } => Some(*op),
-        RAtom::Lit { .. } | RAtom::Eq(..) | RAtom::EqGlobal(..) => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) => None,
     }
 }
 
 /// Indices (stable `atom_id`s) of the join atoms in a rule — the atoms the
-/// semi-naive variant loop ranges over. Excludes `Lit`/`Eq`/`EqGlobal`.
+/// semi-naive variant loop ranges over. Excludes `Eq`/`EqGlobal`.
 fn join_atom_indices<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> Vec<usize> {
     rq.atoms
         .iter()

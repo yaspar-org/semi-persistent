@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The literal is two constructor levels below the pattern root, so its atom is reached
+;; only after two `ExtractChild` steps. Pins that the payload check is emitted against the
+;; node the parent chain bound, not against a fresh scan.
+(datatype Math (Add Math Math) (Mul Math Math) (Const i64) (Var String))
+(rewrite (Mul x (Add y (Const 0))) (Mul x y))
+
+(let t (Mul (Var "p") (Add (Var "q") (Const 0))))
+(run 5)
+(check (= t (Mul (Var "p") (Var "q"))))
+
+;; Same depth, wrong constant: no match.
+(let u (Mul (Var "r") (Add (Var "s") (Const 3))))
+(run 5)
+(check (!= u (Mul (Var "r") (Var "s"))))

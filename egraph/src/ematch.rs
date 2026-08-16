@@ -815,7 +815,7 @@ where
 /// and do not care about allocation — tests, the REPL, `EGraph::run_query`. The
 /// saturation drivers use `run_query_into` with a persistent [`MatchPool`].
 pub fn run_query<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -835,7 +835,7 @@ where
 /// The pool is cleared first, so a caller may hand the same pool to every query
 /// in a round; see [`MatchPool`] for why that is where the win is.
 pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -851,7 +851,7 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
@@ -979,6 +979,12 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 run_step(plan, step_idx + 1, eg, index, globals, env, results);
             }
         }
+        Step::CheckLit { node, value } => {
+            let node_id = env.get(*node);
+            if eg.get_lit_val(node_id) == Some(value) {
+                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            }
+        }
     }
 }
 
@@ -987,7 +993,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     children: &[PatVar],
     pre: Option<SeqVarId>,
@@ -1058,7 +1064,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     children: &[PatVar],
     seq: &[Cfg::G],
@@ -1157,7 +1163,7 @@ fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<u
     }
 }
 fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     rest: Option<MsetVarId>,
@@ -1178,7 +1184,7 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     ei: usize,
@@ -1307,7 +1313,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     elems: &[PatVar],
     rest: Option<SetVarId>,
@@ -1329,7 +1335,7 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     elems: &[PatVar],
     ei: usize,
@@ -1422,7 +1428,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     target: VarId,
     lookups: &[IndexLookup<Cfg::O, Cfg::Index>],
@@ -1521,7 +1527,7 @@ where
 /// binding `target` to each match and recursing into the next plan step.
 fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     cursors: CursorVec<C>,
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     target: VarId,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
@@ -1622,7 +1628,7 @@ struct Frame<'a, Cfg: EGraphConfig> {
 }
 
 pub struct MatchIterator<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool> {
-    plan: &'a QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &'a QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &'a EGraph<Cfg, L, T, P>,
     index: &'a VariantIndex<'a, Cfg>,
     globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1640,7 +1646,7 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub fn new(
-        plan: &'a QueryPlan<Cfg::O, Cfg::Index>,
+        plan: &'a QueryPlan<Cfg::O, Cfg::Index, L>,
         eg: &'a EGraph<Cfg, L, T, P>,
         index: &'a VariantIndex<'a, Cfg>,
         globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1820,6 +1826,15 @@ where
                 let node_id = self.env.get(*node);
                 if let Some(lit_val_id) = self.eg.get_lit_val_id(node_id) {
                     self.env.set_lit_val(*val, lit_val_id);
+                    self.cursor += 1;
+                    Enter::Advanced
+                } else {
+                    Enter::Failed
+                }
+            }
+            Step::CheckLit { node, value } => {
+                let node_id = self.env.get(*node);
+                if self.eg.get_lit_val(node_id) == Some(value) {
                     self.cursor += 1;
                     Enter::Advanced
                 } else {
@@ -2535,7 +2550,7 @@ enum Enter {
 
 /// Convenience: collect all matches using the iterator.
 pub fn run_query_iter<Cfg, L, const T: bool, const P: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &EGraph<Cfg, L, T, P>,
     index: &VariantIndex<'_, Cfg>,
 ) -> Vec<Match<Cfg>>
