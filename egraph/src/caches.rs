@@ -831,6 +831,83 @@ mod tests {
         assert!(c.probe(&op, &[ENodeId::new(2), ENodeId::new(1)]).is_none());
     }
 
+    /// A 32-bit fingerprint collision does not produce a wrong hash-cons hit.
+    ///
+    /// `probe` uses the fingerprint only to reach a candidate; the hit is
+    /// declared by `n.op() == *op && n.children == *children` (fixed arity) and
+    /// `n.op() == op && self.children_eq(&n, elems)` (variable arity). Without
+    /// that confirmation a collision would return some *other* node's class,
+    /// which `EGraph::add` would then treat as the term's class — an unsound
+    /// merge of two structurally different terms. The test brute-forces a real
+    /// collision (birthday: ~2^16 candidates expected) and checks both probes
+    /// still answer with their own node.
+    #[test]
+    fn fingerprint_collision_is_disambiguated_by_content() {
+        const LIMIT: u32 = 4_000_000;
+
+        // -- fixed arity: `[G; 2]`, hashed element-wise --
+        let mut fixed = FixedArityCache::<ENodeId, OpId, Plain2Id, 2, false>::new();
+        let op = OpId::new(0);
+        let mut seen: std::collections::HashMap<Fingerprint, u32> =
+            std::collections::HashMap::new();
+        let (a, b) = (0..LIMIT)
+            .find_map(|n| {
+                let fp = fixed.fingerprint(&op, &[ENodeId::new(n), ENodeId::new(0)]);
+                seen.insert(fp, n).map(|prev| (prev, n))
+            })
+            .expect("no 32-bit fingerprint collision within the search bound");
+        assert_ne!(a, b);
+        let (ca, cb) = (
+            [ENodeId::new(a), ENodeId::new(0)],
+            [ENodeId::new(b), ENodeId::new(0)],
+        );
+        // A genuine collision: same fingerprint, different children.
+        assert_eq!(fixed.fingerprint(&op, &ca), fixed.fingerprint(&op, &cb));
+        assert_ne!(ca, cb);
+
+        let ga = ENodeId::new(LIMIT + 1);
+        let gb = ENodeId::new(LIMIT + 2);
+        assert!(matches!(
+            fixed.probe_or_insert(ga, op, ca),
+            InsertResult::Inserted { .. }
+        ));
+        // The colliding node must NOT be reported as already present.
+        assert!(matches!(
+            fixed.probe_or_insert(gb, op, cb),
+            InsertResult::Inserted { .. }
+        ));
+        assert_eq!(fixed.probe(&op, &ca), Some(ga));
+        assert_eq!(fixed.probe(&op, &cb), Some(gb));
+
+        // -- variable arity: `&[C]`, hashed with a length prefix --
+        let mut var = VariableArityCache::<ENodeId, OpId, ENodeId, PlainNId, false>::new();
+        let mut seen: std::collections::HashMap<Fingerprint, u32> =
+            std::collections::HashMap::new();
+        let (a, b) = (0..LIMIT)
+            .find_map(|n| {
+                let fp = var.fingerprint(&op, &[ENodeId::new(n), ENodeId::new(0)]);
+                seen.insert(fp, n).map(|prev| (prev, n))
+            })
+            .expect("no 32-bit fingerprint collision within the search bound");
+        let (va, vb) = (
+            [ENodeId::new(a), ENodeId::new(0)],
+            [ENodeId::new(b), ENodeId::new(0)],
+        );
+        assert_eq!(var.fingerprint(&op, &va), var.fingerprint(&op, &vb));
+        assert_ne!(va, vb);
+
+        assert!(matches!(
+            var.probe_or_insert(ga, op, &va),
+            InsertResult::Inserted { .. }
+        ));
+        assert!(matches!(
+            var.probe_or_insert(gb, op, &vb),
+            InsertResult::Inserted { .. }
+        ));
+        assert_eq!(var.probe(op, &va), Some(ga));
+        assert_eq!(var.probe(op, &vb), Some(gb));
+    }
+
     #[test]
     fn variable_arity_probe_insert() {
         let mut c = VariableArityCache::<ENodeId, OpId, ENodeId, PlainNId, false>::new();
