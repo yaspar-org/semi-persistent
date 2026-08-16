@@ -100,10 +100,48 @@ pub enum InsertResult<G, L> {
     Inserted { local_id: L },
 }
 
+/// One open mark, mirroring the frame the node arena pushed for the same mark.
+///
+/// `saved_len` splits the arena at restore time: local ids below it existed at
+/// the mark and keep their index entries, ids at or above it are the suffix the
+/// restore deletes. `dirty_start` cuts [`dirty`](FixedArityCache::dirty) into
+/// per-frame segments the same way the arena's `diff_start` cuts its diff log.
+#[derive(Clone, Copy, Debug)]
+struct CacheFrame {
+    saved_len: usize,
+    dirty_start: usize,
+}
+
+/// Restore rebuilds the whole index once the incremental work would exceed
+/// `1 / REBUILD_RATIO` of it.
+///
+/// Deleting one index entry costs a fingerprint and a probe, about what
+/// inserting one during a rebuild costs, and the incremental path also
+/// re-inserts every recanonized pre-mark node, so the two paths break even
+/// near `suffix + 2 * dirty == live`. A quarter keeps the incremental path
+/// below that break-even point and bounds the cost of a restore that takes the
+/// rebuild it did not need to a quarter of one.
+pub(crate) const REBUILD_RATIO: usize = 4;
+
+/// Per-frame cap on recorded pre-mark writes: past it, restore is going to
+/// rebuild anyway (the fallback test below is already false), so recording
+/// more would only cost memory.
+#[inline]
+fn dirty_budget(saved_len: usize) -> usize {
+    saved_len / REBUILD_RATIO
+}
+
+/// Whether restore can fix the index in place rather than rebuilding it.
+#[inline]
+pub(crate) fn restore_incrementally(suffix_len: usize, dirty_len: usize, saved_len: usize) -> bool {
+    REBUILD_RATIO * (suffix_len + dirty_len) <= saved_len
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CacheToken {
     nodes: VecToken,
     history: Option<VecToken>,
+    frame_index: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -112,6 +150,7 @@ pub struct PoolCacheToken {
     children: VecToken,
     history_nodes: Option<VecToken>,
     history_children: Option<VecToken>,
+    frame_index: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +172,13 @@ pub struct FixedArityCache<
     /// rewrites performed, not the number of nodes, and a single node can be recanonicalized
     /// arbitrarily many times — so no id capacity bounds it and `L` here would be a cap.
     history: Option<VecI<FixedArityNode<G, O, K>, usize, TRACK>>,
+    /// Local ids below the enclosing mark's `saved_len` whose content
+    /// `recanonize_node` changed. Their index entries were re-keyed at
+    /// recanonize time and the arena rolls their content back on restore, so
+    /// restore has to re-key them a second time, back to the mark's content.
+    /// Duplicates are allowed: re-keying a node twice is idempotent.
+    dirty: Vec<L>,
+    frames: Vec<CacheFrame>,
 }
 
 impl<
@@ -163,6 +209,8 @@ impl<
             nodes: VecI::new(),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
             history: if PROOFS { Some(VecI::new()) } else { None },
+            dirty: Vec::new(),
+            frames: Vec::new(),
         }
     }
 
@@ -246,6 +294,7 @@ impl<
         // Node's canonical form genuinely changed this round — record it for
         // the semi-naive delta (after the no-change early-return above).
         touched.push(node.global_id());
+        self.note_dirty(local_id);
 
         // save to history on first recanonize
         if let Some(hist) = &mut self.history
@@ -294,8 +343,29 @@ impl<
         None
     }
 
+    /// Record a pre-mark node whose content just changed, so restore can put
+    /// its index entry back under the mark's key. Nodes at or above the
+    /// enclosing mark's `saved_len` need no entry: they are in the suffix
+    /// restore deletes outright, and every enclosing mark's `saved_len` is no
+    /// larger, so they are in its suffix too.
+    #[inline]
+    fn note_dirty(&mut self, local_id: L) {
+        if !TRACK {
+            return;
+        }
+        let Some(frame) = self.frames.last() else {
+            return;
+        };
+        if local_id.as_usize() >= frame.saved_len
+            || self.dirty.len() - frame.dirty_start > dirty_budget(frame.saved_len)
+        {
+            return;
+        }
+        self.dirty.push(local_id);
+    }
+
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> CacheToken {
-        CacheToken {
+        let token = CacheToken {
             nodes: self
                 .nodes
                 .try_mark(shrink)
@@ -304,10 +374,45 @@ impl<
                 h.try_mark(shrink)
                     .expect("mark: frame depth is bounded by the saturation driver")
             }),
-        }
+            frame_index: self.frames.len(),
+        };
+        self.frames.push(CacheFrame {
+            saved_len: self.nodes.len().as_usize(),
+            dirty_start: self.dirty.len(),
+        });
+        token
     }
 
     pub fn restore(&mut self, token: CacheToken) {
+        let frame = *self
+            .frames
+            .get(token.frame_index)
+            .expect("restore: token minted by this cache's own mark, and not already spent");
+        let live_len = self.nodes.len().as_usize();
+        let incremental = restore_incrementally(
+            live_len - frame.saved_len,
+            self.dirty.len() - frame.dirty_start,
+            frame.saved_len,
+        );
+
+        // The arena is append-only, so the nodes added since the mark are the
+        // contiguous suffix at or above `saved_len` and theirs are the entries
+        // to delete. The only other entries the scope moved are those of the
+        // pre-mark nodes `recanonize_node` re-keyed, which `dirty` names, so
+        // the correction is O(added + recanonized) rather than O(live).
+        //
+        // Delete under the CURRENT keys, before the arena rolls the content
+        // back: an entry is filed under the fingerprint of the content it had
+        // when it was last written.
+        if incremental {
+            for i in frame.saved_len..live_len {
+                self.remove_entry(L::from_usize(i));
+            }
+            for k in frame.dirty_start..self.dirty.len() {
+                self.remove_entry(self.dirty[k]);
+            }
+        }
+
         self.nodes
             .try_restore(token.nodes)
             .expect("restore: token minted by this container's own mark");
@@ -315,7 +420,56 @@ impl<
             h.try_restore(tok)
                 .expect("restore: token minted by this container's own mark");
         }
-        self.rebuild_index();
+
+        if incremental {
+            for k in frame.dirty_start..self.dirty.len() {
+                self.insert_entry(self.dirty[k]);
+            }
+        } else {
+            self.rebuild_index();
+        }
+        self.dirty.truncate(frame.dirty_start);
+        self.frames.truncate(token.frame_index);
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.index_matches_rebuild(),
+            "restore left the hashcons index out of step with the node arena"
+        );
+    }
+
+    /// Drop `local_id`'s entry, keyed by the content it holds right now. A
+    /// repeat call is a no-op: the entry is already gone.
+    #[inline]
+    fn remove_entry(&mut self, local_id: L) {
+        let fp = fold32(self.nodes.get(local_id).content_hash());
+        self.index.remove(&StoredKey { fp, local_id });
+    }
+
+    #[inline]
+    fn insert_entry(&mut self, local_id: L) {
+        let fp = fold32(self.nodes.get(local_id).content_hash());
+        self.index.insert(StoredKey { fp, local_id }, ());
+    }
+
+    /// The index holds exactly one entry per live node, keyed by that node's
+    /// current content, which is what [`rebuild_index`](Self::rebuild_index)
+    /// produces from scratch.
+    #[cfg(debug_assertions)]
+    fn index_matches_rebuild(&self) -> bool {
+        let count = self.nodes.len().as_usize();
+        if self.index.len() != count {
+            return false;
+        }
+        let mut seen = vec![false; count];
+        for (sk, ()) in self.index.iter() {
+            let i = sk.local_id.as_usize();
+            if i >= count || seen[i] || sk.fp != fold32(self.nodes.get(sk.local_id).content_hash())
+            {
+                return false;
+            }
+            seen[i] = true;
+        }
+        true
     }
 
     fn rebuild_index(&mut self) {
@@ -374,6 +528,11 @@ pub struct VariableArityCache<
     /// Children of the history entries; `Σ arity` over `history_nodes`, so `usize` for both
     /// of the reasons above at once.
     history_children: Option<VecI<C, usize, TRACK>>,
+    /// Local ids below the enclosing mark's `saved_len` whose content
+    /// `recanonize_node` changed, through the node's own span or through the
+    /// child pool it addresses. See [`FixedArityCache::dirty`].
+    dirty: Vec<L>,
+    frames: Vec<CacheFrame>,
 }
 
 impl<
@@ -406,6 +565,8 @@ impl<
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
             history_nodes: if PROOFS { Some(VecI::new()) } else { None },
             history_children: if PROOFS { Some(VecI::new()) } else { None },
+            dirty: Vec::new(),
+            frames: Vec::new(),
         }
     }
 
@@ -519,6 +680,7 @@ impl<
         // Node's canonical form genuinely changed this round — record it for
         // the semi-naive delta (after the no-change early-return above).
         touched.push(node.global_id());
+        self.note_dirty(local_id);
 
         // save to history on first recanonize
         if let (Some(hn), Some(hc)) = (&mut self.history_nodes, &mut self.history_children)
@@ -595,8 +757,25 @@ impl<
         false
     }
 
+    /// See [`FixedArityCache::note_dirty`].
+    #[inline]
+    fn note_dirty(&mut self, local_id: L) {
+        if !TRACK {
+            return;
+        }
+        let Some(frame) = self.frames.last() else {
+            return;
+        };
+        if local_id.as_usize() >= frame.saved_len
+            || self.dirty.len() - frame.dirty_start > dirty_budget(frame.saved_len)
+        {
+            return;
+        }
+        self.dirty.push(local_id);
+    }
+
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> PoolCacheToken {
-        PoolCacheToken {
+        let token = PoolCacheToken {
             nodes: self
                 .nodes
                 .try_mark(shrink)
@@ -613,10 +792,39 @@ impl<
                 h.try_mark(shrink)
                     .expect("mark: frame depth is bounded by the saturation driver")
             }),
-        }
+            frame_index: self.frames.len(),
+        };
+        self.frames.push(CacheFrame {
+            saved_len: self.nodes.len().as_usize(),
+            dirty_start: self.dirty.len(),
+        });
+        token
     }
 
     pub fn restore(&mut self, token: PoolCacheToken) {
+        let frame = *self
+            .frames
+            .get(token.frame_index)
+            .expect("restore: token minted by this cache's own mark, and not already spent");
+        let live_len = self.nodes.len().as_usize();
+        let incremental = restore_incrementally(
+            live_len - frame.saved_len,
+            self.dirty.len() - frame.dirty_start,
+            frame.saved_len,
+        );
+
+        // Delete under the CURRENT keys, before the arena and the child pool
+        // roll back: an entry is filed under the fingerprint of the content it
+        // had when it was last written.
+        if incremental {
+            for i in frame.saved_len..live_len {
+                self.remove_entry(L::from_usize(i));
+            }
+            for k in frame.dirty_start..self.dirty.len() {
+                self.remove_entry(self.dirty[k]);
+            }
+        }
+
         self.nodes
             .try_restore(token.nodes)
             .expect("restore: token minted by this container's own mark");
@@ -631,7 +839,56 @@ impl<
             h.try_restore(tok)
                 .expect("restore: token minted by this container's own mark");
         }
-        self.rebuild_index();
+
+        if incremental {
+            for k in frame.dirty_start..self.dirty.len() {
+                self.insert_entry(self.dirty[k]);
+            }
+        } else {
+            self.rebuild_index();
+        }
+        self.dirty.truncate(frame.dirty_start);
+        self.frames.truncate(token.frame_index);
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.index_matches_rebuild(),
+            "restore left the hashcons index out of step with the node arena"
+        );
+    }
+
+    /// Drop `local_id`'s entry, keyed by the content it holds right now. A
+    /// repeat call is a no-op: the entry is already gone.
+    #[inline]
+    fn remove_entry(&mut self, local_id: L) {
+        let fp = self.children_fingerprint(&self.nodes.get(local_id));
+        self.index.remove(&StoredKey { fp, local_id });
+    }
+
+    #[inline]
+    fn insert_entry(&mut self, local_id: L) {
+        let fp = self.children_fingerprint(&self.nodes.get(local_id));
+        self.index.insert(StoredKey { fp, local_id }, ());
+    }
+
+    /// See [`FixedArityCache::index_matches_rebuild`].
+    #[cfg(debug_assertions)]
+    fn index_matches_rebuild(&self) -> bool {
+        let count = self.nodes.len().as_usize();
+        if self.index.len() != count {
+            return false;
+        }
+        let mut seen = vec![false; count];
+        for (sk, ()) in self.index.iter() {
+            let i = sk.local_id.as_usize();
+            if i >= count
+                || seen[i]
+                || sk.fp != self.children_fingerprint(&self.nodes.get(sk.local_id))
+            {
+                return false;
+            }
+            seen[i] = true;
+        }
+        true
     }
 
     fn children_eq(&self, node: &VariableArityNode<G, O>, elems: &[C]) -> bool {
@@ -684,6 +941,10 @@ impl<
 pub struct LitCache<G: DenseId, O: DenseId, V: DenseId, L: DenseId, const TRACK: bool = true> {
     nodes: VecI<LitNode<G, O, V>, L, TRACK>,
     index: hashbrown::HashMap<StoredKey<L>, (), PassthroughBuildHasher>,
+    /// No `dirty` counterpart to the other two caches: a literal's content is
+    /// its operator and its value, and nothing recanonizes either, so the only
+    /// entries a restore has to drop are the suffix's.
+    frames: Vec<CacheFrame>,
 }
 
 impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const TRACK: bool> Default
@@ -701,6 +962,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
         Self {
             nodes: VecI::new(),
             index: hashbrown::HashMap::with_hasher(PassthroughBuildHasher),
+            frames: Vec::new(),
         }
     }
 
@@ -751,20 +1013,69 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> CacheToken {
-        CacheToken {
+        let token = CacheToken {
             nodes: self
                 .nodes
                 .try_mark(shrink)
                 .expect("mark: frame depth is bounded by the saturation driver"),
             history: None,
-        }
+            frame_index: self.frames.len(),
+        };
+        self.frames.push(CacheFrame {
+            saved_len: self.nodes.len().as_usize(),
+            dirty_start: 0,
+        });
+        token
     }
 
     pub fn restore(&mut self, token: CacheToken) {
+        let frame = *self
+            .frames
+            .get(token.frame_index)
+            .expect("restore: token minted by this cache's own mark, and not already spent");
+        let live_len = self.nodes.len().as_usize();
+        let incremental = restore_incrementally(live_len - frame.saved_len, 0, frame.saved_len);
+
+        if incremental {
+            for i in frame.saved_len..live_len {
+                let local_id = L::from_usize(i);
+                let fp = fold32(self.nodes.get(local_id).content_hash());
+                self.index.remove(&StoredKey { fp, local_id });
+            }
+        }
+
         self.nodes
             .try_restore(token.nodes)
             .expect("restore: token minted by this container's own mark");
-        self.rebuild_index();
+
+        if !incremental {
+            self.rebuild_index();
+        }
+        self.frames.truncate(token.frame_index);
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.index_matches_rebuild(),
+            "restore left the hashcons index out of step with the node arena"
+        );
+    }
+
+    /// See [`FixedArityCache::index_matches_rebuild`].
+    #[cfg(debug_assertions)]
+    fn index_matches_rebuild(&self) -> bool {
+        let count = self.nodes.len().as_usize();
+        if self.index.len() != count {
+            return false;
+        }
+        let mut seen = vec![false; count];
+        for (sk, ()) in self.index.iter() {
+            let i = sk.local_id.as_usize();
+            if i >= count || seen[i] || sk.fp != fold32(self.nodes.get(sk.local_id).content_hash())
+            {
+                return false;
+            }
+            seen[i] = true;
+        }
+        true
     }
 
     fn rebuild_index(&mut self) {
@@ -1069,6 +1380,147 @@ mod tests {
         assert!(c.probe(op, &[id(1), id(3)]).is_some());
         // old 3-element key gone
         assert!(c.probe(op, &[id(1), id(2), id(3)]).is_none());
+    }
+
+    // -- mark / restore --
+
+    const SHRINK: ShrinkPolicy = ShrinkPolicy::Never;
+
+    /// Restore drops the entries of the nodes the scope added and keeps the
+    /// rest, which is what makes a later `probe` answer for the restored graph.
+    #[test]
+    fn restore_drops_the_post_mark_suffix() {
+        let mut c = FixedArityCache::<ENodeId, OpId, Plain2Id, 2>::new();
+        let op = OpId::new(0);
+        c.probe_or_insert(id(10), op, [id(1), id(2)]);
+        let token = c.mark(SHRINK);
+        c.probe_or_insert(id(20), op, [id(3), id(4)]);
+        assert!(c.probe(&op, &[id(3), id(4)]).is_some());
+
+        c.restore(token);
+        assert_eq!(c.len(), Plain2Id::new(1));
+        assert_eq!(c.probe(&op, &[id(1), id(2)]), Some(id(10)));
+        assert!(c.probe(&op, &[id(3), id(4)]).is_none());
+        // The freed local id is reusable and does not collide with the entry
+        // the discarded node left behind, because there is none.
+        c.probe_or_insert(id(30), op, [id(5), id(6)]);
+        assert_eq!(c.probe(&op, &[id(5), id(6)]), Some(id(30)));
+    }
+
+    /// A pre-mark node recanonized inside the scope is filed under its new key
+    /// while the scope runs and back under the mark's key after restore.
+    #[test]
+    fn restore_rekeys_a_recanonized_pre_mark_node() {
+        let mut c = FixedArityCache::<ENodeId, OpId, Plain2Id, 2>::new();
+        let op = OpId::new(0);
+        c.probe_or_insert(id(10), op, [id(1), id(2)]);
+        let token = c.mark(SHRINK);
+        c.recanonize_node::<PlainCanon>(
+            Plain2Id::new(0),
+            |g| if g == id(2) { id(1) } else { g },
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+        assert!(c.probe(&op, &[id(1), id(1)]).is_some());
+        assert!(c.probe(&op, &[id(1), id(2)]).is_none());
+
+        c.restore(token);
+        assert_eq!(c.probe(&op, &[id(1), id(2)]), Some(id(10)));
+        assert!(c.probe(&op, &[id(1), id(1)]).is_none());
+    }
+
+    /// Same for a variable-arity node, whose content lives in the shared child
+    /// pool: the pool rolls back with the arena and the key follows it.
+    #[test]
+    fn restore_rekeys_a_recanonized_variable_arity_node() {
+        let mut c = VariableArityCache::<ENodeId, OpId, ENodeId, SetNodeId>::new();
+        let op = OpId::new(0);
+        c.probe_or_insert(id(10), op, &[id(1), id(2), id(3)]);
+        let token = c.mark(SHRINK);
+        c.recanonize_node::<SetCanon>(
+            SetNodeId::new(0),
+            |g| if g == id(2) { id(1) } else { g },
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+            crate::canon::CanonMode::PLAIN,
+        );
+        assert!(c.probe(op, &[id(1), id(3)]).is_some());
+
+        c.restore(token);
+        assert_eq!(c.probe(op, &[id(1), id(2), id(3)]), Some(id(10)));
+        assert!(c.probe(op, &[id(1), id(3)]).is_none());
+    }
+
+    /// Nested marks: restoring the outer token past an unrestored inner mark
+    /// has to undo both the inner suffix and a pre-outer-mark node the inner
+    /// scope re-keyed.
+    #[test]
+    fn restore_past_an_open_inner_mark() {
+        let mut c = FixedArityCache::<ENodeId, OpId, Plain2Id, 2>::new();
+        let op = OpId::new(0);
+        c.probe_or_insert(id(10), op, [id(1), id(2)]);
+        let outer = c.mark(SHRINK);
+        c.probe_or_insert(id(20), op, [id(3), id(4)]);
+        let _inner = c.mark(SHRINK);
+        c.probe_or_insert(id(30), op, [id(5), id(6)]);
+        c.recanonize_node::<PlainCanon>(
+            Plain2Id::new(0),
+            |g| if g == id(2) { id(7) } else { g },
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
+
+        c.restore(outer);
+        assert_eq!(c.len(), Plain2Id::new(1));
+        assert_eq!(c.probe(&op, &[id(1), id(2)]), Some(id(10)));
+        assert!(c.probe(&op, &[id(1), id(7)]).is_none());
+        assert!(c.probe(&op, &[id(3), id(4)]).is_none());
+        assert!(c.probe(&op, &[id(5), id(6)]).is_none());
+    }
+
+    /// A scope that adds more than a quarter of the arena takes the rebuild
+    /// fallback, and lands on the same index the incremental path would build.
+    #[test]
+    fn restore_falls_back_to_rebuild_on_a_large_suffix() {
+        let mut c = FixedArityCache::<ENodeId, OpId, Plain2Id, 2>::new();
+        let op = OpId::new(0);
+        c.probe_or_insert(id(10), op, [id(1), id(2)]);
+        let token = c.mark(SHRINK);
+        for k in 0..10 {
+            c.probe_or_insert(id(100 + k), op, [id(200 + k), id(0)]);
+        }
+        assert!(!restore_incrementally(10, 0, 1));
+
+        c.restore(token);
+        assert_eq!(c.len(), Plain2Id::new(1));
+        assert_eq!(c.probe(&op, &[id(1), id(2)]), Some(id(10)));
+        assert!(c.probe(&op, &[id(200), id(0)]).is_none());
+    }
+
+    /// The check `restore` asserts on rejects a stale key. Without this, an
+    /// index that never diverges and a check that never looks are the same
+    /// test result.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn index_check_rejects_a_stale_key() {
+        let mut c = FixedArityCache::<ENodeId, OpId, Plain2Id, 2>::new();
+        let op = OpId::new(0);
+        c.probe_or_insert(id(10), op, [id(1), id(2)]);
+        assert!(c.index_matches_rebuild());
+
+        let local_id = Plain2Id::new(0);
+        let fp = c.fingerprint(&op, &[id(1), id(2)]);
+        c.index.remove(&StoredKey { fp, local_id });
+        assert!(!c.index_matches_rebuild(), "a missing entry is a mismatch");
+        c.index.insert(
+            StoredKey {
+                fp: fp ^ 1,
+                local_id,
+            },
+            (),
+        );
+        assert!(!c.index_matches_rebuild(), "a stale key is a mismatch");
     }
 
     #[test]
