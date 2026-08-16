@@ -77,6 +77,16 @@ cost(Eq/EqGlobal)             = 0
 Emit the selected atom via `emit_atom` (Join + ExtractChild steps),
 then return to Phase A.
 
+### Where the loop runs
+
+By default both phases run once per query and produce the step array the
+matcher walks. Under `ematch::set_runtime_scheduling` they run at each depth
+instead, against the live environment: the same two phases over the same
+`try_eager_lower` and `emit_atom`, with Phase B's estimate replaced by the
+length of the shortest bucket the atom's join would open for the bindings in
+hand. The match set is the same either way (chapter 09, "Which Snapshot");
+the flag is off by default and chapter 20's S4 has the measurements.
+
 ## E-Class–Aware Re-Join
 
 When a `Plain` or `LitBind`

@@ -905,12 +905,421 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     pool.steps = 0;
     pool.op_filter_policy = op_filter_policy();
     let mut env = Match::new(&plan.shape);
-    run_step(plan, 0, eg, index, globals, &mut env, pool);
+    let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
+    run_step(&exec, 0, eg, index, globals, &mut env, pool);
     add_match_steps(pool.steps);
 }
 
-fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+/// Collect all matches of `rq` into `pool`, choosing the atom order at plan time
+/// (`plan`) or per binding, according to [`runtime_scheduling`].
+///
+/// `plan` is `rq` scheduled by [`schedule_with_stats`](crate::schedule::schedule_with_stats).
+/// It is what runs with the flag off, and it is also the fallback for a query
+/// too wide for the runtime scheduler's masks (see [`ADAPTIVE_MAX_WIDTH`]), so a
+/// caller passes both and gets the same match set either way.
+pub fn run_query_scheduled_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
     plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &mut MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    if !runtime_scheduling() || !Adaptive::<Cfg, L, S>::fits(rq) {
+        run_query_into(plan, eg, index, globals, pool);
+        return;
+    }
+    pool.reshape(&rq.shape);
+    pool.steps = 0;
+    pool.op_filter_policy = op_filter_policy();
+    let mut env = Match::new(&rq.shape);
+    let adaptive = Adaptive::new(rq);
+    let exec = Exec::adaptive(&adaptive);
+    run_step(&exec, 0, eg, index, globals, &mut env, pool);
+    add_match_steps(pool.steps);
+}
+
+/// [`run_query_scheduled_into`] into a fresh `Vec`; the counterpart of
+/// [`run_query`] for callers that want the flag respected.
+pub fn run_query_scheduled<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> Vec<Match<Cfg>>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut pool = MatchPool::new();
+    run_query_scheduled_into(rq, plan, eg, index, globals, &mut pool);
+    (0..pool.len()).map(|j| pool.clone_match(j)).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Runtime atom scheduling
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// Whether the matcher picks the next atom per binding instead of once per
+    /// query. Off by default: the plan-time order stays the shipped one.
+    ///
+    /// Thread-local rather than process-wide like [`OP_FILTER_POLICY`], because
+    /// it is read once per query rather than once per join — so the argument
+    /// that made that one an atomic does not apply here — and because the
+    /// differential tests run one match set with the flag on against another
+    /// with it off, which a process-wide flag would make order-dependent under
+    /// the test harness's thread pool.
+    static RUNTIME_SCHEDULING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Turn runtime (per-binding) atom scheduling on or off for subsequent queries
+/// run through [`run_query_scheduled_into`]. Per thread, read at query start.
+pub fn set_runtime_scheduling(on: bool) {
+    RUNTIME_SCHEDULING.with(|c| c.set(on));
+}
+
+/// Whether runtime atom scheduling is in force on this thread.
+pub fn runtime_scheduling() -> bool {
+    RUNTIME_SCHEDULING.with(|c| c.get())
+}
+
+/// Atoms and node variables a runtime-scheduled query may have.
+///
+/// The scheduler state that the static scheduler keeps in two `Vec<bool>` —
+/// which atoms are used, which variables are bound — is a pair of `u64` masks
+/// here, because it is carried per stack frame and keys the lowering memo. A
+/// wider query falls back to its static plan, which is a performance decision
+/// and not a correctness one: no rule in the corpus has more than a handful of
+/// atoms.
+pub const ADAPTIVE_MAX_WIDTH: usize = 64;
+
+/// Memo key for the eager block, in the slot that otherwise holds an atom index.
+const EAGER: u32 = u32::MAX;
+
+/// One lowered block of steps, with the scheduler state it leaves behind.
+///
+/// `steps` is shared rather than owned because the same block is re-entered once
+/// per partial match that reaches the same decision point, and re-lowering it
+/// there was the whole cost this memo exists to avoid; an `Rc` clone is a
+/// refcount bump and the borrow lives on the executing frame's stack.
+struct Segment<Cfg: EGraphConfig, L: LitVal> {
+    steps: std::rc::Rc<[Step<Cfg::O, Cfg::Index, L>]>,
+    bound: u64,
+    used: u64,
+}
+
+impl<Cfg: EGraphConfig, L: LitVal> Clone for Segment<Cfg, L> {
+    fn clone(&self) -> Self {
+        Self {
+            steps: self.steps.clone(),
+            bound: self.bound,
+            used: self.used,
+        }
+    }
+}
+
+/// The query a runtime-scheduled execution schedules from, plus its lowering
+/// memo.
+///
+/// `emit_atom`'s output is a function of the atom and of which variables are
+/// bound when it is emitted, so a block is memoized under
+/// `(atom, bound-mask, used-mask)` and computed once per distinct mask a run
+/// reaches. There are few of those — a k-atom rule reaches at most the k! atom
+/// prefixes, and in practice a handful — so the memo is a linear-scanned vector
+/// rather than a hash map: three-word key comparisons over a few entries beat
+/// hashing one on the per-partial-match path.
+struct Adaptive<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> {
+    atoms: &'q [crate::resolve::RAtom<Cfg::O, S, L>],
+    /// Atoms phase B ranges over: every atom that is not an equality. The
+    /// equalities are the eager pass's business and are never costed, exactly
+    /// as in the static loop's `min_by` filter.
+    costed: u64,
+    num_vars: usize,
+    memo: std::cell::RefCell<Vec<((u32, u64, u64), Segment<Cfg, L>)>>,
+}
+
+impl<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> Adaptive<'q, Cfg, L, S> {
+    /// Whether `rq` fits the mask width; see [`ADAPTIVE_MAX_WIDTH`].
+    fn fits(rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>) -> bool {
+        rq.atoms.len() <= ADAPTIVE_MAX_WIDTH && rq.shape.num_vars() <= ADAPTIVE_MAX_WIDTH
+    }
+
+    fn new(rq: &'q crate::resolve::ResolvedQuery<Cfg::O, S, L>) -> Self {
+        let mut costed = 0u64;
+        for (i, atom) in rq.atoms.iter().enumerate() {
+            if !matches!(
+                atom,
+                crate::resolve::RAtom::Eq(..) | crate::resolve::RAtom::EqGlobal(..)
+            ) {
+                costed |= 1 << i;
+            }
+        }
+        Self {
+            atoms: &rq.atoms,
+            costed,
+            num_vars: rq.shape.num_vars(),
+            memo: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The block `chosen` lowers to at `(bound, used)`: the eager fixpoint when
+    /// `chosen` is [`EAGER`], otherwise that one atom's join and its reads.
+    fn segment(&self, chosen: u32, bound: u64, used: u64) -> Segment<Cfg, L> {
+        let key = (chosen, bound, used);
+        if let Some((_, seg)) = self.memo.borrow().iter().find(|(k, _)| *k == key) {
+            return seg.clone();
+        }
+        // `ADAPTIVE_MAX_WIDTH` bools of stack, in the two shapes the scheduler's
+        // lowering takes its state in.
+        let mut bound_buf = [false; ADAPTIVE_MAX_WIDTH];
+        let mut used_buf = [false; ADAPTIVE_MAX_WIDTH];
+        let bound_arr = &mut bound_buf[..self.num_vars];
+        let used_arr = &mut used_buf[..self.atoms.len()];
+        for (i, b) in bound_arr.iter_mut().enumerate() {
+            *b = bound & (1 << i) != 0;
+        }
+        for (i, u) in used_arr.iter_mut().enumerate() {
+            *u = used & (1 << i) != 0;
+        }
+        let mut steps = Vec::new();
+        if chosen == EAGER {
+            crate::schedule::lower_eager(self.atoms, used_arr, bound_arr, &mut steps);
+        } else {
+            let ai = chosen as usize;
+            crate::schedule::emit_atom(&self.atoms[ai], ai, bound_arr, &mut steps);
+            used_arr[ai] = true;
+        }
+        let seg = Segment {
+            steps: steps.into(),
+            bound: mask_of(bound_arr),
+            used: mask_of(used_arr),
+        };
+        self.memo.borrow_mut().push((key, seg.clone()));
+        seg
+    }
+}
+
+fn mask_of(flags: &[bool]) -> u64 {
+    flags
+        .iter()
+        .enumerate()
+        .fold(0u64, |m, (i, &b)| if b { m | (1 << i) } else { m })
+}
+
+/// A position the matcher executes from: a slice of steps, and — under runtime
+/// scheduling — what to do when it runs out.
+///
+/// Statically scheduled, `steps` is the whole plan and `adaptive` is `None`, so
+/// this is the `&QueryPlan` the engine used to carry. Runtime-scheduled, `steps`
+/// is one lowered block owned by the frame that chose it, and the masks are the
+/// scheduler state at its end. The chain of frames on the stack is the order
+/// chosen for the partial match under execution; a sibling binding at the same
+/// depth may choose a different one.
+struct Exec<'a, Cfg: EGraphConfig, L: LitVal, S: Copy> {
+    steps: &'a [Step<Cfg::O, Cfg::Index, L>],
+    adaptive: Option<&'a Adaptive<'a, Cfg, L, S>>,
+    bound: u64,
+    used: u64,
+}
+
+impl<'a, Cfg: EGraphConfig, L: LitVal, S: Copy> Exec<'a, Cfg, L, S> {
+    fn static_plan(steps: &'a [Step<Cfg::O, Cfg::Index, L>]) -> Self {
+        Self {
+            steps,
+            adaptive: None,
+            bound: 0,
+            used: 0,
+        }
+    }
+
+    /// The empty prefix of a runtime-scheduled run: the first thing the engine
+    /// does is hit the end of it, which is the first decision point.
+    fn adaptive(ad: &'a Adaptive<'a, Cfg, L, S>) -> Self {
+        Self {
+            steps: &[],
+            adaptive: Some(ad),
+            bound: 0,
+            used: 0,
+        }
+    }
+}
+
+/// Decide what runs next, at the end of a runtime-scheduled block.
+///
+/// The two phases of the static scheduling loop (chapter 08), one iteration per
+/// call, with the environment live: the eager pass to fixpoint, then the
+/// cheapest remaining atom. The order is the same as the static one because it
+/// is the same code lowering the same atoms; only the choice in phase B is made
+/// from the bindings in hand rather than from a per-round average.
+///
+/// Both phases run against the state at the end of the current block, and the
+/// block below is executed before the next decision, so every variable the
+/// scheduler calls bound is actually set in `env` when phase B reads it.
+fn advance<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &mut Match<Cfg>,
+    results: &mut MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let eager = ad.segment(EAGER, exec.bound, exec.used);
+    if !eager.steps.is_empty() {
+        let next = Exec {
+            steps: &eager.steps,
+            adaptive: Some(ad),
+            bound: eager.bound,
+            used: eager.used,
+        };
+        run_step(&next, 0, eg, index, globals, env, results);
+        return;
+    }
+
+    // No atom left to schedule: every atom is used, or the ones left are
+    // equalities between two unbound variables, which the static scheduler
+    // leaves unenforced for the same reason (nothing else in the query binds
+    // them). Either way the environment is a match.
+    let Some(ai) = choose_atom(ad, exec, eg, index, globals, env) else {
+        results.steps += 1;
+        results.push(env);
+        return;
+    };
+    let seg = ad.segment(ai as u32, exec.bound, exec.used);
+    let next = Exec {
+        steps: &seg.steps,
+        adaptive: Some(ad),
+        bound: seg.bound,
+        used: seg.used,
+    };
+    run_step(&next, 0, eg, index, globals, env, results);
+}
+
+/// The unused atom whose join opens the shortest cursor under the current
+/// bindings, or `None` if none is schedulable.
+///
+/// Phase B of the scheduling loop with the estimator replaced by a measurement.
+/// The static scheduler prices an atom by its relation scaled by one measured
+/// mean fan-out per bound key (`schedule::estimate_cost`); those means are
+/// averages over skewed distributions, so they are right about the workload and
+/// wrong about the binding (chapter 20, Fact 2). Here the atom is priced by the
+/// length of the shortest bucket its join would actually open, which is the
+/// leapfrog intersection's own bound on the candidates it can propose: an upper
+/// bound on the work, exact for a single-lookup join, and read from the buckets
+/// the join is about to open anyway.
+///
+/// Ties keep the lowest atom index, so the choice is a function of the bindings
+/// and the atom numbering and nothing else.
+fn choose_atom<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> Option<usize>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let candidates = ad.costed & !exec.used;
+    // One candidate is its own minimum. Worth the branch because it is the
+    // common case — the last atom of every rule, and both remaining atoms of a
+    // two-atom one — and because the alternative is a bucket resolution per
+    // lookup that `run_join` is about to repeat.
+    if candidates.count_ones() == 1 {
+        let ai = candidates.trailing_zeros() as usize;
+        #[cfg(test)]
+        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+        return Some(ai);
+    }
+    let mut best: Option<(usize, usize)> = None;
+    for ai in 0..ad.atoms.len() {
+        if candidates & (1 << ai) == 0 {
+            continue;
+        }
+        let seg = ad.segment(ai as u32, exec.bound, exec.used);
+        let len = cursor_len(&seg, ai, eg, index, globals, env);
+        if best.is_none_or(|(b, _)| len < b) {
+            best = Some((len, ai));
+        }
+    }
+    #[cfg(test)]
+    if let Some((_, ai)) = best {
+        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+    }
+    best.map(|(_, ai)| ai)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One entry per phase-B decision: the atoms already scheduled, and the one
+    /// chosen next. Drained by the tests that assert the choice is per binding;
+    /// release has no probe on the path.
+    static ATOM_CHOICE_LOG: std::cell::RefCell<Vec<(u64, usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take and clear this thread's record of per-binding atom choices.
+#[cfg(test)]
+pub(crate) fn take_atom_choices() -> Vec<(u64, usize)> {
+    ATOM_CHOICE_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// Shortest bucket the block's join would open, in the slice this atom's
+/// semi-naive mode reads.
+///
+/// One `len` per lookup on buckets `run_join` is about to resolve again, which
+/// is the same pair of reads the operator-restriction policy already makes per
+/// binding (see [`demote_by_op`]). `FullMinusDelta` reads the full side, an
+/// upper bound on `full ∖ delta`, for the reason given in `run_join`: a tighter
+/// number would cost the overlap, which is the work being priced.
+fn cursor_len<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    seg: &Segment<Cfg, L>,
+    atom_id: usize,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> usize
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    // Every atom phase B costs lowers to a `Join` first; the ones that do not
+    // are the equalities, which are filtered out before this is called.
+    let Some(Step::Join { lookups, .. }) = seg.steps.first() else {
+        return usize::MAX;
+    };
+    let store = match index.mode(atom_id) {
+        IndexMode::Delta => index.delta,
+        IndexMode::Full | IndexMode::FullMinusDelta => index.full,
+    };
+    let mut best = usize::MAX;
+    for l in lookups {
+        let len = bucket_len(&bucket_in(store, index, l, eg, globals, env));
+        if len < best {
+            best = len;
+        }
+    }
+    best
+}
+
+fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
@@ -922,20 +1331,32 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    results.steps += 1;
-    if step_idx >= plan.steps.len() {
-        results.push(env);
+    if step_idx >= exec.steps.len() {
+        // End of the step sequence. Statically scheduled, that is the whole
+        // plan and the environment is a match; runtime-scheduled, it is a
+        // decision point — `advance` either finds another atom to lower or
+        // reaches the same conclusion. The step tally counts one per executed
+        // step and one per emitted match in both modes, so the two are
+        // comparable; the choice itself is not a step.
+        match exec.adaptive {
+            None => {
+                results.steps += 1;
+                results.push(env);
+            }
+            Some(ad) => advance(ad, exec, eg, index, globals, env, results),
+        }
         return;
     }
+    results.steps += 1;
 
-    match &plan.steps[step_idx] {
+    match &exec.steps[step_idx] {
         Step::Join {
             target,
             lookups,
             atom_id,
         } => {
             run_join(
-                plan, step_idx, *target, lookups, *atom_id, eg, index, globals, env, results,
+                exec, step_idx, *target, lookups, *atom_id, eg, index, globals, env, results,
             );
         }
         Step::ExtractChild {
@@ -946,7 +1367,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let parent_id = env.get(*parent);
             let child = eg.child_at(parent_id, *pos);
             env.set(*target, child);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.clear(*target);
         }
         Step::CheckChildEq {
@@ -958,23 +1379,23 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let child = eg.child_at(parent_id, *pos);
             let exp = env.resolve_pv(*expected, globals);
             if canon(index, eg, child) == canon(index, eg, exp) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckEq { a, b } => {
             if canon(index, eg, env.get(*a)) == canon(index, eg, env.get(*b)) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckEqGlobal { local, global } => {
             if canon(index, eg, env.get(*local)) == canon(index, eg, globals.binding(*global)) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CopyBinding { target, other } => {
             let val = canon(index, eg, env.get(*other));
             env.set(*target, val);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.clear(*target);
         }
         Step::ExpandA {
@@ -989,7 +1410,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let mut buf = results.take_id_buf();
             eg.seq_children(node_id, &mut buf);
             run_expand_a(
-                plan, step_idx, children, *pre, *suf, &buf, eg, index, globals, env, results,
+                exec, step_idx, children, *pre, *suf, &buf, eg, index, globals, env, results,
             );
             results.give_id_buf(buf);
         }
@@ -1006,7 +1427,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 entry.0 = canon(index, eg, entry.0);
             }
             run_decompose_ac(
-                plan,
+                exec,
                 step_idx,
                 elems,
                 *rest,
@@ -1027,7 +1448,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 *entry = canon(index, eg, *entry);
             }
             run_decompose_aci(
-                plan, step_idx, elems, *rest, &residual, eg, index, globals, env, results,
+                exec, step_idx, elems, *rest, &residual, eg, index, globals, env, results,
             );
             results.give_id_buf(residual);
         }
@@ -1035,13 +1456,13 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let node_id = env.get(*node);
             if let Some(lit_val_id) = eg.get_lit_val_id(node_id) {
                 env.set_lit_val(*val, lit_val_id);
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckLit { node, value } => {
             let node_id = env.get(*node);
             if eg.get_lit_val(node_id) == Some(value) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
     }
@@ -1052,7 +1473,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     children: &[PatVar],
     pre: Option<SeqVarId>,
@@ -1075,7 +1496,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 return;
             }
             bind_fixed_and_continue(
-                plan, step_idx, children, seq, 0, eg, index, globals, env, results,
+                exec, step_idx, children, seq, 0, eg, index, globals, env, results,
             );
         }
         (Some(p), None) => {
@@ -1085,7 +1506,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let split = seq.len() - nfixed;
             env.push_seq(p, &seq[..split]);
             bind_fixed_and_continue(
-                plan, step_idx, children, seq, split, eg, index, globals, env, results,
+                exec, step_idx, children, seq, split, eg, index, globals, env, results,
             );
             env.pop_seq(p);
         }
@@ -1095,7 +1516,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             }
             env.push_seq(s, &seq[nfixed..]);
             bind_fixed_and_continue(
-                plan, step_idx, children, seq, 0, eg, index, globals, env, results,
+                exec, step_idx, children, seq, 0, eg, index, globals, env, results,
             );
             env.pop_seq(s);
         }
@@ -1108,7 +1529,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 env.push_seq(p, &seq[..offset]);
                 env.push_seq(s, &seq[offset + nfixed..]);
                 bind_fixed_and_continue(
-                    plan, step_idx, children, seq, offset, eg, index, globals, env, results,
+                    exec, step_idx, children, seq, offset, eg, index, globals, env, results,
                 );
                 for &cv in children {
                     if let PatVar::Local(v) = cv {
@@ -1123,7 +1544,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 }
 
 fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     children: &[PatVar],
     seq: &[Cfg::G],
@@ -1157,7 +1578,7 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
             }
         }
     }
-    run_step(plan, step_idx + 1, eg, index, globals, env, results);
+    run_step(exec, step_idx + 1, eg, index, globals, env, results);
     for &cv in children {
         if let PatVar::Local(v) = cv {
             env.clear(v)
@@ -1222,7 +1643,7 @@ fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<u
     }
 }
 fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     rest: Option<MsetVarId>,
@@ -1238,12 +1659,12 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     decompose_ac_elem(
-        plan, step_idx, elems, 0, rest, residual, eg, index, globals, env, results,
+        exec, step_idx, elems, 0, rest, residual, eg, index, globals, env, results,
     );
 }
 
 fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     ei: usize,
@@ -1263,10 +1684,10 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     if ei >= elems.len() {
         if let Some(rv) = rest {
             env.push_mset_residual(rv, residual);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.pop_mset(rv);
         } else if residual.iter().all(|&(_, m)| m == zero) {
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
         }
         return;
     }
@@ -1301,7 +1722,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let prev = residual[pos].1;
             residual[pos].1 = prev.saturating_sub(take);
             decompose_ac_elem(
-                plan,
+                exec,
                 step_idx,
                 elems,
                 ei + 1,
@@ -1347,7 +1768,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         let prev = residual[ri].1;
         residual[ri].1 = prev.saturating_sub(take);
         decompose_ac_elem(
-            plan,
+            exec,
             step_idx,
             elems,
             ei + 1,
@@ -1372,7 +1793,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[PatVar],
     rest: Option<SetVarId>,
@@ -1389,12 +1810,12 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     let mut used = crate::containers::bitset::BitSet::new(residual.len());
     decompose_aci_elem(
-        plan, step_idx, elems, 0, rest, residual, &mut used, eg, index, globals, env, results,
+        exec, step_idx, elems, 0, rest, residual, &mut used, eg, index, globals, env, results,
     );
 }
 
 fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[PatVar],
     ei: usize,
@@ -1414,10 +1835,10 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     if ei >= elems.len() {
         if let Some(rv) = rest {
             env.push_set_residual(rv, residual, used);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.pop_set(rv);
         } else if (0..residual.len()).all(|i| used.test(i)) {
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
         }
         return;
     }
@@ -1436,7 +1857,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         {
             used.set(pos);
             decompose_aci_elem(
-                plan,
+                exec,
                 step_idx,
                 elems,
                 ei + 1,
@@ -1464,7 +1885,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         env.set(vid, residual[ri]);
         used.set(ri);
         decompose_aci_elem(
-            plan,
+            exec,
             step_idx,
             elems,
             ei + 1,
@@ -1688,7 +2109,7 @@ fn cursor_of<G: crate::containers::DenseId>(b: Option<&SortedVec<G>>) -> SortedV
 }
 
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     target: VarId,
     lookups: &[IndexLookup<Cfg::O, Cfg::Index>],
@@ -1789,7 +2210,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 None
             };
             leapfrog_join(
-                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
+                cursors, op_filter, exec, step_idx, target, eg, index, globals, env, results,
             );
         }};
     }
@@ -1871,7 +2292,7 @@ where
 }
 
 /// Run a leapfrog intersection over `cursors` (any `SortedCursor` flavor),
-/// binding `target` to each match and recursing into the next plan step.
+/// binding `target` to each match and recursing into the next step.
 ///
 /// `op_filter` carries the operator of a `ByOp` lookup that `run_join` left out
 /// of `cursors`; a candidate whose operator differs is skipped without being
@@ -1879,7 +2300,7 @@ where
 fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     cursors: CursorVec<C>,
     op_filter: Option<Cfg::O>,
-    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     target: VarId,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
@@ -1906,7 +2327,7 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
         if op_filter.is_none_or(|o| index.full.round_op(id).unwrap_or_else(|| eg.node_op(id)) == o)
         {
             env.set(target, id);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
         }
         join.next();
     }
@@ -4878,17 +5299,8 @@ mod tests {
         srcs: &[&str],
         first: &str,
         ops_in_query: &[&str],
-    ) -> (QueryPlan<OpId, u32, NiraLitVal>, MatchShape) {
-        let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
-        let fq = flatten(&pats, eg.ops()).unwrap();
-        let rq = resolve(
-            &fq,
-            eg.ops(),
-            eg.sorts(),
-            &NiraModel,
-            &crate::resolve::GlobalCtx::<_, ()>::new(),
-        )
-        .unwrap();
+    ) -> (RQ, QueryPlan<OpId, u32, NiraLitVal>) {
+        let rq = resolve_srcs(eg, srcs);
         let mut stats = crate::schedule::IndexStats::<OpId>::new();
         for name in ops_in_query {
             stats
@@ -4896,19 +5308,47 @@ mod tests {
                 .insert(eg.ops().id_by_name(name).unwrap(), 1000);
         }
         stats.op_card.insert(eg.ops().id_by_name(first).unwrap(), 0);
-        (crate::schedule::schedule_with_stats(&rq, &stats), rq.shape)
+        let plan = crate::schedule::schedule_with_stats(&rq, &stats);
+        (rq, plan)
     }
 
-    /// Run `plan` through both matcher engines and return the match set as a
-    /// sorted list of binding keys. The two engines must agree; a divergence
-    /// here is a bug in its own right, so it is asserted rather than hidden.
+    type RQ = crate::resolve::ResolvedQuery<OpId, SortId, NiraLitVal>;
+
+    /// Compile and resolve `srcs` against `eg`'s registries.
+    fn resolve_srcs(eg: &EG, srcs: &[&str]) -> RQ {
+        let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
+        let fq = flatten(&pats, eg.ops()).unwrap();
+        resolve(
+            &fq,
+            eg.ops(),
+            eg.sorts(),
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<SortId, ()>::new(),
+        )
+        .unwrap()
+    }
+
+    /// Run the query through all three engines and return the match set as a
+    /// sorted list of binding keys.
+    ///
+    /// The three must agree. Static push against static pull is the check that
+    /// was already here: two independent walks of one plan. Runtime-scheduled
+    /// push against static pull is the oracle for the scheduling flag, and it is
+    /// the strongest one available, because the pull engine shares nothing with
+    /// the flag — it is a different control structure (an explicit stack, not
+    /// recursion) walking a different atom order (the plan's, fixed) — so an
+    /// agreement between them is not two copies of the same mistake.
+    ///
+    /// A divergence here is a bug in its own right, so it is asserted rather
+    /// than returned.
     fn match_keys(
         eg: &EG,
+        rq: &RQ,
         plan: &QueryPlan<OpId, u32, NiraLitVal>,
         index: &IndexStore<DefaultConfig>,
     ) -> Vec<Vec<Option<u32>>> {
         let vindex = VariantIndex::naive(index);
-        let ng = crate::resolve::GlobalCtx::<(), _>::new();
+        let ng = crate::resolve::GlobalCtx::<SortId, _>::new();
 
         let key = |m: &Match<DefaultConfig>| -> Vec<Option<u32>> {
             m.nodes
@@ -4923,9 +5363,20 @@ mod tests {
         while it.next_match() {
             pull.push(key(it.env()));
         }
+        set_runtime_scheduling(true);
+        let mut adaptive: Vec<_> = run_query_scheduled(rq, plan, eg, &vindex, &ng)
+            .iter()
+            .map(key)
+            .collect();
+        set_runtime_scheduling(false);
         recursive.sort();
         pull.sort();
+        adaptive.sort();
         assert_eq!(recursive, pull, "the two matcher engines disagree");
+        assert_eq!(
+            adaptive, pull,
+            "runtime atom scheduling changed the match set"
+        );
         recursive
     }
 
@@ -4980,12 +5431,12 @@ mod tests {
 
             // The pin is worth nothing if both orders compile to the same plan.
             assert_ne!(
-                from_f.0.steps, from_g.0.steps,
+                from_f.1.steps, from_g.1.steps,
                 "the two pins produced the same plan (tall_g_class={tall_g_class})"
             );
 
-            let mf = match_keys(&eg, &from_f.0, &index);
-            let mg = match_keys(&eg, &from_g.0, &index);
+            let mf = match_keys(&eg, &from_f.0, &from_f.1, &index);
+            let mg = match_keys(&eg, &from_g.0, &from_g.1, &index);
             assert_eq!(
                 mf, mg,
                 "join order changed the match set (tall_g_class={tall_g_class})"
@@ -5012,13 +5463,9 @@ mod tests {
         eg.rebuild();
 
         let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(&eg, &["(f x x)"], "f", &["f"]);
         assert_eq!(
-            match_keys(
-                &eg,
-                &plan_driven_from(&eg, &["(f x x)"], "f", &["f"]).0,
-                &index
-            )
-            .len(),
+            match_keys(&eg, &driven.0, &driven.1, &index).len(),
             1,
             "control: a merge the index build can see does make the pattern match"
         );
@@ -5030,14 +5477,127 @@ mod tests {
         eg.rebuild();
         let index = IndexStore::build(&eg);
         eg.merge(b, c);
-        let matches = match_keys(
-            &eg,
-            &plan_driven_from(&eg, &["(f x x)"], "f", &["f"]).0,
-            &index,
-        );
+        let driven = plan_driven_from(&eg, &["(f x x)"], "f", &["f"]);
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
         assert!(
             matches.is_empty(),
             "a merge after the index build made `(f x x)` match: {matches:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Runtime atom scheduling
+    // -----------------------------------------------------------------------
+
+    /// An e-graph holding one node of every shape the lowering can emit, so the
+    /// sweep below reaches every branch of `emit_atom` and `try_eager_lower`.
+    fn every_shape() -> EG {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let ga = eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        let gb = eg.add(eg.ops().id_by_name("g").unwrap(), &[b]);
+        let f = eg.ops().id_by_name("f").unwrap();
+        let fab = eg.add(f, &[a, b]);
+        eg.add(f, &[ga, b]);
+        eg.add(f, &[a, a]);
+        eg.add(f, &[gb, ga]);
+        eg.add(eg.ops().id_by_name("h").unwrap(), &[fab, gb]);
+        eg.add(eg.ops().id_by_name("concat").unwrap(), &[a, b, c]);
+        eg.add(eg.ops().id_by_name("add").unwrap(), &[a, b, c]);
+        eg.add(eg.ops().id_by_name("union").unwrap(), &[a, b, c]);
+        eg.rebuild();
+        eg
+    }
+
+    /// The flag does not change the match set, on every atom shape.
+    ///
+    /// `match_keys` runs the query three ways and asserts all three agree, so
+    /// this is the sweep of shapes rather than the comparison itself. The
+    /// property is not an accident of these patterns: the match set is a
+    /// function of the round's index and the query (chapter 09, "Which
+    /// Snapshot"), which is exactly what makes an order change a performance
+    /// change. This is that guarantee held to the strongest oracle available.
+    #[test]
+    fn runtime_scheduling_matches_the_static_plan() {
+        let eg = every_shape();
+        let index = IndexStore::build(&eg);
+        let shapes: &[&[&str]] = &[
+            &["(f x y)"],
+            &["(f (g x) y)"],
+            &["(f x x)"],
+            &["(h (f x y) (g y))"],
+            &["(concat x y ..rest)"],
+            &["(add x:1 ..rest)"],
+            &["(union x ..rest)"],
+            // Disconnected conjuncts: two atoms with no variable in common, so
+            // the order is decided by cost alone.
+            &["(f x y)", "(g z)"],
+            // Three atoms joined through child variables — the shape whose
+            // order the flag can change per binding.
+            &["(f x y)", "(g x)", "(g y)"],
+        ];
+        for srcs in shapes {
+            let rq = resolve_srcs(&eg, srcs);
+            let plan = schedule(&rq);
+            let m = match_keys(&eg, &rq, &plan, &index);
+            assert!(!m.is_empty(), "{srcs:?}: shape must match something");
+        }
+    }
+
+    /// Two bindings of one query, at the same depth, schedule different atoms.
+    ///
+    /// The counterpart of `op_restriction_policy_is_taken_per_binding` for the
+    /// atom choice: it asserts the mechanism ran, not just that the answer came
+    /// out right. `(f x y)` binds a pair of child classes; the `g` atom over `x`
+    /// and the `h` atom over `y` have their bucket sizes swapped between the two
+    /// `f` nodes, so a plan-time order is wrong on one of them and the per-binding
+    /// choice is right on both.
+    #[test]
+    fn atom_order_is_chosen_per_binding() {
+        let mut eg = make_eg();
+        let (f, g, h) = (
+            eg.ops().id_by_name("f").unwrap(),
+            eg.ops().id_by_name("g").unwrap(),
+            eg.ops().id_by_name("h").unwrap(),
+        );
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        // Two `f` nodes over four leaf classes. `x` is read by the `h` atom at
+        // position 1 and `y` by the `g` atom at position 0, neither of which is
+        // where `f` puts them, so the two buckets hold only the probe nodes.
+        let x0 = eg.add(g, &[a]);
+        let y0 = eg.add(g, &[b]);
+        let x1 = eg.add(g, &[c]);
+        let y1 = eg.add(h, &[a, b]);
+        eg.add(f, &[x0, y0]);
+        eg.add(f, &[x1, y1]);
+        // Binding 0: `x0` has two `h` parents, `y0` has none — the `g` atom is
+        // the empty one. Binding 1: the other way round.
+        eg.add(h, &[a, x0]);
+        eg.add(h, &[b, x0]);
+        eg.add(g, &[y1]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let rq = resolve_srcs(&eg, &["(f x y)", "(h w x)", "(g y)"]);
+        let plan = schedule(&rq);
+        let _ = take_atom_choices();
+        match_keys(&eg, &rq, &plan, &index);
+        let choices = take_atom_choices();
+
+        // The first choice is made with nothing bound and is the same for every
+        // binding; what this test is about is the ones after it.
+        let after_f: Vec<usize> = choices
+            .iter()
+            .filter(|(used, _)| *used != 0)
+            .map(|(_, ai)| *ai)
+            .collect();
+        assert!(
+            after_f.contains(&1) && after_f.contains(&2),
+            "both atoms must be chosen second on some binding, got {choices:?}"
         );
     }
 

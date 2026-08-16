@@ -296,7 +296,7 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
-    crate::ematch::run_query_into(&plan, eg, vindex, globals, pool);
+    crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);
     let mut changes = 0;
     for j in 0..pool.len() {
         let mut row = pool.row_mut(j);
@@ -1073,8 +1073,21 @@ mod tests {
     // union is exactly the naive matches involving >= 1 new (delta) node.
     #[test]
     fn variants_disjoint_and_complete() {
+        for runtime in [false, true] {
+            variants_disjoint_and_complete_under(runtime);
+        }
+    }
+
+    /// The variant decomposition holds under both scheduling modes.
+    ///
+    /// The delta restriction is per atom and independent of where the atom sits
+    /// in the order (`VariantIndex::mode` reads the compile-time numbering), so
+    /// re-choosing the order per binding must not move a match from one variant
+    /// to another, nor lose one: this asserts both halves against the flag.
+    fn variants_disjoint_and_complete_under(runtime: bool) {
         use std::collections::HashSet;
 
+        crate::ematch::set_runtime_scheduling(runtime);
         let mut eg = make_eg();
         let mut rr = crate::registry::RuleRegistry::<false>::new();
         // 2 join atoms: the outer f and the inner g.
@@ -1125,7 +1138,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1146,7 +1160,13 @@ mod tests {
         let naive_plan =
             crate::schedule::schedule_with_stats(&rule.query, &IndexStats::from_index(&full));
         let naive_vindex = VariantIndex::naive(&full);
-        let naive_matches = crate::ematch::run_query(&naive_plan, &eg, &naive_vindex, &globals);
+        let naive_matches = crate::ematch::run_query_scheduled(
+            &rule.query,
+            &naive_plan,
+            &eg,
+            &naive_vindex,
+            &globals,
+        );
         let naive_new: HashSet<Vec<usize>> = naive_matches
             .iter()
             .filter(|m| {
@@ -1165,6 +1185,7 @@ mod tests {
         );
         // sanity: the scenario actually produced new matches
         assert!(!union.is_empty(), "expected at least one new match");
+        crate::ematch::set_runtime_scheduling(false);
     }
 
     // -- per-atom cardinality: same op, different mode → different card --
@@ -1307,7 +1328,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1327,7 +1349,13 @@ mod tests {
         let naive_plan =
             crate::schedule::schedule_with_stats(&rule.query, &IndexStats::from_index(&full));
         let naive_vindex = VariantIndex::naive(&full);
-        let naive_matches = crate::ematch::run_query(&naive_plan, &eg, &naive_vindex, &globals);
+        let naive_matches = crate::ematch::run_query_scheduled(
+            &rule.query,
+            &naive_plan,
+            &eg,
+            &naive_vindex,
+            &globals,
+        );
         let naive_new: HashSet<Vec<usize>> = naive_matches
             .iter()
             .filter(|m| {
@@ -1419,7 +1447,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1615,7 +1644,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1757,7 +1787,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
