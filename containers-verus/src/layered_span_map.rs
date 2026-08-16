@@ -483,6 +483,12 @@ impl<V: Copy + Default> LayeredSpanMap<V> {
         self.delta.stream_view()
     }
 
+    /// The base generation's contents, per key. NOT the logical view: it is
+    /// what remains if the delta generation and the invalidations are discarded.
+    pub open(crate) spec fn base_view(&self) -> Seq<Seq<V>> {
+        self.base.view()
+    }
+
     /// The base generation refines its stream.
     pub open(crate) spec fn base_refines(&self) -> bool {
         self.base.refines()
@@ -570,6 +576,7 @@ impl<V: Copy + Default> LayeredSpanMap<V> {
             r matches Ok(m) ==> (base.wf() ==> m.wf()),
             r matches Ok(m) ==> m.view().len() == base.view().len(),
             r matches Ok(m) ==> m.base_stream() == base.stream_view(),
+            r matches Ok(m) ==> m.base_view() == base.view(),
             r matches Ok(m) ==> m.delta_stream() == delta_stream@,
             r matches Ok(m) ==> m.invalid_count_spec() == invalid@.len(),
             r matches Ok(m) ==> (base.refines() ==> m.refines()),
@@ -632,6 +639,54 @@ impl<V: Copy + Default> LayeredSpanMap<V> {
             }
         }
         Ok(m)
+    }
+
+    /// Take the base generation back out, discarding the delta generation and
+    /// the invalidations. O(1): it is a move, nothing is read or copied.
+    ///
+    /// The result is the BASE, not the logical view. A caller that wants the
+    /// logical contents as one map wants `flatten`; this is the cheap inverse of
+    /// `try_with_delta` for a caller that is about to install a different delta,
+    /// and the route back to a `DenseSpanMap` for anything that needs one.
+    pub fn into_base(self) -> (r: DenseSpanMap<V>)
+        ensures
+            r.view() == self.base_view(),
+            r.stream_view() == self.base_stream(),
+            r.view().len() == self.view().len(),
+            self.wf() ==> r.wf(),
+            self.base_refines() ==> r.refines(),
+    {
+        self.base
+    }
+
+    /// Install a different delta generation over the same base.
+    ///
+    /// THE cross-round operation: round N+1 hands in the accumulated delta
+    /// stream and the accumulated invalidations, and the base carries over
+    /// untouched. Cost is O(delta_stream + invalid); the base is not read, which
+    /// is the whole point of the layering. `doc/design/16-layered-span-map.md`
+    /// section 4 states the accumulate-and-reinstall policy this implements.
+    ///
+    /// The previous delta generation is discarded, so the caller accumulates the
+    /// delta stream across rounds rather than handing in only the newest round's
+    /// entries. Handing in only the newest round would drop the earlier rounds'
+    /// additions.
+    pub fn replace_delta(
+        self,
+        delta_stream: &[(usize, V)],
+        invalid: &[usize],
+    ) -> (r: Result<Self, crate::error::ContainerError>)
+        ensures
+            r matches Ok(m) ==> (self.wf() ==> m.wf()),
+            r matches Ok(m) ==> m.view().len() == self.view().len(),
+            r matches Ok(m) ==> m.base_stream() == self.base_stream(),
+            r matches Ok(m) ==> m.base_view() == self.base_view(),
+            r matches Ok(m) ==> m.delta_stream() == delta_stream@,
+            r matches Ok(m) ==> m.invalid_count_spec() == invalid@.len(),
+            r matches Ok(m) ==> (self.base_refines() ==> m.refines()),
+    {
+        let base = self.into_base();
+        Self::try_with_delta(base, delta_stream, invalid)
     }
 
     /// True when the delta generation plus the invalidated keys exceed a quarter

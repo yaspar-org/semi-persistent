@@ -341,3 +341,146 @@ fn u64_values_layer_the_same_way() {
     assert_eq!(b1, &[] as &[u64]);
     assert_eq!(d1, &[] as &[u64]);
 }
+
+// ---------------------------------------------------------------------------
+// Cross-round reinstall: replace_delta and into_base
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// The accumulate-and-reinstall policy, exercised the way a saturation loop
+    /// drives it: build a base once, install a delta, then replace that delta
+    /// with a longer accumulated stream each round. The base is never rebuilt,
+    /// and after every round the contents must equal the oracle computed from
+    /// the original base stream and the round's accumulated delta.
+    #[test]
+    fn replace_delta_matches_reference_across_rounds(
+        num_keys in 1usize..14,
+        base in prop::collection::vec((0usize..14, any::<u32>()), 0..90),
+        rounds in prop::collection::vec(
+            (
+                prop::collection::vec((0usize..14, any::<u32>()), 0..25),
+                prop::collection::vec(0usize..14, 0..5),
+            ),
+            1..6,
+        ),
+    ) {
+        let base: Vec<(usize, u32)> = base.into_iter().filter(|&(k, _)| k < num_keys).collect();
+        let d = DenseSpanMap::<u32>::try_build(&base, num_keys).expect("in range");
+        let mut m = LayeredSpanMap::<u32>::try_with_delta(d, &[], &[]).expect("in range");
+
+        // The caller accumulates the delta stream and the invalidations.
+        let mut accumulated: Vec<(usize, u32)> = Vec::new();
+        let mut invalid: Vec<usize> = Vec::new();
+
+        for (round_delta, round_invalid) in rounds {
+            accumulated.extend(round_delta.into_iter().filter(|&(k, _)| k < num_keys));
+            invalid.extend(round_invalid.into_iter().filter(|&k| k < num_keys));
+            invalid.sort_unstable();
+            invalid.dedup();
+
+            m = m.replace_delta(&accumulated, &invalid).expect("in range");
+
+            let want = reference(&base, &accumulated, &invalid, num_keys);
+            prop_assert_eq!(m.len(), num_keys);
+            prop_assert_eq!(m.base_total(), base.len(), "base was rebuilt");
+            prop_assert_eq!(m.delta_total(), accumulated.len(), "delta size");
+            prop_assert_eq!(m.invalid_count(), invalid.len(), "invalid count");
+            for k in 0..num_keys {
+                prop_assert_eq!(&contents(&m, k), &want[&k], "key {}: after reinstall", k);
+            }
+        }
+    }
+
+    /// `into_base` yields the base generation, and what it yields is accepted by
+    /// `try_with_delta`, so a caller can leave and re-enter the layered form.
+    #[test]
+    fn into_base_round_trips_through_try_with_delta(
+        num_keys in 1usize..12,
+        base in prop::collection::vec((0usize..12, any::<u32>()), 0..60),
+        delta in prop::collection::vec((0usize..12, any::<u32>()), 0..30),
+    ) {
+        let base: Vec<(usize, u32)> = base.into_iter().filter(|&(k, _)| k < num_keys).collect();
+        let delta: Vec<(usize, u32)> = delta.into_iter().filter(|&(k, _)| k < num_keys).collect();
+        let d = DenseSpanMap::<u32>::try_build(&base, num_keys).expect("in range");
+        let m = LayeredSpanMap::<u32>::try_with_delta(d, &delta, &[]).expect("in range");
+
+        // into_base discards the delta and the invalidations: it is the base,
+        // not the logical view.
+        let recovered = m.into_base();
+        prop_assert_eq!(recovered.len(), num_keys);
+        prop_assert_eq!(recovered.total(), base.len(), "into_base is the base");
+        let base_only = reference(&base, &[], &[], num_keys);
+        for k in 0..num_keys {
+            prop_assert_eq!(recovered.get(k), base_only[&k].as_slice(), "key {}", k);
+        }
+
+        // And it re-enters the layered form.
+        let again = LayeredSpanMap::<u32>::try_with_delta(recovered, &delta, &[])
+            .expect("into_base output is a usable base");
+        for k in 0..num_keys {
+            prop_assert_eq!(&contents(&again, k), &reference(&base, &delta, &[], num_keys)[&k]);
+        }
+    }
+}
+
+#[test]
+fn replace_delta_keeps_the_base_and_swaps_the_delta() {
+    let m = layered(&[(0, 1), (1, 5)], &[(0, 2)], &[], 2);
+    assert_eq!(contents(&m, 0), vec![1, 2]);
+    // Round two hands in the accumulated stream, not just the new entries.
+    let m = m
+        .replace_delta(&[(0, 2), (0, 3), (1, 6)], &[])
+        .expect("in range");
+    assert_eq!(contents(&m, 0), vec![1, 2, 3]);
+    assert_eq!(contents(&m, 1), vec![5, 6]);
+    assert_eq!(m.base_total(), 2, "base untouched");
+    assert_eq!(m.delta_total(), 3);
+}
+
+#[test]
+fn replace_delta_can_change_the_invalidated_set() {
+    let m = layered(&[(0, 1), (1, 5)], &[(0, 2)], &[], 2);
+    // Key 1 becomes invalidated in a later round; key 0 stays live.
+    let m = m.replace_delta(&[(0, 2), (1, 7)], &[1]).expect("in range");
+    assert_eq!(contents(&m, 0), vec![1, 2]);
+    assert_eq!(contents(&m, 1), vec![7], "base entry 5 dropped");
+    // And it can be un-invalidated again, because invalidation is per install.
+    let m = m.replace_delta(&[(0, 2), (1, 7)], &[]).expect("in range");
+    assert_eq!(contents(&m, 1), vec![5, 7]);
+}
+
+#[test]
+fn replace_delta_validates_its_inputs() {
+    let m = layered(&[(0, 1)], &[], &[], 2);
+    let m = match m.replace_delta(&[(9, 1)], &[]) {
+        Ok(_) => panic!("out-of-range delta key must be refused"),
+        Err(_) => layered(&[(0, 1)], &[], &[], 2),
+    };
+    assert!(
+        m.replace_delta(&[], &[1, 0]).is_err(),
+        "descending invalid list"
+    );
+}
+
+#[test]
+fn into_base_discards_the_delta() {
+    let m = layered(&[(0, 1)], &[(0, 2)], &[], 1);
+    assert_eq!(contents(&m, 0), vec![1, 2]);
+    let b = m.into_base();
+    assert_eq!(
+        b.get(0),
+        &[1],
+        "into_base is the base, not the logical view"
+    );
+    assert_eq!(b.total(), 1);
+}
+
+#[test]
+fn flatten_then_relayer_is_the_other_restart_route() {
+    // flatten folds the delta in; into_base would have dropped it.
+    let m = layered(&[(0, 1)], &[(0, 2)], &[], 1);
+    let folded = m.flatten();
+    assert_eq!(folded.get(0), &[1, 2]);
+    let m2 = LayeredSpanMap::<u32>::try_with_delta(folded, &[(0, 3)], &[]).expect("in range");
+    assert_eq!(contents(&m2, 0), vec![1, 2, 3]);
+}
