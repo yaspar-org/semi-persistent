@@ -27,6 +27,17 @@ Three benchmarks, each in three configurations:
 
 `run-pilot.py` is the harness and `pilot-results.csv` its output, one line per timed run.
 
+Beside the pilot, `addac-sweep.md` reports the add-ac width-scaling sweep that answers
+part (b) of the convergence target in
+`egraph/doc/design/20-index-selectivity-and-delta-suffixes.md`: the `math-add-ac` block
+generalized to sum width n = 7..20, three configurations per width, in
+`addac-n<k>.{egglog,rules,native}.egg`. `gen-addac-sweep.py` writes those programs,
+`run-addac-sweep.py` times them, and `addac-sweep.csv` holds the per-run values. Native
+AC holds at 4n - 3 nodes and one iteration across the whole range while the rules
+encoding reaches 37 902 nodes at n = 20; read `addac-sweep.md` for the shape of that
+growth, for the goal-binding deviation that makes the three programs the same problem,
+and for the timing trap that erases the result.
+
 Read the ledgers before the numbers. `math-microbenchmark.deviations.md` in particular
 records a deviation large enough to change how its native column may be read: eleven of
 its rules are restated in n-ary form, because a binary pattern against a variadic AC
