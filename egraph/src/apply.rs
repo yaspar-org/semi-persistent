@@ -505,6 +505,12 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match arg {
+        // A bound node used directly as a child needs no canonicalization here:
+        // `out` is `EGraph::add`'s child slice and `add` canonicalizes every
+        // child itself — which is also why the splice arms below hand it raw
+        // match bindings. Going through `eval` would `find` each child twice.
+        RhsArg::One(RhsOp::FetchNode(vid)) => out.push(m.get(*vid)),
+        RhsArg::One(RhsOp::FetchGlobal(gid)) => out.push(globals.binding(*gid)),
         RhsArg::One(inner) => out.push(eval(inner, m, eg, model, globals)),
         RhsArg::SpliceSeq(sid) => out.extend_from_slice(m.seq_slice(*sid)),
         RhsArg::SpliceSet(sid) => out.extend_from_slice(m.set_slice(*sid)),
