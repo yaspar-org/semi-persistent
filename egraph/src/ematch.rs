@@ -1483,33 +1483,59 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         // No constraints — preserve original behavior (no match emitted).
         return;
     }
+    // A whole-relation `ByOp` cursor is redundant in any join that also has a
+    // narrower lookup, so it is demoted to a per-candidate operator test.
+    //
+    // `IndexStore::build_from` files every non-subsumed node into `by_op` and
+    // into its `by_repr` / `by_child_pos` / `by_contains` buckets from one id
+    // stream, so for any other bucket `B` of the same store
+    // `by_op[o] ∩ B = { n ∈ B : op(n) = o }`. Replacing the intersection with
+    // the test trades one leapfrog seek over a relation-sized sorted vector per
+    // partial match — the seek is a doubling gallop plus a bisection, ~2 log|B|
+    // branchy iterations — for one `node_op` read per surviving candidate, and
+    // it takes one cursor out of the leapfrog ring.
+    //
+    // The identity holds in each of the three modes because the delta store is
+    // built by the same `build_from` over the same e-graph: a node in
+    // `full.B ∖ delta.B` cannot be in the delta id stream at all (if it were,
+    // the same child/class/op reads that put it in `full.B` would have put it
+    // in `delta.B`), so it is not in `delta.by_op[o]` either.
+    let op_filter = if lookups.len() > 1 {
+        lookups.iter().find_map(|l| match l {
+            IndexLookup::ByOp { op } => Some(*op),
+            _ => None,
+        })
+    } else {
+        None
+    };
+    let cursor_lookups = lookups
+        .iter()
+        .filter(|l| op_filter.is_none() || !matches!(l, IndexLookup::ByOp { .. }));
+
     // Build a homogeneous cursor vector for this atom's mode, then run the
     // generic leapfrog. The mode is fixed for the whole atom (all its
     // lookups read the same flavor); see design doc "How a Variant Executes".
     match index.mode(atom_id) {
         IndexMode::Full => {
-            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
-                .iter()
+            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = cursor_lookups
                 .map(|l| cursor_in(index.full, index, l, eg, globals, env))
                 .collect();
             leapfrog_join(
-                cursors, plan, step_idx, target, eg, index, globals, env, results,
+                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
             );
         }
         IndexMode::Delta => {
-            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
-                .iter()
+            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = cursor_lookups
                 .map(|l| cursor_in(index.delta, index, l, eg, globals, env))
                 .collect();
             leapfrog_join(
-                cursors, plan, step_idx, target, eg, index, globals, env, results,
+                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
             );
         }
         IndexMode::FullMinusDelta => {
             let cursors: CursorVec<
                 Difference<SortedVecCursor<'_, Cfg::G>, SortedVecCursor<'_, Cfg::G>>,
-            > = lookups
-                .iter()
+            > = cursor_lookups
                 .map(|l| {
                     Difference::new(
                         cursor_in(index.full, index, l, eg, globals, env),
@@ -1518,7 +1544,7 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 })
                 .collect();
             leapfrog_join(
-                cursors, plan, step_idx, target, eg, index, globals, env, results,
+                cursors, op_filter, plan, step_idx, target, eg, index, globals, env, results,
             );
         }
     }
@@ -1566,8 +1592,13 @@ where
 
 /// Run a leapfrog intersection over `cursors` (any `SortedCursor` flavor),
 /// binding `target` to each match and recursing into the next plan step.
+///
+/// `op_filter` carries the operator of a `ByOp` lookup that `run_join` left out
+/// of `cursors`; a candidate whose operator differs is skipped without being
+/// bound or counted as a match step (see `run_join` for why the two forms agree).
 fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     cursors: CursorVec<C>,
+    op_filter: Option<Cfg::O>,
     plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     step_idx: usize,
     target: VarId,
@@ -1592,8 +1623,10 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     let mut join = LeapfrogJoin::new(cursors);
     while join.is_valid() {
         let id = join.key();
-        env.set(target, id);
-        run_step(plan, step_idx + 1, eg, index, globals, env, results);
+        if op_filter.is_none_or(|o| eg.node_op(id) == o) {
+            env.set(target, id);
+            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+        }
         join.next();
     }
     env.set_opt(target, prev);
