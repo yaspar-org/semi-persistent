@@ -550,6 +550,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
             r.wf(),
             r.view().len() == num_keys,
             r.stream_view() == stream@,
+            r.total_spec() == stream@.len(),
             r.refines(),
             forall|k: int|
                 0 <= k < num_keys ==> #[trigger] r.view()[k] == key_slice(stream@, k as nat),
@@ -855,6 +856,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
                 &&& m.wf()
                 &&& m.view().len() == num_keys
                 &&& m.stream_view() == stream@
+                &&& m.total_spec() == stream@.len()
                 &&& m.refines()
             },
             r matches Err(e) ==> e == crate::error::ContainerError::IndexOutOfBounds,

@@ -68,6 +68,10 @@ contracts.)
 15. **[The Dense-Span Multimap](15-dense-span-map.md)**: the build-once index
     behind the e-graph's per-round index families: a two-pass counting build
     refined to the per-key filter of its input stream, with no mark/restore.
+16. **[The Layered Span Map](16-layered-span-map.md)**: incremental maintenance
+    over chapter 15: a base generation, one delta generation, per-key
+    invalidation, and the cross-generation sortedness lemma with the caller
+    obligation it rests on.
 
 ## Techniques: reusable lessons (chapters 03–08)
 
