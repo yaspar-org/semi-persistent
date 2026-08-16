@@ -76,8 +76,9 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 6. **[Index Construction](06-index.md)**
    `IndexStore`: `by_op`, `by_repr`, `by_child_pos`, `by_contains`.
-   Built from scratch each saturation iteration. `SortedVec` with
-   leapfrog-compatible cursor.
+   Built from scratch each saturation iteration. Each family is a verified
+   `DenseSpanMap`: a flat value pool plus a dense-keyed span table, read
+   through a leapfrog-compatible cursor.
 
 7. **[Leapfrog Triejoin](07-leapfrog.md)**
    `LeapfrogJoin` over sorted iterators. Worst-case optimal multi-way

@@ -7,7 +7,7 @@
 //! as the cursor type. No intermediate adapters: `SortedCursor` is
 //! implemented directly on both cursors.
 //!
-//! `ENodeId` is `#[repr(transparent)] u32`, so `SortedVec<ENodeId>` and
+//! `ENodeId` is `#[repr(transparent)] u32`, so `Vec<ENodeId>` and
 //! `BPlusTreeSet` store the same bytes per key; the comparison is
 //! apples-to-apples.
 //!
@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use semi_persistent_containers::bplus::{BPlusTreeSet, BinarySearch, Layout256};
 use semi_persistent_egraph::id::ENodeId;
-use semi_persistent_egraph::index::{SortedVec, SortedVecCursor};
+use semi_persistent_egraph::index::SortedVecCursor;
 use semi_persistent_egraph::leapfrog::LeapfrogJoin;
 
 type Tree = BPlusTreeSet<ENodeId, Layout256, BinarySearch, false>;
@@ -67,8 +67,9 @@ fn gen_sets(k: usize, n: usize, hit_frac: f64, seed: u64) -> Vec<Vec<u32>> {
 // different C. Both collect matches into a Vec<u32> for equivalence
 // checking.
 
-fn run_sortedvec(sets: &[SortedVec<ENodeId>]) -> Vec<u32> {
-    let iters: Vec<SortedVecCursor<'_, ENodeId>> = sets.iter().map(|s| s.iter()).collect();
+fn run_sortedvec(sets: &[Vec<ENodeId>]) -> Vec<u32> {
+    let iters: Vec<SortedVecCursor<'_, ENodeId>> =
+        sets.iter().map(|s| SortedVecCursor::new(s)).collect();
     let mut join = LeapfrogJoin::new(iters);
     let mut out = Vec::new();
     while join.is_valid() {
@@ -110,9 +111,9 @@ fn bench_leapfrog(c: &mut Criterion) {
     ] {
         let raw = gen_sets(k, n, hit_frac, 0xC0FFEE);
 
-        let svecs: Vec<SortedVec<ENodeId>> = raw
+        let svecs: Vec<Vec<ENodeId>> = raw
             .iter()
-            .map(|v| SortedVec::from_sorted_dedup(v.iter().map(|&x| ENodeId::new(x)).collect()))
+            .map(|v| v.iter().map(|&x| ENodeId::new(x)).collect())
             .collect();
         let trees: Vec<Tree> = raw
             .iter()

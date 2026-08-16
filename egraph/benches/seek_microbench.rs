@@ -23,7 +23,7 @@ use semi_persistent_containers::{
     bplus::{BPlusTreeSet, BinarySearch, Layout256},
 };
 use semi_persistent_egraph::id::ENodeId;
-use semi_persistent_egraph::index::SortedVec;
+use semi_persistent_egraph::index::SortedVecCursor;
 
 type Tree = BPlusTreeSet<ENodeId, Layout256, BinarySearch, false>;
 
@@ -48,9 +48,7 @@ fn seek_microbench(c: &mut Criterion) {
         // Keys: 0, 10, 20, ... (step 10 so seek targets can fall between).
         let data: Vec<u32> = (0..n as u32).map(|i| i * 10).collect();
 
-        let svec = SortedVec::<ENodeId>::from_sorted_dedup(
-            data.iter().map(|&x| ENodeId::new(x)).collect(),
-        );
+        let svec: Vec<ENodeId> = data.iter().map(|&x| ENodeId::new(x)).collect();
 
         // Bulk-built tree: arena in traversal order.
         let data_ids: Vec<ENodeId> = data.iter().map(|&x| ENodeId::new(x)).collect();
@@ -72,7 +70,7 @@ fn seek_microbench(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("sortedvec", n), &(), |b, _| {
             b.iter(|| {
-                let mut cur = svec.iter();
+                let mut cur = SortedVecCursor::new(&svec);
                 for &t in &targets {
                     <_ as SortedCursor>::seek(&mut cur, ENodeId::new(t));
                 }
@@ -129,9 +127,7 @@ fn seek_stride_sweep(c: &mut Criterion) {
     group.sample_size(20);
 
     const N: usize = 1_000_000;
-    let svec = SortedVec::<ENodeId>::from_sorted_dedup(
-        (0..N as u32).map(|i| ENodeId::new(i * 10)).collect(),
-    );
+    let svec: Vec<ENodeId> = (0..N as u32).map(|i| ENodeId::new(i * 10)).collect();
 
     // Same seek count for every shape below, so the rows are comparable as
     // per-seek costs rather than as totals.
@@ -143,7 +139,7 @@ fn seek_stride_sweep(c: &mut Criterion) {
             .collect();
         group.bench_with_input(BenchmarkId::new("stride", stride), &(), |b, _| {
             b.iter(|| {
-                let mut cur = svec.iter();
+                let mut cur = SortedVecCursor::new(&svec);
                 for &t in &targets {
                     <_ as SortedCursor>::seek(&mut cur, t);
                 }
@@ -163,7 +159,7 @@ fn seek_stride_sweep(c: &mut Criterion) {
     let rnd_targets: Vec<ENodeId> = rnd.iter().map(|&x| ENodeId::new(x * 10)).collect();
     group.bench_function("random", |b| {
         b.iter(|| {
-            let mut cur = svec.iter();
+            let mut cur = SortedVecCursor::new(&svec);
             for &t in &rnd_targets {
                 <_ as SortedCursor>::seek(&mut cur, t);
             }
@@ -186,7 +182,7 @@ fn seek_stride_sweep(c: &mut Criterion) {
         .collect();
     group.bench_function("adversarial", |b| {
         b.iter(|| {
-            let mut cur = svec.iter();
+            let mut cur = SortedVecCursor::new(&svec);
             for &t in &adv {
                 <_ as SortedCursor>::seek(&mut cur, t);
             }

@@ -8,7 +8,9 @@ A5 was two independent changes to `IndexStore::build_from`. Measured separately,
 neither survives:
 
 - **A5a — hoist the per-node `seen` scratch `Vec`.** No effect outside the noise
-  band. Rejected.
+  band. Rejected. (`seen` was later hoisted anyway, into the `IndexScratch` the
+  round loop keeps for the four build streams: it costs nothing to carry there,
+  and this file's number says not to expect anything from it.)
 - **A5b — build the maps as `SortedVec` and sort in place, so `finalize` stops
   rehashing every key.** A consistent 6-8% *regression* on the completion
   workload, reproduced outside criterion. Rejected.

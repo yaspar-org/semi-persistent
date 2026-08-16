@@ -7,12 +7,13 @@
 //! B4-V2 — delta correctness: `IndexStore::build_delta(eg, touched)` equals
 //!         `IndexStore::build(eg)` restricted to the touched node set, per key.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use proptest::prelude::*;
 use semi_persistent_egraph::EGraph;
 use semi_persistent_egraph::containers::DenseId;
-use semi_persistent_egraph::index::{FastMap, IndexStore, SortedVec};
+use semi_persistent_egraph::containers::DenseSpanMap;
+use semi_persistent_egraph::index::IndexStore;
 use semi_persistent_egraph::literal::{NiraLitVal, NiraModel};
 use semi_persistent_egraph::nodes::DefaultConfig;
 
@@ -94,38 +95,41 @@ fn b4_v1_touched_superset_of_changed() {
 }
 
 /// Assert `delta` equals `full` restricted to the touched node set, exactly:
-/// same keys, same (filtered) buckets.
-fn assert_delta_is_full_restricted<K>(
-    full: &FastMap<K, SortedVec<G>>,
-    delta: &FastMap<K, SortedVec<G>>,
+/// every key's delta bucket is that key's full bucket filtered to touched.
+///
+/// The families are dense span maps, so a key is an integer and "absent" is the
+/// empty slice. The delta's span table may be shorter than the full's, because
+/// it is sized to the largest key its own stream carried, and every key past its
+/// end must have an empty full bucket after filtering.
+fn assert_delta_is_full_restricted(
+    family: &str,
+    full: &DenseSpanMap<G>,
+    delta: &DenseSpanMap<G>,
     tset: &HashSet<usize>,
-) where
-    K: Eq + std::hash::Hash + std::fmt::Debug,
-{
-    // Expected: each full bucket filtered to touched, dropping empties.
-    let mut expected: HashMap<&K, Vec<usize>> = HashMap::new();
-    for (k, sv) in full {
-        let f: Vec<usize> = sv
-            .as_slice()
+) {
+    for k in 0..full.len() {
+        let expected: Vec<usize> = full
+            .get(k)
             .iter()
             .map(|g| g.to_usize())
             .filter(|x| tset.contains(x))
             .collect();
-        if !f.is_empty() {
-            expected.insert(k, f);
-        }
+        let got: Vec<usize> = delta
+            .try_get(k)
+            .unwrap_or(&[])
+            .iter()
+            .map(|g| g.to_usize())
+            .collect();
+        assert_eq!(
+            got, expected,
+            "{family}: bucket {k} differs from full∩touched"
+        );
     }
-    assert_eq!(
-        delta.len(),
-        expected.len(),
-        "delta key set differs from full∩touched"
-    );
-    for (k, dsv) in delta {
-        let got: Vec<usize> = dsv.as_slice().iter().map(|g| g.to_usize()).collect();
-        let exp = expected
-            .get(k)
-            .unwrap_or_else(|| panic!("delta key {k:?} not present in full∩touched"));
-        assert_eq!(&got, exp, "delta bucket {k:?} differs from full∩touched");
+    for k in full.len()..delta.len() {
+        assert!(
+            delta.get(k).is_empty(),
+            "{family}: delta bucket {k} has no counterpart in the full index"
+        );
     }
 }
 
@@ -141,10 +145,18 @@ fn b4_v2_delta_equals_full_restricted_to_touched() {
     let delta = IndexStore::<DefaultConfig>::build_delta(&eg, &touched);
 
     assert!(!tset.is_empty(), "round should have touched some nodes");
-    assert_delta_is_full_restricted(&full.by_op, &delta.by_op, &tset);
-    assert_delta_is_full_restricted(&full.by_repr, &delta.by_repr, &tset);
-    assert_delta_is_full_restricted(&full.by_child_pos, &delta.by_child_pos, &tset);
-    assert_delta_is_full_restricted(&full.by_contains, &delta.by_contains, &tset);
+    // Both indices are built at the same node bound, so their `by_child_pos`
+    // keys mean the same `(position, class)` pair.
+    assert_eq!(full.child_pos_stride, delta.child_pos_stride);
+    assert_delta_is_full_restricted("by_op", &full.by_op, &delta.by_op, &tset);
+    assert_delta_is_full_restricted("by_repr", &full.by_repr, &delta.by_repr, &tset);
+    assert_delta_is_full_restricted(
+        "by_child_pos",
+        &full.by_child_pos,
+        &delta.by_child_pos,
+        &tset,
+    );
+    assert_delta_is_full_restricted("by_contains", &full.by_contains, &delta.by_contains, &tset);
 }
 
 /// Build a graph of random fixed-arity nodes (a/b/c consts, g/1, f/2) from a

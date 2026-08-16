@@ -193,10 +193,24 @@ impl<C: SortedCursor> LeapfrogJoin<C> {
 mod tests {
     use super::*;
     use crate::containers::DenseId;
-    use crate::index::{SortedVec, SortedVecCursor};
+    use crate::index::SortedVecCursor;
 
-    fn svec<G: DenseId>(vals: &[usize]) -> SortedVec<G> {
-        SortedVec::from_unsorted(vals.iter().map(|&v| G::from_usize(v)).collect())
+    /// A bucket in the shape the index build produces: ascending, no repeats.
+    /// The index itself hands out `&[G]` slices carved from one arena; this is
+    /// the test's owner for them.
+    struct Bucket<G>(Vec<G>);
+
+    impl<G: DenseId> Bucket<G> {
+        fn iter(&self) -> SortedVecCursor<'_, G> {
+            SortedVecCursor::new(&self.0)
+        }
+    }
+
+    fn svec<G: DenseId>(vals: &[usize]) -> Bucket<G> {
+        let mut v: Vec<G> = vals.iter().map(|&x| G::from_usize(x)).collect();
+        v.sort_unstable();
+        v.dedup();
+        Bucket(v)
     }
 
     fn collect<'a, G: DenseId>(j: &mut LeapfrogJoin<SortedVecCursor<'a, G>>) -> Vec<usize> {

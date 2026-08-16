@@ -10,7 +10,7 @@ use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::IndexLike;
 use crate::egraph::EGraph;
-use crate::index::{IndexMode, IndexStore, SortedVec, SortedVecCursor, VariantIndex};
+use crate::index::{IndexMode, IndexStore, SortedVecCursor, VariantIndex};
 use crate::leapfrog::{CursorVec, Difference, LeapfrogJoin, SortedCursor};
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
@@ -1310,7 +1310,7 @@ where
     };
     let mut best = usize::MAX;
     for l in lookups {
-        let len = bucket_len(&bucket_in(store, index, l, eg, globals, env));
+        let len = bucket_in(store, index, l, eg, globals, env).len();
         if len < best {
             best = len;
         }
@@ -2099,13 +2099,11 @@ fn demote_by_op(m: usize, n: Option<usize>, policy: OpFilterPolicy) -> bool {
     demote
 }
 
-/// Turn a resolved bucket into a cursor; an absent key is an empty cursor.
+/// Turn a resolved bucket into a cursor; an absent key resolves to the empty
+/// slice, hence to an empty cursor.
 #[inline]
-fn cursor_of<G: crate::containers::DenseId>(b: Option<&SortedVec<G>>) -> SortedVecCursor<'_, G> {
-    match b {
-        Some(v) => v.iter(),
-        None => SortedVecCursor::new(&[]),
-    }
+fn cursor_of<G: crate::containers::DenseId>(b: &[G]) -> SortedVecCursor<'_, G> {
+    SortedVecCursor::new(b)
 }
 
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
@@ -2191,14 +2189,14 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                     continue;
                 }
                 let b = bucket_in(store, index, l, eg, globals, env);
-                let len = bucket_len(&b);
+                let len = b.len();
                 if len < m {
                     m = len;
                 }
                 cursors.push($open(b, l));
             }
             let op_bucket = op_pos.map(|p| bucket_in(store, index, &lookups[p], eg, globals, env));
-            let op_filter = if demote_by_op(m, op_bucket.map(|b| bucket_len(&b)), policy) {
+            let op_filter = if demote_by_op(m, op_bucket.map(|b| b.len()), policy) {
                 match &lookups[op_pos.expect("a demoted join has a ByOp lookup")] {
                     IndexLookup::ByOp { op } => Some(*op),
                     _ => unreachable!("op_pos indexes a ByOp lookup"),
@@ -2228,14 +2226,8 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     }
 }
 
-/// Length of a resolved bucket; an absent key contributes zero candidates.
-#[inline]
-fn bucket_len<G: crate::containers::DenseId>(b: &Option<&SortedVec<G>>) -> usize {
-    b.map_or(0, |v| v.len())
-}
-
 /// Resolve one lookup's key against a single index store, returning the bucket
-/// it selects (`None` if the key is absent).
+/// it selects (the empty slice if the key names no bucket of this build).
 ///
 /// `store` is the slice this atom's mode reads (full or delta); `index` is the
 /// round's view, consulted only for the canonicalization the buckets are keyed
@@ -2249,25 +2241,25 @@ fn bucket_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
-) -> Option<&'a SortedVec<Cfg::G>>
+) -> &'a [Cfg::G]
 where
     Cfg: EGraphConfig,
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match l {
-        IndexLookup::ByOp { op } => store.by_op.get(op),
+        IndexLookup::ByOp { op } => store.nodes_by_op(*op),
         IndexLookup::ByChildPos { child, pos } => {
             let r = canon(index, eg, env.resolve_pv(*child, globals));
-            store.by_child_pos.get(&(r, *pos))
+            store.nodes_by_child_pos(r, *pos)
         }
         IndexLookup::ByRepr { repr } => {
             let r = canon(index, eg, env.get(*repr));
-            store.by_repr.get(&r)
+            store.nodes_by_repr(r)
         }
         IndexLookup::ByContains { child } => {
             let r = canon(index, eg, env.resolve_pv(*child, globals));
-            store.by_contains.get(&r)
+            store.nodes_by_contains(r)
         }
     }
 }
@@ -2338,32 +2330,32 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
 // MatchIterator — explicit DFS stack machine (lazy, pull-based)
 // ---------------------------------------------------------------------------
 
-/// Resolve an `IndexLookup` to a `&SortedVec` from the **full** index (the
+/// Resolve an `IndexLookup` to a bucket slice from the **full** index (the
 /// pull-based engine runs naive only — see semi-naive design notes).
-/// Returns `None` when the lookup key is absent (i.e. no matches).
+/// Returns the empty slice when the lookup key names no bucket (i.e. no matches).
 fn resolve_lookup<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool>(
     l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, T, P>,
     index: &'a VariantIndex<'a, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
-) -> Option<&'a SortedVec<Cfg::G>>
+) -> &'a [Cfg::G]
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match l {
-        IndexLookup::ByOp { op } => index.full.by_op.get(op),
+        IndexLookup::ByOp { op } => index.full.nodes_by_op(*op),
         IndexLookup::ByChildPos { child, pos } => {
             let r = canon(index, eg, env.resolve_pv(*child, globals));
-            index.full.by_child_pos.get(&(r, *pos))
+            index.full.nodes_by_child_pos(r, *pos)
         }
         IndexLookup::ByRepr { repr } => {
             let r = canon(index, eg, env.get(*repr));
-            index.full.by_repr.get(&r)
+            index.full.nodes_by_repr(r)
         }
         IndexLookup::ByContains { child } => {
             let r = canon(index, eg, env.resolve_pv(*child, globals));
-            index.full.by_contains.get(&r)
+            index.full.nodes_by_contains(r)
         }
     }
 }
@@ -2626,18 +2618,22 @@ where
 
     fn enter_join(&mut self, target: VarId, lookups: &[IndexLookup<Cfg::O, Cfg::Index>]) -> Enter {
         // Collected straight into cursors: `resolve_lookup` borrows from the
-        // index, which outlives the frame, so there is no need for the
-        // intermediate `Vec<&SortedVec>` this used to build.
-        let iters: CursorVec<SortedVecCursor<'a, Cfg::G>> = match lookups
-            .iter()
-            .map(|l| {
-                resolve_lookup(l, self.eg, self.index, self.globals, &self.env).map(SortedVec::iter)
-            })
-            .collect::<Option<CursorVec<_>>>()
-        {
-            Some(v) if !v.is_empty() => v,
-            _ => return Enter::Failed,
-        };
+        // index's pool, which outlives the frame, so there is no intermediate
+        // vector of bucket references. An empty bucket short-circuits the whole
+        // join, as the absent key it stands for did before the families became
+        // dense: the intersection is empty either way, and failing here keeps
+        // the frame off the stack.
+        let mut iters: CursorVec<SortedVecCursor<'a, Cfg::G>> = CursorVec::new();
+        for l in lookups {
+            let b = resolve_lookup(l, self.eg, self.index, self.globals, &self.env);
+            if b.is_empty() {
+                return Enter::Failed;
+            }
+            iters.push(SortedVecCursor::new(b));
+        }
+        if iters.is_empty() {
+            return Enter::Failed;
+        }
         let join = LeapfrogJoin::new(iters);
         let valid = join.is_valid();
         if valid {

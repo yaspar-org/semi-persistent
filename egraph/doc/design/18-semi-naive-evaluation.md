@@ -541,8 +541,8 @@ watermarks it to superpose only critical pairs with a changed endpoint
 and matcher-created nodes into completion's, through one mechanism.) At the
 end of each round:
 
-1. Sort and dedup the touched log into `SortedVec<G>` values, keyed
-   by the same hash-map keys as `full`.
+1. Sort and dedup the touched log, then stream it into the same four
+   families as `full`, under the same keys.
 2. Run e-matching with the k-variant fan-out.
 3. After all rules have matched, discard `delta` (the entries merge
    into `full` naturally since `full` already contains these nodes by
@@ -566,9 +566,10 @@ round-local scratch, cleared at each round boundary. Duplicates are
 removed by the sort-dedup in step 1, so no separate hash set is
 needed.
 
-**The delta index is always `SortedVec<G>`.** No backend flexibility
-needed — it's built once, read once, discarded. The access pattern is
-pure outer-loop iteration, which favors contiguous memory.
+**The delta index has the same representation as the full index, a
+`DenseSpanMap` per family.** No backend flexibility needed: it is built once,
+read once, discarded. The access pattern is pure outer-loop iteration, which
+favors contiguous memory.
 
 ### Global, Not Per-Cache
 

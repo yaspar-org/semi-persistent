@@ -520,3 +520,55 @@ two blocks is mechanical, but Verus is not installed on this machine and
 `verus.yml` verifies this crate, so the rewrite cannot be checked here. It is
 the next change to make, and it is the one that would take the rules encoding
 inside 6% of egglog.
+
+## Addendum, 2026-08-16: R2 and R3 measured
+
+Records what the two re-layout items this file proposed and did not implement
+are worth, now that they are implemented. Section E' left the residual as IPC,
+3.78 against egglog's 4.25, and named R2 (arena-backed index buckets) and R3 (a
+class-indexed `by_child_pos`) as the list that applies from there. They landed
+as one change: the four index families moved onto `containers-verus`'s verified
+`DenseSpanMap`, which is a flat value pool with `(offset, length)` spans (R2)
+addressed by a dense integer key (R3). Splitting them would have meant building
+an intermediate structure that was neither.
+
+Same machine, same efficiency-core placement, same `ipcwrap` counters, medians
+of seven interleaved runs. **egglog was not re-measured in this session**, so
+the egglog column is section E's value and the wall-time comparison against it
+is across sessions, not back to back.
+
+| configuration | instructions | cycles | IPC | wall |
+|---|---|---|---|---|
+| ours before, rules, naive | 5.581 G | 1.484 G | 3.76 | 574.4 ms |
+| ours after, rules, naive | 5.484 G | 1.389 G | 3.95 | 537.4 ms |
+| ours before, native, naive | 6.056 G | 1.403 G | 4.32 | 542.2 ms |
+| ours after, native, naive | 5.748 G | 1.232 G | 4.67 | 477.2 ms |
+| egglog (section E', earlier session) | 5.741 G | 1.352 G | 4.25 | 523.8 ms |
+
+Under semi-naive evaluation the same change takes the rules encoding from
+620.0 to 560.3 ms at IPC 3.58 to 3.83, and the native encoding from 562.9 to
+448.1 ms at IPC 4.09 to 4.65.
+
+**The cycle reduction is three to four times the instruction reduction**, which
+is what distinguishes a layout change from a work reduction: 1.7% of
+instructions against 6.4% of cycles on the rules encoding, 5.1% against 12.2% on
+the native one. Section A's discriminating measurement asked whether re-layout
+could pay on this engine and answered no for the configuration it saw; at 0.965x
+egglog's instruction count the answer is yes, and this is the size of it.
+
+**Section 4 of the ranked fix list said R2 was "bounded by 21.5 ms of build plus
+an unmeasured probe win". Both halves were wrong in the same direction.** The
+build did not cost more, it cost less: timed around every `IndexStore::build*`
+call over a whole saturation, the rules encoding goes 25.9 to 17.9 ms under
+naive evaluation and 45.3 to 27.7 ms under semi-naive, and the native encoding
+66.4 to 30.5 ms and 107.1 to 48.9 ms. A two-pass counting sort over a key space
+wider than the stream still beats one hash insert and one `Vec` push per entry
+into roughly 2.4 M separately allocated buckets per round. And the probe win is
+the 6.4% to 12.2% of cycles above.
+
+Peak resident memory rises 3.2% on the rules encoding, 247 to 255 MB, which is
+the span tables: they are sized by the largest key in use rather than by the
+number of occupied keys.
+
+Match steps and node counts are unchanged on all twenty programs under
+`comparison/`, under both scheduling strategies.
