@@ -125,12 +125,16 @@ where
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
+    // Likewise the index's build buffers: the families are rebuilt per round
+    // from streams proportional to the node count, and the capacity reached in
+    // round n is the capacity round n+1 needs.
+    let mut scratch = crate::index::IndexScratch::new();
     for i in 0..spec.limit {
         if goal_met(spec, eg) {
             return sat_result(i, false, true, steps_base);
         }
         eg.rebuild();
-        let index = IndexStore::build(eg);
+        let index = IndexStore::build_with(eg, &mut scratch);
         let stats = crate::schedule::IndexStats::from_index(&index);
         let mut changes = 0;
         for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
@@ -263,8 +267,8 @@ where
     let mut stats = IndexStats::from_index(full);
     for (j, atom) in rq.atoms.iter().enumerate() {
         let Some(op) = atom_op(atom) else { continue };
-        let full_card = full.by_op.get(&op).map(|sv| sv.len()).unwrap_or(0);
-        let delta_card = delta.by_op.get(&op).map(|sv| sv.len()).unwrap_or(0);
+        let full_card = full.nodes_by_op(op).len();
+        let delta_card = delta.nodes_by_op(op).len();
         let card = match j.cmp(&delta_atom) {
             std::cmp::Ordering::Equal => delta_card,            // delta
             std::cmp::Ordering::Less => full_card - delta_card, // full ∖ delta
@@ -354,18 +358,21 @@ where
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
+    // One scratch for both builds of every round; `build_with` clears it on
+    // entry, so the full index's streams do not leak into the delta's.
+    let mut scratch = crate::index::IndexScratch::new();
     for i in 0..limit {
         if goal_met(spec, eg) {
             return sat_result(i, false, true, steps_base);
         }
         eg.rebuild();
-        let full = IndexStore::build(eg);
+        let full = IndexStore::build_with(eg, &mut scratch);
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
         let delta = if i == 0 {
             None
         } else {
-            Some(IndexStore::build_delta(eg, eg.touched()))
+            Some(IndexStore::build_delta_with(eg, eg.touched(), &mut scratch))
         };
         eg.clear_touched();
 
@@ -1226,8 +1233,8 @@ mod tests {
         let full = IndexStore::build(&eg);
         let delta = IndexStore::build_delta(&eg, &touched);
 
-        let full_f = full.by_op.get(&of).map(|s| s.len()).unwrap();
-        let delta_f = delta.by_op.get(&of).map(|s| s.len()).unwrap();
+        let full_f = full.nodes_by_op(of).len();
+        let delta_f = delta.nodes_by_op(of).len();
         assert!(delta_f >= 1 && delta_f < full_f, "need a partial delta");
 
         let jatoms = join_atom_indices(&rule.query);

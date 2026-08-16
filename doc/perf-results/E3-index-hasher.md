@@ -4,6 +4,13 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # E3 — index hasher (A3)
 
+**Superseded for the index families, 2026-08-16.** `IndexStore`'s four families
+are no longer hash maps: they are dense-keyed `DenseSpanMap`s, read by array
+index (`egraph/doc/design/06-index.md`). The result below stands as the record of
+the commit it measured, and it still applies to the per-operator statistics maps
+that remain hashed, but the four families it names no longer hash anything. Do
+not cite it as the current state of the index.
+
 **Change.** The maps keyed by internal dense ids now use foldhash instead of
 std's default SipHash:
 

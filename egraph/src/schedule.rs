@@ -155,7 +155,7 @@ impl<O: Eq + Hash + Copy> IndexStats<O> {
         crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
     {
         Self {
-            op_card: index.by_op.iter().map(|(&op, v)| (op, v.len())).collect(),
+            op_card: index.op_cardinalities().collect(),
             atom_card: std::collections::HashMap::new(),
             fanouts: index.fanouts.clone(),
         }

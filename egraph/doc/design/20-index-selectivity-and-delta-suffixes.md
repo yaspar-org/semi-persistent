@@ -651,3 +651,69 @@ rules 565.1 ms against 562.0 ms, inside the run-to-run spread). S3's second
 half, per-binding selection of which iterator drives the seek, is still
 unmeasured, and it attacks a smaller target than the audit's: after `790ba05`
 the leapfrog seek is 5.2% of the profile where the audit measured it at 26.3%.
+
+## R2 and R3 landed together (2026-08-16)
+
+**R2 (arena-backed index buckets) and R3 (a class-indexed `by_child_pos`) are
+implemented, as one change, on the verified `DenseSpanMap`.** The two proposals
+are the two halves of the same container: R2 is the flat value pool with
+`(offset, length)` spans replacing one heap allocation per key, and R3 is the
+dense integer key replacing the hash probe. Splitting them would have meant
+building an intermediate structure that was neither, so the four families moved
+onto `DenseSpanMap` in one step and the hash-map families were deleted rather
+than kept behind a flag. `containers-verus/doc/design/15-dense-span-map.md`
+states what the container proves; chapter 6 states how the index uses it,
+including the position-major composite key `pos * stride + class` that R3 needs
+and the space it costs.
+
+Measured on `math-microbenchmark`, medians of seven interleaved runs, the same
+machine and efficiency-core placement `comparison/hotpath-audit.md` describes:
+
+| program | instructions | cycles | IPC | wall |
+|---|---|---|---|---|
+| rules, naive, before | 5.581 G | 1.484 G | 3.76 | 574.4 ms |
+| rules, naive, after | 5.484 G | 1.389 G | 3.95 | 537.4 ms |
+| rules, semi-naive, before | 5.731 G | 1.600 G | 3.58 | 620.0 ms |
+| rules, semi-naive, after | 5.551 G | 1.448 G | 3.83 | 560.3 ms |
+| native, naive, before | 6.056 G | 1.403 G | 4.32 | 542.2 ms |
+| native, naive, after | 5.748 G | 1.232 G | 4.67 | 477.2 ms |
+| native, semi-naive, before | 5.945 G | 1.454 G | 4.09 | 562.9 ms |
+| native, semi-naive, after | 5.371 G | 1.155 G | 4.65 | 448.1 ms |
+
+**The prediction that the residual is IPC holds, and the re-layout moves it.**
+Instructions fall 1.7% on the rules encoding and 5.1% on the native one, while
+cycles fall 6.4% and 12.2%: the cycle reduction is three to four times the
+instruction reduction, which is the signature of a layout change rather than a
+work reduction. IPC on the rules encoding goes 3.76 to 3.95 against egglog's
+4.25 recorded in the previous session, closing 39% of that gap. egglog was not
+re-measured in this session, so the 537.4 ms is comparable to this file's own
+before-number and not to a same-session egglog run.
+
+**The index build got cheaper, not more expensive.** The concern was that a
+counting sort touches one span slot per key whether or not the key has values,
+which the hash map did not, and that this would cost most on the delta index,
+whose stream is short against the same key space. Timed around every
+`IndexStore::build*` call over a whole saturation:
+
+| program | before | after |
+|---|---|---|
+| rules, naive | 25.9 ms | 17.9 ms |
+| rules, semi-naive (full + delta) | 25.0 + 20.3 ms | 15.6 + 12.2 ms |
+| native, naive | 66.4 ms | 30.5 ms |
+| native, semi-naive (full + delta) | 65.6 + 41.5 ms | 29.9 + 19.0 ms |
+
+The counting build wins even where the key space is widest, because what it
+replaced was one hash insert and one `Vec` push per entry into roughly 2.4 M
+separately allocated buckets per round. Peak resident memory rises 3.2%, 247 to
+255 MB on the rules encoding.
+
+Every one of the twenty comparison programs was checked under both scheduling
+strategies: node counts, class counts, iteration counts and match steps are
+identical to the values before the change.
+
+**R1 (folding the operator into the `by_child_pos` key) is still not
+implemented, and R3 makes its cost concrete.** R1 multiplies the key count by
+the number of operators, and the key count is now the length of a span table
+that is allocated per round. The measurement to make before attempting it is the
+span table's occupancy: R1 is worth its memory only if the buckets it splits are
+long enough that the split removes more probe work than the wider table costs.
