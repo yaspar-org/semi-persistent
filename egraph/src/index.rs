@@ -162,6 +162,18 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     /// leaves it empty: a delta is built in the same instant as its full index
     /// and shares that index's canonicalization, so the mapping is stored once.
     pub repr: Vec<Cfg::G>,
+    /// `op[id]` — the operator of every node id as of this build.
+    ///
+    /// A join that demotes its `ByOp` lookup to a per-candidate operator test
+    /// (`ematch::run_join`) reads this instead of [`EGraph::node_op`], which
+    /// resolves the routing table and then the arity-specific arena: two
+    /// dependent random loads over 10 MB and 20 MB against one over `4 ·
+    /// node_count` bytes. The build pays for it with a sequential pass, where
+    /// the same two loads stream.
+    ///
+    /// Filled by [`build`](Self::build) only, like [`repr`](Self::repr): the
+    /// delta's ids are a subset of the full index's, so one table serves both.
+    pub op: Vec<Cfg::O>,
     /// Measured selectivity of each access path, read by the scheduler through
     /// [`IndexStats::from_index`](crate::schedule::IndexStats::from_index).
     ///
@@ -185,9 +197,7 @@ where
         // routing entry was minted through `TypedRouting::reserve`'s checked
         // path) lives with `node_ids`; an inline scan here would restate the
         // unchecked spelling without the justification.
-        let mut store = Self::build_from(eg, eg.node_ids(), true);
-        store.repr = eg.node_ids().map(|g| eg.class_repr(g)).collect();
-        store
+        Self::build_from(eg, eg.node_ids(), true)
     }
 
     /// Build the per-round **delta** index from the touched-node log: the
@@ -210,12 +220,15 @@ where
 
     /// Shared bucketing core for [`build`](Self::build) and
     /// [`build_delta`](Self::build_delta): index the given node ids into the
-    /// four crosscutting maps. Skips subsumed nodes. `measure` additionally
-    /// accumulates [`FanOuts`], which only the full index needs.
+    /// four crosscutting maps. Skips subsumed nodes. `full` additionally
+    /// records the per-id [`repr`](Self::repr) and [`op`](Self::op) tables and
+    /// accumulates [`FanOuts`], which only the full index needs; it is sound
+    /// only for the whole-graph id stream, whose ids arrive in ascending order
+    /// with no gaps.
     fn build_from<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
         ids: impl Iterator<Item = Cfg::G>,
-        measure: bool,
+        full: bool,
     ) -> Self {
         let mut by_op: FastMap<Cfg::O, Vec<Cfg::G>> = FastMap::default();
         let mut by_repr: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
@@ -223,12 +236,29 @@ where
         let mut by_contains: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
         let mut indexed = 0usize;
 
+        // Per-id tables, filled only for the whole-graph stream. Both reads are
+        // made anyway for the bucketing below, so recording them here costs a
+        // push; a separate pass would repeat 1.2 M routing-table walks a round.
+        // A subsumed node is skipped for bucketing but still needs its slot, so
+        // the tables stay indexable by node id.
+        let mut repr_tab: Vec<Cfg::G> = Vec::new();
+        let mut op_tab: Vec<Cfg::O> = Vec::new();
+        if full {
+            repr_tab.reserve(eg.node_count());
+            op_tab.reserve(eg.node_count());
+        }
+
         for gid in ids {
+            let op = eg.node_op(gid);
+            let repr = eg.class_repr(gid);
+            if full {
+                debug_assert_eq!(repr_tab.len(), gid.to_usize());
+                repr_tab.push(repr);
+                op_tab.push(op);
+            }
             if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
                 continue;
             }
-            let op = eg.node_op(gid);
-            let repr = eg.class_repr(gid);
 
             by_op.entry(op).or_default().push(gid);
             by_repr.entry(repr).or_default().push(gid);
@@ -282,7 +312,7 @@ where
         let by_repr = finalize(by_repr);
         let by_child_pos = finalize(by_child_pos);
         let by_contains = finalize(by_contains);
-        let fanouts = if measure {
+        let fanouts = if full {
             Self::measure_fanouts(eg, &by_repr, &by_child_pos, &by_contains, indexed)
         } else {
             FanOuts::default()
@@ -293,7 +323,8 @@ where
             by_repr,
             by_child_pos,
             by_contains,
-            repr: Vec::new(),
+            repr: repr_tab,
+            op: op_tab,
             fanouts,
         }
     }
@@ -389,6 +420,13 @@ where
     #[inline]
     pub fn round_repr(&self, id: Cfg::G) -> Option<Cfg::G> {
         self.repr.get(id.to_usize()).copied()
+    }
+
+    /// The operator of `id` as of this build, or `None` when the table is not
+    /// filled (a delta store) or `id` postdates the build. See [`op`](Self::op).
+    #[inline]
+    pub fn round_op(&self, id: Cfg::G) -> Option<Cfg::O> {
+        self.op.get(id.to_usize()).copied()
     }
 
     /// Get an iterator over nodes with the given operator.
