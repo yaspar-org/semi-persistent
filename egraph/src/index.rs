@@ -51,6 +51,12 @@ pub struct SortedVec<G> {
     data: Vec<G>,
 }
 
+impl<G> Default for SortedVec<G> {
+    fn default() -> Self {
+        SortedVec { data: Vec::new() }
+    }
+}
+
 impl<G: DenseId> SortedVec<G> {
     /// Wrap a vector the caller has already sorted and deduplicated.
     /// Debug builds re-check; release trusts the caller within this module's
@@ -67,6 +73,21 @@ impl<G: DenseId> SortedVec<G> {
         v.sort_unstable();
         v.dedup();
         SortedVec { data: v }
+    }
+    /// Append without re-establishing the order, for a builder that will call
+    /// [`sort_dedup`](Self::sort_dedup) before anyone reads the bucket.
+    ///
+    /// The invariant is suspended between the two calls, so this pair is
+    /// private to `IndexStore::build_from`: filling the buckets in place is
+    /// what lets the build skip rebuilding a two-million-key map to change the
+    /// value type from `Vec<G>` to `SortedVec<G>`.
+    fn push_unordered(&mut self, g: G) {
+        self.data.push(g);
+    }
+    /// Re-establish the order after a run of [`push_unordered`](Self::push_unordered).
+    fn sort_dedup(&mut self) {
+        self.data.sort_unstable();
+        self.data.dedup();
     }
     pub fn as_slice(&self) -> &[G] {
         &self.data
@@ -230,10 +251,10 @@ where
         ids: impl Iterator<Item = Cfg::G>,
         full: bool,
     ) -> Self {
-        let mut by_op: FastMap<Cfg::O, Vec<Cfg::G>> = FastMap::default();
-        let mut by_repr: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
-        let mut by_child_pos: FastMap<(Cfg::G, Cfg::Index), Vec<Cfg::G>> = FastMap::default();
-        let mut by_contains: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
+        let mut by_op: FastMap<Cfg::O, SortedVec<Cfg::G>> = FastMap::default();
+        let mut by_repr: FastMap<Cfg::G, SortedVec<Cfg::G>> = FastMap::default();
+        let mut by_child_pos: FastMap<(Cfg::G, Cfg::Index), SortedVec<Cfg::G>> = FastMap::default();
+        let mut by_contains: FastMap<Cfg::G, SortedVec<Cfg::G>> = FastMap::default();
         let mut indexed = 0usize;
 
         // Per-id tables, filled only for the whole-graph stream. Both reads are
@@ -260,8 +281,8 @@ where
                 continue;
             }
 
-            by_op.entry(op).or_default().push(gid);
-            by_repr.entry(repr).or_default().push(gid);
+            by_op.entry(op).or_default().push_unordered(gid);
+            by_repr.entry(repr).or_default().push_unordered(gid);
             indexed += 1;
 
             // The counter is `Cfg::Index`-wide and checked. A variadic node's arity is
@@ -271,7 +292,10 @@ where
             let mut pos = <Cfg::Index as IndexLike>::min();
             let is_variadic = eg.for_each_child(gid, |child, _mult| {
                 let child_repr = eg.class_repr(child);
-                by_child_pos.entry((child_repr, pos)).or_default().push(gid);
+                by_child_pos
+                    .entry((child_repr, pos))
+                    .or_default()
+                    .push_unordered(gid);
                 pos = crate::containers::index_like::checked_incr(pos)
                     .expect("node arity exceeds EGraphConfig::Index; configure a wider index word");
             });
@@ -290,28 +314,22 @@ where
                     let cr = eg.class_repr(child);
                     if !seen.contains(&cr) {
                         seen.push(cr);
-                        by_contains.entry(cr).or_default().push(gid);
+                        by_contains.entry(cr).or_default().push_unordered(gid);
                     }
                 });
             }
         }
 
-        fn finalize<K: Eq + std::hash::Hash, G: DenseId>(
-            map: FastMap<K, Vec<G>>,
-        ) -> FastMap<K, SortedVec<G>> {
-            map.into_iter()
-                .map(|(k, mut v)| {
-                    v.sort_unstable();
-                    v.dedup();
-                    (k, SortedVec::from_sorted_dedup(v))
-                })
-                .collect()
+        fn finalize<K: Eq + std::hash::Hash, G: DenseId>(map: &mut FastMap<K, SortedVec<G>>) {
+            for v in map.values_mut() {
+                v.sort_dedup();
+            }
         }
 
-        let by_op = finalize(by_op);
-        let by_repr = finalize(by_repr);
-        let by_child_pos = finalize(by_child_pos);
-        let by_contains = finalize(by_contains);
+        finalize(&mut by_op);
+        finalize(&mut by_repr);
+        finalize(&mut by_child_pos);
+        finalize(&mut by_contains);
         let fanouts = if full {
             Self::measure_fanouts(eg, &by_repr, &by_child_pos, &by_contains, indexed)
         } else {
