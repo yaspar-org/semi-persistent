@@ -110,13 +110,22 @@ canonization, as a width-scaling sweep of the add-ac block (n = 7..20):
 the rules encoding and egglog grow super-linearly in the sum width while
 native AC stays flat. Budget arithmetic for (a) on math-microbenchmark:
 egglog's 508 ms includes 218 ms rebuild; their matching+apply is ~300 ms.
-Post-S1 we project ~890 ms with ~25 ms rebuild, so the matching path needs
-about another 2x beyond S1. Levers in order: S3 per-binding drivers,
-LeapfrogJoin::new setup and its per-partial-match insertion sort (5.1%),
-the TLS match-step counter read (2.3%), and inner-loop constants in
-LeapfrogJoin::search (52% self time). The semi-naive access-path audit
-(delta-specific indexes, delta-driven ordering, AC id churn) gates any
-semi-naive claim.
+The hot-path audit (comparison/hotpath-audit.md, measured with validated
+hardware counters) settled the lever list. Verdict: compute-bound, not
+memory-bound - IPC 3.65 vs egglog's 4.16, but 19.6x more instructions
+retired; only instruction removal closes the gap, and re-layout does not.
+Revised levers, prototype-measured: (1) S1 selectivity (prototype: 112.8 G
+-> 9.6 G instructions, 11.8 s -> 879 ms); (2) memoize
+`OpRegistry::completion_column`, which allocates and rescans the op map
+once per fresh node (~1,800 instructions per node; 23.7% of the
+order-corrected run; 879 -> 769 ms); (3) after those, the residual 1.31x
+is term construction (ListArena::try_append, FixedArityCache::probe,
+rehashing), 24% of the corrected run - the next frontier, untouched by
+matching work. Rejected by measurement: specializing LeapfrogJoin::new's
+sort (instructions +2.4%); the TLS counter is 1.85% and only if flag and
+counter move together. The semi-naive access-path audit (delta indexes
+correct; middle-out ordering absent; per-key ByContains skew) gates any
+semi-naive claim and extends S1's scope.
 
 ## Order and gates
 
