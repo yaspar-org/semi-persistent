@@ -42,7 +42,7 @@ SIZES = [880, 2_650, 8_900, 27_000, 100_000]
 # cheap variants run 200 so that the measured delta dominates the base build it
 # is subtracted from (a 20-cycle delta is ~15% of the base wall at the largest
 # size, which is inside this machine's background-load noise).
-CYCLES = {"cycles": 20, "empty": 200, "norun": 200}
+CYCLES = {"cycles": 20, "empty": 200, "norun": 200, "empty20k": 20_000}
 SEED = 20260816
 
 # Constant ranges. Products stay under 1e8 so neither engine's i64 arithmetic
@@ -147,6 +147,12 @@ def write(outdir, n_terms, native):
             cycle_body(k, terms, native, True) for k in range(CYCLES["cycles"])
         ),
         "empty": "".join("(push)\n(pop)\n" for _ in range(CYCLES["empty"])),
+        # Opt-in high-resolution twin of `empty`: once a bare pair costs tens of
+        # microseconds, a 200-pair delta is a rounding error on the base wall
+        # time it is subtracted from, and 20 000 pairs put the delta back above
+        # it. Not in the runner's default variant list — 20 000 pairs of a
+        # snapshot-copying engine is minutes per run.
+        "empty20k": "".join("(push)\n(pop)\n" for _ in range(CYCLES["empty20k"])),
         "norun": "".join(
             cycle_body(k, terms, native, True, run=False)
             for k in range(CYCLES["norun"])

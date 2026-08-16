@@ -132,6 +132,10 @@ column.
 
 ## 3. Cost per cycle: bare push/pop
 
+Our columns here are superseded by section 11 (2026-08-16), which re-measures
+them after restore stopped rebuilding the hashcons index; the egglog column
+stands.
+
 Milliseconds per `(push)(pop)` pair, 200 pairs, base wall time subtracted.
 
 | S (our nodes) | egglog | ours, naive | ours, semi-naive |
@@ -149,6 +153,10 @@ snapshot copy of a 600 966-row database is 2x cheaper than our restore of a
 1 001 932-node one.
 
 ## 4. Cost per cycle: assume, derive, retract
+
+Our columns here are superseded by section 11 (2026-08-16), which re-measures
+them after restore stopped rebuilding the hashcons index; the egglog column
+stands.
 
 The same cycle without the saturation step: ten fresh ground terms, two unions,
 one check, then pop. 200 cycles, base wall time subtracted.
@@ -200,6 +208,10 @@ first, and it is the number to fix before our push/pop advantage is worth
 anything end to end.
 
 ## 6. The internal baseline: restore versus re-running the prefix
+
+Our columns here are superseded by section 11 (2026-08-16), which re-measures
+them after restore stopped rebuilding the hashcons index; the egglog column
+stands.
 
 Ours only, so no cross-engine caveat applies. The alternative to semi-persistence
 is to re-run the program prefix per cycle in a fresh process, which the `rerun`
@@ -262,7 +274,8 @@ than from the pop. Restoring to a mark instead of re-running the base is worth
 92x to 117x per cycle on our engine, or 4.5x to 7.1x when the cycle also
 saturates.
 
-**Not shown: an asymptotic separation.** The expected shape was flat-versus-linear
+**Not shown: an asymptotic separation. RETRACTED 2026-08-16, see section
+11.4; do not cite this paragraph.** The expected shape was flat-versus-linear
 and the measurement is linear-versus-linear. Our pop is O(S) because it rebuilds
 ten hashcons indexes, so the O(touched) diff journal underneath never shows
 through. Nothing here supports a claim that semi-persistence changes the cost
@@ -289,9 +302,15 @@ the hashcons index. Making `restore` roll the index back through the same diff
 journal that rolls the node arena back would remove the only O(S) term we found
 on the path. Re-run section 3 after that change; if the bare push/pop cost stops
 growing with S, the separation this experiment looked for exists and this file's
-conclusion is superseded.
+conclusion is superseded. Section 11 is that re-run: it stopped
+growing, and one term the paragraph did not anticipate, the literal interner's
+own index rebuild, had to go with it.
 
 ## 9. Conclusion
+
+Sections 11.1 to 11.4 supersede the two paragraphs below that give factors for
+our push/pop: after the index fix the separation is one of cost class, not of
+constant. The rest of this section stands.
 
 Semi-persistence is worth 92x to 117x per assume/check/retract cycle against
 re-running the base, and that number needs no cross-engine caveat: it is the
@@ -325,3 +344,140 @@ contaminated first pass is a usable control: it reproduces every number in
 sections 3, 4 and 6 within 8%, so the in-flight matcher and scheduler changes do
 not move these measurements. Per methodology.md section 6 the submission's final
 tables re-run at one pinned commit.
+
+## 11. Addendum, 2026-08-16: restore stopped rebuilding the hashcons index
+
+Section 8 postponed the flat-versus-linear result and named the condition that
+would revive it: a pop that does not rebuild the hashcons index. This section
+records that change and its measurement. It supersedes our columns in sections
+3, 4 and 6 and the two "not shown" claims in section 8; it does not re-measure
+sections 5 and 7, and the egglog columns everywhere are unchanged.
+
+**What changed.** `FixedArityCache::restore`, `VariableArityCache::restore` and
+`LitCache::restore` delete the index entries of the nodes added since the mark,
+which the append-only arena keeps as the contiguous suffix at or above the mark's
+length, plus the entries of the pre-mark nodes `recanonize_node` re-keyed inside
+the scope, which each cache records in a per-frame list. Both sets are O(touched).
+`rebuild_index` survives as the fallback, taken when the two sets together exceed
+a quarter of the surviving arena, which bounds the cost of a restore that takes
+the rebuild it did not need to a quarter of one. A debug assertion compares the
+incrementally corrected index against a from-scratch rebuild after every restore
+and runs in the proptest suites.
+
+The literal interner needed the same fix. With the ten node caches corrected, a
+sampling profile of 20 000 bare pairs at S = 1e6 put 87% of what remained in
+`LitValStore::restore`, which reached `containers::Map::restore`: that map
+rebuilds its lookup index from the surviving log on restore, cloning every live
+key. Interning is append-only, so `LitValStore` now holds the log and the lookup
+index directly and deletes the suffix's keys, on the same fallback terms.
+
+**Protocol.** Same generator, same seed 20260816, same runner, same statistic
+(minimum of the timed runs). The two binaries differ only in `egraph/src/caches.rs`
+and `egraph/src/literal.rs` and were built three minutes apart from one tree, so
+the other engine work in flight on the branch is in both: `semi-persistent` md5
+0d315c89bc7ce8b69e5196e9885ca64a (rebuild) and 352ce26b2e6359fb452f4c62293619af
+(suffix). egglog md5 9213d10fe3777cce331a6eba317e3945 at 7b1adf2, re-run this
+session, reproduces its published columns within 1%, which is what makes this
+session's numbers comparable to the tables above. Every run is in
+`semi-persistence-index-restore.csv`.
+
+### 11.1 Cost per cycle: bare push/pop
+
+Milliseconds per `(push)(pop)` pair, 200 pairs, base wall time subtracted: the
+protocol of section 3, so the first two columns are directly comparable to it.
+
+| S (our nodes) | egglog | ours, rebuild | ours, suffix | ours, suffix, 20 000 pairs |
+|---|---|---|---|---|
+| 9 966 | 0.07 | 0.08 | 0.005 | 0.0042 |
+| 90 996 | 0.64 | 0.76 | 0.009 | 0.0041 |
+| 1 001 932 | 5.99 | 12.38 | 0.074 | 0.0029 |
+
+Read the fourth column as an upper bound and the fifth as the value. Once a pair
+costs a few microseconds, its 200-pair total is under a millisecond against a
+base build of 1.3 s, and the difference is dominated by run-to-run variation in
+the base term; the fifth column runs 20 000 pairs per program (`empty20k`,
+opt-in in both scripts), which puts the difference at 4.4%, 94% and 690% of the
+base for the three sizes. On that
+column the cost per pair does not grow over a 100.5x range of base sizes: 4.2,
+4.1 and 2.9 microseconds, where the ordering inside that spread is noise rather
+than a trend. Measured their way in the same pass, ours grew 164x over that
+range before the change.
+
+The separation section 3 looked for is therefore present: our bare pair is flat
+in S and egglog's grows 81x over the same range, ending 5.99 ms against our
+0.074 ms measured their way, or 0.003 ms measured at full resolution.
+
+### 11.2 Cost per cycle: assume, derive, retract
+
+The section 4 cycle without the saturation step, 200 cycles, base subtracted.
+
+| S (our nodes) | egglog | ours, rebuild | ours, suffix |
+|---|---|---|---|
+| 9 966 | 0.26 | 0.10 | 0.027 |
+| 90 996 | 2.06 | 0.77 | 0.036 |
+| 1 001 932 | 33.00 | 12.40 | 0.075 |
+
+The cycle now costs what the work inside the scope costs: twelve assertions, a
+union against the base, and a check, for 27 to 75 microseconds, against 12.38 ms
+of index rebuilding for the same base size before. The 2.6x of section 4 becomes
+440x at S = 1e6, and the shape rather than the factor is the result: ours is
+flat over the 100.5x size range and theirs grows 129x, because a union against
+the base forces a rebuild over their tables.
+
+### 11.3 The internal baseline: restore versus re-running the prefix
+
+Section 6's comparison, no-run cycle, ours only, with `rerunnorun` re-measured on
+the suffix binary (the re-run programs contain no push or pop, so the change
+cannot move them, and it does not: 12.35, 86.53 and 1 311.25 ms against 11.30,
+86.80 and 1 283.98 ms in section 6).
+
+| S (our nodes) | restore, no-run cycle | re-run, no-run cycle | ratio |
+|---|---|---|---|
+| 9 966 | 0.027 | 12.35 | 459x |
+| 90 996 | 0.036 | 86.53 | 2 408x |
+| 1 001 932 | 0.075 | 1 311.25 | 17 514x |
+
+Section 6 reported this ratio as flat in S at 92x to 117x, because both terms
+grew with S. Only the re-run term grows now, so the ratio grows with the base:
+that is the same measurement reporting a change of cost class rather than a
+constant factor.
+
+### 11.4 What this changes in the conclusions
+
+Section 8's "Not shown: an asymptotic separation" is retracted: do not cite it.
+The expected shape was flat-versus-linear and 11.1 measures flat-versus-linear,
+on the bare pair and on the assume/derive/retract cycle alike. Section 9's
+"2.6x per cycle at a million nodes and not a change of cost class" is retracted
+with it.
+
+Section 8's "Not shown: an end-to-end win on this workload" stands unchanged and
+is now the whole story: at S = 1e6 the full cycle costs 366 ms of which 353 ms
+is one round of naive matching (section 5), and this change removes 12.3 ms of
+the remaining 12.6. Cheap push/pop still does not pay for naive saturation, and
+incremental matching is still the number to fix before any of this decides which
+engine finishes a workload first.
+
+What is left on the bare pair is 3 to 4 microseconds at every size measured.
+Section 1's remaining O(S) candidate, `ParallelStore::prepare_mark` clearing an
+S/64-word capture bitset per mark, is inside that figure and is not separable
+from it at this resolution: the per-pair cost at S = 1e6 is no larger than at
+S = 1e4, so whatever that pass costs is under a microsecond. Nothing here needs
+another fix; the next measurement that would move this file is a workload with
+marks deep enough to make the per-frame bookkeeping visible.
+
+### 11.5 Reproducing this section
+
+```
+python3 gen-semipersistence.py --terms 880 --terms 8900 --terms 100000
+python3 run-semipersistence.py --configs ours-naive,ours-semi \
+    --variants base,empty,norun --terms 880 --terms 8900 --terms 100000 \
+    --skip-calc --ours <pinned>/semi-persistent --out <csv>
+python3 run-semipersistence.py --configs ours-naive,ours-semi \
+    --variants base,empty20k --terms 880 --terms 8900 --terms 100000 \
+    --skip-calc --ours <pinned>/semi-persistent --out <csv>
+```
+
+`--configs`, `--variants` and `--skip-calc` select a subset of the sweep and are
+new in this pass; without them the runner behaves as section 10 documents.
+`empty20k` is the 20 000-pair twin of `empty`, generated always and never run by
+default, because 20 000 pairs of a snapshot-copying engine is minutes per run.

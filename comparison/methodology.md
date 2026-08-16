@@ -156,6 +156,17 @@ which side of each fix it was measured on:
   13.57 s -> 0.89 s). Post-fix numbers re-run the affected tables.
 - Semi-naive access-path audit and hot-path locality audit in flight;
   their findings and any fixes append here.
+- 2026-08-16, restore stopped rebuilding the hashcons index: the ten node
+  caches and the literal interner delete the index entries of what the
+  scope added instead of re-inserting every live entry, with the rebuild
+  kept as a fallback above a quarter of the arena. E6's bare push/pop at
+  S = 1e6 goes 12.38 ms -> 0.07 ms measured its way, 0.003 ms at 20 000
+  pairs, and stops growing with S. Supersedes our columns in
+  semi-persistence.md sections 3, 4 and 6 and retracts the no-asymptotic-
+  separation claim in section 8; the addendum is section 11 and its runs
+  are in semi-persistence-index-restore.csv. egglog re-run in the same
+  session reproduces its published columns within 1%, so the pre-fix and
+  post-fix tables in that file are comparable despite the rule above.
 
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.
