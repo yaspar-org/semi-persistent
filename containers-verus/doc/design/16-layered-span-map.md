@@ -106,15 +106,29 @@ key, and filtering ignores the positions of other keys' entries. The proof that
 `flatten` preserves every key's contents is what makes the compaction policy
 sound: without it, a flatten is a silent opportunity to reorder or drop.
 
+**The operation that implements the policy is `replace_delta`.** Round N+1 hands
+in the accumulated delta stream and the accumulated invalidations; the base
+carries over untouched and is never read. Its contract is `try_with_delta`'s with
+`base_stream()` and `base_view()` carried through from the receiver, so a caller
+can chain rounds without re-establishing anything about the base. The previous
+delta generation is discarded, which is why the caller accumulates the stream
+rather than handing in only the newest round's entries.
+
+`into_base` is the O(1) way back to a `DenseSpanMap`. It returns the base
+generation and **discards the delta and the invalidations**: it is not the
+logical view. A caller that wants the logical contents as one map wants
+`flatten`. Both are stated in the ensures so the two are not confusable:
+`into_base` gives `r.view() == self.base_view()`, `flatten` gives
+`r.view()[k] == self.view()[k]`.
+
 **What this costs per round, stated honestly.** Installing a generation is
 O(delta + invalid): the base is not read. It is not O(touched) in the strict
-sense across a period, because a caller that accumulates a delta stream across
-rounds rebuilds the delta map from the accumulated stream, which is O(accumulated
-delta) and bounded by `c * base`. Against the current O(base) every round that is
-bounded by a factor of four in the worst case and much better immediately after a
-flatten. True O(touched) per round requires N layers, which is the read
-amplification this design refuses. Revisit only if the index build is measured to
-dominate after this change lands.
+sense across a period, because `replace_delta` rebuilds the delta map from the
+accumulated stream, which is O(accumulated delta) and bounded by `c * base`.
+Against the current O(base) every round that is bounded by a factor of four in
+the worst case and much better immediately after a flatten. True O(touched) per
+round requires N layers, which is the read amplification this design refuses.
+Revisit only if the index build is measured to dominate after this change lands.
 
 ## 5. In-place refresh of one `DenseSpanMap`, rejected
 
