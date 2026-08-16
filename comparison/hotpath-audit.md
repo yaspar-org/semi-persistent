@@ -387,3 +387,136 @@ and 2 land: at that point it is a larger target than the join.
 correctness-of-cost-model failure that S1 reduces but does not prove absent;
 fix 4 is 1.85% for an hour's work and it corrects a comment in `ematch.rs:30-34`
 that claims the disabled counter costs zero.
+
+## Addendum, 2026-08-16: the state after the selectivity fix, and one correction
+
+Re-measures the same benchmark at `5289140`, the first commit carrying both of
+the audit's top two fixes (S1 measured selectivity in `16ddfea`,
+`completion_column` memoized in `84af7d6`), then records what nine further
+changes did. Same machine, same efficiency-core placement, same `ipcwrap`
+counters, egglog re-measured in the same session. The sections above are the
+record of an earlier commit and are left as written.
+
+### A'. The gap at `5289140`
+
+| configuration | instructions | cycles | IPC | wall |
+|---|---|---|---|---|
+| ours at `5289140` | 6.89 G | 1.96 G | 3.52 | 758 ms |
+| egglog | 5.74 G | 1.35 G | 4.25 | 524 ms |
+
+Section A measured a 19.6x instruction gap. At this commit it is 1.20x, and
+the cycle gap is 1.45x. The verdict "compute-bound, and it is not close" was
+true of the configuration it described and is no longer true here: with the
+instruction counts within 20% of each other, IPC is half the remaining gap.
+
+### B'. Where the instructions go, by phase
+
+`proc_pid_rusage` read around each stage of `saturate_spec` in a private clone.
+The probe costs 5,887 instructions and is called 825 times over the run, so it
+accounts for 0.14% of what it measures. Phases sum to 96.5% of the total; the
+remainder is parsing, sort checking, and the `print-size` and `print-stats`
+commands the benchmark ends with.
+
+| phase | instructions | share | cycles |
+|---|---|---|---|
+| apply and term construction | 3.43 G | 49.6% | 960 M |
+| matching | 2.82 G | 40.7% | 793 M |
+| index build | 237 M | 3.4% | 73 M |
+| rebuild | 188 M | 2.7% | 60 M |
+| outside the saturation loop | 242 M | 3.5% | 52 M |
+| query planning | 3.6 M | 0.05% | 1.0 M |
+| index statistics | 0.1 M | 0.00% | 0.05 M |
+
+The audit's closing prediction holds: term construction is the larger half,
+and it is untouched by every fix ranked above.
+
+The trailing print commands are 220 M of our instructions and 50 M of our
+cycles, measured by deleting them from the program. They are 430 M and 89 M of
+egglog's, so they are not a source of the gap and both engines keep them.
+
+### C'. Correction: fix 3 is worth 19% of cycles, not nothing
+
+Section D concluded that dropping `ByOp` "is worth 1.55x when the plan is wrong
+and exactly nothing when it is right", on the evidence of `P2` measured under
+the `P5` root-driven counterfactual. **That conclusion does not transfer to the
+order the selectivity constants actually choose, and the ranked list understated
+fix 3 by a factor it can be measured at.** Chapter 20 records the chosen plan:
+it scans `Mul`, joins `Add` through `by_child_pos`, and re-joins the second
+`Mul` through `by_repr`. Two of those three joins intersect a bound-child bucket
+with the whole `Add` or `Mul` relation, where `P5`'s remaining joins intersected
+`ByRepr` buckets of 2.51 entries. Measured at `5289140`: 6.89 G to 6.35 G
+instructions, 1.96 G to 1.59 G cycles, 758 to 615 ms, with match steps and node
+counts identical.
+
+The general lesson is narrower than "P2 is neutral": a whole-relation cursor
+costs nothing only when every other cursor in its ring is already small, and
+whether that holds is a property of the plan the cost model picks, not of the
+cost model being correct.
+
+### D'. Changes measured and landed
+
+Each row is the cumulative state after that commit, rules encoding, and each
+was checked to leave match steps at 7,284,276 and the final node count at
+1,233,013. All twenty programs under `comparison/` were also checked node for
+node and step for step against `5289140`.
+
+| commit | change | instructions | cycles | wall |
+|---|---|---|---|---|
+| `5289140` | base | 6.89 G | 1.96 G | 758 ms |
+| `790ba05` | `ByOp` demoted to a per-candidate operator test | 6.35 G | 1.593 G | 615 ms |
+| `e32feda` | per-round `op[id]` table beside `repr[id]` | 6.21 G | 1.575 G | 608 ms |
+| `9c6f2aa` | hash-cons entry 16 bytes to 8 | 6.19 G | 1.552 G | 601 ms |
+| `e87ebaf` | match-step counter off the per-step thread-local | 6.00 G | 1.540 G | 596 ms |
+| `d92a86e` | index buckets filled in place, no map rebuild | 5.95 G | 1.515 G | 586 ms |
+| `d9357e6` | fan-out pass reads the `op` table | 5.94 G | 1.514 G | 585 ms |
+| `8c62891` | per-op facts of a new node derived once | 5.83 G | 1.490 G | 576 ms |
+| `a838f08` | one `extend` per match instead of one push per variable | 5.79 G | 1.489 G | 576 ms |
+| `96d222e` | bound node handed to `add` without canonicalizing first | 5.54 G | 1.467 G | 567 ms |
+
+### E'. Final state
+
+Seven interleaved runs of each engine, medians:
+
+| | instructions | cycles | IPC | wall |
+|---|---|---|---|---|
+| ours | 5.539 G | 1.467 G | 3.78 | 566.7 ms |
+| egglog | 5.741 G | 1.352 G | 4.25 | 523.8 ms |
+| ratio | 0.965 | 1.085 | 0.89 | 1.082 |
+
+**We now retire 3.5% fewer instructions than egglog and take 8.2% longer.**
+Chapter 20's acceptance is within 10% of egglog's wall time on the rules
+encoding, and 566.7 ms against 523.8 ms is 8.2%: met.
+
+**The verdict inverts.** Section A's discriminating measurement concluded that
+no re-layout could close a gap of the shape it saw, because the gap was
+instruction count. The instruction count is now below egglog's and the entire
+residual is IPC, 3.78 against 4.25. The re-layout items this file listed and
+did not implement (R2, arena-backed index buckets; R3, a class-indexed
+`by_child_pos`) are the list that applies from here, together with the use-list
+layout below. Whether any of them is worth its cost is a measurement, not an
+inference, and none of them has been made.
+
+### F'. Proposed, not landed: append to prepend on the class use-list
+
+`ListArena::try_append` is 14% of the profile at the end of this work, and it
+is the largest single item. An append reads the list head, pushes the new node
+at the arena's end, then reads and rewrites the old tail node to link it
+forward: two random locations. A prepend links the new node to the old head and
+rewrites only the head: one. The use-list has no order contract that any
+consumer reads.
+
+Measured on top of `96d222e` by swapping `EClasses::add_use` from
+`ListArena::try_append` to `ListArena::try_prepend`, which is already verified
+with the same postconditions: 5.539 G to 5.488 G instructions, 1.467 G to
+1.410 G cycles, 567 to 552 ms. That is 1.054 of egglog's wall time. Match steps
+7,284,276 and final node count 1,233,013, unchanged; the e-graph library tests
+(639), the AU differential fixture (5) and the egg fixtures (99) all pass.
+
+It is not landed because `EClasses::add_use`'s proof body asserts the appended
+list shape directly (`um == oum.update(li, oum[li].push(oun.len()))`, and an
+index case split on `um[l].len() - 1`), and the prepend obligations are
+`seq![oun.len()] + oum[li]` with the indices shifted by one. Rewriting those
+two blocks is mechanical, but Verus is not installed on this machine and
+`verus.yml` verifies this crate, so the rewrite cannot be checked here. It is
+the next change to make, and it is the one that would take the rules encoding
+inside 6% of egglog.

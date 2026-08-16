@@ -226,3 +226,41 @@ equivalence protocol, and a before/after on math-microbenchmark plus one
 delta-heavy incremental workload (to be added beside the comparison
 pilots: repeated small-edit re-saturation under mark/restore, the shape
 S2 exists for).
+
+## Convergence target met (2026-08-16)
+
+Acceptance (a) is met on the rules encoding: 566.7 ms against egglog's
+523.8 ms, 8.2%, medians of seven interleaved runs on the machine and
+under the placement `comparison/hotpath-audit.md` describes. The nine
+changes that took it there are recorded with per-commit numbers in that
+file's 2026-08-16 addendum; the summary is 6.89 G to 5.54 G instructions
+and 1.96 G to 1.47 G cycles from `5289140`, with match steps and final
+node counts identical on all twenty programs under `comparison/`.
+
+The lever list above needs two corrections.
+
+**Lever (3), dropping `ByOp` from a join that has a bound-child lookup,
+was priced at nothing post-S1 and is worth 19% of cycles.** The
+prediction came from measuring it against the `P5` root-driven
+counterfactual, whose remaining joins intersect `by_repr` buckets of 2.51
+entries. The order S1's constants actually choose is the one printed
+above: two of its three joins intersect a bound-child bucket with a whole
+relation, and the whole-relation cursor is a doubling gallop plus a
+bisection per partial match. Landed as `790ba05`.
+
+**Lever (3)'s premise, that the residual is instruction count, no longer
+holds.** The audit's verdict was compute-bound at 19.6x instructions, and
+it was right about that configuration. We now retire 5.54 G instructions
+against egglog's 5.74 G, 0.965x, and take 1.082x their wall time: the
+whole residual is IPC, 3.78 against 4.25. From here the levers that can
+still pay are the re-layouts the audit listed and did not implement (R2,
+arena-backed index buckets; R3, a class-indexed `by_child_pos`), plus the
+class use-list, which is 14% of the profile and whose append does two
+random memory accesses where a prepend does one. The prepend is measured
+at 552 ms, 1.054 of egglog, and is blocked on re-verifying
+`EClasses::add_use`, whose proof body asserts the appended list shape.
+
+S3 (per-binding driver selection inside the leapfrog seek) is still
+unmeasured and still the right next matching change, but it now attacks a
+smaller target: after `790ba05` the leapfrog seek is 5.2% of the profile
+where the audit measured it at 26.3%.
