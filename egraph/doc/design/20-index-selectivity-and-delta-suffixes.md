@@ -101,6 +101,23 @@ S1+S3 have a measured residual that justifies it; the measured ceiling of
 the whole rules path today is 1.75x of egglog with only the order fixed,
 so the expected value of S4 is bounded and small.
 
+## Convergence target (2026-08-15)
+
+The program's acceptance is now: (a) within 10% of egglog wall clock on
+non-canonizing workloads, i.e. the shared rules encoding, on the
+intersection benchmarks; (b) demonstrated separation under native AC
+canonization, as a width-scaling sweep of the add-ac block (n = 7..20):
+the rules encoding and egglog grow super-linearly in the sum width while
+native AC stays flat. Budget arithmetic for (a) on math-microbenchmark:
+egglog's 508 ms includes 218 ms rebuild; their matching+apply is ~300 ms.
+Post-S1 we project ~890 ms with ~25 ms rebuild, so the matching path needs
+about another 2x beyond S1. Levers in order: S3 per-binding drivers,
+LeapfrogJoin::new setup and its per-partial-match insertion sort (5.1%),
+the TLS match-step counter read (2.3%), and inner-loop constants in
+LeapfrogJoin::search (52% self time). The semi-naive access-path audit
+(delta-specific indexes, delta-driven ordering, AC id churn) gates any
+semi-naive claim.
+
 ## Order and gates
 
 S1 first (with its prerequisite characterization), then S2 and S3 in
