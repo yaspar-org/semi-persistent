@@ -47,6 +47,16 @@ internal restore-versus-re-run baseline that needs no cross-engine caveat, and
 not establish, which includes the asymptotic separation the experiment was
 designed to find.
 
+`span-table-sparsity.md` prices the `O(num_keys)` term in the per-round index
+build and states the design that removes it: at S = 1e6 the span tables are
+40.6 ms of a 65.4 ms index build because they are dense over a key space 2.44x
+the values it holds, and installing a semi-naive delta costs 19.6 ms to make 23
+values addressable. `run-span-table.py` regenerates every number in it and gates
+the two prototypes on corpus identity. That document also retracts the cost claim
+in `containers-verus/doc/design/16-layered-span-map.md` section 4 and the
+semi-naive column of `semi-persistence/semi-persistence.md` section 5; read it
+before citing either.
+
 Read the ledgers before the numbers. `math-microbenchmark.deviations.md` in particular
 records a deviation large enough to change how its native column may be read: eleven of
 its rules are restated in n-ary form, because a binary pattern against a variadic AC

@@ -133,13 +133,27 @@ where
         if goal_met(spec, eg) {
             return sat_result(i, false, true, steps_base);
         }
-        eg.rebuild();
-        let index = IndexStore::build_with(eg, &mut scratch);
-        let stats = crate::schedule::IndexStats::from_index(&index);
-        let mut changes = 0;
-        for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
-            changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
+        {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
+            eg.rebuild();
         }
+        let index = {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
+            IndexStore::build_with(eg, &mut scratch)
+        };
+        let mut changes = 0;
+        {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
+            let stats = {
+                let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                crate::schedule::IndexStats::from_index(&index)
+            };
+            for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
+                changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
+            }
+        }
+        crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
+        crate::phase_timing::round_line("naive");
         if changes == 0 {
             return sat_result(i + 1, true, false, steps_base);
         }
@@ -365,22 +379,34 @@ where
         if goal_met(spec, eg) {
             return sat_result(i, false, true, steps_base);
         }
-        eg.rebuild();
-        let full = IndexStore::build_with(eg, &mut scratch);
+        {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
+            eg.rebuild();
+        }
+        let full = {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
+            IndexStore::build_with(eg, &mut scratch)
+        };
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
         let delta = if i == 0 {
             None
         } else {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::DELTA);
+            crate::phase_timing::count(crate::phase_timing::C_ROUNDS_DELTA, 1);
             Some(IndexStore::build_delta_with(eg, eg.touched(), &mut scratch))
         };
         eg.clear_touched();
 
+        let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
         let mut changes = 0;
         match &delta {
             // Round 0: naive — the whole graph is new.
             None => {
-                let stats = IndexStats::from_index(&full);
+                let stats = {
+                    let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                    IndexStats::from_index(&full)
+                };
                 let vindex = VariantIndex::naive(&full);
                 for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     changes +=
@@ -389,7 +415,10 @@ where
             }
             // Rounds ≥ 1: one variant per join atom.
             Some(delta) => {
-                let full_stats = IndexStats::from_index(&full);
+                let full_stats = {
+                    let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                    IndexStats::from_index(&full)
+                };
                 for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     let jatoms = join_atom_indices(&rule.query);
                     if jatoms.is_empty() {
@@ -408,7 +437,11 @@ where
                         continue;
                     }
                     for &di in &jatoms {
-                        let stats = variant_stats(&rule.query, di, &full, delta);
+                        let stats = {
+                            let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                            crate::phase_timing::count(crate::phase_timing::C_VARIANTS, 1);
+                            variant_stats(&rule.query, di, &full, delta)
+                        };
                         let vindex = VariantIndex::variant(&full, delta, di);
                         changes +=
                             run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
@@ -416,6 +449,9 @@ where
                 }
             }
         }
+        match_timer.stop();
+        crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
+        crate::phase_timing::round_line(if delta.is_some() { "semi" } else { "semi-r0" });
 
         if changes == 0 {
             return sat_result(i + 1, true, false, steps_base);

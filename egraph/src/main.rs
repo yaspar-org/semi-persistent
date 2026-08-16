@@ -200,6 +200,11 @@ fn main() {
         (63, true) => dispatch!(semi_persistent_egraph::nodes::Config64, true),
         _ => unreachable!(),
     }
+
+    // Prints only under the `phase-timing` feature with `EGRAPH_PHASE` set; a
+    // no-op call otherwise. Placed after the dispatch rather than inside `run`
+    // so a program that ends in `(pop)` still reports the rounds it ran.
+    semi_persistent_egraph::phase_timing::dump();
 }
 
 fn run<Cfg, L, M, const PROOFS: bool>(

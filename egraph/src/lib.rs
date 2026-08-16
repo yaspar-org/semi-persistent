@@ -37,11 +37,13 @@ pub mod node_store;
 pub mod node_types;
 pub mod nodes;
 pub mod parser;
+pub mod phase_timing;
 pub mod registry;
 pub mod resolve;
 pub mod saturate;
 pub mod schedule;
 pub mod sortcheck;
+pub mod span_proto;
 pub mod surface_ast;
 #[cfg(test)]
 pub(crate) mod test_helpers;
