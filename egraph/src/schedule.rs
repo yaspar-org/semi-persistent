@@ -339,20 +339,7 @@ pub fn schedule_with_stats<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone
     let mut used = vec![false; rq.atoms.len()];
     loop {
         // Eager pass: Eq, Lit, already-bound nodes.
-        let mut progress = true;
-        while progress {
-            progress = false;
-            for ai in 0..rq.atoms.len() {
-                if used[ai] {
-                    continue;
-                }
-                if let Some(eager) = try_eager_lower(&rq.atoms[ai], ai, &mut bound) {
-                    steps.extend(eager);
-                    used[ai] = true;
-                    progress = true;
-                }
-            }
-        }
+        lower_eager(&rq.atoms, &mut used, &mut bound, &mut steps);
 
         // Pick cheapest unprocessed atom.
         // `min_by` over an `f64` cost: the estimate is an expected cardinality,
@@ -409,7 +396,36 @@ fn emit_read_children<O: DenseId + Hash + Copy, S, V, I: IndexLike>(
     }
 }
 
-fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
+/// Run the eager pass to fixpoint: lower every atom the current bindings make
+/// free (see [`try_eager_lower`]), marking each one used and binding whatever it
+/// binds, until no unused atom is free any more.
+///
+/// Shared by the static scheduler's Phase A and the runtime-scheduled matcher,
+/// which reaches the same fixpoint at each of its decision points before it
+/// costs the remaining atoms.
+pub(crate) fn lower_eager<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
+    atoms: &[RAtom<O, S, V>],
+    used: &mut [bool],
+    bound: &mut [bool],
+    steps: &mut Vec<Step<O, I, V>>,
+) {
+    let mut progress = true;
+    while progress {
+        progress = false;
+        for ai in 0..atoms.len() {
+            if used[ai] {
+                continue;
+            }
+            if let Some(eager) = try_eager_lower(&atoms[ai], ai, bound) {
+                steps.extend(eager);
+                used[ai] = true;
+                progress = true;
+            }
+        }
+    }
+}
+
+pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
     atom: &RAtom<O, S, V>,
     atom_id: usize,
     bound: &mut [bool],

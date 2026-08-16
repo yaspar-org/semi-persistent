@@ -154,33 +154,40 @@ fn run_with<
 fn check(path: &str) {
     let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
     let directives = parse_directives(&src);
-    for strategy in directives.evals.iter().copied() {
-        let (expect, results) = run_egg_file(path, strategy, &directives);
-        let output = results.join("\n");
-        match expect.as_str() {
-            "ok" => assert!(
-                output.starts_with("ok"),
-                "{path} [{strategy:?}]: expected ok, got: {output}"
-            ),
-            "check-failed" => assert!(
-                output.contains("check failed"),
-                "{path} [{strategy:?}]: expected check-failed, got: {output}"
-            ),
-            "parse-error" => assert!(
-                output.contains("parse-error"),
-                "{path} [{strategy:?}]: expected parse-error, got: {output}"
-            ),
-            "error" => assert!(
-                output.starts_with("error"),
-                "{path} [{strategy:?}]: expected error, got: {output}"
-            ),
-            "sort-error" => assert!(
-                output.starts_with("sort-error"),
-                "{path} [{strategy:?}]: expected sort-error, got: {output}"
-            ),
-            other => panic!("{path}: unknown EXPECT directive: {other}"),
+    // Every file runs under both atom-scheduling modes as well as under both
+    // evaluation strategies. The scheduling flag may not change what a program
+    // computes — only how long it takes to compute it (design chapter 20, S4) —
+    // and a whole-program outcome over a hundred and seven files is the
+    // broadest statement of that available.
+    for runtime in [false, true] {
+        semi_persistent_egraph::ematch::set_runtime_scheduling(runtime);
+        for strategy in directives.evals.iter().copied() {
+            let (expect, results) = run_egg_file(path, strategy, &directives);
+            let output = results.join("\n");
+            let at = format!("{path} [{strategy:?}, runtime_scheduling={runtime}]");
+            match expect.as_str() {
+                "ok" => assert!(output.starts_with("ok"), "{at}: expected ok, got: {output}"),
+                "check-failed" => assert!(
+                    output.contains("check failed"),
+                    "{at}: expected check-failed, got: {output}"
+                ),
+                "parse-error" => assert!(
+                    output.contains("parse-error"),
+                    "{at}: expected parse-error, got: {output}"
+                ),
+                "error" => assert!(
+                    output.starts_with("error"),
+                    "{at}: expected error, got: {output}"
+                ),
+                "sort-error" => assert!(
+                    output.starts_with("sort-error"),
+                    "{at}: expected sort-error, got: {output}"
+                ),
+                other => panic!("{path}: unknown EXPECT directive: {other}"),
+            }
         }
     }
+    semi_persistent_egraph::ematch::set_runtime_scheduling(false);
 }
 
 fn check_panic(path: &str) {

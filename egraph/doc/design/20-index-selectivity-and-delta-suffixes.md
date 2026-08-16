@@ -270,14 +270,109 @@ runs only under release codegen, following the binary-search canary in
 `e2eb260` on all twenty programs under `comparison/` in both the naive and the
 semi-naive driver.
 
-## S4. Postponed: stage-level re-sorting (free-join style)
+## S4. Per-binding atom scheduling
 
 Re-sorting whole join stages by live candidate size, as egglog does before
-the join and every third stage, requires moving from LFTJ's fixed variable
-order to stage-structured execution: a real engine change. Postponed until
-S1+S3 have a measured residual that justifies it; the measured ceiling of
-the whole rules path today is 1.75x of egglog with only the order fixed,
-so the expected value of S4 is bounded and small.
+the join and every third stage, was postponed on the argument that it
+requires moving from LFTJ's fixed variable order to stage-structured
+execution. That argument is right about stages and wrong about atoms. An
+atom's join binds one variable, and which atom binds next is a choice the
+executor can make as cheaply at depth 5 as the planner makes it at compile
+time — the state it needs is which atoms are used and which variables are
+bound, two masks. The atom order is also the part of the plan every
+measurement in this chapter is about.
+
+**Implemented 2026-08-16, flag-guarded, default off.**
+`ematch::set_runtime_scheduling`, or `--runtime-scheduling` on the CLI. With
+the flag off the matcher runs the precompiled step array and every corpus
+number below is unchanged to the digit.
+
+**What it does.** With the flag on there is no precompiled step array. The
+executor runs the two phases of the scheduling loop (chapter 08) at each
+depth, against the environment rather than against the round's averages:
+the eager pass to fixpoint, then the unused atom whose join opens the
+shortest bucket under the current bindings. The price is a `len` on each of
+the atom's lookups — `by_repr[env[node]]`, `by_child_pos[(env[child], pos)]`,
+`by_contains[env[elem]]`, `by_op[op]` — resolved in the slice the atom's
+semi-naive mode reads, and it is a bound on the candidates the leapfrog
+intersection can propose, exact when the join has one lookup. Ties keep the
+lowest atom index, so the choice is a function of the bindings and the atom
+numbering. Nothing else changes: each atom still lowers through `emit_atom`,
+so an AC atom's `ExpandA`/`DecomposeAC` sequence stays one block, and the
+delta restriction is still per atom and position-independent
+(`VariantIndex::mode` reads the compile-time numbering), which
+`saturate::variants_disjoint_and_complete` now asserts under both modes.
+
+Two implementation decisions worth recording. **Lowering is memoized per
+`(atom, bound-mask, used-mask)`**, because `emit_atom`'s output is a
+function of exactly those and a run reaches few of them — a handful for a
+three-atom rule — so the blocks are lowered once and re-entered by refcount
+thereafter; the memo is a linear-scanned vector, since comparing three words
+over a few entries beats hashing one on the per-partial-match path. **The
+choice is re-made per binding, not batched.** Batching every B bindings was
+the fallback if the decision showed up in the wall clock; it does show up
+(below), but re-deciding is what the flag is for, and the residual is better
+spent on the double bucket resolution the decision and `run_join` currently
+do than on deciding less often.
+
+**Where it wins.** The workload the postponement did not have:
+`tests/ematch_runtime_schedule.rs` builds `(f x y) (p w x) (q y v)` over an
+e-graph where each `f` node has exactly one of its two probe buckets
+populated, half on `x` and half on `y`. Both schedulers drive from `f`; a
+plan-time order then commits to one probe atom and walks its `fan` nodes on
+the half of the bindings where the other atom's bucket is empty. Match steps
+and median wall per query, release, Apple M4 Pro, 1 024 `f` nodes:
+
+| fan | steps off | steps on | ratio | wall off | wall on | ratio |
+|---|---|---|---|---|---|---|
+| 1 | 3 121 | 3 121 | 1.00 | 0.075 ms | 0.108 ms | 0.69 |
+| 4 | 9 217 | 3 121 | 2.95 | 0.213 ms | 0.119 ms | 1.79 |
+| 16 | 27 505 | 3 121 | 8.81 | 0.568 ms | 0.121 ms | 4.69 |
+| 64 | 100 657 | 3 121 | 32.25 | 1.987 ms | 0.122 ms | 16.28 |
+| 256 | 393 265 | 3 121 | 126.01 | 7.850 ms | 0.126 ms | 62.45 |
+
+The steps-on column is flat because the per-binding order opens the empty
+bucket first at every binding, whatever the other one holds. The gate is the
+step count at `fan = 64`, stated at 10x so that it fails on a regression
+rather than on noise; the wall figure is a release-only canary, following the
+operator-restriction canary above.
+
+**Where it does not.** The `fan = 1` row is the honest one: the two orders
+cost the same steps, the choice is made 1 024 times for nothing, and the run
+is 1.4x slower. The same shows on the workload S1 was fitted to, where the
+plan-time order is already good — math-microbenchmark, medians of fifteen
+interleaved runs, ranges in brackets:
+
+| encoding | steps off | steps on | wall off | wall on |
+|---|---|---|---|---|
+| rules | 7 284 276 | 6 759 733 | 626.0 ms [612.5-632.7] | 629.0 ms [615.9-642.6] |
+| native | 3 074 106 | 3 077 307 | 596.0 ms [578.0-604.8] | 614.8 ms [600.8-629.6] |
+
+The rules encoding finds 7.2% fewer steps and gives them straight back to the
+decision, landing inside the run-to-run spread; the native encoding has
+nothing to find and pays 3.2%. Both are consistent with the reading that the
+per-binding decision costs about what one avoided partial match saves, and
+with the audit's verdict that this path is compute-bound: the decision
+resolves each candidate atom's buckets and `run_join` then resolves the
+winner's again, which is the obvious thing to remove before the flag is
+worth turning on by default.
+
+The flag changes no match set. Node counts are identical to `9e3da18` on all
+twenty programs under `comparison/` in the naive driver, the hundred and
+seven files of `tests/egg/` run under both scheduling modes and both
+evaluation strategies, and `ematch::match_keys` — the differential helper
+behind the snapshot-semantics tests — now runs the adaptive push engine
+against the static pull engine, which share neither a control structure nor
+an atom order. Under semi-naive the corpus node counts move on six of twenty
+programs; so do naive's against semi-naive's with the flag off (addac-n7:
+501 against 531), because a `:until` goal stops the run as soon as it holds
+and a different application order reaches it at a different point. What is
+invariant there is the match set, and that is what
+`variants_disjoint_and_complete` asserts directly.
+
+What is still not implemented is what S4 originally named: egglog's
+re-sorting of whole stages, which would reorder the variables inside an
+atom's join and not just the atoms. Nothing measured so far asks for it.
 
 ## Convergence target (2026-08-15)
 

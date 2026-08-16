@@ -405,7 +405,7 @@ where
 use crate::EGraphConfig;
 use crate::canon::{MSetCanon, VarCanon};
 use crate::egraph::EGraph;
-use crate::ematch::{MatchPool, run_query_into};
+use crate::ematch::{MatchPool, run_query_scheduled_into};
 use crate::index::IndexStore;
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
@@ -723,7 +723,7 @@ where
 {
     let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     let vindex = crate::index::VariantIndex::naive(index);
-    run_query_into(&plan, eg, &vindex, globals, pool);
+    run_query_scheduled_into(&rule.query, &plan, eg, &vindex, globals, pool);
     let mut changes = 0;
     for j in 0..pool.len() {
         let mut row = pool.row_mut(j);

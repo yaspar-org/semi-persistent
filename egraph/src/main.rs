@@ -54,6 +54,12 @@ struct Cli {
     /// Off by default; enabling it has negligible cost and needs no rebuild.
     #[arg(long, default_value_t = false)]
     count_match_steps: bool,
+
+    /// Choose each rule's atom order per binding, from the live bucket lengths,
+    /// instead of once per round from the index averages. Off by default; the
+    /// match set is the same either way (design chapter 20, S4).
+    #[arg(long, default_value_t = false)]
+    runtime_scheduling: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +138,7 @@ fn main() {
                     cli.derive_ac_eqs,
                     cli.check_ac_basis,
                     cli.count_match_steps,
+                    cli.runtime_scheduling,
                 ),
                 LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
                     &surface_cmds,
@@ -140,6 +147,7 @@ fn main() {
                     cli.derive_ac_eqs,
                     cli.check_ac_basis,
                     cli.count_match_steps,
+                    cli.runtime_scheduling,
                 ),
                 LitValChoice::All => run::<$Cfg, AllLit, AllModel, $proofs>(
                     &surface_cmds,
@@ -148,6 +156,7 @@ fn main() {
                     cli.derive_ac_eqs,
                     cli.check_ac_basis,
                     cli.count_match_steps,
+                    cli.runtime_scheduling,
                 ),
             }
         };
@@ -169,6 +178,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     cc: bool,
     basis_checks: bool,
     count_match_steps: bool,
+    runtime_scheduling: bool,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
     Cfg::O: std::hash::Hash,
@@ -180,6 +190,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     if count_match_steps {
         semi_persistent_egraph::ematch::set_match_step_counting(true);
     }
+    semi_persistent_egraph::ematch::set_runtime_scheduling(runtime_scheduling);
     let mut interp =
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
     interp.set_strategy(strategy);
