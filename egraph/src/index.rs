@@ -331,7 +331,7 @@ where
         finalize(&mut by_child_pos);
         finalize(&mut by_contains);
         let fanouts = if full {
-            Self::measure_fanouts(eg, &by_repr, &by_child_pos, &by_contains, indexed)
+            Self::measure_fanouts(&op_tab, &by_repr, &by_child_pos, &by_contains, indexed)
         } else {
             FanOuts::default()
         };
@@ -358,8 +358,12 @@ where
     /// by three orders of magnitude. The tally is an array indexed by the
     /// operator's dense id, so a bucket costs one increment per parent and no
     /// hashing.
-    fn measure_fanouts<L: LitVal, const TRACK: bool, const PROOFS: bool>(
-        eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    ///
+    /// The operator of each bucket entry comes from `op_tab` — the [`op`](Self::op)
+    /// table this build just filled — rather than from `EGraph::node_op`: the
+    /// pass visits every bucket entry, which is several times the node count.
+    fn measure_fanouts(
+        op_tab: &[Cfg::O],
         by_repr: &FastMap<Cfg::G, SortedVec<Cfg::G>>,
         by_child_pos: &FastMap<(Cfg::G, Cfg::Index), SortedVec<Cfg::G>>,
         by_contains: &FastMap<Cfg::G, SortedVec<Cfg::G>>,
@@ -378,7 +382,7 @@ where
             |bucket: &SortedVec<Cfg::G>, tally: &mut Vec<u32>, touched: &mut Vec<usize>| {
                 touched.clear();
                 for &gid in bucket.as_slice() {
-                    let o = eg.node_op(gid).to_usize();
+                    let o = op_tab[gid.to_usize()].to_usize();
                     if o >= tally.len() {
                         tally.resize(o + 1, 0);
                     }
