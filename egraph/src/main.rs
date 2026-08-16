@@ -60,6 +60,26 @@ struct Cli {
     /// match set is the same either way (design chapter 20, S4).
     #[arg(long, default_value_t = false)]
     runtime_scheduling: bool,
+
+    /// Price a bound key by sampling the emitter atom's relation instead of by
+    /// the round's size-biased mean fan-out. Off by default; the match set is
+    /// the same either way (design chapter 20, S5).
+    #[arg(long, default_value_t = false)]
+    sampled_selectivity: bool,
+
+    /// Emitter nodes drawn per sampled estimate. Needs --sampled-selectivity.
+    #[arg(long, default_value_t = 32)]
+    sampler_k: usize,
+
+    /// Bootstrap resamples guarding each sampled estimate; 0 disables the
+    /// guard. Needs --sampled-selectivity.
+    #[arg(long, default_value_t = 0)]
+    sampler_bootstrap: usize,
+
+    /// Bootstrap coefficient of variation above which a sampled estimate is
+    /// discarded for the mean. Needs --sampler-bootstrap.
+    #[arg(long, default_value_t = 1.0)]
+    sampler_cv: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +147,17 @@ fn main() {
     }
 
     let choice = choose_litval(&groups);
+
+    // Set here rather than threaded into `run`: the flag is thread-local and
+    // the whole run happens on this thread, as `--runtime-scheduling` does one
+    // frame down.
+    semi_persistent_egraph::schedule::set_sampled_selectivity(cli.sampled_selectivity.then_some(
+        semi_persistent_egraph::schedule::SamplerConfig {
+            k: cli.sampler_k,
+            bootstrap: cli.sampler_bootstrap,
+            cv_threshold: cli.sampler_cv,
+        },
+    ));
 
     macro_rules! dispatch {
         ($Cfg:ty, $proofs:expr) => {
@@ -219,5 +250,9 @@ fn run<Cfg, L, M, const PROOFS: bool>(
             "match steps: {}",
             semi_persistent_egraph::ematch::match_steps()
         );
+        let (taken, rejected) = semi_persistent_egraph::schedule::sample_tally();
+        if taken > 0 {
+            eprintln!("sampled estimates: {taken}, guard fallbacks: {rejected}");
+        }
     }
 }

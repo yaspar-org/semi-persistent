@@ -123,8 +123,11 @@ impl<G: DenseId> SortedVec<G> {
 /// random", which no probe does, and on a distribution with one hub bucket of
 /// size H among K singletons it reports about 1 where the size-biased mean
 /// reports about H. Chapter 20's Fact 2 still applies: this is one number per
-/// path, so it prices the *expected* probe and not the individual one, and the
-/// variance is what per-binding driver selection (S3) is for.
+/// path, so it prices the *expected* probe and not the individual one. Two
+/// refinements attack that from opposite ends: per-binding driver selection
+/// (S3) at execution, and sampled cross-index selectivity (S5) at plan time,
+/// which replaces this number with the mean bucket the emitter atom's own keys
+/// select. See [`IndexSampler`].
 #[derive(Clone, Debug)]
 pub struct FanOuts<O> {
     /// Nodes in the class a `ByRepr` probe lands in.
@@ -509,12 +512,20 @@ pub enum IndexMode {
 /// Not a new abstraction — just the bundle the matcher needs in place of a
 /// bare `&IndexStore`. A `delta_atom` of `None` is the **naive** view: every
 /// atom reads `full` (and `delta` is never consulted).
-#[derive(Clone, Copy)]
 pub struct VariantIndex<'a, Cfg: EGraphConfig> {
     pub full: &'a IndexStore<Cfg>,
     pub delta: &'a IndexStore<Cfg>,
     pub delta_atom: Option<usize>,
 }
+
+// Hand-written rather than derived: a derive would bound `Cfg: Clone`, and the
+// view is three references whatever `Cfg` is.
+impl<Cfg: EGraphConfig> Clone for VariantIndex<'_, Cfg> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<Cfg: EGraphConfig> Copy for VariantIndex<'_, Cfg> {}
 
 impl<'a, Cfg: EGraphConfig> VariantIndex<'a, Cfg> {
     /// Naive view: every atom reads `full`. `delta` is aliased to `full` and
@@ -551,6 +562,145 @@ impl<'a, Cfg: EGraphConfig> VariantIndex<'a, Cfg> {
             Some(i) if atom_id < i => IndexMode::FullMinusDelta,
             Some(_) => IndexMode::Full,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plan-time sampling
+// ---------------------------------------------------------------------------
+
+/// Entries of a bucket read to estimate its operator-restricted length.
+///
+/// `by_child_pos` and `by_contains` are keyed by child class alone while every
+/// join intersects them with `by_op[op]`, so the length the scheduler needs is
+/// the bucket restricted to one operator — the same quantity
+/// [`IndexStore::measure_fanouts`] tallies, and for the same reason: the two
+/// operators of one query differ in it by three orders of magnitude. Counting
+/// it exactly is a pass over the bucket, which on a hub class is hundreds of
+/// thousands of loads for one sampled key. Past this many entries the count is
+/// taken over an evenly-strided subsample of the bucket and scaled back up,
+/// which is the estimator the emitter draw already is, applied once more.
+const PROBE_SCAN_CAP: usize = 256;
+
+/// [`CrossSampler`] over one round's indices: the implementation the scheduler
+/// gets its samples from.
+///
+/// Emitter draws come from the slice the atom's semi-naive mode reads, which is
+/// the relation it will actually enumerate. Probe buckets come from the full
+/// index in every mode, matching [`FanOuts`], which the full build measures and
+/// every variant prices against: a variant's delta shows up in the atom's base
+/// cardinality, and applying it again to the probe would charge it twice.
+///
+/// [`CrossSampler`]: crate::schedule::CrossSampler
+pub struct IndexSampler<'a, Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool> {
+    eg: &'a EGraph<Cfg, L, TRACK, PROOFS>,
+    index: VariantIndex<'a, Cfg>,
+}
+
+impl<'a, Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
+    IndexSampler<'a, Cfg, L, TRACK, PROOFS>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    pub fn new(eg: &'a EGraph<Cfg, L, TRACK, PROOFS>, index: VariantIndex<'a, Cfg>) -> Self {
+        Self { eg, index }
+    }
+
+    /// The class of `id` as the round's buckets are keyed, mirroring
+    /// `ematch::canon`: the build's mapping where it has one, the live
+    /// union-find for an id minted after the build.
+    #[inline]
+    fn canon(&self, id: Cfg::G) -> Cfg::G {
+        match self.index.full.round_repr(id) {
+            Some(r) => r,
+            None => self.eg.find_const(id),
+        }
+    }
+
+    /// Nodes of `op` in `bucket`, exactly when the bucket is short enough and
+    /// by a strided subsample scaled to the bucket's length when it is not.
+    fn op_restricted(&self, bucket: &SortedVec<Cfg::G>, op: Cfg::O) -> usize {
+        let s = bucket.as_slice();
+        let n = s.len();
+        let op_tab = &self.index.full.op;
+        let hits = |g: &Cfg::G| op_tab.get(g.to_usize()).is_some_and(|&o| o == op);
+        if n <= PROBE_SCAN_CAP {
+            return s.iter().filter(|g| hits(g)).count();
+        }
+        let seen = (0..PROBE_SCAN_CAP)
+            .filter(|j| hits(&s[j * n / PROBE_SCAN_CAP]))
+            .count();
+        seen * n / PROBE_SCAN_CAP
+    }
+}
+
+impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
+    crate::schedule::CrossSampler<Cfg::O> for IndexSampler<'_, Cfg, L, TRACK, PROOFS>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    fn driver_sample(&self, atom_id: usize, op: Cfg::O, k: usize, out: &mut Vec<usize>) {
+        out.clear();
+        // `FullMinusDelta` draws from the full side, an upper bound on
+        // `full ∖ delta`, for the reason `ematch::cursor_len` gives: a tighter
+        // draw would cost the overlap, which is the work being priced.
+        let store = match self.index.mode(atom_id) {
+            IndexMode::Delta => self.index.delta,
+            IndexMode::Full | IndexMode::FullMinusDelta => self.index.full,
+        };
+        let Some(bucket) = store.by_op.get(&op) else {
+            return;
+        };
+        let s = bucket.as_slice();
+        let n = s.len();
+        if n == 0 || k == 0 {
+            return;
+        }
+        let take = k.min(n);
+        out.extend((0..take).map(|j| s[j * n / take].to_usize()));
+    }
+
+    fn key_classes(&self, node: usize, site: crate::schedule::KeySite, out: &mut Vec<usize>) {
+        use crate::schedule::KeySite;
+        let g = Cfg::G::from_usize(node);
+        match site {
+            KeySite::Node => out.push(self.canon(g).to_usize()),
+            // Read through `for_each_child` with a position counter, the same
+            // walk `IndexStore::build_from` keys `by_child_pos` with, rather
+            // than `EGraph::child_at`, which panics on a multiset node.
+            KeySite::Child(pos) => {
+                let mut i = 0usize;
+                self.eg.for_each_child(g, |c, _| {
+                    if i == pos {
+                        out.push(self.canon(c).to_usize());
+                    }
+                    i += 1;
+                });
+            }
+            KeySite::Element => {
+                self.eg.for_each_child(g, |c, _| {
+                    let cr = self.canon(c).to_usize();
+                    if !out.contains(&cr) {
+                        out.push(cr);
+                    }
+                });
+            }
+        }
+    }
+
+    fn probe_len(&self, class: usize, path: crate::schedule::ProbePath, op: Cfg::O) -> usize {
+        use crate::schedule::ProbePath;
+        let c = Cfg::G::from_usize(class);
+        let bucket = match path {
+            ProbePath::ChildPos(pos) => {
+                let Some(p) = <Cfg::Index as IndexLike>::try_from_usize(pos) else {
+                    return 0;
+                };
+                self.index.full.by_child_pos.get(&(c, p))
+            }
+            ProbePath::Contains => self.index.full.by_contains.get(&c),
+        };
+        bucket.map_or(0, |b| self.op_restricted(b, op))
     }
 }
 

@@ -721,8 +721,9 @@ where
     M: crate::lit_model::LitModel<Value = L>,
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
-    let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     let vindex = crate::index::VariantIndex::naive(index);
+    let sampler = crate::index::IndexSampler::new(eg, vindex);
+    let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     run_query_scheduled_into(&rule.query, &plan, eg, &vindex, globals, pool);
     let mut changes = 0;
     for j in 0..pool.len() {
