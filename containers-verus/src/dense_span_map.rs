@@ -894,6 +894,52 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         self.pool.len()
     }
 
+    /// The keys the current generation wrote, in first-occurrence order.
+    ///
+    /// A consumer that needs to visit every non-empty key iterates this instead
+    /// of scanning `0..len()`, which is the difference between work proportional
+    /// to the occupied keys and work proportional to the key space.
+    ///
+    /// Total: the postconditions tying the slice to `occupied` are conditioned on
+    /// `wf()` rather than required, so no precondition reaches an unverified
+    /// caller. The list has no duplicates; that is
+    /// [`lemma_occ_injective`](Self::lemma_occ_injective), on demand, because
+    /// stating it here would put a pairwise quantifier in every caller's context.
+    pub fn occupied_keys(&self) -> (r: &[usize])
+        ensures
+            r@ == self.occ_view(),
+            // every listed key is in range and occupied
+            self.wf() ==> (forall|j: int|
+                0 <= j < r@.len() ==> (#[trigger] r@[j]) < self.view().len()
+                    && self.occupied(r@[j] as int)),
+            // and every occupied key is listed
+            self.wf() ==> (forall|k: int|
+                0 <= k < self.view().len() ==> (#[trigger] self.occupied(k))
+                    ==> r@.contains(k as usize)),
+    {
+        self.arena.occ.as_slice()
+    }
+
+    /// The occupancy list has no duplicates, so iterating it visits each
+    /// occupied key exactly once.
+    ///
+    /// Derived rather than asserted in `wf()`: a repeated key would put the same
+    /// span at two positions, and the tiling forces a repeated span to be empty,
+    /// contradicting `wf()`'s "an occupied span is non-empty". Stating it in
+    /// `wf()` would put a pairwise quantifier there (playbook section 9).
+    pub proof fn lemma_occ_injective(&self, i: int, j: int)
+        requires
+            self.wf(),
+            0 <= i < j < self.occ_view().len(),
+        ensures
+            self.occ_view()[i] != self.occ_view()[j],
+    {
+        lemma_permute_len(self.spans_view(), self.occ_view());
+        lemma_permute_index(self.spans_view(), self.occ_view(), i);
+        lemma_permute_index(self.spans_view(), self.occ_view(), j);
+        lemma_spans_disjoint(self.occ_spans(), self.total_spec(), i, j);
+    }
+
     /// Hand the span table back for the next build. O(1): it is a move.
     pub fn recycle(self) -> (r: SpanArena)
         ensures
