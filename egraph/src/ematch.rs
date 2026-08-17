@@ -11,6 +11,7 @@ use crate::config::EGraphConfig;
 use crate::containers::IndexLike;
 use crate::egraph::EGraph;
 use crate::index::{IndexMode, IndexStore, SortedVecCursor, VariantIndex};
+use crate::leapfrog::seek_stats::Probed;
 use crate::leapfrog::{CursorVec, Difference, LeapfrogJoin, SortedCursor};
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
@@ -2101,9 +2102,14 @@ fn demote_by_op(m: usize, n: Option<usize>, policy: OpFilterPolicy) -> bool {
 
 /// Turn a resolved bucket into a cursor; an absent key resolves to the empty
 /// slice, hence to an empty cursor.
+///
+/// The cursor type is [`Probed`], which is `SortedVecCursor` itself unless the
+/// `seek-stats` feature is on; see `leapfrog::seek_stats`. This function and
+/// [`cursor_in`] are the two places the push-based matcher opens an index
+/// bucket, so wrapping them counts every seek the join layer issues.
 #[inline]
-fn cursor_of<G: crate::containers::DenseId>(b: &[G]) -> SortedVecCursor<'_, G> {
-    SortedVecCursor::new(b)
+fn cursor_of<G: crate::containers::DenseId>(b: &[G]) -> Probed<'_, G> {
+    Probed::new(b)
 }
 
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
@@ -2274,7 +2280,7 @@ fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
-) -> SortedVecCursor<'a, Cfg::G>
+) -> Probed<'a, Cfg::G>
 where
     Cfg: EGraphConfig,
     L: LitVal,

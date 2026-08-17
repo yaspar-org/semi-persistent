@@ -112,3 +112,4 @@ protocol in the plan assumed.
 | [E5](E5-bplus-search-kind.md) | `Branchless` as the B+tree search default | **closed** — `BPlusTreeSet` is not instantiated outside benches; the sweep splits on node size anyway |
 | [E12](E12-worklist-fixpoint.md) | worklist instead of full rescan in the extraction fixpoint | **closed unimplemented** — the fixpoint converges in 2 passes on every workload |
 | [E10](E10-update-multiset-branch.md) | branchless duplicate merge in `update_multiset` | **closed on its gate** — 0 calls on every bench, 118 across all 90 fixtures, duplicate branch taken 8 times |
+| [E18](E18-seek-strategy.md) | seek strategy re-measured on the arena layout: galloping vs bisection vs a stride-hinted ladder | **galloping held, hinting rejected** — bisection loses every point of the sweep (3.5% to 32x); the stride hint costs 0.4-1.4% end to end, because the advance distribution is bimodal and the estimate overshoots 8x on 34.8-66.9% of seeks |

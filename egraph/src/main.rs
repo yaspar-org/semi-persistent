@@ -205,6 +205,8 @@ fn main() {
     // no-op call otherwise. Placed after the dispatch rather than inside `run`
     // so a program that ends in `(pop)` still reports the rounds it ran.
     semi_persistent_egraph::phase_timing::dump();
+    // Same discipline, for the `seek-stats` feature and `EGRAPH_SEEK`.
+    semi_persistent_egraph::leapfrog::seek_stats::dump();
 }
 
 fn run<Cfg, L, M, const PROOFS: bool>(

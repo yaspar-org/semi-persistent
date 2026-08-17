@@ -73,6 +73,23 @@ paid 5-8 probes to move one position
 output size times log *n*, which is worst-case optimal for the AGM bound on join
 output; galloping improves the constant, not that bound.
 
+That choice was re-measured on the arena layout the index has since R2, together
+with the one alternative the join has enough information to compute: starting the
+ladder at an estimated stride rather than at 1, since the expected advance
+distance is the ratio of the two intersecting cursors' remaining lengths and is
+available in O(1) at seek time. Both alternatives lose
+(`doc/perf-results/E18-seek-strategy.md`). Bisection does not win a single point
+of a sweep over bucket-sized spans, from 64 to 262 144 keys and advance distances
+1 to 1024; its best showing is 3.5% behind galloping and its worst is 32x behind.
+A perfect stride estimate would be worth 9 to 14%, but only for advances between
+4 and 64, and it *loses* 19 to 44% past 256, because the hinted ladder stops on
+its first probe and hands the bisection a window twice as wide as the one plain
+doubling produces. An estimate 8x too large costs 6.4x at *d* = 1, which is where
+30% to 95% of seeks are. The measured advance distribution is bimodal, so no
+per-cursor scalar can serve it, and a prototype starting the ladder at the
+cursor's running mean advance ran 0.4 to 1.4% slower end to end than its own
+control.
+
 The seek is verified, and it is the verified code that runs: `index.rs`
 re-exports `containers-verus`'s `SortedVecCursor` rather than defining one, so
 the proof — it lands on the first key ≥ the target and skips no present key, for
@@ -81,6 +98,17 @@ performance-neutral end-to-end
 ([containers-verus Ch. 12](../../../containers-verus/doc/design/12-sorted-vec-cursor.md) §7a).
 `SortedCursor for SortedVecCursor` is therefore implemented in that crate, not
 here; `leapfrog.rs` carries no cursor impl of its own.
+
+### Measuring the seek distribution
+
+`leapfrog::seek_stats` records, for every seek the push-based matcher issues, the
+distance it advanced against the run remaining in front of it. It is behind the
+`seek-stats` feature and prints under `EGRAPH_SEEK=1`; with the feature off its
+cursor wrapper is a type alias for `SortedVecCursor`, so nothing is added to the
+shipped path (measured at −0.31% to +0.28% on `math-microbenchmark`, both
+encodings, both strategies). The two histograms it keeps are enough to price any
+search whose cost is a function of the distance and the remaining length, which
+is what settled the comparison above without a run per candidate.
 
 ### Usage in Pattern Matching
 

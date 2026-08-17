@@ -757,3 +757,40 @@ returning the slice, and matching measures 5% slower over three repeated runs.
 The round total falls anyway, 170.5 ms to 151.2 ms. The trade reverses on a
 workload whose rounds probe much more than they build; which one applies is a
 measurement, not an inference.
+
+## Seek strategy closed, and one lever with it (2026-08-16)
+
+**Galloping is the right search on the arena layout, and the stride estimate the
+join could compute does not improve it.** The lever list above prices the
+leapfrog seek at 5.2% of the profile after `790ba05` and leaves the search itself
+unexamined; `doc/perf-results/E18-seek-strategy.md` examines it. Bisecting the
+remaining run loses every point of a sweep over bucket-sized spans (64 to
+262 144 keys, advances 1 to 1024), by 3.5% at its closest and 32x at its
+furthest. Starting the ladder at an expected stride is worth 9 to 14% for
+advances between 4 and 64, loses 19 to 44% past 256, and costs 6.4x at an advance
+of 1 when the estimate is 8x too large.
+
+**The reason is the advance distribution, and it constrains more than this
+lever.** `leapfrog::seek_stats` puts 30% to 95% of seeks at an advance of at most
+one element and spreads the remainder almost flat out to `2^12`: on
+`math-microbenchmark.rules` naive, every bucket from `log₂ d = 2` to 10 holds
+between 3.2% and 5.5%. A per-cursor scalar cannot serve mass at both ends. The
+same instrumentation measures the estimator directly, as the cursor's running
+mean advance, which is `n/m` observed rather than predicted: on the naive
+strategy it is within one octave on 8.6% to 40.6% of seeks and overshoots by 8x
+or more on 34.8% to 66.9%, and the overshoot concentrates on the short advances
+where it costs most. A prototype ran 0.4 to 1.4% slower end to end than its own
+control on `math-microbenchmark`, both encodings, both strategies, medians of
+seven.
+
+**S3's second half is narrower than it was.** Choosing per binding which iterator
+drives the seek was already attacking 5.2% of the profile; the sweep now says the
+search inside that 5.2% is within 12% to 41% of the best any distance-aware
+strategy could do, and that the remaining margin is not reachable from a
+plan-time length ratio. What is left of S3's second half is the ordering
+question, not the search question.
+
+The instrumentation lands and the searches do not: `seek-stats` is off by default
+and measured at −0.31% to +0.28% end to end when off. It is the reusable part,
+because it prices any search whose cost is a function of the advance distance and
+the remaining length without a run per candidate.

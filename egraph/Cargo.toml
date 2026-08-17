@@ -20,6 +20,11 @@ path = "src/main.rs"
 # `phase_timing` entry point is an empty inline function, so the instrumented
 # call sites cost nothing. See `src/phase_timing.rs`.
 phase-timing = []
+# Per-seek advance-distance accounting for the leapfrog join, read at run time
+# through `EGRAPH_SEEK`. Off by default: with the feature off the recording
+# cursor is a type alias for the bare one, so the wrapped call sites compile to
+# the same code. See `src/leapfrog/seek_stats.rs`.
+seek-stats = []
 
 [dependencies]
 semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.1.0" }

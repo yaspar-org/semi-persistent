@@ -8,6 +8,8 @@
 pub use semi_persistent_containers::SortedCursor;
 use smallvec::SmallVec;
 
+pub mod seek_stats;
+
 /// Cursor container for a single join.
 ///
 /// Inline capacity 4: a join's arity is the number of index lookups the planner

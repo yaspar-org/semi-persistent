@@ -193,5 +193,156 @@ fn seek_stride_sweep(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, seek_microbench, seek_stride_sweep);
+// ---------------------------------------------------------------------------
+// Seek strategy sweep: galloping, bisection, stride-hinted galloping
+// ---------------------------------------------------------------------------
+
+/// The three candidate seeks, written against a raw slice so the sweep prices
+/// the search arithmetic and nothing else.
+///
+/// `gallop` is `SortedVecCursor::seek` transcribed: the early check, the
+/// doubling ladder, the clamp, the bisection of the window doubling produced.
+/// `binary` is what it replaced (E7), a `partition_point` over the remaining
+/// run. `hinted` is `gallop` with the ladder's first offset set to a caller-
+/// supplied expected stride instead of 1. That is correct for any hint at or
+/// above 1, because the bisection's precondition is only that `data[lo]` is
+/// below the target, which the early check establishes before the ladder runs.
+mod strategy {
+    use semi_persistent_egraph::id::ENodeId;
+
+    #[inline]
+    pub fn gallop(data: &[ENodeId], pos: &mut usize, target: ENodeId) {
+        hinted(data, pos, target, 1)
+    }
+
+    #[inline]
+    pub fn binary(data: &[ENodeId], pos: &mut usize, target: ENodeId) {
+        let n = data.len();
+        if *pos >= n || data[*pos] >= target {
+            return;
+        }
+        *pos += data[*pos..].partition_point(|x| *x < target);
+    }
+
+    #[inline]
+    pub fn hinted(data: &[ENodeId], pos: &mut usize, target: ENodeId, hint: usize) {
+        let n = data.len();
+        if *pos >= n || data[*pos] >= target {
+            return;
+        }
+        let mut lo = *pos;
+        let mut step = hint.max(1);
+        while step < n - lo && data[lo + step] < target {
+            lo += step;
+            step *= 2;
+        }
+        let hi = if step < n - lo { lo + step } else { n };
+        *pos = lo + 1 + data[lo + 1..hi].partition_point(|x| *x < target);
+    }
+}
+
+/// Run lengths and advance distances the sweep crosses.
+///
+/// Both axes are read off the instrumented saturation runs
+/// (`leapfrog::seek_stats`, `EGRAPH_SEEK=1`): on the programs under
+/// `comparison/` the remaining run in front of a seek spans `2^0` to `2^16`
+/// with mass at both ends, and the advance distance is bimodal: 30% to 95% of
+/// seeks move by at most one element, and the rest spread almost flat out to
+/// `2^12`. A crossover table has to cover both axes because the two strategies'
+/// costs depend on different ones: galloping pays in *d*, bisection pays in
+/// *rem*.
+const SPANS: &[usize] = &[64, 1_024, 16_384, 262_144];
+const STRIDES: &[usize] = &[1, 4, 16, 64, 256, 1_024];
+
+/// Seeks confined to one bucket-sized span at a time, cycling spans across an
+/// arena far larger than cache.
+///
+/// This is the layout the index actually has since R2: every bucket is a
+/// contiguous `(offset, length)` window into one shared pool, so a seek's
+/// working set is the span, and consecutive joins touch spans scattered through
+/// a pool much larger than L2. Benchmarking on a single hot 1M-element array
+/// instead would hand galloping a cache advantage it does not have in the
+/// engine, which is the constant this whole comparison turns on.
+///
+/// `hinted/exact` is an oracle whose hint *is* the distance, so it bounds what
+/// any stride estimator can pay for. `hinted/over` and `hinted/under` are the
+/// same estimator wrong by 8x in each direction, which is the cost a real `n/m`
+/// estimate has to be weighed against.
+fn seek_strategy_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("seek_strategy");
+    group.sample_size(20);
+
+    // 32 MB of ids: past this machine's last-level cache, so span selection is a
+    // cold start the way a fresh join's first probe is.
+    const ARENA: usize = 8 << 20;
+    const SEEKS: usize = 4096;
+    let arena: Vec<ENodeId> = (0..ARENA as u32).map(|i| ENodeId::new(i * 10)).collect();
+
+    for &span in SPANS {
+        let spans = ARENA / span;
+        for &d in STRIDES {
+            if d * 2 > span {
+                continue;
+            }
+            // (span index, target) for every seek, precomputed so the timed loop
+            // holds nothing but the seek. The cursor restarts at the head of the
+            // next span whenever the current one runs out.
+            let mut plan: Vec<(usize, ENodeId)> = Vec::with_capacity(SEEKS);
+            let (mut si, mut p) = (0usize, 0usize);
+            for _ in 0..SEEKS {
+                if p + d >= span {
+                    si = (si + 1) % spans;
+                    p = 0;
+                }
+                p += d;
+                plan.push((si, arena[si * span + p]));
+            }
+
+            macro_rules! case {
+                ($name:literal, $seek:expr) => {
+                    group.bench_with_input(
+                        BenchmarkId::new($name, format!("{span}/{d}")),
+                        &(),
+                        |b, _| {
+                            b.iter(|| {
+                                let (mut cur, mut pos) = (usize::MAX, 0usize);
+                                for &(si, t) in &plan {
+                                    if si != cur {
+                                        cur = si;
+                                        pos = 0;
+                                    }
+                                    let run = &arena[si * span..(si + 1) * span];
+                                    #[allow(clippy::redundant_closure_call)]
+                                    ($seek)(run, &mut pos, t);
+                                }
+                                std::hint::black_box(pos)
+                            });
+                        },
+                    );
+                };
+            }
+
+            case!("gallop", strategy::gallop);
+            case!("binary", strategy::binary);
+            case!("hinted/exact", |r: &[ENodeId], p: &mut usize, t| {
+                strategy::hinted(r, p, t, d)
+            });
+            case!("hinted/over", |r: &[ENodeId], p: &mut usize, t| {
+                strategy::hinted(r, p, t, d * 8)
+            });
+            case!("hinted/under", |r: &[ENodeId], p: &mut usize, t| {
+                strategy::hinted(r, p, t, d / 8)
+            });
+        }
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    seek_microbench,
+    seek_stride_sweep,
+    seek_strategy_sweep
+);
 criterion_main!(benches);
