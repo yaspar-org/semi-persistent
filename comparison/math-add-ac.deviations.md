@@ -69,6 +69,18 @@ Our two saturation strategies disagree slightly in the rules encoding (3256 node
 classes naive, 3304 / 134 semi-naive) because they reach the 7-iteration budget having
 applied the two A/C rules in different orders; neither has saturated.
 
+**Superseded 2026-08-17: our four counts above are pre-fix and must not be cited.** They
+were measured on 2026-08-15, and the pinned final campaign measures 3317 nodes / 159
+classes naive and 3359 / 136 semi-naive; the current figures are in
+`final/final-tables.md`, which is the citable table. The cause is the one this section
+already names: neither strategy saturates at the 7-iteration budget, and roughly twenty
+ematch and scheduling commits landed between 2026-08-15 and the pin that change which
+matches are found in which round, so the count at the budget moves with them. The check
+passes in every configuration before and after, and the egglog column is unchanged at
+1939 nodes / 7 iterations, so what moved is how much work the budget buys and not what
+the run concludes. The `Add`, `Const` and literal counts in the table above are left as
+measured on 2026-08-15 for the same reason.
+
 The native column is the honest headline of this benchmark: **11 `Add` nodes instead of
 1932-3242, and one iteration** (the run fires nothing and reports saturation
 immediately). Both the seven-term input and the seven-term reversed

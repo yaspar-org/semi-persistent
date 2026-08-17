@@ -25,10 +25,11 @@ that cannot be justified drops the benchmark; nothing is fudged.
   states its binary's commit. Timed binaries are pinned copies under
   /tmp/addac-bin with recorded md5s where cross-agent rebuilds were a risk.
 - Hardware: one Apple Silicon machine, single-threaded on both engines
-  (`-j 1` for egglog; ours has no threading). Artifact note: record the
-  exact machine model and OS build at final-run time; interim numbers were
-  taken under occasional background load and the affected docs say which
-  numbers are load-sensitive.
+  (`-j 1` for egglog; ours has no threading). The exact machine model, OS
+  build, binary md5s and measured load are recorded in section 9, which the
+  earlier artifact note asked for and which the final campaign supplies;
+  interim numbers were taken under occasional background load and the
+  affected docs say which numbers are load-sensitive.
 
 ## 2. Timing protocol
 
@@ -178,7 +179,7 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   workaround runs exactly (node counts to the digit; the 2-node delta is
   the dropped let commands). History kept in the ledger.
 
-- **Class counts at truncated budgets are order-sensitive under
+- **Node and class counts at truncated budgets are order-sensitive under
   incomplete closure.** The add_use prepend (use-list registration order
   reversed) leaves every saturating program byte-identical (congruence
   closure is confluent at a fixpoint) and nodes/match-steps identical
@@ -188,6 +189,23 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   expired. Both partitions are sound. Consequence: class counts on
   non-saturating programs are reported with this caveat, and final tables
   re-run at one pinned commit as already required.
+
+  **Widened 2026-08-17 by the final campaign: node counts move too, and by
+  more than class counts do.** This entry was written for class counts, on
+  the evidence that the add_use prepend moved only those. math-add-ac's
+  rules encoding, whose `(run add_ac 7)` its ledger records as saturating
+  under neither strategy, moves 3 256 nodes / 148 classes -> 3 317 / 159
+  naive and 3 304 / 134 -> 3 359 / 136 semi-naive between the ledger's
+  2026-08-15 measurement and the pinned campaign: 61 nodes, 1.9%, against
+  the 6 ppm this entry cites. The cause is the same mechanism at larger
+  amplitude, roughly twenty ematch and scheduling commits landing in that
+  window that change which matches are found in which round (90e2d5f,
+  5d85c53, ca2088b among them). The counts are deterministic at the pin
+  (five naive and three semi-naive runs agree), the check passes in every
+  configuration, and the egglog column is unchanged at 1 939 nodes / 7
+  iterations, so what moved is how much work the budget buys and not what
+  the run concludes. The superseded figures stay in
+  `math-add-ac.deviations.md` marked not to be cited.
 
 ## 5. Benchmark selection and exclusions
 
@@ -348,3 +366,65 @@ Every agent or author touching comparison/ re-reads this file first and
 appends any new divergence with justification and consequence. The
 deviation ledgers stay per-benchmark; this registry is the index a
 reviewer reads.
+
+## 9. Final campaign (2026-08-17)
+
+**FINAL.** The run section 6 requires: every table measured in one campaign,
+at one pinned commit of each engine, on one quiet machine, with the hardware
+recorded. Results in `final/final-tables.md`; raw data in
+`final/final-results.csv`. This campaign supersedes every earlier timing table
+in comparison/ for the ten benchmarks it covers.
+
+- **Pinned commit** c25fb2547b69fbfa0c5172ccf0e32c3ec637fbc6, branch
+  egraph-wf, clean tree.
+- **Machine** Apple M4 Pro, model identifier Mac16,8, 14 cores, 48 GiB,
+  macOS 26.6.1 build 25G76. One machine, so section 7's no-cross-platform-
+  replication threat stands.
+- **Load** one-minute average 1.71 at the start and 1.77 at the end, verified
+  below 2 before starting. A process left by an earlier session was holding a
+  core: the `eqsolve --derive-ac-eqs` probe section 5 records as
+  non-terminating, 54 minutes in, reading an input file no longer in the tree.
+  It was killed before the campaign and the machine was otherwise idle, so no
+  load qualification applies to these numbers.
+- **Our binary** `cargo build --release` at the pinned tip on the repo's
+  pinned Rust 1.97.1: 5 635 968 bytes, md5 80926a7fca2987f9afd3d1db9cfc4fb6.
+- **egglog binary** commit 7b1adf249c918226871b9b3d5e8f089585e46e99 built at
+  its pinned Rust 1.91.0: 9 247 232 bytes, md5
+  f16c4c42abd2d24b360f48a345126a89. Not rebuilt, because it reproduces
+  addac-n7 at 451 nodes and 3 iterations, which is the check section 1
+  records for the toolchain-deviation withdrawal.
+- **Protocol** 2 warmups and 10 timed runs per configuration, medians
+  reported, all 460 runs kept. Ten benchmarks in 46 configurations, invoked
+  one benchmark per process so that a failure would lose one benchmark and
+  not the campaign; all ten succeeded.
+- **Process startup measured, not assumed.** An empty program costs 2.88 ms
+  on our binary and 3.58 ms on egglog's. Section 7 estimated this at about
+  2 ms; the measured value is what `final-tables.md` uses to separate the
+  four benchmarks whose ratios are startup-dominated from the six that
+  measure throughput, and the paper should quote the restricted median.
+
+Every configuration reproduced the node, class and iteration counts its
+committed ledger records, to the digit, with one exception: math-add-ac's
+rules encoding, whose movement and cause are the widened entry in section 4.
+That exception is why this campaign exists, so it is a confirmation of the
+rule rather than a defect.
+
+**AU corpus, partially re-confirmed.** The committed curve tables regenerate
+exactly from the committed `au/corpus.csv` through `au/analyze.py`, so the doc
+is consistent with its data. Re-measuring the engine at the pin under a
+reduced wall budget (`AU_CORPUS_SECS=360`, writing to a scratch directory)
+covered 152 of the 673 instances and 2 280 of the 10 095 rows, with no exact
+timeout, no MCGS timeout and no ladder cut, matching the committed run's
+conditions. Every quality field agrees with the committed corpus on all 2 280
+rows, and the headline statistics restricted to those 152 instances are
+identical in both: zero fraction 0.513 at one playout and 0.836 at 2^14,
+certified fraction 0.000 and 0.382, mean gap 0.0829 and 0.0152. One instance
+disagrees on two census fields, xover-14 at `sum_a` 38 994 295 -> 39 212 064
+and `or_states` 3 973 120 -> 4 000 000: it is census-capped in both runs and
+is one of the 38 capped instances `anytime-corpus.md` already excludes from
+the knee analysis because their `sum A(v)` is a lower bound, so the value
+depends on where the traversal stopped and no headline number reads it.
+Carried without re-measurement: the remaining 521 instances of the main run,
+the full-corpus figures those 673 instances produce (zero fraction 0.290 to
+0.798, certified fraction 0.193 at 2^14), and the entire deep-ladder run of
+table (e).
