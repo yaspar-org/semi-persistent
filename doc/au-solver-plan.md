@@ -186,6 +186,44 @@ bs as a height proxy) falls under a threshold, run A2-exact with a budget
 and mark the result. Proven values then propagate as closed subtrees, which
 accelerates certification, and commitment-style variants become safe when
 gated on certified children only. 1-2 weeks, after A0 and A2.
+Done 2026-08-17: `hybrid_exact` with `hybrid_threshold`
+(`AuConfig`/`McgsConfig`, default false and 4096). `exact::run_exact_at` is
+the new entry point, an exact solve from an arbitrary `(l, r, ctxL, ctxR)`
+with A2 and A6 on, running on its own search space, action cache, and result
+table and sharing only the caller's term pool, which is what makes the
+returned term id usable by MCGS: the pool is append-only and hash-consed, so
+interning appends and never invalidates an id MCGS holds, and a session
+`restore` truncates the additions with the same token bundle that rolls back
+the results pointing at them. The trigger is `estimates::reachable_pairs`,
+`|{l} ∪ reach(l)| * |{r} ∪ reach(r)|` off per-SCC popcounts precomputed with
+the reachability bitsets, evaluated once per OR node at `ensure_or_stats`; it
+is monotone non-increasing down the search graph, so the trigger fires on a
+downward-closed set of nodes, and the threshold is the boundedness guard (a
+node above it is left to the playouts, so no playout can start an unbounded
+solve). A proved node is marked exact, which is already a terminal condition,
+and a terminal node is closed at birth, so A8 needed no new code to propagate
+the proof. Flag off, the differential fixture is byte-identical; flag on,
+`au_differential.rs::hybrid_exact_mcgs_is_sound` pins that no line loses
+quality or a certificate, and `au_hybrid_exact.rs` pins the knee. On the
+deceptive family with the threshold set to admit every proper subproblem, the
+knee stops depending on the burial depth and lands at the root's own action
+count: depth 5/8/12/16 with 4 decoys certify at 8 playouts against 32/64/64/128
+with A8 alone, at one exact call of 0.03 to 0.11 ms. On the corpus's `dec` and
+`mixed` families at the default threshold, certification at 2^14 goes 0.715 ->
+1.000 (reached at 256 playouts), no rung regresses on gap or certification, and
+total MCGS time over the ladder falls 19.2x (48890 ms -> 2544 ms) of which the
+exact calls are 109 ms; `mixed` goes from 55 of 180 certified to 180 of 180.
+221 of 423 instances certify strictly below their `sum A(v)`, which retires
+B1's lower bound: it holds only while a certificate requires realizing every
+action, and one exact call proves a subgraph without realizing any of it.
+The measured limit is the estimate itself: it counts class pairs and is blind
+to member fan-out, so `ac m24c4` sits at 841 pairs and costs exact 3.19 ms
+while `dec d12k2` sits at 42025 and costs 0.16 ms. The threshold is therefore
+calibrated on the worst call it admits, not on a correlation, which is what
+holds the default at 4096 (worst admitted probe 3.19 ms) against 8192 (64.64
+ms) and 65536 (644.23 ms) even though the `dec` and `mixed` knee keeps
+improving to 65536. Numbers, both sweeps, and the untested two-part estimate
+are in comparison/au/anytime-corpus.md section (g).
 
 **A8. The MCTS-solver closed bit in MCGS.** B1's measurement (below) shows
 the certification budget on deep search graphs is set by the selection rule

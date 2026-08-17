@@ -61,6 +61,10 @@ pub struct Reachability<A: AuIds> {
     scc_spans: Vec<Span<A::ReachBlock>>,
     /// Packed bit blocks (one dense bitset per SCC, each `ceil(num_classes/64)` u64s).
     bit_blocks: Vec<u64>,
+    /// Per-SCC population count of the block above. Computed once with the
+    /// bitsets, which already cost one pass over every block, so the size of a
+    /// reachable set is an array read rather than a scan.
+    scc_reach_count: Vec<u32>,
     /// Number of classes (determines bitset width).
     num_classes: u64,
 }
@@ -75,6 +79,15 @@ impl<A: AuIds> Reachability<A> {
         let word = start + t / 64;
         let bit = t % 64;
         (self.bit_blocks[word] >> bit) & 1 != 0
+    }
+
+    /// How many classes are in `reach(source)`. Note the asymmetry the bitsets
+    /// already have: a class belongs to its own reachable set only when it sits
+    /// on a cycle, so an acyclic class counts its strict descendants.
+    #[inline]
+    pub fn reach_count(&self, source: A::Class) -> u64 {
+        let scc = self.class_to_scc[source.to_usize()];
+        u64::from(self.scc_reach_count[scc.to_usize()])
     }
 
     /// Number of classes in this reachability table.
@@ -636,10 +649,22 @@ where
         // Unused variable suppression.
         let _ = au_to_repr;
 
+        let scc_reach_count: Vec<u32> = scc_spans
+            .iter()
+            .map(|span| {
+                let start = span.start_usize();
+                bit_blocks[start..start + words_per_scc]
+                    .iter()
+                    .map(|w| w.count_ones())
+                    .sum()
+            })
+            .collect();
+
         Reachability {
             class_to_scc,
             scc_spans,
             bit_blocks,
+            scc_reach_count,
             num_classes: num_classes as u64,
         }
     }

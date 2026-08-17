@@ -52,6 +52,48 @@
 //! under the same cycle mode. `ensure_or_stats` already makes a node with the
 //! flag terminal at creation, so the proof carries into later runs on the same
 //! session layers, and it rolls back with the results table's own token.
+//!
+//! # Hybrid exact subproblems (plan item A7)
+//!
+//! Under `McgsConfig::hybrid_exact` every OR node is measured once, when its
+//! statistics are created, by `estimates::reachable_pairs`: the size of the
+//! class-pair rectangle its subgraph lives in, two array reads off the
+//! snapshot's precomputed reachability popcounts. A node at or below
+//! `McgsConfig::hybrid_threshold` is handed to the exact solver instead of
+//! being enumerated by playouts: `exact::run_exact_at` on that node's own
+//! `(l, r, ctxL, ctxR)` under the run's cycle mode, with A2 pruning and A6
+//! context subsumption on, which are what make a subproblem call cheap. The
+//! result is offered and marked exact, which makes the node terminal through
+//! the condition that was already there, and terminal nodes are born closed,
+//! so under `closed_bit` the proof propagates upward as a closure with no
+//! extra machinery.
+//!
+//! Soundness. An exact run entered at `(l, r, ctxL, ctxR)` with the same cycle
+//! mode solves the identical subproblem the MCGS node stands for: the OR key
+//! *is* that 4-tuple, cycle blocking reads nothing else, and both solvers
+//! generate actions from the same `generate_actions`/`transport_actions`. So
+//! its optimum is the quantity `mark_exact` claims, namely this node's optimum
+//! over the same action space under the same cycle mode, and the certificate's
+//! meaning is unchanged. The term is safe to offer regardless: term validity
+//! is context-independent (contexts exist to terminate the search, not to
+//! restrict which terms are valid), so an exact-solved term projects into the
+//! two classes like any other. Afterwards the write-once exact flag,
+//! `offer`'s strict-improvement rule, and its finality assertion are what
+//! prevent degradation.
+//!
+//! Boundedness. The threshold is the guard: a node above it is never handed to
+//! exact, so no playout can trigger an unbounded solve, and the estimate
+//! itself is O(1). A call that comes back without a proof (only possible with
+//! a deadline configured) has its term offered but is not marked.
+//!
+//! Layer separation. The exact run creates its own search space, action cache,
+//! and result table, so it cannot read or write the MCGS overlay; the single
+//! shared layer is the term pool, and sharing it is what makes the returned
+//! term id meaningful to MCGS. That sharing is safe by construction: the pool
+//! is append-only and hash-consed, so interning appends and never invalidates
+//! an id MCGS already holds, and a session `restore` truncates those
+//! additions with the same token bundle that rolls back the results pointing
+//! at them.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
@@ -65,7 +107,7 @@ use super::AuIds31;
 use super::ac_repr;
 use super::actions::{Action, ActionCache, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
-use super::estimates::{lb_pair, static_generalize_quality, transport_pair_lb};
+use super::estimates::{lb_pair, reachable_pairs, static_generalize_quality, transport_pair_lb};
 use super::results::BestResults;
 use super::space::{CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
@@ -136,6 +178,37 @@ pub struct McgsConfig {
     /// `au_differential.rs::closed_bit_mcgs_is_sound` gates the flag-on
     /// behavior.
     pub closed_bit: bool,
+    /// Hybrid exact solving on shallow subproblems (plan item A7,
+    /// doc/au-solver-plan.md): at OR-stats creation, when the node's
+    /// reachable-pair estimate is at or below [`Self::hybrid_threshold`], run
+    /// the exact solver on that node's own state and mark its result exact.
+    /// See the module doc for the trigger and its soundness argument. Default
+    /// `false`: the pure playout search is the reference the differential
+    /// fixture was captured against;
+    /// `au_differential.rs::hybrid_exact_mcgs_is_sound` gates the flag-on
+    /// behavior.
+    pub hybrid_exact: bool,
+    /// Hardness ceiling for [`Self::hybrid_exact`]: the largest
+    /// `estimates::reachable_pairs` value a subproblem may have and still be
+    /// handed to the exact solver. This is the guard that keeps exact calls
+    /// bounded: a node above it is searched by playouts as usual, so no
+    /// playout can trigger an unbounded exact run. Default 4096, from the
+    /// corpus sweep in comparison/au/anytime-corpus.md section (g).
+    pub hybrid_threshold: u64,
+}
+
+/// What the hybrid trigger did over one run (`McgsConfig::hybrid_exact`).
+/// Plain counters, not search state: they are diagnostics only, so they are
+/// outside the semi-persistent arenas and a `restore` leaves them alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HybridStats {
+    /// Subproblems handed to the exact solver.
+    pub calls: u64,
+    /// Of those, the ones that came back with a proof (all of them unless a
+    /// deadline is configured).
+    pub proved: u64,
+    /// Total wall time spent inside those calls.
+    pub time: std::time::Duration,
 }
 
 impl Default for McgsConfig {
@@ -148,9 +221,17 @@ impl Default for McgsConfig {
             and_selector: AndSelector::default(),
             dominance_pruning: false,
             closed_bit: false,
+            hybrid_exact: false,
+            hybrid_threshold: DEFAULT_HYBRID_THRESHOLD,
         }
     }
 }
+
+/// Default [`McgsConfig::hybrid_threshold`]. Section (g) of
+/// comparison/au/anytime-corpus.md sweeps it; 4096 reachable pairs is where
+/// the corpus's certification knee bottoms out without the exact calls
+/// starting to dominate wall time.
+pub const DEFAULT_HYBRID_THRESHOLD: u64 = 4096;
 
 /// Builder payload for one OR-statistics node. The arena flattens edge state
 /// into typed pools when this value is pushed.
@@ -1116,6 +1197,10 @@ pub(crate) struct McgsState<A: AuIds = AuIds31, O: DenseId = crate::id::OpId> {
     /// `A::Or` -> its statistics node. Keyed by an id whose `Index` is `A::Index`, so
     /// the hash index stores positions in that word rather than 8-byte `usize`.
     or_stats_map: SpMap<A::Or, A::OrStats, A::Index>,
+    /// What the hybrid trigger did (`McgsConfig::hybrid_exact`). Diagnostics,
+    /// not search state: nothing reads them back, so they sit outside the
+    /// semi-persistent arenas and `mark`/`restore` do not touch them.
+    hybrid: HybridStats,
 }
 
 /// Token for restoring `McgsState`. It bundles only arena and map tokens.
@@ -1132,7 +1217,13 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
             or_stats: OrStatsArena::new(),
             and_stats: AndStatsArena::new(),
             or_stats_map: SpMap::new(),
+            hybrid: HybridStats::default(),
         }
+    }
+
+    /// What the hybrid trigger did, cumulative over every run on this state.
+    pub(crate) fn hybrid_stats(&self) -> HybridStats {
+        self.hybrid
     }
 
     pub(crate) fn mark(&mut self) -> McgsToken {
@@ -1283,6 +1374,7 @@ pub fn run_mcgs<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
         <Cfg::Au as AuIds>::Term,
         TermPool<Cfg::O, Cfg::V, Cfg::Au>,
         super::session::Completion,
+        HybridStats,
     ),
     super::AuError,
 >
@@ -1308,7 +1400,7 @@ where
         r_root,
         config,
     )?;
-    Ok((best, pool, completion))
+    Ok((best, pool, completion, state.hybrid_stats()))
 }
 
 /// Session-based MCGS: runs on caller-owned layers so a `SearchSession` can
@@ -1347,11 +1439,12 @@ where
     let root_idx = ensure_or_stats(
         snap,
         space,
+        pool,
         action_cache,
         results,
         state,
         root_or,
-        config.dominance_pruning,
+        config,
     );
 
     if !state.or_stat(root_idx).terminal {
@@ -1780,26 +1873,101 @@ where
     bound > u64::from(gen_size)
 }
 
+/// The hybrid trigger (plan item A7, doc/au-solver-plan.md): if this node's
+/// subproblem is at or below `config.hybrid_threshold` reachable class pairs,
+/// solve it exactly and record the proof.
+///
+/// The exact run is entered at this node's own state: the same `(l, r)`, the
+/// same two cycle contexts, the same cycle mode. What it returns is therefore
+/// the optimum of *this* node, which is exactly what `mark_exact` asserts and what
+/// the certificate is defined over (module doc, and A7's paragraph in the
+/// plan). The term is offered unconditionally, because term validity does not
+/// depend on contexts, and only a completed run is marked: a deadline expiry
+/// yields a feasible incumbent with no proof attached.
+///
+/// The threshold is the boundedness guard. A node above it is left to the
+/// playout search, so the work one hybrid call can do is bounded by the
+/// threshold rather than by the whole search graph.
+#[allow(clippy::too_many_arguments)]
+fn solve_hybrid<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    space: &SearchSpace<Cfg::Au>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    results: &mut BestResults<Cfg::Au>,
+    state: &mut McgsState<Cfg::Au, Cfg::O>,
+    or_id: <Cfg::Au as AuIds>::Or,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
+    config: &McgsConfig,
+) where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    if reachable_pairs(snap, l, r) > config.hybrid_threshold {
+        return;
+    }
+    // Copied out because the exact run interns them into its own context
+    // store; `ContextStore::get` already hands them back sorted and deduped,
+    // the form `run_exact_at` expects.
+    let ctx_l: Vec<ClassOf<Cfg>> = space
+        .contexts
+        .get(*space.or_arena.left_ctx.get(or_id.to_index()))
+        .to_vec();
+    let ctx_r: Vec<ClassOf<Cfg>> = space
+        .contexts
+        .get(*space.or_arena.right_ctx.get(or_id.to_index()))
+        .to_vec();
+
+    let start = std::time::Instant::now();
+    let run = super::exact::run_exact_at(
+        snap,
+        pool,
+        l,
+        r,
+        &ctx_l,
+        &ctx_r,
+        space.cycle_mode,
+        None,
+        // A2 and A6: what make a subproblem call cheap, and both proven to
+        // leave the optimum unchanged (au_differential.rs).
+        true,
+        true,
+    );
+    state.hybrid.calls += 1;
+    state.hybrid.time += start.elapsed();
+
+    results.offer(or_id, run.term, pool.quality(run.term));
+    if run.complete {
+        state.hybrid.proved += 1;
+        results.mark_exact(or_id);
+    }
+}
+
 /// Look up or create the statistics struct for an OR node. Fresh structs know
 /// their action count (cycle-filtered; additionally dominance-filtered when
-/// `dominance` is set, see [`structural_action_dominated`]), terminal flag,
-/// and normalization sizes; values start at the node's stored best-result
-/// size (terminal) or infinity (awaiting a rollout estimate).
+/// `config.dominance_pruning` is set, see [`structural_action_dominated`]),
+/// terminal flag, and normalization sizes; values start at the node's stored
+/// best-result size (terminal) or infinity (awaiting a rollout estimate).
 ///
-/// With `dominance` on, a node whose every action is dropped has
+/// With dominance pruning on, a node whose every action is dropped has
 /// `num_actions == 0` and closes through the existing terminal condition
 /// below, at its stored best result — at worst the generalize value, whose
 /// term every creation site offers before calling here (the root seed in
 /// `run_mcgs_in`, `child_seed` in `expand_action`, and the rollout offers) —
 /// which is then exact, because every alternative was proven non-optimal.
+///
+/// With `config.hybrid_exact` on, a node whose subproblem is small enough is
+/// solved outright by [`solve_hybrid`] and reaches the same terminal condition
+/// through `results.is_exact`.
+#[allow(clippy::too_many_arguments)]
 fn ensure_or_stats<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
     action_cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     results: &mut BestResults<Cfg::Au>,
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     or_id: <Cfg::Au as AuIds>::Or,
-    dominance: bool,
+    config: &McgsConfig,
 ) -> <Cfg::Au as AuIds>::OrStats
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
@@ -1808,6 +1976,7 @@ where
         return *state.or_stats_map.get_val(log_idx);
     }
 
+    let dominance = config.dominance_pruning;
     let l = *space.or_arena.left.get(or_id.to_index());
     let r = *space.or_arena.right.get(or_id.to_index());
     let l_best = *space.or_arena.left_best_size.get(or_id.to_index()) as f64;
@@ -1851,6 +2020,14 @@ where
         count += descs.len();
         (count, descs)
     };
+
+    // Hybrid exact (plan item A7): a subproblem small enough to prove outright
+    // is proved here rather than enumerated by playouts. Running before the
+    // terminal test is what makes the proof land: `results.is_exact` is
+    // already a terminal condition, so a proved node needs no separate flag.
+    if config.hybrid_exact && l != r && num_actions > 0 && !results.is_exact(or_id) {
+        solve_hybrid(snap, space, pool, results, state, or_id, l, r, config);
+    }
 
     let terminal = l == r || num_actions == 0 || results.is_exact(or_id);
     // Terminal nodes take their stored best result as their permanent value.
@@ -2444,11 +2621,12 @@ where
             let child_idx = ensure_or_stats(
                 snap,
                 space,
+                pool,
                 action_cache,
                 results,
                 state,
                 child_or,
-                dominance,
+                config,
             );
             child_or_stats.push(child_idx);
             // Widening a structural multiplicity to the surface width `child_counts`
@@ -2513,11 +2691,12 @@ where
                 let child_idx = ensure_or_stats(
                     snap,
                     space,
+                    pool,
                     action_cache,
                     results,
                     state,
                     child_or,
-                    dominance,
+                    config,
                 );
                 cell_map.push(Some(filtered_children.len()));
                 filtered_children.push(child_idx);
@@ -2997,7 +3176,7 @@ mod tests {
             cycle_mode: CycleMode::AncestorOnly,
             ..Default::default()
         };
-        let (mcgs_term, mcgs_pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+        let (mcgs_term, mcgs_pool, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
         assert_eq!(mcgs_pool.size(mcgs_term), exact_size);
         // This tiny graph should be fully certified within 500 playouts.
         assert_eq!(completion, super::super::session::Completion::Exact);
@@ -3042,7 +3221,7 @@ mod tests {
             cycle_mode: CycleMode::AncestorOnly,
             ..Default::default()
         };
-        let (mcgs_term, mcgs_pool, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
+        let (mcgs_term, mcgs_pool, _, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
         assert_eq!(
             mcgs_pool.size(mcgs_term),
             exact_size,
@@ -3066,7 +3245,7 @@ mod tests {
             playouts: 10,
             ..Default::default()
         };
-        let (term, pool, _) = run_mcgs(&snap, ac, ac, &config).unwrap();
+        let (term, pool, _, _) = run_mcgs(&snap, ac, ac, &config).unwrap();
         assert_eq!(pool.size(term), 1);
     }
 
@@ -3093,7 +3272,7 @@ mod tests {
             playouts: 100,
             ..Default::default()
         };
-        let (term, pool, _) = run_mcgs(&snap, ac, bc, &config).unwrap();
+        let (term, pool, _, _) = run_mcgs(&snap, ac, bc, &config).unwrap();
         assert!(pool.size(term) < 100);
     }
 
@@ -3261,7 +3440,7 @@ mod tests {
             playouts: 200,
             ..Default::default()
         };
-        let (_, _, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+        let (_, _, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
         assert_eq!(
             completion,
             super::super::session::Completion::Exact,
@@ -3987,7 +4166,7 @@ mod tests {
                 and_selector: selector,
                 ..Default::default()
             };
-            let (mcgs_term, mcgs_pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+            let (mcgs_term, mcgs_pool, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
             assert_eq!(
                 mcgs_pool.size(mcgs_term),
                 exact_size,
@@ -4046,7 +4225,7 @@ mod tests {
                         and_selector: selector,
                         ..Default::default()
                     };
-                    let (_, _, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+                    let (_, _, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
                     completion == super::super::session::Completion::Exact
                 })
                 .expect("the flag-off run certifies this graph inside the ladder");
@@ -4057,7 +4236,7 @@ mod tests {
                 closed_bit: true,
                 ..Default::default()
             };
-            let (term, pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+            let (term, pool, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
             assert_eq!(
                 pool.size(term),
                 exact_size,
@@ -4279,7 +4458,7 @@ mod tests {
                 playouts: 200,
                 ..Default::default()
             };
-            let (term, pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+            let (term, pool, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
             (pool.size(term), pool, completion)
         };
         let config = McgsConfig {
@@ -4287,7 +4466,7 @@ mod tests {
             closed_bit: true,
             ..Default::default()
         };
-        let (term, pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+        let (term, pool, completion, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
         assert_eq!(plain_completion, super::super::session::Completion::Exact);
         assert_eq!(completion, super::super::session::Completion::Exact);
         assert_eq!(pool.size(term), plain);
@@ -4384,7 +4563,7 @@ mod tests {
                     cycle_mode: CycleMode::AncestorOnly,
                     ..Default::default()
                 };
-                let (term, pool, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
+                let (term, pool, _, _) = run_mcgs(&snap, lc, rc, &config).unwrap();
                 assert!(pool.size(term) >= 1);
             },
         );

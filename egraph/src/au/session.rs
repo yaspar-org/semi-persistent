@@ -12,7 +12,7 @@ use crate::literal::LitVal;
 use super::actions::{ActionCache, ActionCacheToken};
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::exact;
-use super::mcgs::{self, AndSelector, McgsConfig};
+use super::mcgs::{self, AndSelector, HybridStats, McgsConfig};
 use super::results::{BestResults, BestResultsToken};
 use super::space::{CycleMode, SearchSpace, SpaceToken};
 use super::terms::{TermOp, TermPool, TermPoolToken};
@@ -108,6 +108,25 @@ pub struct AuConfig {
     /// captured against; `au_differential.rs::closed_bit_mcgs_is_sound` gates
     /// the flag-on behavior. Ignored by the exact algorithm.
     pub closed_bit: bool,
+    /// Hybrid exact subproblems in the UCT/MCGS solver (plan item A7,
+    /// doc/au-solver-plan.md): when a new OR node's reachable-pair estimate is
+    /// at or below [`Self::hybrid_threshold`], the exact solver (with
+    /// `exact_pruning` and `context_subsumption` on) solves that node's own
+    /// state (same class pair, same cycle contexts, same cycle mode), and its
+    /// optimum is offered and marked exact in the session's result table.
+    /// Since an exact-marked node is terminal at creation, and terminal nodes
+    /// are born closed, the proof is a closed subtree the search never enters:
+    /// what would have cost `sum A(v)` playouts below that node costs one
+    /// exact call. The threshold is what bounds the call, so no playout can
+    /// trigger an unbounded solve. Default `false`: the pure playout search is
+    /// the reference the differential fixture was captured against;
+    /// `au_differential.rs::hybrid_exact_mcgs_is_sound` gates the flag-on
+    /// behavior. Ignored by the exact algorithm.
+    pub hybrid_exact: bool,
+    /// Hardness ceiling for [`Self::hybrid_exact`], in reachable class pairs
+    /// (`estimates::reachable_pairs`). Default from the corpus sweep in
+    /// comparison/au/anytime-corpus.md section (g).
+    pub hybrid_threshold: u64,
 }
 
 impl Default for AuConfig {
@@ -124,6 +143,8 @@ impl Default for AuConfig {
             context_subsumption: false,
             dominance_pruning: false,
             closed_bit: false,
+            hybrid_exact: false,
+            hybrid_threshold: mcgs::DEFAULT_HYBRID_THRESHOLD,
         }
     }
 }
@@ -145,6 +166,9 @@ pub struct AuResult<Cfg: EGraphConfig> {
     pub size: u32,
     pub algorithm: AuAlgorithm,
     pub completion: Completion,
+    /// What `AuConfig::hybrid_exact` did during the run; all zeros for the
+    /// exact algorithm and for a UCT run with the flag off.
+    pub hybrid: HybridStats,
 }
 
 /// Width aliases for downstream convenience.
@@ -237,6 +261,7 @@ where
                 size,
                 algorithm: AuAlgorithm::Exact,
                 completion,
+                hybrid: HybridStats::default(),
             })
         }
         AuAlgorithm::Uct => {
@@ -248,8 +273,10 @@ where
                 and_selector: config.and_selector,
                 dominance_pruning: config.dominance_pruning,
                 closed_bit: config.closed_bit,
+                hybrid_exact: config.hybrid_exact,
+                hybrid_threshold: config.hybrid_threshold,
             };
-            let (term_id, pool, completion) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
+            let (term_id, pool, completion, hybrid) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
             let size = pool.size(term_id);
             Ok(AuResult {
                 term_id,
@@ -257,6 +284,7 @@ where
                 size,
                 algorithm: AuAlgorithm::Uct,
                 completion,
+                hybrid,
             })
         }
     }
@@ -418,6 +446,12 @@ where
             r,
             config,
         )
+    }
+
+    /// What `McgsConfig::hybrid_exact` did, cumulative over every `run_uct`
+    /// call on this session.
+    pub fn hybrid_stats(&self) -> HybridStats {
+        self.mcgs.hybrid_stats()
     }
 
     /// The lexicographic quality of a term in this session's pool.

@@ -84,6 +84,36 @@ where
     }
 }
 
+/// How many distinct class pairs a subproblem rooted at `(l, r)` can reach:
+/// `|{l} ∪ reach(l)| * |{r} ∪ reach(r)|` (plan item A7, doc/au-solver-plan.md).
+///
+/// This is the size of the rectangle every OR state below `(l, r)` lives in.
+/// It over-counts, because an action pairs a left child with a right child of
+/// the *same* operator, so most cells of the rectangle are never states; and it
+/// under-counts states, since a state is a pair plus two cycle contexts. What
+/// it does is separate shallow subproblems from deep ones at the cost of two
+/// array reads, which is what the hybrid trigger needs: the popcounts are
+/// precomputed per SCC with the reachability bitsets themselves.
+///
+/// Saturating, so a product past `u64` reads as "very hard" and the caller's
+/// `estimate <= threshold` gate rejects it.
+pub fn reachable_pairs<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    l: ClassOf<Cfg>,
+    r: ClassOf<Cfg>,
+) -> u64
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let side = |c: ClassOf<Cfg>| {
+        let reach = snap.reachability();
+        // A class is in its own reachable set only when it sits on a cycle;
+        // add it back exactly when the bitset does not already hold it.
+        reach.reach_count(c) + u64::from(!reach.is_reachable(c, c))
+    };
+    side(l).saturating_mul(side(r))
+}
+
 /// Admissible lower bound on the size of any term one AC/ACI representation
 /// pair `(lm, rm)` can produce: the min-cost flow over `lb_pair` cell costs
 /// (illegal cells `Forbidden`) plus 1 for the operator. Sound because every

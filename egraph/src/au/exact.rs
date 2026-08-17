@@ -198,23 +198,17 @@ where
         ActionCache::without_ac_actions(usize::MAX);
     let mut results: BestResults<Cfg::Au> = BestResults::new();
 
-    let empty_ctx = space.contexts.empty();
-    let l_best = snap.best_size(l_root);
-    let r_best = snap.best_size(r_root);
-    let (root_or, _) =
-        space.get_or_insert_or_node(l_root, r_root, empty_ctx, empty_ctx, l_best, r_best);
-
-    let mut memo: Vec<MemoState<<Cfg::Au as AuIds>::Term>> = Vec::new();
-
-    let (term, complete) = solve_iterative(
+    let (root_or, term, complete) = solve_entry(
         snap,
         &mut space,
         &mut pool,
         &mut cache,
         &mut results,
-        &mut memo,
-        root_or,
-        deadline.map(|d| std::time::Instant::now() + d),
+        l_root,
+        r_root,
+        &[],
+        &[],
+        deadline,
         pruning,
         subsumption,
     );
@@ -228,6 +222,121 @@ where
         root_or,
         complete,
     })
+}
+
+/// Solve one entry state on caller-owned layers: intern the two entry
+/// contexts, create the OR node for `(l, r, ctxL, ctxR)`, and run the memoized
+/// search from it. `run_exact` calls it with empty contexts (the root entry);
+/// `run_exact_at` calls it with a subproblem's own contexts.
+#[allow(clippy::too_many_arguments)]
+fn solve_entry<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    space: &mut SearchSpace<Cfg::Au>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    cache: &mut ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
+    results: &mut BestResults<Cfg::Au>,
+    l_root: ClassOf<Cfg>,
+    r_root: ClassOf<Cfg>,
+    ctx_l: &[ClassOf<Cfg>],
+    ctx_r: &[ClassOf<Cfg>],
+    deadline: Option<std::time::Duration>,
+    pruning: bool,
+    subsumption: bool,
+) -> (<Cfg::Au as AuIds>::Or, <Cfg::Au as AuIds>::Term, bool)
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    debug_assert!(
+        ctx_l.windows(2).all(|w| w[0] < w[1]) && ctx_r.windows(2).all(|w| w[0] < w[1]),
+        "the context interner stores contexts sorted and deduplicated"
+    );
+    let ctx_l = space.contexts.intern(ctx_l);
+    let ctx_r = space.contexts.intern(ctx_r);
+    let l_best = snap.best_size(l_root);
+    let r_best = snap.best_size(r_root);
+    let (root_or, _) = space.get_or_insert_or_node(l_root, r_root, ctx_l, ctx_r, l_best, r_best);
+
+    let mut memo: Vec<MemoState<<Cfg::Au as AuIds>::Term>> = Vec::new();
+    let (term, complete) = solve_iterative(
+        snap,
+        space,
+        pool,
+        cache,
+        results,
+        &mut memo,
+        root_or,
+        deadline.map(|d| std::time::Instant::now() + d),
+        pruning,
+        subsumption,
+    );
+    (root_or, term, complete)
+}
+
+/// The optimum of one exact solve entered at an arbitrary OR state.
+pub(crate) struct ExactAt<T> {
+    /// The winning term, interned in the pool the caller passed in.
+    pub(crate) term: T,
+    /// True when the search ran to completion, so `term` is the proven optimum
+    /// of the entry state; false when a deadline expired and `term` is only the
+    /// entry frame's incumbent (feasible, not certified).
+    pub(crate) complete: bool,
+}
+
+/// Run the exact solver from an arbitrary OR state `(l, r, ctxL, ctxR)`
+/// instead of the root's empty contexts, interning its terms into a
+/// caller-owned pool (plan item A7, doc/au-solver-plan.md).
+///
+/// `ctx_l`/`ctx_r` are ascending-sorted, deduplicated class lists, the form
+/// `ContextStore` stores, so a caller passes `contexts.get(id)` straight
+/// through. Together with `cycle_mode` they define exactly the subproblem the
+/// caller's own OR node stands for, so the returned optimum is the optimum of
+/// that node.
+///
+/// The search runs on layers created here (its own search space, action cache,
+/// and result table), so it cannot observe or disturb a caller's search state.
+/// The one shared layer is the term pool, which is what makes the returned
+/// `TermId` usable by the caller: the pool is append-only and hash-consed, so
+/// interning here only appends, never invalidates an existing id, and a
+/// semi-persistent restore truncates the additions with the caller's own token.
+///
+/// Finiteness is the caller's precondition: this entry point does not repeat
+/// `validate_finite_from`, because a caller that validated its own root has
+/// already covered every class reachable from it, and `(l, r)` is such a pair.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_exact_at<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    l_root: ClassOf<Cfg>,
+    r_root: ClassOf<Cfg>,
+    ctx_l: &[ClassOf<Cfg>],
+    ctx_r: &[ClassOf<Cfg>],
+    cycle_mode: CycleMode,
+    deadline: Option<std::time::Duration>,
+    pruning: bool,
+    subsumption: bool,
+) -> ExactAt<<Cfg::Au as AuIds>::Term>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut space: SearchSpace<Cfg::Au> = SearchSpace::new(cycle_mode);
+    let mut cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M> =
+        ActionCache::without_ac_actions(usize::MAX);
+    let mut results: BestResults<Cfg::Au> = BestResults::new();
+    let (_, term, complete) = solve_entry(
+        snap,
+        &mut space,
+        pool,
+        &mut cache,
+        &mut results,
+        l_root,
+        r_root,
+        ctx_l,
+        ctx_r,
+        deadline,
+        pruning,
+        subsumption,
+    );
+    ExactAt { term, complete }
 }
 
 /// How many OR-node entries pass between two `Instant::now()` deadline polls.

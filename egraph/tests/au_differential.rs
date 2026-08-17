@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Differential gate for the AU solver work plan (doc/au-solver-plan.md).
 //!
-//! Every solver change on the plan (A0-A7) is compared against the current
+//! Every solver change on the plan (A0-A8) is compared against the current
 //! solvers: the exhaustive uninformed exact search (no pruning, no ordering)
 //! and the current MCGS. This harness pins their outputs on a deterministic
 //! corpus as a committed golden fixture,
@@ -1255,6 +1255,125 @@ fn closed_bit_mcgs_is_sound() {
     println!(
         "closed_bit_mcgs_is_sound: {checked} mcgs lines checked against the flag-off fixture, \
          {better} better, {certified_earlier} certified earlier"
+    );
+}
+
+/// A7's flag-on check, the same protocol, in both configurations the flag
+/// ships in: `hybrid_exact` alone, and combined with A8's `closed_bit`. The
+/// trigger replaces the enumeration of a small subproblem with one exact
+/// solve of the same state, so the mcgs lines may move but only toward the
+/// optimum. The threshold is the instance's own root estimate minus one:
+/// `reachable_pairs` is monotone non-increasing down the search graph, so that
+/// is the largest threshold excluding the root, and it makes every instance
+/// exercise the trigger on proper subproblems rather than have the whole
+/// instance absorbed by a single call.
+#[test]
+fn hybrid_exact_mcgs_is_sound() {
+    fn field(value: &str, key: &str) -> String {
+        value
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("no field {key} in fixture value {value:?}"))
+            .to_string()
+    }
+
+    let golden = read_golden();
+    let find = |key: &str| -> String {
+        golden
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key} :: ")))
+            .unwrap_or_else(|| panic!("{key}: no line in the golden fixture; {REGEN_HINT}"))
+            .to_string()
+    };
+
+    let mut checked = 0usize;
+    let mut better = 0usize;
+    let mut certified_earlier = 0usize;
+    let mut fired = 0usize;
+    for spec in full_specs() {
+        let id = spec.id();
+        let inst = spec.build();
+        let snap = AuSnapshot::new(&inst.eg).unwrap();
+        let l = snap.class_of(inst.left).unwrap();
+        let r = snap.class_of(inst.right).unwrap();
+        let threshold = semi_persistent_egraph::au::estimates::reachable_pairs(&snap, l, r) - 1;
+
+        let exact_line = find(&format!("{id} exact"));
+        let exact_size: u32 = field(&exact_line, "size").parse().unwrap();
+        let exact_vmass: u32 = field(&exact_line, "vmass").parse().unwrap();
+
+        for playouts in PLAYOUT_BUDGETS {
+            for closed_bit in [false, true] {
+                let mcgs = anti_unify(
+                    &snap,
+                    inst.left,
+                    inst.right,
+                    &AuConfig {
+                        algorithm: AuAlgorithm::Uct,
+                        playouts,
+                        closed_bit,
+                        hybrid_exact: true,
+                        hybrid_threshold: threshold,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                let quality = (mcgs.size, mcgs.pool.variant_mass(mcgs.term_id));
+                let certified = mcgs.completion == Completion::Exact;
+                if mcgs.hybrid.calls > 0 {
+                    fired += 1;
+                }
+                assert_eq!(
+                    mcgs.hybrid.calls, mcgs.hybrid.proved,
+                    "{id}: a hybrid call returned without a proof and no deadline was set"
+                );
+
+                assert!(
+                    quality.0 >= exact_size,
+                    "{id}: hybrid at {playouts} playouts (closed_bit {closed_bit}) reports size \
+                     {}, beating the exact optimum {exact_size}; the trigger is unsound",
+                    quality.0
+                );
+                if certified {
+                    assert_eq!(
+                        quality,
+                        (exact_size, exact_vmass),
+                        "{id}: hybrid at {playouts} playouts (closed_bit {closed_bit}) reports \
+                         Completion::Exact off the exact optimum; the certificate is unsound"
+                    );
+                }
+
+                let golden_line = find(&format!("{id} mcgs p{playouts}"));
+                let golden_quality: (u32, u32) = (
+                    field(&golden_line, "size").parse().unwrap(),
+                    field(&golden_line, "vmass").parse().unwrap(),
+                );
+                let golden_certified = field(&golden_line, "certified") == "yes";
+                assert!(
+                    quality <= golden_quality,
+                    "{id} mcgs p{playouts} (closed_bit {closed_bit}): hybrid returns \
+                     {quality:?} against the flag-off fixture's {golden_quality:?}; proving a \
+                     subproblem must not cost quality"
+                );
+                assert!(
+                    !golden_certified || certified,
+                    "{id} mcgs p{playouts} (closed_bit {closed_bit}): the flag-off fixture \
+                     certified and hybrid did not"
+                );
+                if quality < golden_quality {
+                    better += 1;
+                }
+                if certified && !golden_certified {
+                    certified_earlier += 1;
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(fired > 0, "the hybrid trigger never fired on the corpus");
+    println!(
+        "hybrid_exact_mcgs_is_sound: {checked} mcgs lines checked against the flag-off fixture, \
+         {fired} with the trigger firing, {better} better, {certified_earlier} certified earlier"
     );
 }
 

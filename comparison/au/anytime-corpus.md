@@ -10,18 +10,20 @@ budget, on both budget axes (playouts, and wall clock relative to the exact
 solver), and how much budget a completion certificate costs against B1's
 prediction that certification needs about `sum A(v)` playouts.
 
-Three runs, 2026-08-16 and 2026-08-17, release build on Apple Silicon. The main
+Four runs, 2026-08-16 and 2026-08-17, release build on Apple Silicon. The main
 run is 673 instances, 10095 rows, 1854 s wall; the deep-ladder run repeats the
 `dec` and `mixed` families to 2^18 playouts (438 instances, 8322 rows, 1317 s)
 to see whether the budget, rather than the algorithm, was what stopped
 certification; the closed-bit run repeats the same two families on the main
 run's ladder with plan item A8's selection rule on (438 instances, 6570 rows,
-612 s). Every spec of all three was measured: no exact timeout, no MCGS
-timeout, no ladder cut on the per-instance budget, no instance past the wall
-budget. Tables (a) to (d) are the main run, whose ladder is 2^0 to 2^14; table
-(e) is the deep-ladder run; table (f) is the closed-bit run and is the only
-one whose MCGS runs are not the default configuration. The exact solver runs
-with `exact_pruning` and `context_subsumption` on in all three.
+612 s); the hybrid run repeats them again with A8 on and plan item A7's exact
+trigger on top (438 instances, 6570 rows, 568 s). Every spec of all four was
+measured: no exact timeout, no MCGS timeout, no ladder cut on the per-instance
+budget, no instance past the wall budget. Tables (a) to (d) are the main run,
+whose ladder is 2^0 to 2^14; table (e) is the deep-ladder run; tables (f) and
+(g) are the closed-bit and hybrid runs, the only ones whose MCGS runs are not
+the default configuration. The exact solver runs with `exact_pruning` and
+`context_subsumption` on in all four.
 
 ## Regenerating
 
@@ -52,6 +54,22 @@ AU_BENCH_DIR=comparison/au AU_CSV_NAME=corpus-closed.csv AU_FAMILIES=dec,mixed \
   -- --ignored --nocapture
 python3 comparison/au/analyze.py comparison/au/corpus-closed.csv
 ```
+
+The hybrid run of section (g) adds `AU_HYBRID`, the reachable-pair threshold
+the exact trigger fires at, and reads its comparison off the closed-bit run:
+
+```text
+AU_BENCH_DIR=comparison/au AU_CSV_NAME=corpus-hybrid.csv AU_FAMILIES=dec,mixed \
+  AU_CLOSED_BIT=1 AU_HYBRID=4096 AU_CORPUS_SECS=1500 \
+  cargo test -p semi-persistent-egraph --release --test au_corpus_bench \
+  -- --ignored --nocapture
+python3 comparison/au/analyze.py comparison/au/corpus-hybrid.csv \
+  --against comparison/au/corpus-closed.csv
+```
+
+`--against` prints the budget-by-budget comparison of two runs over the same
+instances, and `hybrid_calls`/`hybrid_ms` are two extra CSV columns a hybrid
+run fills and every earlier CSV leaves absent.
 
 `AU_CORPUS_SECS` is the wall budget after which no new instance starts; the
 CSV is flushed per line, so a killed run leaves usable data. `AU_MIN_EXACT_MS`
@@ -105,8 +123,9 @@ and they are excluded from the knee tables.
 16384 playouts still takes 10.8 ms against 0.03 ms at 16, growing linearly in
 the budget. Wall-clock costs above the knee are therefore the cost of playouts
 that realize nothing, not of the certificate. This holds for the flag-off
-tables below, which are every table except (f): the closed bit knows when the
-graph has closed and stops there, and section (f) reports what that is worth.
+tables below, which are every table except (f) and (g): the closed bit knows
+when the graph has closed and stops there, and sections (f) and (g) report what
+that is worth.
 
 ## Families
 
@@ -456,3 +475,133 @@ overhead and costs 14.3% (39893 ms to 45598 ms): one reverse-edge entry per
 child position at expansion, and the closed-child scans in selection. That is
 the trade the flag makes, and it is why the default stays off for runs whose
 instances are known not to close.
+
+## (g) Hybrid exact subproblems, 2026-08-17: `mixed` certification 0.31 to 1.00
+
+Plan item A7 hands a subproblem to the exact solver instead of enumerating it.
+At OR-node creation MCGS measures the node with `estimates::reachable_pairs`,
+the size of the class-pair rectangle its subgraph lives in
+(`|{l} ∪ reach(l)| * |{r} ∪ reach(r)|`, two array reads off the snapshot's
+per-SCC reachability popcounts); a node at or below `AuConfig::hybrid_threshold`
+is solved by `exact::run_exact_at` on its own `(l, r, ctxL, ctxR)` under the
+run's cycle mode, and the result is marked exact. A marked node is terminal at
+creation and a terminal node is closed at birth, so with A8 also on the proof
+propagates upward as a closure. This run repeats the `dec` and `mixed` families
+of the closed-bit run, same instances and same ladder, with `closed_bit` and
+`hybrid_exact` at threshold 4096: 438 instances, 6570 rows, 568 s,
+`corpus-hybrid.csv`. The comparison column is the closed-bit run itself, so the
+two differ in exactly one flag.
+
+| playouts | certified closed | certified hybrid | zero gap closed | zero gap hybrid | mean gap closed | mean gap hybrid |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.000 | 0.142 | 0.000 | 0.144 | 0.1768 | 0.1519 |
+| 4 | 0.000 | 0.189 | 0.100 | 0.224 | 0.1432 | 0.1288 |
+| 16 | 0.180 | 0.301 | 0.416 | 0.523 | 0.0730 | 0.0643 |
+| 64 | 0.578 | 0.836 | 0.826 | 0.966 | 0.0225 | 0.0033 |
+| 256 | 0.694 | 1.000 | 0.973 | 1.000 | 0.0042 | 0.0000 |
+| 1024 | 0.694 | 1.000 | 1.000 | 1.000 | 0.0000 | 0.0000 |
+| 4096 | 0.694 | 1.000 | 1.000 | 1.000 | 0.0000 | 0.0000 |
+| 16384 | 0.715 | 1.000 | 1.000 | 1.000 | 0.0000 | 0.0000 |
+
+No rung regresses on either axis, and the certification column reaches 1.000 at
+256 playouts against 0.715 at the top of the ladder. Total MCGS wall time over
+the whole ladder falls 19.2x, 48890 ms to 2544 ms, because an instance that
+certifies stops early: the 125 instances the closed bit never closed are the
+ones that spent the full budget, and all of them now close.
+
+The knee splits by family, and this is where the threshold shows:
+
+| family | certified closed | certified hybrid | median `sum A(v)` | median knee closed | median knee hybrid |
+| --- | --- | --- | --- | --- | --- |
+| `dec` | 258 of 258 | 258 of 258 | 32 | 32 | 32 |
+| `mixed` | 55 of 180 | 180 of 180 | 113019 | 128 | 64 |
+
+`dec` does not move at this threshold: its root estimates run from 676 at burial
+depth 5 with one decoy to 962361 at depth 20 with four, so a threshold of 4096
+reaches only the last few levels of the chain, and A8 had already put the
+`dec` knee at `sum A(v)`. `mixed` moves from 55 instances certified to all 180,
+because its `sum A(v)` is 1e5 and above: those instances have more actions than
+the ladder has playouts, and a proof that does not come from realizing actions
+is the only proof available to them.
+
+That is also the first result in this document that breaks B1's lower bound.
+`sum A(v)` bounds a certificate from below only while one playout realizes at
+most one action and a certificate needs every action realized; one exact call
+proves a whole subgraph without realizing any of it in MCGS. 221 of the 423
+uncapped instances certify strictly below their own `sum A(v)`, which is sound
+for the reason `au_differential.rs::hybrid_exact_mcgs_is_sound` asserts and not
+a defect in the census.
+
+What the calls cost:
+
+| playouts | median calls | p90 calls | max calls | median hybrid ms | hybrid share of run time |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 1 | 13 | 0.000 | 0.189 |
+| 16 | 1 | 3 | 15 | 0.004 | 0.088 |
+| 64 | 1 | 4 | 15 | 0.008 | 0.039 |
+| 256 | 1 | 5 | 15 | 0.007 | 0.032 |
+| 16384 | 1 | 5 | 15 | 0.007 | 0.031 |
+
+Five calls at the 90th percentile and 15 at the maximum, 109 ms of the run's
+2544 ms in total. The share is highest at one playout because there is almost
+no playout work to divide it into, and it falls as the ladder rises: the calls
+are made once, at node creation, and a longer run does not repeat them.
+
+### The threshold sweep
+
+Two sweeps chose 4096, because the corpus and the cost push in opposite
+directions. The corpus sweep repeats the run at four thresholds
+(`AU_HYBRID` 256 and 65536 into `/tmp`, 0 being the closed-bit run itself):
+
+| T | certified | median knee | p90 knee | median calls | max calls | total MCGS ms | hybrid time share |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 (closed alone) | 313/438 | 64 | 128 | 0 | 0 | 48890 | 0.000 |
+| 256 | 380/438 | 64 | 128 | 0 | 13 | 24007 | 0.001 |
+| 4096 | 438/438 | 64 | 128 | 1 | 15 | 2544 | 0.043 |
+| 65536 | 438/438 | 16 | 128 | 1 | 12 | 1852 | 0.137 |
+
+On these two families the sweep is monotone: a higher threshold certifies at
+least as often, at least as early, and faster.
+`au_hybrid_exact.rs::hybrid_threshold_sweep` shows the same shape per instance
+at nine thresholds, including the point at which the root's own estimate falls
+under the threshold and the trigger absorbs the whole instance in one call.
+What stops the sweep is the second one,
+`au_corpus_bench.rs::calibrate_hybrid_threshold`, which prints the
+trigger's estimate against what exact actually costs at that root, per family:
+
+| instance | root estimate | max A(v) at one node | `sum A(v)` | exact ms |
+| --- | --- | --- | --- | --- |
+| `dec d5k1` | 676 | 2 | 10 | 0.08 |
+| `xover d4w4c8` | 625 | 17 | 181111 | 0.05 |
+| `ac m24c4` | 841 | 576 | 576 | 3.19 |
+| `xover d5w8c12` | 1521 | 65 | 39212053+ | 0.12 |
+| `width d4w16` | 4761 | 256 | 1024 | 0.28 |
+| `ac m64c8` | 5329 | 4096 | 4096 | 64.64 |
+| `ac m128c12` | 19881 | 16384 | 16384 | 644.23 |
+| `dec d12k2` | 42025 | 3 | 36 | 0.16 |
+| `wide d4w32` | 56169 | 1024 | 4120 | 1.43 |
+| `width d4w64` | 68121 | 4096 | 16384 | 3.70 |
+| `mixed c10` | 135054 | 82 | 32963165 | 0.15 |
+| `width d12w256` | 9517225 | 65536 | 786432 | 163.50 |
+
+The estimate counts class pairs and is therefore blind to how many members a
+class has, which is exactly what the `ac` and `width` families vary: `ac m24c4`
+lives in a rectangle of 841 pairs and still costs 3.19 ms, because its single
+class pair carries 576 representation pairs. So the estimate does not order
+instances the way exact's cost does, and the threshold is calibrated on the
+worst call it admits rather than on a correlation. At 4096 the worst probe
+admitted is `ac m24c4` at 3.19 ms; at 8192 it is `ac m64c8` at 64.64 ms; at
+65536 it is `ac m128c12` at 644.23 ms, which is more than the entire MCGS
+ladder costs on that instance. 4096 is the last threshold in the sweep whose
+admitted calls stay in single-digit milliseconds, and buying the `dec` and
+`mixed` knee at 65536 would cost 200x on the worst `ac` call. That is the
+trade, and it is why the flag ships off with 4096 as its default rather than
+on.
+
+The honest limit this leaves: the estimate is a poor predictor of exact's cost
+whenever fan-out rather than class count is what drives the search, and a
+threshold calibrated on the worst case is correspondingly conservative for
+everything else. The node's own action count is available for free at the
+trigger (`ensure_or_stats` has already computed it) and would separate the `ac`
+and `width` cases from the deep narrow ones; whether a two-part estimate beats
+a single conservative threshold is a measurement nobody has run.

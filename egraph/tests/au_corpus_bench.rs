@@ -69,8 +69,10 @@
 //! how the deep families' certification knees were measured past the default
 //! ladder; the CSV name follows `$AU_CSV_NAME` (default `corpus.csv`) so such
 //! a run does not overwrite the main one. `$AU_CLOSED_BIT` runs MCGS with the
-//! closed bit on (plan item A8): a different solver configuration, so it
-//! belongs in its own CSV, never mixed into a flag-off one.
+//! closed bit on (plan item A8) and `$AU_HYBRID=T` runs it with the hybrid
+//! exact trigger at reachable-pair threshold `T` (plan item A7): both are
+//! different solver configurations, so each belongs in its own CSV, never
+//! mixed into a flag-off one.
 
 use std::fs;
 use std::io::Write as _;
@@ -357,6 +359,8 @@ struct McgsMeasurement {
     vmass: u32,
     certified: bool,
     ms: f64,
+    hybrid_calls: u64,
+    hybrid_ms: f64,
 }
 
 /// Whether this run measures MCGS with the closed bit on (`$AU_CLOSED_BIT`,
@@ -366,8 +370,17 @@ fn closed_bit() -> bool {
     std::env::var("AU_CLOSED_BIT").is_ok_and(|v| v != "0")
 }
 
+/// Hybrid exact threshold for this run (plan item A7): `$AU_HYBRID` unset or
+/// `0` leaves the trigger off, any other value is the reachable-pair threshold
+/// it fires at. Same rule as the closed bit: a flag-on run is a separate CSV.
+fn hybrid_threshold() -> Option<u64> {
+    let value: u64 = std::env::var("AU_HYBRID").ok()?.parse().ok()?;
+    (value > 0).then_some(value)
+}
+
 fn run_mcgs(label: &str, build: Builder, playouts: u64) -> Option<McgsMeasurement> {
     let closed_bit = closed_bit();
+    let hybrid = hybrid_threshold();
     run_guarded(
         format!("au-mcgs-{label}-p{playouts}"),
         MCGS_GUARD,
@@ -378,6 +391,8 @@ fn run_mcgs(label: &str, build: Builder, playouts: u64) -> Option<McgsMeasuremen
                 algorithm: AuAlgorithm::Uct,
                 playouts,
                 closed_bit,
+                hybrid_exact: hybrid.is_some(),
+                hybrid_threshold: hybrid.unwrap_or(0),
                 ..Default::default()
             };
             let start = Instant::now();
@@ -389,6 +404,8 @@ fn run_mcgs(label: &str, build: Builder, playouts: u64) -> Option<McgsMeasuremen
                 vmass,
                 certified: matches!(result.completion, Completion::Exact),
                 ms,
+                hybrid_calls: result.hybrid.calls,
+                hybrid_ms: result.hybrid.time.as_secs_f64() * 1e3,
             }
         },
     )
@@ -758,7 +775,7 @@ fn anytime_corpus() {
     let mut csv = fs::File::create(&csv_path).unwrap();
     csv.write_all(
         b"instance,family,params,sum_a,sum_a_capped,or_states,exact_ms,exact_size,exact_vmass,\
-          playouts,mcgs_ms,mcgs_size,mcgs_vmass,certified\n",
+          playouts,mcgs_ms,mcgs_size,mcgs_vmass,certified,hybrid_calls,hybrid_ms\n",
     )
     .unwrap();
 
@@ -875,14 +892,16 @@ fn anytime_corpus() {
             csv.write_all(
                 format!(
                     "{id},{family},{params},{sum_a},{sum_a_capped},{or_states},{:.3},{},{},\
-                     {playouts},{:.3},{},{},{}\n",
+                     {playouts},{:.3},{},{},{},{},{:.3}\n",
                     exact.ms,
                     exact.size,
                     exact.vmass,
                     mcgs.ms,
                     mcgs.size,
                     mcgs.vmass,
-                    mcgs.certified
+                    mcgs.certified,
+                    mcgs.hybrid_calls,
+                    mcgs.hybrid_ms
                 )
                 .as_bytes(),
             )
@@ -902,6 +921,108 @@ fn anytime_corpus() {
     );
     println!("wrote {}", csv_path.display());
     println!("elapsed {:.1} s", start.elapsed().as_secs_f64());
+}
+
+/// Calibration for the hybrid trigger's threshold (plan item A7): per family,
+/// the root's `reachable_pairs` estimate, the trigger's input, against what
+/// the exact solver actually costs there and against `sum A(v)`. A threshold
+/// is only usable if the estimate orders instances the way exact's cost does,
+/// so this is the measurement that says which families the estimate protects
+/// and which it does not. Not a corpus run.
+#[test]
+#[ignore = "hybrid threshold calibration; prints the trigger's estimate against exact's cost"]
+fn calibrate_hybrid_threshold() {
+    let mut probes: Vec<(String, Builder)> = Vec::new();
+    for &(d, k) in &[(5usize, 1usize), (12, 2), (20, 4)] {
+        let p = DeceptiveParams {
+            burial_depth: d,
+            margin: 2,
+            gap: 2,
+            decoys: k,
+        };
+        probes.push((
+            format!("dec d{d}k{k}"),
+            Arc::new(move || build_deceptive(p)),
+        ));
+    }
+    for &c in &[6usize, 10] {
+        let p = MixedParams {
+            seed: case_seed(MIX_BASE, 4242),
+            cycles: c,
+            n_deceptive: 1,
+            deceptive: DeceptiveParams {
+                burial_depth: 8,
+                margin: 3,
+                gap: 2,
+                decoys: 2,
+            },
+        };
+        probes.push((format!("mixed c{c}"), Arc::new(move || build_mixed(p).0)));
+    }
+    for &(d, w) in &[(4usize, 16usize), (4, 64), (8, 64), (12, 256)] {
+        probes.push((
+            format!("width d{d}w{w}"),
+            Arc::new(move || build_width(d, w)),
+        ));
+    }
+    for &(m, c) in &[(24usize, 4usize), (64, 8), (128, 12)] {
+        probes.push((format!("ac m{m}c{c}"), Arc::new(move || build_ac(m, c))));
+    }
+    for &(d, w) in &[(4usize, 32usize), (8, 128)] {
+        let p = WideParams {
+            depth: d,
+            width: w,
+            deceptive: DeceptiveParams {
+                burial_depth: 8,
+                margin: 2,
+                gap: 2,
+                decoys: 2,
+            },
+        };
+        probes.push((
+            format!("wide d{d}w{w}"),
+            Arc::new(move || build_wide_deceptive(p)),
+        ));
+    }
+    for &(d, w, c) in &[(4usize, 4usize, 8usize), (5, 8, 12)] {
+        probes.push((
+            format!("xover d{d}w{w}c{c}"),
+            Arc::new(move || build_crossover(d, w, c)),
+        ));
+    }
+
+    println!(
+        "{:<16} {:>10} {:>11} {:>12} {:>10} {:>10}",
+        "instance", "root est", "max acts", "sum_A", "exact ms", "est/act"
+    );
+    for (label, build) in probes {
+        let inst = build();
+        let snap = AuSnapshot::new(&inst.eg).unwrap();
+        let l = snap.class_of(inst.left).unwrap();
+        let r = snap.class_of(inst.right).unwrap();
+        let est = semi_persistent_egraph::au::estimates::reachable_pairs(&snap, l, r);
+        let census = certification_budget(
+            &snap,
+            l,
+            r,
+            CycleMode::AncestorOnly,
+            CENSUS_MAX_STATES,
+            Some(Instant::now() + CENSUS_GUARD),
+        )
+        .unwrap();
+        let exact = run_exact(&label, Arc::clone(&build));
+        println!(
+            "{label:<16} {est:>10} {:>11} {:>12} {:>10} {:>10}",
+            census.max_actions,
+            if census.capped {
+                format!("{}+", census.sum_actions)
+            } else {
+                census.sum_actions.to_string()
+            },
+            exact.map_or("TIMEOUT".to_string(), |m| format!("{:.2}", m.ms)),
+            est.saturating_mul(census.max_actions),
+        );
+    }
 }
 
 /// Parameter calibration for the corpus grids: pruned exact wall time per

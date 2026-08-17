@@ -41,6 +41,10 @@ def load(path):
             r["or_states"] = int(r["or_states"]) if r["or_states"] else None
             r["sum_a_capped"] = r["sum_a_capped"] == "true"
             r["gap"] = (r["mcgs_size"] - r["exact_size"]) / r["exact_size"]
+            # Written only by runs with $AU_HYBRID set (plan item A7); absent
+            # from every CSV recorded before it existed.
+            r["hybrid_calls"] = int(r.get("hybrid_calls") or 0)
+            r["hybrid_ms"] = float(r.get("hybrid_ms") or 0.0)
             rows.append(r)
     return rows
 
@@ -371,11 +375,65 @@ def table_greedy(rows):
     print()
 
 
+def table_hybrid(rows):
+    """What the hybrid exact trigger cost and how far it reached (A7)."""
+    if not any(r["hybrid_calls"] for r in rows):
+        return
+    print("## (g) Hybrid exact calls")
+    print()
+    print(f"{'playouts':>9} {'n':>5} {'p50 calls':>10} {'p90 calls':>10} "
+          f"{'max calls':>10} {'p50 hybrid ms':>14} {'time share':>11}")
+    for b in sorted({r["playouts"] for r in rows}):
+        at = [r for r in rows if r["playouts"] == b]
+        calls = [r["hybrid_calls"] for r in at]
+        total_ms = sum(r["mcgs_ms"] for r in at)
+        share = sum(r["hybrid_ms"] for r in at) / total_ms if total_ms else 0.0
+        print(f"{b:>9} {len(at):>5} {quantile(calls, 0.5):>10.0f} "
+              f"{quantile(calls, 0.9):>10.0f} {max(calls):>10} "
+              f"{quantile([r['hybrid_ms'] for r in at], 0.5):>14.3f} {share:>11.3f}")
+    print()
+
+
+def table_compare(rows, other, label):
+    """Certification, zero-gap mass, and mean gap of two runs of the same
+    instances, budget by budget. Both CSVs must cover the same corpus."""
+    mine = {r["instance"] for r in rows}
+    theirs = {r["instance"] for r in other}
+    if mine != theirs:
+        print(f"## Comparison against {label}")
+        print()
+        print(f"skipped: {len(mine)} instances here against {len(theirs)} there")
+        print()
+        return
+    print(f"## Comparison against {label}")
+    print()
+    print(f"{'playouts':>9} {'cert base':>10} {'cert this':>10} {'zero base':>10} "
+          f"{'zero this':>10} {'gap base':>9} {'gap this':>9}")
+    for b in sorted({r["playouts"] for r in rows}):
+        a = [r for r in rows if r["playouts"] == b]
+        o = [r for r in other if r["playouts"] == b]
+        if not o:
+            continue
+        frac = lambda rs, f: sum(1 for r in rs if f(r)) / len(rs)
+        print(f"{b:>9} {frac(o, lambda r: r['certified']):>10.3f} "
+              f"{frac(a, lambda r: r['certified']):>10.3f} "
+              f"{frac(o, lambda r: r['gap'] == 0):>10.3f} "
+              f"{frac(a, lambda r: r['gap'] == 0):>10.3f} "
+              f"{mean([r['gap'] for r in o]):>9.4f} {mean([r['gap'] for r in a]):>9.4f}")
+    print()
+    print(f"total MCGS wall time over the ladder: {sum(r['mcgs_ms'] for r in other):.0f} ms "
+          f"base, {sum(r['mcgs_ms'] for r in rows):.0f} ms this")
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("csv", nargs="?", default="corpus.csv")
     ap.add_argument("--hard-ms", type=float, default=10.0)
     ap.add_argument("--family", default=None)
+    ap.add_argument("--against", default=None,
+                    help="baseline CSV over the same instances, for the "
+                         "budget-by-budget comparison table")
     args = ap.parse_args()
 
     rows = load(args.csv)
@@ -397,6 +455,12 @@ def main():
     table_knee_by_depth(rows)
     table_playouts_to_zero(rows)
     table_ttt(rows)
+    table_hybrid(rows)
+    if args.against:
+        base = load(args.against)
+        if args.family:
+            base = [r for r in base if r["family"] == args.family]
+        table_compare(rows, base, args.against)
 
 
 if __name__ == "__main__":
