@@ -1,0 +1,16 @@
+;; EXPECT: check-failed
+;; TYPES: machine
+;; Partition semantics: two AC pattern elements bind distinct multiset children,
+;; so the n-ary lift of a binary constant fold does not match the same summand
+;; taken twice. Add{Const4 : 2} is unmatched by (Add (Const a) (Const b) ..rest).
+;; The companion fixture ac_coincidence_twin.egg adds the multiplicity twin and
+;; expects ok; this one pins the gap itself.
+(datatype Math
+    (Add Math :assoc-comm)
+    (Const i64))
+
+(rewrite (Add (Const a) (Const b) ..rest) (Add (Const (i64::+ a b)) ..rest))
+
+(let sq (Add (Const 4) (Const 4)))
+(run 3)
+(check (= sq (Const 8)))

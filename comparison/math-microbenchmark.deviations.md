@@ -245,3 +245,16 @@ configuration is a faithful transcription of egglog's program and is directly co
 to it. The native configuration is *not* the same rule set and its wall time should be
 read as "what this problem costs when the algebra is native", not as a same-program
 speedup.
+
+## Coincidence twins (2026-08-17)
+
+Partition semantics (see `integer_math.deviations.md`, same date): five `:k>=2`
+twins are added, one each for the factoring rule (`k` reinserted as a `Const`
+factor) and the Pow-product rule (`(a^b)^k = a^(b*k)`), and one per identity
+(`0+`, `0*`, `1*`) because this file has no constant fold to normalize a
+repeated 0 or 1 down to multiplicity 1. Residual: the distributivity rule
+cannot keep `k-1` copies of its matched Add child on the RHS, so a repeated
+Add factor (`(x+y)^2 * z`) still distributes only through other paths;
+verified latent, all checks pass. Re-validated after the change: node counts
+identical to the campaign under both strategies (755 926 / 755 917), so the
+twins fire zero times on this workload and the numbers stand.

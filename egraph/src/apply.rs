@@ -23,10 +23,15 @@ pub enum RhsOp<O, V> {
     Lit(O, V),
     /// Reconstruct `@sort(val)` lit node from a bound LitValVarId.
     LitVar(O, LitValVarId),
+    /// Reconstruct an `@i64(k)` lit node from a bound AC multiplicity variable.
+    MultVar(O, MultVarId),
     /// Build `(op args...)` via `eg.add()`. Args may expand to multiple children.
     App { op: O, args: Vec<RhsArg<O, V>> },
-    /// Evaluate a prim op on bound lit values, intern result.
-    PrimApp { op: O, args: Vec<LitValVarId> },
+    /// Evaluate a prim op on bound lit values or multiplicities, intern result.
+    PrimApp {
+        op: O,
+        args: Vec<crate::resolve::RPrimArg>,
+    },
     /// Fetch a global e-class id from the runtime global bindings.
     FetchGlobal(GlobalVarId),
 }
@@ -76,6 +81,7 @@ pub fn compile_rhs<O: Clone, S, V: Clone>(term: &RRhsTerm<O, S, V>) -> RhsOp<O, 
         RRhsTerm::Var(vid) => RhsOp::FetchNode(*vid),
         RRhsTerm::Lit { op, value, .. } => RhsOp::Lit(op.clone(), value.clone()),
         RRhsTerm::LitVar { op, val } => RhsOp::LitVar(op.clone(), *val),
+        RRhsTerm::MultVar { op, var } => RhsOp::MultVar(op.clone(), *var),
         RRhsTerm::App { op, children } => {
             let args: Vec<RhsArg<O, V>> = children.iter().map(|c| compile_rhs_arg(c)).collect();
             RhsOp::App {
@@ -435,6 +441,18 @@ type ChildVec<Cfg> = SmallVec<[<Cfg as EGraphConfig>::G; 16]>;
 /// are arithmetic and comparison, so two covers all of them.
 const PRIM_ARGS: usize = 2;
 
+/// A bound AC multiplicity read as an i64 literal value. Resolution only admits
+/// multiplicity variables in i64 positions, so the model must carry an i64
+/// sort; a count above `i64::MAX` cannot arise from a real node's children.
+fn mult_as_lit<L: LitVal, M: crate::lit_model::LitModel<Value = L>>(model: &M, k: u64) -> L {
+    let desc = model
+        .sorts()
+        .iter()
+        .find(|s| s.name == "i64")
+        .expect("multiplicity in RHS: model has no i64 sort");
+    (desc.parse)(&k.to_string()).expect("multiplicity in RHS does not fit i64")
+}
+
 pub fn eval<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
     m: &mut V,
@@ -460,6 +478,11 @@ where
             let val_id = m.get_lit_val(*lvid);
             eg.add_lit(*op, val_id)
         }
+        RhsOp::MultVar(op, mid) => {
+            let val = mult_as_lit(model, m.get_mult(*mid).to_u64());
+            let id = eg.lits_mut().intern(val);
+            eg.add_lit(*op, id)
+        }
         RhsOp::App { op: o, args } => {
             let mut children = ChildVec::<Cfg>::new();
             for arg in args {
@@ -468,12 +491,17 @@ where
             eg.add(*o, &children)
         }
         RhsOp::PrimApp { op, args } => {
-            // Gather bound lit values from the match
+            // Gather bound lit values (or multiplicities as i64) from the match
             let raw_vals: SmallVec<[L; PRIM_ARGS]> = args
                 .iter()
-                .map(|vid| {
-                    let lit_val_id = m.get_lit_val(*vid);
-                    eg.lits().get(lit_val_id).clone()
+                .map(|arg| match arg {
+                    crate::resolve::RPrimArg::LitVal(vid) => {
+                        let lit_val_id = m.get_lit_val(*vid);
+                        eg.lits().get(lit_val_id).clone()
+                    }
+                    crate::resolve::RPrimArg::Mult(mid) => {
+                        mult_as_lit(model, m.get_mult(*mid).to_u64())
+                    }
                 })
                 .collect();
             let refs: SmallVec<[&L; PRIM_ARGS]> = raw_vals.iter().collect();
@@ -1125,6 +1153,9 @@ mod tests {
             R::PrimApp { op, args, .. } => {
                 println!("{indent}PrimApp(op={op:?}, args={args:?})");
             }
+            R::MultVar { op, var } => {
+                println!("{indent}MultVar(op={op:?}, var={var:?})");
+            }
             R::LitVar { op, val } => {
                 println!("{indent}LitVar(op={op:?}, val={val:?})");
             }
@@ -1178,6 +1209,9 @@ mod tests {
             }
             RhsOp::LitVar(op, lvid) => {
                 println!("{indent}LitVar(op={op:?}, val={lvid:?})");
+            }
+            RhsOp::MultVar(op, mid) => {
+                println!("{indent}MultVar(op={op:?}, var={mid:?})");
             }
             RhsOp::FetchGlobal(gid) => {
                 println!("{indent}FetchGlobal({gid:?})");

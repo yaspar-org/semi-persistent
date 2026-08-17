@@ -368,6 +368,23 @@ which side of each fix it was measured on:
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.
 
+- 2026-08-17, coincidence twins and multiplicity on the RHS: AC matching
+  is a partition of distinct children (an element takes its child's whole
+  multiplicity; unannotated, that multiplicity must be exactly 1), so the
+  n-ary lifts of binary rules missed same-child coincidences
+  (`Mul{t : 2}` unmatched by two-element patterns, `Add{0 : 2}` unmatched
+  by a bare identity element). Ruled intended semantics, not a matcher
+  defect; the language guide's two contrary examples were corrected. The
+  engine gained the pieces the twins need: a bound multiplicity variable
+  is readable on the RHS in i64 positions, and `i64::pow` exists. Twins
+  were added by hand to `integer_math.native`, `math-microbenchmark
+  .native` and both `matrix` native files (per-benchmark ledgers, same
+  date). Every re-validated count is identical to the campaign tables
+  under both strategies: the twins fire zero times on the shipped
+  workloads, so no table is re-measured. Fixtures
+  `ac_coincidence_twin_gap.egg` / `ac_coincidence_twin.egg` pin the gap
+  and the twins.
+
 ## 7. Threats to validity
 
 - One machine, one OS; no cross-platform replication yet.

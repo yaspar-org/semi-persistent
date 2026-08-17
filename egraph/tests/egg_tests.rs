@@ -350,6 +350,8 @@ egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 
 // ── AC multiplicity semantics ──
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
+egg_test!(ac_coincidence_twin_gap, "ac_coincidence_twin_gap.egg");
+egg_test!(ac_coincidence_twin, "ac_coincidence_twin.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 

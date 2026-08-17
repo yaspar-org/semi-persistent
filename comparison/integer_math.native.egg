@@ -27,8 +27,13 @@
 
 ;; Evaluation, n-ary: fold two constant summands/factors wherever they sit.
 (rewrite (Add (Const a) (Const b) ..rest) (Add (Const (i64::+ a b)) ..rest))
+;; Coincidence twin: an element consumes its child's whole multiplicity and two
+;; elements bind distinct children (partition semantics), so a Const summand at
+;; multiplicity k >= 2 needs its own rule; k is readable on the RHS as an i64.
+(rewrite (Add (Const a):k>=2 ..rest) (Add (Const (i64::* a k)) ..rest))
 (rewrite (Sub (Const a) (Const b)) (Const (i64::- a b)))
 (rewrite (Mul (Const a) (Const b) ..rest) (Mul (Const (i64::* a b)) ..rest))
+(rewrite (Mul (Const a):k>=2 ..rest) (Mul (Const (i64::pow a k)) ..rest))
 
 ;; No RShift/LShift/Not constant folds: our i64 primitive set has no bitwise
 ;; operators. Zero matches on this program, so no measured consequence.
@@ -47,6 +52,9 @@
 ;; Factoring, n-ary: two Mul summands sharing a factor, inside any Add.
 (rewrite (Add (Mul a ..p) (Mul a ..q) ..rest)
          (Add (Mul a (Add (Mul ..p) (Mul ..q))) ..rest))
+;; Coincidence twin: the same Mul summand taken k times (t*u + t*u = 2*t*u).
+(rewrite (Add (Mul a ..p):k>=2 ..rest)
+         (Add (Mul a (Const k) ..p) ..rest))
 
 (rewrite (Pow x (Const 1 )) x)
 (rewrite (Pow x (Const 2)) (Mul x x))

@@ -136,3 +136,14 @@ configurations, on both engines, at `(run 6)`.
 Node counts are not comparable across engines (methodology section 3). The set keeps its
 extraction-path column: both engines reach the same three answers, and the two agree on
 every class the benchmark asserts.
+
+**Update 2026-08-17.** The "worth a pass over that file" above is done: the
+partition-semantics reading was confirmed as intended (an element takes its
+child's whole multiplicity, exactly 1 unless annotated), `:k>=2` twins with
+RHS-readable `k` were added by hand to `integer_math.native`,
+`math-microbenchmark.native` and both `matrix` native files, and all
+re-validated counts are identical to the campaign (the twins fire zero times
+on the shipped workloads). Methodology section 6, same date, has the summary;
+`egraph/tests/egg/ac_coincidence_twin*.egg` pin both directions. The
+reproduction above still fails by design: its two-element rule needs the twin,
+which is the documented migration rule, not an engine defect.

@@ -343,8 +343,13 @@ The non-linear `x` requires `(F x)` to be in the same set. Only
 ### AC Patterns (multiset semantics)
 
 AC nodes store sorted multisets (elements with multiplicities).
-A bare variable `x` in an AC pattern implicitly means `x:1` (consume
-exactly one occurrence). The accepted forms are:
+Matching is a partition of the node's distinct children: every pattern
+element binds a distinct child and takes that child's *whole*
+multiplicity, which must satisfy the element's annotation. A bare
+variable `x` (and a bare concrete element like `(Zero)`) implicitly
+means `:1`: it only binds a child whose total multiplicity is exactly
+one. Children not bound by any element go to the rest variable, again
+with their whole multiplicity. The accepted forms are:
 
 - Exact: `(Add x (Zero) y)`. Total multiplicities must match
   exactly.
@@ -366,12 +371,13 @@ exactly one occurrence). The accepted forms are:
 Example: `(Add x (Zero) ..rest)` against `(Add (Zero) (A) (A) (B))`:
 
 ```
-match 1: x = A, rest = {A:1, B:1}
-match 2: x = B, rest = {A:2}
+match: x = B, rest = {A:2}
 ```
 
-The concrete `(Zero)` is consumed (multiplicity 1). Then `x:1`
-consumes one occurrence of each remaining distinct child.
+The concrete `(Zero)` binds the Zero child (total multiplicity 1).
+`x` cannot bind A: A's total multiplicity is 2 and a bare variable
+requires exactly 1. To also catch A, write `x:k` and read the
+multiplicity from `k`.
 
 Example: `(Add x:k y:j ..rest)` against `(Add (A) (A) (A) (B) (B))`:
 
@@ -395,21 +401,27 @@ fails the constraint.
 Example: `(Add (Zero) ..rest)` against `(Add (Zero) (Zero) (A))`:
 
 ```
-match: rest = {Zero:1, A:1}
+no match
 ```
 
-One `(Zero)` is consumed by the concrete pattern element (implicit
-`:1`). The second Zero remains in the rest.
+The Zero child's total multiplicity is 2, and the bare concrete
+element requires exactly 1. `(Add (Zero):2 ..rest)` matches with
+`rest = {A:1}`, and `(Add (Zero):k ..rest)` matches any multiplicity,
+binding `k = 2`.
 
 Multiplicity constraint summary:
 
 | Syntax | Meaning |
 |--------|---------|
-| `x` | implicit `x:1` (consume exactly one) |
-| `x:3` | consume exactly 3 occurrences |
-| `x:k` | bind k to total multiplicity (k ≥ 1) |
+| `x` | implicit `:1` (child's total multiplicity is exactly 1) |
+| `x:3` | child's total multiplicity is exactly 3 |
+| `x:k` | bind k to the child's total multiplicity (k ≥ 1) |
 | `x:k>=2` | bind k, require k ≥ 2 |
 | `x:k<5` | bind k, require k < 5 |
+
+A bound multiplicity variable is readable on the right-hand side
+wherever an `i64` is expected: as a primitive argument
+(`(Const (i64::* a k))`) and in a literal position (`(Const k)`).
 
 Non-linear multiplicity variables (same `:k` on multiple elements)
 must bind to the same value:
@@ -451,12 +463,30 @@ multiplicity twin explicitly:
 (rewrite (Mul (Add a b):k>=2 ..rest) ...)
 ```
 
+The same applies to a *single* element facing a repeated child: an
+element takes its child's whole multiplicity, and unannotated it
+requires exactly 1, so `(rewrite (Add (Const 0) ..rest) (Add ..rest))`
+does not fire on `Add{0:2, x}`. Its twin
+`(rewrite (Add (Const 0):k>=2 ..rest) (Add ..rest))` drops all copies
+at once. Where the right-hand side needs the count, read it as an
+i64: a constant fold's twin is
+
+```
+(rewrite (Add (Const a):k>=2 ..rest) (Add (Const (i64::* a k)) ..rest))
+(rewrite (Mul (Const a):k>=2 ..rest) (Mul (Const (i64::pow a k)) ..rest))
+```
+
 This is deliberate. Partition semantics is what makes AC matching
 well defined and enumerable; generating coincidence variants
 automatically is a combinatorial blowup (every subset of mutually
 unifiable elements could coincide). When you translate a binary rule
-whose element subpatterns can unify with each other, decide per rule
-whether the coincidence case matters and write its twin if it does.
+whose element subpatterns can unify with each other, or whose element
+can face a repeated child, decide per rule whether the coincidence
+case matters and write its twin if it does. One shape has no twin
+today: a rule that must *keep* `k-1` copies of the matched child on
+the right-hand side (for example, distributing one factor out of
+`(x+y)^k · z`) cannot be written, because right-hand-side elements
+carry no multiplicity arithmetic.
 
 ### A Patterns (sequence semantics)
 

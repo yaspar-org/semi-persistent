@@ -144,3 +144,22 @@ Smoke pass (1 run, 0 warmups — not a timing result):
 Native AC holds the same check at 29% of the rules encoding's nodes. Ours-vs-theirs
 node counts are not comparable (`methodology.md` section 3); the 116 includes 9
 interned literals that egglog never counts.
+
+## Coincidence twins (2026-08-17)
+
+Partition semantics: an AC pattern element binds a distinct child and takes its
+whole multiplicity, which unannotated must be exactly 1. The n-ary lifts above
+therefore missed the same-child-taken-k-times cases (`Add{Const4 : 2}`,
+`Add{(Mul a p) : 2}`), latent here because no shipped input reaches them. Three
+`:k>=2` twins are added next to their general rules (both constant folds, one
+per Add and Mul, and the factoring rule); the bound multiplicity `k` is read on
+the RHS (`i64::* a k`, `i64::pow a k`, `(Const k)` as a factor). The three
+identity/annihilator rules need no twins here: the fold twins normalize a
+repeated Const to a single one, and the identities then fire. Residual, shared
+with every translation: a rule that must keep `k-1` copies of its matched child
+on the RHS (distributivity over a repeated Add child) has no expressible twin;
+verified latent, all checks pass. Re-validated after the change: node, class
+and iteration counts identical to the campaign table under both strategies
+(34 / 24 / 4), so the twins fire zero times on this workload and the numbers
+stand. Fixtures: `egraph/tests/egg/ac_coincidence_twin_gap.egg` (pins the gap),
+`ac_coincidence_twin.egg` (pins the twins).

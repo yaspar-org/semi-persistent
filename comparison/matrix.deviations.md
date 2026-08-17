@@ -128,3 +128,14 @@ two roots equal changes no node's tuple and so appears in no variant's delta. A 
 carrying such a constraint is now matched against the whole graph every round. Without
 that, both of this benchmark's assertions failed under `--use-semi-naive` and passed
 under naive matching, which is how the defect was found.
+
+## Coincidence twin (2026-08-17)
+
+Partition semantics (see `integer_math.deviations.md`, same date, for the full
+statement): the n-ary Lit fold's two elements cannot bind the same child, so
+`Times{Lit3 : 2}` went unfolded. Both native files (`matrix.native.egg`,
+`matrix.native-A.egg`) gain the twin
+`(rewrite (Times (Lit i):k>=2 ..rest) (Times (Lit (i64::pow i k)) ..rest))`.
+Re-validated: counts identical to the campaign (91/90 nodes, 25 classes) and to
+the native-A validation (62 nodes), so the twin fires zero times on this
+workload and the recorded numbers stand.

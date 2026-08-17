@@ -1602,10 +1602,23 @@ pub enum RRhsTerm<O, S, L> {
     /// `(+ x y)` where `+` is a `LitOpDesc` prim op.
     PrimApp {
         op: O,
-        args: Vec<LitValVarId>,
+        args: Vec<RPrimArg>,
         ret_sort: S,
     },
+    /// Reconstruct a `@i64(k)` lit node from a bound AC multiplicity variable.
+    MultVar {
+        op: O,
+        var: MultVarId,
+    },
     FetchGlobal(GlobalVarId),
+}
+
+/// A primitive-op argument on a RHS: a bound literal value, or a bound AC
+/// multiplicity variable read as an i64.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RPrimArg {
+    LitVal(LitValVarId),
+    Mult(MultVarId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1764,6 +1777,29 @@ pub fn resolve_rhs<
             if let Some(s) = expected_sort
                 && sorts.is_concrete(s)
             {
+                if shape.find_lit_val(v).is_none()
+                    && let Some(mv) = shape.find_mult(v)
+                {
+                    // A bound AC multiplicity used in a literal position,
+                    // e.g. `(Const k)` after `x:k` — readable only as i64.
+                    if sorts.name(s) != "i64" {
+                        return Err(err(
+                            format!(
+                                "multiplicity variable '{v}' can only fill an i64 \
+                                 literal position, found sort {}",
+                                sorts.name(s)
+                            ),
+                            span,
+                        ));
+                    }
+                    let lit_op = ops.lit_op_for_sort(s).ok_or_else(|| {
+                        err(format!("no lit op for sort '{}'", sorts.name(s)), span)
+                    })?;
+                    return Ok(RRhsTerm::MultVar {
+                        op: lit_op,
+                        var: mv,
+                    });
+                }
                 let lvid = shape
                     .find_lit_val(v)
                     .ok_or_else(|| err(format!("unbound literal variable '{v}'"), span))?;
@@ -1851,13 +1887,31 @@ pub fn resolve_rhs<
                             ));
                         }
                     };
-                    let vid = shape.find_lit_val(var_name).ok_or_else(|| {
-                        err(
-                            "'var_name' is not a lit-val variable (bind via OpKind::Lit pattern)"
-                                .to_string(),
+                    let vid = if let Some(lv) = shape.find_lit_val(var_name) {
+                        RPrimArg::LitVal(lv)
+                    } else if let Some(mv) = shape.find_mult(var_name) {
+                        // A bound AC multiplicity is a count; it is readable
+                        // only where the primitive expects an i64.
+                        if sorts.name(arg_sorts[i]) != "i64" {
+                            return Err(err(
+                                format!(
+                                    "multiplicity variable '{var_name}' can only feed an \
+                                     i64 argument; prim op '{op}' arg {i} expects {}",
+                                    sorts.name(arg_sorts[i])
+                                ),
+                                span,
+                            ));
+                        }
+                        RPrimArg::Mult(mv)
+                    } else {
+                        return Err(err(
+                            format!(
+                                "'{var_name}' is not a lit-val or multiplicity variable \
+                                 (bind via OpKind::Lit pattern or a `:k` annotation)"
+                            ),
                             span,
-                        )
-                    })?;
+                        ));
+                    };
                     args.push(vid);
                 }
                 return Ok(RRhsTerm::PrimApp {

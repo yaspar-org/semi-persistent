@@ -32,6 +32,13 @@
 (rewrite (Add (Const 0) ..rest) (Add ..rest))
 (rewrite (Mul (Const 0) ..rest) (Const 0))
 (rewrite (Mul (Const 1) ..rest) (Mul ..rest))
+;; Coincidence twins for the three identities: an element requires its child's
+;; total multiplicity to satisfy its annotation (default exactly 1), so a 0 or
+;; 1 occurring k >= 2 times needs its own rule. This file has no constant fold
+;; to normalize multiplicities, so the identities cover k directly.
+(rewrite (Add (Const 0):k>=2 ..rest) (Add ..rest))
+(rewrite (Mul (Const 0):k>=2 ..rest) (Const 0))
+(rewrite (Mul (Const 1):k>=2 ..rest) (Mul ..rest))
 
 (rewrite (Sub a a) (Const 0))
 
@@ -40,8 +47,15 @@
 ;; Factoring, n-ary: two Mul summands sharing a factor, inside any Add.
 (rewrite (Add (Mul a ..p) (Mul a ..q) ..rest)
          (Add (Mul a (Add (Mul ..p) (Mul ..q))) ..rest))
+;; Coincidence twin: an element consumes its child's whole multiplicity and two
+;; elements bind distinct children (partition semantics), so the same Mul
+;; summand at multiplicity k >= 2 needs its own rule; k is readable as an i64.
+(rewrite (Add (Mul a ..p):k>=2 ..rest)
+         (Add (Mul a (Const k) ..p) ..rest))
 
 (rewrite (Mul (Pow a b) (Pow a c) ..rest) (Mul (Pow a (Add b c)) ..rest))
+;; Coincidence twin: the same Pow factor taken k times ((a^b)^k = a^(b*k)).
+(rewrite (Mul (Pow a b):k>=2 ..rest) (Mul (Pow a (Mul (Const k) b)) ..rest))
 (rewrite (Pow x (Const 1)) x)
 (rewrite (Pow x (Const 2)) (Mul x x))
 
