@@ -1,0 +1,91 @@
+;; integer_math, scoped to the intersection set. From egglog tests/integer_math.egg
+;; at 7b1adf2; see integer_math.deviations.md.
+;;
+;; Removed here so that all three configurations run the same problem: the MathU
+;; universe relation and its 13 grounding rules, the evals-to relation and its two
+;; rules, the is-not-zero relation and its rule, the two MathU-driven identity
+;; introductions, and the five rewrites guarded by is-not-zero or by a primitive
+;; disequality. We have no datalog relations, and our `:when` takes patterns only, so
+;; a relation guard and a primitive guard both have nothing to compile to. The three
+;; bitwise constant folds go too (no i64 bitwise primitives on our side; they have zero
+;; matches here, so this costs nothing). The check is untouched and still passes.
+(datatype Math
+    (Diff Math Math)
+    (Integral Math Math)
+
+    (Add Math Math)
+    (Sub Math Math)
+    (Mul Math Math)
+    (Div Math Math)
+    (Pow Math Math)
+    (RShift Math Math)
+    (LShift Math Math)
+    (Mod Math Math)
+    (Not Math)
+
+    (Const i64)
+    (Var String))
+
+;; Evaluation
+(rewrite (Add (Const a) (Const b))
+         (Const (+ a b)))
+(rewrite (Sub (Const a) (Const b))
+            (Const (- a b)))
+(rewrite (Mul (Const a) (Const b)) (Const (* a b)))
+
+;; The RShift/LShift/Not constant folds are removed too: our i64 primitive set has
+;; no bitwise operators. Measured consequence: none. At (run 4) all three rules have
+;; zero matches on this program, and the node count is identical with and without
+;; them, so the shift structure is still exercised by the two shift-introduction
+;; rewrites below and nothing else changes.
+
+;; Properties
+(rewrite (Add a b) (Add b a))
+(rewrite (Mul a b) (Mul b a))
+(rewrite (Add a (Add b c)) (Add (Add a b) c))
+(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))
+
+(rewrite (Sub a b) (Add a (Mul (Const -1) b)))
+
+(rewrite (Add a (Const 0)) a)
+(rewrite (Mul a (Const 0)) (Const 0))
+(rewrite (Mul a (Const 1)) a)
+
+(rewrite (Sub a a) (Const 0))
+
+(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))
+(rewrite (Add (Mul a b) (Mul a c)) (Mul a (Add b c)))
+
+(rewrite (Pow x (Const 1 )) x)
+(rewrite (Pow x (Const 2)) (Mul x x))
+
+(rewrite (Mul x (Pow (Const 2) y)) (LShift x y))
+(rewrite (Div x (Pow (Const 2) y)) (RShift x y))
+
+(rewrite (Not (Not x)) x)
+
+
+;; Tests
+(let $start-expr (Div (
+                        Mul (Var "a") (Pow (Const 2) (Const 3))
+                    ) (
+                        Add (Var "c") (
+                            Sub (Mul (Var "b") (Const 2)) (Mul (Var "b") (Const 2))
+                        )
+                    )))
+
+(let $equiv-expr (Div (
+                    LShift (Var "a") (Const 3)
+                ) (
+                    Mul (Var "c") (Not (Not (Const 1)))
+                )
+                ))
+
+(run 4)
+
+(check (= $start-expr $equiv-expr))
+
+;; --- added by the comparison harness (see integer_math.deviations.md) ---
+(print-size)
+(print-stats)
+(print-stats :file "integer_math.egglog.stats.json")
