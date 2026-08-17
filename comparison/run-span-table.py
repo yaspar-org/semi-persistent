@@ -6,8 +6,10 @@ Two jobs, one script, because they read the same binaries:
   --corpus    run every comparison program on each binary and compare the
               stdout and the stats tuple (nodes, classes, iterations,
               match_steps) against the first binary. Wall time is dropped: it is
-              the thing being changed. A prototype that fails this is not
-              measuring the same computation and its timings mean nothing.
+              the thing being changed. A binary that fails this is not measuring
+              the same computation and its timings mean nothing. --extra passes
+              an engine flag through, so one invocation covers a scheduling
+              mode; repeat the run per mode.
 
   --phases    run a program under EGRAPH_PHASE=1 (requires a binary built with
               --features phase-timing) and print the per-round phase split:
@@ -28,7 +30,7 @@ Binaries are given as name=path pairs, e.g.
 Build them with, from the workspace root:
 
     cargo build --release -p semi-persistent-egraph --bin semi-persistent \\
-        --features phase-timing[,span-proto-reuse|,span-proto-sorted]
+        --features phase-timing
 
 Following comparison/methodology.md section 2 for the wall-clock numbers, with
 the same registered divergence run-semipersistence.py takes: the reported
@@ -75,12 +77,13 @@ def run(binary, prog, extra=(), env=None, cwd=None):
     return r.stdout.decode(), r.stderr.decode(), dt
 
 
-def fingerprint(binary, prog, semi):
+def fingerprint(binary, prog, semi, extra=()):
     """stdout plus the run-invariant stats fields, for every stats file written."""
     with tempfile.TemporaryDirectory() as d:
         # `(print-stats :file ...)` writes relative to the working directory, so
         # each run gets its own; the program itself is read by absolute path.
-        out, _, _ = run(binary, prog, extra=(("--use-semi-naive",) if semi else ()), cwd=d)
+        flags = (("--use-semi-naive",) if semi else ()) + tuple(extra)
+        out, _, _ = run(binary, prog, extra=flags, cwd=d)
         stats = {}
         for f in sorted(os.listdir(d)):
             if f.endswith(".json"):
@@ -96,10 +99,12 @@ def cmd_corpus(args, bins):
     for prog in CORPUS:
         for semi in (False, True) if args.semi else (False,):
             tag = os.path.basename(prog) + (" [semi]" if semi else "")
-            ref = fingerprint(ref_bin, prog, semi)
+            if args.extra:
+                tag += " " + " ".join(args.extra)
+            ref = fingerprint(ref_bin, prog, semi, args.extra)
             row = []
             for name, b in bins[1:]:
-                got = fingerprint(b, prog, semi)
+                got = fingerprint(b, prog, semi, args.extra)
                 ok = got == ref
                 bad += not ok
                 row.append(f"{name}={'ok' if ok else 'DIFF'}")
@@ -159,6 +164,13 @@ def main():
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--warmups", type=int, default=1)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        metavar="FLAG",
+        help="extra engine flag, repeatable; e.g. --extra --runtime-scheduling",
+    )
     args = ap.parse_args()
 
     bins = []

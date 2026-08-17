@@ -190,6 +190,14 @@ superseding per-phase and wall-time numbers. The "ours, naive" and "egglog"
 columns stand, and so does the conclusion drawn from them below: the gap at
 S = 1e6 is the `(run 1)`, not the push or the pop.
 
+**Retracted further by section 12 (2026-08-16).** The attribution below of the
+whole `(run 1)` cost to matching is wrong: the round splits into matching and an
+index build, and the index build was 34% of it at S = 1e6. The "ours, naive"
+column is also superseded, because it predates both the restore fix of section
+11 and the index build fix of section 12; the per-cycle cost at S = 1e6 is
+146.17 ms, not 366.14. Do not cite the 353 ms as a cost of matching. The
+conclusion in the paragraph after the table stands: the gap is the `(run 1)`.
+
 20 cycles, base wall time subtracted.
 
 | S (our nodes) | egglog | ours, naive | ours, semi-naive |
@@ -489,3 +497,112 @@ python3 run-semipersistence.py --configs ours-naive,ours-semi \
 new in this pass; without them the runner behaves as section 10 documents.
 `empty20k` is the 20 000-pair twin of `empty`, generated always and never run by
 default, because 20 000 pairs of a snapshot-copying engine is minutes per run.
+
+## 12. Addendum, 2026-08-16: the index build stopped writing the whole key space
+
+Section 5 attributes the whole cost of a cycle's saturation round to matching.
+That attribution is wrong. Splitting the round in process
+(`egraph/src/phase_timing.rs`) puts 57.6 of its 170.5 ms at S = 1e6 in the index
+build, and 29.6 of the 57.6 in the container writing a span table over a key
+space the data does not fill: `by_child_pos` addresses 801 008 values with
+2 003 967 keys. The diagnosis is `comparison/span-table-sparsity.md`; this
+section records what the fix did to the numbers this file reports, and section
+12.3 states what section 5 has to retract.
+
+The e-graph's four index families now build through
+`DenseSpanMap::build_in` over a caller-owned `SpanArena` that outlives the map
+(`containers-verus` commit 3779a56, verification 1698 to 1716 conditions, 0
+errors). A build bumps a generation stamp and writes only the keys its own
+stream carries, so a key an earlier build left behind carries an older stamp and
+reads as empty. Work becomes proportional to the stream and the keys it occupies
+rather than to the key space. The arenas are held by the `Interpreter` rather
+than by the saturation call, because `(run 1)` is one round and this file's
+cycle is twenty of them: a scratch allocated per call is dropped before it is
+ever reused. Nothing has to be invalidated between runs or across `(push)` and
+`(pop)`; the stamp does it.
+
+### 12.1 Cost per cycle: the full cycle, with one saturation round
+
+Both columns are measured in one session at the two commits this change spans,
+so they are comparable to each other and not to section 5's table: section 5
+predates the restore fix of section 11 and several other changes, and
+`methodology.md` section 6 forbids mixing pre-fix and post-fix numbers in one
+table. Per cycle is the whole-program wall minus the base program's, divided by
+the 20 cycles, which is section 5's construction. Minimum of five timed runs
+after two warmups.
+
+| S (our nodes) | cycles, before | cycles, after | base, before | base, after | per cycle, before | per cycle, after | ratio |
+|---|---|---|---|---|---|---|---|
+| 9 966 | 32.6 | 30.1 | 9.5 | 9.4 | 1.155 | **1.035** | 0.90 |
+| 90 996 | 293.0 | 262.3 | 65.0 | 62.3 | 11.40 | **10.00** | 0.88 |
+| 1 001 932 | 4 090.6 | 3 635.0 | 746.7 | 711.7 | 167.20 | **146.17** | 0.87 |
+
+No egglog column: comparing against a number measured in an earlier session at
+an earlier commit is the mixing that rule forbids. The cross-engine ratio needs
+both engines re-run at one pinned commit, which the final submission does.
+
+### 12.2 What moved inside the round
+
+Milliseconds per round at S = 1e6, from `phase_timing`:
+
+| phase | before | after |
+|---|---|---|
+| index build | 57.61 | **32.64** |
+| span table, by_child_pos | 16.47 | **3.56** |
+| span table, by_repr | 13.10 | **4.25** |
+| fan-out pass | 7.60 | 7.69 |
+| matching and apply | 111.23 | 116.93 |
+
+Matching costs 5% more and the increase is reproducible over three runs. A
+stamped span is 24 bytes against the old 16, so a probe reads a span table 1.5
+times wider and compares the stamp before returning the slice. The round total
+falls anyway, because the build gives up more than the probes take back.
+
+Peak resident set size at S = 1e6 falls from 1 047.3 MiB to 608.2 MiB and system
+time from 0.43 s to 0.07 s: one span table per family is held for the whole run
+instead of a fresh one being allocated and freed every round.
+
+### 12.3 What this changes in the conclusions
+
+Section 5's sentence "one round of matching over a saturated million-node base
+costs us 353 ms" is retracted as stated, on two counts. The round is no longer
+353 ms: at 3779a56 the cycle costs 167.20 ms, most of the difference being the
+restore fix of section 11 and the changes since. And the cost was never all
+matching: of the 170.5 ms the round loop accounts for at S = 1e6 before this
+change, matching is 111.2 and the index build is 57.6. Do not cite the 353 ms as
+a matching cost.
+
+The round loop goes 170.5 ms to 151.2 ms per round, and the index build's share
+of it goes from 34% to 22%. The fan-out pass is now the largest single term
+inside the build at 7.69 ms, and removing it needs the container to export the
+occupied-key list it already maintains, which is a `containers-verus` change.
+
+Section 5's conclusion stands, and so does its reason. We re-match the whole base
+after an assertion batch and they match the delta. That is a property of the
+evaluation strategy, and no reduction of the index build reaches it: matching is
+77% of the round after this change, against 65% before.
+
+Semi-naive is the strategy that matches the delta, and section 5 measures it
+slower than naive at S = 1e6 (390.94 against 366.14). Section 11.3 of the
+sparsity document shows a term that was working against it: on a cycle that
+reaches a delta round, building the delta's span tables cost 12.75 ms per round
+to make 9 100 values addressable, and now costs 1.38. Whether semi-naive now
+wins at S = 1e6 is not measured here, because this file's cycle runs `(run 1)`
+and never reaches a delta round. A multi-round variant of the E6 programs is the
+next measurement, and it is the one that decides whether the strategy gap is
+real or was an artifact of the delta build's cost.
+
+### 12.4 Reproducing this section
+
+```
+cargo build --release -p semi-persistent-egraph --bin semi-persistent \
+    --features phase-timing
+cd comparison
+python3 run-span-table.py --phases \
+    --prog semi-persistence/sp-t100000.cycles.native.egg --bin now=<binary>
+python3 run-span-table.py --wall --runs 5 --warmups 2 \
+    --prog semi-persistence/sp-t100000.cycles.native.egg --bin now=<binary>
+```
+
+Wall-time comparisons use binaries built without `phase-timing`, which adds a
+clock read per timed phase.

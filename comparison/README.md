@@ -51,11 +51,14 @@ designed to find.
 build and states the design that removes it: at S = 1e6 the span tables are
 40.6 ms of a 65.4 ms index build because they are dense over a key space 2.44x
 the values it holds, and installing a semi-naive delta costs 19.6 ms to make 23
-values addressable. `run-span-table.py` regenerates every number in it and gates
-the two prototypes on corpus identity. That document also retracts the cost claim
-in `containers-verus/doc/design/16-layered-span-map.md` section 4 and the
+values addressable. `run-span-table.py` regenerates every number in it and
+checks corpus identity across binaries. That document also retracts the cost
+claim in `containers-verus/doc/design/16-layered-span-map.md` section 4 and the
 semi-naive column of `semi-persistence/semi-persistence.md` section 5; read it
-before citing either.
+before citing either. Its section 11 records the verified landing: the index
+build goes 57.61 ms to 32.64 per round at S = 1e6, the delta build 12.75 to
+1.38, and peak resident set size 1 047.3 MiB to 608.2. Sections 1 through 10 are
+the diagnosis and their prototype numbers are superseded by section 11.
 
 Read the ledgers before the numbers. `math-microbenchmark.deviations.md` in particular
 records a deviation large enough to change how its native column may be read: eleven of

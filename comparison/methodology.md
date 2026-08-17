@@ -168,6 +168,20 @@ which side of each fix it was measured on:
   session reproduces its published columns within 1%, so the pre-fix and
   post-fix tables in that file are comparable despite the rule above.
 
+- 2026-08-16, the index build stopped writing its whole key space: the
+  four index families build into a caller-owned span arena that outlives
+  the map, so a build stamps a generation and writes only the keys its
+  stream carries instead of a span table dense over the key space. At
+  S = 1e6 the E6 round's index build goes 57.61 ms -> 32.64 ms and the
+  delta index build 12.75 ms -> 1.38 ms; peak resident set size goes
+  1 047.3 MiB -> 608.2 MiB. Matching costs 5% more, measured and
+  reproducible, because a stamped span is 24 bytes against 16; the round
+  total falls from 170.5 ms to 151.2 ms. Retracts the attribution in
+  semi-persistence.md section 5 of the whole `(run 1)` cost to matching,
+  and supersedes its "ours, naive" column; the addendum is section 12 and
+  the diagnosis is span-table-sparsity.md. Corpus byte-identical on 26
+  programs under both strategies and three scheduling modes.
+
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.
 

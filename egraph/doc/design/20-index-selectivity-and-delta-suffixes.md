@@ -717,3 +717,43 @@ the number of operators, and the key count is now the length of a span table
 that is allocated per round. The measurement to make before attempting it is the
 span table's occupancy: R1 is worth its memory only if the buckets it splits are
 long enough that the split removes more probe work than the wider table costs.
+
+## The span table stopped being written per round (2026-08-16)
+
+**The `O(num_keys)` term in the index build is gone, and the fan-out pass is now
+the largest term left in the build.** R2 gave every family a span table dense
+over its key space, and chapter 6 recorded the space that costs. What it did not
+record is that the build *writes* that table every round whether or not the keys
+occur. `comparison/span-table-sparsity.md` measures the consequence at S = 1e6 on
+the E6 cycle: `by_child_pos` addresses 801 008 values with 2 003 967 keys, and
+the four builds spend 40.6 ms per round on span tables for a 3.2 MB pool.
+
+The families now build through `DenseSpanMap::build_in` over a caller-owned
+`SpanArena` that outlives the map (`containers-verus` commit 3779a56). A build
+bumps a generation stamp and writes only the keys its stream carries; a key an
+earlier build wrote reads as empty. Chapter 6 states how the arenas are owned and
+recycled. Per round at S = 1e6:
+
+| phase | before | after |
+|---|---|---|
+| index build | 57.61 ms | 32.64 ms |
+| span table, `by_child_pos` | 16.47 ms | 3.56 ms |
+| span table, `by_repr` | 13.10 ms | 4.25 ms |
+| `measure_fanouts` | 7.60 ms | 7.69 ms |
+| matching and apply | 111.23 ms | 116.93 ms |
+
+**`measure_fanouts` does not improve, and the reason is a missing accessor.** It
+needs the occupied keys of `by_child_pos`, `by_contains` and `by_repr`. The arena
+maintains exactly that list and the build keeps it current, but it is
+`pub(crate)`, so `index.rs` scans `0..len()` and skips empty buckets. That scan
+is the `O(num_keys)` term this change removed from every other phase, and at
+7.69 ms it is now 24% of the index build. Exporting the occupancy list from
+`containers-verus` is the next reduction and needs no e-graph change beyond
+calling it. S5's sampler reads the same tally, so it would benefit too.
+
+**S1's constants cost 5% more to serve.** A stamped span is 24 bytes against 16,
+so a probe reads a span table 1.5 times wider and compares the stamp before
+returning the slice, and matching measures 5% slower over three repeated runs.
+The round total falls anyway, 170.5 ms to 151.2 ms. The trade reverses on a
+workload whose rounds probe much more than they build; which one applies is a
+measurement, not an inference.

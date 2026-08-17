@@ -10,12 +10,12 @@
 use std::collections::HashSet;
 
 use proptest::prelude::*;
+use semi_persistent_containers::DenseSpanMap;
 use semi_persistent_egraph::EGraph;
 use semi_persistent_egraph::containers::DenseId;
 use semi_persistent_egraph::index::IndexStore;
 use semi_persistent_egraph::literal::{NiraLitVal, NiraModel};
 use semi_persistent_egraph::nodes::DefaultConfig;
-use semi_persistent_egraph::span_proto::{self, Family};
 
 type EG = EGraph<DefaultConfig, NiraLitVal, false, false>;
 type G = semi_persistent_egraph::id::ENodeId;
@@ -103,18 +103,22 @@ fn b4_v1_touched_superset_of_changed() {
 /// end must have an empty full bucket after filtering.
 fn assert_delta_is_full_restricted(
     family: &str,
-    full: &Family<G>,
-    delta: &Family<G>,
+    full: &DenseSpanMap<G>,
+    delta: &DenseSpanMap<G>,
     tset: &HashSet<usize>,
 ) {
-    let n = span_proto::num_keys(full).max(span_proto::num_keys(delta));
+    let n = full.len().max(delta.len());
     for k in 0..n {
-        let expected: Vec<usize> = span_proto::get(full, k)
+        let expected: Vec<usize> = full
+            .try_get(k)
+            .unwrap_or(&[])
             .iter()
             .map(|g| g.to_usize())
             .filter(|x| tset.contains(x))
             .collect();
-        let got: Vec<usize> = span_proto::get(delta, k)
+        let got: Vec<usize> = delta
+            .try_get(k)
+            .unwrap_or(&[])
             .iter()
             .map(|g| g.to_usize())
             .collect();
