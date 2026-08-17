@@ -1,0 +1,43 @@
+;; TYPES: machine
+;; Translation of egglog tests/until.egg (7b1adf2).
+;; Config: native A. `gmul` is declared variadic `:assoc` — associative, not
+;; commutative. The associativity birewrite is deleted and the remaining rules are
+;; restated n-ary. See until.deviations.md.
+;;
+;; DEVIATION, load-bearing: our engine does not flatten a nested application of an
+;; `:assoc` operator, so the gmul terms below are written flat, in the form the engine
+;; would have produced itself. Reproduction in calc.deviations.md; the same note
+;; applies here.
+(sort G)
+(constructor IConst () G)
+(let gI (IConst))
+(constructor AConst () G)
+(let gA (AConst))
+(constructor BConst () G)
+(let gB (BConst))
+
+(constructor gmul (G) G :assoc)
+(constructor inv (G) G)
+(rewrite (gmul x) x)
+(rewrite (gmul ..p gI ..s) (gmul ..p ..s))
+
+; gA is cyclic of period 4
+(rewrite (gmul ..p gA gA gA gA ..s) (gmul ..p gI ..s))
+
+(let gA2 (gmul gA gA))
+(let gA4 (gmul gA gA gA gA))
+(let gA8 (gmul gA gA gA gA gA gA gA gA))
+
+; non terminating rule
+(sort U)
+(constructor allgs (G) U)
+(rule ((allgs x)) ((allgs (gmul gB x))))
+(allgs gA)
+
+; if you remove :until, this will take a very long time
+(run 10000 :until (= gA8 gI))
+(check (= gA8 gI))
+(check (!= gB gA))
+(check (!= gI gA))
+(print-size)
+(print-stats :file "until.native.stats.json")

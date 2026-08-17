@@ -1,0 +1,38 @@
+;; TYPES: machine
+;; Translation of egglog tests/until.egg (7b1adf2).
+;; Config: associativity supplied as an explicit birewrite rule, their encoding.
+;; See until.deviations.md.
+(sort G)
+(constructor IConst () G)
+(let gI (IConst))
+(constructor AConst () G)
+(let gA (AConst))
+(constructor BConst () G)
+(let gB (BConst))
+
+(constructor gmul (G G) G)
+(constructor inv (G) G)
+(birewrite (gmul (gmul a b) c) (gmul a (gmul b c))) ; assoc
+(rewrite (gmul gI a) a) ; idl
+(rewrite (gmul a gI) a) ; idr
+
+; gA is cyclic of period 4
+(rewrite (gmul gA (gmul gA (gmul gA gA))) gI)
+
+(let gA2 (gmul gA gA))
+(let gA4 (gmul gA2 gA2))
+(let gA8 (gmul gA4 gA4))
+
+; non terminating rule
+(sort U)
+(constructor allgs (G) U)
+(rule ((allgs x)) ((allgs (gmul gB x))))
+(allgs gA)
+
+; if you remove :until, this will take a very long time
+(run 10000 :until (= gA8 gI))
+(check (= gA8 gI))
+(check (!= gB gA))
+(check (!= gI gA))
+(print-size)
+(print-stats :file "until.rules.stats.json")
