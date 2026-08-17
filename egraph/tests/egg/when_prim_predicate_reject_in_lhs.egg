@@ -1,0 +1,6 @@
+;; EXPECT: sort-error
+;; TYPES: machine
+;; A primitive names a function on values, not a relation the e-graph stores, so it may
+;; head a guard but may not appear as a subterm of a pattern.
+(datatype Expr (Num i64) (Mark Expr))
+(rewrite (Mark (i64::+ a 1)) (Num a))

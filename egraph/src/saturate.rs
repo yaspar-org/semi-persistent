@@ -250,7 +250,7 @@ pub(crate) fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
         | RAtom::ACISub { op, .. }
         | RAtom::Lit { op, .. }
         | RAtom::LitBind { op, .. } => Some(*op),
-        RAtom::Eq(..) | RAtom::EqGlobal(..) => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
     }
 }
 
@@ -281,7 +281,7 @@ fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
         | RAtom::ACIExact { node, .. }
         | RAtom::ACISub { node, .. }
         | RAtom::LitBind { node, .. } => Some(*node),
-        RAtom::Eq(..) | RAtom::EqGlobal(..) => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
     }
 }
 

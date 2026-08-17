@@ -173,6 +173,89 @@ pub enum RAtom<O, S, L> {
     },
     Eq(VarId, VarId),
     EqGlobal(VarId, GlobalVarId),
+    /// A primitive predicate guard. Scans nothing and binds nothing: it is evaluated
+    /// over already-bound literal values and keeps or drops the partial match.
+    ///
+    /// `deps` names the atoms that bind the guard's literal values: the `LitBind` atoms
+    /// for the variables in `guard.expr`. The scheduler lowers the guard as soon as all
+    /// of them have run, which is as early as the guard can be evaluated at all.
+    Pred {
+        guard: PredGuard<O, L>,
+        deps: Vec<usize>,
+    },
+}
+
+/// A resolved primitive predicate guard: the computation, plus the truth test for the
+/// literal model the query was resolved against.
+///
+/// Both function pointers come from the model (`LitOpDesc::eval`, `LitModel::is_truthy`)
+/// and are captured at resolve time, which is what keeps the matcher generic over the
+/// value type alone rather than over the whole model.
+#[derive(Clone, Debug)]
+pub struct PredGuard<O, L> {
+    pub expr: RPredExpr<O, L>,
+    /// `LitModel::is_truthy`: the guard passes when the value it computes is true.
+    pub truthy: fn(&L) -> bool,
+}
+
+/// Equality on the computation, not on the captured function pointers: an operator
+/// determines its own `eval`, and the truth test is a property of the model, which is
+/// fixed for a program. Comparing the pointers would be comparing addresses that the
+/// compiler is free to merge or duplicate.
+impl<O: PartialEq, L: PartialEq> PartialEq for PredGuard<O, L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expr == other.expr
+    }
+}
+impl<O: Eq, L: Eq> Eq for PredGuard<O, L> {}
+
+/// A resolved guard expression. Leaves are bound literal values or constants; nodes are
+/// primitive applications carrying the model's evaluator.
+#[derive(Clone, Debug)]
+pub enum RPredExpr<O, L> {
+    /// A literal value bound by a `LitBind` atom.
+    Val(LitValVarId),
+    /// A constant written in the guard, parsed at the argument position's sort.
+    Const(L),
+    App {
+        op: O,
+        eval: fn(&[&L]) -> L,
+        args: Vec<RPredExpr<O, L>>,
+    },
+}
+
+impl<O: PartialEq, L: PartialEq> PartialEq for RPredExpr<O, L> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RPredExpr::Val(a), RPredExpr::Val(b)) => a == b,
+            (RPredExpr::Const(a), RPredExpr::Const(b)) => a == b,
+            (
+                RPredExpr::App {
+                    op: a, args: xs, ..
+                },
+                RPredExpr::App {
+                    op: b, args: ys, ..
+                },
+            ) => a == b && xs == ys,
+            _ => false,
+        }
+    }
+}
+impl<O: Eq, L: Eq> Eq for RPredExpr<O, L> {}
+
+impl<O, L> RPredExpr<O, L> {
+    /// The literal-value variables the guard reads, in evaluation order.
+    pub fn value_vars(&self, out: &mut Vec<LitValVarId>) {
+        match self {
+            RPredExpr::Val(v) => out.push(*v),
+            RPredExpr::Const(_) => {}
+            RPredExpr::App { args, .. } => {
+                for a in args {
+                    a.value_vars(out);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -612,6 +695,8 @@ where
         )?);
     }
 
+    link_pred_deps(&mut resolved, &shape)?;
+
     let mult_intervals = collect_mult_intervals(&resolved, &fq.atoms, &shape)?;
 
     Ok(ResolvedQuery {
@@ -620,6 +705,50 @@ where
         var_sorts,
         mult_intervals,
     })
+}
+
+/// Fill in each predicate guard's `deps`: the atoms that bind the literal values it
+/// reads.
+///
+/// A guard is evaluated, not matched, so it has no join to schedule and no cost to
+/// compare; what it has is a point in the schedule before which it cannot run. That
+/// point is "every `LitBind` atom feeding it has run", which is what this records, and
+/// the scheduler's eager pass fires the guard at exactly that point.
+fn link_pred_deps<O, S, L>(atoms: &mut [RAtom<O, S, L>], shape: &MatchShape) -> R<()> {
+    let mut binder: Vec<Option<usize>> = vec![None; shape.num_lit_val_vars()];
+    for (i, a) in atoms.iter().enumerate() {
+        if let RAtom::LitBind { val, .. } = a {
+            binder[val.idx()] = Some(i);
+        }
+    }
+    let mut vars = Vec::new();
+    for i in 0..atoms.len() {
+        let RAtom::Pred { guard, .. } = &atoms[i] else {
+            continue;
+        };
+        vars.clear();
+        guard.expr.value_vars(&mut vars);
+        let mut deps = Vec::with_capacity(vars.len());
+        for v in &vars {
+            let d = binder[v.idx()].ok_or_else(|| {
+                err(
+                    format!(
+                        "guard variable '{}' is never bound to a literal value by this rule",
+                        shape.lit_val_name(*v)
+                    ),
+                    Span::Dummy,
+                )
+            })?;
+            deps.push(d);
+        }
+        deps.sort_unstable();
+        deps.dedup();
+        let RAtom::Pred { deps: slot, .. } = &mut atoms[i] else {
+            unreachable!()
+        };
+        *slot = deps;
+    }
+    Ok(())
 }
 
 /// Intern a node variable name, growing var_sorts as needed.
@@ -741,6 +870,34 @@ where
                     Ok(vec![RAtom::Eq(va, vb)])
                 }
             }
+        }
+
+        Atom::Pred { expr, span } => {
+            let rexpr = resolve_pred_expr(expr, None, ops, sorts, model, shape)?;
+            let RPredExpr::App { op, .. } = &rexpr else {
+                return Err(err(
+                    "a guard must be a primitive application, e.g. `(i64::< a b)`",
+                    *span,
+                ));
+            };
+            let ret = ops.info(*op).return_sort;
+            if sorts.name(ret) != "bool" {
+                return Err(err(
+                    format!(
+                        "a guard must compute a bool, but this one computes '{}'",
+                        sorts.name(ret)
+                    ),
+                    *span,
+                ));
+            }
+            Ok(vec![RAtom::Pred {
+                guard: PredGuard {
+                    expr: rexpr,
+                    truthy: M::is_truthy,
+                },
+                // Filled in by `link_pred_deps` once every atom is resolved.
+                deps: Vec::new(),
+            }])
         }
 
         Atom::Lit { node, text, span } => {
@@ -1119,6 +1276,94 @@ fn lookup_op<'a, O: DenseId + Hash + Copy, S: DenseId + Copy, const TRACK: bool>
     Ok((id, ops.info(id)))
 }
 
+/// Resolve a guard expression against the model's primitives.
+///
+/// `expected` is the sort the enclosing argument position asks for; it types the
+/// literal constants (so `0` in an `i64` position is an `i64` and not a bignum) and
+/// checks the nested applications.
+fn resolve_pred_expr<O, S, L, M, const TRACK: bool>(
+    expr: &crate::compile::PredExpr,
+    expected: Option<S>,
+    ops: &OpRegistry<O, S, TRACK>,
+    sorts: &SortRegistry<S, TRACK>,
+    model: &M,
+    shape: &MatchShape,
+) -> R<RPredExpr<O, L>>
+where
+    O: DenseId + Hash + Copy,
+    S: DenseId + Copy,
+    L: LitVal,
+    M: LitModel<Value = L>,
+{
+    use crate::compile::PredExpr;
+    match expr {
+        PredExpr::Var(name, span) => {
+            let vid = shape.find_lit_val(name).ok_or_else(|| {
+                err(
+                    format!(
+                        "'{name}' is not bound to a literal value; a guard may only read \
+                         variables that some pattern binds in a primitive-sorted argument \
+                         position, and only patterns written before it"
+                    ),
+                    *span,
+                )
+            })?;
+            Ok(RPredExpr::Val(vid))
+        }
+        PredExpr::Lit(text, span) => {
+            let val = match expected {
+                Some(s) => model.parse_as(sorts.name(s), text).ok_or_else(|| {
+                    err(
+                        format!("cannot parse '{text}' as '{}'", sorts.name(s)),
+                        *span,
+                    )
+                })?,
+                None => model
+                    .parse_any(text)
+                    .map(|(_, v)| v)
+                    .ok_or_else(|| err(format!("cannot parse literal '{text}'"), *span))?,
+            };
+            Ok(RPredExpr::Const(val))
+        }
+        PredExpr::App { op, args, span } => {
+            let (op_id, info) = lookup_op(op, ops, *span)?;
+            if !ops.is_prim_op(op_id) {
+                return Err(err(
+                    format!("'{op}' is not a primitive operator, so it cannot appear in a guard"),
+                    *span,
+                ));
+            }
+            if let Some(exp) = expected
+                && exp != info.return_sort
+            {
+                return Err(err(
+                    format!(
+                        "guard operator '{op}' computes '{}', but this position expects '{}'",
+                        sorts.name(info.return_sort),
+                        sorts.name(exp)
+                    ),
+                    *span,
+                ));
+            }
+            let OpKind::Normal { arg_sorts } = &info.kind else {
+                unreachable!("a primitive op is always registered as OpKind::Normal")
+            };
+            check_arity(op, arg_sorts.len(), args.len(), *span)?;
+            let mut rargs = Vec::with_capacity(args.len());
+            for (a, s) in args.iter().zip(arg_sorts) {
+                rargs.push(resolve_pred_expr(a, Some(*s), ops, sorts, model, shape)?);
+            }
+            Ok(RPredExpr::App {
+                op: op_id,
+                // A primitive op's id is its index into the model's op table: the
+                // registry registers `LitModel::ops()` first and in order.
+                eval: model.ops()[op_id.to_usize()].eval,
+                args: rargs,
+            })
+        }
+    }
+}
+
 /// Like `lookup_op` but rejects primitive ops (only constructors allowed in LHS).
 fn lookup_lhs_op<'a, O: DenseId + Hash + Copy, S: DenseId + Copy, const TRACK: bool>(
     name: &str,
@@ -1128,8 +1373,10 @@ fn lookup_lhs_op<'a, O: DenseId + Hash + Copy, S: DenseId + Copy, const TRACK: b
     let (id, info) = lookup_op(name, ops, span)?;
     if ops.is_prim_op(id) {
         return Err(err(
-            "primitive operator 'name' cannot appear in LHS pattern (only in RHS or ground terms)"
-                .to_string(),
+            format!(
+                "primitive operator '{name}' cannot appear inside a left-hand-side pattern \
+                 (it may head a `:when` guard, or appear in a right-hand side or ground term)"
+            ),
             span,
         ));
     }
@@ -1974,6 +2221,53 @@ mod tests {
         assert_eq!(eqs.len(), 2);
         assert_eq!(eqs[0].0, eqs[1].0);
         assert_ne!(eqs[0].1, eqs[1].1);
+    }
+
+    /// A guard reads the literal values other atoms bind, and records the atoms that bind
+    /// them so the scheduler knows when it can run.
+    #[test]
+    fn guard_records_its_binding_atoms() {
+        let rq = do_resolve_multi(&["(f (ILit a) (ILit b))", "(< a b)"]).unwrap();
+        let (guard, deps) = rq
+            .atoms
+            .iter()
+            .find_map(|at| match at {
+                RAtom::Pred { guard, deps } => Some((guard, deps)),
+                _ => None,
+            })
+            .expect("guard atom");
+        let mut vals = Vec::new();
+        guard.expr.value_vars(&mut vals);
+        assert_eq!(vals.len(), 2);
+        assert_eq!(deps.len(), 2);
+        for d in deps {
+            assert!(matches!(&rq.atoms[*d], RAtom::LitBind { .. }));
+        }
+    }
+
+    /// A constant in a guard is parsed at the argument position's sort, not guessed.
+    #[test]
+    fn guard_constant_takes_the_argument_sort() {
+        let rq = do_resolve_multi(&["(f (ILit a) y)", "(< a 5)"]).unwrap();
+        assert!(rq.atoms.iter().any(|at| matches!(at, RAtom::Pred { .. })));
+    }
+
+    #[test]
+    fn guard_rejects_a_variable_no_pattern_binds() {
+        let e = do_resolve_multi(&["(f x y)", "(< a b)"]).unwrap_err();
+        assert!(e.msg.contains("not bound to a literal value"), "{}", e.msg);
+    }
+
+    #[test]
+    fn guard_rejects_a_non_boolean_computation() {
+        let e = do_resolve_multi(&["(f (ILit a) (ILit b))", "(+ a b)"]).unwrap_err();
+        assert!(e.msg.contains("must compute a bool"), "{}", e.msg);
+    }
+
+    #[test]
+    fn guard_rejects_a_non_primitive_operator() {
+        let e = do_resolve_multi(&["(f (ILit a) (ILit b))", "(< (g a) b)"]).unwrap_err();
+        assert!(e.msg.contains("not a primitive"), "{}", e.msg);
     }
 
     #[test]

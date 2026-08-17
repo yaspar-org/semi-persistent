@@ -515,3 +515,24 @@ egg_test!(root_binding_nonlinear, "root_binding_nonlinear.egg");
 egg_test!(root_binding_when_global, "root_binding_when_global.egg");
 egg_test!(root_binding_rewrite_lhs, "root_binding_rewrite_lhs.egg");
 egg_test!(root_binding_reject_arity, "root_binding_reject_arity.egg");
+// Primitive predicates in `:when`: a guard is evaluated over the literal values the
+// patterns bound, not matched against the e-graph. Each positive file carries its
+// soundness twin, a term the guard is false for, and asserts the rule did not fire.
+egg_test!(when_prim_predicate, "when_prim_predicate.egg");
+egg_test!(
+    when_prim_predicate_two_vars,
+    "when_prim_predicate_two_vars.egg"
+);
+egg_test!(when_prim_predicate_nested, "when_prim_predicate_nested.egg");
+egg_test!(
+    when_prim_predicate_reject_non_bool,
+    "when_prim_predicate_reject_non_bool.egg"
+);
+egg_test!(
+    when_prim_predicate_reject_unbound,
+    "when_prim_predicate_reject_unbound.egg"
+);
+egg_test!(
+    when_prim_predicate_reject_in_lhs,
+    "when_prim_predicate_reject_in_lhs.egg"
+);

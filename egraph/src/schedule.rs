@@ -7,7 +7,7 @@
 
 use crate::ast::{GlobalVarId, LitValVarId, MsetVarId, SeqVarId, SetVarId, VarId};
 use crate::containers::{DenseId, IndexLike};
-use crate::resolve::{MatchShape, PatVar, RAtom, RMult, ResolvedQuery};
+use crate::resolve::{MatchShape, PatVar, PredGuard, RAtom, RMult, ResolvedQuery};
 use std::cell::Cell;
 use std::hash::Hash;
 
@@ -101,6 +101,11 @@ pub enum Step<O, I, V> {
     CheckLit {
         node: VarId,
         value: V,
+    },
+    /// Keep the match only if the guard evaluates to a true boolean over the literal
+    /// values bound so far.
+    CheckPred {
+        guard: PredGuard<O, V>,
     },
 }
 
@@ -599,7 +604,8 @@ fn record_emitters<O, S, V>(
                     em[(*b).idx()] = em[(*a).idx()];
                 }
             }
-            RAtom::EqGlobal(..) => {}
+            // A guard binds nothing, so it emits nothing.
+            RAtom::EqGlobal(..) | RAtom::Pred { .. } => {}
         }
     }
 }
@@ -705,7 +711,7 @@ fn estimate_cost<O: DenseId + Hash + Copy, S, V>(
             node, op, elems, ..
         } => by_contains_cost(atoms, node, op, atom_id, elems, bound, ctx),
         RAtom::Lit { op, .. } | RAtom::LitBind { op, .. } => base_card(op, atom_id, stats) as f64,
-        RAtom::Eq(..) | RAtom::EqGlobal(..) => 0.0,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => 0.0,
     }
 }
 
@@ -809,7 +815,12 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
         // comparator, which under sampling would redraw them per comparison.
         let mut best: Option<(usize, f64)> = None;
         for ai in 0..rq.atoms.len() {
-            if used[ai] || matches!(&rq.atoms[ai], RAtom::Eq(..) | RAtom::EqGlobal(..)) {
+            if used[ai]
+                || matches!(
+                    &rq.atoms[ai],
+                    RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. }
+                )
+            {
                 continue;
             }
             let c = estimate_cost(&rq.atoms, ai, &bound, &mut ctx);
@@ -877,6 +888,21 @@ pub(crate) fn lower_eager<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
         progress = false;
         for ai in 0..atoms.len() {
             if used[ai] {
+                continue;
+            }
+            // A guard is free exactly when the atoms binding its values have run.
+            // That is a condition on `used`, not on `bound`, and it has to be: the
+            // node variable of a `LitBind` atom is bound by the enclosing pattern's
+            // `ExtractChild`, one step before the `ExtractLitVal` that fills the
+            // value slot the guard reads.
+            if let RAtom::Pred { guard, deps } = &atoms[ai] {
+                if deps.iter().all(|d| used[*d]) {
+                    steps.push(Step::CheckPred {
+                        guard: guard.clone(),
+                    });
+                    used[ai] = true;
+                    progress = true;
+                }
                 continue;
             }
             if let Some(eager) = try_eager_lower(&atoms[ai], ai, bound) {
@@ -961,7 +987,10 @@ pub(crate) fn emit_atom<O: DenseId + Hash + Copy, S, V: Clone, I: IndexLike>(
                 val: *val,
             });
         }
-        RAtom::Eq(..) | RAtom::EqGlobal(..) => {}
+        // Never selected by phase B: the equalities and the guards have no join to
+        // cost, and `schedule_inner`/`choose_atom` skip them for that reason. The
+        // eager pass owns them.
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => {}
         RAtom::AExact { node, op, children } => {
             emit_variadic_join(node, *op, atom_id, children, bound, steps);
             steps.push(Step::ExpandA {
@@ -1313,6 +1342,31 @@ mod tests {
             stats.op_card.insert(op_id, c);
         }
         (schedule_with_stats(&rq, &stats), rq.shape)
+    }
+
+    /// A guard runs as soon as its values are bound, not at the end of the plan: the
+    /// check sits immediately after the last `ExtractLitVal` it depends on, so a false
+    /// guard cuts the search before the remaining atoms are joined.
+    #[test]
+    fn guard_runs_as_soon_as_its_values_are_bound() {
+        let (plan, _) = do_plan_multi(&["(f (ILit a) (ILit b))", "(< a b)", "(g y)"]);
+        let pred = plan
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::CheckPred { .. }))
+            .expect("guard step");
+        let last_extract = plan
+            .steps
+            .iter()
+            .rposition(|s| matches!(s, Step::ExtractLitVal { .. }))
+            .expect("lit-val extraction");
+        assert_eq!(pred, last_extract + 1);
+        // The unrelated atom is still to come, so the guard cut it off.
+        assert!(
+            plan.steps[pred + 1..]
+                .iter()
+                .any(|s| matches!(s, Step::Join { .. }))
+        );
     }
 
     /// The root-binding form costs one step when the bound name is fresh: the root is

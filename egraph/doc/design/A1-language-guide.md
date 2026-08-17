@@ -21,6 +21,8 @@ union, check, extract, push/pop, and run) and extends it with:
   actions.
 - Namespaced builtin operator names (`IBig::+`, `i64::<<`, `RBig::neg`)
   to disambiguate when multiple numeric types are in scope.
+- Predicate guards (`:when ((i64::< a b))`): a primitive computation over
+  bound literal values, evaluated at match time rather than matched.
 
 ## Sorts and Operators
 
@@ -207,6 +209,45 @@ The `:when` clause adds guard patterns that must also match:
 (rewrite (Mul x y) (Mul y x)
   :when ((Add x z)))  ;; only if x appears in some Add
 ```
+
+### Predicate Guards
+
+A `:when` conjunct headed by a primitive operator is a predicate, not a pattern.
+It is evaluated over the literal values the patterns bound, and the match
+survives when it computes `true`:
+
+```
+;; only fold when the exponent is small
+(rewrite (Pow x (Num n)) (Mul x (Pow x (Num (i64::- n 1))))
+  :when ((i64::< n 8)))
+```
+
+Guards compose, and a constant written in a guard is parsed at the argument
+position's sort:
+
+```
+;; 3y = 12 becomes y = 4, and only when the division is exact
+(rule ((= r (Mul (Num x) y)) (= r (Num z)) (i64::== (i64::% z x) 0))
+      ((union y (Num (i64::/ z x)))))
+```
+
+Four rules govern them:
+
+- A guard is a top-level conjunct of a `:when` list or a `rule` body. A
+  primitive may not appear as a subterm of a pattern, because it names a
+  function on values and not a relation the e-graph stores.
+- Every operator inside a guard is a primitive, and the whole guard computes a
+  `bool`.
+- A guard reads variables that some pattern binds in a primitive-sorted
+  argument position, and only patterns written before it. `(P (Num a) (Num b))`
+  binds `a` and `b`; `(P a b)` binds e-classes, which a primitive cannot
+  compute over.
+- A guard computes and discards. It never interns the value it computed; a rule
+  that wants the value in the e-graph computes it again on the right-hand side.
+
+The guard runs as early as its variables allow, immediately after the last of
+them is bound, so a false guard cuts the search before the remaining patterns
+are joined.
 
 ### Subsumption
 
@@ -569,8 +610,10 @@ variables to nested applications, and produces a flat list of atoms.
 Each atom is classified by operator kind (Plain, C, A/APrefix/ASuffix/
 ABoth, ACExact/ACSub, ACIExact/ACISub). Invalid combinations (e.g.,
 prefix rest on an AC operator, multiplicity on an ACI operator)
-produce clear error messages. `(= p q)` is recognized by name first: it flattens
-both sides and emits one `Eq` between their roots.
+produce clear error messages. Two forms are recognized by name first:
+`(= p q)`, which flattens both sides and emits one `Eq` between their
+roots, and a top-level primitive application, which becomes a
+predicate-guard atom.
 
 `resolve` maps string variable names to dense typed identifiers
 (VarId, SeqVarId, SetVarId, MsetVarId, MultVarId, LitValVarId).
@@ -636,6 +679,7 @@ symbol      = '<<' | '>>' | '<=' | '>=' | '!=' | '==' | '=>'
             | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '&' | '|' | '^' | '~' ;
 qualified   = ident , '::' , ( ident | symbol ) ;       (* e.g. IBig::+, RBig::neg *)
 op          = qualified | ident | symbol ;
+prim_op     = op ;                (* one of the literal model's primitives *)
 comment     = ';' , { char - '\n' } , '\n' ;
 
 (* ── Literals ── *)
@@ -660,6 +704,8 @@ term        = literal
 pattern     = literal
             | ident
             | '(' , '=' , pattern , pattern , ')'         (* root binding *)
+            | '(' , prim_op , pattern* , ')'              (* predicate guard,
+                                                             top-level only *)
             | '(' , op , pat_child* , ')' ;
 
 pat_child   = '..' , ident                               (* rest variable *)

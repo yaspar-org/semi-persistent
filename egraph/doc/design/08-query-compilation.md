@@ -42,6 +42,15 @@ order to apply them.
 | `AExact / APrefix / ASuffix / ABoth` | A-node with optional rest vars |
 | `ACExact / ACSub` | AC-node exact or sub-multiset |
 | `ACIExact / ACISub` | ACI-node exact or subset |
+| `Pred { guard, deps }` | Primitive predicate over bound literal values |
+
+`Pred` is the one atom that matches nothing. It carries an expression over
+primitive operators, literal constants, and the variables other atoms bind to
+literal payloads, and it keeps the partial match when that expression evaluates
+to true. A primitive names a function on values rather than a relation the
+e-graph stores, so there is no bucket to scan for it; `deps` names the `LitBind`
+atoms that fill the value slots it reads, which is what tells the scheduler when
+it can run.
 
 The surface form `(= v pat)` produces no atom of its own: `pat` flattens exactly
 as it would alone, and one `Eq` ties `v` to its root.
@@ -64,6 +73,14 @@ fan-out, only constrain):
 - `Eq(a, b)` with one bound → `CopyBinding`
 - `EqGlobal` with local bound → `CheckEqGlobal`
 - `Plain/LitBind` with node already bound: re-join within e-class.
+- `Pred` with every atom in `deps` already lowered → `CheckPred`.
+
+The guard's condition is on the *atoms* that have run, not on the variables that
+are bound, and it has to be: a `LitBind` atom's node variable is bound by the
+enclosing pattern's `ExtractChild`, one step before the `ExtractLitVal` that
+fills the value slot the guard reads. Firing the guard as soon as its dependency
+atoms have run puts the check immediately after the last of them, so a false
+guard cuts the search before the remaining atoms are joined.
 
 ### Phase B: Cost-Based Selection
 
@@ -74,8 +91,11 @@ cost(Plain { op, children }) = card(op) >> bound_children_count
 cost(LitBind { op, .. })     = card(op)
 cost(A/AC/ACI variants)      = card(op)
 cost(Lit)                     = 1
-cost(Eq/EqGlobal)             = 0
+cost(Eq/EqGlobal/Pred)        = 0
 ```
+
+`Eq`, `EqGlobal` and `Pred` are never selected here: they have no join to cost,
+and Phase A owns them.
 
 Emit the selected atom via `emit_atom` (Join + ExtractChild steps),
 then return to Phase A.
@@ -131,11 +151,14 @@ extracting the literal value.
 | `ExpandA { node, children, pre, suf }` | Enumerate subsequence matches |
 | `DecomposeAC { node, elems, rest, idempotent }` | Enumerate sub-multiset matches |
 | `DecomposeACI { node, elems, rest }` | Enumerate subset matches |
+| `CheckLit { node, value }` | Verify node's literal payload equals `value` |
+| `CheckPred { guard }` | Evaluate the guard over bound literal values, keep the match when it is true |
 
 > **Note**: `CheckLitEq` and `EvalLit` do not exist as `Step` variants.
 > Literal equality checks are handled by `ExtractLitVal` + `CheckEq`.
-> Primitive op evaluation happens during RHS application (Chapter 12),
-> not during LHS matching.
+> Primitive op evaluation during matching happens only in `CheckPred`, which
+> computes a value and discards it after testing it; the primitives that build
+> terms run during RHS application (Chapter 12).
 
 ## Example Plan
 

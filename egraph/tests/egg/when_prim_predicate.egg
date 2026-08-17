@@ -1,0 +1,15 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A `:when` guard whose operator is a primitive predicate. The guard is evaluated over
+;; the literal values the pattern bound, not matched against the e-graph: `(i64::< a 5)`
+;; asks nothing of the e-graph and there is no node for it to find.
+(datatype Expr (Num i64) (Mark Expr))
+
+(rewrite (Num a) (Mark (Num a)) :when ((i64::< a 5)))
+
+(Num 3)
+(Num 7)
+(run 3)
+(check (= (Mark (Num 3)) (Num 3)))
+;; The soundness twin: the guard is false for 7, so the rewrite does not fire.
+(check (!= (Mark (Num 7)) (Num 7)))

@@ -328,7 +328,7 @@ fn cterm_sort<O, S: Copy, L>(ct: &CTerm<O, S, L>) -> S {
 
 // ── Flatten SurfacePattern directly to Atom (skip Pattern) ──
 
-use crate::compile::{Atom, FlatMult, FlatQuery};
+use crate::compile::{Atom, FlatMult, FlatQuery, PredExpr};
 use crate::surface_ast::{SurfaceCommand, SurfacePatChild, SurfacePattern};
 
 /// The operator name reserved for the root-binding pattern form `(= p q)`.
@@ -353,7 +353,7 @@ where
     };
     let mut root_vars = Vec::with_capacity(patterns.len());
     for p in patterns {
-        root_vars.push(ctx.flatten_child(p)?);
+        root_vars.push(ctx.flatten_root(p)?);
     }
     Ok(FlatQuery {
         atoms: ctx.atoms,
@@ -378,9 +378,32 @@ where
         format!("?{hint}{id}")
     }
 
-    /// Flatten a pattern to the name of the variable holding its root e-class. A
-    /// top-level conjunct and a nested subpattern flatten the same way, which is why
-    /// `flatten_surface` calls this for both.
+    /// Flatten a top-level conjunct of a rule body or `:when` list.
+    ///
+    /// Two forms are only legal here, at the top of a conjunct: the root-binding
+    /// `(= v pat)` (legal nested too, but idiomatic here) and a primitive predicate
+    /// guard, which is a constraint rather than a subterm and so has no meaningful
+    /// nested reading.
+    fn flatten_root(&mut self, pat: &SurfacePattern) -> Result<String, String> {
+        if let SurfacePattern::App { op, .. } = pat
+            && op != EQ_FORM
+            && let Some(op_id) = self.ops.id_by_name(op)
+            && self.ops.is_prim_op(op_id)
+        {
+            let expr = self.pred_expr(pat)?;
+            self.atoms.push(Atom::Pred {
+                expr,
+                span: pat.span(),
+            });
+            // A guard binds nothing, so it has no root e-class to name. The fresh
+            // name is never interned; a caller that needs the root (a rewrite's
+            // left-hand side) fails to find it and reports that.
+            return Ok(self.fresh("guard"));
+        }
+        self.flatten_child(pat)
+    }
+
+    /// Flatten a pattern to the name of the variable holding its root e-class.
     fn flatten_child(&mut self, pat: &SurfacePattern) -> Result<String, String> {
         match pat {
             SurfacePattern::Var(v, _) => Ok(v.clone()),
@@ -445,6 +468,51 @@ where
             self.atoms.push(Atom::Eq(a.clone(), b));
         }
         Ok(a)
+    }
+
+    /// Build a guard expression: primitive applications over literal constants and the
+    /// variables other atoms bind to literal payloads.
+    fn pred_expr(&self, pat: &SurfacePattern) -> Result<PredExpr, String> {
+        match pat {
+            SurfacePattern::Var(v, span) => Ok(PredExpr::Var(v.clone(), *span)),
+            SurfacePattern::Lit(text, span) => Ok(PredExpr::Lit(text.clone(), *span)),
+            SurfacePattern::App {
+                op,
+                prefix,
+                children,
+                suffix,
+                span,
+            } => {
+                if prefix.is_some() || suffix.is_some() {
+                    return Err(format!("guard operator '{op}' takes no rest variables"));
+                }
+                let op_id = self
+                    .ops
+                    .id_by_name(op)
+                    .ok_or_else(|| format!("unknown operator '{op}'"))?;
+                if !self.ops.is_prim_op(op_id) {
+                    return Err(format!(
+                        "'{op}' is not a primitive operator; every operator inside a guard \
+                         must be one, because a guard is evaluated over bound literal values \
+                         rather than matched against the e-graph"
+                    ));
+                }
+                let mut args = Vec::with_capacity(children.len());
+                for c in children {
+                    match c {
+                        SurfacePatChild::Elem(p) => args.push(self.pred_expr(p)?),
+                        SurfacePatChild::ElemMult(..) => {
+                            return Err(format!("guard operator '{op}' takes no multiplicities"));
+                        }
+                    }
+                }
+                Ok(PredExpr::App {
+                    op: op.clone(),
+                    args,
+                    span: *span,
+                })
+            }
+        }
     }
 
     /// Flatten children, returning var names. Only Elem children (no mults).
@@ -747,13 +815,20 @@ where
             ruleset,
         } => {
             let ruleset = rulesets.resolve(&ruleset)?;
+            let lhs_span = lhs.span();
             let mut pats = vec![lhs];
             pats.extend(when);
             let fq = flatten_surface(&pats, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let root_name = fq.root_vars[0].clone();
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
-            let root_vid = rq.shape.find_var(&root_name).expect("root var");
+            let root_vid = rq.shape.find_var(&root_name).ok_or_else(|| {
+                serr(
+                    "a rewrite's left-hand side must name an e-class to rewrite; a \
+                     primitive predicate guard names none (it belongs in `:when`)",
+                    lhs_span,
+                )
+            })?;
             let mut vs = rq.var_sorts.clone();
             let mut shape = rq.shape.clone();
             let root_sort = vs[root_vid.idx()];

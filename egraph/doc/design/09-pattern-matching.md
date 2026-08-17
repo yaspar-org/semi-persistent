@@ -233,6 +233,27 @@ are structurally 1 due to idempotency).
 Each pattern element must match a distinct child. The rest variable
 captures the unmatched children.
 
+## Predicate Guards
+
+`CheckPred` is the one step that computes rather than looks up. It evaluates the
+guard expression bottom-up over the literal values in the match environment and
+keeps the partial match when the result is true by the model's `is_truthy`. Both
+function pointers it needs, the primitive's `eval` and the model's truth test,
+are captured at resolve time and stored in the step, which is what keeps the
+matcher generic over the literal value type alone rather than over the whole
+literal model.
+
+The step is read-only like every other matching step: the value it computes is
+tested and dropped, never interned. Interning it would mint literal nodes during
+matching, which the frozen-snapshot argument above rules out; a rule that wants
+the value in the e-graph computes it again on the right-hand side, where
+`RhsOp::PrimApp` interns it (Chapter 12).
+
+The guard's placement is the scheduler's (Chapter 8, Phase A): immediately after
+the last `ExtractLitVal` that fills a slot it reads. It cannot run earlier than
+that, and running it later would join atoms whose results the guard is about to
+discard.
+
 ## `MatchIterator` — Lazy Pull-Based Engine
 
 In addition to the recursive `run_query` (which collects all matches

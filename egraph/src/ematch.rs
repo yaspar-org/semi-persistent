@@ -17,6 +17,7 @@ use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
 use crate::resolve::{PatVar, RMult};
 use crate::schedule::{IndexLookup, QueryPlan, Step};
+use smallvec::SmallVec;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -1057,7 +1058,9 @@ impl<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> Adaptive<'q, Cfg, L, S> {
         for (i, atom) in rq.atoms.iter().enumerate() {
             if !matches!(
                 atom,
-                crate::resolve::RAtom::Eq(..) | crate::resolve::RAtom::EqGlobal(..)
+                crate::resolve::RAtom::Eq(..)
+                    | crate::resolve::RAtom::EqGlobal(..)
+                    | crate::resolve::RAtom::Pred { .. }
             ) {
                 costed |= 1 << i;
             }
@@ -1465,6 +1468,57 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             if eg.get_lit_val(node_id) == Some(value) {
                 run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
+        }
+        Step::CheckPred { guard } => {
+            if eval_guard(guard, eg, env) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
+            }
+        }
+    }
+}
+
+/// Inline capacity for a guard's argument list; the primitives are arithmetic and
+/// comparison, so two covers all of them (`apply::PRIM_ARGS`, same reasoning).
+const GUARD_ARGS: usize = 2;
+
+/// Evaluate a guard against the current bindings.
+///
+/// The values come from the match's literal slots, which the guard's `deps` guarantee
+/// are filled: the scheduler emits the check only after every `LitBind` atom feeding it
+/// has run.
+fn eval_guard<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    guard: &crate::resolve::PredGuard<Cfg::O, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    env: &Match<Cfg>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let v = eval_pred_expr(&guard.expr, eg, env);
+    (guard.truthy)(&v)
+}
+
+fn eval_pred_expr<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    expr: &crate::resolve::RPredExpr<Cfg::O, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    env: &Match<Cfg>,
+) -> L
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    use crate::resolve::RPredExpr;
+    match expr {
+        RPredExpr::Val(v) => eg.lits().get(env.get_lit_val(*v)).clone(),
+        RPredExpr::Const(l) => l.clone(),
+        RPredExpr::App { eval, args, .. } => {
+            let vals: SmallVec<[L; GUARD_ARGS]> =
+                args.iter().map(|a| eval_pred_expr(a, eg, env)).collect();
+            let refs: SmallVec<[&L; GUARD_ARGS]> = vals.iter().collect();
+            eval(&refs)
         }
     }
 }
@@ -2613,6 +2667,14 @@ where
             Step::CheckLit { node, value } => {
                 let node_id = self.env.get(*node);
                 if self.eg.get_lit_val(node_id) == Some(value) {
+                    self.cursor += 1;
+                    Enter::Advanced
+                } else {
+                    Enter::Failed
+                }
+            }
+            Step::CheckPred { guard } => {
+                if eval_guard(guard, self.eg, &self.env) {
                     self.cursor += 1;
                     Enter::Advanced
                 } else {

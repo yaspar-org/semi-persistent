@@ -41,15 +41,23 @@ nested `App` nodes, validates against operator kind:
 
 Invalid combinations produce clear error messages with spans.
 
-One form is recognized before the table, by the operator name. **`(= p q)`, the
-root-binding form**: both subpatterns flatten as they would alone, and one
-`Atom::Eq` constrains their roots to one e-class. The name `=` is reserved rather
-than looked up in the registry, so a declaration cannot shadow the form and
-silently change what an existing `(= …)` means. The idiomatic use is `(= v pat)`,
-which names `pat`'s root: the left side is a bare variable, so the `Eq` costs one
-`CopyBinding` once `pat`'s root is bound. Repeating the name across conjuncts is
-the ordinary non-linear case, and it is how a rule states that two patterns share
-a root rather than forming a cross product.
+Two forms are recognized before the table, by the operator name.
+
+**`(= p q)`, the root-binding form.** Both subpatterns flatten as they would
+alone, and one `Atom::Eq` constrains their roots to one e-class. The name `=` is
+reserved rather than looked up in the registry, so a declaration cannot shadow
+the form and silently change what an existing `(= …)` means. The idiomatic use is
+`(= v pat)`, which names `pat`'s root: the left side is a bare variable, so the
+`Eq` costs one `CopyBinding` once `pat`'s root is bound. Repeating the name
+across conjuncts is the ordinary non-linear case, and it is how a rule states
+that two patterns share a root rather than forming a cross product.
+
+**A primitive application, a predicate guard.** Legal only as a top-level
+conjunct of a rule body or a `:when` list, because a guard is a constraint and
+not a subterm. It flattens to `Atom::Pred`, carrying a `PredExpr` tree over
+primitive operators, literal constants, and the variables other patterns bind to
+literal payloads. Everywhere else in a left-hand side a primitive is still
+rejected: it names a function on values, not a relation the e-graph stores.
 
 ## `resolve` — Name Resolution
 
@@ -74,6 +82,22 @@ the first occurrence binds, subsequent occurrences emit `CheckEq`.
 An `Eq` atom also unifies the two sides' sorts, since they denote one e-class.
 That is what gives `(rewrite (= v pat) rhs)` a sort to check `rhs` against: `v`
 alone constrains nothing, and takes its sort from `pat`.
+
+### Predicate Guards
+
+`Atom::Pred` resolves to `RAtom::Pred`, which holds a `PredGuard`: the guard
+expression with each primitive's `eval` and the model's `is_truthy` captured as
+function pointers, plus `deps`, the indices of the `LitBind` atoms that bind the
+values it reads. Three things are checked here:
+
+- Every variable in the guard is already a literal-value variable. A guard may
+  only read variables that some earlier pattern binds in a primitive-sorted
+  argument position, so a guard written before its binder is rejected.
+- Every operator in the guard is a primitive, and its arity matches.
+- The guard computes a `bool`. Literal constants are parsed at the argument
+  position's sort, so `0` in an `i64` position is an `i64`.
+
+`deps` is filled once every atom is resolved, by `link_pred_deps`.
 
 ### Global Name Resolution
 
