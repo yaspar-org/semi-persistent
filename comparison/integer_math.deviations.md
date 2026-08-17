@@ -163,3 +163,11 @@ and iteration counts identical to the campaign table under both strategies
 (34 / 24 / 4), so the twins fire zero times on this workload and the numbers
 stand. Fixtures: `egraph/tests/egg/ac_coincidence_twin_gap.egg` (pins the gap),
 `ac_coincidence_twin.egg` (pins the twins).
+
+**Update, same date, later:** the residual is retired. RHS elements now take
+checked u64 multiplicity expressions (interval-checked at install, 0 omits),
+so the distributivity twin keeps `k-1` copies of the repeated Add factor, and
+the LShift rule's twin folds `(2^y)^k` to `2^(y*k)`. Both added; counts remain
+identical to the campaign under both strategies (34 / 24 / 4), so they fire
+zero times on this workload. Fixtures: `rhs_mult_expr.egg`,
+`rhs_mult_expr_underflow.egg`.

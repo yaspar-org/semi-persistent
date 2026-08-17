@@ -433,6 +433,25 @@ A bound multiplicity variable is readable on the right-hand side
 wherever an `i64` is expected: as a primitive argument
 (`(Const (i64::* a k))`) and in a literal position (`(Const k)`).
 
+RHS elements of a variadic operator also take a multiplicity, either
+a literal or a checked u64 expression over bound multiplicities
+(`u64::+ u64::- u64::* u64::/ u64::% u64::min u64::max`):
+
+```
+(rewrite (Mul (Add b ..s):k ..rest)
+         (Add (Mul b (Add b ..s):(u64::- k 1) ..rest)
+              (Mul (Add ..s) (Add b ..s):(u64::- k 1) ..rest)))
+```
+
+A multiplicity of 0 omits the element without evaluating it, so at
+`k = 1` this rule is ordinary distributivity and at `k >= 2` it keeps
+`k-1` copies of the repeated factor. The expression is interval-checked
+at rule install against the LHS constraints: with a bare `:k` the
+multiplicity is only known to be at least 1, so `(u64::- k 2)` is
+rejected until the element is annotated `:k>=2`. Division and remainder
+need a divisor provably nonzero; overflow stays a runtime trap, checked
+like the literal primitives.
+
 Non-linear multiplicity variables (same `:k` on multiple elements)
 must bind to the same value:
 
@@ -492,11 +511,10 @@ automatically is a combinatorial blowup (every subset of mutually
 unifiable elements could coincide). When you translate a binary rule
 whose element subpatterns can unify with each other, or whose element
 can face a repeated child, decide per rule whether the coincidence
-case matters and write its twin if it does. One shape has no twin
-today: a rule that must *keep* `k-1` copies of the matched child on
-the right-hand side (for example, distributing one factor out of
-`(x+y)^k · z`) cannot be written, because right-hand-side elements
-carry no multiplicity arithmetic.
+case matters and write its twin if it does. The keep-`k-1`-copies
+shape (distributing one factor out of `(x+y)^k · z`) is written with
+an RHS multiplicity expression, `(Add b ..s):(u64::- k 1)` — see the
+multiplicity section above.
 
 ### A Patterns (sequence semantics)
 

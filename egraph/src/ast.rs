@@ -226,6 +226,13 @@ impl RhsTerm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RhsChild {
     Term(RhsTerm),
+    /// `term:mult` under a variadic op — the term contributed `mult` times.
+    /// Multiplicity 0 omits the term (the k−1 = 0 case of a coincidence twin).
+    TermMult {
+        term: RhsTerm,
+        mult: MultExpr,
+        span: Span,
+    },
     /// `..name` — splice rest variable contents.
     Splice(String, Span),
     /// `..{body for v in source [if guard]}` — set comprehension.
@@ -261,6 +268,12 @@ pub enum RhsChild {
 pub enum MultExpr {
     Lit(u64),
     Var(String),
+    /// `(u64::- k 1)` — checked u64 arithmetic over multiplicity variables
+    /// and literals. The op vocabulary mirrors the u64 primitive ops; the
+    /// resolver interval-checks the expression against the LHS multiplicity
+    /// constraints so an underflow or division by zero is a compile error,
+    /// not a runtime one.
+    Prim { op: String, args: Vec<MultExpr> },
 }
 
 // ---------------------------------------------------------------------------

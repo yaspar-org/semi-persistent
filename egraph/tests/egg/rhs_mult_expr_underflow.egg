@@ -1,0 +1,11 @@
+;; EXPECT: error
+;; TYPES: machine
+;; Static interval check: with a bare `:k` the multiplicity is only known to
+;; be >= 1, so `(u64::- k 2)` cannot be proved non-negative and the rule is
+;; rejected at install. Annotating the LHS element `:k>=2` would admit it.
+(datatype E
+    (N i64)
+    (plus E :assoc-comm))
+(rewrite (plus (N a):k ..rest) (plus (N a):(u64::- k 2) ..rest))
+(let t (plus (N 1) (N 1) (N 5)))
+(run 1)

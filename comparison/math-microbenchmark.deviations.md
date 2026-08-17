@@ -258,3 +258,8 @@ Add factor (`(x+y)^2 * z`) still distributes only through other paths;
 verified latent, all checks pass. Re-validated after the change: node counts
 identical to the campaign under both strategies (755 926 / 755 917), so the
 twins fire zero times on this workload and the numbers stand.
+
+**Update, same date, later:** the distributivity residual is retired via RHS
+multiplicity expressions (see `integer_math.deviations.md`, same date): the
+twin distributes one copy of a repeated Add factor and keeps `k-1`. Counts
+remain identical to the campaign under both strategies (755 926 / 755 917).

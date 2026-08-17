@@ -442,7 +442,21 @@ fn parse_rhs(input: &mut &str, base: usize) -> ModalResult<RhsTerm> {
             if input.starts_with("..") {
                 children.push(parse_rhs_dotdot(input, base)?);
             } else {
-                children.push(RhsChild::Term(parse_rhs(input, base)?));
+                let child_start = input.as_ptr() as usize;
+                let t = parse_rhs(input, base)?;
+                ws(input)?;
+                // `term:mult` — a multiplicity annotation on an RHS element.
+                if input.starts_with(':') {
+                    *input = &input[1..];
+                    let mult = parse_mult_expr(input)?;
+                    children.push(RhsChild::TermMult {
+                        term: t,
+                        mult,
+                        span: span_of(base, child_start, input),
+                    });
+                } else {
+                    children.push(RhsChild::Term(t));
+                }
             }
         }
         cut_char(input, ')')?;
@@ -575,7 +589,20 @@ fn parse_optional_if(input: &mut &str, base: usize) -> ModalResult<Option<Box<Rh
 
 fn parse_mult_expr(input: &mut &str) -> ModalResult<MultExpr> {
     ws(input)?;
-    if input.starts_with(|c: char| c.is_ascii_digit()) {
+    if input.starts_with('(') {
+        expect_char(input, '(')?;
+        let op = op_expr(input)?;
+        let mut args = Vec::new();
+        loop {
+            ws(input)?;
+            if input.starts_with(')') {
+                break;
+            }
+            args.push(parse_mult_expr(input)?);
+        }
+        cut_char(input, ')')?;
+        Ok(MultExpr::Prim { op, args })
+    } else if input.starts_with(|c: char| c.is_ascii_digit()) {
         let n = number(input)?;
         Ok(MultExpr::Lit(n))
     } else {

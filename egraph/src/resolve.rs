@@ -1624,6 +1624,12 @@ pub enum RPrimArg {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RRhsChild<O, S, L> {
     Term(RRhsTerm<O, S, L>),
+    /// `term:mult` under a variadic op: the term contributed `mult` times.
+    /// Multiplicity 0 omits the term without evaluating it.
+    TermMult {
+        body: Box<RRhsTerm<O, S, L>>,
+        mult: ResolvedMultExpr,
+    },
     SpliceSeq(SeqVarId),
     SpliceSet(SetVarId),
     SpliceMset(MsetVarId),
@@ -1659,6 +1665,54 @@ pub enum RRhsChild<O, S, L> {
 pub enum ResolvedMultExpr {
     Lit(u64),
     Var(MultVarId),
+    /// Checked u64 arithmetic over multiplicities (`(u64::- k 1)`). Interval-
+    /// checked at rule install against the LHS multiplicity constraints, so a
+    /// possible underflow or division by zero is rejected before the rule
+    /// runs; evaluation still uses checked ops as the second line.
+    Prim {
+        op: MultPrimOp,
+        args: Vec<ResolvedMultExpr>,
+    },
+}
+
+/// The RHS multiplicity-expression vocabulary: the u64 primitive ops that
+/// make sense over counts, same names, same checked semantics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultPrimOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Min,
+    Max,
+}
+
+impl MultPrimOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            MultPrimOp::Add => "u64::+",
+            MultPrimOp::Sub => "u64::-",
+            MultPrimOp::Mul => "u64::*",
+            MultPrimOp::Div => "u64::/",
+            MultPrimOp::Rem => "u64::%",
+            MultPrimOp::Min => "u64::min",
+            MultPrimOp::Max => "u64::max",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "u64::+" => Some(MultPrimOp::Add),
+            "u64::-" => Some(MultPrimOp::Sub),
+            "u64::*" => Some(MultPrimOp::Mul),
+            "u64::/" => Some(MultPrimOp::Div),
+            "u64::%" => Some(MultPrimOp::Rem),
+            "u64::min" => Some(MultPrimOp::Min),
+            "u64::max" => Some(MultPrimOp::Max),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1933,8 +1987,21 @@ pub fn resolve_rhs<
                 ));
             }
             let child_sorts = arg_sorts_for_rhs(&info.kind, op, children.len(), span)?;
+            let variadic = matches!(
+                info.kind,
+                OpKind::A { .. } | OpKind::MSet { .. } | OpKind::Set { .. }
+            );
             let mut rchildren = Vec::with_capacity(children.len());
             for (i, c) in children.iter().enumerate() {
+                if !variadic && matches!(c, crate::ast::RhsChild::TermMult { .. }) {
+                    return Err(err(
+                        format!(
+                            "a multiplicity annotation on an RHS element needs a \
+                             variadic operator; '{op}' has fixed arity"
+                        ),
+                        span,
+                    ));
+                }
                 let cs = child_sorts.get(i).copied();
                 rchildren.push(resolve_rhs_child(
                     c, cs, ops, sorts, model, var_sorts, shape, globals,
@@ -1994,6 +2061,16 @@ fn resolve_rhs_child<
         RhsChild::Term(t) => Ok(RRhsChild::Term(resolve_rhs(
             t, sort, ops, sorts, model, vs, shape, globals,
         )?)),
+        RhsChild::TermMult { term, mult, span } => {
+            // Only a variadic op can absorb a repeated child; the App site
+            // rejects the annotation under fixed-arity ops before recursing.
+            let body = resolve_rhs(term, sort, ops, sorts, model, vs, shape, globals)?;
+            let m = resolve_mult_expr(mult, *span, shape)?;
+            Ok(RRhsChild::TermMult {
+                body: Box::new(body),
+                mult: m,
+            })
+        }
         RhsChild::Splice(name, span) => resolve_splice(name, *span, shape),
         RhsChild::SetComp {
             body,
@@ -2171,6 +2248,28 @@ fn resolve_mult_expr(
         crate::ast::MultExpr::Lit(n) => Ok(ResolvedMultExpr::Lit(*n)),
         crate::ast::MultExpr::Var(name) => {
             lookup_mult_var(name, span, shape).map(ResolvedMultExpr::Var)
+        }
+        crate::ast::MultExpr::Prim { op, args } => {
+            let p = MultPrimOp::from_name(op).ok_or_else(|| {
+                err(
+                    format!(
+                        "'{op}' is not a multiplicity operation (u64::+ u64::- u64::* \
+                         u64::/ u64::% u64::min u64::max)"
+                    ),
+                    span,
+                )
+            })?;
+            if args.len() != 2 {
+                return Err(err(
+                    format!("'{op}' in a multiplicity expression takes 2 args, got {}", args.len()),
+                    span,
+                ));
+            }
+            let rargs = args
+                .iter()
+                .map(|a| resolve_mult_expr(a, span, shape))
+                .collect::<R<Vec<_>>>()?;
+            Ok(ResolvedMultExpr::Prim { op: p, args: rargs })
         }
     }
 }

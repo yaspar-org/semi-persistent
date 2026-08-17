@@ -384,6 +384,17 @@ final submission re-runs every table at one pinned commit.
   and pre-fix semi numbers on capped programs must not be cited as
   complete derivations.
 
+- 2026-08-17, RHS multiplicity expressions: RHS elements of a variadic
+  operator take checked u64 expressions over bound multiplicities
+  (`(Add b ..s):(u64::- k 1)`), interval-checked at rule install against
+  the LHS constraints (a possible underflow or zero divisor is a compile
+  error) with multiplicity 0 omitting the element. This retires the last
+  inexpressible twin shape (keep k-1 copies): distributivity twins landed
+  in `integer_math.native` (plus its LShift rule) and
+  `math-microbenchmark.native`, counts identical to the campaign under
+  both strategies (they fire zero times on the shipped workloads).
+  Fixtures `rhs_mult_expr.egg` / `rhs_mult_expr_underflow.egg`.
+
 - 2026-08-17, coincidence twins and multiplicity on the RHS: AC matching
   is a partition of distinct children (an element takes its child's whole
   multiplicity; unannotated, that multiplicity must be exactly 1), so the

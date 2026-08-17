@@ -329,7 +329,9 @@ where
                  multiplicity width (EGraphConfig::M holds at most {})",
                 <Cfg::M as crate::multiplicity::MultiplicityLike>::MAX
             ))
-        })
+        })?;
+        crate::apply::check_rhs_mult_exprs(rule)
+            .map_err(|msg| InterpError::DeclError(format!("rule `{name}`: {msg}")))
     }
 
     fn exec_checked(&mut self, cmd: &CCommand<Cfg::O, Cfg::S, L>) -> Result<(), InterpError> {

@@ -41,6 +41,12 @@ pub enum RhsOp<O, V> {
 pub enum RhsArg<O, V> {
     /// Single child.
     One(RhsOp<O, V>),
+    /// One child contributed `mult` times (variadic ops only). Multiplicity 0
+    /// omits the child without evaluating it, so nothing is materialized.
+    OneMult {
+        body: Box<RhsOp<O, V>>,
+        mult: crate::resolve::ResolvedMultExpr,
+    },
     /// Splice sequence rest into children.
     SpliceSeq(SeqVarId),
     /// Splice set rest into children.
@@ -100,6 +106,10 @@ pub fn compile_rhs<O: Clone, S, V: Clone>(term: &RRhsTerm<O, S, V>) -> RhsOp<O, 
 fn compile_rhs_arg<O: Clone, S, V: Clone>(child: &RRhsChild<O, S, V>) -> RhsArg<O, V> {
     match child {
         RRhsChild::Term(t) => RhsArg::One(compile_rhs(t)),
+        RRhsChild::TermMult { body, mult } => RhsArg::OneMult {
+            body: Box::new(compile_rhs(body)),
+            mult: mult.clone(),
+        },
         RRhsChild::SpliceSeq(id) => RhsArg::SpliceSeq(*id),
         RRhsChild::SpliceSet(id) => RhsArg::SpliceSet(*id),
         RRhsChild::SpliceMset(id) => RhsArg::SpliceMset(*id),
@@ -257,6 +267,16 @@ fn check_op_mults<Cfg: crate::config::EGraphConfig, O, V>(op: &RhsOp<O, V>) -> R
     for arg in args {
         match arg {
             RhsArg::One(inner) => check_op_mults::<Cfg, _, _>(inner)?,
+            RhsArg::OneMult { body, mult } => {
+                // A literal count above the stored width can never be
+                // represented; multiplicity 0 is legal here (omission).
+                if let crate::resolve::ResolvedMultExpr::Lit(n) = mult
+                    && *n > 0
+                {
+                    check_one::<Cfg>(*n)?;
+                }
+                check_op_mults::<Cfg, _, _>(body)?;
+            }
             RhsArg::MsetComp {
                 body, mult, filter, ..
             } => {
@@ -540,6 +560,20 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
         RhsArg::One(RhsOp::FetchNode(vid)) => out.push(m.get(*vid)),
         RhsArg::One(RhsOp::FetchGlobal(gid)) => out.push(globals.binding(*gid)),
         RhsArg::One(inner) => out.push(eval(inner, m, eg, model, globals)),
+        RhsArg::OneMult { body, mult } => {
+            // Multiplicity 0 omits the child without evaluating it, so an
+            // omitted term is never materialized (the k-1 = 0 case of a
+            // coincidence twin). Underflow and division by zero were rejected
+            // at install by the interval check; the checked ops here are the
+            // second line, like the checked literal primitives.
+            let k = eval_mult_expr::<Cfg, V>(mult, m);
+            if k > 0 {
+                let id = eval(body, m, eg, model, globals);
+                for _ in 0..k {
+                    out.push(id);
+                }
+            }
+        }
         RhsArg::SpliceSeq(sid) => out.extend_from_slice(m.seq_slice(*sid)),
         RhsArg::SpliceSet(sid) => out.extend_from_slice(m.set_slice(*sid)),
         RhsArg::SpliceMset(mid) => {
@@ -619,11 +653,9 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
                 // literal is a rule error, not a silently smaller multiplicity.
                 // `check_mult_literals` rejects such rules at install time, which
                 // is why this is an `expect` rather than a propagated error.
-                let n: Cfg::M = match out_mult {
-                    crate::resolve::ResolvedMultExpr::Lit(n) => Cfg::M::try_from_u64(*n)
-                        .expect("RHS multiplicity literal exceeds the configured width"),
-                    crate::resolve::ResolvedMultExpr::Var(mid) => m.get_mult(*mid),
-                };
+                let n = eval_mult_expr::<Cfg, V>(out_mult, m);
+                let n: Cfg::M = Cfg::M::try_from_u64(n)
+                    .expect("RHS multiplicity exceeds the configured width");
                 for _ in 0..n.to_usize() {
                     out.push(result);
                 }
@@ -631,6 +663,150 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
             m.clear(*var);
         }
     }
+}
+
+/// Evaluate an RHS multiplicity expression over the match's bound
+/// multiplicities, in checked u64 arithmetic. Underflow and division by zero
+/// are rejected statically at rule install ([`check_rhs_mult_exprs`]); the
+/// checked ops here are the second line, and panic like the checked literal
+/// primitives do.
+fn eval_mult_expr<Cfg, V>(e: &crate::resolve::ResolvedMultExpr, m: &V) -> u64
+where
+    Cfg: EGraphConfig,
+    V: crate::ematch::MatchView<Cfg>,
+{
+    use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
+    match e {
+        E::Lit(n) => *n,
+        E::Var(v) => m.get_mult(*v).to_u64(),
+        E::Prim { op, args } => {
+            let a = eval_mult_expr::<Cfg, V>(&args[0], m);
+            let b = eval_mult_expr::<Cfg, V>(&args[1], m);
+            match op {
+                P::Add => a.checked_add(b).expect("u64::+ overflow in RHS multiplicity"),
+                P::Sub => a.checked_sub(b).expect("u64::- underflow in RHS multiplicity"),
+                P::Mul => a.checked_mul(b).expect("u64::* overflow in RHS multiplicity"),
+                P::Div => a.checked_div(b).expect("u64::/ by zero in RHS multiplicity"),
+                P::Rem => a.checked_rem(b).expect("u64::% by zero in RHS multiplicity"),
+                P::Min => a.min(b),
+                P::Max => a.max(b),
+            }
+        }
+    }
+}
+
+/// Interval bounds of an RHS multiplicity expression, from the rule's LHS
+/// multiplicity constraints (`ResolvedQuery::mult_intervals`; an unannotated
+/// `x:k` is `[1, u64::MAX]`). Errors on the two expressions that could be
+/// *wrong* at runtime rather than merely large: a subtraction that cannot be
+/// proved non-negative, and a division or remainder whose divisor could be
+/// zero. Additions and products saturate in the bound computation; a runtime
+/// overflow still traps in [`eval_mult_expr`].
+fn mult_expr_bounds(
+    e: &crate::resolve::ResolvedMultExpr,
+    intervals: &[(crate::ast::MultVarId, u64, u64)],
+) -> Result<(u64, u64), String> {
+    use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
+    Ok(match e {
+        E::Lit(n) => (*n, *n),
+        E::Var(v) => intervals
+            .iter()
+            .find(|(id, _, _)| id == v)
+            .map(|(_, lo, hi)| (*lo, *hi))
+            .unwrap_or((1, u64::MAX)),
+        E::Prim { op, args } => {
+            let (lo_a, hi_a) = mult_expr_bounds(&args[0], intervals)?;
+            let (lo_b, hi_b) = mult_expr_bounds(&args[1], intervals)?;
+            match op {
+                P::Add => (lo_a.saturating_add(lo_b), hi_a.saturating_add(hi_b)),
+                P::Sub => {
+                    if lo_a < hi_b {
+                        return Err(format!(
+                            "u64::- can underflow: the left side is at least {lo_a} but \
+                             the right side can reach {hi_b}; constrain the multiplicity \
+                             on the LHS (e.g. `x:k>=2`) so the subtraction cannot go \
+                             negative"
+                        ));
+                    }
+                    (lo_a - hi_b, hi_a.saturating_sub(lo_b))
+                }
+                P::Mul => (lo_a.saturating_mul(lo_b), hi_a.saturating_mul(hi_b)),
+                P::Div | P::Rem => {
+                    if lo_b == 0 {
+                        return Err(format!(
+                            "{} divisor can be zero; constrain it on the LHS",
+                            op.name()
+                        ));
+                    }
+                    match op {
+                        P::Div => (lo_a / hi_b.max(1), hi_a / lo_b),
+                        _ => (0, hi_b - 1),
+                    }
+                }
+                P::Min => (lo_a.min(lo_b), hi_a.min(hi_b)),
+                P::Max => (lo_a.max(lo_b), hi_a.max(hi_b)),
+            }
+        }
+    })
+}
+
+/// Static safety check for every RHS multiplicity expression in a rule's
+/// actions, against the rule's LHS multiplicity intervals. Rejection here is
+/// what licenses the `expect`s in [`eval_mult_expr`] for underflow and
+/// division by zero; overflow stays a runtime trap because any expression
+/// over an unbounded `k` could overflow and rejecting them all would ban
+/// `k+1`.
+pub fn check_rhs_mult_exprs<O, S, V>(rule: &PreparedRule<O, S, V>) -> Result<(), String> {
+    fn walk_op<O, V>(
+        op: &RhsOp<O, V>,
+        intervals: &[(crate::ast::MultVarId, u64, u64)],
+    ) -> Result<(), String> {
+        let RhsOp::App { args, .. } = op else {
+            return Ok(());
+        };
+        for arg in args {
+            match arg {
+                RhsArg::One(inner) => walk_op(inner, intervals)?,
+                RhsArg::OneMult { body, mult } => {
+                    mult_expr_bounds(mult, intervals)?;
+                    walk_op(body, intervals)?;
+                }
+                RhsArg::MsetComp { body, mult, filter, .. } => {
+                    mult_expr_bounds(mult, intervals)?;
+                    walk_op(body, intervals)?;
+                    if let Some(f) = filter {
+                        walk_op(f, intervals)?;
+                    }
+                }
+                RhsArg::SetComp { body, filter, .. } | RhsArg::SeqComp { body, filter, .. } => {
+                    walk_op(body, intervals)?;
+                    if let Some(f) = filter {
+                        walk_op(f, intervals)?;
+                    }
+                }
+                RhsArg::SpliceSeq(_) | RhsArg::SpliceSet(_) | RhsArg::SpliceMset(_) => {}
+            }
+        }
+        Ok(())
+    }
+    let iv = &rule.query.mult_intervals;
+    for action in &rule.actions {
+        match action {
+            CompiledAction::Union(_, a, b) => {
+                walk_op(a, iv)?;
+                walk_op(b, iv)?;
+            }
+            CompiledAction::Insert(t) => walk_op(t, iv)?,
+            CompiledAction::Set { args, value, .. } => {
+                for a in args {
+                    walk_op(a, iv)?;
+                }
+                walk_op(value, iv)?;
+            }
+            CompiledAction::Subsume(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn check_filter_truthy<Cfg, L, M, const T: bool, const P: bool>(
@@ -1127,6 +1303,10 @@ mod tests {
                             println!("{indent}  child[{i}]:");
                             print_rhs(&format!("{indent}    "), t);
                         }
+                        RC::TermMult { body, mult } => {
+                            println!("{indent}  child[{i}] (mult {mult:?}):");
+                            print_rhs(&format!("{indent}    "), body);
+                        }
                         RC::SpliceSeq(id) => println!("{indent}  child[{i}]: SpliceSeq({:?})", id),
                         RC::SpliceSet(id) => println!("{indent}  child[{i}]: SpliceSet({:?})", id),
                         RC::SpliceMset(id) => {
@@ -1176,6 +1356,10 @@ mod tests {
                         RhsArg::One(inner) => {
                             println!("{indent}  arg[{i}]:");
                             print_compiled(&format!("{indent}    "), inner);
+                        }
+                        RhsArg::OneMult { body, mult } => {
+                            println!("{indent}  arg[{i}] (mult {mult:?}):");
+                            print_compiled(&format!("{indent}    "), body);
                         }
                         RhsArg::SpliceSeq(s) => {
                             println!("{indent}  arg[{i}]: SpliceSeq(SeqVarId({}))", s.idx())

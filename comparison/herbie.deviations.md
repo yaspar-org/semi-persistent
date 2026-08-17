@@ -206,3 +206,10 @@ literal pre-existing).
 7b1adf2 it is not herbie's simplify layer at 2.9x but a typed-lowering
 unsoundness repro with no checks; `repro-herbie-vanilla.deviations.md` has
 the corrected characterization and the drop.
+
+**Update on the residuals (same date, later):** the keep-`k-1`-copies shape is
+now expressible (RHS multiplicity expressions, checked u64 arithmetic,
+interval-checked at install), so the herbie rules in that residual class can
+gain twins on the file's next pass; the RBig-fold residual stands, since it
+needs an integer-to-RBig cast primitive, not multiplicity arithmetic. Recorded
+here so the residual list is read against the current language.
