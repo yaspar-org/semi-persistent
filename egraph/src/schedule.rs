@@ -836,9 +836,98 @@ fn schedule_inner<O: DenseId + Hash + Copy, S: DenseId + Copy, V: Clone, I: Inde
         before.copy_from_slice(&used);
     }
 
+    if dump_plan_enabled() {
+        dump_plan(&steps, rq.atoms.len());
+    }
     QueryPlan {
         steps,
         shape: rq.shape.clone(),
+    }
+}
+
+/// Whether `EGRAPH_DUMP_PLAN` is set, read once. The variable is read at the first
+/// scheduled query and cached, so an unset environment costs one relaxed load per plan.
+fn dump_plan_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("EGRAPH_DUMP_PLAN").is_some())
+}
+
+/// Print the scheduled plan to stderr, one line per step, in the form chapter 8's
+/// "Example Plan" section uses. Variables are printed by their resolved index, so a
+/// step's `v3` is variable 3 of the query's `MatchShape`.
+///
+/// This is the diagnostic the pre-bound-child defect in `ematch.rs` was found with: the
+/// dump showed a `Join` keyed on `v0` scheduled after an `ExpandA` that listed `v0`
+/// among its fixed children, which is the order that made the expansion's cleanup unbind
+/// a variable the join then read.
+fn dump_plan<O: std::fmt::Debug, I: std::fmt::Debug, V>(steps: &[Step<O, I, V>], atoms: usize) {
+    eprintln!("=== plan: {} atoms, {} steps ===", atoms, steps.len());
+    for (i, st) in steps.iter().enumerate() {
+        eprintln!("step[{i}]: {}", fmt_step(st));
+    }
+}
+
+fn fmt_step<O: std::fmt::Debug, I: std::fmt::Debug, V>(st: &Step<O, I, V>) -> String {
+    match st {
+        Step::Join {
+            target,
+            lookups,
+            atom_id,
+        } => format!(
+            "Join target=v{} atom={atom_id} lookups={lookups:?}",
+            target.idx()
+        ),
+        Step::ExtractChild {
+            target,
+            parent,
+            pos,
+        } => format!(
+            "ExtractChild target=v{} parent=v{} pos={pos:?}",
+            target.idx(),
+            parent.idx()
+        ),
+        Step::CheckChildEq {
+            parent,
+            pos,
+            expected,
+        } => format!(
+            "CheckChildEq parent=v{} pos={pos:?} expected={expected:?}",
+            parent.idx()
+        ),
+        Step::CheckEq { a, b } => format!("CheckEq v{} v{}", a.idx(), b.idx()),
+        Step::CheckEqGlobal { local, global } => {
+            format!("CheckEqGlobal v{} global={global:?}", local.idx())
+        }
+        Step::CopyBinding { target, other } => {
+            format!("CopyBinding target=v{} from=v{}", target.idx(), other.idx())
+        }
+        Step::ExpandA {
+            node,
+            children,
+            pre,
+            suf,
+        } => format!(
+            "ExpandA node=v{} children={children:?} pre={pre:?} suf={suf:?}",
+            node.idx()
+        ),
+        Step::DecomposeAC {
+            node,
+            elems,
+            rest,
+            idempotent,
+        } => format!(
+            "DecomposeAC node=v{} elems={elems:?} rest={rest:?} idempotent={idempotent}",
+            node.idx()
+        ),
+        Step::DecomposeACI { node, elems, rest } => format!(
+            "DecomposeACI node=v{} elems={elems:?} rest={rest:?}",
+            node.idx()
+        ),
+        Step::ExtractLitVal { node, val } => {
+            format!("ExtractLitVal node=v{} val={val:?}", node.idx())
+        }
+        Step::CheckLit { node, .. } => format!("CheckLit node=v{}", node.idx()),
+        Step::CheckPred { .. } => "CheckPred".to_string(),
     }
 }
 

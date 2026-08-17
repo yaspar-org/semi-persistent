@@ -189,5 +189,18 @@ The scheduler picks Mul first (cardinality 1) over @IBig (cardinality 4).
 Steps 3, 5, 7, 9 are the e-class re-joins; without them, the match
 would silently fail when the class rep has a different op.
 
+## Dumping a Plan
+
+Setting `EGRAPH_DUMP_PLAN` (to any value) prints every plan the scheduler
+produces to stderr in the form above, one line per step, with variables named by
+their resolved index (`v3` is variable 3 of the query's `MatchShape`). The
+variable is read once and cached, so leaving it unset costs one load per plan.
+
+The dump answers what is bound when a step runs, which is the question behind
+both classes of matcher defect: a re-join keyed on a variable no earlier step
+binds, and a variadic expansion whose fixed children were bound elsewhere. The
+backtracking bug fixed on 2026-08-17 was diagnosed from it, by reading a `Join`
+on `v0` scheduled after an `ExpandA` that listed `v0` among its children.
+
 ---
 [← Ch 7: Leapfrog Triejoin](07-leapfrog.md) · [Table of Contents](00-table-of-contents.md) · [Ch 9: Pattern Matching →](09-pattern-matching.md)
