@@ -10,11 +10,15 @@ budget, on both budget axes (playouts, and wall clock relative to the exact
 solver), and how much budget a completion certificate costs against B1's
 prediction that certification needs about `sum A(v)` playouts.
 
-One run, 2026-08-16, release build on Apple Silicon: 673 instances, 10095
-rows, 1854 s wall. Every spec was measured: no exact timeout, no MCGS timeout,
-no ladder cut on the per-instance budget, no instance past the wall budget.
-The playout ladder is 2^0 to 2^14 and the exact solver runs with
-`exact_pruning` and `context_subsumption` on.
+Two runs, 2026-08-16 and 2026-08-17, release build on Apple Silicon. The main
+run is 673 instances, 10095 rows, 1854 s wall; the deep-ladder run repeats the
+`dec` and `mixed` families to 2^18 playouts (438 instances, 8322 rows, 1317 s)
+to see whether the budget, rather than the algorithm, was what stopped
+certification. Every spec of both runs was measured: no exact timeout, no MCGS
+timeout, no ladder cut on the per-instance budget, no instance past the wall
+budget. Tables (a) to (d) are the main run, whose ladder is 2^0 to 2^14; table
+(e) is the deep-ladder run. The exact solver runs with `exact_pruning` and
+`context_subsumption` on in both.
 
 ## Regenerating
 
@@ -23,6 +27,16 @@ AU_BENCH_DIR=comparison/au AU_CORPUS_SECS=5400 \
   cargo test -p semi-persistent-egraph --release --test au_corpus_bench \
   -- --ignored --nocapture
 python3 comparison/au/analyze.py comparison/au/corpus.csv
+```
+
+The deep-ladder run is the same harness with three knobs:
+
+```text
+AU_BENCH_DIR=comparison/au AU_CSV_NAME=corpus-deep.csv AU_FAMILIES=dec,mixed \
+  AU_LADDER_TOP=262144 AU_CORPUS_SECS=7200 \
+  cargo test -p semi-persistent-egraph --release --test au_corpus_bench \
+  -- --ignored --nocapture
+python3 comparison/au/analyze.py comparison/au/corpus-deep.csv
 ```
 
 `AU_CORPUS_SECS` is the wall budget after which no new instance starts; the
@@ -252,14 +266,82 @@ magnitude, and the miss grows with depth rather than with the action count:
 | 20 | 48 | 0 | 60 | - | - |
 
 `sum A(v)` grows linearly with the burial depth, from 9 to 60, while the knee
-grows from 64 to beyond 16384. Verdict: the prediction is refuted as stated
-and holds in one direction. `sum A(v)` counts the edges a certificate must
-realize, and one playout realizes at most one edge, but a playout also has to
-descend to the node holding that edge, and UCT re-descends prefixes it has
-already realized. The cost of the descent is what the prediction omits, and it
-is invisible on shallow graphs and dominant on deep ones. A depth-aware
-predictor is the next falsifiable form; this corpus does not have the
-per-node depth to fit one, which is one census field away.
+grows from 64 to beyond 16384, and the deep-ladder run shows the ladder was
+not what stopped it: at 2^18 playouts, 7281 times the predicted 36, no
+instance at burial depth 12 certifies.
+
+Verdict: the prediction is refuted as stated and holds in one direction.
+`sum A(v)` counts the edges a certificate must realize and one playout
+realizes at most one edge, so it is a lower bound. What it omits is which
+edges a playout can reach. Selection descends by UCB1, which gives an arm that
+looks worse by a margin only logarithmically many visits in the total budget,
+so the actions buried behind a misranked action are realized after a budget
+exponential in the burial depth, not linear in the action count. The deceptive
+family isolates exactly that: it is the family whose whole construction is a
+misranked action, and it is the family where the prediction misses by two
+orders of magnitude and more.
+
+The concrete consequence for the solver is a selection rule, not a bigger
+budget: MCGS keeps descending into subtrees that are already closed, so a
+playout spent there realizes nothing. Excluding closed children from selection
+(the MCTS-solver rule) is what would make the certification budget track
+`sum A(v)` on deep graphs, and it is testable against this corpus, since the
+knee column is what it has to move.
+
+## Playouts to gap zero
+
+The budget at which MCGS first returns an optimal term, on the main run's
+ladder:
+
+| family | n | reaches gap 0 | p50 | p90 | max |
+| --- | --- | --- | --- | --- | --- |
+| `dec` | 258 | 0.771 | 64 | 4096 | 16384 |
+| `wide` | 40 | 0.150 | 6144 | 8192 | 8192 |
+| `mixed` | 180 | 0.761 | 512 | 4096 | 16384 |
+| `rand` | 120 | 1.000 | 1 | 1 | 1 |
+| `xover` | 45 | 1.000 | 1 | 1 | 1 |
+| `width` | 15 | 1.000 | 1 | 1 | 1 |
+| `ac` | 15 | 1.000 | 1 | 1 | 1 |
+
+On the deceptive family the budget is geometric in both knobs, which is the
+mechanism behind the certification result above: each additional decoy is one
+more arm that outranks the winner on the estimate, and each additional level
+is one more such choice to make in sequence.
+
+| burial depth | 1 decoy | 2 decoys | 4 decoys |
+| --- | --- | --- | --- |
+| 3 | 2 | 4 | 8 |
+| 5 | 8 | 16 | 32 |
+| 8 | 16 | 64 | 256 |
+| 12 | 128 | 1024 | 4608 |
+| 16 | 512 | 2048 | 8192 |
+| 20 | 4096 | 8192 | - |
+
+Median playouts to gap 0 over the instances that reach it; at burial depth 20
+that is 75%, 19%, and 6% of the instances respectively, and the last cell has
+too few to report.
+
+## (e) The deep ladder: quality converges, certification does not
+
+Repeating the `dec` and `mixed` families to 2^18 separates two questions the
+main run's ladder conflates.
+
+| playouts | zero fraction | mean gap | certified fraction |
+| --- | --- | --- | --- |
+| 1 | 0.000 | 0.1768 | 0.000 |
+| 256 | 0.475 | 0.0664 | 0.117 |
+| 4096 | 0.712 | 0.0266 | 0.194 |
+| 16384 | 0.767 | 0.0165 | 0.215 |
+| 65536 | 0.829 | 0.0122 | 0.231 |
+| 262144 | 0.886 | 0.0076 | 0.242 |
+
+Quality keeps converging: the zero fraction rises from 0.767 to 0.886 and the
+mean gap halves between 2^14 and 2^18. Certification moves 0.215 to 0.242 over
+the same 16x budget. On the deceptive family at burial depth 12, MCGS returns
+the optimum at a median 128 playouts and has not proved it at 262144, a factor
+of 2000 between finding and proving on instances whose entire search graph is
+36 actions wide. Finding the optimum and certifying it are different problems
+here, and only the first one is what the budget buys.
 
 ## (d) Time to optimum against exact's completion
 

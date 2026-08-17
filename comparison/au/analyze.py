@@ -272,6 +272,53 @@ def table_knee_by_depth(rows):
     print()
 
 
+def table_playouts_to_zero(rows):
+    """Lowest budget at which MCGS reaches the optimum, by family, and for the
+    deceptive family by burial depth and decoy count: the mechanism behind the
+    knee, since a node behind a misranked action is reached only after UCT has
+    spent enough budget on the arm that looks worse."""
+    inst = by_instance(rows)
+    print("## Playouts to gap zero")
+    print()
+    fams = collections.OrderedDict()
+    for name, rs in inst.items():
+        fams.setdefault(rs[0]["family"], []).append(rs)
+    print(f"{'family':>8} {'n':>5} {'reaches 0':>10} {'p50':>8} {'p90':>8} {'max':>8}")
+    for fam, groups in fams.items():
+        got = []
+        for rs in groups:
+            zero = [r["playouts"] for r in rs if r["gap"] == 0]
+            if zero:
+                got.append(min(zero))
+        if not got:
+            print(f"{fam:>8} {len(groups):>5} {0.0:>10.3f} {'-':>8} {'-':>8} {'-':>8}")
+            continue
+        print(f"{fam:>8} {len(groups):>5} {len(got) / len(groups):>10.3f} "
+              f"{quantile(got, 0.5):>8.0f} {quantile(got, 0.9):>8.0f} {max(got):>8}")
+    print()
+
+    buckets = collections.OrderedDict()
+    for name, rs in inst.items():
+        if rs[0]["family"] != "dec":
+            continue
+        p = dict(kv.split("=") for kv in rs[0]["params"].split(";"))
+        zero = [r["playouts"] for r in rs if r["gap"] == 0]
+        buckets.setdefault((int(p["d_b"]), int(p["k"])), []).append(
+            min(zero) if zero else None)
+    if not buckets:
+        return
+    print("### Deceptive family, by burial depth and decoy count")
+    print()
+    print(f"{'burial depth':>13} {'decoys':>7} {'n':>4} {'reaches 0':>10} "
+          f"{'median playouts':>16}")
+    for key in sorted(buckets):
+        e = buckets[key]
+        got = [x for x in e if x is not None]
+        print(f"{key[0]:>13} {key[1]:>7} {len(e):>4} {len(got) / len(e):>10.3f} "
+              f"{(quantile(got, 0.5) if got else float('nan')):>16.0f}")
+    print()
+
+
 def table_ttt(rows):
     print("## (d) Time to optimum against exact's completion")
     print()
@@ -348,6 +395,7 @@ def main():
     table_certification(rows)
     table_knee_by_family(rows)
     table_knee_by_depth(rows)
+    table_playouts_to_zero(rows)
     table_ttt(rows)
 
 

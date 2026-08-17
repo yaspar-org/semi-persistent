@@ -305,10 +305,19 @@ factor of 2 of it (`width` 1.00, `ac` 1.78, `wide` 1.99, all inside the
 ladder's own factor-2 granularity), and deep narrow graphs miss by an order of
 magnitude with the miss growing in depth, not in action count (deceptive
 family: `sum A(v)` 9 -> 60 as burial depth goes 3 -> 20, knee 64 -> 512 ->
-2048 -> uncertified at 2^14; ratios 7.1, 34.1, 128). What the prediction omits
-is the descent: a playout realizes at most one edge but must re-descend the
-prefix to reach it. Numbers and the per-decade table are in
-`comparison/au/anytime-corpus.md`.
+2048 -> uncertified at 2^14; ratios 7.1, 34.1, 128). A second run to 2^18
+playouts shows the ladder was not the binding constraint: at burial depth 12,
+MCGS returns the optimum at a median 128 playouts and still has no certificate
+at 262144, on instances whose whole search graph is 36 actions. What the
+prediction omits is which edges a playout can reach: selection descends by
+UCB1, which gives an arm that looks worse only logarithmically many visits in
+the total budget, so the actions behind a misranked action are realized after
+a budget exponential in the burial depth. The consequence is a selection rule
+rather than a bigger budget: MCGS keeps descending into closed subtrees, and
+excluding closed children from selection (the MCTS-solver rule) is the change
+that would make the certification budget track `sum A(v)` on deep graphs,
+testable against this corpus's knee column. Numbers and the per-decade table
+are in `comparison/au/anytime-corpus.md`.
 
 **B2. The deceptive family.** Instances where the lazy-completion estimate
 misranks actions: a decoy member pair whose children look cheaper by margin
@@ -372,11 +381,14 @@ The plan's 10 ms hardness floor is reported rather than applied, because A2
 and A6 made the cyclic families microseconds wide (crossover `cycles=20` in
 0.3 ms) and the floor would have selected `width` and `ac` and nothing else;
 the harness's `calibrate_hardness` is the measurement, `$AU_MIN_EXACT_MS`
-reinstates the floor, and every table is recomputable per family. Two
-follow-ups the run exposes: MCGS keeps spending playouts after the search
-graph closes (10.8 ms at 2^14 on an instance certified at 16 playouts), and
-the initial rollout's cost, not expansion, is what bounds the anytime story
-after A0.
+reinstates the floor, and every table is recomputable per family. Three
+follow-ups the runs expose: MCGS keeps spending playouts after the search
+graph closes (10.8 ms at 2^14 on an instance certified at 16 playouts); the
+initial rollout's cost, not expansion, is what bounds the anytime story after
+A0; and quality keeps converging past 2^14 (zero fraction 0.767 -> 0.886 to
+2^18 on the deceptive and mixed families) while certification moves 0.215 ->
+0.242 over the same 16x budget, so finding the optimum and proving it are
+separate problems here and only the first is what budget buys.
 
 **B4. Auto-formalization variability benchmark.** The application story:
 several LLM formalizations of one natural-language statement differ in

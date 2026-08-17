@@ -63,6 +63,12 @@
 //!   cargo test -p semi-persistent-egraph --release --test au_corpus_bench \
 //!   -- --ignored --nocapture
 //! ```
+//!
+//! `$AU_LADDER_TOP` raises the top of the playout ladder (default 2^14) and
+//! `$AU_FAMILIES` restricts the run to a comma-separated family list, which is
+//! how the deep families' certification knees were measured past the default
+//! ladder; the CSV name follows `$AU_CSV_NAME` (default `corpus.csv`) so such
+//! a run does not overwrite the main one.
 
 use std::fs;
 use std::io::Write as _;
@@ -115,10 +121,20 @@ const LADDER_BUDGET: Duration = Duration::from_secs(25);
 const CENSUS_GUARD: Duration = Duration::from_secs(20);
 /// OR-state cap of the census walk per instance.
 const CENSUS_MAX_STATES: u64 = 4_000_000;
-/// The playout ladder: 2^0 .. 2^14.
-const BUDGETS: [u64; 15] = [
-    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
-];
+/// The playout ladder: 2^0 up to `$AU_LADDER_TOP` (default 2^14). Raising the
+/// top is how the knee of an instance whose `sum A(v)` the default ladder
+/// cannot pay for gets measured.
+fn budgets() -> Vec<u64> {
+    let top: u64 = std::env::var("AU_LADDER_TOP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(16384);
+    let mut out = vec![1u64];
+    while *out.last().unwrap() < top {
+        out.push(out.last().unwrap() * 2);
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Families beyond the deceptive/mixed/rand ones shared from au_deceptive.rs.
@@ -719,7 +735,8 @@ fn anytime_corpus() {
     let bench_dir =
         std::env::var("AU_BENCH_DIR").expect("set AU_BENCH_DIR to the directory for corpus.csv");
     fs::create_dir_all(&bench_dir).unwrap();
-    let csv_path = PathBuf::from(&bench_dir).join("corpus.csv");
+    let csv_name = std::env::var("AU_CSV_NAME").unwrap_or_else(|_| "corpus.csv".to_owned());
+    let csv_path = PathBuf::from(&bench_dir).join(csv_name);
     let wall_budget = Duration::from_secs(
         std::env::var("AU_CORPUS_SECS")
             .ok()
@@ -745,8 +762,28 @@ fn anytime_corpus() {
     let mut mcgs_timeouts = 0usize;
     let mut ladder_cuts = 0usize;
     let mut cut_after = 0usize;
-    let specs = corpus();
+    let ladder = budgets();
+    let families: Option<Vec<String>> = std::env::var("AU_FAMILIES")
+        .ok()
+        .map(|s| s.split(',').map(|f| f.trim().to_owned()).collect());
+    let specs: Vec<Spec> = corpus()
+        .into_iter()
+        .filter(|s| {
+            families
+                .as_ref()
+                .is_none_or(|fs| fs.iter().any(|f| f == s.family))
+        })
+        .collect();
     let total = specs.len();
+    println!(
+        "ladder {:?}, {} specs{}",
+        ladder,
+        total,
+        match &families {
+            Some(fs) => format!(" (families {})", fs.join(",")),
+            None => String::new(),
+        }
+    );
 
     for spec in specs {
         if start.elapsed() > wall_budget {
@@ -796,7 +833,7 @@ fn anytime_corpus() {
         );
 
         let mut spent = Duration::ZERO;
-        for &playouts in &BUDGETS {
+        for &playouts in &ladder {
             if spent > LADDER_BUDGET || start.elapsed() > wall_budget + LADDER_BUDGET {
                 ladder_cuts += 1;
                 break;
