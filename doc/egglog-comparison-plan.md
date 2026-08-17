@@ -156,3 +156,18 @@ one incremental round costs them 1.8 ms and costs our naive matcher 353 ms:
 that gap, not push/pop, decides the workload. herbie.egg is out of the
 intersection set (BigRat, lattice merges, one relation) so calc.egg is the
 macro exhibit, and every block of it is under 1 ms on both engines.
+
+Status 2026-08-17: the intersection set is complete at ten benchmarks in 46
+configurations, measured in one pinned campaign (`comparison/methodology.md`
+section 9, tables in `comparison/final/`). matrix's A-only native column, the
+one configuration E3 still owed, landed after the campaign: its n-ary
+restatement reached a matcher defect that unbound variables a variadic
+expansion had checked rather than bound, which panicked on one path and
+silently dropped a guard's constraint on the other. Fixed in both matcher
+engines and in all three decompositions, fenced by two `.egg` fixtures and
+four match-set tests, and registered in methodology.md section 6 with the
+verification that no committed benchmark reaches the pattern: all 32 programs
+in `comparison/` are byte-identical across the fix under both strategies and
+three scheduling modes, so the campaign numbers stand. `matrix.native-A.egg`
+is validated (62 nodes, 23 classes, three assertions passing under both
+strategies) and carries no timing from that campaign, which predates it.

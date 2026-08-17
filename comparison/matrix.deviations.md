@@ -6,7 +6,8 @@ over `Dim` has both an associativity pair and a commutativity rule (AC); `MMul` 
 over `MExpr` have associativity in both directions and no commutativity (A-only).
 
 Files: `matrix.egglog.egg` (theirs), `matrix.rules.egg` (ours, A and C as explicit rewrite
-rules), `matrix.native.egg` (ours, native AC on `Times` only), this ledger.
+rules), `matrix.native.egg` (ours, native AC on `Times` only), `matrix.native-A.egg`
+(ours, native AC on `Times` and native A on `MMul` and `Kron`), this ledger.
 
 **Dropped 2026-08-16, translated 2026-08-17.** The drop was on a missing pattern-language
 feature, a root-binding pattern form; that feature landed in commit 93d698d and the
@@ -64,40 +65,37 @@ between two atoms' node variables is matched against the whole graph every round
 binding a root nothing reads would have cost the native column six semi-naive iterations,
 measured at 10 against 4.
 
-## The native configuration, and what it does not cover
+## The two native configurations
 
-`Times` is declared `(Times Dim :assoc-comm)`, its two associativity rewrites and its
-commutativity rewrite are deleted, and its constant fold is restated n-ary:
-`(rewrite (Times (Lit i) (Lit j) ..rest) (Times (Lit (i64::* i j)) ..rest))`.
+`matrix.native.egg` is the AC-only column: `Times` is declared
+`(Times Dim :assoc-comm)`, its two associativity rewrites and its commutativity rewrite
+are deleted, and its constant fold is restated n-ary:
+`(rewrite (Times (Lit i) (Lit j) ..rest) (Times (Lit (i64::* i j)) ..rest))`. `MMul` and
+`Kron` keep their four associativity rewrites there.
 
-**`MMul` and `Kron` keep their four associativity rewrites.** They are the A-only half
-of the signature, which is the property this benchmark was selected for, so this is the
-column's limitation and not a convenience.
+`matrix.native-A.egg` is the column this benchmark was selected for: `MMul` and `Kron`
+are declared `:assoc` as well, their four associativity rewrites are deleted, and the
+eight rules that mention either are restated n-ary with rest variables, the guarded
+Kron/MMul rewrite included. Both columns ship, because the pair isolates what A-only
+declarations buy on a signature that also carries AC.
 
 The n-ary restatement is writable as of commit e998295, which gave `:assoc` operators the
 flattened-sequence normal form: `(MMul a ..rest)`, `(MMul ..pre (Id n) ..suf)` and the
-rest all rely on a one-element application denoting its argument, and it now does. What
-blocks the column is a matcher defect the restatement reaches. With `MMul` and `Kron`
-declared `:assoc` and all eight rules that mention them restated, the guarded Kron/MMul
-rewrite panics:
+rest all rely on a one-element application denoting its argument, and it now does.
 
-```
-thread 'main' panicked at egraph/src/ematch.rs:229:29:
-called `Option::unwrap()` on a `None` value
-```
-
-`Match::get` through `bucket_in`'s `IndexLookup::ByRepr` arm: the scheduler emitted a
-re-join keyed on a variable that is not bound when the join runs. It needs the guard
-(deleting the `:when` clause, and nothing else, makes the same program run) and it needs
-eight of the twelve rules at once; each rule alone is clean, each pair is clean, and no
-smaller synthetic reproduces it. Reported rather than chased, because it is a matcher
-defect and this pass owns `comparison/`.
-
-The program that panics is kept as `matrix.native-A-draft.egg.txt`, under `.txt` so the
-runner does not collect it.
-
-Revisit when that is fixed: the AC half of this column needs no change and the eight
-n-ary restatements are mechanical.
+**Blocked 2026-08-17, unblocked the same day.** The A-only restatement reached a matcher
+defect: with all eight rules restated the guarded Kron/MMul rewrite panicked in
+`Match::get`, and the previous version of this section reported it as a defect for
+someone else to chase and kept the program as `matrix.native-A-draft.egg.txt`. The
+diagnosis found the panic to be the milder of two symptoms. A variadic expansion checks a
+fixed child whose variable an earlier atom bound, but its cleanup cleared every local
+child, so the next window rebound the variable from its own children rather than checking
+it: the guard's constraint was erased and the rule fused Kronecker products of mismatched
+dimensions, with no crash. Fixed in the matcher, fenced by
+`egraph/tests/egg/a_matrix_kron_fusion.egg` (this program) and by the minimal
+`a_prebound_fixed_child.egg`; the registry entry is section 6 of `methodology.md`. The
+draft file is gone, the column is validated below, and this program's negative check
+`(check (!= ex2 (Kron matA matC)))` is what asserts the guard is enforced.
 
 ## Validated
 
@@ -111,6 +109,18 @@ source's `(run 20)` and `(run 10)`. Both engines exit non-zero on a failed check
 | ours, rules, semi-naive | 91 | 25 | 4 |
 | ours, native, naive | 91 | 25 | 10 |
 | ours, native, semi-naive | 90 | 25 | 4 |
+| ours, native-A, naive | 62 | 23 | 10 |
+| ours, native-A, semi-naive | 62 | 23 | 3 |
+
+The native-A column's counts are smaller because the declaration is doing the work the
+deleted rules used to: one flat `MMul` or `Kron` node stands for every association of its
+factors, where the rules encoding materializes each. Its node and class counts are equal
+under the two strategies, and the four rows above it are unchanged by the matcher fix
+that unblocked it, to the digit. The counts are not comparable to egglog's 53 term-wise:
+that column has no `@String` nodes (ours interns six) and binary `MMul` and `Kron` nodes
+against ours n-ary. What is comparable is the three assertions, which hold on both
+engines. Measured after the fix, so the section 9 campaign, which predates it, carries no
+timing for this column.
 
 The guarded rule is the reason commit 4258fa4 exists: under semi-naive delta restriction
 it never fired, at the source's budget of 20 and at 60, because the merge that makes its

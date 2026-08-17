@@ -22,7 +22,7 @@ pattern-language features they needed existed.
 | `calc` | `egglog/tests/calc.egg`, ranked 6, `:until` goals over four push/pop blocks | 3 |
 | `until` | `egglog/tests/until.egg`, ranked 6, `:until` against a non-terminating generator | 3 |
 | `integer_math` | `egglog/tests/integer_math.egg`, ranked 5, **scoped** | 3 |
-| `matrix` | `egglog/tests/web-demo/matrix.egg`, ranked 7, mixed AC and A-only | 3 |
+| `matrix` | `egglog/tests/web-demo/matrix.egg`, ranked 7, mixed AC and A-only | 4 |
 | `bdd` | `egglog/tests/web-demo/bdd.egg`, ranked 9, commutative without associative | 3 |
 | `herbie` | `egglog/tests/web-demo/herbie.egg`, ranked 3, **scoped**, no native dual | 2 |
 | `eqsolve` | `egglog/tests/web-demo/eqsolve.egg`, ranked 10, the extraction path, no native dual | 2 |
@@ -36,11 +36,14 @@ commit c2558c7 and are not current. Two configurations remain unwritten:
 plus `repro-herbie-vanilla` (ranked 4). Reasons in `eqsolve.deviations.md` and
 `herbie.deviations.md`.
 
-`matrix`'s native column carries native AC on `Times` only; its A-only operators
-keep their associativity rewrites, because a one-element application of an
-`:assoc` operator is not identified with its argument, so an n-ary restatement is
-not writable. That is the benchmark's own selection property, so read
-`matrix.deviations.md` before drawing an A-only conclusion from this set.
+`matrix` ships two native columns, which is why it has four configurations rather
+than three: `matrix.native.egg` carries native AC on `Times` only, and
+`matrix.native-A.egg` adds native A on `MMul` and `Kron` with their four
+associativity rewrites deleted. The second landed 2026-08-17, once the matcher
+defect its restatement reached was fixed (`methodology.md` section 6); the first
+is kept because the pair is what isolates the A-only half of the signature, which
+is the property this benchmark was selected for. Read `matrix.deviations.md`
+before drawing an A-only conclusion from this set.
 
 `integer_math` and `herbie` are scoped columns: a reduced program, identical in
 every configuration, standing in for the upstream benchmark. Their timings are not
@@ -53,6 +56,7 @@ to 100.
 | `<name>.egglog.egg` | egglog | theirs, unchanged except as its ledger records |
 | `<name>.rules.egg` | ours | A/C supplied as explicit rewrite rules, their encoding |
 | `<name>.native.egg` | ours | A/C carried by the operator declaration, the A/C rules deleted |
+| `<name>.native-A.egg` | ours | matrix only: the above, plus native A on its two A-only operators |
 | `<name>.deviations.md` | | every semantic difference between the three |
 
 `run-pilot.py` is the pilot harness and `pilot-results.csv` its output, one line per

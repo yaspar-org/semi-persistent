@@ -38,7 +38,9 @@ BENCHMARKS = {
     "calc":                {"types": "machine",        "encodings": ("rules", "native")},
     "until":               {"types": "machine",        "encodings": ("rules", "native")},
     "integer_math":        {"types": "machine",        "encodings": ("rules", "native")},
-    "matrix":              {"types": "machine",        "encodings": ("rules", "native")},
+    # matrix ships two native columns: AC on Times only, and that plus native A on
+    # MMul and Kron. See its ledger.
+    "matrix":              {"types": "machine",        "encodings": ("rules", "native", "native-A")},
     "bdd":                 {"types": "machine",        "encodings": ("rules", "native")},
     # herbie's and eqsolve's native-AC duals are not written; see their ledgers.
     "herbie":              {"types": "machine,bignum", "encodings": ("rules",)},

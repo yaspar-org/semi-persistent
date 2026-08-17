@@ -90,4 +90,4 @@
 (check (!= ex2 (Kron matA matC)))
 
 (print-size)
-(print-stats :file "matrix.native.stats.json")
+(print-stats :file "matrix.native-A.stats.json")
