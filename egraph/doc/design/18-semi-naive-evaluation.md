@@ -113,7 +113,7 @@ The "k atoms" above are the **join-producing atoms** — those that
 scan an index to generate candidate nodes. In our `RAtom` enum these
 are `Plain`, `AExact`, `APrefix`, `ASuffix`, `ABoth`, `ACExact`,
 `ACSub`, `ACIExact`, `ACISub`, `Lit`, and `LitBind`. The built-in
-constraint atoms `Eq` and `EqGlobal` are **excluded** from the
+constraint atoms `Eq`, `EqGlobal` and `Pred` are **excluded** from the
 variant count: they do not scan a relation, they only check or
 propagate bindings between already-bound variables. They have no
 `delta` because they are not extensional indices.
@@ -128,6 +128,23 @@ new match. Constraint atoms are applied as filters uniformly across
 all variants — excluding them changes nothing about which matches a
 variant finds, only how many redundant variants we would otherwise
 run.
+
+**One constraint breaks that argument, and is handled by opting out.**
+"Every new match must involve at least one new node" is false for a
+constraint between two atoms' *node* variables, which the root-binding
+form `(= v pat)` produces: the match becomes available when the two
+classes merge, and a merge of two classes changes neither node's tuple,
+so no variant's delta records it. Measured on the `matrix` translation,
+whose conditional Kron/MMul rewrite guards on
+`(= p (ncols a)) (= p (nrows c))`: under delta restriction that rule
+never fires, at any budget, and the two assertions that depend on it
+fail. A rule with such a constraint is therefore matched against the
+whole graph every round (`saturate::needs_naive_match`), like a rule
+with no scanning atoms at all. A constraint whose local variable is only
+ever a *child* is unaffected: a merge re-canonicalizes the parent's
+children, so the parent's tuple does change and lands in the delta.
+`egraph/tests/egg/root_binding_merge_during_run.egg` is the regression
+test, and runs under both strategies.
 
 ## Worked Example: Nested Patterns and Flattening
 

@@ -1,0 +1,22 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The join on a shared root has to survive delta restriction. Nothing unions the two
+;; patterns' roots up front here: a rule does it mid-run, and that merge changes no
+;; node's tuple, so no semi-naive variant's delta records it. The rule below is matched
+;; against the whole graph every round for exactly that reason.
+(datatype E (N i64) (F E) (G E) (Ok E E) (Trig E))
+
+(F (N 1))
+(G (N 2))
+(Trig (N 1))
+
+(rule ((= t (Trig x))) ((union (F x) (G (N 2)))))
+(rule ((= d (F x)) (= d (G y))) ((union (Ok x y) (N 9))))
+
+(run 10)
+(check (= (Ok (N 1) (N 2)) (N 9)))
+;; The soundness twin: no merge reaches this pair, so the join finds nothing.
+(F (N 3))
+(G (N 4))
+(run 10)
+(check (!= (Ok (N 3) (N 4)) (N 9)))

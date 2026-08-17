@@ -515,6 +515,13 @@ egg_test!(root_binding_nonlinear, "root_binding_nonlinear.egg");
 egg_test!(root_binding_when_global, "root_binding_when_global.egg");
 egg_test!(root_binding_rewrite_lhs, "root_binding_rewrite_lhs.egg");
 egg_test!(root_binding_reject_arity, "root_binding_reject_arity.egg");
+// A shared root whose merge happens mid-run: the enabling event changes no node's tuple,
+// so the rule has to be matched against the whole graph every round. Runs under both
+// evaluation strategies, which is what makes it the regression test.
+egg_test!(
+    root_binding_merge_during_run,
+    "root_binding_merge_during_run.egg"
+);
 // Primitive predicates in `:when`: a guard is evaluated over the literal values the
 // patterns bound, not matched against the e-graph. Each positive file carries its
 // soundness twin, a term the guard is false for, and asserts the rule did not fire.

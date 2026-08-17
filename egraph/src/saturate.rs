@@ -265,10 +265,9 @@ fn join_atom_indices<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> Vec<usize> {
         .collect()
 }
 
-/// The node variable an atom binds, or `None` for the binary constraint atoms
-/// (`Eq`, `EqGlobal`).
-#[cfg(test)]
-fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
+/// The node variable an atom binds, or `None` for the atoms that bind none (`Eq`,
+/// `EqGlobal`, `Pred`).
+pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
     match atom {
         RAtom::Plain { node, .. }
         | RAtom::Lit { node, .. }
@@ -283,6 +282,35 @@ fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
         | RAtom::LitBind { node, .. } => Some(*node),
         RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
     }
+}
+
+/// Whether a rule has to be matched against the whole graph every round instead of
+/// being delta-restricted.
+///
+/// The variant decomposition assumes that every way a match can become available shows
+/// up as a new or re-canonicalized tuple in some atom's relation. A constraint between
+/// two atoms' *node* variables breaks that assumption: when those two classes merge,
+/// neither node's tuple changes, so no variant's delta holds the event and the match is
+/// never found. Measured on the `matrix` translation, whose conditional Kron/MMul rewrite
+/// guards on `(= p (ncols a)) (= p (nrows c))`: under delta restriction the rule never
+/// fires, at any budget.
+///
+/// The root-binding pattern form `(= v pat)` is what produces such constraints; a rule
+/// that does not use it is unaffected, so this costs the existing corpus nothing.
+fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
+    let has_eq = rq
+        .atoms
+        .iter()
+        .any(|a| matches!(a, RAtom::Eq(..) | RAtom::EqGlobal(..)));
+    if !has_eq {
+        return false;
+    }
+    let node_vars: Vec<crate::ast::VarId> = rq.atoms.iter().filter_map(atom_node).collect();
+    rq.atoms.iter().any(|a| match a {
+        RAtom::Eq(x, y) => node_vars.contains(x) || node_vars.contains(y),
+        RAtom::EqGlobal(x, _) => node_vars.contains(x),
+        _ => false,
+    })
 }
 
 /// Stats for the semi-naive variant whose delta atom is `delta_atom`.
@@ -484,9 +512,11 @@ where
                 };
                 for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     let jatoms = join_atom_indices(&rule.query);
-                    if jatoms.is_empty() {
-                        // No scanning atoms (e.g. a bare-literal rule): run it
-                        // naive so its matches are never missed.
+                    if jatoms.is_empty() || needs_naive_match(&rule.query) {
+                        // No scanning atoms (e.g. a bare-literal rule), or a
+                        // constraint between two atoms' node variables, whose
+                        // enabling merge no delta records: run it naive so its
+                        // matches are never missed.
                         let vindex = VariantIndex::naive(&full);
                         changes += run_rule_variant(
                             rule,
