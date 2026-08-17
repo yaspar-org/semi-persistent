@@ -93,6 +93,9 @@ eight of the twelve rules at once; each rule alone is clean, each pair is clean,
 smaller synthetic reproduces it. Reported rather than chased, because it is a matcher
 defect and this pass owns `comparison/`.
 
+The program that panics is kept as `matrix.native-A-draft.egg.txt`, under `.txt` so the
+runner does not collect it.
+
 Revisit when that is fixed: the AC half of this column needs no change and the eight
 n-ary restatements are mechanical.
 

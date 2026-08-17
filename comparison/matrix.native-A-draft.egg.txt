@@ -1,0 +1,93 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/matrix.egg (7b1adf2).
+;; Config: native AC and A. Times is declared variadic :assoc-comm and MMul and Kron
+;; variadic :assoc; their seven associativity and commutativity rewrite rules are
+;; deleted, and every remaining rule that matched one of the three is restated in its
+;; n-ary form with rest variables. See matrix.deviations.md.
+(datatype Dim (Times Dim :assoc-comm) (NamedDim String) (Lit i64))
+
+;; The two associativity rewrites and the commutativity rewrite are deleted: the
+;; declaration above gives Times multiset semantics.
+;; Constant fold, n-ary: fold two literal factors wherever they sit.
+(rewrite (Times (Lit i) (Lit j) ..rest) (Times (Lit (i64::* i j)) ..rest))
+
+(datatype MExpr
+    (MMul MExpr :assoc)
+    (Kron MExpr :assoc)
+    (NamedMat String)
+    (Id Dim))
+
+(constructor nrows (MExpr) Dim)
+(constructor ncols (MExpr) Dim)
+
+;; Dimensions, n-ary: a product's rows come from its first factor and its columns from
+;; its last, and a Kronecker product's from every factor.
+(rewrite (nrows (Kron a ..rest)) (Times (nrows a) (nrows (Kron ..rest))))
+(rewrite (ncols (Kron a ..rest)) (Times (ncols a) (ncols (Kron ..rest))))
+
+(rewrite (nrows (MMul a ..rest)) (nrows a))
+(rewrite (ncols (MMul ..rest b)) (ncols b))
+
+(rewrite (nrows (Id n)) n)
+(rewrite (ncols (Id n)) n)
+
+;; Identity, n-ary: an Id factor drops out wherever it sits, which is one rule rather
+;; than the source's left and right pair.
+(rewrite (MMul ..pre (Id n) ..suf) (MMul ..pre ..suf))
+
+;; The four associativity rewrites for MMul and Kron are deleted: the declarations above
+;; give both sequence semantics.
+
+;; Exchange, n-ary: rewrite one adjacent pair of factors and keep its surroundings.
+(rewrite (Kron ..pre (MMul a c) (MMul b d) ..suf)
+         (Kron ..pre (MMul (Kron a b) (Kron c d)) ..suf))
+
+;; The benchmark's subject. The guard is an equality between two derived terms: the
+;; e-class of (ncols a) must be the e-class of (nrows c). Each conjunct binds the root
+;; of one pattern, and the repeated name is what requires the two to be one class.
+(rewrite (MMul ..pre (Kron a b) (Kron c d) ..suf)
+         (MMul ..pre (Kron (MMul a c) (MMul b d)) ..suf)
+    :when
+        ((= p (ncols a)) (= p (nrows c))
+         (= q (ncols b)) (= q (nrows d))))
+
+; demand, n-ary: every factor of every product needs its dimensions.
+(rule ((MMul ..pre a ..suf))
+      ((ncols a)
+       (nrows a)))
+
+(rule ((Kron ..pre a ..suf))
+      ((ncols a)
+       (nrows a)))
+
+(let dimN (NamedDim "n"))
+(let dimM (NamedDim "m"))
+(let dimP (NamedDim "p"))
+
+(let matA (NamedMat "A"))
+(let matB (NamedMat "B"))
+(let matC (NamedMat "C"))
+
+(union (nrows matA) dimN)
+(union (ncols matA) dimN)
+(union (nrows matB) dimM)
+(union (ncols matB) dimM)
+(union (nrows matC) dimP)
+(union (ncols matC) dimP)
+(let ex1 (MMul (Kron (Id dimN) matB) (Kron matA (Id dimM))))
+(let rows1 (nrows ex1))
+(let cols1 (ncols ex1))
+
+(run 20)
+
+(check (= (nrows matB) dimM))
+(check (= (nrows (Kron (Id dimN) matB)) (Times dimN dimM)))
+(let simpleEx1 (Kron matA matB))
+(check (= ex1 simpleEx1))
+
+(let ex2 (MMul (Kron (Id dimP) matC) (Kron matA (Id dimM))))
+(run 10)
+(check (!= ex2 (Kron matA matC)))
+
+(print-size)
+(print-stats :file "matrix.native.stats.json")
