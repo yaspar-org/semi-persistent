@@ -331,6 +331,12 @@ fn cterm_sort<O, S: Copy, L>(ct: &CTerm<O, S, L>) -> S {
 use crate::compile::{Atom, FlatMult, FlatQuery};
 use crate::surface_ast::{SurfaceCommand, SurfacePatChild, SurfacePattern};
 
+/// The operator name reserved for the root-binding pattern form `(= p q)`.
+///
+/// Reserved rather than looked up: a declaration named `=` would otherwise shadow the
+/// form and silently change what every existing `(= …)` in a rule body means.
+pub const EQ_FORM: &str = "=";
+
 /// Flatten surface patterns directly to `FlatQuery`, skipping `Pattern`.
 pub fn flatten_surface<O, S, const TRACK: bool>(
     patterns: &[SurfacePattern],
@@ -347,7 +353,7 @@ where
     };
     let mut root_vars = Vec::with_capacity(patterns.len());
     for p in patterns {
-        root_vars.push(ctx.flatten_root(p)?);
+        root_vars.push(ctx.flatten_child(p)?);
     }
     Ok(FlatQuery {
         atoms: ctx.atoms,
@@ -372,26 +378,9 @@ where
         format!("?{hint}{id}")
     }
 
-    fn flatten_root(&mut self, pat: &SurfacePattern) -> Result<String, String> {
-        match pat {
-            SurfacePattern::Var(v, _) => Ok(v.clone()),
-            SurfacePattern::Lit(text, span) => {
-                let v = self.fresh("lit");
-                self.atoms.push(Atom::Lit {
-                    node: v.clone(),
-                    text: text.clone(),
-                    span: *span,
-                });
-                Ok(v)
-            }
-            SurfacePattern::App { .. } => {
-                let node = self.fresh("n");
-                self.flatten_app(pat, &node)?;
-                Ok(node)
-            }
-        }
-    }
-
+    /// Flatten a pattern to the name of the variable holding its root e-class. A
+    /// top-level conjunct and a nested subpattern flatten the same way, which is why
+    /// `flatten_surface` calls this for both.
     fn flatten_child(&mut self, pat: &SurfacePattern) -> Result<String, String> {
         match pat {
             SurfacePattern::Var(v, _) => Ok(v.clone()),
@@ -404,12 +393,58 @@ where
                 });
                 Ok(v)
             }
+            SurfacePattern::App { op, .. } if op == EQ_FORM => self.flatten_eq(pat),
             SurfacePattern::App { .. } => {
                 let v = self.fresh("n");
                 self.flatten_app(pat, &v)?;
                 Ok(v)
             }
         }
+    }
+
+    /// Flatten the root-binding form `(= p q)`: both subpatterns match, and their root
+    /// e-classes are constrained equal.
+    ///
+    /// Each side flattens exactly as it would on its own, so the form adds no atom kind
+    /// of its own: one `Atom::Eq` between the two roots is the whole of it, and resolve,
+    /// scheduling and matching already handle that. The common case `(= v pat)` costs
+    /// nothing beyond `pat`, because the left side is a bare variable and the `Eq` lowers
+    /// to a `CopyBinding` the moment `pat`'s root is bound.
+    fn flatten_eq(&mut self, pat: &SurfacePattern) -> Result<String, String> {
+        let SurfacePattern::App {
+            op,
+            prefix,
+            children,
+            suffix,
+            ..
+        } = pat
+        else {
+            unreachable!()
+        };
+        if prefix.is_some() || suffix.is_some() {
+            return Err(format!("'{op}' takes no rest variables"));
+        }
+        if children.len() != 2 {
+            return Err(format!(
+                "'{op}' takes exactly 2 subpatterns, got {}",
+                children.len()
+            ));
+        }
+        let mut sides = Vec::with_capacity(2);
+        for c in children {
+            match c {
+                SurfacePatChild::Elem(p) => sides.push(self.flatten_child(p)?),
+                SurfacePatChild::ElemMult(..) => {
+                    return Err(format!("'{op}' takes no multiplicities"));
+                }
+            }
+        }
+        let b = sides.pop().unwrap();
+        let a = sides.pop().unwrap();
+        if a != b {
+            self.atoms.push(Atom::Eq(a.clone(), b));
+        }
+        Ok(a)
     }
 
     /// Flatten children, returning var names. Only Elem children (no mults).

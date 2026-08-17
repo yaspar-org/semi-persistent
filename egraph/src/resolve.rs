@@ -719,6 +719,25 @@ where
                 _ => {
                     let va = iv(a, span, shape, var_sorts)?;
                     let vb = iv(b, span, shape, var_sorts)?;
+                    // The two sides denote one e-class, so they have one sort. Whichever
+                    // side already has one gives it to the other; this is what lets
+                    // `(rewrite (= v pat) rhs)` sort-check its right-hand side against
+                    // `pat`'s sort, since `v` alone constrains nothing.
+                    match (var_sorts[va.idx()], var_sorts[vb.idx()]) {
+                        (Some(sa), None) => var_sorts[vb.idx()] = Some(sa),
+                        (None, Some(sb)) => var_sorts[va.idx()] = Some(sb),
+                        (Some(sa), Some(sb)) if sa != sb => {
+                            return Err(err(
+                                format!(
+                                    "'{a}' and '{b}' are equated but have sorts '{}' and '{}'",
+                                    sorts.name(sa),
+                                    sorts.name(sb)
+                                ),
+                                span,
+                            ));
+                        }
+                        _ => {}
+                    }
                     Ok(vec![RAtom::Eq(va, vb)])
                 }
             }
@@ -1902,6 +1921,59 @@ mod tests {
             extra_spans: Vec::new(),
         })?;
         resolve(&fq, &ops, &sorts, &model, &GlobalCtx::<_, ()>::new())
+    }
+
+    fn do_resolve_multi(
+        srcs: &[&str],
+    ) -> Result<ResolvedQuery<OpId, SortId, NiraLitVal>, ResolveError> {
+        let (ops, sorts) = setup();
+        let model = crate::literal::NiraModel;
+        let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
+        let fq = flatten(&pats, &ops).map_err(|e| ResolveError {
+            msg: e,
+            span: crate::ast::Span::Dummy,
+            extra_spans: Vec::new(),
+        })?;
+        resolve(&fq, &ops, &sorts, &model, &GlobalCtx::<_, ()>::new())
+    }
+
+    /// `(= v pat)` adds no atom kind of its own: `pat` flattens as it would alone and one
+    /// `Eq` ties `v` to its root.
+    #[test]
+    fn root_binding_lowers_to_one_eq() {
+        let rq = do_resolve("(= v (g x))").unwrap();
+        assert_eq!(rq.atoms.len(), 2);
+        assert!(matches!(&rq.atoms[0], RAtom::Plain { .. }));
+        assert!(matches!(&rq.atoms[1], RAtom::Eq(..)));
+    }
+
+    /// The bound root carries the pattern's sort, which is what lets a rewrite whose
+    /// left-hand side is `(= v pat)` sort-check its right-hand side.
+    #[test]
+    fn root_binding_propagates_the_sort() {
+        let (_, sorts) = setup();
+        let e = sorts.id_by_name("IExpr").unwrap();
+        let rq = do_resolve("(= v (g x))").unwrap();
+        let v = rq.shape.find_var("v").unwrap();
+        assert_eq!(rq.var_sorts[v.idx()], Some(e));
+    }
+
+    /// Repeating the bound name across conjuncts is the ordinary non-linear case: one
+    /// variable, two roots, one `Eq` each.
+    #[test]
+    fn root_binding_shares_one_variable_across_conjuncts() {
+        let rq = do_resolve_multi(&["(= v (g x))", "(= v (f x y))"]).unwrap();
+        let eqs: Vec<_> = rq
+            .atoms
+            .iter()
+            .filter_map(|a| match a {
+                RAtom::Eq(a, b) => Some((*a, *b)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(eqs.len(), 2);
+        assert_eq!(eqs[0].0, eqs[1].0);
+        assert_ne!(eqs[0].1, eqs[1].1);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+;; EXPECT: sort-error
+;; TYPES: machine
+;; `=` is the root-binding form and takes exactly two subpatterns.
+(datatype E (V i64) (F E))
+(rule ((= v (F x) (F x))) ((union v v)))

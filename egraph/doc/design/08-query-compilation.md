@@ -43,6 +43,9 @@ order to apply them.
 | `ACExact / ACSub` | AC-node exact or sub-multiset |
 | `ACIExact / ACISub` | ACI-node exact or subset |
 
+The surface form `(= v pat)` produces no atom of its own: `pat` flattens exactly
+as it would alone, and one `Eq` ties `v` to its root.
+
 ## The Scheduling Algorithm
 
 The scheduler must be free to bind variables in any order. Consider

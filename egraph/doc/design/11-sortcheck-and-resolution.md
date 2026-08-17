@@ -41,6 +41,16 @@ nested `App` nodes, validates against operator kind:
 
 Invalid combinations produce clear error messages with spans.
 
+One form is recognized before the table, by the operator name. **`(= p q)`, the
+root-binding form**: both subpatterns flatten as they would alone, and one
+`Atom::Eq` constrains their roots to one e-class. The name `=` is reserved rather
+than looked up in the registry, so a declaration cannot shadow the form and
+silently change what an existing `(= …)` means. The idiomatic use is `(= v pat)`,
+which names `pat`'s root: the left side is a bare variable, so the `Eq` costs one
+`CopyBinding` once `pat`'s root is bound. Repeating the name across conjuncts is
+the ordinary non-linear case, and it is how a rule states that two patterns share
+a root rather than forming a cross product.
+
 ## `resolve` — Name Resolution
 
 Maps string variable names to dense typed ids:
@@ -60,6 +70,10 @@ source of truth for the binding environment layout.
 
 Non-linear variables (same name in multiple atoms) are unified:
 the first occurrence binds, subsequent occurrences emit `CheckEq`.
+
+An `Eq` atom also unifies the two sides' sorts, since they denote one e-class.
+That is what gives `(rewrite (= v pat) rhs)` a sort to check `rhs` against: `v`
+alone constrains nothing, and takes its sort from `pat`.
 
 ### Global Name Resolution
 

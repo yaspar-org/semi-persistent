@@ -149,6 +149,8 @@ O(1) equality checks:
 (rewrite (Add x y) (Mul x y) :when ((= x zero)))
 ```
 
+`(= x zero)` is the root-binding form below, with a global on one side.
+
 The scheduler treats global children as always-bound, which is a
 significant selectivity advantage: a `ByChildPos` index lookup
 constrained to a specific global narrows the join to only nodes
@@ -169,6 +171,33 @@ matches, the matched term is unioned with the RHS:
 
 Variables in patterns are bare identifiers: any name not registered
 as an operator is treated as a pattern variable.
+
+### Root Binding: `(= v pat)`
+
+A pattern position may name the e-class it matches:
+
+```
+;; z is the class of the whole (Add x y); the action refers to it twice
+(rule ((= z (Add x y))) ((union (Mark z) z)))
+```
+
+Both sides of `=` are patterns, and the form constrains their roots to one
+e-class. Repeating the bound name across conjuncts is what states that two
+patterns share a root, rather than being a cross product over two independent
+matches:
+
+```
+;; fires only when (ncols A) and (nrows C) are the SAME class
+(rewrite (MMul (Kron a b) (Kron c d))
+         (Kron (MMul a c) (MMul b d))
+  :when ((= p (ncols a)) (= p (nrows c))
+         (= q (ncols b)) (= q (nrows d))))
+```
+
+The bound name is an ordinary pattern variable: it can be reused in child
+positions, appear in the right-hand side, and take its sort from the pattern it
+names. `=` is reserved for this form, so an operator declared `=` does not
+shadow it.
 
 ### Conditional Rewrites
 
@@ -540,7 +569,8 @@ variables to nested applications, and produces a flat list of atoms.
 Each atom is classified by operator kind (Plain, C, A/APrefix/ASuffix/
 ABoth, ACExact/ACSub, ACIExact/ACISub). Invalid combinations (e.g.,
 prefix rest on an AC operator, multiplicity on an ACI operator)
-produce clear error messages.
+produce clear error messages. `(= p q)` is recognized by name first: it flattens
+both sides and emits one `Eq` between their roots.
 
 `resolve` maps string variable names to dense typed identifiers
 (VarId, SeqVarId, SetVarId, MsetVarId, MultVarId, LitValVarId).
@@ -629,6 +659,7 @@ term        = literal
 
 pattern     = literal
             | ident
+            | '(' , '=' , pattern , pattern , ')'         (* root binding *)
             | '(' , op , pat_child* , ')' ;
 
 pat_child   = '..' , ident                               (* rest variable *)

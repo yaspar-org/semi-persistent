@@ -1,0 +1,8 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A rewrite may bind its own root: the left-hand side still names the class to rewrite.
+(datatype E (V i64) (F E) (G E))
+(rewrite (= v (F x)) (G v))
+(let t (F (V 1)))
+(run 3)
+(check (= t (G (F (V 1)))))

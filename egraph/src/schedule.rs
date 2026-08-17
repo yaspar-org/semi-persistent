@@ -1315,6 +1315,19 @@ mod tests {
         (schedule_with_stats(&rq, &stats), rq.shape)
     }
 
+    /// The root-binding form costs one step when the bound name is fresh: the root is
+    /// copied onto it, not re-searched.
+    #[test]
+    fn root_binding_copies_the_root() {
+        let (plan, shape) = do_plan("(= v (g x))");
+        let v = shape.find_var("v").unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .any(|s| matches!(s, Step::CopyBinding { target, .. } if *target == v))
+        );
+    }
+
     #[test]
     fn plain_flat() {
         let (qp, _) = do_plan("(f x y)");

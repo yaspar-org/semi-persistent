@@ -505,3 +505,13 @@ egg_test!(
     zero_arity_with_identity_is_unit,
     "zero_arity_with_identity_is_unit.egg"
 );
+// Root-binding pattern form `(= v pat)`: `v` names the e-class `pat` matched. Repeating
+// the name across conjuncts joins them on that class, which is what a guard on an
+// equality between two derived terms needs; the negative twin in each file has the same
+// terms present in distinct classes and asserts the rule does not fire.
+egg_test!(root_binding_bind_and_use, "root_binding_bind_and_use.egg");
+egg_test!(root_binding_shared_root, "root_binding_shared_root.egg");
+egg_test!(root_binding_nonlinear, "root_binding_nonlinear.egg");
+egg_test!(root_binding_when_global, "root_binding_when_global.egg");
+egg_test!(root_binding_rewrite_lhs, "root_binding_rewrite_lhs.egg");
+egg_test!(root_binding_reject_arity, "root_binding_reject_arity.egg");
