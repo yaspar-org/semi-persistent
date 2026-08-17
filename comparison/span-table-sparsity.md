@@ -482,7 +482,8 @@ holds its occupied-key list, and the build maintains it, but the list is
 `pub(crate)`: there is no exported iterator, so `index.rs` scans the key space
 instead. At 1e6 that is 7.685 ms of a 32.644 ms index build, and it is now the
 largest single term in it. Exporting the occupancy list is the next reduction,
-and it is a container change, not an e-graph one.
+and it is a container change, not an e-graph one. (§12 takes it, and it is worth
+0.37 ms per round, not 7.7: the scan was cheap per key.)
 
 **Matching costs 5% more, measured, and the net is still favorable.** Three
 repeated runs at 1e5 give 7.056, 7.127 and 7.244 ms per round before against
@@ -570,3 +571,47 @@ python3 run-span-table.py --corpus --semi --extra=--sampled-selectivity ...
 fixtures, the AC completion conditions, and the hub, heterogeneous, runtime
 scheduling and sampled selectivity comparisons. `cargo clippy --workspace
 --all-targets -- -D warnings` and `cargo fmt --all` are clean.
+
+## 12. Landed as: the fan-out pass iterates the occupied keys
+
+`DenseSpanMap::occupied_keys` exports the list §11.1 wanted, so `index.rs`'s
+`for_each_occupied` iterates it instead of scanning `0..len()`. Every caller of
+that helper — the fan-out pass, the `phase_timing` occupancy count and the
+debug-build sortedness check — visits the occupied keys and nothing else.
+
+**0.37 ms per round, not the 7.7 the scan was worth.** Minimum of three runs at
+S = 1e6 on the E6 cycle, `EGRAPH_PHASE=1`, before is 19b4b8c:
+
+| phase | before | after |
+|---|---|---|
+| fanouts | 7.667 | **7.301** |
+| index.full | 32.499 | **31.611** |
+| match+apply | 115.807 | 115.386 |
+
+The scan was cheap per key and the pass is not proportional to keys. Per round
+`by_child_pos` has 1 925 698 keys and 688 935 occupied ones, and `by_repr` about
+1.0 M keys against 801 932 classes, so the change removes roughly 1.44 M key
+visits — each of them a sequential 24-byte span read and a stamp compare, which
+prices out at about 0.26 ns. What stays is what the pass is made of: 787 960
+bucket entries per round, each a random load into the `op` table, and one hash
+map update per occupied bucket per operator. `by_contains` contributed nothing
+either way, because its stream is empty on this program and its key space is
+therefore zero-length, not sparse.
+
+The visit order changes from ascending key to first occurrence in the build
+stream, so the span table is now read scattered rather than sequentially. The net
+is still a reduction, measured; it is smaller than the key counts alone predict,
+and that scatter is a candidate reason.
+
+**The fan-out pass is still the largest single term in the index build**, 7.30 ms
+of 31.61. Removing more of it means not reading the `op` table per bucket entry —
+a different change, on the pass rather than on the iteration.
+
+`egraph/tests/index_fanouts_occupancy.rs` fences the statistics: it recomputes
+them with the key-space scan, on a graph whose `by_child_pos` key space is
+several times its occupied keys and whose buckets mix operators, and requires
+exact equality with the `FanOuts` the build recorded. Exact, not approximate:
+both passes accumulate bucket sizes in `u128` and divide once, so the visit order
+cannot move a result. `math-microbenchmark` is byte-identical in both encodings
+under both strategies, stdout and the run-invariant statistics; the crate's test
+binaries pass; clippy `-D warnings` and fmt are clean.

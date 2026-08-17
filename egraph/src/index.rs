@@ -302,22 +302,22 @@ fn build_family<G: DenseId>(
     })
 }
 
-/// Visit every key with at least one value, in ascending key order.
+/// Visit every key with at least one value.
 ///
-/// The verified map exposes no occupied-key iterator — its occupancy list is
-/// `pub(crate)` — so this scans the key space and skips the empty buckets. That
-/// is an `O(num_keys)` pass over the span table, which is the one place the
-/// stamped build's `O(stream + occupied)` shape is not carried through to the
-/// consumer; `measure_fanouts` is the caller that pays it. See the note in
-/// `comparison/span-table-sparsity.md` on what an exported occupancy list would
-/// save.
+/// Iterates the map's occupancy list rather than scanning `0..len()`, so the
+/// pass costs the occupied keys and not the key space — the last place the
+/// stamped build's `O(stream + occupied)` shape was not carried through to the
+/// consumer. `occupied_keys` ensures the list holds exactly the occupied keys
+/// and that every one of them is in range, and `lemma_occ_injective` that it
+/// holds each of them once, so this visits what the scan visited.
+///
+/// The order is first occurrence in the build stream rather than ascending key.
+/// Every caller here is a count or a sum over the buckets, so the order does not
+/// reach the result; a caller that needed ascending keys would have to sort.
 #[inline]
 fn for_each_occupied<G: DenseId>(m: &DenseSpanMap<G>, mut f: impl FnMut(usize, &[G])) {
-    for k in 0..m.len() {
-        let b = m.get(k);
-        if !b.is_empty() {
-            f(k, b);
-        }
+    for &k in m.occupied_keys() {
+        f(k, m.get(k));
     }
 }
 
@@ -606,8 +606,8 @@ where
     /// The span table is dense over the composite key space, so its length is
     /// what a build pays whether or not the keys occur, and the ratio of that
     /// length to the values it addresses is the sparsity this measures. The
-    /// occupied-key count needs its own pass over the span table, so the whole
-    /// helper is skipped unless the accounting is switched on.
+    /// occupied-key count is a pass over the map's occupancy list, so the whole
+    /// helper is still skipped unless the accounting is switched on.
     #[inline]
     fn record_shape(full: bool, indexed: usize, by_child_pos: &DenseSpanMap<Cfg::G>) {
         use crate::phase_timing as pt;
@@ -640,8 +640,9 @@ where
     /// Measure each access path's size-biased mean bucket size from the
     /// finished families.
     ///
-    /// One pass over `by_child_pos` and `by_contains`, tallying each bucket's
-    /// parents by operator, because those two families are keyed by child class
+    /// One pass over the occupied keys of `by_child_pos` and `by_contains`,
+    /// tallying each bucket's parents by operator, because those two families
+    /// are keyed by child class
     /// alone (`by_contains`) or by child class and position (`by_child_pos`)
     /// while the join always intersects them with `by_op[op]`: the quantity the
     /// scheduler needs is the bucket restricted to one operator, and on
@@ -650,8 +651,8 @@ where
     /// operator's dense id, so a bucket costs one increment per parent and no
     /// hashing.
     ///
-    /// `by_repr`'s number needs no pass at all now: a size-biased mean over
-    /// bucket sizes is a sum over the span table, which is `key_len` per key.
+    /// `by_repr`'s number reads no bucket entry: a size-biased mean over bucket
+    /// sizes is a sum of span lengths over the occupied keys.
     ///
     /// The operator of each bucket entry comes from `op_tab` — the [`op`](Self::op)
     /// table this build just filled — rather than from `EGraph::node_op`: the
