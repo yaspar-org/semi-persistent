@@ -364,6 +364,8 @@ egg_test!(ac_coincidence_twin, "ac_coincidence_twin.egg");
 egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
 egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
 egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
+egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
+egg_test!(semi_merge_membership_delta, "semi_merge_membership_delta.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 

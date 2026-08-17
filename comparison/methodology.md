@@ -368,6 +368,22 @@ which side of each fix it was measured on:
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.
 
+- 2026-08-17, semi-naive class-growth blindness: a merge whose surviving
+  representative is the id the parents already store recanonicalizes
+  nothing, so a match created purely by class-membership growth never
+  reached any delta — which union direction you got decided whether the
+  rule fired. Found by the herbie native dual (block 9, 11/12), reduced
+  to two four-line repros, fixed in two halves: merges under semi-naive
+  record the absorbed class's members in the touched log, and rules
+  referencing a let-bound global in a child/element position match full
+  every round (4258fa4's category). herbie native semi is 12/12; the 35
+  programs pass both strategies; semi-naive node counts on budget-capped
+  programs shifted (eqsolve.rules 9085 -> 9398, math-microbenchmark.rules
+  1 254 903 -> 1 248 629) because the strategy now derives per round what
+  it silently missed — those rows are re-measured in the next campaign,
+  and pre-fix semi numbers on capped programs must not be cited as
+  complete derivations.
+
 - 2026-08-17, coincidence twins and multiplicity on the RHS: AC matching
   is a partition of distinct children (an element takes its child's whole
   multiplicity; unannotated, that multiplicity must be exactly 1), so the

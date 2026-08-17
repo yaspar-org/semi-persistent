@@ -72,6 +72,10 @@ pub struct EGraph<
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
     touched: Vec<Cfg::G>,
+    /// When set, every class merge also records the absorbed side's member
+    /// nodes in `touched` (see `merge_in_classes`). Only semi-naive saturation
+    /// consumes it; off everywhere else so merges pay no ring walk.
+    track_merge_members: bool,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
     /// inter-reduction). **Default off** — but NOT for the historical flattening reason
     /// (nested same-op flattening, `WF_flat`, landed in `flatten_ac_children`): the
@@ -180,6 +184,7 @@ where
             g_buf: Vec::new(),
             mset_buf: Vec::new(),
             touched: Vec::new(),
+            track_merge_members: false,
             cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
@@ -532,7 +537,13 @@ where
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
         scratch: &mut crate::index::IndexScratch<Cfg>,
     ) -> crate::saturate::SatResult {
-        crate::saturate::saturate_semi_spec_in(rules, self, model, spec, globals, scratch)
+        // Semi-naive is the one consumer of the merge-membership delta (see
+        // `merge_in_classes`); the flag keeps the per-merge ring walks off
+        // everywhere else.
+        self.track_merge_members = true;
+        let r = crate::saturate::saturate_semi_spec_in(rules, self, model, spec, globals, scratch);
+        self.track_merge_members = false;
+        r
     }
 
     /// The number of distinct e-classes over the current node set. A scan, not a maintained
@@ -1111,10 +1122,54 @@ where
             "cannot merge concrete sort '{}' e-classes",
             self.sorts.name(self.node_sort(a))
         );
-        let m = self.classes.merge(a, b)?;
+        let m = self.merge_in_classes(a, b, None)?;
         self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
+    }
+
+    /// Class merge, recording the absorbed side's member nodes in the
+    /// semi-naive touched log when `track_merge_members` is set.
+    ///
+    /// A merge can create matches without changing any node's canonical form:
+    /// when the surviving representative is the id the parents already store,
+    /// nothing recanonicalizes, yet nodes of the absorbed side changed class.
+    /// The variant decomposition's premise — every new match shows up as a new
+    /// or re-canonicalized tuple in some atom's relation — then needs the
+    /// membership change itself in the delta, and the absorbed members are
+    /// exactly that change: a new match either recanonicalizes a parent
+    /// (already touched) or connects through a node whose class assignment
+    /// moved. Collection walks both rings before the merge splices them,
+    /// because the survivor is not known until the union decides; the flag
+    /// keeps the walk off outside semi-naive saturation, where nothing
+    /// consumes the log.
+    fn merge_in_classes(
+        &mut self,
+        a: Cfg::G,
+        b: Cfg::G,
+        just: Option<Justification<Cfg::G>>,
+    ) -> Option<crate::classes::MergeInfo<Cfg::G, Cfg::UL>> {
+        let pre = if self.track_merge_members {
+            let ra = self.classes.find_const(a);
+            let rb = self.classes.find_const(b);
+            if ra == rb {
+                return None;
+            }
+            let va: Vec<Cfg::G> = self.classes.iter_class(ra).collect();
+            let vb: Vec<Cfg::G> = self.classes.iter_class(rb).collect();
+            Some((ra, va, vb))
+        } else {
+            None
+        };
+        let m = match just {
+            Some(j) => self.classes.merge_justified(a, b, j),
+            None => self.classes.merge(a, b),
+        }?;
+        if let Some((ra, va, vb)) = pre {
+            let absorbed = if m.absorbed == ra { va } else { vb };
+            self.touched.extend(absorbed);
+        }
+        Some(m)
     }
 
     pub fn merge_justified(
@@ -1137,7 +1192,7 @@ where
             "cannot merge concrete sort '{}' e-classes",
             self.sorts.name(self.node_sort(a))
         );
-        let m = self.classes.merge_justified(a, b, just)?;
+        let m = self.merge_in_classes(a, b, Some(just))?;
         self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
@@ -1515,16 +1570,16 @@ where
             for i in 0..self.collisions.len() {
                 let (a, b) = self.collisions[i];
                 let m = if PROOFS {
-                    self.classes.merge_justified(
+                    self.merge_in_classes(
                         a,
                         b,
-                        Justification::Congruence {
+                        Some(Justification::Congruence {
                             node_a: a,
                             node_b: b,
-                        },
+                        }),
                     )
                 } else {
-                    self.classes.merge(a, b)
+                    self.merge_in_classes(a, b, None)
                 };
                 if let Some(m) = m {
                     self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
@@ -1715,9 +1770,9 @@ where
                 return false;
             }
             let m = if PROOFS {
-                eg.classes.merge_justified(x, y, just)
+                eg.merge_in_classes(x, y, Some(just))
             } else {
-                eg.classes.merge(x, y)
+                eg.merge_in_classes(x, y, None)
             };
             match m {
                 Some(m) => {

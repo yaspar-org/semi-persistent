@@ -298,6 +298,17 @@ pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::Va
 /// The root-binding pattern form `(= v pat)` is what produces such constraints; a rule
 /// that does not use it is unaffected, so this costs the existing corpus nothing.
 fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
+    // A global reference in a child or element position is a fixed-class
+    // constraint with no scanning atom behind it: the match set grows when the
+    // global's class absorbs another class, and if the surviving
+    // representative is the id the parents already store, nothing
+    // recanonicalizes and no relation gains a tuple — the merge-membership
+    // delta (`merge_in_classes`) cannot help a class no atom scans. Such a
+    // rule matches the whole graph every round, like the Eq-constrained rules
+    // below. `semi_recanon_parent_delta.egg` is the regression test.
+    if rq.atoms.iter().any(pattern_refs_global) {
+        return true;
+    }
     let has_eq = rq
         .atoms
         .iter()
@@ -311,6 +322,28 @@ fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
         RAtom::EqGlobal(x, _) => node_vars.contains(x),
         _ => false,
     })
+}
+
+/// Whether an atom's pattern references a let-bound global in a child or
+/// element position (see the fixed-class case in [`needs_naive_match`]).
+fn pattern_refs_global<O, S, V>(a: &RAtom<O, S, V>) -> bool {
+    use crate::resolve::PatVar;
+    let g = |v: &PatVar| matches!(v, PatVar::Global(_));
+    match a {
+        RAtom::Plain { children, .. } | RAtom::AExact { children, .. } => children.iter().any(g),
+        RAtom::APrefix { fixed, .. }
+        | RAtom::ASuffix { fixed, .. }
+        | RAtom::ABoth { fixed, .. } => fixed.iter().any(g),
+        RAtom::ACExact { elems, .. } | RAtom::ACSub { elems, .. } => {
+            elems.iter().any(|(v, _)| g(v))
+        }
+        RAtom::ACIExact { elems, .. } | RAtom::ACISub { elems, .. } => elems.iter().any(g),
+        RAtom::Lit { .. }
+        | RAtom::LitBind { .. }
+        | RAtom::Eq(..)
+        | RAtom::EqGlobal(..)
+        | RAtom::Pred { .. } => false,
+    }
 }
 
 /// Stats for the semi-naive variant whose delta atom is `delta_atom`.
@@ -487,6 +520,9 @@ where
             crate::phase_timing::count(crate::phase_timing::C_ROUNDS_DELTA, 1);
             Some(IndexStore::build_delta_with(eg, eg.touched(), scratch))
         };
+        if std::env::var_os("EGRAPH_TRACE_DELTA").is_some() {
+            eprintln!("[semi round {i}] touched={:?}", eg.touched());
+        }
         eg.clear_touched();
 
         let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);

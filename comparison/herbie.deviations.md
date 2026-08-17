@@ -185,7 +185,22 @@ sub-millisecond on both configurations):
 | config | nodes | classes | iterations |
 |---|---|---|---|
 | ours, native, naive | 11 | 11 | 1 |
-| ours, native, semi-naive | blocked (engine defect above) | | |
+| ours, native, semi-naive | 11 | 11 | 1 |
+
+**The engine defect above is fixed and the semi-naive column passes 12/12.**
+The diagnosis sharpened during the fix: the merge need not recanonicalize the
+parent at all — when the surviving representative is the id the parents
+already store, nothing recanonicalizes anywhere, and the new match arises
+purely from class membership growth, invisible to a node delta. Two halves,
+both landed: every merge under semi-naive records the absorbed class's member
+nodes in the touched log (covers rules that scan the class through any atom,
+including literal elements over pre-existing nodes), and a rule referencing a
+let-bound global in a child or element position matches the whole graph every
+round (no atom scans a global's class, so no delta can carry it; same
+category as the root-binding rules of 4258fa4). Regression fixtures:
+`semi_recanon_parent_delta.egg` (the global half, this file's repro) and
+`semi_merge_membership_delta.egg` (the membership half, with the merged
+literal pre-existing).
 
 `repro-herbie-vanilla.egg` is not behind this file after all: surveyed at
 7b1adf2 it is not herbie's simplify layer at 2.9x but a typed-lowering
