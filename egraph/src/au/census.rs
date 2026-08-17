@@ -8,7 +8,7 @@
 //! non-optimal, so the number of playouts a certificate costs is bounded below
 //! by `sum over reachable v of A(v)`, the total action count of the search
 //! graph. That sum is a property of the instance, not of a run: this module
-//! computes it by enumerating the graph without solving anything — no term is
+//! computes it by enumerating the graph without solving anything: no term is
 //! interned, no transport problem is costed beyond the feasibility gate the
 //! action count itself depends on, and no value is backed up.
 //!

@@ -9,8 +9,9 @@
 //! pair whose classes share no operator (a variable is all one can do there)
 //! and strictly pessimistic for a pair that factors through shared structure.
 //! This family builds instances where that difference misranks the root
-//! actions, so the greedy answer — MCGS at one playout, the initial rollout —
-//! is provably suboptimal and the quality-vs-budget curve is not flat.
+//! actions, so the greedy answer, which is MCGS at one playout and therefore
+//! the initial rollout, is provably suboptimal and the quality-vs-budget curve
+//! is not flat.
 //!
 //! # The gadget
 //!
@@ -57,7 +58,7 @@
 //! ```
 //!
 //! and both are asserted per instance against the exact solver and against
-//! MCGS at one playout — the family is verified, not assumed.
+//! MCGS at one playout: the family is verified, not assumed.
 //!
 //! # Mixing
 //!
@@ -68,10 +69,11 @@
 //! solver's context product, so exact stays slow enough to be worth measuring
 //! against.
 //!
-//! Tests: `deceptive_family_smoke` runs in the default suite (~2 s release);
+//! Tests: `deceptive_family_smoke` runs in the default suite (20 ms release);
 //! `deceptive_family_grid` is `#[ignore]`d and sweeps the full knob grid
-//! (~3 min release), reporting the fraction of instances on which greedy is
-//! wrong and the playouts each instance needs to close the gap.
+//! (1.1 s release, 153 instances), reporting the fraction of instances on
+//! which greedy is wrong and the playouts each instance needs to close the
+//! gap.
 
 use std::time::{Duration, Instant};
 
@@ -147,7 +149,7 @@ impl DeceptiveParams {
     /// Whether level `i`'s decoys outrank its winner. The estimate is the full
     /// lexicographic quality `(size, variant_mass)`: a decoy's is `(1 + 2s, 2s)`
     /// and the winner's is `(1 + 2*bs(L_{i-1}) + q, 2*bs(L_{i-1}))`, because
-    /// the shared child pair is an `l == r` terminal — the estimate prices it
+    /// the shared child pair is an `l == r` terminal, which the estimate prices
     /// at `q` exactly, with no variant mass. Ties go to the decoys, which are
     /// enumerated first (their operators are registered first).
     fn deceptive_at(&self, level: usize) -> bool {
@@ -299,9 +301,10 @@ pub struct WideParams {
 }
 
 /// A deceptive gadget under a width-family spine. The spine is what the
-/// pruned exact solver still has to pay for — its actions all sit under the
-/// generalize value, so neither the projection bound nor context subsumption
-/// removes them — and the gadget at the base is what the estimate misranks,
+/// pruned exact solver still has to pay for, because its actions all sit under
+/// the generalize value, so neither the projection bound nor context
+/// subsumption removes them; the gadget at the base is what the estimate
+/// misranks,
 /// so the instance is simultaneously hard for exact and deceptive for MCGS.
 pub fn build_wide_deceptive(p: WideParams) -> Instance {
     let plan = p.deceptive.plan();
@@ -954,7 +957,7 @@ fn wide_deceptive_keeps_the_deception_under_a_spine() {
 }
 
 #[test]
-#[ignore = "full B2 grid: ~3 min release, prints the per-instance misranking arithmetic"]
+#[ignore = "full B2 grid: 1.1 s release, prints the per-instance misranking arithmetic"]
 fn deceptive_family_grid() {
     let mut n = 0usize;
     let mut wrong = 0usize;

@@ -14,23 +14,23 @@
 //! Families (round-robin interleaved, so a deadline cut leaves every stratum
 //! represented):
 //!
-//! * `dec` — the deceptive family (`au_deceptive.rs`): the estimate misranks
+//! * `dec`: the deceptive family (`au_deceptive.rs`): the estimate misranks
 //!   the root actions, so MCGS starts at a known positive gap and closes it
 //!   only by searching past the decoys at every buried level. This is the
 //!   family that makes the gap-vs-budget curve non-flat.
-//! * `mixed` — deceptive gadgets planted at disjoint positions of a random
+//! * `mixed`: deceptive gadgets planted at disjoint positions of a random
 //!   backbone that also carries the crossover family's cyclic classes: the
 //!   gadget supplies the misranking, the cyclic classes supply the exact
 //!   solver's context product.
-//! * `rand` — the same random backbone with no gadget (the pilot's stratum).
-//! * `xover` — the crossover family: `cycles` mutually reachable cyclic
+//! * `rand`: the same random backbone with no gadget (the pilot's stratum).
+//! * `xover`: the crossover family: `cycles` mutually reachable cyclic
 //!   classes under a binary backbone with hot/shared/diff leaves.
-//! * `width` — acyclic spine, `width` same-operator members per side per
+//! * `width`: acyclic spine, `width` same-operator members per side per
 //!   level, so every level-pair OR state fans out `width^2` actions.
-//! * `ac` — one MSet class pair with `members` monomials per side; both
+//! * `ac`: one MSet class pair with `members` monomials per side; both
 //!   solvers enumerate the `members^2` representation-pair product.
 //!
-//! * `wide` — a deceptive gadget under a width-family spine: hard for exact
+//! * `wide`: a deceptive gadget under a width-family spine: hard for exact
 //!   (the spine's actions all sit under the generalize value, so neither the
 //!   projection bound nor context subsumption removes them) and deceptive for
 //!   MCGS (the gadget at the base is what the estimate misranks).
@@ -41,7 +41,7 @@
 //! plan called for a 10 ms hardness floor as well, and the calibration sweep
 //! (`calibrate_hardness`) shows why this harness does not apply one by
 //! default: with A2 and A6 on, the cyclic families are microseconds wide open
-//! — crossover at `cycles=20` is 0.3 ms, mixed at `cycles=24` is 0.4 ms — so a
+//! (crossover at `cycles=20` is 0.3 ms, mixed at `cycles=24` is 0.4 ms), so a
 //! 10 ms floor would have selected the `width` and `ac` families and nothing
 //! else. The floor is therefore a reported stratification rather than an
 //! exclusion: every kept instance carries its `exact_ms`, `HARD_EXACT_MS`
@@ -729,8 +729,8 @@ fn corpus_pipeline_smoke() {
 }
 
 #[test]
-#[ignore = "corpus run: hours of release-mode measurement, writes $AU_BENCH_DIR/corpus.csv \
-            (wall budget from $AU_CORPUS_SECS, default 3600 s)"]
+#[ignore = "corpus run: 1854 s release for the committed 673-instance run, writes \
+            $AU_BENCH_DIR/corpus.csv (wall budget from $AU_CORPUS_SECS, default 3600 s)"]
 fn anytime_corpus() {
     let bench_dir =
         std::env::var("AU_BENCH_DIR").expect("set AU_BENCH_DIR to the directory for corpus.csv");
@@ -798,7 +798,7 @@ fn anytime_corpus() {
             exempt,
         } = spec;
         let Some(exact) = run_exact(&id, Arc::clone(&build)) else {
-            println!("{id} [{family} {params}]: exact TIMEOUT({EXACT_GUARD:?}) — skipped");
+            println!("{id} [{family} {params}]: exact TIMEOUT({EXACT_GUARD:?}), skipped");
             skipped_timeout += 1;
             continue;
         };
@@ -840,7 +840,7 @@ fn anytime_corpus() {
             }
             let Some(mcgs) = run_mcgs(&id, Arc::clone(&build), playouts) else {
                 mcgs_timeouts += 1;
-                println!("  {id} p={playouts}: MCGS TIMEOUT({MCGS_GUARD:?}) — ladder stopped");
+                println!("  {id} p={playouts}: MCGS TIMEOUT({MCGS_GUARD:?}), ladder stopped");
                 break;
             };
             spent += Duration::from_secs_f64(mcgs.ms / 1e3);
@@ -897,7 +897,7 @@ fn anytime_corpus() {
 /// candidate parameter point, printed so the grids can be set against the
 /// `MIN_EXACT_MS` floor and the `EXACT_GUARD` ceiling. Not a corpus run.
 #[test]
-#[ignore = "calibration sweep, minutes; prints pruned exact times per parameter point"]
+#[ignore = "calibration sweep, 15 s release; prints pruned exact times per parameter point"]
 fn calibrate_hardness() {
     let mut probes: Vec<(String, Builder)> = Vec::new();
     for &c in &[10usize, 12, 14, 16, 20] {
