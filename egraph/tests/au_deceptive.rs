@@ -137,7 +137,7 @@ impl DeceptiveParams {
     /// `gap` after the parity adjustment: `2s = span + 1 + gap` must be even.
     fn gap_eff(&self) -> usize {
         let span = self.burial_depth * (self.margin - 1);
-        if (span + 1 + self.gap) % 2 == 0 {
+        if (span + 1 + self.gap).is_multiple_of(2) {
             self.gap
         } else {
             self.gap + 1
@@ -629,7 +629,11 @@ pub fn build_mixed(p: MixedParams) -> (Instance, MixedDescr) {
     let t = gen_tree(&mut rng, 0);
     let want = 2 + rng.below(3) + p.n_deceptive;
     let paths = choose_mutation_paths(&mut rng, &t, want);
-    assert!(!paths.is_empty(), "seed {:#018x}: no mutable position", p.seed);
+    assert!(
+        !paths.is_empty(),
+        "seed {:#018x}: no mutable position",
+        p.seed
+    );
     let mut left_t = t.clone();
     let mut right_t = t;
     let mut hot = 0usize;
@@ -809,7 +813,10 @@ pub fn smoke_grid() -> Vec<DeceptiveParams> {
 /// Verify one instance: the exact optimum matches the family arithmetic, the
 /// greedy answer matches the predicted misranked answer, and the greedy answer
 /// is strictly worse. Returns `(plan, exact, greedy)`.
-pub fn verify_deception(params: DeceptiveParams, pruned: bool) -> (DeceptivePlan, Quality, Quality) {
+pub fn verify_deception(
+    params: DeceptiveParams,
+    pruned: bool,
+) -> (DeceptivePlan, Quality, Quality) {
     let plan = params.plan();
     let inst = build_deceptive(params);
     let exact = exact_quality(&inst, pruned, None);

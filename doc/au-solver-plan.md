@@ -294,6 +294,21 @@ instance (the dump module computes it), select instances with the sum in
 playouts because the initial rollout does per-node work comparable to exact
 along one path. Falsifiable prediction to test: certification knees at
 approximately `sum of A(v)` playouts.
+Done 2026-08-16, folded into B3's corpus: `egraph/src/au/census.rs` computes
+`sum A(v)` by enumerating the reachable OR graph without solving it (MCGS's
+own action-counting conventions; `census_matches_exact_arena` pins the state
+count against the unpruned exact arena where the two conventions coincide),
+and the corpus records it per instance beside the ladder to 2^14 and the wall
+times. The prediction is refuted as stated and holds in one direction: no
+instance certifies below its `sum A(v)`, wide shallow graphs certify within a
+factor of 2 of it (`width` 1.00, `ac` 1.78, `wide` 1.99, all inside the
+ladder's own factor-2 granularity), and deep narrow graphs miss by an order of
+magnitude with the miss growing in depth, not in action count (deceptive
+family: `sum A(v)` 9 -> 60 as burial depth goes 3 -> 20, knee 64 -> 512 ->
+2048 -> uncertified at 2^14; ratios 7.1, 34.1, 128). What the prediction omits
+is the descent: a playout realizes at most one edge but must re-descend the
+prefix to reach it. Numbers and the per-decade table are in
+`comparison/au/anytime-corpus.md`.
 
 **B2. The deceptive family.** Instances where the lazy-completion estimate
 misranks actions: a decoy member pair whose children look cheaper by margin
@@ -306,6 +321,27 @@ Prediction: playouts-to-gap-zero grows with d_b; greedy (budget 1) is wrong
 on essentially all instances with m > 0. This family is what makes the
 quality-vs-budget curve non-flat, since the pilot showed the symmetric
 families are decided by depth-1 information.
+Done 2026-08-16 (`egraph/tests/au_deceptive.rs`): the gadget is a chain of
+`burial_depth` levels, each with `decoys` decoy members whose children are
+ground-distinct and one winner member whose buried child pair factors through
+the chain. `DeceptiveParams::plan` solves the arithmetic for the four knobs
+(burial depth, margin, gap, decoy count) and `is_feasible` rejects the
+combinations the burial depth cannot pay for. Verification is per instance,
+not assumed: the exact optimum equals the closed form and the one-playout
+answer equals the closed-form misranked value on 153 of 153 instances of the
+`#[ignore]`d full grid (1.1 s release), and the default-suite smoke test also
+cross-checks pruned exact against the unpruned reference. Two corrections to
+the plan's shape. The winner's shared child is an `l == r` terminal that the
+estimate prices exactly, so the margin knob is that child's size and not twice
+it (`margin = 2 + shared`); and a decoy that sets its class's `bs` can never
+be misranked by more than 2, which is why the margin needs the shared child at
+all. Playouts to gap zero grows with burial depth and decoy count as predicted
+(margin 2, gap 1, depth 12: 256 playouts at one decoy, 4096 at two,
+uncertified within 2^16 at four); a larger gap is easier, not harder, because
+it shrinks the deceptive window to the top of the chain. Two mixing generators
+ship with it: gadgets planted in random cyclic backbones, and a gadget under a
+width-family spine, which is the only combination measured to be hard for the
+pruned exact solver and deceptive for MCGS at once.
 
 **B3. The 1000-instance corpus.** Metamorphic generation with mixed
 fresh/shared amplification plus deceptive injections; exact ground truth
@@ -314,6 +350,33 @@ deliverables per the standard methodology: quality profiles
 (gap vs budget, means and quantiles, zero-inflation reported separately),
 certification curves, primal integrals, and time-to-target plots against
 exact's completion time, on both budget axes.
+Done 2026-08-16 (`egraph/tests/au_corpus_bench.rs`, `#[ignore]`d, 1854 s
+release for the committed run): 673 instances over seven families, 10095 rows,
+no exact timeout, no MCGS timeout, no ladder cut. Results, tables, and the
+caveats are in `comparison/au/anytime-corpus.md`; `comparison/au/corpus.csv`
+is the run and `comparison/au/analyze.py` regenerates every table from it.
+Four findings. Greedy is wrong on 478 of 673 instances, and the split is
+exactly the constructed one: every instance carrying a deceptive gadget, no
+instance without one, which confirms the pilot's depth-1 observation at 673
+instances. The gap curve moves 7.8x in the mean (0.121 to 0.016) and the zero
+fraction 0.290 to 0.798 over the ladder, and the movement is instances
+crossing to zero rather than improving gradually (the mean among nonzero gaps
+moves only 2.2x). On the wall-clock axis the anytime claim does not hold on
+this corpus: one playout already costs a median 0.545 of exact's total time,
+so no MCGS answer exists below half of exact's budget, and at 100% of it the
+answer is optimal on 21.9% of the 45 instances with exact at or above 10 ms.
+MCGS reaches the optimum before exact finishes on 33.1% of the corpus, and the
+families where it wins on time are the families where its first answer was
+already optimal.
+The plan's 10 ms hardness floor is reported rather than applied, because A2
+and A6 made the cyclic families microseconds wide (crossover `cycles=20` in
+0.3 ms) and the floor would have selected `width` and `ac` and nothing else;
+the harness's `calibrate_hardness` is the measurement, `$AU_MIN_EXACT_MS`
+reinstates the floor, and every table is recomputable per family. Two
+follow-ups the run exposes: MCGS keeps spending playouts after the search
+graph closes (10.8 ms at 2^14 on an instance certified at 16 playouts), and
+the initial rollout's cost, not expansion, is what bounds the anytime story
+after A0.
 
 **B4. Auto-formalization variability benchmark.** The application story:
 several LLM formalizations of one natural-language statement differ in

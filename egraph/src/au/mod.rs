@@ -34,6 +34,7 @@
 
 pub mod ac_repr;
 pub mod actions;
+pub mod census;
 #[cfg(test)]
 mod dump;
 pub mod egraph_api;

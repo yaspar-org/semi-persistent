@@ -1284,12 +1284,12 @@ fn is_structurally_complete<A: AuIds, O: DenseId>(
 /// (zero-cost transport with blocked cells Forbidden) become actions; a pair
 /// with legal cells can still be Hall-infeasible (a blocked row with positive
 /// supply), and such pairs must not consume an action slot.
-struct TransportActionDesc<O, C> {
+pub(crate) struct TransportActionDesc<O, C> {
     op: O,
-    left: ac_repr::Monomial<C>,
-    right: ac_repr::Monomial<C>,
+    pub(crate) left: ac_repr::Monomial<C>,
+    pub(crate) right: ac_repr::Monomial<C>,
     /// Flat row-major r*c mask: true = cell is not cycle-blocked.
-    legal_cells: Vec<bool>,
+    pub(crate) legal_cells: Vec<bool>,
     /// `left`/`right` multiplicities already narrowed to the transport solver's
     /// width. Narrowing happens once, in the feasibility gate below: a pair
     /// whose multiplicities the solver cannot represent never becomes a
@@ -1301,7 +1301,7 @@ struct TransportActionDesc<O, C> {
 
 /// Enumerate the feasible transport actions for `(l, r)` at `or_id`. Single
 /// source of truth for action counting, expansion indexing, and rollout.
-fn transport_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+pub(crate) fn transport_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &SearchSpace<Cfg::Au>,
     or_id: <Cfg::Au as AuIds>::Or,
