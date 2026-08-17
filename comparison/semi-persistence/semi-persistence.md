@@ -182,6 +182,14 @@ bookkeeping is not; theirs is the other way round.
 
 ## 5. Cost per cycle: the full cycle, with one saturation round
 
+**Retracted, 2026-08-16: the "ours, semi-naive" column below was measured at a
+stale commit and must not be cited.** It predates the index families moving onto
+`DenseSpanMap`, so it charges the semi-naive path a delta index built the way the
+full index was. `comparison/span-table-sparsity.md` sections 3 and 5 carry the
+superseding per-phase and wall-time numbers. The "ours, naive" and "egglog"
+columns stand, and so does the conclusion drawn from them below: the gap at
+S = 1e6 is the `(run 1)`, not the push or the pop.
+
 20 cycles, base wall time subtracted.
 
 | S (our nodes) | egglog | ours, naive | ours, semi-naive |

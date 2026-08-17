@@ -130,6 +130,21 @@ the worst case and much better immediately after a flatten. True O(touched) per
 round requires N layers, which is the read amplification this design refuses.
 Revisit only if the index build is measured to dominate after this change lands.
 
+> **Correction, 2026-08-16: the cost above omits the span-table term. Do not
+> cite the paragraph above.** Installing a generation is O(delta + invalid +
+> num_keys), not O(delta + invalid). `replace_delta` builds the delta generation
+> with `DenseSpanMap::build`, whose span table is dense over the whole key space:
+> a build writes `num_keys` counts, `num_keys` offsets, `num_keys` cursors and
+> `num_keys` spans however few values the stream carries. On the E6 two-round
+> cycle at S = 1e6 the delta carries 46 touched nodes and 23 `by_child_pos`
+> entries against a key bound of 1,002,009, and the install costs 19.6 ms against
+> 0.07 ms of matching in the round it feeds
+> (`comparison/span-table-sparsity.md` section 3). The omitted term is three
+> orders of magnitude larger than the one that was stated. The remedy is a build
+> path proportional to the occupied keys, measured at 0.010 ms for the same
+> install; section 7 of that document states the container change it needs, and
+> that change is not yet implemented.
+
 ## 5. In-place refresh of one `DenseSpanMap`, rejected
 
 Appending to an interior bucket of a single `DenseSpanMap` is not possible
