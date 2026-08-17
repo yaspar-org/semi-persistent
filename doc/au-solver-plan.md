@@ -187,7 +187,35 @@ and mark the result. Proven values then propagate as closed subtrees, which
 accelerates certification, and commitment-style variants become safe when
 gated on certified children only. 1-2 weeks, after A0 and A2.
 
-Order: A0, A1, A2, then A3 and A4 in parallel, then A5, A6, A7.
+**A8. The MCTS-solver closed bit in MCGS.** B1's measurement (below) shows
+the certification budget on deep search graphs is set by the selection rule
+rather than by the ladder: MCGS keeps descending into subgraphs whose every
+action is already realized, so those playouts realize nothing. Give every OR
+node a bit — terminal, or every slot realized and every child of every
+realized AND closed — maintain it incrementally, and exclude closed subtrees
+from selection at both node kinds. Acceptance: the deep families' knee
+collapses from uncertified at 2^18 to the wide families' within-2x band, and
+no gap curve regresses. Days, after A5.
+Done 2026-08-17: `closed_bit` (`AuConfig`/`McgsConfig`, default false) keeps
+the bit plus an open-edge count per OR node, an open-child count per AND
+node, and a reverse-edge list per OR node (one entry per child position), so
+a closure propagates to every parent of a shared node rather than along the
+playout's path only; `select_uct` and all three AND selectors skip closed
+subtrees, the certificate is the root's bit (with `is_structurally_complete`
+kept as a debug oracle asserting the equivalence on every run), and the run
+stops as soon as the root closes. A node that closes is also marked exact in
+`BestResults`, which makes it terminal at creation in a later run on the same
+session layers and rolls back with the table's token. Flag off, the
+differential fixture is byte-identical; flag on,
+`au_differential.rs::closed_bit_mcgs_is_sound` pins that no line loses
+quality or a certificate, and `au_closed_bit.rs` pins the knee against the
+independently computed `sum A(v)`. The deceptive family's knee, flag off ->
+on: burial depth 5 (4 decoys) 16384 -> 32, depth 8 (4 decoys) uncertified at
+2^14 -> 64, depth 12 (1 decoy) uncertified at 2^14 -> 32, depth 12 (4 decoys)
+uncertified at 2^14 -> 64, all within 1.0x-1.6x of `sum A(v)`. Corpus numbers
+in comparison/au/anytime-corpus.md.
+
+Order: A0, A1, A2, then A3 and A4 in parallel, then A5, A6, A8, A7.
 
 ## Soundness arguments, per item
 
@@ -276,6 +304,23 @@ projections land in the classes is valid), so an exact-solved term is
 always safe to offer; the write-once exact flag and `offer`'s
 strict-improvement rule prevent silent degradation afterward.
 
+**A8.** A closed subgraph is fully realized, so its stored value and result
+cannot change: every action below it exists, every descendant is closed, and
+the closure walk recomputes each AND node's value and offers its composition
+to its parent before that parent's own bit is set, so a closed OR node's
+incumbent already accounts for every one of its actions. A visit inside such
+a subgraph therefore cannot change a value, a stored result, or the
+certificate, and excluding it from selection removes nothing but those
+visits; the certificate's claim is unchanged, because closure is defined by
+the same exhaustiveness `is_structurally_complete` checks (which stays as the
+debug oracle for the equivalence). Closure is exactly what `mark_exact`
+asserts — this node's stored result is its optimum over the same action space
+under the same cycle mode — so writing the proof through to `BestResults` is
+the A7 argument applied to a subproblem MCGS proved itself; `offer`'s
+strict-improvement rule and a debug assertion pin that nothing ever beats a
+marked result afterward. Cycles are excluded for free: closure is a least
+fixpoint, and a node on a cycle would have to be closed already to close.
+
 For the benchmark program, soundness means the measurement supports the
 claim: B1's knee prediction uses `sum of A(v)` computed by the dump,
 independent of the measured run; B2 verifies the misranking per instance
@@ -316,8 +361,10 @@ a budget exponential in the burial depth. The consequence is a selection rule
 rather than a bigger budget: MCGS keeps descending into closed subtrees, and
 excluding closed children from selection (the MCTS-solver rule) is the change
 that would make the certification budget track `sum A(v)` on deep graphs,
-testable against this corpus's knee column. Numbers and the per-decade table
-are in `comparison/au/anytime-corpus.md`.
+testable against this corpus's knee column. That rule is A8, and the test
+came out for it: the deep families' knee lands within a small multiple of
+`sum A(v)`. Numbers and the per-decade table are in
+`comparison/au/anytime-corpus.md`.
 
 **B2. The deceptive family.** Instances where the lazy-completion estimate
 misranks actions: a decoy member pair whose children look cheaper by margin

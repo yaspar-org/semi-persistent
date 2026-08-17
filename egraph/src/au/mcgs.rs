@@ -12,9 +12,46 @@
 //! exhausted graphs.
 //!
 //! Implemented policies: UCT selection at OR nodes and three AND-node effort
-//! selectors (`lct_and` default, `uct_and`, `round_robin`; §3.3.5). PUCT,
-//! priors, and an incremental completion counter are future work; see
-//! doc/future/au-associative-operators.md.
+//! selectors (`lct_and` default, `uct_and`, `round_robin`; §3.3.5). PUCT and
+//! priors are future work; see doc/future/au-associative-operators.md.
+//!
+//! # The closed bit (MCTS-solver rule, plan item A8)
+//!
+//! Under `McgsConfig::closed_bit` every OR node carries a bit that is set once
+//! its subgraph is fully resolved — terminal, or every action slot realized
+//! and every child of every realized AND closed — and every AND node carries
+//! the count of its children that are still open. The bits are maintained
+//! incrementally: an AND closes when its last open child closes, an OR closes
+//! when its last open AND closes, and closure walks upward through reverse
+//! edges (each OR node keeps the list of AND nodes holding it as a child), so
+//! a node's bit is set the moment its subgraph resolves, through every parent
+//! of a shared node rather than only along the playout's path.
+//!
+//! Selection then skips closed subtrees: `select_uct` never descends into an
+//! action whose AND is closed (its value still enters `recompute_or_value`),
+//! and the AND-node selectors skip closed children, the same gate the terminal
+//! skip applies. Certification reads the root bit instead of walking the graph.
+//!
+//! Soundness. A closed subtree's value and stored result are exact and final:
+//! every action below it is realized, every descendant is closed, and the
+//! closure walk recomputes each AND's value and offers its composition to its
+//! parent *before* that parent can close, so an OR node's incumbent already
+//! includes every action's final composition when its bit is set. Skipping
+//! such a subtree therefore removes only visits that could not change any
+//! value, any stored result, or the certificate; the playouts freed are spent
+//! on unrealized actions instead. Answer quality at a given budget can only
+//! improve or stay, and `Completion::Exact` still means what it meant: every
+//! reachable action was realized (or proven non-optimal, under
+//! `dominance_pruning`).
+//!
+//! The statistics arenas hold the propagation bookkeeping (the bits, the open
+//! counters, the reverse edges), but the durable record of a closure is in
+//! `BestResults`: a node that closes is marked exact there, the same
+//! write-once flag the exact solver sets, because closure asserts the same
+//! fact — the stored result is that node's optimum over the same action space
+//! under the same cycle mode. `ensure_or_stats` already makes a node with the
+//! flag terminal at creation, so the proof carries into later runs on the same
+//! session layers, and it rolls back with the results table's own token.
 
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
@@ -89,6 +126,16 @@ pub struct McgsConfig {
     /// `au_differential.rs::dominant_pruned_mcgs_is_sound` gates the flag-on
     /// behavior.
     pub dominance_pruning: bool,
+    /// The MCTS-solver closed bit (plan item A8, doc/au-solver-plan.md): keep
+    /// a per-OR-node "subgraph fully resolved" bit, maintain it incrementally
+    /// through reverse edges, exclude closed subtrees from selection, and read
+    /// the certificate off the root's bit instead of walking the graph. See
+    /// the module doc for the rule and its soundness argument. Default
+    /// `false`: the unrestricted search is the reference the differential
+    /// fixture was captured against;
+    /// `au_differential.rs::closed_bit_mcgs_is_sound` gates the flag-on
+    /// behavior.
+    pub closed_bit: bool,
 }
 
 impl Default for McgsConfig {
@@ -100,6 +147,7 @@ impl Default for McgsConfig {
             x_target: 0.8,
             and_selector: AndSelector::default(),
             dominance_pruning: false,
+            closed_bit: false,
         }
     }
 }
@@ -198,6 +246,11 @@ struct OrStatsToken {
     edge_and: VecToken,
     first_unrealized: VecToken,
     transport_descs: VecToken,
+    closed: VecToken,
+    open_edges: VecToken,
+    parent_head: VecToken,
+    parent_and: VecToken,
+    parent_next: VecToken,
 }
 
 /// OR statistics stored in aligned semi-persistent arenas. Node structure is
@@ -222,6 +275,25 @@ struct OrStatsArena<A: AuIds, O: DenseId> {
     /// keeps the prefix invariant.
     first_unrealized: VecP<A::Index, A::Index>,
     transport_descs: AppendOnlyVec<Vec<TransportActionDesc<O, A::Class>>, A::Index>,
+    /// Closed bit (`McgsConfig::closed_bit`): the node's subgraph is fully
+    /// resolved. Set at birth for terminal nodes and by the closure walk
+    /// otherwise; never cleared, so a restore is what rewinds it.
+    closed: VecP<bool, A::Index>,
+    /// Action slots that are not known resolved: unrealized slots plus
+    /// realized slots whose AND node is open. Starts at the action count (zero
+    /// for a terminal node), and reaching zero is what closes the node —
+    /// realizing a slot does not decrement it, closing the slot's AND does.
+    open_edges: VecP<A::Index, A::Index>,
+    /// Head of this node's reverse-edge list, an index into
+    /// `parent_and`/`parent_next`.
+    parent_head: VecP<Option<A::Index>, A::Index>,
+    /// Reverse-edge pool: the AND node of one parent entry. One entry per
+    /// child *position*, so an AND holding the same OR node twice appears
+    /// twice and both of its open-child slots are decremented when that node
+    /// closes. Written only under `closed_bit`.
+    parent_and: AppendOnlyVec<A::AndStats, A::Index>,
+    /// Reverse-edge pool: the next entry of the same node's list.
+    parent_next: AppendOnlyVec<Option<A::Index>, A::Index>,
 }
 
 /// Preconstruct a typed span and validate its exclusive end and final typed
@@ -259,6 +331,11 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
             edge_and: VecP::new(),
             first_unrealized: VecP::new(),
             transport_descs: AppendOnlyVec::new(),
+            closed: VecP::new(),
+            open_edges: VecP::new(),
+            parent_head: VecP::new(),
+            parent_and: AppendOnlyVec::new(),
+            parent_next: AppendOnlyVec::new(),
         }
     }
 
@@ -290,6 +367,9 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         assert_eq!(self.value.len(), node_len);
         assert_eq!(self.first_unrealized.len(), node_len);
         assert_eq!(self.transport_descs.len(), node_len);
+        assert_eq!(self.closed.len(), node_len);
+        assert_eq!(self.open_edges.len(), node_len);
+        assert_eq!(self.parent_head.len(), node_len);
 
         let edge_start = self.edge_visits.len().as_usize();
         assert_eq!(self.edge_and.len().as_usize(), edge_start);
@@ -303,6 +383,16 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
             data.edge_visits.len(),
             "OR edge-statistics pool",
         );
+        // A terminal node is closed at birth and has nothing open; every other
+        // node starts with every action slot open (`ensure_or_stats` makes a
+        // node with no surviving action terminal, so this is nonzero there).
+        let open_edges = if data.terminal {
+            A::Index::try_from_usize(0).expect("zero fits every index word")
+        } else {
+            A::Index::try_from_usize(data.edge_visits.len())
+                .expect("action count bounded by the validated edge span")
+        };
+        let closed = data.terminal;
 
         for visit in data.edge_visits {
             self.edge_visits
@@ -341,7 +431,70 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         self.transport_descs
             .try_push(transport_descs)
             .expect("AU arena sized by its index word");
+        self.closed
+            .try_push(closed)
+            .expect("AU arena sized by its index word");
+        self.open_edges
+            .try_push(open_edges)
+            .expect("AU arena sized by its index word");
+        self.parent_head
+            .try_push(None)
+            .expect("AU arena sized by its index word");
         id
+    }
+
+    #[inline]
+    fn closed(&self, id: A::OrStats) -> bool {
+        self.closed.get(Self::index(id))
+    }
+
+    /// Set the closed bit. Idempotent by construction: the closure walk only
+    /// calls this on a node whose last open edge just closed, and a closed
+    /// node's `open_edges` never leaves zero.
+    fn set_closed(&mut self, id: A::OrStats) {
+        self.closed.set(Self::index(id), true);
+    }
+
+    #[inline]
+    fn open_edges(&self, id: A::OrStats) -> usize {
+        self.open_edges.get(Self::index(id)).as_usize()
+    }
+
+    /// Account one action slot as resolved: the slot's AND node just closed.
+    fn close_edge(&mut self, id: A::OrStats) {
+        let node = Self::index(id);
+        let open = self.open_edges.get(node).as_usize();
+        debug_assert!(open > 0, "closing an edge of a node with none open");
+        self.open_edges.set(
+            node,
+            A::Index::try_from_usize(open - 1).expect("decrement of a valid index"),
+        );
+    }
+
+    /// Record `and_id` as a parent of `child`: one entry per child position,
+    /// prepended to the child's reverse-edge list.
+    fn push_parent(&mut self, child: A::OrStats, and_id: A::AndStats) {
+        let node = Self::index(child);
+        let entry = self.parent_and.len();
+        let head = self.parent_head.get(node);
+        self.parent_and
+            .try_push(and_id)
+            .expect("AU arena sized by its index word");
+        self.parent_next
+            .try_push(head)
+            .expect("AU arena sized by its index word");
+        self.parent_head.set(node, Some(entry));
+    }
+
+    #[inline]
+    fn parent_head(&self, id: A::OrStats) -> Option<A::Index> {
+        self.parent_head.get(Self::index(id))
+    }
+
+    /// One reverse-edge entry: its AND node and the next entry of the list.
+    #[inline]
+    fn parent_entry(&self, entry: A::Index) -> (A::AndStats, Option<A::Index>) {
+        (*self.parent_and.get(entry), *self.parent_next.get(entry))
     }
 
     #[inline]
@@ -464,6 +617,26 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
                 .transport_descs
                 .try_mark(ShrinkPolicy::Never)
                 .expect("mark: depth bounded by the search driver"),
+            closed: self
+                .closed
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            open_edges: self
+                .open_edges
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            parent_head: self
+                .parent_head
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            parent_and: self
+                .parent_and
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            parent_next: self
+                .parent_next
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -481,10 +654,30 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
                 .first_unrealized
                 .is_valid_token(&token.first_unrealized)
             && self.transport_descs.is_valid_token(&token.transport_descs)
+            && self.closed.is_valid_token(&token.closed)
+            && self.open_edges.is_valid_token(&token.open_edges)
+            && self.parent_head.is_valid_token(&token.parent_head)
+            && self.parent_and.is_valid_token(&token.parent_and)
+            && self.parent_next.is_valid_token(&token.parent_next)
     }
 
     fn restore(&mut self, token: OrStatsToken) {
         assert!(self.is_valid_token(&token), "OrStatsArena: invalid token");
+        self.parent_next
+            .try_restore(token.parent_next)
+            .expect("restore: token minted by this container's own mark");
+        self.parent_and
+            .try_restore(token.parent_and)
+            .expect("restore: token minted by this container's own mark");
+        self.parent_head
+            .try_restore(token.parent_head)
+            .expect("restore: token minted by this container's own mark");
+        self.open_edges
+            .try_restore(token.open_edges)
+            .expect("restore: token minted by this container's own mark");
+        self.closed
+            .try_restore(token.closed)
+            .expect("restore: token minted by this container's own mark");
         self.transport_descs
             .try_restore(token.transport_descs)
             .expect("restore: token minted by this container's own mark");
@@ -537,6 +730,8 @@ struct AndStatsToken {
     transport_rows: VecToken,
     transport_cols: VecToken,
     transport_cell_map: VecToken,
+    closed: VecToken,
+    open_children: VecToken,
 }
 
 /// AND statistics stored in aligned semi-persistent arenas. Child state is
@@ -557,6 +752,13 @@ struct AndStatsArena<A: AuIds, O: DenseId> {
     transport_rows: AppendOnlyVec<Vec<u32>, A::Index>,
     transport_cols: AppendOnlyVec<Vec<u32>, A::Index>,
     transport_cell_map: AppendOnlyVec<Vec<Option<A::AndChildStat>>, A::Index>,
+    /// Closed bit (`McgsConfig::closed_bit`): every child is closed, so this
+    /// action's subgraph is fully resolved.
+    closed: VecP<bool, A::Index>,
+    /// Child *positions* whose OR node is still open. Set at creation from the
+    /// children's bits, decremented as they close; reaching zero closes the
+    /// AND node.
+    open_children: VecP<A::Index, A::Index>,
 }
 
 impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
@@ -574,6 +776,8 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
             transport_rows: AppendOnlyVec::new(),
             transport_cols: AppendOnlyVec::new(),
             transport_cell_map: AppendOnlyVec::new(),
+            closed: VecP::new(),
+            open_children: VecP::new(),
         }
     }
 
@@ -600,6 +804,8 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         assert_eq!(self.transport_rows.len(), node_len);
         assert_eq!(self.transport_cols.len(), node_len);
         assert_eq!(self.transport_cell_map.len(), node_len);
+        assert_eq!(self.closed.len(), node_len);
+        assert_eq!(self.open_children.len(), node_len);
 
         let child_start = self.child_or_stats.len().as_usize();
         assert_eq!(self.child_counts.len().as_usize(), child_start);
@@ -673,7 +879,45 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         self.transport_cell_map
             .try_push(typed_cell_map)
             .expect("AU arena sized by its index word");
+        self.closed
+            .try_push(false)
+            .expect("AU arena sized by its index word");
+        // Every position starts open; `McgsState::push_and_stat` discounts the
+        // children that are already closed, and the closure walk is what turns
+        // a zero count into the closed bit.
+        self.open_children
+            .try_push(
+                A::Index::try_from_usize(child_len)
+                    .expect("child count bounded by the validated child span"),
+            )
+            .expect("AU arena sized by its index word");
         id
+    }
+
+    #[inline]
+    fn closed(&self, id: A::AndStats) -> bool {
+        self.closed.get(Self::index(id))
+    }
+
+    fn set_closed(&mut self, id: A::AndStats) {
+        self.closed.set(Self::index(id), true);
+    }
+
+    #[inline]
+    fn open_children(&self, id: A::AndStats) -> usize {
+        self.open_children.get(Self::index(id)).as_usize()
+    }
+
+    /// Account one child position as resolved: that child's OR node closed (or
+    /// was already closed when this node was created).
+    fn close_child(&mut self, id: A::AndStats) {
+        let node = Self::index(id);
+        let open = self.open_children.get(node).as_usize();
+        debug_assert!(open > 0, "closing a child of a node with none open");
+        self.open_children.set(
+            node,
+            A::Index::try_from_usize(open - 1).expect("decrement of a valid index"),
+        );
     }
 
     #[inline]
@@ -788,6 +1032,14 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
                 .transport_cell_map
                 .try_mark(ShrinkPolicy::Never)
                 .expect("mark: depth bounded by the search driver"),
+            closed: self
+                .closed
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            open_children: self
+                .open_children
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -806,10 +1058,18 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
             && self
                 .transport_cell_map
                 .is_valid_token(&token.transport_cell_map)
+            && self.closed.is_valid_token(&token.closed)
+            && self.open_children.is_valid_token(&token.open_children)
     }
 
     fn restore(&mut self, token: AndStatsToken) {
         assert!(self.is_valid_token(&token), "AndStatsArena: invalid token");
+        self.open_children
+            .try_restore(token.open_children)
+            .expect("restore: token minted by this container's own mark");
+        self.closed
+            .try_restore(token.closed)
+            .expect("restore: token minted by this container's own mark");
         self.transport_cell_map
             .try_restore(token.transport_cell_map)
             .expect("restore: token minted by this container's own mark");
@@ -932,8 +1192,40 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
         id
     }
 
-    fn push_and_stat(&mut self, data: AndStatsData<A::OrStats, O>) -> A::AndStats {
-        self.and_stats.push(data)
+    /// Push one AND-statistics node. With `track_closed` (the `closed_bit`
+    /// flag), also register the reverse edge from every child position back to
+    /// this node and discount the children that are already closed, so the
+    /// node's open-child count is exact the moment it exists.
+    fn push_and_stat(
+        &mut self,
+        data: AndStatsData<A::OrStats, O>,
+        track_closed: bool,
+    ) -> A::AndStats {
+        let id = self.and_stats.push(data);
+        if track_closed {
+            // Read the children back from the arena one position at a time:
+            // holding a slice would borrow the AND arena across the
+            // `close_child` writes, and cloning the child vector would put an
+            // allocation back on the expansion path A0 took one off.
+            for pos in 0..self.and_stats.child_span(id).len_usize() {
+                let child = self.and_stats.child_or(self.and_stats.child_id(id, pos));
+                self.or_stats.push_parent(child, id);
+                if self.or_stats.closed(child) {
+                    self.and_stats.close_child(id);
+                }
+            }
+        }
+        id
+    }
+
+    #[inline]
+    fn or_closed(&self, id: A::OrStats) -> bool {
+        self.or_stats.closed(id)
+    }
+
+    #[inline]
+    fn and_closed(&self, id: A::AndStats) -> bool {
+        self.and_stats.closed(id)
     }
 
     fn set_or_initial_value(&mut self, id: A::OrStats, value: f64) {
@@ -1072,6 +1364,13 @@ where
         state.set_or_value(root_idx, sz);
 
         for _ in 0..config.playouts {
+            // Nothing is left to realize once the root closes, so the
+            // remaining budget would buy only playouts that change nothing;
+            // `close_completed_dag` below is what turns the closed graph into
+            // the final answer.
+            if config.closed_bit && state.or_closed(root_idx) {
+                break;
+            }
             playout(
                 snap,
                 space,
@@ -1085,7 +1384,22 @@ where
         }
     }
 
-    let completion = if is_structurally_complete(state, root_idx) {
+    // With the closed bit the certificate is the root's bit: it is set exactly
+    // when every reachable action is realized and every reachable node closed,
+    // which is what `is_structurally_complete` walks the graph to decide. The
+    // walk stays as the debug oracle for the equivalence.
+    let complete = if config.closed_bit {
+        let closed = state.or_closed(root_idx);
+        debug_assert_eq!(
+            closed,
+            is_structurally_complete(state, root_idx),
+            "the root's closed bit disagrees with the structural certificate"
+        );
+        closed
+    } else {
+        is_structurally_complete(state, root_idx)
+    };
+    let completion = if complete {
         // Close the completed DAG: path-only backpropagation may have left
         // some incoming parents without the final child improvements. One
         // children-first pass recomputes every value and recomposes every
@@ -1275,6 +1589,91 @@ fn is_structurally_complete<A: AuIds, O: DenseId>(
             }
             let (done, _, _) = stack.pop().expect("completion stack cannot be empty");
             visited[done.to_usize()] = 2; // memoize
+        }
+    }
+}
+
+/// Close `and_idx` if its last open child just closed, and report the OR node
+/// that closes with it, if any.
+///
+/// The order inside is what makes a closed node's stored result exact: the
+/// node's value is recomputed and its composition offered to its parent OR
+/// *before* that parent's open-edge count can reach zero, so when an OR node's
+/// bit is set, its incumbent already accounts for every one of its actions'
+/// final compositions (each child's own result being final by induction).
+fn try_close_and<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    results: &mut BestResults<Cfg::Au>,
+    state: &mut McgsState<Cfg::Au, Cfg::O>,
+    and_idx: <Cfg::Au as AuIds>::AndStats,
+) -> Option<<Cfg::Au as AuIds>::OrStats>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    if state.and_closed(and_idx) || state.and_stats.open_children(and_idx) != 0 {
+        return None;
+    }
+    state.and_stats.set_closed(and_idx);
+    recompute_and_value(state, and_idx);
+    compose_and_offer(snap, pool, results, state, and_idx);
+
+    let parent = state.and_stat(and_idx).parent;
+    debug_assert!(
+        !state.or_closed(parent),
+        "an OR node closed before one of its actions did"
+    );
+    state.or_stats.close_edge(parent);
+    if state.or_stats.open_edges(parent) == 0 {
+        state.or_stats.set_closed(parent);
+        recompute_or_value(state, parent);
+        // Write the proof through to the results table, where it outlives this
+        // run's statistics: closure asserts exactly what `mark_exact` means —
+        // the stored result is the optimum of this node's action space under
+        // this cycle mode (the A7 argument in doc/au-solver-plan.md) — and
+        // `ensure_or_stats` makes a node with the flag terminal at creation, so
+        // a later run on the same session inherits the proof instead of
+        // re-realizing the subgraph. The flag is write-once and rolls back with
+        // the table's own token, so mark/restore needs nothing here.
+        results.mark_exact(state.or_id(parent));
+        return Some(parent);
+    }
+    None
+}
+
+/// Propagate closure upward from the AND node a playout just realized
+/// (`McgsConfig::closed_bit`). Each OR node that closes hands the news to
+/// every AND node holding it as a child, through the reverse-edge lists, so a
+/// shared node's closure reaches all of its parents and not just the ones on
+/// this playout's path.
+///
+/// Termination and cost: a node's bit is set at most once and each reverse
+/// edge is walked once per closure of its child, so the whole run does O(E)
+/// work here. A node on a cycle never closes — it would have to be closed
+/// already to close — which is the same answer `is_structurally_complete`
+/// gives by rejecting an active cycle.
+fn settle_closure<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
+    snap: &AuSnapshot<Cfg, L, T, P>,
+    pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
+    results: &mut BestResults<Cfg::Au>,
+    state: &mut McgsState<Cfg::Au, Cfg::O>,
+    realized: <Cfg::Au as AuIds>::AndStats,
+) where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut pending: Vec<<Cfg::Au as AuIds>::OrStats> =
+        try_close_and(snap, pool, results, state, realized)
+            .into_iter()
+            .collect();
+    while let Some(or_idx) = pending.pop() {
+        let mut entry = state.or_stats.parent_head(or_idx);
+        while let Some(current) = entry {
+            let (and_idx, next) = state.or_stats.parent_entry(current);
+            entry = next;
+            state.and_stats.close_child(and_idx);
+            if let Some(parent) = try_close_and(snap, pool, results, state, and_idx) {
+                pending.push(parent);
+            }
         }
     }
 }
@@ -1497,8 +1896,18 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     // The traversed path: AND stats ids, root-side first.
     let mut path: Vec<<Cfg::Au as AuIds>::AndStats> = Vec::new();
     let mut current = root_idx;
+    // The action this playout realized, if any. Under `closed_bit` there is
+    // always one: selection enters only open nodes and picks only open
+    // children, and an open node either has an unrealized slot or an open
+    // action leading to an open node, so the descent cannot dead-end. A
+    // playout that expands nothing means a closure that was not propagated.
+    let mut realized: Option<<Cfg::Au as AuIds>::AndStats> = None;
 
     loop {
+        debug_assert!(
+            !config.closed_bit || !state.or_closed(current),
+            "playout descended into a closed node"
+        );
         if state.or_stat(current).terminal {
             break;
         }
@@ -1531,11 +1940,12 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
                 state,
                 current,
                 action_idx,
-                config.dominance_pruning,
+                config,
             );
             state.set_or_edge_and(current, action_idx, Some(and_idx));
             state.advance_or_first_unrealized(current);
             path.push(and_idx);
+            realized = Some(and_idx);
 
             // Rollout: first estimate for fresh children (§3.3.2).
             for pos in 0..state.and_stat(and_idx).child_or_stats.len() {
@@ -1578,6 +1988,20 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
         let parent = state.and_stat(and_idx).parent;
         recompute_or_value(state, parent);
     }
+
+    // Closure (§ the module doc's closed bit): the realized action is the only
+    // thing that can have resolved a subgraph this playout, and the walk takes
+    // the news as far up as it goes.
+    if config.closed_bit {
+        debug_assert!(
+            realized.is_some(),
+            "a playout realized no action while the root was open; a closure \
+             was not propagated to every parent"
+        );
+        if let Some(and_idx) = realized {
+            settle_closure(snap, pool, results, state, and_idx);
+        }
+    }
 }
 
 /// UCT score (§3.3.4):
@@ -1586,6 +2010,13 @@ fn playout<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
 ///
 /// All actions are normalized against the parent OR node's own (min_size, max_size)
 /// (§2.5.1 property A); per-action bases can invert the size preference.
+///
+/// **Closed skip (`McgsConfig::closed_bit`).** An action whose AND node is
+/// closed is scored by nobody: its subgraph is fully resolved, so a visit
+/// there realizes nothing and changes no value. Its value still enters the
+/// node's Q through `recompute_or_value` — the skip removes the arm from the
+/// argmax, not from the estimate. The caller only reaches this function at an
+/// open node, which by definition still has an open action.
 fn select_uct<A: AuIds, O: DenseId>(
     state: &McgsState<A, O>,
     or_idx: A::OrStats,
@@ -1596,10 +2027,17 @@ fn select_uct<A: AuIds, O: DenseId>(
     let sqrt_total = (total as f64).sqrt();
 
     let mut best_score = f64::NEG_INFINITY;
-    let mut best_action = 0;
+    let mut best_action: Option<usize> = None;
+    // The scored-set fallback, unchanged from "action 0" when nothing is
+    // skipped: the first action that was actually scored.
+    let mut first_open: Option<usize> = None;
 
     for (a, edge) in stats.edge_and.iter().enumerate() {
         let and_idx = edge.expect("select_uct requires a fully expanded node");
+        if config.closed_bit && state.and_closed(and_idx) {
+            continue;
+        }
+        first_open.get_or_insert(a);
         let and = state.and_stat(and_idx);
         let r = super::reward::reward(and.value, stats.min_size, stats.max_size, config.x_target);
         let exploration =
@@ -1607,10 +2045,14 @@ fn select_uct<A: AuIds, O: DenseId>(
         let score = r + exploration;
         if score > best_score {
             best_score = score;
-            best_action = a;
+            best_action = Some(a);
         }
     }
-    best_action
+    debug_assert!(
+        first_open.is_some() || !config.closed_bit,
+        "every action of an open node is closed; a closure was not propagated"
+    );
+    best_action.or(first_open).unwrap_or(0)
 }
 
 /// AND-node effort allocation (§3.3.5): pick the child position that receives
@@ -1642,6 +2084,13 @@ fn select_uct<A: AuIds, O: DenseId>(
 /// When every child is terminal the choice is inert (descent stops at any
 /// terminal child and backpropagation is path-based); the smallest index is
 /// returned.
+///
+/// **Closed skip (`McgsConfig::closed_bit`).** With the flag on, every
+/// selector — round robin included — passes over children whose OR node is
+/// closed, by the same argument one step further: a closed child's subgraph is
+/// fully realized, so no visit below it can change a value, a stored result,
+/// or the certificate. Terminal children are closed at birth, so the flag-on
+/// skip is a superset of the terminal-skip gate.
 fn select_and_child<A: AuIds, O: DenseId>(
     state: &McgsState<A, O>,
     and_idx: A::AndStats,
@@ -1652,7 +2101,17 @@ fn select_and_child<A: AuIds, O: DenseId>(
             let and = state.and_stat(and_idx);
             let arity = and.child_or_stats.len();
             debug_assert!(arity > 0, "AND selection requires at least one child");
-            (and.round_robin as usize) % arity
+            let start = (and.round_robin as usize) % arity;
+            if !config.closed_bit {
+                return start;
+            }
+            // Closed skip, as on the value-guided selectors: rotate on to the
+            // first open child. The rotation order is unchanged; only resolved
+            // children are passed over.
+            (0..arity)
+                .map(|step| (start + step) % arity)
+                .find(|&i| !state.or_closed(and.child_or_stats[i]))
+                .unwrap_or(start)
         }
         AndSelector::UctAnd => select_and_child_value_guided(state, and_idx, config, 1.0, true),
         AndSelector::LctAnd => select_and_child_value_guided(state, and_idx, config, -1.0, true),
@@ -1688,6 +2147,13 @@ fn select_and_child_value_guided<A: AuIds, O: DenseId>(
         if skip_terminal && child.terminal {
             continue;
         }
+        // Closed skip (`McgsConfig::closed_bit`): the same argument as the
+        // terminal skip, on the larger set. A closed child's subgraph is
+        // resolved, so refining it changes nothing; terminal children are
+        // closed too, so this subsumes the gate above when the flag is on.
+        if config.closed_bit && state.or_closed(child_idx) {
+            continue;
+        }
         let r = super::reward::reward(child.value, child.min_size, child.max_size, config.x_target);
         let exploration =
             config.exploration_constant * sqrt_total / (1.0 + and.child_visits[i] as f64);
@@ -1698,6 +2164,10 @@ fn select_and_child_value_guided<A: AuIds, O: DenseId>(
         }
     }
     // Every child terminal: the choice is inert (see the gate documentation).
+    debug_assert!(
+        best_child.is_some() || !config.closed_bit,
+        "every child of an open AND node is closed; a closure was not propagated"
+    );
     best_child.unwrap_or(0)
 }
 
@@ -1894,11 +2364,11 @@ fn compose_and_offer<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>
 
 /// Realize one edge: allocate the AND statistics struct and all child OR nodes.
 /// `action_idx` indexes first over non-AC cached actions, then over AC/ACI
-/// representation pairs (transport-AND-nodes). `dominance` must equal the flag
-/// `ensure_or_stats` sized this node's edge arrays with: the surviving-action
-/// subsequence is recomputed here from the same deterministic predicates
-/// (cycle blocking, then dominance against the static generalize value), so
-/// indices agree and edges stay hole-free.
+/// representation pairs (transport-AND-nodes). `config.dominance_pruning` must
+/// equal the flag `ensure_or_stats` sized this node's edge arrays with: the
+/// surviving-action subsequence is recomputed here from the same deterministic
+/// predicates (cycle blocking, then dominance against the static generalize
+/// value), so indices agree and edges stay hole-free.
 #[allow(clippy::too_many_arguments)]
 fn expand_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
@@ -1909,11 +2379,12 @@ fn expand_action<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     state: &mut McgsState<Cfg::Au, Cfg::O>,
     or_idx: <Cfg::Au as AuIds>::OrStats,
     action_idx: usize,
-    dominance: bool,
+    config: &McgsConfig,
 ) -> <Cfg::Au as AuIds>::AndStats
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let dominance = config.dominance_pruning;
     let or_id = state.or_id(or_idx);
     let l = *space.or_arena.left.get(or_id.to_index());
     let r = *space.or_arena.right.get(or_id.to_index());
@@ -1985,19 +2456,22 @@ where
             child_counts.push(pair.count.to_u64());
         }
         let arity = child_or_stats.len();
-        state.push_and_stat(AndStatsData {
-            parent: or_idx,
-            op: action.op,
-            commutative: snap.op_is_commutative(action.op),
-            value: f64::INFINITY,
-            child_or_stats,
-            child_counts,
-            child_visits: vec![0; arity],
-            round_robin: 0,
-            transport_rows: Vec::new(),
-            transport_cols: Vec::new(),
-            transport_cell_map: Vec::new(),
-        })
+        state.push_and_stat(
+            AndStatsData {
+                parent: or_idx,
+                op: action.op,
+                commutative: snap.op_is_commutative(action.op),
+                value: f64::INFINITY,
+                child_or_stats,
+                child_counts,
+                child_visits: vec![0; arity],
+                round_robin: 0,
+                transport_rows: Vec::new(),
+                transport_cols: Vec::new(),
+                transport_cell_map: Vec::new(),
+            },
+            config.closed_bit,
+        )
     } else {
         // AC/ACI transport-AND-node: one per feasible transport action.
         // Descriptors come from the per-OR cache built at stats creation.
@@ -2051,19 +2525,22 @@ where
         }
 
         let arity = filtered_children.len();
-        state.push_and_stat(AndStatsData {
-            parent: or_idx,
-            op,
-            commutative: true,
-            value: f64::INFINITY,
-            child_or_stats: filtered_children,
-            child_counts: vec![0; arity],
-            child_visits: vec![0; arity],
-            round_robin: 0,
-            transport_rows: row_supply,
-            transport_cols: col_demand,
-            transport_cell_map: cell_map,
-        })
+        state.push_and_stat(
+            AndStatsData {
+                parent: or_idx,
+                op,
+                commutative: true,
+                value: f64::INFINITY,
+                child_or_stats: filtered_children,
+                child_counts: vec![0; arity],
+                child_visits: vec![0; arity],
+                round_robin: 0,
+                transport_rows: row_supply,
+                transport_cols: col_demand,
+                transport_cell_map: cell_map,
+            },
+            config.closed_bit,
+        )
     }
 }
 
@@ -2386,7 +2863,7 @@ mod tests {
         }
     }
 
-    fn tiny_or_lengths(arena: &OrStatsArena<TinyAu, TinyId>) -> [usize; 10] {
+    fn tiny_or_lengths(arena: &OrStatsArena<TinyAu, TinyId>) -> [usize; 15] {
         [
             arena.or_ids.len().as_usize(),
             arena.min_size.len().as_usize(),
@@ -2398,10 +2875,15 @@ mod tests {
             arena.edge_visits.len().as_usize(),
             arena.edge_and.len().as_usize(),
             arena.transport_descs.len().as_usize(),
+            arena.closed.len().as_usize(),
+            arena.open_edges.len().as_usize(),
+            arena.parent_head.len().as_usize(),
+            arena.parent_and.len().as_usize(),
+            arena.parent_next.len().as_usize(),
         ]
     }
 
-    fn tiny_and_lengths(arena: &AndStatsArena<TinyAu, TinyId>) -> [usize; 12] {
+    fn tiny_and_lengths(arena: &AndStatsArena<TinyAu, TinyId>) -> [usize; 14] {
         [
             arena.parent.len().as_usize(),
             arena.op.len().as_usize(),
@@ -2415,6 +2897,8 @@ mod tests {
             arena.transport_rows.len().as_usize(),
             arena.transport_cols.len().as_usize(),
             arena.transport_cell_map.len().as_usize(),
+            arena.closed.len().as_usize(),
+            arena.open_children.len().as_usize(),
         ]
     }
 
@@ -2478,7 +2962,9 @@ mod tests {
         state: &mut McgsState,
         data: AndStatsData<OrStatsId, crate::id::OpId>,
     ) -> AndStatsId {
-        state.push_and_stat(data)
+        // Synthetic fixtures track the closed bookkeeping: the counters and
+        // reverse edges are pushed, so a fixture can drive the closure walk.
+        state.push_and_stat(data, true)
     }
 
     /// On a small instance, MCGS run to exhaustion equals the exact solver's size.
@@ -2869,6 +3355,13 @@ mod tests {
         state.set_and_child_count(cs(0), 7);
         state.bump_and_child_visit(cs(0));
         state.bump_and_round_robin(asid(0));
+        // The closed bookkeeping is overlay state like the rest: bits, open
+        // counters, and reverse-edge entries all have to rewind.
+        state.and_stats.close_child(asid(0));
+        state.and_stats.set_closed(asid(0));
+        state.or_stats.close_edge(os(0));
+        state.or_stats.set_closed(os(0));
+        state.or_stats.push_parent(os(0), asid(0));
 
         state.restore(token);
         let or = state.or_stat(os(0));
@@ -2892,6 +3385,14 @@ mod tests {
         assert!(and.transport_rows.is_empty());
         assert!(and.transport_cols.is_empty());
         assert!(and.transport_cell_map.is_empty());
+        assert!(!state.or_closed(os(0)));
+        assert!(!state.and_closed(asid(0)));
+        assert_eq!(state.or_stats.open_edges(os(0)), 1);
+        assert_eq!(state.and_stats.open_children(asid(0)), 1);
+        // The one entry `push_and` registered survives; the one pushed after
+        // the mark does not.
+        assert_eq!(state.or_stats.parent_and.len().as_usize(), 1);
+        assert!(state.or_stats.parent_head(os(0)).is_some());
     }
 
     #[test]
@@ -3498,6 +3999,298 @@ mod tests {
                 "{selector:?}: this tiny graph must certify within 500 playouts"
             );
         }
+    }
+
+    /// The closed bit under every AND selector, including round robin, whose
+    /// rotation gets its own skip. The certificate must still be the exact
+    /// optimum, and it must arrive no later than the flag-off run's — here the
+    /// graph closes in a handful of playouts either way, so the budget is set
+    /// to the flag-off knee rather than to 500. In a debug build this also
+    /// exercises the oracle assert in `run_mcgs_in`: the root's bit has to
+    /// agree with `is_structurally_complete` on every one of these runs.
+    #[test]
+    fn closed_bit_certifies_under_every_and_selector() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let f_op = eg.register_op2("f", int, int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let fab = eg.add(f_op, &[a, b]);
+        let fac = eg.add(f_op, &[a, c]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(fab).unwrap();
+        let rc = snap.class_of(fac).unwrap();
+        let (exact_term, exact_pool) =
+            eager_with_memo(&snap, lc, rc, CycleMode::AncestorOnly).unwrap();
+        let exact_size = exact_pool.size(exact_term);
+
+        for selector in [
+            AndSelector::RoundRobin,
+            AndSelector::UctAnd,
+            AndSelector::LctAnd,
+        ] {
+            // The smallest ladder budget that certifies without the flag.
+            let knee = (0..)
+                .map(|k| 1u64 << k)
+                .take(12)
+                .find(|&playouts| {
+                    let config = McgsConfig {
+                        playouts,
+                        and_selector: selector,
+                        ..Default::default()
+                    };
+                    let (_, _, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+                    completion == super::super::session::Completion::Exact
+                })
+                .expect("the flag-off run certifies this graph inside the ladder");
+
+            let config = McgsConfig {
+                playouts: knee,
+                and_selector: selector,
+                closed_bit: true,
+                ..Default::default()
+            };
+            let (term, pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+            assert_eq!(
+                pool.size(term),
+                exact_size,
+                "{selector:?}: the closed bit must not cost quality"
+            );
+            assert_eq!(
+                completion,
+                super::super::session::Completion::Exact,
+                "{selector:?}: the closed bit must not certify later than the flag-off run \
+                 (knee {knee})"
+            );
+        }
+    }
+
+    /// Fixture for the closed bit's write-through tests: `f(a,b)` vs `f(a,c)`,
+    /// which certifies in a few hundred playouts.
+    fn write_through_fixture() -> (
+        EGraph31<NiraLitVal, false, false>,
+        crate::id::ENodeId,
+        crate::id::ENodeId,
+    ) {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let c_op = eg.register_op0("c", int);
+        let f_op = eg.register_op2("f", int, int, int);
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let c = eg.add(c_op, &[]);
+        let fab = eg.add(f_op, &[a, b]);
+        let fac = eg.add(f_op, &[a, c]);
+        eg.rebuild();
+        (eg, fab, fac)
+    }
+
+    /// The closure proof outlives the statistics that produced it. A run with
+    /// the flag on marks every closed node exact in the results table; a
+    /// second run on the same session layers with a *fresh* statistics overlay
+    /// finds the root terminal at creation and certifies without spending a
+    /// playout. Without the flag there is no proof to inherit, and the same
+    /// zero-budget run cannot certify.
+    #[test]
+    fn closed_bit_write_through_certifies_the_next_run() {
+        let (eg, fab, fac) = write_through_fixture();
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(fab).unwrap();
+        let rc = snap.class_of(fac).unwrap();
+
+        for closed_bit in [true, false] {
+            let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+            let mut pool = TermPool::new();
+            let mut cache = ActionCache::without_ac_actions(usize::MAX);
+            let mut results = BestResults::new();
+            let mut first = McgsState::new();
+            let config = McgsConfig {
+                playouts: 500,
+                closed_bit,
+                ..Default::default()
+            };
+            let (term, completion) = run_mcgs_in(
+                &snap,
+                &mut space,
+                &mut pool,
+                &mut cache,
+                &mut results,
+                &mut first,
+                lc,
+                rc,
+                &config,
+            )
+            .unwrap();
+            assert_eq!(completion, super::super::session::Completion::Exact);
+
+            let mut second = McgsState::new();
+            let (reused, completion) = run_mcgs_in(
+                &snap,
+                &mut space,
+                &mut pool,
+                &mut cache,
+                &mut results,
+                &mut second,
+                lc,
+                rc,
+                &McgsConfig {
+                    playouts: 0,
+                    ..config.clone()
+                },
+            )
+            .unwrap();
+            if closed_bit {
+                assert_eq!(
+                    completion,
+                    super::super::session::Completion::Exact,
+                    "the marked-exact root must certify at zero playouts"
+                );
+                assert_eq!(pool.quality(reused), pool.quality(term));
+            } else {
+                assert_eq!(
+                    completion,
+                    super::super::session::Completion::BudgetExhausted { playouts_used: 0 },
+                    "without the write-through there is no proof to inherit"
+                );
+            }
+        }
+    }
+
+    /// The proof is overlay state like everything else: restoring the session
+    /// layers past the run that produced it takes the exact flag with it.
+    #[test]
+    fn closed_bit_write_through_rolls_back() {
+        let (eg, fab, fac) = write_through_fixture();
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(fab).unwrap();
+        let rc = snap.class_of(fac).unwrap();
+
+        let mut space = SearchSpace::new(CycleMode::AncestorOnly);
+        let mut pool = TermPool::new();
+        let mut cache = ActionCache::without_ac_actions(usize::MAX);
+        let mut results = BestResults::new();
+        let mut state = McgsState::new();
+
+        let space_token = space.mark();
+        let pool_token = pool.mark();
+        let results_token = results.mark();
+        let cache_token = cache.mark();
+        let state_token = state.mark();
+
+        let config = McgsConfig {
+            playouts: 500,
+            closed_bit: true,
+            ..Default::default()
+        };
+        let (_, completion) = run_mcgs_in(
+            &snap,
+            &mut space,
+            &mut pool,
+            &mut cache,
+            &mut results,
+            &mut state,
+            lc,
+            rc,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(completion, super::super::session::Completion::Exact);
+
+        let empty = space.contexts.empty();
+        let (root_or, _) = space.get_or_insert_or_node(
+            lc,
+            rc,
+            empty,
+            empty,
+            snap.best_size(lc),
+            snap.best_size(rc),
+        );
+        assert!(
+            results.is_exact(root_or),
+            "the closed root must be marked exact"
+        );
+
+        state.restore(state_token);
+        cache.restore(cache_token);
+        results.restore(results_token);
+        pool.restore(pool_token);
+        space.restore(space_token);
+        assert!(
+            !results.is_exact(root_or),
+            "the restore must take the closure proof with it"
+        );
+
+        // And the search is genuinely back to square one: a zero-budget run
+        // certifies nothing.
+        let mut fresh = McgsState::new();
+        let (_, completion) = run_mcgs_in(
+            &snap,
+            &mut space,
+            &mut pool,
+            &mut cache,
+            &mut results,
+            &mut fresh,
+            lc,
+            rc,
+            &McgsConfig {
+                playouts: 0,
+                ..config.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            completion,
+            super::super::session::Completion::BudgetExhausted { playouts_used: 0 }
+        );
+    }
+
+    /// Shared subproblem: `f(a,a)` vs `f(b,b)` reaches AU(a,b) through two
+    /// child positions of the same action, so its closure has to be accounted
+    /// once per position. The root closes and the run stops early.
+    #[test]
+    fn closed_bit_certifies_a_shared_child() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let sort = eg.intern_sort("S");
+        let a_op = eg.register_op0("a", sort);
+        let b_op = eg.register_op0("b", sort);
+        let f_op = eg.register_op2("f", sort, sort, sort);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let faa = eg.add(f_op, &[a, a]);
+        let fbb = eg.add(f_op, &[b, b]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let lc = snap.class_of(faa).unwrap();
+        let rc = snap.class_of(fbb).unwrap();
+
+        let (plain, _, plain_completion) = {
+            let config = McgsConfig {
+                playouts: 200,
+                ..Default::default()
+            };
+            let (term, pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+            (pool.size(term), pool, completion)
+        };
+        let config = McgsConfig {
+            playouts: 200,
+            closed_bit: true,
+            ..Default::default()
+        };
+        let (term, pool, completion) = run_mcgs(&snap, lc, rc, &config).unwrap();
+        assert_eq!(plain_completion, super::super::session::Completion::Exact);
+        assert_eq!(completion, super::super::session::Completion::Exact);
+        assert_eq!(pool.size(term), plain);
     }
 
     #[test]

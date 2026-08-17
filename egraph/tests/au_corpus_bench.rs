@@ -68,7 +68,9 @@
 //! `$AU_FAMILIES` restricts the run to a comma-separated family list, which is
 //! how the deep families' certification knees were measured past the default
 //! ladder; the CSV name follows `$AU_CSV_NAME` (default `corpus.csv`) so such
-//! a run does not overwrite the main one.
+//! a run does not overwrite the main one. `$AU_CLOSED_BIT` runs MCGS with the
+//! closed bit on (plan item A8): a different solver configuration, so it
+//! belongs in its own CSV, never mixed into a flag-off one.
 
 use std::fs;
 use std::io::Write as _;
@@ -357,7 +359,15 @@ struct McgsMeasurement {
     ms: f64,
 }
 
+/// Whether this run measures MCGS with the closed bit on (`$AU_CLOSED_BIT`,
+/// default off). Plan item A8: the flag changes which subgraphs selection may
+/// enter, so a flag-on run is a separate CSV, never mixed into a flag-off one.
+fn closed_bit() -> bool {
+    std::env::var("AU_CLOSED_BIT").is_ok_and(|v| v != "0")
+}
+
 fn run_mcgs(label: &str, build: Builder, playouts: u64) -> Option<McgsMeasurement> {
+    let closed_bit = closed_bit();
     run_guarded(
         format!("au-mcgs-{label}-p{playouts}"),
         MCGS_GUARD,
@@ -367,6 +377,7 @@ fn run_mcgs(label: &str, build: Builder, playouts: u64) -> Option<McgsMeasuremen
             let cfg = AuConfig {
                 algorithm: AuAlgorithm::Uct,
                 playouts,
+                closed_bit,
                 ..Default::default()
             };
             let start = Instant::now();

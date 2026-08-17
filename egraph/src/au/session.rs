@@ -91,6 +91,23 @@ pub struct AuConfig {
     /// against; `au_differential.rs::dominant_pruned_mcgs_is_sound` gates
     /// the flag-on behavior. Ignored by the exact algorithm.
     pub dominance_pruning: bool,
+    /// The MCTS-solver closed bit in the UCT/MCGS solver (plan item A8,
+    /// doc/au-solver-plan.md): every OR node carries a bit that is set once
+    /// its subgraph is fully resolved, maintained incrementally through
+    /// reverse edges, and selection descends only into open subtrees. A closed
+    /// subtree's value and stored result are exact and final, so the skipped
+    /// visits could not have changed any answer; the freed playouts go to
+    /// actions that are still unrealized, which is what makes the
+    /// certification budget track `sum A(v)` on deep search graphs instead of
+    /// growing exponentially in their depth (B1). Certification reads the
+    /// root's bit and the run stops as soon as it is set. Every closed node is
+    /// also marked exact in the session's result table, so a later run on the
+    /// same session inherits the proof (that node is terminal at creation) and
+    /// the proof rolls back with `restore`. Default `false`: the
+    /// unrestricted search is the reference the differential fixture was
+    /// captured against; `au_differential.rs::closed_bit_mcgs_is_sound` gates
+    /// the flag-on behavior. Ignored by the exact algorithm.
+    pub closed_bit: bool,
 }
 
 impl Default for AuConfig {
@@ -106,6 +123,7 @@ impl Default for AuConfig {
             exact_pruning: false,
             context_subsumption: false,
             dominance_pruning: false,
+            closed_bit: false,
         }
     }
 }
@@ -229,6 +247,7 @@ where
                 x_target: config.x_target,
                 and_selector: config.and_selector,
                 dominance_pruning: config.dominance_pruning,
+                closed_bit: config.closed_bit,
             };
             let (term_id, pool, completion) = mcgs::run_mcgs(snap, l, r, &mcgs_config)?;
             let size = pool.size(term_id);

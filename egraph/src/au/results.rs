@@ -75,10 +75,27 @@ impl<A: AuIds> BestResults<A> {
         A::Index::try_from_usize(or_id.to_usize()).expect("OR id exceeds configured index width")
     }
 
+    /// Offer a result for `or_id`, keeping it if it strictly improves the
+    /// stored one under the lexicographic quality order.
+    ///
+    /// A strict improvement on a node already marked exact is a contradiction:
+    /// `mark_exact` claims the stored result is the optimum of that node, so
+    /// nothing can beat it. Both writers of the flag issue it only after
+    /// offering the result it certifies — the exact solver at completion, MCGS
+    /// when a node's subgraph closes — and the debug assertion below is what
+    /// pins that discipline (it is the check that MCGS's closure walk really
+    /// leaves a closed node's stored result final, since `close_completed_dag`
+    /// re-offers every composition afterward).
     pub fn offer(&mut self, or_id: A::Or, term: A::Term, quality: (u32, u32)) -> bool {
         self.ensure_capacity(or_id);
         let idx = Self::index_of(or_id);
         let entry = self.entries.get(idx);
+        debug_assert!(
+            !(entry.exact && quality < entry.quality),
+            "a result better than the certified optimum was offered: {quality:?} beats the \
+             marked-exact {:?}",
+            entry.quality
+        );
         if quality < entry.quality {
             self.entries.set(
                 idx,

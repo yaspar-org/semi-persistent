@@ -10,15 +10,18 @@ budget, on both budget axes (playouts, and wall clock relative to the exact
 solver), and how much budget a completion certificate costs against B1's
 prediction that certification needs about `sum A(v)` playouts.
 
-Two runs, 2026-08-16 and 2026-08-17, release build on Apple Silicon. The main
+Three runs, 2026-08-16 and 2026-08-17, release build on Apple Silicon. The main
 run is 673 instances, 10095 rows, 1854 s wall; the deep-ladder run repeats the
 `dec` and `mixed` families to 2^18 playouts (438 instances, 8322 rows, 1317 s)
 to see whether the budget, rather than the algorithm, was what stopped
-certification. Every spec of both runs was measured: no exact timeout, no MCGS
+certification; the closed-bit run repeats the same two families on the main
+run's ladder with plan item A8's selection rule on (438 instances, 6570 rows,
+612 s). Every spec of all three was measured: no exact timeout, no MCGS
 timeout, no ladder cut on the per-instance budget, no instance past the wall
 budget. Tables (a) to (d) are the main run, whose ladder is 2^0 to 2^14; table
-(e) is the deep-ladder run. The exact solver runs with `exact_pruning` and
-`context_subsumption` on in both.
+(e) is the deep-ladder run; table (f) is the closed-bit run and is the only
+one whose MCGS runs are not the default configuration. The exact solver runs
+with `exact_pruning` and `context_subsumption` on in all three.
 
 ## Regenerating
 
@@ -37,6 +40,17 @@ AU_BENCH_DIR=comparison/au AU_CSV_NAME=corpus-deep.csv AU_FAMILIES=dec,mixed \
   cargo test -p semi-persistent-egraph --release --test au_corpus_bench \
   -- --ignored --nocapture
 python3 comparison/au/analyze.py comparison/au/corpus-deep.csv
+```
+
+The closed-bit run of section (f) is the same harness with the flag on, in its
+own CSV because it is a different solver configuration:
+
+```text
+AU_BENCH_DIR=comparison/au AU_CSV_NAME=corpus-closed.csv AU_FAMILIES=dec,mixed \
+  AU_CLOSED_BIT=1 AU_CORPUS_SECS=1800 \
+  cargo test -p semi-persistent-egraph --release --test au_corpus_bench \
+  -- --ignored --nocapture
+python3 comparison/au/analyze.py comparison/au/corpus-closed.csv
 ```
 
 `AU_CORPUS_SECS` is the wall budget after which no new instance starts; the
@@ -90,7 +104,9 @@ and they are excluded from the knee tables.
 `sum A(v) = 6`, the certificate is available at 16 playouts and the run at
 16384 playouts still takes 10.8 ms against 0.03 ms at 16, growing linearly in
 the budget. Wall-clock costs above the knee are therefore the cost of playouts
-that realize nothing, not of the certificate.
+that realize nothing, not of the certificate. This holds for the flag-off
+tables below, which are every table except (f): the closed bit knows when the
+graph has closed and stops there, and section (f) reports what that is worth.
 
 ## Families
 
@@ -286,7 +302,8 @@ budget: MCGS keeps descending into subtrees that are already closed, so a
 playout spent there realizes nothing. Excluding closed children from selection
 (the MCTS-solver rule) is what would make the certification budget track
 `sum A(v)` on deep graphs, and it is testable against this corpus, since the
-knee column is what it has to move.
+knee column is what it has to move. Section (f) is that test, run on the same
+instances: the knee moves to 1.3x `sum A(v)`.
 
 ## Playouts to gap zero
 
@@ -365,3 +382,77 @@ where its first answer is already optimal; the families where it loses are the
 ones where the first answer is wrong, which is the same split as table (a) and
 the reason the anytime story on this corpus is about the initial rollout
 rather than about the ladder.
+
+## (f) The closed bit, 2026-08-17: the knee moves to 1.3x `sum A(v)`
+
+Plan item A8 excludes fully resolved subgraphs from selection: an OR node
+carries a bit set once every action below it is realized and every descendant
+is closed, and neither `select_uct` nor the AND selectors descend into a closed
+subtree. This run repeats the `dec` and `mixed` families of the main run, same
+instances and same ladder, with `closed_bit` on: 438 instances, 6570 rows,
+612 s wall, `corpus-closed.csv`. The comparison column is the main run's own
+`dec` and `mixed` rows, which is why the ladder stops at 2^14 here; the
+flag-off deep-family knee is past 2^18 by section (e).
+
+| playouts | certified off | certified on | zero gap off | zero gap on | mean gap off | mean gap on |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.000 | 0.000 | 0.000 | 0.000 | 0.1768 | 0.1768 |
+| 4 | 0.000 | 0.000 | 0.068 | 0.100 | 0.1512 | 0.1432 |
+| 16 | 0.025 | 0.180 | 0.192 | 0.416 | 0.1167 | 0.0730 |
+| 64 | 0.080 | 0.578 | 0.297 | 0.826 | 0.0953 | 0.0225 |
+| 256 | 0.116 | 0.694 | 0.475 | 0.973 | 0.0664 | 0.0042 |
+| 1024 | 0.176 | 0.694 | 0.571 | 1.000 | 0.0457 | 0 |
+| 4096 | 0.194 | 0.694 | 0.712 | 1.000 | 0.0266 | 0 |
+| 16384 | 0.215 | 0.715 | 0.767 | 1.000 | 0.0165 | 0 |
+
+No rung regresses on either axis, and the two axes move for the same reason: a
+playout that would have gone into a resolved subgraph goes into an unrealized
+action instead. Certification at 2^14 on these families is 0.215 to 0.715; over
+the whole 673-instance corpus the flag-off number is 0.193, and the families
+this run repeats are the ones that carried the miss.
+
+The knee against `sum A(v)`, the prediction B1 states and the census computes
+without running either solver:
+
+| family | certified off | certified on | median `sum A(v)` | median knee off | median knee on | knee / `sum A(v)` off | on |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `dec` | 83 of 258 | 258 of 258 | 32 | 256 | 32 | 17.07 | 1.33 |
+| `mixed` | 11 of 180 | 55 of 180 | 65 | 512 | 128 | 19.69 | 1.28 |
+
+Both families land inside the band the wide, shallow families already held
+flag-off (`width` 1.00, `ac` 1.78, `wide` 1.99), and the bound direction is
+unchanged: no instance certifies below its `sum A(v)`. The `mixed` instances
+that still do not certify are the ones whose `sum A(v)` exceeds the ladder top
+(1e5 and above); their knee is unmeasured, not missing.
+
+The miss grew with burial depth flag-off, from 7.1 at depth 3 to past
+measurement at depth 12. It no longer does:
+
+| burial depth | n | certified | median `sum A(v)` | median knee | knee / `sum A(v)` |
+| --- | --- | --- | --- | --- | --- |
+| 3 | 33 | 1.000 | 9 | 16 | 1.33 |
+| 5 | 39 | 1.000 | 15 | 16 | 1.28 |
+| 8 | 45 | 1.000 | 24 | 32 | 1.33 |
+| 12 | 45 | 1.000 | 36 | 64 | 1.33 |
+| 16 | 48 | 1.000 | 48 | 64 | 1.33 |
+| 20 | 48 | 1.000 | 60 | 64 | 1.28 |
+
+Finding the optimum collapses with proving it. The budget at which the
+deceptive family first returns an optimal term, median over instances, goes
+from geometric in both knobs to within a factor of 2 of the certification knee:
+depth 20 with 1 decoy 4096 to 32, with 2 decoys 8192 to 32, with 4 decoys
+unmeasured (6% of instances reached it) to 64, and every deceptive and mixed
+instance now reaches gap zero within the ladder against 0.771 and 0.761
+flag-off. The factor of 2000 between finding and proving that section (e)
+reports at depth 12 is a property of the flag-off selection rule, not of the
+instances.
+
+Wall clock splits by whether the instance closes. On the 313 instances that
+close within the ladder, total MCGS time over all rungs falls 2.07x (6819 ms to
+3292 ms), because the run stops when the root closes instead of spending the
+rest of the budget: median time at 2^14 playouts is 7.840 ms flag-off against
+0.552 ms flag-on. On the 125 that never close, the bookkeeping is pure
+overhead and costs 14.3% (39893 ms to 45598 ms): one reverse-edge entry per
+child position at expansion, and the closed-child scans in selection. That is
+the trade the flag makes, and it is why the default stays off for runs whose
+instances are known not to close.
