@@ -52,17 +52,22 @@ checks, all passing.
 `gmul` is `:assoc`, not `:assoc-comm` — the source has an assoc birewrite and no
 commutativity rule.
 
-The `:assoc` flattening defect described in `calc.deviations.md` applies here
-unchanged: nested applications are not flattened and singletons are not collapsed,
-so the `gmul` terms are written flat and the singleton law `(rewrite (gmul x) x)`
-is stated. The identity and cyclic rules are restated n-ary with prefix and suffix
-rest variables, same table as `calc`.
+The identity and cyclic rules are restated n-ary with prefix and suffix rest
+variables, same table as `calc`: a binary pattern is an exact pattern against a
+flat sequence node and would stop firing at length 3 or more.
 
-The generator's right-hand side `(gmul gB x)` builds a nested node when `x` is
-itself a `gmul`, which a correct `:assoc` would flatten. It does not change the
-generator's behaviour — either way it adds one node per iteration — but it does
-mean the native column's `gmul` count is over sequences of length 2, not over the
-flattened chain.
+**Withdrawn 2026-08-15.** This file carried the `:assoc` flattening workaround
+described in `calc.deviations.md` item 1 — the `gmul` terms written flat and the
+singleton law `(rewrite (gmul x) x)` stated explicitly. The engine defect is fixed,
+both are gone, and the terms are back to the source's nested form
+(`(let gA4 (gmul gA2 gA2))` and so on). Kept here because the pilot's first
+published numbers for this benchmark were measured under it.
+
+The generator's right-hand side `(gmul gB x)` now flattens when `x` is itself a
+`gmul`, so the native column's `gmul` count is over the flattened chain rather than
+over sequences of length 2. The generator's behaviour is unchanged either way — one
+node per iteration — but the node totals below moved: naive 25 → 22, semi-naive
+19 → 17, with the class count and iteration count unchanged at 9 and 2.
 
 ## Cross-check
 
@@ -74,8 +79,8 @@ not a timing result):
 | egglog | 7 | — | 3 |
 | ours, rules, naive | 52 | 15 | 3 |
 | ours, rules, semi-naive | 75 | 22 | 4 |
-| ours, native, naive | 25 | 9 | 2 |
-| ours, native, semi-naive | 19 | 9 | 2 |
+| ours, native, naive | 22 | 9 | 2 |
+| ours, native, semi-naive | 17 | 9 | 2 |
 
 **These node counts are not a result, and the spread between them is expected.**
 The program does not saturate: it runs a generator that never stops and halts on a

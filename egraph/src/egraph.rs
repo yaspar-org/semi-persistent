@@ -656,6 +656,15 @@ where
             self.flatten_ac_children(op);
         }
 
+        // The A-only (`Seq`) twin of the same law. `ac-algebraic-properties.md` gives every
+        // associative operator the flattened-sequence normal form (the `:assoc-left` /
+        // `-right` / `:assoc` row of the tag-derivation table); only the merge step differs
+        // — a multiset union for AC, an order-preserving splice here, since associativity
+        // permits re-association but not reordering.
+        if matches!(self.ops.info(op).kind, OpKind::A { .. }) {
+            self.flatten_seq_children(op);
+        }
+
         // Canonization must *establish* the op's algebraic normal form at build time (not defer
         // it to completion): coalesce/dedup, drop the identity's unit class, apply the count clamp
         // (nilpotent mod-n), and resolve a degenerate arity. Degeneracy is an equality, so the
@@ -778,6 +787,24 @@ where
                     },
                     1 => return self.classes.find(self.g_buf[0]),
                     _ => self.nodes.add_set(op, &self.g_buf, node_flags),
+                }
+            }
+            OpKind::A { .. } => {
+                // Degenerate arity ⇒ an existing class, the A-only twin of the MSet/Set
+                // degeneracy above: a one-element sequence IS its element (`seq(x) = x`),
+                // so return that child's class instead of minting a node for it. There is
+                // no empty case to resolve — an A-only op cannot declare `:identity` (the
+                // property resolver rejects `:identity` without `:comm`, `sortcheck.rs`),
+                // so the empty sequence names nothing in the algebra. Sortcheck already
+                // rejects a zero-argument A application; reaching here is an API-contract
+                // violation, and panics in ALL builds like the MSet/Set twins.
+                match self.g_buf.len() {
+                    0 => panic!(
+                        "zero-child A term — an A-only operator has no identity, so the \
+                         empty sequence has no algebraic meaning for a semigroup op"
+                    ),
+                    1 => return self.classes.find(self.g_buf[0]),
+                    _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
                 }
             }
             _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
@@ -2680,6 +2707,96 @@ where
         debug_assert!(
             out.len() <= cap,
             "flatten_ac_children exceeded cap (degenerate cyclic AC class?)"
+        );
+
+        self.g_buf = out;
+        self.flatten_buf = work;
+    }
+
+    /// The canonical same-`op` sequence node of `g`'s class, or `None` if the class is not a
+    /// **pure `op`-sequence** — i.e. if any member is something other than an `op` `Seq` node.
+    ///
+    /// This is the A-only counterpart of the AC `summand_form` predicate
+    /// (`ac-congruence-completeness.md` §6c) and it is chosen for the same reason: the answer
+    /// must be a function of the class's *membership*, not of whichever node the union-find
+    /// picked as representative (a representative-keyed test flattens or not depending on
+    /// merge order, so it is not canonical — §6c's representative trap). Two consequences,
+    /// both deliberate:
+    ///
+    /// - **Purity, not AC's `atomic`.** `atomic` cannot serve here: `register_if_fresh` sets
+    ///   it on every class without a completion column, which includes every `Seq` class, so
+    ///   for A-only ops it is constantly true. Purity plays the same role — a class holding
+    ///   only `op`-sequences has no standalone atom form, so spelling it out is forced — and
+    ///   it is what keeps a class that is *also* an atom from being spliced. That case is not
+    ///   hypothetical: once a rule proves `gmul(b, inv(b)) = I`, `I`'s class holds a `Seq`
+    ///   node, and splicing it into every later sequence would rewrite uphill and grow terms
+    ///   without bound.
+    /// - **The `op`-least member.** A class may hold several distinct `op`-sequences that were
+    ///   merged; picking the least node id makes the choice a function of the class, and node
+    ///   ids are assigned at creation and never renumbered, so this is merge-order independent.
+    ///   Every spelling of the child therefore splices to the same sequence and the parents
+    ///   land in one class.
+    ///
+    /// Cost is one class-ring walk, with an early exit on the first non-`op` member — so an
+    /// ordinary atom child (a leaf, a constructor) costs its class's first member, and the
+    /// full walk is paid only by classes that really are pure sequences.
+    fn pure_seq_node(&self, g: Cfg::G, op: Cfg::O) -> Option<Cfg::G> {
+        let cls = self.classes.find_const(g);
+        let mut best: Option<Cfg::G> = None;
+        for n in self.classes.iter_class(cls) {
+            if self.node_op(n) != op || !matches!(self.node_ref(n), NodeRef::Seq(_)) {
+                return None;
+            }
+            if best.is_none_or(|b| n.to_usize() < b.to_usize()) {
+                best = Some(n);
+            }
+        }
+        best
+    }
+
+    /// Flatten nested same-op children of an A-only (`Seq`) op in `self.g_buf`, to a fixpoint,
+    /// **preserving order**: associativity licenses re-association, not reordering, so a
+    /// spliced child's elements take the child's position in the parent's sequence.
+    ///
+    /// A child is spliced iff [`pure_seq_node`](Self::pure_seq_node) names an `op`-sequence
+    /// for its class; otherwise it is kept as one element. Splicing recurses, because a
+    /// spliced sequence's own elements may since have been merged into pure `op`-sequence
+    /// classes.
+    ///
+    /// `g_buf` already holds `find`'d ids. Bounded by the same cap `flatten_ac_children` uses,
+    /// and for the same reason: each splice replaces one element by a strictly shorter
+    /// sequence, so a well-formed graph drains far below the bound and the cap only stops a
+    /// degenerate cyclic class (`X = {seq(X, a)}`) from looping.
+    fn flatten_seq_children(&mut self, op: Cfg::O) {
+        // Move the buffers out to satisfy the borrow checker while reading `self`.
+        let mut work = std::mem::take(&mut self.flatten_buf);
+        let mut out = std::mem::take(&mut self.g_buf);
+        // Seed the worklist reversed, so popping yields the children in sequence order — for
+        // A this is load-bearing, not cosmetic as in the AC twin.
+        work.clear();
+        work.extend(out.iter().rev().copied());
+        out.clear();
+        let cap = work.len() + 1 + 64 * self.node_count();
+        while let Some(g) = work.pop() {
+            let mut spliced = false;
+            if out.len() <= cap
+                && let Some(inner) = self.pure_seq_node(g, op)
+                && let NodeRef::Seq(l) = self.node_ref(inner)
+            {
+                let (s, e) = self.nodes.seq.get(l).span();
+                // Reversed again, so the elements pop back in their stored order.
+                for i in (s..e).rev() {
+                    work.push(self.nodes.seq.pool_get(i));
+                }
+                spliced = true;
+            }
+            if !spliced {
+                out.push(g);
+            }
+        }
+        debug_assert!(
+            out.len() <= cap,
+            "flatten_seq_children exceeded cap (degenerate cyclic A class?)"
         );
 
         self.g_buf = out;

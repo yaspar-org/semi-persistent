@@ -358,6 +358,14 @@ egg_test!(ac_flatten_build, "ac_flatten_build.egg");
 // Set (ACI) ops flatten at build too — the MSet-only gate was a bug (2026-07-10).
 egg_test!(set_flatten_build, "set_flatten_build.egg");
 
+// ── A-only (Seq) build-side normal form ──
+// Associative-but-not-commutative ops flatten to a sequence (order preserved) and
+// collapse a one-element sequence to its element, per
+// `ac-algebraic-properties.md`'s A row and `04-canonization.md`. Both were missing
+// until 2026-08-15; the AC/ACI twins above were correct.
+egg_test!(a_flatten_build, "a_flatten_build.egg");
+egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
+
 // ── AC congruence completeness (superposition + inter-reduction) ──
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");
 egg_test!(ac_complete_superposition, "ac_complete_superposition.egg");

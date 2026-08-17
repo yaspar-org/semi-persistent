@@ -14,18 +14,8 @@
 (constructor inv (G) G)
 
 ;; The assoc birewrite of the rules encoding is deleted here: the declaration above
-;; gives gmul sequence semantics.
-;;
-;; DEVIATION, load-bearing: our engine does not flatten a nested application of an
-;; `:assoc` operator — `(gmul (gmul a b) c)` and `(gmul a b c)` stay distinct nodes,
-;; against the sequence normal form ac-algebraic-properties.md specifies. (`:assoc-comm`
-;; does flatten; only A-only is affected.) So every gmul term below is written in the
-;; flat n-ary form the engine would have produced itself, and the rules are stated
-;; n-ary. Reproduction and the equivalence argument are in calc.deviations.md.
-
-;; A singleton sequence is its element. Our engine does not collapse a one-element
-;; :assoc node either, so the law is stated; without it block 4's check fails.
-(rewrite (gmul x) x)
+;; gives gmul sequence semantics, so the nested terms below flatten to the sequence
+;; normal form on the way in and a singleton sequence is its element.
 
 ;; idl and idr collapse into one n-ary rule: delete an identity element wherever it
 ;; sits in the sequence. Strictly generalizes the two binary rules.
@@ -38,23 +28,25 @@
 (rewrite (gmul ..p gA gA gA gA ..s) (gmul ..p gI ..s))
 
 (let gA2 (gmul gA gA))
-(let gA4 (gmul gA gA gA gA))
-(let gA8 (gmul gA gA gA gA gA gA gA gA))
+(let gA4 (gmul gA2 gA2))
+(let gA8 (gmul gA4 gA4))
 
 ;; --- block 1 ---
-;; Flat: (gmul gA4 gA4) and (gmul (gmul gA2 gA2) (gmul gA2 gA2)) are both the
-;; eight-element sequence, so the goal holds by canonization and the run does nothing.
+;; (gmul gA4 gA4) and (gmul (gmul gA2 gA2) (gmul gA2 gA2)) are both the eight-element
+;; sequence, so the goal holds by canonization and the run does nothing.
 (push)
-(gmul gA gA gA gA gA gA gA gA)
-(run 10000 :until (= (gmul gA gA gA gA gA gA gA gA) (gmul gA gA gA gA gA gA gA gA)))
-(check (= (gmul gA gA gA gA gA gA gA gA) (gmul gA gA gA gA gA gA gA gA)))
+(gmul gA4 gA4)
+(run 10000 :until (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+(check (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
 (pop)
 
 ;; --- block 2 ---
 (push)
-(gmul gA gA gA gA gA gA gA gA)
-(run 10000 :until (= (gmul gA gA gA gA gA gA gA gA) (gmul gA gA gA gA gA gA gA gA)))
-(check (= (gmul gA gA gA gA gA gA gA gA) (gmul gA gA gA gA gA gA gA gA)))
+(gmul (gmul gA2 gA2) (gmul gA2 gA2))
+(run 10000 :until (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+                     (gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
+(check (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+          (gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
 (pop)
 
 
@@ -65,9 +57,9 @@
 
 ;; --- block 3 ---
 (push)
-(gmul gb (inv ga) ga (inv gb))
-(run 100000 :until (= (gmul gb (inv ga) ga (inv gb)) (gmul gb (inv gb))))
-(check (= (gmul gb (inv ga) ga (inv gb)) (gmul gb (inv gb))))
+(gmul (gmul gb (gmul (inv ga) ga)) (inv gb))
+(run 100000 :until (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+(check (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
 (pop)
 
 ;; --- block 4 ---

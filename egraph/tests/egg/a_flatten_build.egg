@@ -1,0 +1,39 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Build-side A-only flattening (design 04-canonization "A-Only Operators"): an
+;; associative-but-not-commutative operator has the flat *sequence* normal form, so a
+;; nested same-op term flattens on the way in. Order is preserved — associativity
+;; licenses re-association, not reordering. Plain canonicalization in `add`; no rules,
+;; no completion.
+
+(sort E)
+(constructor seq (E) E :assoc)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+(constructor d () E)
+
+;; Nested same-op constructions all canonicalize to the same flat node.
+(check (= (seq (seq (a) (b)) (c)) (seq (a) (b) (c))))
+(check (= (seq (a) (seq (b) (c))) (seq (a) (b) (c))))
+(check (= (seq (seq (a) (b)) (seq (c) (d))) (seq (a) (b) (c) (d))))
+
+;; The congruence the defect broke: the two associations of a three-element product
+;; are one class at add time, with no rule and no run.
+(check (= (seq (seq (a) (b)) (c)) (seq (a) (seq (b) (c)))))
+
+;; Deeper nesting flattens to a fixpoint, from either side.
+(check (= (seq (seq (seq (a) (b)) (c)) (d)) (seq (a) (b) (c) (d))))
+(check (= (seq (a) (seq (b) (seq (c) (d)))) (seq (a) (b) (c) (d))))
+
+;; Repetition is preserved: a sequence is not a multiset, so length matters.
+(check (= (seq (seq (a) (a)) (b)) (seq (a) (a) (b))))
+(check (!= (seq (a) (a) (b)) (seq (a) (b))))
+
+;; Order is preserved: flattening must not sort. This is the whole difference from
+;; the AC twin (ac_flatten_build.egg), where the two sides ARE equal.
+(check (!= (seq (a) (b)) (seq (b) (a))))
+(check (!= (seq (seq (a) (b)) (c)) (seq (c) (b) (a))))
+
+;; Negative control: flattening does not conflate distinct flat sequences.
+(check (!= (seq (a) (b)) (seq (a) (c))))
