@@ -1,5 +1,12 @@
 # FINAL comparison tables
 
+> **Superseded where they differ by `final-r2-tables.md`** (2026-08-17, second
+> pass at the post-fix engine): herbie gains a native column, matrix's
+> native-A column gains timings, and the semi-naive rows of eqsolve.rules and
+> math-microbenchmark.rules move because the pre-fix strategy under-derived
+> (methodology section 6, class-growth entry). Everything else reproduces
+> within noise.
+
 **FINAL.** Every number here is measured in one campaign, on one quiet
 machine, at one pinned commit of each engine, on 2026-08-17. This file
 supersedes every earlier timing table in comparison/ for the benchmarks it

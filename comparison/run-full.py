@@ -42,8 +42,9 @@ BENCHMARKS = {
     # MMul and Kron. See its ledger.
     "matrix":              {"types": "machine",        "encodings": ("rules", "native", "native-A")},
     "bdd":                 {"types": "machine",        "encodings": ("rules", "native")},
-    # herbie's and eqsolve's native-AC duals are not written; see their ledgers.
-    "herbie":              {"types": "machine,bignum", "encodings": ("rules",)},
+    # eqsolve's native-AC dual is postponed; see its ledger. herbie's landed
+    # 2026-08-17 (hand-derived; see herbie.deviations.md).
+    "herbie":              {"types": "machine,bignum", "encodings": ("rules", "native")},
     "eqsolve":             {"types": "machine",        "encodings": ("rules",)},
 }
 

@@ -147,3 +147,31 @@ on the shipped workloads). Methodology section 6, same date, has the summary;
 `egraph/tests/egg/ac_coincidence_twin*.egg` pin both directions. The
 reproduction above still fails by design: its two-element rule needs the twin,
 which is the documented migration rule, not an engine defect.
+
+## The three completion modes, measured (2026-08-17)
+
+The engine now has three ways to run an AC workload — plain (canonization and
+congruence only), eager completion (`--derive-ac-eqs`) and lazy completion
+(`--lazy-ac-eqs`, the completion pass inside a mark/complete/restore
+transaction at failing checks, with goal-directed rule/completion alternation;
+design doc section 13). Measured on the experimental native dual with its
+twins (checks numbered 1-10 as in this file):
+
+- **plain**: 69 nodes at `(run 6)`; checks 1, 2 and 8 pass (system 1 solves
+  without completion), the rest fail on congruence completeness.
+- **eager**: every round budget up to 5 terminates (37 / 146 / 608 / 30 978 /
+  203 908 nodes at 0 / 0 / 0 / 15 / 33 s), and checks 1-8 hold at budget 5.
+  Budget 6, which the answer checks 9-10 need, exceeds 600 s: not a loop —
+  the reduced basis converges each round — but compounding growth from the
+  completion-with-rules interaction (lcm superposition widens sums, rules
+  multiply them, folding mints new atoms that refeed the next round).
+- **lazy**: decides check 3 instantly (eager spends 15 s+ before reaching it)
+  and check 7 in 124 s; checks 9-10 sit past the same interaction blowup, and
+  today each check re-derives from scratch (the shared-transaction refinement
+  is recorded in the design doc).
+
+The rules encoding remains the shipped configuration and the right one for
+this benchmark: 129 ms, all ten checks, because binary nodes keep the
+intermediate sums whose plain congruence decides these entailments for free.
+The native column stays postponed; what would unblock it is completion cost,
+not translation.
