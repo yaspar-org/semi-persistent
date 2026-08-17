@@ -82,6 +82,13 @@ fills the value slot the guard reads. Firing the guard as soon as its dependency
 atoms have run puts the check immediately after the last of them, so a false
 guard cuts the search before the remaining atoms are joined.
 
+Guards are lowered in atom order within one pass of the eager fixpoint, so
+of two guards that become free at the same point, the one written first is
+checked first. A guard whose dependencies are a subset of another's is
+therefore never checked after it, which is what lets a partial primitive be
+protected: `(i64::!= x 0)` before `(i64::== (i64::% z x) 0)` rejects the
+match before the remainder is computed, because the first reads `x` alone.
+
 ### Phase B: Cost-Based Selection
 
 Pick the cheapest unprocessed atom:

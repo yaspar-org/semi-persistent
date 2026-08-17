@@ -24,9 +24,9 @@
 ;; The rule that turns 3y = 12 into y = 4. The two patterns share a root e-class, and
 ;; the divisibility test is a primitive predicate over the two bound literals.
 ;; The x /= 0 guard has no counterpart in theirs: their `%` is partial and yields no
-;; value at zero, so their rule silently does not fire; ours is total and traps. Guards
-;; are lowered in the order written, so this one rejects the match before the remainder
-;; is computed. See eqsolve.deviations.md.
+;; value at zero, so their rule silently does not fire; ours is total and traps. It
+;; reads x alone, so it is never checked after the guard that also reads z, and it
+;; rejects the match before the remainder is computed. See eqsolve.deviations.md.
 (rule ((= (Mul (Num x) y) (Num z))
        (i64::!= x 0)
        (i64::== (i64::% z x) 0))

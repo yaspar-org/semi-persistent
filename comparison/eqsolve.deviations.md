@@ -55,9 +55,11 @@ part of the validation rather than something a reader has to eyeball.
 **A `x /= 0` guard with no counterpart in theirs.** Their `%` is partial and yields no
 value at zero, so their rule silently does not fire when `x` is `0`; ours is total and
 traps, and `(Num 0)` does reach a `Mul` position in this program. `(i64::!= x 0)` written
-before the divisibility guard restores their behaviour: guards are lowered in the order
-written, so the zero test rejects the match before the remainder is computed. The rule
-fires on exactly the same matches either way.
+before the divisibility guard restores their behaviour. It is checked first for a reason
+that does not depend on source order: a guard is lowered as soon as the atoms binding its
+values have run, the zero test reads `x` alone and the divisibility test reads `x` and
+`z`, so the first is never checked after the second (chapter 08, Phase A). The rule fires
+on exactly the same matches either way.
 
 **`(- 0 n)` becomes `(i64::neg n)`.** A primitive's arguments on a right-hand side must be
 bound literal-value variables, so a literal `0` cannot appear there. `0 - n` and `-n` agree
