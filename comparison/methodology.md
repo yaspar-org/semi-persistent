@@ -9,12 +9,17 @@ that cannot be justified drops the benchmark; nothing is fudged.
 
 ## 1. Systems under test and pinning
 
-- egglog: commit 7b1adf2 (egraphs-good/egglog), built `--release` with
+- egglog: commit 7b1adf2 (egraphs-good/egglog), built `--release`.
+  Registry dependencies vendored from static.crates.io because cargo
+  could not reach index.crates.io here; procedure in comparison/README.md.
+  **Toolchain deviation withdrawn 2026-08-16:** the earlier build used
   Rust 1.93.0 because the repo's pinned 1.91.0 was not installable on this
-  machine (deviation, recorded; no behavioral difference observed against
-  their own test suite). Registry dependencies vendored from
-  static.crates.io because cargo could not reach index.crates.io here;
-  procedure in comparison/README.md. Binary 8.98 MB.
+  machine. 1.91.0 is installed now, so the binary is built at the pinned
+  toolchain and the deviation is gone. The rebuilt binary is 8.82 MB
+  against 8.98, and reproduces the committed ledgers exactly: eqsat-basic
+  11 nodes / 3 iterations, math-add-ac 1 939 / 7, addac-n7 451 — every
+  figure identical to the published tables, which is the evidence that
+  the toolchain change moved nothing observable.
 - semi-persistent: branch egraph-wf at the commit each measurement names;
   the study landed engine fixes mid-flight (section 6), so every table
   states its binary's commit. Timed binaries are pinned copies under
@@ -55,6 +60,21 @@ quiet, pin binaries).
 - **`check` semantics.** Their `check` is a database query (facts may be
   non-constructive); ours builds the term then asserts `=`/`!=`. This is
   the reason for the goal-binding decision in section 4.
+- **Multi-block programs report neither metric comparably.** On any
+  benchmark whose work happens inside `push`/`run`/`check`/`pop` blocks
+  (`calc`, `until`, `herbie`), the node count printed at the end is the
+  base state after the last `(pop)` and reflects none of the work; and
+  egglog's stats file accumulates one entry per iteration across every
+  `(run …)` in the program while ours reports the last `(run …)` only
+  (herbie: 24 against 1). Wall time is the metric for these three, and
+  their node and iteration columns are reported only to show the runs
+  happened.
+- **Goal-terminated runs have no stable node count.** `until` halts on a
+  `:until` goal while a non-terminating rule generates, so the size at
+  the moment the goal is noticed depends on engine, encoding and
+  saturation strategy: 52 nodes naive against 75 semi-naive in the same
+  encoding, both correct. Stronger form of the truncated-budget caveat
+  below; that benchmark's node column is not an e-graph size comparison.
 
 ## 4. Translation decisions (with measured consequences)
 
@@ -77,13 +97,59 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
 - **eqsat-basic native uses `:comm` only**, because the original has
   commutativity but no associativity rule; declaring AC would compare
   against a strictly stronger system.
-- **Universe-relation boilerplate dropped** (integer_math, when
-  translated): 13 rules that exist as egglog's groundedness workaround,
-  not part of the problem; documented per file.
-- **Interval-lattice functions stripped** (herbie family, when
-  translated): the 2-function hi/lo lattice gates a minority of rules; the
-  delta is documented and those rules are dropped on both sides or the
-  benchmark column is scoped.
+- **Universe-relation boilerplate dropped** (integer_math, translated
+  2026-08-16): 13 rules that exist as egglog's groundedness workaround.
+  Larger than anticipated: two of the rules driven by `MathU` introduce an
+  `Add`-with-zero and a `Mul`-with-one for every node, and are what makes
+  the benchmark grow, so the strip takes term nodes from 537 to 100 at
+  `(run 4)` — 81%. integer_math therefore ships as a **scoped column**,
+  the same reduced program in all three configurations, and its timings
+  are not comparable to anything upstream calls integer_math. Its
+  `evals-to` relation is removed with no consequence (provably a no-op:
+  every union it can perform is a node with itself); its five
+  `is-not-zero`- or disequality-guarded rewrites are removed because we
+  have neither relations nor guards, and keeping them unguarded would be
+  unsound at zero; its three bitwise constant folds are removed for want
+  of i64 bitwise primitives, at a measured cost of zero (0 matches, node
+  count identical either way). Ledger: `integer_math.deviations.md`.
+- **Interval-lattice functions stripped** (herbie, translated
+  2026-08-16): the 2-function hi/lo lattice plus the `non-zero` relation
+  it feeds — 32 forms, of which 12 are gated rewrites — and 5 constant
+  folds over rational `pow`/`log`/`ceil`/`floor`/`round`, which our RBig
+  primitive set lacks. Applied to the egglog program too. 163 of 180
+  rewrites and 12 of 14 test blocks survive; the two dropped blocks were
+  identified by running the stripped program and reading which checks
+  failed, not by inspection, and both engines then agree on all twelve
+  remaining checks. herbie is a **scoped column**. This supersedes the
+  calc-substitution row below and the plan's closing claim that herbie is
+  out of the intersection set: it is in, scoped. Ledger:
+  `herbie.deviations.md`; `gen-herbie.py` regenerates it.
+- **A datalog relation re-encoded as a constructor, on both sides**
+  (until). Its generator rule is the benchmark — it is what `:until` has
+  to cut short — so `(relation allgs (G))` becomes
+  `(constructor allgs (G) U)` into an empty sort in all three
+  configurations rather than being dropped. Consequence: a relation row
+  becomes a node, so `allgs` now counts on both sides. Justified only
+  because the same re-encoding is applied to the egglog program; a
+  one-sided emulation would violate the intersection principle.
+- **A-only native duals write their terms pre-flattened** (calc, until).
+  Our `:assoc` does not flatten nested applications and does not collapse
+  singletons, against the sequence normal form
+  `ac-algebraic-properties.md` specifies (section 6 records the defect;
+  `:assoc-comm` is correct). The native files therefore write every
+  sequence in the flat form a correct implementation would have built,
+  and state the singleton law `(rewrite (gmul x) x)` explicitly. Sound:
+  the flat node is the one the nested text denotes, so when the defect is
+  fixed the nested text reproduces these files unchanged. Same shape as
+  the withdrawn literal-matcher workaround. Consequence: calc's blocks 1
+  and 2 become true by canonization, which is the AC/A value proposition
+  and not a weakened check — the same phenomenon as math-add-ac's native
+  column saturating at 25 nodes in one iteration.
+- **Two type groups compose on the command line** (herbie). It needs
+  `RBig` from `bignum` and `String` from `machine`, and
+  `--types machine,bignum` supplies both. Resolves the open note in
+  README.md's protocol section that the `bignum` group has no `String`
+  sort; no benchmark is untypeable for that reason.
 - **Ruleset default reading.** Our `(run N)` runs the default ruleset
   (untagged rules), egglog-style; the alternative (run everything) would
   let scoped AC rules fire in main runs and destroy the isolated add-ac
@@ -141,6 +207,52 @@ tests/files.rs list) are excluded from timing. Qualitative-only exhibits:
 their multiset AC workarounds (eqsat-basic-multiset, factoring-multisets),
 discussed but never timed head-to-head.
 
+**Three of the ten ranked intersection benchmarks are dropped, 2026-08-16,
+on two missing pattern-language features.** Each has a ledger; none is
+fudged into the set.
+
+- **matrix** (ranked 7, mixed AC and A-only). Its subject is one
+  conditional rewrite whose guard is an equality between two derived
+  terms, `:when ((= (ncols A) (nrows C)) …)`. Expressing it needs a
+  root-binding pattern form — egglog's `(= v (f x))` — which we do not
+  have: our patterns are `(Op children…)` and cannot name a root, so two
+  patterns cannot be required to share one. Both of the benchmark's
+  assertions turn on that rule (the positive check derives through it and
+  through nothing else; the `fail` check exists to show the guard blocks
+  it), so removing it leaves fifteen unconditional rules and no
+  assertions. `matrix.deviations.md`.
+- **bdd** (ranked 9, commutative-without-associative). Six rules — the
+  variable-ordering rules that make it a BDD — are guarded by a primitive
+  comparison `:when ((< n m))`. A primitive operator may not appear in a
+  left-hand side at all on our side. The guard is the rules' correctness
+  condition, not a restriction: unguarded, both orderings fire and the
+  ITE tree grows without bound, and the twelve checks assert exactly the
+  canonicity the ordering buys. `bdd.deviations.md`.
+- **eqsolve** (ranked 10, the set's only extraction-path benchmark).
+  Three of its four rules desugar exactly by substituting the pattern for
+  its root variable; the fourth needs both missing features at once — two
+  patterns sharing a root class and a primitive divisibility guard. It is
+  the rule that turns `3y = 12` into `y = 4`, so it produces the
+  benchmark's output. Measured: removing it fails check 3 of 7 at the
+  original `(run 5)`, and raising the budget to `(run 9)` to recover it
+  does not terminate in 120 s, because the rule is also what keeps the
+  search finite. `eqsolve.deviations.md`.
+
+Consequence for coverage: the set loses its extraction-path column and
+its A-only-operator column, and the honest scoping sentence for the paper
+is that the comparison covers the intersection minus what two pattern
+features would unlock. Both features are named in the ledgers: a
+root-binding pattern form, and primitive predicates in `:when`.
+
+**herbie's native-AC dual is deferred, not dropped**, and
+`repro-herbie-vanilla` (ranked 4, 471 rewrites) behind it. The scoped
+rules column ships and is validated; the dual needs a rule-by-rule pass
+because nested same-operator patterns must be reshaped rather than
+lifted — `(Mul (Mul a b) (Mul a b))` and `(Mul (Mul a a) (Mul b b))` are
+the same multiset under AC, so that rule pair becomes a tautology and
+must be deleted, and a mechanical n-ary lift would leave patterns that
+silently match nothing. `herbie.deviations.md`.
+
 ## 6. Engine changes landed during the study (provenance)
 
 The study found and fixed defects in our engine; every number states
@@ -181,6 +293,27 @@ which side of each fix it was measured on:
   and supersedes its "ours, naive" column; the addendum is section 12 and
   the diagnosis is span-table-sparsity.md. Corpus byte-identical on 26
   programs under both strategies and three scheduling modes.
+
+- 2026-08-16, found while translating, not yet fixed (both in
+  `egraph/src`, reported rather than changed because this pass owns
+  `comparison/` only):
+  - **`:assoc` does not flatten.** A nested application of an A-only
+    operator stays a distinct node — `(seq (seq (Aa) (Bb)) (Cc))` and
+    `(seq (Aa) (Bb) (Cc))` fail `(check (= …))` — and a one-element node
+    is not collapsed to its element. `:assoc-comm` is correct on both
+    counts, so only A-only operators are affected.
+    `ac-algebraic-properties.md` lines 460 and 475 specify the flattened
+    sequence as the normal form. Consequence: the calc and until native
+    columns carry the pre-flattening workaround in section 4, and matrix
+    would have needed it on operators whose whole role is re-association.
+    Reproduction in `calc.deviations.md`.
+  - **`A1-language-guide.md` line 149 documents a `:when` form that does
+    not exist.** `(rewrite (Add x y) (Mul x y) :when ((= x zero)))` is
+    given as the way globals appear in guards; `parse_rule_tags` reads
+    `:when` as a list of `SurfacePattern` and sortcheck rejects `=` as an
+    operator. Not a blocker for anything shipped — no translated
+    benchmark needed it — but it is what made the matrix and eqsolve
+    guards look expressible on a first reading.
 
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.

@@ -10,13 +10,34 @@ difference that stands between the three programs being compared.
 
 ## What is here
 
-Three benchmarks, each in three configurations:
+Seven benchmarks. The first three are the pilot; the rest landed 2026-08-16 and
+complete the translated set.
 
-| benchmark | source |
-|---|---|
-| `eqsat-basic` | `egglog/tests/web-demo/eqsat-basic.egg`, benchmark 8, the calibration smoke test |
-| `math-add-ac` | the `add-ac` ruleset block of `egglog/tests/web-demo/math.egg` lines 138-160, benchmark 2 |
-| `math-microbenchmark` | `egglog/tests/math-microbenchmark.egg`, benchmark 1 |
+| benchmark | source | configurations |
+|---|---|---|
+| `eqsat-basic` | `egglog/tests/web-demo/eqsat-basic.egg`, ranked 8, the calibration smoke test | 3 |
+| `math-add-ac` | the `add-ac` ruleset block of `egglog/tests/web-demo/math.egg` lines 138-160, ranked 2 | 3 |
+| `math-microbenchmark` | `egglog/tests/math-microbenchmark.egg`, ranked 1 | 3 |
+| `calc` | `egglog/tests/calc.egg`, ranked 6, `:until` goals over four push/pop blocks | 3 |
+| `until` | `egglog/tests/until.egg`, ranked 6, `:until` against a non-terminating generator | 3 |
+| `integer_math` | `egglog/tests/integer_math.egg`, ranked 5, **scoped** | 3 |
+| `herbie` | `egglog/tests/web-demo/herbie.egg`, ranked 3, **scoped**, no native dual | 2 |
+
+Three of the ten ranked intersection benchmarks are **dropped**, each with a
+ledger and no `.egg` files: `matrix` (ranked 7), `bdd` (ranked 9) and `eqsolve`
+(ranked 10). All three need a pattern-language feature we lack — a root-binding
+form `(= v pat)`, or primitive predicates in `:when` — for a rule that carries the
+benchmark's assertions. Read `matrix.deviations.md`, `bdd.deviations.md` and
+`eqsolve.deviations.md` before concluding anything about coverage;
+`methodology.md` section 5 is the index. `repro-herbie-vanilla` (ranked 4) and
+herbie's own native-AC dual are deferred, with the reason in
+`herbie.deviations.md`.
+
+`integer_math` and `herbie` are scoped columns: a reduced program, identical in
+every configuration, standing in for the upstream benchmark. Their timings are not
+comparable to anything upstream calls by those names. Both ledgers open with that
+warning and state what the scoping cost — for `integer_math`, 537 term nodes down
+to 100.
 
 | file | engine | encoding |
 |---|---|---|
@@ -25,7 +46,21 @@ Three benchmarks, each in three configurations:
 | `<name>.native.egg` | ours | A/C carried by the operator declaration, the A/C rules deleted |
 | `<name>.deviations.md` | | every semantic difference between the three |
 
-`run-pilot.py` is the harness and `pilot-results.csv` its output, one line per timed run.
+`run-pilot.py` is the pilot harness and `pilot-results.csv` its output, one line per
+timed run. `run-full.py` covers the whole set with the same protocol; it names its
+output after `--label`, so `smoke-results.csv` is a 1-run-0-warmup pass proving the
+harness runs end to end and `final-results.csv` is reserved for the campaign at one
+pinned commit. Do not read `smoke-results.csv` as a timing result, for two reasons.
+With no warmups its first cell per process pays cold-start cost, visible as
+eqsat-basic's 376 ms against a warm 3.3 ms. And its `ours` binary was built from a
+working tree carrying another agent's uncommitted `egraph/src` changes, so it names
+no commit, which `methodology.md` section 1 requires of any table. What the pass
+does establish is validation, not timing: both engines exit non-zero on a failed
+check, so a clean sweep of all 33 cells means every check of every program holds in
+every configuration.
+
+`gen-herbie.py` regenerates herbie's two programs and `herbie-dropped.txt`, the
+verbatim listing of every form the scoping removes.
 
 Beside the pilot, `addac-sweep.md` reports the add-ac width-scaling sweep that answers
 part (b) of the convergence target in
@@ -199,8 +234,14 @@ directory = "vendor"
 
 `cargo build --release --offline -p egglog` then succeeds. Record this only because the
 egglog side of the comparison cannot be reproduced without it on a similarly restricted
-machine. egglog also pins toolchain 1.91.0, which was not installable here; the build used
-1.93.0 through `RUSTUP_TOOLCHAIN` and produced an 8.98 MB binary.
+machine. The `.crate` files stay useful: keeping the download cache means a later
+re-vendor needs no network at all, which is how the 2026-08-16 rebuild ran.
+
+egglog pins toolchain 1.91.0. It was not installable when the pilot ran, so that build
+used 1.93.0 and produced an 8.98 MB binary. 1.91.0 is installed now and the current
+binary is built at the pinned toolchain: 8.82 MB, and byte-for-byte agreement with the
+committed ledgers on the three benchmarks checked (eqsat-basic 11 nodes / 3 iterations,
+math-add-ac 1 939 / 7, addac-n7 451). The toolchain deviation is withdrawn.
 
 ## What the pilot does not cover
 
