@@ -116,28 +116,78 @@ is inside `push`/`pop`, so the node counts are the base state after the last
 twelve `(run …)` commands while ours reports the last one only. Wall time is the
 metric for this benchmark. Same caveat as `calc` and `until`.
 
-## Native-AC dual: deferred
+## Native-AC dual: delivered (2026-08-17)
 
-`Add` and `Mul` are AC in this file (lines 188-201 give both commutativity and
-both directions of associativity), so a native dual is meaningful and would be the
-most valuable column in the set — 163 rewrites is by far the largest AC workload
-we have.
+`herbie.native.egg` is the hand-derived dual: `Add` and `Mul` are declared
+variadic `:assoc-comm` and every rule that matched either operator is restated
+against flattened multisets, per-rule, with the twelve checks as the oracle.
+The file is not generated; the record of each decision is this section plus
+the file's comments. The accounting closes exactly against the 163 rewrites of
+the rules configuration:
 
-It is not written, because a rule-for-rule native translation would be wrong
-rather than merely weaker, and the correct one needs per-rule analysis at a scale
-this pass could not validate. Two distinct transformations are involved:
+| bucket | count |
+|---|---|
+| A/C rules deleted (2 commutativity, 4 associativity) | 6 |
+| deleted as multiset tautologies | 2 |
+| C-redundant pairs collapsed to one native rule | 12 pairs |
+| restated verbatim (no AC position) | 84 |
+| lifted n-ary or reshaped to multiset form (`:2`/`:3` elements) | 59 |
+| coincidence twins added | 9 |
+| native rewrites total | 152 |
 
-1. Rules whose left-hand side has `Add` or `Mul` at the root need a rest variable
-   added, the ordinary n-ary lifting used in `math-microbenchmark.native.egg`.
-2. Rules with *nested* same-operator patterns need reshaping, not lifting, because
-   the nesting does not survive flattening. `(rewrite (Mul (Mul a b) (Mul a b)) (Mul (Mul a a) (Mul b b)))`
-   is the clear case: under AC both sides are the multiset `{a,a,b,b}`, so the
-   rule and its converse are tautologies and must be deleted, not restated. A
-   mechanical lift would leave a pattern that matches nothing.
+The two tautologies are the nested difference-of-squares pair
+`(Mul (Mul a b) (Mul a b)) <-> (Mul (Mul a a) (Mul b b))`: both sides flatten
+to `{a:2, b:2}`, so the rules are contentless under native canonization and a
+mechanical lift would have left patterns that match nothing (the failure mode
+the deferral predicted). The two cube-root chains
+`(Mul (Mul c c) c)` / `(Mul c (Mul c c))` flatten to one multiset
+`{Cbrt x : 3}` and are one `:3` rule, counted among the 12 collapses.
 
-Getting this wrong is silent — the rules simply stop firing — so the dual needs a
-rule-by-rule pass with the twelve checks as the oracle. Recorded as the next piece
-of work on this benchmark. `repro-herbie-vanilla.egg` (471 rewrites, same
-signature and same analysis) is deferred behind it for the same reason: its strip
-would be the same mechanical one, but its native dual is the same unfinished
-analysis at 2.9x the size.
+Squared and cubed factors are multiset elements with multiplicity, so every
+`(Mul t t)` subpattern is restated as `t:2` (`sin`/`cos`/`cosh`/`sinh`
+identities, square roots, `Fabs`, difference of squares) and `x*x*x` as `x:3`.
+The nine twins cover repeated children where the source's binary patterns
+match by positional coincidence: the two `Num` folds at `:2`, the counting
+rule at `:3` (`three` is a global), the `Neg`-pair and `exp`-pair rules at
+`:2`, `zero`/`one`/`negone` identity elements at `:k>=2`, and the `Mul`
+annihilator at `:k>=2`. Residuals, verified latent by the oracle: a `Num`
+fold at multiplicity k >= 3 (the multiplicity is an i64 and RBig arithmetic
+cannot consume it), counting at k >= 4, and any rule that must keep k-1
+copies of its matched child on the right-hand side (the language carries no
+multiplicity arithmetic; see the language guide's caveat section).
+
+**Validation: naive passes 12/12; semi-naive passes 11/12 and is blocked by an
+engine defect, not by the translation.** Block 9 (`e9 = (Sub (Add x one) one)`
+at `(run 4)`) needs 8 semi-naive rounds where naive needs 3, and the minimal
+repro is independent of this file:
+
+```
+(rewrite (Sub x x) zero)
+(rewrite (Add zero ..rest) (Add ..rest))
+(let t (Add x (Sub one one)))
+(run 2)
+(check (= t x))        ; naive ok, semi-naive fails
+```
+
+Replace the rule-derived merge by a literal `(union (Sub one one) zero)` and
+semi-naive passes: when a merge produced by a rule recanonizes a parent AC
+node (the child class collapses into `zero`'s class, so the parent's multiset
+gains `zero` as an element), the recanonized parent is not visible to the next
+round's delta for the rule that binds that element. Same family as the
+root-binding gap fixed in 4258fa4. The budget is not raised to hide the lag:
+the file keeps the source's `(run 4)` and the semi-naive column is blocked
+until the engine fix lands, at which point the twelve checks re-validate it.
+
+Smoke pass (1 run, 0 warmups; same base-state and last-block caveats as the
+rules table above; wall time is the benchmark's metric and every block is
+sub-millisecond on both configurations):
+
+| config | nodes | classes | iterations |
+|---|---|---|---|
+| ours, native, naive | 11 | 11 | 1 |
+| ours, native, semi-naive | blocked (engine defect above) | | |
+
+`repro-herbie-vanilla.egg` is not behind this file after all: surveyed at
+7b1adf2 it is not herbie's simplify layer at 2.9x but a typed-lowering
+unsoundness repro with no checks; `repro-herbie-vanilla.deviations.md` has
+the corrected characterization and the drop.

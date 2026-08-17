@@ -171,3 +171,10 @@ in `comparison/` are byte-identical across the fix under both strategies and
 three scheduling modes, so the campaign numbers stand. `matrix.native-A.egg`
 is validated (62 nodes, 23 classes, three assertions passing under both
 strategies) and carries no timing from that campaign, which predates it.
+
+Status 2026-08-17 (later): herbie's native-AC dual is delivered and validated
+(naive 12/12; semi-naive blocked by an engine defect recorded in its ledger).
+Benchmark 4, repro-herbie-vanilla, is dropped with corrected premises: at
+7b1adf2 it is a typed-lowering unsoundness repro with no checks, not the
+simplify layer at 2.9x; `comparison/repro-herbie-vanilla.deviations.md` has
+the characterization and the conditions under which it becomes translatable.

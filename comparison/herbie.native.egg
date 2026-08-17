@@ -1,0 +1,368 @@
+;; TYPES: machine,bignum
+;; Translation of egglog tests/web-demo/herbie.egg (7b1adf2), scoped.
+;; Config: native AC. Add and Mul are declared variadic :assoc-comm, the six
+;; A/C rewrite rules are deleted, and every rule that matched an Add or a Mul
+;; is restated against flattened multisets: root patterns are lifted n-ary
+;; with a rest variable, nested same-operator patterns are reshaped or, when
+;; flattening makes both sides the same multiset, deleted as tautologies.
+;; Coincidence twins (:2 / :k>=2) cover repeated children where expressible;
+;; the per-rule record is in herbie.deviations.md. Derived by hand from
+;; herbie.rules.egg (gen-herbie.py output); not itself generated.
+;; Renamings as in the rules configuration.
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Datatypes
+
+(datatype Math
+  ; Ground terms
+  (Num RBig)
+  (Var String)
+
+  ; Custom ops
+  (Const String)
+  (Unary String Math)
+
+  ; Constant-folding ops
+  (Add Math :assoc-comm)
+  (Sub Math Math)
+  (Mul Math :assoc-comm)
+  (Div Math Math)
+  (Pow Math Math)
+  (Neg Math)
+  (Sqrt Math)
+  (Cbrt Math) ; cube root
+  (Fabs Math)
+  (Ceil Math)
+  (Floor Math)
+  (Round Math)
+  (Log Math))
+
+(let rzero 0/1)
+(let rone  1/1)
+(let rtwo  2/1)
+(let zero (Num rzero))
+(let one  (Num rone))
+(let two  (Num rtwo))
+(let three (Num 3/1))
+(let negone (Neg one))
+
+;; First, constant folding!
+
+; Cases (n-ary lifts; the :2 twins fold a repeated numeral; k >= 3 has no
+; expressible twin because the multiplicity is an i64 and RBig arithmetic
+; cannot consume it -- see the ledger's residual note)
+(rewrite (Add (Num a) (Num b) ..rest) (Add (Num (RBig::+ a b)) ..rest))
+(rewrite (Add (Num a):2 ..rest) (Add (Num (RBig::+ a a)) ..rest))
+(rewrite (Sub (Num a) (Num b)) (Num (RBig::- a b)))
+(rewrite (Mul (Num a) (Num b) ..rest) (Mul (Num (RBig::* a b)) ..rest))
+(rewrite (Mul (Num a):2 ..rest) (Mul (Num (RBig::* a a)) ..rest))
+(rewrite (Neg (Num a)) (Num (RBig::neg a)))
+(rewrite (Fabs (Num a)) (Num (RBig::abs a)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Rewrites
+
+;; Commutativity, associativity: the six A/C rules are the declarations above.
+
+;; Add/Sub and Mul/Div associativity mixtures. Each C-redundant source pair
+;; is one rule here; the flat sum plays the role of the rearranged spine.
+(rewrite (Add (Sub b c) ..rest) (Sub (Add b ..rest) c))
+(rewrite (Sub a (Add b ..s)) (Sub (Sub a b) (Add ..s)))
+(rewrite (Sub (Add a ..s) c) (Add a (Sub (Add ..s) c)))
+(rewrite (Sub (Sub a b) c) (Sub a (Add b c)))
+(rewrite (Sub a (Sub b c)) (Add (Sub a b) c))
+(rewrite (Mul (Div b c) ..rest) (Div (Mul b ..rest) c))
+(rewrite (Div a (Mul b ..p)) (Div (Div a b) (Mul ..p)))
+
+;; Counting. The source rule is exact x + x; :2 is that shape on a multiset,
+;; and :3 covers the triple (three is a global). k >= 4 is a residual.
+(rewrite (Add x:2 ..rest) (Add (Mul two x) ..rest))
+(rewrite (Add x:3 ..rest) (Add (Mul three x) ..rest))
+
+;; Distributivity
+(rewrite (Mul (Add b ..s) ..rest) (Add (Mul b ..rest) (Mul (Add ..s) ..rest)))
+(rewrite (Add (Mul a ..p) (Mul a ..q) ..rest)
+         (Add (Mul a (Add (Mul ..p) (Mul ..q))) ..rest))
+(rewrite (Sub (Mul a ..p) (Mul a ..q)) (Mul a (Sub (Mul ..p) (Mul ..q))))
+(rewrite (Add (Mul a ..p) a ..rest) (Add (Mul (Add (Mul ..p) one) a) ..rest))
+
+(rewrite (Neg (Mul a ..p)) (Mul (Neg a) ..p))
+(rewrite (Mul (Neg a) ..rest) (Neg (Mul a ..rest)))
+(rewrite (Neg (Add a ..s)) (Add (Neg a) (Neg (Add ..s))))
+(rewrite (Add (Neg a) (Neg b) ..rest) (Add (Neg (Add a b)) ..rest))
+(rewrite (Add (Neg a):2 ..rest) (Add (Neg (Add a a)) ..rest))
+(rewrite (Div (Neg a) b) (Neg (Div a b)))
+(rewrite (Neg (Div a b)) (Div (Neg a) b))
+
+(rewrite (Sub a (Mul (Neg b) ..p)) (Add a (Mul b ..p)))
+(rewrite (Sub a (Mul b ..p)) (Add a (Mul (Neg b) ..p)))
+
+;; Difference of squares. The first source pair,
+;; (Mul (Mul a b) (Mul a b)) <-> (Mul (Mul a a) (Mul b b)), flattens to
+;; {a:2, b:2} on both sides: tautologies, deleted.
+(rewrite (Sub (Mul a:2) (Mul b:2)) (Mul (Add a b) (Sub a b)))
+(rewrite (Sub (Mul a:2) one) (Mul (Add a one) (Sub a one)))
+(rewrite (Add (Mul a:2) (Neg one) ..rest)
+         (Add (Mul (Add a one) (Sub a one)) ..rest))
+(rewrite (Pow a b) (Mul (Pow a (Div b two)) (Pow a (Div b two))))
+(rewrite (Mul (Pow a b):2 ..rest) (Mul (Pow a (Mul two b)) ..rest))
+
+(rewrite (Sub x x) zero)
+(rewrite (Mul zero ..rest) zero)
+(rewrite (Mul zero:k>=2 ..rest) zero)
+
+(rewrite (Add zero ..rest) (Add ..rest))
+(rewrite (Add zero:k>=2 ..rest) (Add zero ..rest))
+(rewrite (Sub zero x) (Neg x))
+(rewrite (Sub x zero) x)
+(rewrite (Neg (Neg x)) x)
+(rewrite (Mul one ..rest) (Mul ..rest))
+(rewrite (Mul one:k>=2 ..rest) (Mul one ..rest))
+(rewrite (Div x one) x)
+(rewrite (Mul negone ..rest) (Neg (Mul ..rest)))
+(rewrite (Mul negone:2 ..rest) (Mul one ..rest))
+
+(rewrite (Sub a b) (Add a (Neg b)))
+(rewrite (Add (Neg b) ..rest) (Sub (Add ..rest) b))
+(rewrite (Neg x) (Sub zero x))
+(rewrite (Neg x) (Mul negone x))
+
+(rewrite (Div x y) (Mul x (Div one y)))
+(rewrite (Mul (Div one y) ..rest) (Div (Mul ..rest) y))
+
+; FIXME carried over from the source: applied to vars only
+(rewrite (Var x) (Mul one (Var x)))
+
+;; Fractions
+(rewrite (Div (Sub a b) c) (Sub (Div a c) (Div b c)))
+(rewrite (Div (Mul a ..p) (Mul c ..q)) (Mul (Div a c) (Div (Mul ..p) (Mul ..q))))
+
+;; Square root
+(rewrite (Mul (Sqrt x):2 ..rest) (Mul x ..rest))
+(rewrite (Sqrt (Mul x:2)) (Fabs x))
+
+(rewrite (Mul (Neg x):2 ..rest) (Mul x x ..rest))
+(rewrite (Mul (Fabs x):2 ..rest) (Mul x x ..rest))
+
+;; Absolute values
+(rewrite (Fabs (Fabs x)) (Fabs x))
+(rewrite (Fabs (Sub a b)) (Fabs (Sub b a)))
+(rewrite (Fabs (Neg x)) (Fabs x))
+(rewrite (Fabs (Mul x:2)) (Mul x x))
+(rewrite (Fabs (Mul a ..p)) (Mul (Fabs a) (Fabs (Mul ..p))))
+(rewrite (Fabs (Div a b)) (Div (Fabs a) (Fabs b)))
+
+;; Cube root. The two source chains (Mul (Mul c c) c) and (Mul c (Mul c c))
+;; flatten to one multiset {Cbrt x : 3}: one rule for both.
+(rewrite (Pow (Cbrt x) three) x)
+(rewrite (Cbrt (Pow x three)) x)
+(rewrite (Mul (Cbrt x):3 ..rest) (Mul x ..rest))
+(rewrite (Pow (Neg x) three) (Neg (Pow x three)))
+
+(rewrite (Pow (Mul x ..p) three) (Mul (Pow x three) (Pow (Mul ..p) three)))
+(rewrite (Pow (Div x y) three) (Div (Pow x three) (Pow y three)))
+
+(rewrite (Pow x three) (Mul x x x))
+(rewrite (Mul x:3 ..rest) (Mul (Pow x three) ..rest))
+
+;; Exponentials
+(rewrite (Unary "exp" (Log x)) x)
+(rewrite (Log (Unary "exp" x)) x)
+
+(rewrite (Unary "exp" zero) one)
+(rewrite (Unary "exp" one) (Const "E"))
+(rewrite (Const "E") (Unary "exp" one))
+
+(rewrite (Unary "exp" (Add a ..s)) (Mul (Unary "exp" a) (Unary "exp" (Add ..s))))
+(rewrite (Unary "exp" (Sub a b)) (Div (Unary "exp" a) (Unary "exp" b)))
+(rewrite (Unary "exp" (Neg a)) (Div one (Unary "exp" a)))
+
+(rewrite (Mul (Unary "exp" a) (Unary "exp" b) ..rest)
+         (Mul (Unary "exp" (Add a b)) ..rest))
+(rewrite (Mul (Unary "exp" a):2 ..rest) (Mul (Unary "exp" (Add a a)) ..rest))
+(rewrite (Div one (Unary "exp" a)) (Unary "exp" (Neg a)))
+(rewrite (Div (Unary "exp" a) (Unary "exp" b)) (Unary "exp" (Sub a b)))
+(rewrite (Unary "exp" (Mul a ..p)) (Pow (Unary "exp" a) (Mul ..p)))
+(rewrite (Unary "exp" (Div a two)) (Sqrt (Unary "exp" a)))
+(rewrite (Unary "exp" (Div a three)) (Cbrt (Unary "exp" a)))
+(rewrite (Unary "exp" (Mul a two)) (Mul (Unary "exp" a) (Unary "exp" a)))
+(rewrite (Unary "exp" (Mul a three)) (Pow (Unary "exp" a) three))
+
+;; Powers
+(rewrite (Pow a negone) (Div one a))
+(rewrite (Pow a one) a)
+(rewrite (Pow one a) one)
+
+(rewrite (Unary "Exp" (Mul (Log a) ..p)) (Pow a (Mul ..p)))
+(rewrite (Mul (Pow a b) a ..rest) (Mul (Pow a (Add b one)) ..rest))
+(rewrite (Pow a (Num 1/2)) (Sqrt a))
+(rewrite (Pow a two) (Mul a a))
+(rewrite (Pow a (Num 1/3)) (Cbrt a))
+(rewrite (Pow a three) (Mul a a a))
+
+;; Logarithms
+(rewrite (Log (Mul a ..p)) (Add (Log a) (Log (Mul ..p))))
+(rewrite (Log (Div a b)) (Sub (Log a) (Log b)))
+(rewrite (Log (Div one a)) (Neg (Log a)))
+(rewrite (Log (Pow a b)) (Mul b (Log a)))
+(rewrite (Log (Const "E")) one)
+
+;; Trigonometry. Squared factors are :2 elements of the flattened Mul.
+(rewrite (Add (Mul (Unary "cos" a):2) (Mul (Unary "sin" a):2) ..rest)
+         (Add one ..rest))
+(rewrite (Sub one (Mul (Unary "cos" a):2))
+         (Mul (Unary "sin" a) (Unary "sin" a)))
+(rewrite (Sub one (Mul (Unary "sin" a):2))
+         (Mul (Unary "cos" a) (Unary "cos" a)))
+(rewrite (Add (Mul (Unary "cos" a):2) (Num -1/1) ..rest)
+         (Add (Neg (Mul (Unary "sin" a) (Unary "sin" a))) ..rest))
+(rewrite (Add (Mul (Unary "sin" a):2) (Num -1/1) ..rest)
+         (Add (Neg (Mul (Unary "cos" a) (Unary "cos" a))) ..rest))
+(rewrite (Sub (Mul (Unary "cos" a):2) one)
+         (Neg (Mul (Unary "sin" a) (Unary "sin" a))))
+(rewrite (Sub (Mul (Unary "sin" a):2) one)
+         (Neg (Mul (Unary "cos" a) (Unary "cos" a))))
+(rewrite (Unary "sin" (Div (Const "PI") (Num 6/1))) (Num 1/2))
+(rewrite (Unary "sin" (Div (Const "PI") (Num 4/1))) (Div (Sqrt two) two))
+(rewrite (Unary "sin" (Div (Const "PI") three)) (Div (Sqrt three) two))
+(rewrite (Unary "sin" (Div (Const "PI") two)) one)
+(rewrite (Unary "sin" (Const "PI")) zero)
+(rewrite (Unary "sin" (Add (Const "PI") ..s)) (Neg (Unary "sin" (Add ..s))))
+(rewrite (Unary "sin" (Add (Div (Const "PI") two) ..s)) (Unary "cos" (Add ..s)))
+(rewrite (Unary "cos" (Div (Const "PI") (Num 6/1))) (Div (Sqrt three) two))
+(rewrite (Unary "cos" (Div (Const "PI") (Num 4/1))) (Div (Sqrt two) two))
+(rewrite (Unary "cos" (Div (Const "PI") three)) (Num 1/2))
+(rewrite (Unary "cos" (Div (Const "PI") two)) zero)
+(rewrite (Unary "cos" (Const "PI")) (Num -1/1))
+(rewrite (Unary "cos" (Add (Const "PI") ..s)) (Neg (Unary "cos" (Add ..s))))
+(rewrite (Unary "cos" (Add (Div (Const "PI") two) ..s))
+         (Neg (Unary "sin" (Add ..s))))
+(rewrite (Unary "tan" (Div (Const "PI") (Num 6/1))) (Div one (Sqrt three)))
+(rewrite (Unary "tan" (Div (Const "PI") (Num 4/1))) one)
+(rewrite (Unary "tan" (Div (Const "PI") three)) (Sqrt three))
+(rewrite (Unary "tan" (Const "PI")) zero)
+(rewrite (Unary "tan" (Add (Const "PI") ..s)) (Unary "tan" (Add ..s)))
+(rewrite (Unary "tan" (Add (Div (Const "PI") two) ..s))
+         (Div negone (Unary "tan" (Add ..s))))
+(rewrite (Div (Unary "sin" a) (Add one (Unary "cos" a)))
+         (Unary "tan" (Div a two)))
+(rewrite (Div (Neg (Unary "sin" a)) (Add one (Unary "cos" a)))
+         (Unary "tan" (Div (Neg a) two)))
+(rewrite (Div (Sub one (Unary "cos" a)) (Unary "sin" a))
+         (Unary "tan" (Div a two)))
+(rewrite (Div (Sub one (Unary "cos" a)) (Neg (Unary "sin" a)))
+         (Unary "tan" (Div (Neg a) two)))
+(rewrite (Div (Add (Unary "sin" a) (Unary "sin" b)) (Add (Unary "cos" a) (Unary "cos" b)))
+         (Unary "tan" (Div (Add a b) two)))
+(rewrite (Div (Sub (Unary "sin" a) (Unary "sin" b)) (Add (Unary "cos" a) (Unary "cos" b)))
+         (Unary "tan" (Div (Sub a b) two)))
+
+(rewrite (Unary "sin" zero) zero)
+(rewrite (Unary "cos" zero) one)
+(rewrite (Unary "tan" zero) zero)
+
+(rewrite (Unary "sin" (Neg x)) (Neg (Unary "sin" x)))
+(rewrite (Unary "cos" (Neg x)) (Unary "cos" x))
+(rewrite (Unary "tan" (Neg x)) (Neg (Unary "cos" x)))
+
+; Hyperbolics
+(rewrite (Unary "sinh" x) (Div (Sub (Unary "exp" x) (Unary "exp" (Neg x))) two))
+(rewrite (Unary "cosh" x) (Div (Add (Unary "exp" x) (Unary "exp" (Neg x))) two))
+(rewrite (Unary "tanh" x) (Div (Sub (Unary "exp" x) (Unary "exp" (Neg x))) (Add (Unary "exp" x) (Unary "exp" (Neg x)))))
+(rewrite (Unary "tanh" x) (Div (Sub (Unary "exp" (Mul two x)) one) (Add (Unary "exp" (Mul two x)) one)))
+(rewrite (Unary "tanh" x) (Div (Sub one (Unary "exp" (Mul (Num -2/1) x))) (Add one (Unary "exp" (Mul (Num -2/1) x)))))
+(rewrite (Sub (Mul (Unary "cosh" x):2) (Mul (Unary "sinh" x):2)) one)
+(rewrite (Add (Unary "cosh" x) (Unary "sinh" x) ..rest) (Add (Unary "exp" x) ..rest))
+(rewrite (Sub (Unary "cosh" x) (Unary "sinh" x)) (Unary "exp" (Neg x)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Testing
+
+(push)
+(let e (Add one zero))
+(run 1)
+(check (= e one))
+(pop)
+
+(push)
+(let five (Num 5/1))
+(let six (Num 6/1))
+(let e2 (Add one five))
+(run 1)
+(check (= e2 six))
+(pop)
+
+(let x (Var "x"))
+
+(push)
+(let e3 (Add x zero))
+(run 1)
+(check (= e3 x))
+(pop)
+
+(push)
+(let e4 (Sub x zero))
+(run 1)
+(check (= e4 x))
+(pop)
+
+(push)
+
+(let e5 (Mul x one))
+(run 1)
+(check (= e5 x))
+(pop)
+
+(push)
+
+(let e6 (Div x one))
+(run 1)
+(check (= e6 x))
+(pop)
+
+(push)
+
+(let e7 (Sub (Mul one x) (Mul (Add x one) one)))
+(run 3)
+(check (= e7 (Num -1/1)))
+(pop)
+
+(push)
+
+(let e8 (Sub (Add x one) x))
+(run 4)
+(check (= e8 one))
+(pop)
+
+(push)
+
+(let e9 (Sub (Add x one) one))
+(run 4)
+(check (= e9 x))
+(pop)
+
+
+
+(push)
+
+(let e11 (Sub (Mul (Sqrt (Add x one)) (Sqrt (Add x one))) (Mul (Sqrt x) (Sqrt x))))
+(run 5)
+(check (= one e11))
+(pop)
+
+(push)
+(let e12 (Add (Num 1/5) (Num 3/10)))
+(run 1)
+(check (= e12 (Num 1/2)))
+(pop)
+
+(push)
+(let e13 (Unary "cos" (Const "PI")))
+(run 1)
+(check (= e13 (Num -1/1)))
+(pop)
+(print-size)
+(print-stats :file "herbie.native.stats.json")
