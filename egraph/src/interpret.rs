@@ -80,6 +80,17 @@ pub struct Interpreter<
     last_sat: Option<crate::saturate::SatResult>,
     /// Wall time of the most recent `(run …)`, measured around the driver call.
     last_run_time: Option<std::time::Duration>,
+    /// Index build scratch, owned here rather than by the saturation call.
+    ///
+    /// `(run 1)` is one round, so a scratch allocated per call would be built
+    /// and dropped without ever being reused — which is exactly the shape of
+    /// the E6 incremental cycle, twenty `(run 1)`s over one base. Holding it
+    /// here carries the span arenas' allocation and their generation stamp
+    /// across commands. Nothing has to be invalidated between runs, including
+    /// across `(push)`/`(pop)`: a build bumps the stamp and writes only the
+    /// keys its own stream carries, so whatever a previous run left in the
+    /// table reads as empty.
+    index_scratch: crate::index::IndexScratch<Cfg>,
 }
 
 impl<Cfg: EGraphConfig, L: LitVal, M: LitModel<Value = L>, const TRACK: bool, const PROOFS: bool>
@@ -100,6 +111,7 @@ where
             strategy: crate::saturate::SaturationStrategy::default(),
             last_sat: None,
             last_run_time: None,
+            index_scratch: crate::index::IndexScratch::new(),
         }
     }
 
@@ -120,6 +132,7 @@ where
             strategy: crate::saturate::SaturationStrategy::default(),
             last_sat: None,
             last_run_time: None,
+            index_scratch: crate::index::IndexScratch::new(),
         }
     }
 
@@ -345,13 +358,21 @@ where
                 };
                 let t0 = std::time::Instant::now();
                 let result = match self.strategy {
-                    crate::saturate::SaturationStrategy::Naive => {
-                        self.eg
-                            .saturate_spec(&self.rules, &self.model, &spec, &self.globals)
-                    }
+                    crate::saturate::SaturationStrategy::Naive => self.eg.saturate_spec_in(
+                        &self.rules,
+                        &self.model,
+                        &spec,
+                        &self.globals,
+                        &mut self.index_scratch,
+                    ),
                     crate::saturate::SaturationStrategy::SemiNaive => {
-                        self.eg
-                            .saturate_semi_spec(&self.rules, &self.model, &spec, &self.globals)
+                        self.eg.saturate_semi_spec_in(
+                            &self.rules,
+                            &self.model,
+                            &spec,
+                            &self.globals,
+                            &mut self.index_scratch,
+                        )
                     }
                 };
                 self.last_run_time = Some(t0.elapsed());

@@ -506,6 +506,35 @@ where
         crate::saturate::saturate_semi_spec(rules, self, model, spec, globals)
     }
 
+    /// [`saturate_spec`](Self::saturate_spec) over a caller-owned index scratch,
+    /// so its span arenas survive the call. See
+    /// [`saturate_spec_in`](crate::saturate::saturate_spec_in).
+    pub fn saturate_spec_in<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+        scratch: &mut crate::index::IndexScratch<Cfg>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_spec_in(rules, self, model, spec, globals, scratch)
+    }
+
+    /// Semi-naive twin of [`saturate_spec_in`](Self::saturate_spec_in).
+    pub fn saturate_semi_spec_in<
+        M: crate::lit_model::LitModel<Value = L>,
+        S: crate::DenseId + Copy,
+    >(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+        scratch: &mut crate::index::IndexScratch<Cfg>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_semi_spec_in(rules, self, model, spec, globals, scratch)
+    }
+
     /// The number of distinct e-classes over the current node set. A scan, not a maintained
     /// counter: `(print-size)` / `(print-stats)` ask for it a handful of times per program.
     pub fn class_count(&self) -> usize {

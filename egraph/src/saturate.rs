@@ -122,13 +122,44 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    saturate_spec_in(
+        rules,
+        eg,
+        model,
+        spec,
+        globals,
+        &mut crate::index::IndexScratch::new(),
+    )
+}
+
+/// [`saturate_spec`] over a caller-owned scratch, so the stream buffers and the
+/// span arenas outlive the call.
+///
+/// A run of one round — which is what `(run 1)` is, and what the E6 incremental
+/// cycle repeats — gets no reuse from a scratch that the saturation call
+/// allocates and drops. Threading it in from the interpreter is what lets the
+/// span arena carry its allocation and its generation stamp from one `(run)` to
+/// the next. Reuse across calls needs no invalidation from the caller: a build
+/// bumps the stamp, so whatever an earlier call left in the table reads as
+/// empty.
+pub fn saturate_spec_in<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
-    // Likewise the index's build buffers: the families are rebuilt per round
-    // from streams proportional to the node count, and the capacity reached in
-    // round n is the capacity round n+1 needs.
-    let mut scratch = crate::index::IndexScratch::new();
     for i in 0..spec.limit {
         if goal_met(spec, eg) {
             return sat_result(i, false, true, steps_base);
@@ -139,7 +170,7 @@ where
         }
         let index = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
-            IndexStore::build_with(eg, &mut scratch)
+            IndexStore::build_with(eg, scratch)
         };
         let mut changes = 0;
         {
@@ -152,6 +183,9 @@ where
                 changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
             }
         }
+        // Before any exit from the loop body: the arenas go back so the next
+        // round, and the next `(run)`, build into the same span tables.
+        index.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
         crate::phase_timing::round_line("naive");
         if changes == 0 {
@@ -367,14 +401,43 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    saturate_semi_spec_in(
+        rules,
+        eg,
+        model,
+        spec,
+        globals,
+        &mut crate::index::IndexScratch::new(),
+    )
+}
+
+/// [`saturate_semi_spec`] over a caller-owned scratch. See
+/// [`saturate_spec_in`] for why the scratch is threaded in rather than
+/// allocated per call.
+///
+/// The full and delta indices are alive at the same time, so they draw from two
+/// separate sets of arenas; [`IndexStore::recycle_into`]'s `full` flag is which
+/// set a store's arenas go back to.
+pub fn saturate_semi_spec_in<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     let limit = spec.limit;
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
-    // One scratch for both builds of every round; `build_with` clears it on
-    // entry, so the full index's streams do not leak into the delta's.
-    let mut scratch = crate::index::IndexScratch::new();
     for i in 0..limit {
         if goal_met(spec, eg) {
             return sat_result(i, false, true, steps_base);
@@ -385,7 +448,7 @@ where
         }
         let full = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
-            IndexStore::build_with(eg, &mut scratch)
+            IndexStore::build_with(eg, scratch)
         };
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
@@ -394,7 +457,7 @@ where
         } else {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::DELTA);
             crate::phase_timing::count(crate::phase_timing::C_ROUNDS_DELTA, 1);
-            Some(IndexStore::build_delta_with(eg, eg.touched(), &mut scratch))
+            Some(IndexStore::build_delta_with(eg, eg.touched(), scratch))
         };
         eg.clear_touched();
 
@@ -450,8 +513,15 @@ where
             }
         }
         match_timer.stop();
+        let had_delta = delta.is_some();
+        // Both stores' arenas go back before any exit from the loop body, each
+        // to the set it was drawn from.
+        if let Some(delta) = delta {
+            delta.recycle_into(scratch, false);
+        }
+        full.recycle_into(scratch, true);
         crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
-        crate::phase_timing::round_line(if delta.is_some() { "semi" } else { "semi-r0" });
+        crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
 
         if changes == 0 {
             return sat_result(i + 1, true, false, steps_base);

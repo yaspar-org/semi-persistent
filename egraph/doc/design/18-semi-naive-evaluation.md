@@ -7,6 +7,18 @@
 semi-naive` on the CLI. The default remains naive; there is no
 automatic fallback. Deferred: delta-size fallback, trigger pre-filter,
 and the pluggable B+tree full-index backend (see Open Questions).
+
+**The delta index build cost 12.75 ms per round and now costs 1.38** (2026-08-16,
+S = 1e6, `comparison/span-table-sparsity.md` section 11.3). The delta's span
+tables were dense over the full index's key space, so a round that filed 9 100
+values into 1.02 M keys paid for the key space and not for the delta: 11.0 ms of
+span table against 0.168 ms to walk the stream. Building through the arena of
+chapter 6 makes the cost proportional to the delta. This is the term that was
+working against the strategy this chapter argues for, and the comparison in
+`comparison/semi-persistence/semi-persistence.md` section 5 that measured
+semi-naive slower than naive at S = 1e6 predates the fix. Whether semi-naive now
+wins there is not yet measured: that file's cycle runs `(run 1)` and never
+reaches a delta round, so it needs a multi-round variant of the E6 programs.
 **Scope**: e-matching loop and `IndexStore`.
 **Depends on**: [Ch 6: Index](06-index.md), [Ch 7: Leapfrog Triejoin](07-leapfrog.md), [Ch 8: Query Compilation](08-query-compilation.md), [Ch 9: Pattern Matching](09-pattern-matching.md).
 

@@ -7,8 +7,7 @@ use crate::config::EGraphConfig;
 use crate::containers::{DenseId, IndexLike};
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
-use crate::span_proto::{self, Family};
-use semi_persistent_containers::DenseSpanMap;
+use semi_persistent_containers::{DenseSpanMap, SpanArena};
 use std::collections::HashMap;
 
 /// Hasher for the statistics maps.
@@ -102,8 +101,21 @@ impl<O> Default for FanOuts<O> {
 /// `math-microbenchmark`. One scratch threaded through the round loop keeps the
 /// pages resident and the capacity at the high-water mark.
 ///
-/// The scratch holds no state between builds: [`IndexStore::build_with`] clears
-/// it on entry, and the built [`DenseSpanMap`]s own copies of what it held.
+/// The stream buffers hold no state between builds: [`IndexStore::build_with`]
+/// clears them on entry, and the built [`DenseSpanMap`]s own copies of what they
+/// held. The **span arenas** are the opposite: they are kept precisely so their
+/// allocation and their generation stamp survive, and their leftover content is
+/// what the stamp invalidates.
+///
+/// Two index stores are alive at once under semi-naive evaluation (the full
+/// index and the round's delta), so the arenas are kept in two sets of four
+/// rather than one: a family's key space is stable across rounds, so pairing
+/// each family with its own arena keeps the table at the size that family needs
+/// instead of thrashing it between a 2 M-key and a 100-key build.
+///
+/// An arena is handed out by [`IndexStore::build_from`] and comes back through
+/// [`IndexStore::recycle_into`]. A caller that forgets to recycle loses only the
+/// reuse: the next build allocates a fresh arena and is correct, just slower.
 pub struct IndexScratch<Cfg: EGraphConfig> {
     by_op: Vec<(usize, Cfg::G)>,
     by_repr: Vec<(usize, Cfg::G)>,
@@ -112,7 +124,19 @@ pub struct IndexScratch<Cfg: EGraphConfig> {
     /// Child classes already filed for the node being visited, so a variadic
     /// node contributes each distinct child to `by_contains` once.
     seen: Vec<Cfg::G>,
+    /// Span arenas for the full index's four families, indexed by
+    /// [`FAM_OP`]..[`FAM_CONTAINS`].
+    arenas_full: [Option<SpanArena>; 4],
+    /// Span arenas for the delta index's four families.
+    arenas_delta: [Option<SpanArena>; 4],
 }
+
+/// Family slots in [`IndexScratch`]'s arena arrays, in the order the build
+/// visits them.
+pub(crate) const FAM_OP: usize = 0;
+pub(crate) const FAM_REPR: usize = 1;
+pub(crate) const FAM_CHILD_POS: usize = 2;
+pub(crate) const FAM_CONTAINS: usize = 3;
 
 impl<Cfg: EGraphConfig> Default for IndexScratch<Cfg> {
     fn default() -> Self {
@@ -128,6 +152,8 @@ impl<Cfg: EGraphConfig> IndexScratch<Cfg> {
             by_child_pos: Vec::new(),
             by_contains: Vec::new(),
             seen: Vec::new(),
+            arenas_full: [None, None, None, None],
+            arenas_delta: [None, None, None, None],
         }
     }
 
@@ -137,6 +163,40 @@ impl<Cfg: EGraphConfig> IndexScratch<Cfg> {
         self.by_child_pos.clear();
         self.by_contains.clear();
         self.seen.clear();
+    }
+
+    /// The arena for one family, or a fresh one the first time round.
+    fn take_arena(&mut self, full: bool, fam: usize) -> SpanArena {
+        let slot = if full {
+            &mut self.arenas_full[fam]
+        } else {
+            &mut self.arenas_delta[fam]
+        };
+        slot.take().unwrap_or_default()
+    }
+
+    /// Put a family's arena back for the next round to reuse.
+    fn put_arena(&mut self, full: bool, fam: usize, arena: SpanArena) {
+        let slot = if full {
+            &mut self.arenas_full[fam]
+        } else {
+            &mut self.arenas_delta[fam]
+        };
+        *slot = Some(arena);
+    }
+
+    /// Total span-table capacity held across all eight arenas, in entries.
+    ///
+    /// Read by `phase_timing` so the memory the reuse keeps resident is
+    /// reported rather than assumed; a recycled table is held for the whole run
+    /// where a per-build table was freed each round.
+    pub fn arena_capacity(&self) -> usize {
+        self.arenas_full
+            .iter()
+            .chain(self.arenas_delta.iter())
+            .filter_map(|a| a.as_ref())
+            .map(|a| a.capacity())
+            .sum()
     }
 }
 
@@ -152,11 +212,11 @@ impl<Cfg: EGraphConfig> IndexScratch<Cfg> {
 /// per-key push it replaces.
 pub struct IndexStore<Cfg: EGraphConfig> {
     /// `by_op[op]` -> node ids with that operator, keyed by the op's dense id.
-    pub by_op: Family<Cfg::G>,
+    pub by_op: DenseSpanMap<Cfg::G>,
     /// `by_repr[repr]` -> node ids in that e-class, keyed by the class
     /// representative's id (see [`repr`](Self::repr) for which
     /// canonicalization).
-    pub by_repr: Family<Cfg::G>,
+    pub by_repr: DenseSpanMap<Cfg::G>,
     /// `by_child_pos[pos * stride + child_repr]` -> parent node ids with
     /// `child_repr` at `pos`.
     ///
@@ -173,9 +233,9 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     /// child pool, which that word already sizes. See [`IndexLookup::ByChildPos`].
     ///
     /// [`IndexLookup::ByChildPos`]: crate::schedule::IndexLookup::ByChildPos
-    pub by_child_pos: Family<Cfg::G>,
+    pub by_child_pos: DenseSpanMap<Cfg::G>,
     /// `by_contains[child_repr]` -> variadic parent node ids (A/AC/ACI/PlainN).
-    pub by_contains: Family<Cfg::G>,
+    pub by_contains: DenseSpanMap<Cfg::G>,
     /// Stride of the [`by_child_pos`](Self::by_child_pos) composite key: the
     /// node bound this index was built at. A probe class at or above it belongs
     /// to no bucket of this build and resolves to the empty slice, which is what
@@ -218,14 +278,47 @@ pub struct IndexStore<Cfg: EGraphConfig> {
     pub fanouts: FanOuts<Cfg::O>,
 }
 
-/// Build one family from its stream.
+/// Build one family from its stream into a caller-owned span arena.
 ///
 /// `num_keys` is the largest key the stream carries plus one, accumulated as the
-/// stream is written, so `try_build`'s range check cannot fail and the span
-/// table is no longer than the keys in use. A family whose stream is empty gets
-/// no span table at all, and every probe into it takes `try_get`'s `None` path.
-fn build_family<G: DenseId>(stream: &[(usize, G)], num_keys: usize) -> Family<G> {
-    span_proto::build(stream, num_keys)
+/// stream is written, so `try_build_in`'s range check cannot fail and the span
+/// table is no longer than the keys in use.
+///
+/// The arena is the recycled span table: it outlives the map built into it, and
+/// a build bumps its generation stamp and writes only the keys its stream
+/// carries, so a key an earlier build left behind carries an older stamp and
+/// reads as empty. That is what makes the build proportional to the stream and
+/// the keys it occupies rather than to the key space — the term
+/// `comparison/span-table-sparsity.md` measures. The container states the
+/// stale-reads-empty property in `build_in`'s ensures, so nothing here has to
+/// clear the table to be correct.
+fn build_family<G: DenseId>(
+    arena: SpanArena,
+    stream: &[(usize, G)],
+    num_keys: usize,
+) -> DenseSpanMap<G> {
+    DenseSpanMap::try_build_in(arena, stream, num_keys).unwrap_or_else(|_| {
+        panic!("num_keys is the stream's own key bound, accumulated as it was written")
+    })
+}
+
+/// Visit every key with at least one value, in ascending key order.
+///
+/// The verified map exposes no occupied-key iterator — its occupancy list is
+/// `pub(crate)` — so this scans the key space and skips the empty buckets. That
+/// is an `O(num_keys)` pass over the span table, which is the one place the
+/// stamped build's `O(stream + occupied)` shape is not carried through to the
+/// consumer; `measure_fanouts` is the caller that pays it. See the note in
+/// `comparison/span-table-sparsity.md` on what an exported occupancy list would
+/// save.
+#[inline]
+fn for_each_occupied<G: DenseId>(m: &DenseSpanMap<G>, mut f: impl FnMut(usize, &[G])) {
+    for k in 0..m.len() {
+        let b = m.get(k);
+        if !b.is_empty() {
+            f(k, b);
+        }
+    }
 }
 
 /// Debug-only check that every bucket is ascending in node id.
@@ -240,9 +333,9 @@ fn build_family<G: DenseId>(stream: &[(usize, G)], num_keys: usize) -> Family<G>
 /// records that no node is filed under one key twice, which is what makes the
 /// per-bucket `dedup` this build no longer performs unnecessary.
 #[inline]
-fn debug_assert_id_sorted<G: DenseId>(m: &Family<G>, family: &str) {
+fn debug_assert_id_sorted<G: DenseId>(m: &DenseSpanMap<G>, family: &str) {
     #[cfg(debug_assertions)]
-    span_proto::for_each_occupied(m, |k, b| {
+    for_each_occupied(m, |k, b| {
         debug_assert!(
             b.windows(2).all(|w| w[0] < w[1]),
             "{family}: bucket {k} is not strictly ascending in node id \
@@ -309,6 +402,23 @@ where
             ids
         };
         Self::build_from(eg, ids.into_iter(), false, scratch)
+    }
+
+    /// Hand this store's four span arenas back to `scratch` for the next round.
+    ///
+    /// `full` says which set of slots they came from, which the caller knows
+    /// because it chose which build produced this store. Consuming `self` is
+    /// what makes the hand-back safe: the maps' pools and the arenas' span
+    /// tables are separate allocations, and only the arenas survive.
+    ///
+    /// Not calling this is a performance bug and not a correctness one — the
+    /// next build allocates a fresh arena — so it is deliberately an ordinary
+    /// method rather than a `Drop` impl, which could not name the scratch.
+    pub fn recycle_into(self, scratch: &mut IndexScratch<Cfg>, full: bool) {
+        scratch.put_arena(full, FAM_OP, self.by_op.recycle());
+        scratch.put_arena(full, FAM_REPR, self.by_repr.recycle());
+        scratch.put_arena(full, FAM_CHILD_POS, self.by_child_pos.recycle());
+        scratch.put_arena(full, FAM_CONTAINS, self.by_contains.recycle());
     }
 
     /// Shared bucketing core for [`build`](Self::build) and
@@ -434,21 +544,30 @@ where
 
         walk_timer.stop();
 
+        // Take all four arenas before the builds: each build borrows its stream
+        // out of the same scratch, so the mutable borrows have to be finished
+        // first.
+        let (a_op, a_repr, a_cp, a_ct) = (
+            scratch.take_arena(full, FAM_OP),
+            scratch.take_arena(full, FAM_REPR),
+            scratch.take_arena(full, FAM_CHILD_POS),
+            scratch.take_arena(full, FAM_CONTAINS),
+        );
         let by_op = {
             let _t = crate::phase_timing::Timer::start(span_base);
-            build_family(&scratch.by_op, op_keys)
+            build_family(a_op, &scratch.by_op, op_keys)
         };
         let by_repr = {
             let _t = crate::phase_timing::Timer::start(span_base + 1);
-            build_family(&scratch.by_repr, repr_keys)
+            build_family(a_repr, &scratch.by_repr, repr_keys)
         };
         let by_child_pos = {
             let _t = crate::phase_timing::Timer::start(span_base + 2);
-            build_family(&scratch.by_child_pos, cp_keys)
+            build_family(a_cp, &scratch.by_child_pos, cp_keys)
         };
         let by_contains = {
             let _t = crate::phase_timing::Timer::start(span_base + 3);
-            build_family(&scratch.by_contains, ct_keys)
+            build_family(a_ct, &scratch.by_contains, ct_keys)
         };
         Self::record_shape(full, indexed, &by_child_pos);
         debug_assert_id_sorted(&by_op, "by_op");
@@ -490,7 +609,7 @@ where
     /// occupied-key count needs its own pass over the span table, so the whole
     /// helper is skipped unless the accounting is switched on.
     #[inline]
-    fn record_shape(full: bool, indexed: usize, by_child_pos: &Family<Cfg::G>) {
+    fn record_shape(full: bool, indexed: usize, by_child_pos: &DenseSpanMap<Cfg::G>) {
         use crate::phase_timing as pt;
         if !pt::enabled() {
             return;
@@ -511,10 +630,10 @@ where
             )
         };
         pt::count(nodes, indexed as u64);
-        pt::count(keys, span_proto::num_keys(by_child_pos) as u64);
-        pt::count(values, span_proto::total(by_child_pos) as u64);
+        pt::count(keys, by_child_pos.len() as u64);
+        pt::count(values, by_child_pos.total() as u64);
         let mut occupied = 0u64;
-        span_proto::for_each_occupied(by_child_pos, |_, _| occupied += 1);
+        for_each_occupied(by_child_pos, |_, _| occupied += 1);
         pt::count(nonempty, occupied);
     }
 
@@ -539,9 +658,9 @@ where
     /// pass visits every bucket entry, which is several times the node count.
     fn measure_fanouts(
         op_tab: &[Cfg::O],
-        by_repr: &Family<Cfg::G>,
-        by_child_pos: &Family<Cfg::G>,
-        by_contains: &Family<Cfg::G>,
+        by_repr: &DenseSpanMap<Cfg::G>,
+        by_child_pos: &DenseSpanMap<Cfg::G>,
+        by_contains: &DenseSpanMap<Cfg::G>,
         stride: usize,
         indexed: usize,
     ) -> FanOuts<Cfg::O> {
@@ -568,7 +687,7 @@ where
             }
         };
 
-        span_proto::for_each_occupied(by_child_pos, |k, bucket| {
+        for_each_occupied(by_child_pos, |k, bucket| {
             // Position-major key: the position is the quotient, and `stride` is
             // nonzero because a non-empty bucket means the graph has a node.
             let pos = k / stride;
@@ -581,7 +700,7 @@ where
                 tally[o] = 0;
             }
         });
-        span_proto::for_each_occupied(by_contains, |_, bucket| {
+        for_each_occupied(by_contains, |_, bucket| {
             tally_bucket(bucket, &mut tally, &mut touched);
             for &o in touched.iter() {
                 let c = u128::from(tally[o]);
@@ -600,7 +719,7 @@ where
             }
         };
         let (mut class_sum, mut class_sq) = (0u128, 0u128);
-        span_proto::for_each_occupied(by_repr, |_, b| {
+        for_each_occupied(by_repr, |_, b| {
             let c = b.len() as u128;
             class_sum += c;
             class_sq += c * c;
@@ -632,13 +751,13 @@ where
     /// Nodes with the given operator; empty when the operator files no node.
     #[inline]
     pub fn nodes_by_op(&self, op: Cfg::O) -> &[Cfg::G] {
-        span_proto::get(&self.by_op, op.to_usize())
+        self.by_op.try_get(op.to_usize()).unwrap_or(&[])
     }
 
     /// Nodes in the given e-class, as this build canonicalized it.
     #[inline]
     pub fn nodes_by_repr(&self, repr: Cfg::G) -> &[Cfg::G] {
-        span_proto::get(&self.by_repr, repr.to_usize())
+        self.by_repr.try_get(repr.to_usize()).unwrap_or(&[])
     }
 
     /// Parent nodes that have `child_repr` at position `pos`.
@@ -653,7 +772,7 @@ where
             child_repr.to_usize(),
             self.child_pos_stride,
         ) {
-            Some(k) => span_proto::get(&self.by_child_pos, k),
+            Some(k) => self.by_child_pos.try_get(k).unwrap_or(&[]),
             None => &[],
         }
     }
@@ -661,7 +780,9 @@ where
     /// Variadic nodes containing `child_repr`.
     #[inline]
     pub fn nodes_by_contains(&self, child_repr: Cfg::G) -> &[Cfg::G] {
-        span_proto::get(&self.by_contains, child_repr.to_usize())
+        self.by_contains
+            .try_get(child_repr.to_usize())
+            .unwrap_or(&[])
     }
 
     /// Get an iterator over nodes with the given operator.
@@ -695,8 +816,8 @@ where
     /// operator stays absent rather than arriving with a zero, which is the
     /// distinction the cost model's `or_else` chain reads.
     pub fn op_cardinalities(&self) -> impl Iterator<Item = (Cfg::O, usize)> + '_ {
-        (0..span_proto::num_keys(&self.by_op)).filter_map(|k| {
-            let n = span_proto::key_len(&self.by_op, k);
+        (0..self.by_op.len()).filter_map(|k| {
+            let n = self.by_op.key_len(k);
             (n > 0).then(|| (Cfg::O::from_usize(k), n))
         })
     }

@@ -20,11 +20,6 @@ path = "src/main.rs"
 # `phase_timing` entry point is an empty inline function, so the instrumented
 # call sites cost nothing. See `src/phase_timing.rs`.
 phase-timing = []
-# Unverified prototype span-table builds, for measuring the span-table sparsity
-# fix before it is designed into `containers-verus`. Mutually exclusive, and
-# never enabled outside a measurement run; see `src/span_proto.rs`.
-span-proto-sorted = []
-span-proto-reuse = []
 
 [dependencies]
 semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.1.0" }

@@ -12,10 +12,15 @@ correction; the correction is not applied here.
 
 It is not a status page. The measurement harness is
 `comparison/run-span-table.py` and the per-phase accounting it reads is
-`egraph/src/phase_timing.rs`, both landed with this document. The two
-alternative span tables are unverified prototypes in `egraph/src/span_proto.rs`,
-compiled only under `--features span-proto-sorted` or `--features
-span-proto-reuse`; they are measurement instruments and neither is the landing.
+`egraph/src/phase_timing.rs`, both landed with this document.
+
+**Landed.** Section 11 records the verified landing and its numbers, and
+supersedes section 3's prototype measurements. The two alternative span tables
+were unverified prototypes in `egraph/src/span_proto.rs` under `--features
+span-proto-sorted` and `--features span-proto-reuse`; they were measurement
+instruments, neither was the landing, and both are now deleted. Sections 1
+through 10 are the diagnosis that chose the design and are left as they were
+written.
 
 All numbers are on an Apple M4 Pro (14 cores), macOS 26.6.1, release profile
 (`lto = "fat"`, `codegen-units = 1`), at commit e2ccf05 plus this document's
@@ -420,3 +425,148 @@ is byte-identical and wall time is inside the noise on every program:
 both prototypes go, and `index.rs` names `DenseSpanMap` directly again.
 `phase_timing.rs` and `run-span-table.py` stay: the phase split is what turned a
 25 ms discrepancy that did not exist into a 19.6 ms install that did.
+
+## 11. Landed as: the verified stamped-reuse build path
+
+The design of §7 is verified in `containers-verus` as `DenseSpanMap::build_in`
+over a caller-owned `SpanArena` (commit 3779a56, whole-crate verification 1698
+to 1716 conditions, 0 errors), and the e-graph builds through it. This section
+records what that measured. It supersedes §3's prototype numbers: those were an
+unverified instrument and are kept only as the prediction this checks.
+
+`span_proto.rs` and both `span-proto-*` features are deleted, satisfying §10's
+delete condition. `index.rs` names `DenseSpanMap` directly again.
+`phase_timing.rs` and `run-span-table.py` stay, and `run-span-table.py` gains
+`--extra`, which passes an engine flag through to every program so the corpus
+comparison covers the scheduling modes as well as the two strategies.
+
+**Where the arenas live.** `IndexScratch` holds eight of them, four for the full
+index and four for the round's delta, because semi-naive keeps both stores alive
+at once and a family's key space is stable across rounds. `IndexStore::build_from`
+takes them and `IndexStore::recycle_into` gives them back. The scratch moved out
+of the saturation call and into the `Interpreter`: `(run 1)` is a single round,
+and the E6 cycle is twenty of them over one base, so a scratch allocated per call
+would be dropped before it was ever reused. Reuse across calls needs no
+invalidation from the caller, including across `(push)` and `(pop)`: a build
+bumps the generation stamp and writes only the keys its own stream carries, so
+whatever an earlier call left in the table reads as empty. That is the property
+`build_in` states in its ensures, and `egraph/tests/index_arena_reuse.rs` checks
+the consumer gets it, on a second build whose key space is smaller than the
+first's so the stale keys are in range.
+
+### 11.1 E6 cycle, per round, by phase
+
+Milliseconds per round, 23 rounds per run, one run per column. Before is 3779a56
+with the dense build; after is this change.
+
+| phase | 1e4 before | 1e4 after | 1e5 before | 1e5 after | 1e6 before | 1e6 after |
+|---|---|---|---|---|---|---|
+| index.full | 0.435 | **0.336** | 4.427 | **2.877** | 57.613 | **32.644** |
+| walk | 0.132 | 0.114 | 1.154 | 1.022 | 14.450 | 12.105 |
+| span.by_op | 0.040 | 0.039 | 0.347 | 0.344 | 4.824 | 3.715 |
+| span.by_repr | 0.070 | 0.038 | 0.633 | 0.340 | 13.101 | 4.251 |
+| span.by_child_pos | 0.097 | 0.036 | 1.483 | 0.343 | 16.465 | 3.561 |
+| fanouts | 0.084 | 0.091 | 0.701 | 0.687 | 7.602 | 7.685 |
+| match+apply | 0.669 | 0.696 | 7.104 | 7.617 | 111.231 | 116.934 |
+
+The span builds carry the change: `by_child_pos` at 1e6 goes 16.465 to 3.561 ms,
+`by_repr` 13.101 to 4.251, and the index build as a whole 57.613 to 32.644, which
+is 0.57 of what it was. §3 predicted 65.4 to 36.5 from the prototype; the
+verified path lands at the same ratio on a base that three cheap rounds pull
+down.
+
+**The fan-out pass does not improve, because it cannot yet.** It reads every key
+of `by_child_pos`, `by_contains` and `by_repr` to find the occupied ones, which
+is the `O(num_keys)` scan this change removes everywhere else. The verified map
+holds its occupied-key list, and the build maintains it, but the list is
+`pub(crate)`: there is no exported iterator, so `index.rs` scans the key space
+instead. At 1e6 that is 7.685 ms of a 32.644 ms index build, and it is now the
+largest single term in it. Exporting the occupancy list is the next reduction,
+and it is a container change, not an e-graph one.
+
+**Matching costs 5% more, measured, and the net is still favorable.** Three
+repeated runs at 1e5 give 7.056, 7.127 and 7.244 ms per round before against
+7.427, 7.498 and 7.567 after, so the increase is reproducible and not run
+variance. The cause is on the probe path: a stamped span is 24 bytes against the
+old 16, so the span table a probe reads is 1.5 times wider, and `get` compares
+the stamp before returning the slice. The round total still falls, from 11.53 to
+10.37 ms at 1e5, because the index build gives up more than the probes take
+back. A workload whose rounds are dominated by probing rather than by building
+would come out the other way; that is a measurement, not an inference, and
+`--wall` on the corpus is how to take it.
+
+### 11.2 End-to-end wall
+
+Minimum of five timed runs after two warmups, binaries built without
+`phase-timing`.
+
+| program | before (ms) | after (ms) | ratio |
+|---|---|---|---|
+| sp-t880.cycles.native | 32.6 | 30.1 | 0.92 |
+| sp-t8900.cycles.native | 293.0 | 262.3 | 0.89 |
+| sp-t100000.cycles.native | 4 090.6 | 3 635.0 | 0.89 |
+| math-microbenchmark.native | 458.1 | 454.2 | 0.99 |
+| math-microbenchmark.native, semi | 430.9 | 428.5 | 0.99 |
+| math-microbenchmark.rules | 517.3 | 516.3 | 1.00 |
+| math-microbenchmark.rules, semi | 542.5 | 540.5 | 1.00 |
+
+Batch saturation is unchanged, which is what §3 predicted and for the reason it
+gave: `math-microbenchmark` more than doubles its node count every round, so
+every round rebuilds a key space it has never seen and there is nothing to reuse.
+The reuse pays where a round's key space repeats, which is the incremental cycle.
+
+### 11.3 The delta build
+
+The two-round variant of §3, `(run 1)` rewritten to `(run 2)` in the cycle bodies
+only, under semi-naive at S = 1e6. 22 rounds build a delta.
+
+| phase | before (ms/round) | after (ms/round) |
+|---|---|---|
+| index.delta | 12.751 | **1.375** |
+| delta.walk | 0.170 | 0.168 |
+| delta.span.by_repr | 5.673 | **0.226** |
+| delta.span.by_child_pos | 5.343 | **0.189** |
+
+This is the headline the sparsity has been costing all along. A delta round files
+9 100 values into a key space of 1.02 M keys, and the dense build charged 11.0 ms
+per round to make them addressable against 0.168 ms to walk them. The stamped
+build charges 0.415 ms, which is 0.038 of what it was. End-to-end the two-round
+variant goes 5 633.9 to 4 281.3 ms, 0.76.
+
+### 11.4 Memory
+
+Peak resident set size, `/usr/bin/time -l`, S = 1e6 E6 cycle:
+
+| | before | after |
+|---|---|---|
+| peak RSS | 1 047.3 MiB | **608.2 MiB** |
+| system time | 0.43 s | **0.07 s** |
+
+The 24-byte stamped span was expected to cost memory and does not: it saves 42%.
+The dense build allocated a fresh span table per family per round and freed it at
+the end of the round, so the peak held a table being built alongside the one
+still being read, and the allocator faulted in tens of megabytes 23 times. The
+arena holds one table per family for the whole run and never reallocates it in
+the steady state, which `arena_capacity_is_retained_across_rounds` asserts. The
+system time falls with it, from 0.43 s to 0.07 s, which is the page faulting that
+is no longer happening. At S = 1e5 the same comparison is 79.3 and 83.5 MiB
+before against 70.8 and 69.2 after.
+
+### 11.5 Conditions checked
+
+The corpus is byte-identical on 26 programs against the 3779a56 binary, under
+both strategies and under each of the default scheduling, `--runtime-scheduling`
+and `--sampled-selectivity`, comparing stdout and the run-invariant statistics
+`nodes`, `classes`, `iterations`, `match_steps`, `saturated` and `goal_met`:
+
+```
+python3 run-span-table.py --corpus --semi \
+    --bin before=/tmp/sp-before --bin after=/tmp/sp-after
+python3 run-span-table.py --corpus --semi --extra=--runtime-scheduling ...
+python3 run-span-table.py --corpus --semi --extra=--sampled-selectivity ...
+```
+
+102 test binaries pass, including the anti-unification differential, the egg
+fixtures, the AC completion conditions, and the hub, heterogeneous, runtime
+scheduling and sampled selectivity comparisons. `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --all` are clean.

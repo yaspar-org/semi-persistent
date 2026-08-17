@@ -129,7 +129,7 @@ build(eg):
         if node is A, AC, ACI, or PlainN:
             for child in eg.variadic_children(id):
                 stream[by_contains].push((eg.class_repr(child), id))  // deduped per node
-    for each family: DenseSpanMap::try_build(stream, largest key + 1)
+    for each family: DenseSpanMap::try_build_in(arena, stream, largest key + 1)
 ```
 
 Ids are visited in ascending order, so each family's stream is ascending in its
@@ -138,9 +138,57 @@ is the stream's order-preserving filter. No per-bucket sort runs, and no
 per-bucket `dedup`, because a node is filed under any one key at most once. A
 debug assertion re-checks strict ascent per bucket.
 
-The streams are owned by an `IndexScratch` the saturation loop keeps across
-rounds, so the tens of megabytes they occupy are faulted in once rather than
-per round.
+The streams are owned by an `IndexScratch`, so the tens of megabytes they occupy
+are faulted in once rather than per round.
+
+## The span arena, and why the build is not proportional to the key space
+
+`IndexScratch` also owns the **span arenas**, and they are the reason a build
+costs what its stream costs rather than what its key space costs. A
+`DenseSpanMap` built by `try_build` allocates a span table of one entry per key
+and writes all of it, which is `O(num_keys)` whether or not the keys occur. That
+term dominated: `comparison/span-table-sparsity.md` measures `by_child_pos` at
+S = 1e6 addressing 801 008 values with 2 003 967 keys, and the build spending
+40.6 ms per round writing 77 MB of span table for a 3.2 MB pool. On a semi-naive
+delta the ratio is the whole cost, because the delta's stream is a few thousand
+values over the same key space.
+
+`try_build_in` takes a caller-owned `SpanArena` that outlives the map. The arena
+holds the span table, the list of keys the current build occupied, and a
+generation stamp. A build bumps the stamp and writes only the keys its stream
+carries, so a key an earlier build wrote carries an older stamp and `get`
+returns the empty slice for it. Nothing is cleared. Work is proportional to the
+stream and the keys it occupies.
+
+The arenas are held in two sets of four, because semi-naive keeps the full index
+and the round's delta alive at the same time and a family's key space is stable
+across rounds. `IndexStore::recycle_into` hands a store's four arenas back to the
+scratch; a caller that does not call it loses the reuse and stays correct,
+because the next build allocates a fresh arena.
+
+The scratch is owned by the `Interpreter`, not by the saturation call. `(run 1)`
+is a single round, so a scratch allocated per call would be dropped before it was
+ever reused, and the E6 incremental cycle is twenty `(run 1)`s over one base.
+Reuse across calls, and across `(push)` and `(pop)`, needs no invalidation from
+the caller: the stamp is what makes an earlier call's content unreadable, and
+that is stated in `build_in`'s postcondition rather than assumed.
+`egraph/tests/index_arena_reuse.rs` checks the consumer gets it, on a second
+build whose key space is smaller than the first's so the stale keys are in range.
+
+**The fan-out pass still scans the key space.** `measure_fanouts` needs every
+occupied key, the arena maintains exactly that list, and the list is
+`pub(crate)`: there is no exported iterator, so `index.rs` walks `0..len()` and
+skips the empty buckets. At S = 1e6 that is 7.69 ms of a 32.64 ms index build,
+and it is the largest single term left in the build. Exporting the occupancy list
+is a `containers-verus` change and the next reduction available.
+
+**A stamped span is 24 bytes against 16, and the probe path pays for it.**
+Matching measures 5% slower, reproducibly, because a probe reads a span table
+1.5 times wider and compares the stamp before returning the slice. The round
+total falls anyway, 170.5 ms to 151.2 ms at S = 1e6. A workload whose rounds are
+dominated by probing rather than by building would come out the other way; which
+one applies to a given workload is a measurement, and `run-span-table.py --wall`
+is how to take it.
 
 ## `IndexStats`
 
