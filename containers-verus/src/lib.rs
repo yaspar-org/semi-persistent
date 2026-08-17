@@ -42,6 +42,10 @@
     clippy::doc_overindented_list_items,  // same: design-doc-style comment formatting
     // `global size_of usize == 8;` is verus syntax; clippy sees the macro expansion as braces.
     unused_braces,
+    // Same class of macro artifact: the `verus!` expansion rewrites a shorthand
+    // struct pattern (`SpanArena { mut spans, .. }`) back into the long form, so the
+    // lint fires on generated code the source does not contain.
+    non_shorthand_field_patterns,
     // `($leaf_cap + 1) / 2` is verified exec arithmetic that must match `split_mid_spec()`'s
     // same expression; vstd (2026-04-12) has no `div_ceil` spec, so a `.div_ceil(2)` rewrite
     // would jeopardise the `split_mid` ensures for a pure style change.
@@ -64,6 +68,12 @@
     // `while !done` loop carrying an invariant; clippy's "initialise at declaration" does not
     // fit the loop control flow.
     clippy::needless_late_init,
+    // The three build passes take `&mut Vec<Span>` / `&Vec<usize>` rather than slices
+    // because the proofs are written against vstd's `Vec` specifications: `push`,
+    // `resize` and the `vec_index_mut` `update` postcondition. A slice rewrite would
+    // change which specification each access goes through and jeopardise the build's
+    // refinement proof for a pure style change.
+    clippy::ptr_arg,
     // ListNode construction goes Default-then-set_next because set_next is the verified
     // packing primitive (its ensures establish next_wf/next_ref); a struct literal would
     // bypass the proof surface.
@@ -126,7 +136,7 @@ pub use canonical_keys::{BitsF64, CanonicalF64, CanonicalRational};
 pub use circular_list::{CircularList, CircularListToken, RingIter};
 pub use container_id::ContainerId;
 pub use dense_id::{DenseId31, DenseId63};
-pub use dense_span_map::{DenseSpanMap, Span};
+pub use dense_span_map::{DenseSpanMap, Span, SpanArena};
 pub use diff_store::DiffStore;
 pub use fork_history::ForkHistory;
 pub use id_factory::{IdFactory, IdRangeError};

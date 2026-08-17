@@ -35,11 +35,18 @@ verus! {
 
 use vstd::seq_lib::*;
 
-/// A half-open run of `pool` positions, `[off, off + len)`.
+/// A half-open run of `pool` positions, `[off, off + len)`, tagged with the
+/// generation that wrote it.
+///
+/// `stamp` is what lets a span table be recycled: a build bumps its arena's
+/// generation and writes only the keys its stream carries, so an entry left by
+/// an earlier build carries an older stamp and reads as empty. Stamp 0 is
+/// reserved for a never-written entry, so a live generation is always positive.
 #[derive(Clone, Copy)]
 pub struct Span {
     pub off: usize,
     pub len: usize,
+    pub stamp: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +167,38 @@ pub proof fn lemma_count_below_all<V>(stream: Seq<(usize, V)>, num_keys: nat)
     }
 }
 
+/// The span table read in occupancy order.
+///
+/// A NAMED spec function rather than an inline `map_values` closure: the closure
+/// term is re-elaborated at every site that mentions it, including once per
+/// iteration inside a loop invariant, which is what put the first attempt at
+/// this build over the solver budget. One symbol matches everywhere.
+#[verifier::opaque]
+pub open spec fn permute(spans: Seq<Span>, occ: Seq<usize>) -> Seq<Span> {
+    occ.map_values(|k: usize| spans[k as int])
+}
+
+/// `permute` has the occupancy list's length.
+pub proof fn lemma_permute_len(spans: Seq<Span>, occ: Seq<usize>)
+    ensures
+        permute(spans, occ).len() == occ.len(),
+{
+    reveal(permute);
+}
+
+/// `permute` reads the table at the listed key. Opaque otherwise, so the tiling
+/// term in a loop invariant stays one symbol instead of unfolding to a
+/// `map_values` application at every mention.
+pub proof fn lemma_permute_index(spans: Seq<Span>, occ: Seq<usize>, i: int)
+    requires
+        0 <= i < occ.len(),
+    ensures
+        permute(spans, occ).len() == occ.len(),
+        permute(spans, occ)[i] == spans[occ[i] as int],
+{
+    reveal(permute);
+}
+
 /// The tiling predicate: `spans` partitions `[0, total)` into consecutive runs.
 ///
 /// Every clause quantifies over a *single* variable. The pairwise-disjointness
@@ -231,82 +270,293 @@ pub proof fn lemma_update_at_end<V>(pool: Seq<V>, lo: int, pos: int, val: V)
     assert(pool.update(pos, val).subrange(lo, pos + 1) =~= pool.subrange(lo, pos).push(val));
 }
 
-/// The placement step, over bare sequences: region `k0` is extended by `val` and
-/// every other region is untouched. The build loop's locals are deliberately not
-/// in scope (playbook §9).
-///
-/// `bound[k] == offsets[k] + counts[k]` is key `k`'s allocated extent; the
-/// hypotheses say the regions are nested inside consecutive allocated extents and
-/// that `k0` has room left.
-pub proof fn lemma_place_step<V>(
-    pool: Seq<V>,
-    offsets: Seq<usize>,
-    counts: Seq<usize>,
-    cursor: Seq<usize>,
-    n: int,
-    k0: int,
-    val: V,
-)
-    requires
-        0 <= n <= offsets.len(),
-        n <= counts.len(),
-        n <= cursor.len(),
-        0 <= k0 < n,
-        forall|k: int|
-            0 <= k < n ==> offsets[k] <= #[trigger] cursor[k] <= offsets[k] + counts[k],
-        forall|k: int|
-            0 <= k && k + 1 < n ==> (#[trigger] offsets[k]) + counts[k] == offsets[k + 1],
-        cursor[k0] < offsets[k0] + counts[k0],
-        forall|k: int| 0 <= k < n ==> (#[trigger] offsets[k]) + counts[k] <= pool.len(),
+/// Appending one entry extends exactly that key's slice.
+pub proof fn lemma_key_slice_push<V>(s: Seq<(usize, V)>, k: usize, v: V, j: nat)
     ensures
-        forall|k: int|
-            0 <= k < n && k != k0 ==> #[trigger] pool.update(cursor[k0] as int, val).subrange(
-                offsets[k] as int,
-                cursor[k] as int,
-            ) == pool.subrange(offsets[k] as int, cursor[k] as int),
-        pool.update(cursor[k0] as int, val).subrange(
-            offsets[k0] as int,
-            cursor[k0] + 1,
-        ) == pool.subrange(offsets[k0] as int, cursor[k0] as int).push(val),
-{
-    let pos = cursor[k0] as int;
-    assert(pos < pool.len());
-    assert forall|k: int| 0 <= k < n && k != k0 implies #[trigger] pool.update(pos, val).subrange(
-        offsets[k] as int,
-        cursor[k] as int,
-    ) == pool.subrange(offsets[k] as int, cursor[k] as int) by {
-        if k < k0 {
-            // cursor[k] <= offsets[k]+counts[k] == offsets[k+1] <= offsets[k0] <= pos
-            lemma_offsets_monotone(offsets, counts, n, k + 1, k0);
-            assert(cursor[k] <= offsets[k] + counts[k]);
-            assert(offsets[k] + counts[k] == offsets[k + 1]);
+        key_slice(s.push((k, v)), j) == if k as nat == j {
+            key_slice(s, j).push(v)
         } else {
-            // offsets[k] >= offsets[k0+1] == offsets[k0]+counts[k0] > pos
-            lemma_offsets_monotone(offsets, counts, n, k0 + 1, k);
-            assert(offsets[k0] + counts[k0] == offsets[k0 + 1]);
-        }
-        lemma_update_outside(pool, offsets[k] as int, cursor[k] as int, pos, val);
+            key_slice(s, j)
+        },
+{
+    let kp = is_key::<V>(j);
+    s.lemma_filter_push((k, v), kp);
+    if k as nat == j {
+        assert(kp((k, v)));
+        assert(s.filter(kp).push((k, v)).map_values(snd::<V>()) =~= s.filter(kp).map_values(
+            snd::<V>(),
+        ).push(v));
     }
-    lemma_update_at_end(pool, offsets[k0] as int, pos, val);
 }
 
-/// Offsets are non-decreasing (bare-sequence companion to `lemma_place_step`).
-pub proof fn lemma_offsets_monotone(offsets: Seq<usize>, counts: Seq<usize>, n: int, a: int, b: int)
+/// A key that occurs in the stream has a positive count.
+pub proof fn lemma_count_key_positive<V>(s: Seq<(usize, V)>, i: int)
     requires
-        0 <= n <= offsets.len(),
-        n <= counts.len(),
-        0 <= a <= b < n,
-        forall|k: int|
-            0 <= k && k + 1 < n ==> (#[trigger] offsets[k]) + counts[k] == offsets[k + 1],
+        0 <= i < s.len(),
     ensures
-        offsets[a] <= offsets[b],
+        count_key(s, s[i].0 as nat) > 0,
+{
+    s.lemma_filter_contains(is_key::<V>(s[i].0 as nat), i);
+    assert(s.filter(is_key::<V>(s[i].0 as nat)).contains(s[i]));
+}
+
+/// `sum_counts` is non-decreasing in the prefix length.
+pub proof fn lemma_sum_counts_monotone<V>(s: Seq<(usize, V)>, occ: Seq<usize>, a: int, b: int)
+    requires
+        0 <= a <= b,
+    ensures
+        sum_counts(s, occ, a) <= sum_counts(s, occ, b),
     decreases b - a,
 {
     if a < b {
-        lemma_offsets_monotone(offsets, counts, n, a, b - 1);
-        assert(0 <= (b - 1) && (b - 1) + 1 < n);
-        assert(offsets[b - 1] + counts[b - 1] == offsets[b]);
+        lemma_sum_counts_monotone::<V>(s, occ, a, b - 1);
     }
+}
+
+/// Sum of the per-key counts over the first `j` entries of an occupancy list.
+///
+/// The pool size is this sum over the whole list, and
+/// [`lemma_sum_counts_is_len`] is the identity that makes it the stream length.
+pub open spec fn sum_counts<V>(s: Seq<(usize, V)>, occ: Seq<usize>, j: int) -> nat
+    decreases j,
+{
+    if j <= 0 {
+        0
+    } else {
+        sum_counts(s, occ, j - 1) + count_key(s, occ[j - 1] as nat)
+    }
+}
+
+/// "Key `x` appears among the first `j` entries of the occupancy list."
+pub open spec fn listed_before(occ: Seq<usize>, j: int, x: usize) -> bool {
+    exists|q: int| 0 <= q < j && (#[trigger] occ[q]) == x
+}
+
+/// Dropping the stream's last entry lowers the sum by one when that entry's key
+/// is listed, and leaves it alone when it is not.
+pub proof fn lemma_sum_counts_drop_last<V>(s: Seq<(usize, V)>, occ: Seq<usize>, j: int)
+    requires
+        s.len() > 0,
+        0 <= j <= occ.len(),
+        forall|a: int, b: int| 0 <= a < b < j ==> occ[a] != occ[b],
+    ensures
+        sum_counts(s, occ, j) == sum_counts(s.drop_last(), occ, j) + if listed_before(
+            occ,
+            j,
+            s.last().0,
+        ) {
+            1int
+        } else {
+            0int
+        },
+    decreases j,
+{
+    if j > 0 {
+        lemma_sum_counts_drop_last(s, occ, j - 1);
+        let rest = s.drop_last();
+        let last = s.last();
+        assert(s =~= rest.push(last));
+        rest.lemma_filter_len_push(is_key::<V>(occ[j - 1] as nat), last);
+        if occ[j - 1] == last.0 {
+            // listed exactly here: the prefix cannot also list it
+            assert(listed_before(occ, j, last.0));
+            assert(!listed_before(occ, j - 1, last.0)) by {
+                assert forall|q: int| 0 <= q < j - 1 implies (#[trigger] occ[q]) != last.0 by {
+                    assert(occ[q] != occ[j - 1]);
+                }
+            }
+        } else {
+            // this position does not list it, so the two agree
+            assert(listed_before(occ, j, last.0) == listed_before(occ, j - 1, last.0)) by {
+                if listed_before(occ, j, last.0) {
+                    let w = choose|w: int| 0 <= w < j && (#[trigger] occ[w]) == last.0;
+                    assert(occ[w] == last.0);
+                    assert(w < j - 1);
+                }
+            }
+        }
+    }
+}
+
+/// An empty stream contributes nothing at any prefix length.
+pub proof fn lemma_sum_counts_empty<V>(s: Seq<(usize, V)>, occ: Seq<usize>, j: int)
+    requires
+        s.len() == 0,
+        0 <= j,
+    ensures
+        sum_counts(s, occ, j) == 0,
+    decreases j,
+{
+    if j > 0 {
+        lemma_sum_counts_empty::<V>(s, occ, j - 1);
+        assert(count_key(s, occ[j - 1] as nat) == 0) by {
+            reveal(Seq::filter);
+        }
+    }
+}
+
+/// The occupancy list's per-key counts sum to the stream length: every entry is
+/// counted under exactly one key, and every key that occurs is listed once.
+///
+/// This is the identity that makes the pool exactly as long as the stream, and
+/// with it the tiling's "the last span ends at `pool.len()`" clause. Stated over
+/// bare sequences, with the pairwise injectivity hypothesis discharged by the
+/// caller, so no pairwise quantifier lives in `wf()` (playbook section 9).
+pub proof fn lemma_sum_counts_is_len<V>(s: Seq<(usize, V)>, occ: Seq<usize>)
+    requires
+        forall|a: int, b: int| 0 <= a < b < occ.len() ==> occ[a] != occ[b],
+        forall|i: int| 0 <= i < s.len() ==> occ.contains((#[trigger] s[i]).0),
+    ensures
+        sum_counts(s, occ, occ.len() as int) == s.len(),
+    decreases s.len(),
+{
+    if s.len() > 0 {
+        let rest = s.drop_last();
+        assert(rest.len() == s.len() - 1);
+        assert forall|i: int| 0 <= i < rest.len() implies occ.contains((#[trigger] rest[i]).0) by {
+            assert(0 <= i < s.len());
+            assert(rest[i] == s[i]);
+        }
+        lemma_sum_counts_is_len(rest, occ);
+        lemma_sum_counts_drop_last(s, occ, occ.len() as int);
+        assert(occ.contains(s.last().0)) by {
+            assert(s[s.len() - 1] == s.last());
+        }
+        assert(listed_before(occ, occ.len() as int, s.last().0)) by {
+            let w = choose|w: int| 0 <= w < occ.len() && occ[w] == s.last().0;
+            assert(occ[w] == s.last().0);
+        }
+        assert(sum_counts(s, occ, occ.len() as int) == sum_counts(rest, occ, occ.len() as int)
+            + 1);
+    } else {
+        lemma_sum_counts_empty::<V>(s, occ, occ.len() as int);
+    }
+}
+
+/// Extents assigned as running prefix sums over the occupancy list tile
+/// `[0, total)`. This is what pass 1b establishes and pass 2 relies on.
+pub proof fn lemma_extent_tiling<V>(
+    s: Seq<(usize, V)>,
+    occ: Seq<usize>,
+    full: Seq<Span>,
+    total: nat,
+)
+    requires
+        sum_counts::<V>(s, occ, occ.len() as int) == total,
+        forall|q: int|
+            0 <= q < occ.len() ==> {
+                &&& full[(#[trigger] occ[q]) as int].off == sum_counts::<V>(s, occ, q)
+                &&& full[occ[q] as int].len == count_key(s, occ[q] as nat)
+            },
+    ensures
+        spans_tile(permute(full, occ), total),
+{
+    reveal(permute);
+    let ps = permute(full, occ);
+    assert(ps.len() == occ.len());
+    assert forall|q: int| 0 <= q < ps.len() implies #[trigger] ps[q] == full[occ[q] as int] by {
+        lemma_permute_index(full, occ, q);
+    }
+    assert forall|q: int| 0 <= q < ps.len() implies (#[trigger] ps[q]).off + ps[q].len
+        == sum_counts::<V>(s, occ, q + 1) by {
+    }
+    assert forall|q: int| 0 <= q < ps.len() implies (#[trigger] ps[q]).off + ps[q].len
+        <= total by {
+        lemma_sum_counts_monotone::<V>(s, occ, q + 1, occ.len() as int);
+    }
+}
+
+/// The placement step, over bare sequences: region `k0` is extended by `val` and
+/// every other region is untouched. The build loop's locals are deliberately not
+/// in scope (playbook section 9).
+///
+/// Regions are ordered by OCCUPANCY position, not by key, so disjointness comes
+/// from `spans_tile` applied to the permuted span sequence. `pos_of[k]` is key
+/// `k`'s index in `occ`; it is a ghost argument so the hypothesis the exec body
+/// must supply stays single-variable, and the lemma derives the pairwise fact
+/// internally.
+pub proof fn lemma_place_step<V>(
+    pool: Seq<V>,
+    spans: Seq<Span>,
+    occ: Seq<usize>,
+    partial: Seq<Span>,
+    pos_of: Seq<int>,
+    live: Seq<bool>,
+    num_keys: int,
+    k0: usize,
+    val: V,
+)
+    requires
+        spans_tile(permute(spans, occ), pool.len()),
+        0 <= num_keys <= spans.len(),
+        num_keys <= partial.len(),
+        num_keys <= pos_of.len(),
+        num_keys <= live.len(),
+        0 <= k0 < num_keys,
+        live[k0 as int],
+        // every listed key is in range, and a LIVE key's recorded position names
+        // it back. Only live keys have a position: an unwritten key's entry holds
+        // whatever the previous generation left there.
+        forall|j: int| 0 <= j < occ.len() ==> (#[trigger] occ[j]) < num_keys,
+        forall|k: int|
+            0 <= k < num_keys ==> (#[trigger] live[k]) ==> {
+                &&& 0 <= pos_of[k] < occ.len()
+                &&& occ[pos_of[k]] as int == k
+            },
+        // cursors sit inside their key's extent, and k0 has room left
+        forall|k: int|
+            0 <= k < num_keys ==> (#[trigger] live[k]) ==> partial[k].off == spans[k].off
+                && partial[k].len <= spans[k].len,
+        partial[k0 as int].len < spans[k0 as int].len,
+    ensures
+        forall|k: int|
+            0 <= k < num_keys && k != k0 as int && live[k] ==> #[trigger] pool.update(
+                (partial[k0 as int].off + partial[k0 as int].len) as int,
+                val,
+            ).subrange(
+                spans[k].off as int,
+                (partial[k].off + partial[k].len) as int,
+            ) == pool.subrange(spans[k].off as int, (partial[k].off + partial[k].len) as int),
+        pool.update((partial[k0 as int].off + partial[k0 as int].len) as int, val).subrange(
+            spans[k0 as int].off as int,
+            partial[k0 as int].off + partial[k0 as int].len + 1,
+        ) == pool.subrange(
+            spans[k0 as int].off as int,
+            (partial[k0 as int].off + partial[k0 as int].len) as int,
+        ).push(val),
+{
+    let permuted = permute(spans, occ);
+    lemma_permute_len(spans, occ);
+    let p0 = pos_of[k0 as int];
+    lemma_permute_index(spans, occ, p0);
+    let pos = (partial[k0 as int].off + partial[k0 as int].len) as int;
+    assert(occ[p0] as int == k0 as int);
+    assert(permuted[p0] == spans[occ[p0] as int]);
+    assert(permuted[p0] == spans[k0 as int]);
+    assert(pos < pool.len());
+    assert forall|k: int|
+        0 <= k < num_keys && k != k0 as int && live[k] implies #[trigger] pool.update(
+        pos,
+        val,
+    ).subrange(
+        spans[k].off as int,
+        (partial[k].off + partial[k].len) as int,
+    ) == pool.subrange(spans[k].off as int, (partial[k].off + partial[k].len) as int) by {
+        let pk = pos_of[k];
+        lemma_permute_index(spans, occ, pk);
+        assert(occ[pk] as int == k);
+        assert(permuted[pk] == spans[occ[pk] as int]);
+        assert(permuted[pk] == spans[k]);
+        // distinct keys occupy distinct positions, so the tiling separates them
+        assert(pk != p0);
+        if pk < p0 {
+            lemma_spans_disjoint(permuted, pool.len(), pk, p0);
+        } else {
+            lemma_spans_disjoint(permuted, pool.len(), p0, pk);
+        }
+        lemma_update_outside(pool, spans[k].off as int, (partial[k].off + partial[k].len) as int, pos, val);
+    }
+    lemma_update_at_end(pool, spans[k0 as int].off as int, pos, val);
 }
 
 /// Filtering preserves relative order, so it preserves sortedness under ANY
@@ -370,32 +620,137 @@ pub proof fn lemma_filter_sorted<A>(s: Seq<A>, p: spec_fn(A) -> bool, r: spec_fn
 // ---------------------------------------------------------------------------
 // The container
 // ---------------------------------------------------------------------------
+/// A recycled span table.
+///
+/// The table outlives the map built into it: `DenseSpanMap::recycle` hands it
+/// back and `DenseSpanMap::build_in` fills it again, so a build allocates
+/// nothing for the part of the key space its stream does not touch. `stamp` is
+/// the current generation; a span carrying an older stamp belongs to a previous
+/// build and reads as empty, which is what removes the O(num_keys) clear.
+pub struct SpanArena {
+    pub(crate) spans: std::vec::Vec<Span>,
+    /// The keys the current generation wrote, in first-occurrence order.
+    pub(crate) occ: std::vec::Vec<usize>,
+    /// The current generation. Never equals a stamp left by an earlier build.
+    pub(crate) stamp: u64,
+}
+
+impl SpanArena {
+    pub open(crate) spec fn spans_view(&self) -> Seq<Span> {
+        self.spans@
+    }
+
+    pub open(crate) spec fn occ_view(&self) -> Seq<usize> {
+        self.occ@
+    }
+
+    pub open(crate) spec fn stamp_view(&self) -> u64 {
+        self.stamp
+    }
+
+    /// No entry claims a generation newer than the arena's own.
+    ///
+    /// This is what makes bumping the generation enough to invalidate the whole
+    /// table: after the bump no existing entry can carry the new stamp. It is a
+    /// TYPE invariant, not a precondition, so `build_in` needs no `requires` and
+    /// the public surface stays total. It holds continuously through a build:
+    /// the bump raises the arena's stamp above every entry's, and every entry a
+    /// build writes gets exactly the current stamp.
+    #[verifier::type_invariant]
+    pub open(crate) spec fn wf(&self) -> bool {
+        forall|k: int|
+            0 <= k < self.spans_view().len() ==> (#[trigger] self.spans_view()[k]).stamp
+                <= self.stamp_view()
+    }
+
+    /// An empty arena. Its generation is 0, the never-written stamp, so the
+    /// first build advances to 1 and every entry it does not write stays stale.
+    pub fn new() -> (r: Self)
+        ensures
+            r.wf(),
+            r.spans_view().len() == 0,
+            r.occ_view().len() == 0,
+            r.stamp_view() == 0,
+    {
+        SpanArena { spans: std::vec::Vec::new(), occ: std::vec::Vec::new(), stamp: 0 }
+    }
+
+    /// Number of key slots the table currently holds.
+    pub fn capacity(&self) -> (n: usize)
+        ensures
+            n == self.spans_view().len(),
+    {
+        self.spans.len()
+    }
+}
+
+impl Default for SpanArena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Build-once dense-keyed multimap.
 ///
 /// `V: Default` supplies the pass-2 filler: the pool is sized up front and every
-/// slot is then overwritten by pass 2 (the spans tile the pool exactly, so no
-/// filler survives in any readable range). The filler is therefore unobservable,
-/// the same argument `doc/design/07-default-impls.md` makes for restore-regrow.
+/// slot is then overwritten by pass 2 (the occupied spans tile the pool exactly,
+/// so no filler survives in any readable range). The filler is therefore
+/// unobservable, the same argument `doc/design/07-default-impls.md` makes for
+/// restore-regrow.
 pub struct DenseSpanMap<V: Copy + Default> {
     pub(crate) pool: std::vec::Vec<V>,
-    pub(crate) spans: std::vec::Vec<Span>,
+    pub(crate) arena: SpanArena,
+    /// The key space. The arena's table may be longer, because it is recycled
+    /// from a build over a larger key space.
+    pub(crate) num_keys: usize,
     /// Ghost record of the stream this map was built from. `refines()` is stated
-    /// against it, so the model obligation survives past `build`'s return.
+    /// against it, so the model obligation survives past the build's return.
     /// (Spec-only: erased in plain builds, hence `dead_code`.)
     #[allow(dead_code)]
     pub(crate) stream: Ghost<Seq<(usize, V)>>,
 }
 
 impl<V: Copy + Default> DenseSpanMap<V> {
-    /// The abstract contents: one value sequence per key.
+    pub open(crate) spec fn spans_view(&self) -> Seq<Span> {
+        self.arena.spans@
+    }
+
+    pub open(crate) spec fn occ_view(&self) -> Seq<usize> {
+        self.arena.occ@
+    }
+
+    pub open(crate) spec fn stamp_view(&self) -> u64 {
+        self.arena.stamp
+    }
+
+    /// Key `k` was written by the generation this map holds.
+    pub open(crate) spec fn occupied(&self, k: int) -> bool {
+        self.spans_view()[k].stamp == self.stamp_view()
+    }
+
+    /// The current generation's spans, in occupancy order.
+    ///
+    /// `wf` states the tiling of THIS sequence rather than of the key-ordered
+    /// table, because a recycled build cannot maintain a tiling in key order: an
+    /// unwritten key's entry holds whatever the previous build left there.
+    pub open(crate) spec fn occ_spans(&self) -> Seq<Span> {
+        permute(self.spans_view(), self.occ_view())
+    }
+
+    /// The abstract contents: one value sequence per key. A key the current
+    /// generation did not write is empty.
     pub open(crate) spec fn view(&self) -> Seq<Seq<V>> {
         Seq::new(
-            self.spans@.len(),
+            self.num_keys as nat,
             |k: int|
-                self.pool@.subrange(
-                    self.spans@[k].off as int,
-                    self.spans@[k].off + self.spans@[k].len,
-                ),
+                if self.occupied(k) {
+                    self.pool@.subrange(
+                        self.spans_view()[k].off as int,
+                        self.spans_view()[k].off + self.spans_view()[k].len,
+                    )
+                } else {
+                    Seq::<V>::empty()
+                },
         )
     }
 
@@ -404,20 +759,39 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         self.stream@
     }
 
-    /// Structural well-formedness: the spans tile the pool exactly.
+    /// Structural well-formedness: the occupied spans tile the pool exactly.
     ///
-    /// Purely structural on purpose (playbook §4). `get` needs in-bounds-ness and
-    /// nothing more; if `wf` also carried the refinement, every `get` would pull a
-    /// `forall k` over filtered sequences into the solver's scope for no reason.
+    /// Every clause quantifies over a single variable. Injectivity of the
+    /// occupancy list is NOT stated here: it is derived by
+    /// [`lemma_occ_injective`] from the tiling plus "an occupied span is
+    /// non-empty", because the pairwise phrasing is the quadratic-trigger shape
+    /// the proof-performance playbook section 9 measures at 223,553 ms.
+    ///
+    /// Purely structural (playbook section 4): the refinement is `refines()`.
     pub open(crate) spec fn wf(&self) -> bool {
-        spans_tile(self.spans@, self.pool@.len())
+        &&& self.num_keys <= self.spans_view().len()
+        &&& self.stamp_view() > 0
+        &&& spans_tile(self.occ_spans(), self.pool@.len())
+        &&& (forall|k: int|
+            0 <= k < self.spans_view().len() ==> (#[trigger] self.spans_view()[k]).stamp
+                <= self.stamp_view())
+        &&& (forall|j: int|
+            0 <= j < self.occ_view().len() ==> {
+                &&& (#[trigger] self.occ_view()[j]) < self.num_keys
+                &&& self.spans_view()[self.occ_view()[j] as int].stamp == self.stamp_view()
+                &&& self.spans_view()[self.occ_view()[j] as int].len > 0
+            })
+        &&& (forall|k: int|
+            0 <= k < self.num_keys ==> (#[trigger] self.spans_view()[k]).stamp
+                == self.stamp_view() ==> self.occ_view().contains(k as usize))
     }
 
     /// Refinement to the build stream: key `k`'s slice IS the stream filtered to
-    /// `k`. Separate from `wf` so it is loaded only where it is used.
+    /// `k`. Unchanged by the recycled build path: a key the stream does not
+    /// carry is unoccupied, and its empty view is the empty filter.
     pub open(crate) spec fn refines(&self) -> bool {
         forall|k: int|
-            0 <= k < self.spans@.len() ==> #[trigger] self.view()[k] == key_slice(
+            0 <= k < self.num_keys ==> #[trigger] self.view()[k] == key_slice(
                 self.stream@,
                 k as nat,
             )
@@ -428,43 +802,57 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         ensures
             n == self.view().len(),
     {
-        self.spans.len()
+        self.num_keys
     }
 
     pub fn is_empty(&self) -> (b: bool)
         ensures
             b == (self.view().len() == 0),
     {
-        self.spans.len() == 0
+        self.num_keys == 0
     }
 
     /// Key `k`'s values, as a slice into the pool.
     ///
-    /// Total, with a documented panic (same protocol as `AppendOnlyVec::get`):
-    /// the two bound branches are O(1) and are exactly what carving the slice
-    /// needs, so no `requires` is exposed to unverified callers. For a `wf()`
-    /// map neither branch is reachable: the tiling makes both checks dead.
+    /// Total, with a documented panic. Three O(1) branches: the key space, the
+    /// generation stamp, and the span's extent. For a `wf()` map only the stamp
+    /// branch is live, and it is the one that makes a recycled table correct.
     ///
-    /// The slice is carved with two `split_at`s rather than `&pool[a..b]`: the
+    /// The slice is carved with two `split_at`s rather than `&pool[a..b]`:
+    /// `split_at` carries a direct `subrange` postcondition, while the
     /// range-index route reaches the pool through vstd's `call_ensures`-shaped
-    /// `Index` specification, whereas `split_at` carries a direct `subrange`
-    /// postcondition.
+    /// `Index` specification.
     pub fn get(&self, k: usize) -> (r: &[V])
         ensures
             k < self.view().len() ==> r@ == self.view()[k as int],
     {
-        if !(k < self.spans.len()) {
+        if !(k < self.num_keys) {
             crate::guard::refuse("DenseSpanMap::get: key out of range");
         }
-        let span = self.spans[k];
+        if !(k < self.arena.spans.len()) {
+            crate::guard::refuse("DenseSpanMap::get: span table shorter than the key space");
+        }
+        let span = self.arena.spans[k];
         let n = self.pool.len();
+        if span.stamp != self.arena.stamp {
+            // Stale generation: this key was not written by the build that
+            // produced this map, so it holds nothing.
+            let (empty, _) = self.pool.as_slice().split_at(0);
+            proof {
+                assert(span == self.spans_view()[k as int]);
+                assert(!self.occupied(k as int));
+                assert(empty@ =~= Seq::<V>::empty());
+            }
+            return empty;
+        }
         if !(span.off <= n && span.len <= n - span.off) {
             crate::guard::refuse("DenseSpanMap::get: span outside pool");
         }
         let (_, tail) = self.pool.as_slice().split_at(span.off);
         let (out, _) = tail.split_at(span.len);
         proof {
-            assert(span == self.spans@[k as int]);
+            assert(span == self.spans_view()[k as int]);
+            assert(self.occupied(k as int));
             assert(out@ =~= self.pool@.subrange(span.off as int, span.off + span.len));
         }
         out
@@ -476,7 +864,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
             k < self.view().len() ==> (r matches Some(s) && s@ == self.view()[k as int]),
             k >= self.view().len() ==> r is None,
     {
-        if k < self.spans.len() {
+        if k < self.num_keys {
             Some(self.get(k))
         } else {
             None
@@ -488,18 +876,8 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         ensures
             k < self.view().len() ==> n == self.view()[k as int].len(),
     {
-        if !(k < self.spans.len()) {
-            crate::guard::refuse("DenseSpanMap::key_len: key out of range");
-        }
-        let span = self.spans[k];
-        let n = self.pool.len();
-        if !(span.off <= n && span.len <= n - span.off) {
-            crate::guard::refuse("DenseSpanMap::key_len: span outside pool");
-        }
-        proof {
-            assert(span == self.spans@[k as int]);
-        }
-        span.len
+        let s = self.get(k);
+        s.len()
     }
 
     /// Pool size (spec twin of `total()`; fields are `pub(crate)`, so the public
@@ -516,11 +894,19 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         self.pool.len()
     }
 
-    /// Exec twin of `build`'s precondition: every key in the stream is in range.
+    /// Hand the span table back for the next build. O(1): it is a move.
+    pub fn recycle(self) -> (r: SpanArena)
+        ensures
+            r.spans_view() == self.spans_view(),
+            r.stamp_view() == self.stamp_view(),
+    {
+        self.arena
+    }
+
+    /// Exec twin of the build precondition: every key in the stream is in range.
     pub fn can_build(stream: &[(usize, V)], num_keys: usize) -> (b: bool)
         ensures
-            b == (forall|i: int|
-                0 <= i < stream@.len() ==> (#[trigger] stream@[i]).0 < num_keys),
+            b == (forall|i: int| 0 <= i < stream@.len() ==> (#[trigger] stream@[i]).0 < num_keys),
     {
         let mut i: usize = 0;
         while i < stream.len()
@@ -537,12 +923,657 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         true
     }
 
-    /// Two-pass counting build.
+    /// Pass 1: count each key's population and list the keys the generation
+    /// touches, in first-occurrence order.
     ///
-    /// Pass 1 counts each key's population and prefix-sums the counts into
-    /// offsets; pass 2 walks the stream again, placing each value at its key's
-    /// running cursor. The result is the order-preserving per-key filter of the
-    /// stream, which is what `refines()` states.
+    /// Each listed key records its own position in the occupancy list in its
+    /// `off` field, which pass 1b overwrites with the real offset. That record is
+    /// what makes the list's injectivity a single-variable fact.
+    fn count_pass(
+        spans: &mut std::vec::Vec<Span>,
+        occ: &mut std::vec::Vec<usize>,
+        stream: &[(usize, V)],
+        num_keys: usize,
+        g: u64,
+    )
+        requires
+            num_keys <= old(spans)@.len(),
+            old(occ)@.len() == 0,
+            g > 0,
+            forall|q: int| 0 <= q < stream@.len() ==> (#[trigger] stream@[q]).0 < num_keys,
+            forall|k: int| 0 <= k < old(spans)@.len() ==> (#[trigger] old(spans)@[k]).stamp < g,
+        ensures
+            final(spans)@.len() == old(spans)@.len(),
+            forall|k: int|
+                0 <= k < final(spans)@.len() ==> (#[trigger] final(spans)@[k]).stamp <= g,
+            forall|j: int|
+                0 <= j < final(occ)@.len() ==> {
+                    &&& (#[trigger] final(occ)@[j]) < num_keys
+                    &&& final(spans)@[final(occ)@[j] as int].stamp == g
+                    &&& final(spans)@[final(occ)@[j] as int].off == j
+                },
+            forall|k: int|
+                0 <= k < num_keys ==> (((#[trigger] final(spans)@[k]).stamp == g) <==> count_key(
+                    stream@,
+                    k as nat,
+                ) > 0),
+            forall|k: int|
+                0 <= k < num_keys ==> ((#[trigger] final(spans)@[k]).stamp == g
+                    ==> final(spans)@[k].len == count_key(stream@, k as nat)),
+            forall|k: int|
+                0 <= k < num_keys ==> ((#[trigger] final(spans)@[k]).stamp == g
+                    ==> final(occ)@.contains(k as usize)),
+    {
+        let ghost s = stream@;
+        let mut i: usize = 0;
+        proof {
+            assert(s.take(0int) =~= Seq::<(usize, V)>::empty());
+            assert forall|k: int|
+                #![trigger count_key(s.take(0int), k as nat)]
+                0 <= k < num_keys implies count_key(s.take(0int), k as nat) == 0 by {
+                reveal(Seq::filter);
+            }
+        }
+        while i < stream.len()
+            invariant
+                i <= s.len(),
+                stream@ == s,
+                g > 0,
+                num_keys <= spans@.len(),
+                spans@.len() == old(spans)@.len(),
+                forall|q: int| 0 <= q < s.len() ==> (#[trigger] s[q]).0 < num_keys,
+                forall|k: int| 0 <= k < spans@.len() ==> (#[trigger] spans@[k]).stamp <= g,
+                forall|j: int|
+                    0 <= j < occ@.len() ==> {
+                        &&& (#[trigger] occ@[j]) < num_keys
+                        &&& spans@[occ@[j] as int].stamp == g
+                        &&& spans@[occ@[j] as int].off == j
+                    },
+                forall|k: int|
+                    0 <= k < num_keys ==> (((#[trigger] spans@[k]).stamp == g) <==> count_key(
+                        s.take(i as int),
+                        k as nat,
+                    ) > 0),
+                forall|k: int|
+                    0 <= k < num_keys ==> ((#[trigger] spans@[k]).stamp == g ==> spans@[k].len
+                        == count_key(s.take(i as int), k as nat)),
+                forall|k: int|
+                    0 <= k < num_keys ==> ((#[trigger] spans@[k]).stamp == g ==> occ@.contains(
+                        k as usize,
+                    )),
+            decreases s.len() - i,
+        {
+            let key = stream[i].0;
+            let ghost prefix = s.take(i as int);
+            let ghost occ_old = occ@;
+            proof {
+                assert(key == s[i as int].0);
+                assert(s[i as int].0 < num_keys);
+                assert(s.take((i + 1) as int) =~= prefix.push(s[i as int]));
+                assert(prefix.len() == i);
+                lemma_count_key_bound(prefix, key as nat);
+                assert forall|k: int|
+                    #![trigger count_key(s.take((i + 1) as int), k as nat)]
+                    0 <= k < num_keys implies count_key(s.take((i + 1) as int), k as nat)
+                    == count_key(prefix, k as nat) + if k == key as int {
+                    1int
+                } else {
+                    0int
+                } by {
+                    prefix.lemma_filter_len_push(is_key::<V>(k as nat), s[i as int]);
+                }
+            }
+            let sp = spans[key];
+            let fresh: bool = sp.stamp != g;
+            if fresh {
+                let pos = occ.len();
+                spans[key] = Span { off: pos, len: 1, stamp: g };
+                occ.push(key);
+            } else {
+                spans[key] = Span { off: sp.off, len: sp.len + 1, stamp: g };
+            }
+            proof {
+                assert forall|k: int|
+                    0 <= k < num_keys && (#[trigger] spans@[k]).stamp == g implies occ@.contains(
+                    k as usize,
+                ) by {
+                    if fresh && k == key as int {
+                        assert(occ@[occ@.len() - 1] == key);
+                    } else {
+                        assert(occ_old.contains(k as usize));
+                        let w = choose|w: int| 0 <= w < occ_old.len() && occ_old[w] == k as usize;
+                        assert(occ@[w] == occ_old[w]);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        proof {
+            assert(s.take(s.len() as int) =~= s);
+        }
+    }
+
+    /// Pass 1b: assign each listed key its extent, over the occupancy list alone.
+    ///
+    /// Extents are laid out in first-occurrence order rather than key order,
+    /// which the per-key refinement does not constrain. Each key's `len` is read
+    /// as its count and then zeroed, so pass 2 can use it as a running cursor.
+    fn extent_pass(
+        spans: &mut std::vec::Vec<Span>,
+        occ: &std::vec::Vec<usize>,
+        num_keys: usize,
+        g: u64,
+        Ghost(s): Ghost<Seq<(usize, V)>>,
+    ) -> (total: usize)
+        requires
+            num_keys <= old(spans)@.len(),
+            g > 0,
+            s.len() <= usize::MAX,
+            sum_counts::<V>(s, occ@, occ@.len() as int) == s.len(),
+            forall|x: int, y: int| 0 <= x < y < occ@.len() ==> occ@[x] != occ@[y],
+            forall|j: int|
+                0 <= j < occ@.len() ==> {
+                    &&& (#[trigger] occ@[j]) < num_keys
+                    &&& old(spans)@[occ@[j] as int].stamp == g
+                    &&& old(spans)@[occ@[j] as int].len == count_key(s, occ@[j] as nat)
+                },
+        ensures
+            final(spans)@.len() == old(spans)@.len(),
+            total == s.len(),
+            // stamps are untouched, so occupancy is unchanged
+            forall|k: int|
+                0 <= k < final(spans)@.len() ==> (#[trigger] final(spans)@[k]).stamp
+                    == old(spans)@[k].stamp,
+            forall|q: int|
+                0 <= q < occ@.len() ==> {
+                    &&& final(spans)@[(#[trigger] occ@[q]) as int].off == sum_counts::<V>(s, occ@, q)
+                    &&& final(spans)@[occ@[q] as int].len == 0
+                },
+    {
+        let mut acc: usize = 0;
+        let mut j: usize = 0;
+        while j < occ.len()
+            invariant
+                j <= occ@.len(),
+                g > 0,
+                s.len() <= usize::MAX,
+                num_keys <= spans@.len(),
+                spans@.len() == old(spans)@.len(),
+                sum_counts::<V>(s, occ@, occ@.len() as int) == s.len(),
+                forall|x: int, y: int| 0 <= x < y < occ@.len() ==> occ@[x] != occ@[y],
+                forall|k: int|
+                    0 <= k < spans@.len() ==> (#[trigger] spans@[k]).stamp == old(spans)@[k].stamp,
+                forall|q: int|
+                    0 <= q < occ@.len() ==> {
+                        &&& (#[trigger] occ@[q]) < num_keys
+                        &&& spans@[occ@[q] as int].stamp == g
+                    },
+                forall|q: int|
+                    0 <= q < j ==> {
+                        &&& spans@[(#[trigger] occ@[q]) as int].off == sum_counts::<V>(s, occ@, q)
+                        &&& spans@[occ@[q] as int].len == 0
+                    },
+                forall|q: int|
+                    j <= q < occ@.len() ==> spans@[(#[trigger] occ@[q]) as int].len == count_key(
+                        s,
+                        occ@[q] as nat,
+                    ),
+                acc == sum_counts::<V>(s, occ@, j as int),
+                acc <= s.len(),
+            decreases occ@.len() - j,
+        {
+            let k = occ[j];
+            let sp = spans[k];
+            let cnt = sp.len;
+            proof {
+                assert(k == occ@[j as int]);
+                assert(sp == spans@[k as int]);
+                assert(cnt == count_key(s, occ@[j as int] as nat));
+                lemma_sum_counts_monotone::<V>(s, occ@, (j + 1) as int, occ@.len() as int);
+                assert(sum_counts::<V>(s, occ@, (j + 1) as int) == sum_counts::<V>(s, occ@, j as int)
+                    + count_key(s, occ@[j as int] as nat));
+                assert(acc + cnt == sum_counts::<V>(s, occ@, (j + 1) as int));
+                assert(sum_counts::<V>(s, occ@, (j + 1) as int) <= s.len());
+            }
+            spans[k] = Span { off: acc, len: 0, stamp: g };
+            acc = acc + cnt;
+            j = j + 1;
+        }
+        acc
+    }
+
+    /// Pass 2: place every stream value at its key's running cursor.
+    ///
+    /// Split out of `build_in` because the whole build in one body exceeded the
+    /// solver budget (playbook section 5: prefer structure over budget). The
+    /// contract is the pool content per key; nothing of the build's other passes
+    /// is in scope here.
+    ///
+    /// `full` carries each key's FINAL extent: the tiling holds of `full`
+    /// throughout, while `spans` grows its lengths from zero to the count.
+    fn place_pass(
+        spans: &mut std::vec::Vec<Span>,
+        pool: &mut std::vec::Vec<V>,
+        stream: &[(usize, V)],
+        num_keys: usize,
+        g: u64,
+        total: usize,
+        Ghost(occ0): Ghost<Seq<usize>>,
+        Ghost(full): Ghost<Seq<Span>>,
+        Ghost(pos_of): Ghost<Seq<int>>,
+    )
+        requires
+            num_keys <= old(spans)@.len(),
+            num_keys <= pos_of.len(),
+            full.len() == old(spans)@.len(),
+            old(pool)@.len() == total,
+            total == stream@.len(),
+            g > 0,
+            forall|q: int| 0 <= q < stream@.len() ==> (#[trigger] stream@[q]).0 < num_keys,
+            spans_tile(permute(full, occ0), total as nat),
+            forall|j: int|
+                0 <= j < occ0.len() ==> {
+                    &&& (#[trigger] occ0[j]) < num_keys
+                    &&& old(spans)@[occ0[j] as int].stamp == g
+                },
+            forall|k: int|
+                0 <= k < num_keys ==> (((#[trigger] old(spans)@[k]).stamp == g) <==> count_key(
+                    stream@,
+                    k as nat,
+                ) > 0),
+            forall|k: int|
+                0 <= k < num_keys ==> ((#[trigger] old(spans)@[k]).stamp == g ==> {
+                    &&& old(spans)@[k].off == full[k].off
+                    &&& full[k].stamp == g
+                    &&& old(spans)@[k].len == 0
+                    &&& full[k].len == count_key(stream@, k as nat)
+                    &&& 0 <= pos_of[k] < occ0.len()
+                    &&& occ0[pos_of[k]] as int == k
+                }),
+        ensures
+            final(spans)@.len() == old(spans)@.len(),
+            final(pool)@.len() == total,
+            forall|k: int|
+                0 <= k < final(spans)@.len() ==> (#[trigger] final(spans)@[k]).stamp
+                    == old(spans)@[k].stamp,
+            forall|k: int|
+                0 <= k < num_keys ==> (#[trigger] final(spans)@[k]).off == old(spans)@[k].off,
+            spans_tile(permute(final(spans)@, occ0), total as nat),
+            forall|k: int|
+                0 <= k < num_keys ==> ((#[trigger] final(spans)@[k]).stamp == g ==> {
+                    &&& final(spans)@[k].len == count_key(stream@, k as nat)
+                    &&& final(pool)@.subrange(
+                        final(spans)@[k].off as int,
+                        final(spans)@[k].off + final(spans)@[k].len,
+                    ) == key_slice(stream@, k as nat)
+                }),
+    {
+        let ghost s = stream@;
+        let ghost live = Seq::new(num_keys as nat, |k: int| old(spans)@[k].stamp == g);
+        let mut i: usize = 0;
+        proof {
+            assert(s.take(0int) =~= Seq::<(usize, V)>::empty());
+            assert forall|k: int|
+                #![trigger key_slice(s.take(0int), k as nat)]
+                0 <= k < num_keys implies key_slice(s.take(0int), k as nat)
+                =~= Seq::<V>::empty() by {
+                // scoped: revealing `filter` for the whole body makes every
+                // count_key/key_slice term unfold recursively
+                reveal(Seq::filter);
+            }
+            assert forall|k: int|
+                0 <= k < num_keys && (#[trigger] spans@[k]).stamp == g implies pool@.subrange(
+                spans@[k].off as int,
+                spans@[k].off + spans@[k].len,
+            ) == key_slice(s.take(0int), k as nat) by {
+                // the key's extent lies inside the pool, so its zero-length
+                // prefix is the empty sequence
+                lemma_permute_index(full, occ0, pos_of[k]);
+                assert(permute(full, occ0)[pos_of[k]] == full[k]);
+                assert(full[k].off + full[k].len <= total);
+                assert(spans@[k].len == 0);
+                assert(pool@.subrange(spans@[k].off as int, spans@[k].off + spans@[k].len)
+                    =~= Seq::<V>::empty());
+            }
+        }
+        while i < stream.len()
+            invariant
+                i <= s.len(),
+                stream@ == s,
+                g > 0,
+                num_keys <= spans@.len(),
+                num_keys <= pos_of.len(),
+                live.len() == num_keys,
+                forall|k: int| 0 <= k < num_keys ==> ((#[trigger] live[k]) <==> spans@[k].stamp == g),
+                full.len() == spans@.len(),
+                pool@.len() == total,
+                total == s.len(),
+                forall|q: int| 0 <= q < s.len() ==> (#[trigger] s[q]).0 < num_keys,
+                spans_tile(permute(full, occ0), total as nat),
+                forall|j: int| 0 <= j < occ0.len() ==> (#[trigger] occ0[j]) < num_keys,
+                forall|k: int|
+                    0 <= k < spans@.len() ==> (#[trigger] spans@[k]).stamp
+                        == old(spans)@[k].stamp,
+                forall|k: int|
+                    0 <= k < num_keys ==> (#[trigger] spans@[k]).off == old(spans)@[k].off,
+                forall|k: int|
+                    0 <= k < num_keys ==> (((#[trigger] spans@[k]).stamp == g) <==> count_key(
+                        s,
+                        k as nat,
+                    ) > 0),
+                forall|k: int|
+                    0 <= k < num_keys ==> ((#[trigger] spans@[k]).stamp == g ==> {
+                        &&& spans@[k].off == full[k].off
+                        &&& full[k].len == count_key(s, k as nat)
+                        &&& spans@[k].len == count_key(s.take(i as int), k as nat)
+                        &&& 0 <= pos_of[k] < occ0.len()
+                        &&& occ0[pos_of[k]] as int == k
+                    }),
+                forall|k: int|
+                    0 <= k < num_keys ==> ((#[trigger] spans@[k]).stamp == g ==> pool@.subrange(
+                        spans@[k].off as int,
+                        spans@[k].off + spans@[k].len,
+                    ) == key_slice(s.take(i as int), k as nat)),
+            decreases s.len() - i,
+        {
+            let key = stream[i].0;
+            let val = stream[i].1;
+            let ghost prefix = s.take(i as int);
+            let ghost pool0 = pool@;
+            proof {
+                assert(key == s[i as int].0);
+                assert(s[i as int].0 < num_keys);
+                lemma_count_key_positive::<V>(s, i as int);
+                assert(spans@[key as int].stamp == g);
+                assert(s.take((i + 1) as int) =~= prefix.push(s[i as int]));
+                s.lemma_filter_take_len(is_key::<V>(key as nat), (i + 1) as int);
+                prefix.lemma_filter_len_push(is_key::<V>(key as nat), s[i as int]);
+                // every cursor is inside its key's final extent: a prefix count
+                // never exceeds the whole-stream count
+                assert forall|k: int|
+                    #![trigger live[k]]
+                    0 <= k < num_keys && live[k] implies spans@[k].len <= full[k].len by {
+                    s.lemma_filter_take_len(is_key::<V>(k as nat), i as int);
+                }
+                lemma_place_step::<V>(
+                    pool@,
+                    full,
+                    occ0,
+                    spans@,
+                    pos_of,
+                    live,
+                    num_keys as int,
+                    key,
+                    val,
+                );
+            }
+            let sp = spans[key];
+            proof {
+                // the write lands inside key's extent, which the tiling bounds
+                // by the pool length
+                assert(sp.off == full[key as int].off);
+                assert(sp.len < full[key as int].len);
+                let pk = pos_of[key as int];
+                lemma_permute_index(full, occ0, pk);
+                assert(full[key as int].off + full[key as int].len <= total);
+            }
+            let at = sp.off + sp.len;
+            pool[at] = val;
+            spans[key] = Span { off: sp.off, len: sp.len + 1, stamp: g };
+            proof {
+                assert(pool@ == pool0.update(at as int, val));
+                assert forall|k: int|
+                    0 <= k < num_keys && (#[trigger] spans@[k]).stamp == g implies {
+                    &&& spans@[k].len == count_key(s.take((i + 1) as int), k as nat)
+                    &&& pool@.subrange(spans@[k].off as int, spans@[k].off + spans@[k].len)
+                        == key_slice(s.take((i + 1) as int), k as nat)
+                } by {
+                    prefix.lemma_filter_len_push(is_key::<V>(k as nat), s[i as int]);
+                    lemma_key_slice_push::<V>(prefix, key, val, k as nat);
+                }
+            }
+            i = i + 1;
+        }
+        proof {
+            assert(s.take(s.len() as int) =~= s);
+            // the finished table agrees with `full` on every listed key, so the
+            // tiling proved of `full` is the tiling of the table itself
+            lemma_permute_len(spans@, occ0);
+            lemma_permute_len(full, occ0);
+            assert(permute(spans@, occ0) =~= permute(full, occ0)) by {
+                assert forall|q: int|
+                    #![trigger permute(full, occ0)[q]]
+                    0 <= q < occ0.len() implies permute(spans@, occ0)[q] == permute(
+                    full,
+                    occ0,
+                )[q] by {
+                    lemma_permute_index(spans@, occ0, q);
+                    lemma_permute_index(full, occ0, q);
+                    let k = occ0[q] as int;
+                    assert(spans@[k].stamp == g);
+                    assert(spans@[k].off == full[k].off);
+                    assert(spans@[k].len == count_key(s, k as nat));
+                    assert(full[k].len == count_key(s, k as nat));
+                    assert(full[k].stamp == spans@[k].stamp);
+                    assert(spans@[k] == full[k]);
+                }
+            }
+        }
+    }
+
+    /// Two-pass counting build into a recycled span table.
+    ///
+    /// Pass 1 counts each key's population, appending the key to the occupancy
+    /// list the first time the generation sees it; pass 1b assigns extents over
+    /// the occupancy list alone; pass 2 places each value at its key's running
+    /// cursor. Work is proportional to the stream and the keys it occupies, not
+    /// to the key space.
+    ///
+    /// Extents are assigned in first-occurrence order rather than key order.
+    /// `refines()` does not constrain that: a key's slice is still the stream's
+    /// order-preserving filter down to that key.
+    // Four phases and seven postcondition clauses after the passes were
+    // extracted (playbook section 5). `spinoff_prover` isolates it in its own
+    // solver instance; it carries no `rlimit` attribute, so it converges on the
+    // default budget, which is the evidence it is stable rather than lucky.
+    #[verifier::spinoff_prover]
+    pub(crate) fn build_in(arena: SpanArena, stream: &[(usize, V)], num_keys: usize) -> (r: Self)
+        requires
+            forall|i: int| 0 <= i < stream@.len() ==> (#[trigger] stream@[i]).0 < num_keys,
+        ensures
+            r.wf(),
+            r.view().len() == num_keys,
+            r.stream_view() == stream@,
+            r.total_spec() == stream@.len(),
+            r.refines(),
+            // Stale spans read as empty: a key the stream does not carry is
+            // unoccupied, and an unoccupied key's view is the empty sequence.
+            (forall|k: int|
+                0 <= k < num_keys ==> ((#[trigger] r.occupied(k)) <==> count_key(
+                    stream@,
+                    k as nat,
+                ) > 0)),
+            (forall|k: int|
+                0 <= k < num_keys && !(#[trigger] r.occupied(k)) ==> r.view()[k]
+                    == Seq::<V>::empty()),
+            r.spans_view().len() >= num_keys,
+    {
+        let ghost s = stream@;
+        let ghost arena_spans = arena.spans@;
+        let ghost arena_stamp = arena.stamp;
+        proof {
+            use_type_invariant(&arena);
+            assert(arena.wf());
+            assert forall|k: int| 0 <= k < arena_spans.len() implies (#[trigger] arena_spans[k]).stamp
+                <= arena_stamp by {
+                assert(arena.spans_view()[k].stamp <= arena.stamp_view());
+            }
+        }
+        // Destructured into locals: a `&mut` borrow of a field of a type with a
+        // type invariant would oblige every vstd `Vec` method the build calls to
+        // be `no_unwind`, which they are not. The arena is reassembled at the
+        // end, where the invariant is checked once.
+        let SpanArena { mut spans, mut occ, mut stamp } = arena;
+        proof {
+            assert(spans@ =~= arena_spans);
+            assert(stamp == arena_stamp);
+            assert forall|k: int| 0 <= k < spans@.len() implies (#[trigger] spans@[k]).stamp
+                <= stamp by {
+                assert(arena_spans[k].stamp <= arena_stamp);
+            }
+        }
+        occ.clear();
+
+        // ---- generation advance, with exhaustion handled rather than assumed ----
+        // Stamp 0 is the never-written stamp, so a wrap must skip it and
+        // re-stamp the whole table once. At u64 and one build per nanosecond
+        // that is 584 years away, but "unreachable in practice" is not a
+        // postcondition, so the path is written and proved.
+        let ghost stamp0 = stamp;
+        let wrapped: bool = stamp == u64::MAX;
+        if wrapped {
+            let mut z: usize = 0;
+            while z < spans.len()
+                invariant
+                    z <= spans@.len(),
+                    forall|q: int| 0 <= q < z ==> (#[trigger] spans@[q]).stamp == 0,
+                decreases spans@.len() - z,
+            {
+                let mut sp = spans[z];
+                sp.stamp = 0;
+                spans[z] = sp;
+                z = z + 1;
+            }
+            stamp = 1;
+            proof {
+                assert forall|q: int| 0 <= q < spans@.len() implies (#[trigger] spans@[q]).stamp
+                    < stamp by {
+                    assert(spans@[q].stamp == 0);
+                }
+            }
+        } else {
+            stamp = stamp + 1;
+            proof {
+                assert forall|q: int| 0 <= q < spans@.len() implies (#[trigger] spans@[q]).stamp
+                    < stamp by {
+                }
+            }
+        }
+        let g: u64 = stamp;
+        proof {
+            assert(g > 0);
+        }
+
+        // ---- grow the table to the key space ----
+        while spans.len() < num_keys
+            invariant
+                g == stamp,
+                g > 0,
+                forall|q: int|
+                    0 <= q < spans@.len() ==> (#[trigger] spans@[q]).stamp < g,
+            decreases num_keys - spans@.len(),
+        {
+            spans.push(Span { off: 0, len: 0, stamp: 0 });
+        }
+
+        // ---- pass 1: population per key, and the occupancy list ----
+        Self::count_pass(&mut spans, &mut occ, stream, num_keys, g);
+        let ghost spans_after_count = spans@;
+        // ---- the occupancy list is injective, and its counts sum to the
+        //      stream length: every entry is placed under exactly one key ----
+        let ghost occ0 = occ@;
+        let ghost pos_of = Seq::new(num_keys as nat, |k: int| spans@[k].off as int);
+        proof {
+            {
+                assert forall|x: int, y: int| 0 <= x < y < occ0.len() implies occ0[x]
+                    != occ0[y] by {
+                    // each listed key records its own position, so two positions
+                    // naming the same key would be the same position
+                    assert(spans@[occ0[x] as int].off == x);
+                    assert(spans@[occ0[y] as int].off == y);
+                }
+                assert forall|q: int| 0 <= q < s.len() implies occ0.contains(
+                    (#[trigger] s[q]).0,
+                ) by {
+                    lemma_count_key_positive::<V>(s, q);
+                    assert(s[q].0 < num_keys);
+                    assert(spans@[s[q].0 as int].stamp == g);
+                }
+                lemma_sum_counts_is_len::<V>(s, occ0);
+            }
+        }
+
+        // ---- pass 1b: extents, over the occupied keys only ----
+        let stream_len: usize = stream.len();
+        proof {
+            assert(s.len() == stream_len);
+        }
+        let total = Self::extent_pass(&mut spans, &occ, num_keys, g, Ghost(s));
+
+        // ---- pass 2: placement, each key's `len` its running cursor ----
+        let ghost full_spans = Seq::new(
+            spans@.len(),
+            |k: int|
+                Span {
+                    off: spans@[k].off,
+                    len: count_key(s, k as nat) as usize,
+                    stamp: spans@[k].stamp,
+                },
+        );
+        let mut pool: std::vec::Vec<V> = std::vec::Vec::new();
+        pool.resize(total, V::default());
+        proof {
+            assert(full_spans.len() == spans@.len());
+            assert forall|q: int|
+                0 <= q < occ0.len() implies {
+                &&& full_spans[(#[trigger] occ0[q]) as int].off == sum_counts::<V>(s, occ0, q)
+                &&& full_spans[occ0[q] as int].len == count_key(s, occ0[q] as nat)
+            } by {
+            }
+            lemma_extent_tiling::<V>(s, occ0, full_spans, total as nat);
+        }
+        Self::place_pass(
+            &mut spans,
+            &mut pool,
+            stream,
+            num_keys,
+            g,
+            total,
+            Ghost(occ0),
+            Ghost(full_spans),
+            Ghost(pos_of),
+        );
+
+        let ghost spans_final = spans@;
+        let a = SpanArena { spans, occ, stamp };
+        let r = DenseSpanMap { pool, arena: a, num_keys, stream: Ghost(s) };
+        proof {
+            {
+                assert(r.occ_view() == occ0);
+                assert(r.occ_spans() == permute(spans_final, occ0));
+                assert(r.stamp_view() == g);
+                assert forall|k: int| 0 <= k < num_keys implies ((#[trigger] r.occupied(k))
+                    <==> count_key(stream@, k as nat) > 0) by {
+                    assert(r.spans_view()[k].stamp == spans_after_count[k].stamp);
+                    assert(r.occupied(k) == (spans_after_count[k].stamp == g));
+                    assert(count_key(s, k as nat) == count_key(stream@, k as nat));
+                }
+                assert(r.wf());
+                assert forall|k: int| 0 <= k < num_keys implies #[trigger] r.view()[k] == key_slice(
+                    s,
+                    k as nat,
+                ) by {
+                    if !r.occupied(k) {
+                        lemma_key_slice_len::<V>(s, k as nat);
+                        assert(key_slice(s, k as nat) =~= Seq::<V>::empty());
+                    }
+                }
+            }
+        }
+        r
+    }
+
+    /// Two-pass counting build into a fresh span table.
     pub(crate) fn build(stream: &[(usize, V)], num_keys: usize) -> (r: Self)
         requires
             forall|i: int| 0 <= i < stream@.len() ==> (#[trigger] stream@[i]).0 < num_keys,
@@ -555,294 +1586,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
             forall|k: int|
                 0 <= k < num_keys ==> #[trigger] r.view()[k] == key_slice(stream@, k as nat),
     {
-        let ghost s = stream@;
-
-        // ---- pass 1a: per-key counts ----
-        let mut counts: std::vec::Vec<usize> = std::vec::Vec::new();
-        let mut c: usize = 0;
-        while c < num_keys
-            invariant
-                c <= num_keys,
-                counts@.len() == c,
-                forall|j: int| 0 <= j < c ==> #[trigger] counts@[j] == 0,
-            decreases num_keys - c,
-        {
-            counts.push(0);
-            c = c + 1;
-        }
-
-        let mut i: usize = 0;
-        proof {
-            assert(s.take(0int) =~= Seq::<(usize, V)>::empty());
-            reveal(Seq::filter);
-        }
-        while i < stream.len()
-            invariant
-                i <= s.len(),
-                stream@ == s,
-                counts@.len() == num_keys,
-                forall|j: int| 0 <= j < s.len() ==> (#[trigger] s[j]).0 < num_keys,
-                forall|k: int|
-                    0 <= k < num_keys ==> #[trigger] counts@[k] == count_key(
-                        s.take(i as int),
-                        k as nat,
-                    ),
-            decreases s.len() - i,
-        {
-            let key = stream[i].0;
-            let ghost prefix = s.take(i as int);
-            proof {
-                assert(key == s[i as int].0);
-                assert(s[i as int].0 < num_keys);  // fires the key-bound invariant
-                assert(s.take((i + 1) as int) =~= prefix.push(s[i as int]));
-                lemma_count_key_bound(prefix, key as nat);
-                assert(prefix.len() == i);
-                // cur == count_key(prefix, key) <= prefix.len() == i < s.len(),
-                // so the increment cannot overflow.
-                assert(counts@[key as int] <= i);
-            }
-            let cur = counts[key];
-            counts[key] = cur + 1;
-            proof {
-                assert forall|k: int| 0 <= k < num_keys implies #[trigger] counts@[k] == count_key(
-                    s.take((i + 1) as int),
-                    k as nat,
-                ) by {
-                    prefix.lemma_filter_len_push(is_key::<V>(k as nat), s[i as int]);
-                }
-            }
-            i = i + 1;
-        }
-        proof {
-            assert(s.take(s.len() as int) =~= s);
-        }
-
-        // ---- pass 1b: prefix sums ----
-        let mut offsets: std::vec::Vec<usize> = std::vec::Vec::new();
-        let mut cursor: std::vec::Vec<usize> = std::vec::Vec::new();
-        let mut acc: usize = 0;
-        let mut k: usize = 0;
-        proof {
-            lemma_count_below_zero(s);
-        }
-        let stream_len: usize = stream.len();
-        while k < num_keys
-            invariant
-                k <= num_keys,
-                s.len() == stream_len,
-                counts@.len() == num_keys,
-                forall|j: int| 0 <= j < num_keys ==> #[trigger] counts@[j] == count_key(s, j as nat),
-                offsets@.len() == k,
-                cursor@ == offsets@,
-                acc == count_below(s, k as nat),
-                forall|j: int|
-                    0 <= j < k ==> #[trigger] offsets@[j] == count_below(s, j as nat),
-            decreases num_keys - k,
-        {
-            offsets.push(acc);
-            cursor.push(acc);
-            proof {
-                // acc + counts[k] == count_below(s, k) + count_key(s, k)
-                //                 == count_below(s, k+1) <= s.len() <= usize::MAX.
-                lemma_count_below_step(s, k as nat);
-                lemma_count_below_bound(s, (k + 1) as nat);
-                assert(acc + counts@[k as int] == count_below(s, (k + 1) as nat));
-                assert(count_below(s, (k + 1) as nat) <= s.len());
-                assert(s.len() == stream_len);  // a usize, hence <= usize::MAX
-            }
-            acc = acc + counts[k];
-            k = k + 1;
-        }
-        proof {
-            assert forall|j: int| 0 <= j < s.len() implies ((#[trigger] s[j]).0 as nat)
-                < num_keys as nat by {
-                assert(s[j].0 < num_keys);
-            }
-            lemma_count_below_all(s, num_keys as nat);
-        }
-        let total = acc;
-
-        // The two facts pass 2 needs about the offset table: consecutive keys'
-        // allocated extents abut, and none runs past the pool.
-        proof {
-            assert forall|j: int| 0 <= j && j + 1 < num_keys implies (#[trigger] offsets@[j])
-                + counts@[j] == offsets@[j + 1] by {
-                lemma_count_below_step(s, j as nat);
-            }
-            assert forall|j: int| 0 <= j < num_keys implies (#[trigger] offsets@[j]) + counts@[j]
-                <= total by {
-                lemma_count_below_step(s, j as nat);
-                lemma_count_below_bound(s, (j + 1) as nat);
-            }
-        }
-
-        // ---- pass 2: placement ----
-        let mut pool: std::vec::Vec<V> = std::vec::Vec::new();
-        pool.resize(total, V::default());
-
-        let mut i2: usize = 0;
-        proof {
-            assert(s.take(0int) =~= Seq::<(usize, V)>::empty());
-            assert forall|k: int| 0 <= k < num_keys implies #[trigger] pool@.subrange(
-                offsets@[k] as int,
-                cursor@[k] as int,
-            ) == key_slice(s.take(0int), k as nat) by {
-                reveal(Seq::filter);
-                assert(pool@.subrange(offsets@[k] as int, cursor@[k] as int) =~= Seq::<V>::empty());
-                assert(key_slice(Seq::<(usize, V)>::empty(), k as nat) =~= Seq::<V>::empty());
-            }
-        }
-        while i2 < stream.len()
-            invariant
-                i2 <= s.len(),
-                stream@ == s,
-                pool@.len() == total,
-                total == s.len(),
-                counts@.len() == num_keys,
-                offsets@.len() == num_keys,
-                cursor@.len() == num_keys,
-                forall|j: int| 0 <= j < s.len() ==> (#[trigger] s[j]).0 < num_keys,
-                forall|j: int| 0 <= j < num_keys ==> #[trigger] counts@[j] == count_key(s, j as nat),
-                forall|j: int|
-                    0 <= j < num_keys ==> #[trigger] offsets@[j] == count_below(s, j as nat),
-                forall|j: int|
-                    0 <= j && j + 1 < num_keys ==> (#[trigger] offsets@[j]) + counts@[j]
-                        == offsets@[j + 1],
-                forall|j: int|
-                    0 <= j < num_keys ==> (#[trigger] offsets@[j]) + counts@[j] <= total,
-                forall|j: int|
-                    0 <= j < num_keys ==> #[trigger] cursor@[j] == offsets@[j] + count_key(
-                        s.take(i2 as int),
-                        j as nat,
-                    ),
-                forall|j: int|
-                    0 <= j < num_keys ==> #[trigger] pool@.subrange(
-                        offsets@[j] as int,
-                        cursor@[j] as int,
-                    ) == key_slice(s.take(i2 as int), j as nat),
-            decreases s.len() - i2,
-        {
-            let key = stream[i2].0;
-            let val = stream[i2].1;
-            let ghost prefix = s.take(i2 as int);
-            proof {
-                assert(key == s[i2 as int].0);
-                assert(s[i2 as int].0 < num_keys);  // fires the key-bound invariant
-            }
-            let pos = cursor[key];
-            let ghost pool0 = pool@;
-
-            proof {
-                assert(s.take((i2 + 1) as int) =~= prefix.push(s[i2 as int]));
-                // key has room left: the entry at i2 is a key-`key` entry not yet
-                // placed, so the prefix count is strictly below the total count.
-                assert(is_key::<V>(key as nat)(s[i2 as int]));
-                prefix.lemma_filter_len_push(is_key::<V>(key as nat), s[i2 as int]);
-                assert(count_key(s.take((i2 + 1) as int), key as nat) == count_key(
-                    prefix,
-                    key as nat,
-                ) + 1);
-                s.lemma_filter_take_len(is_key::<V>(key as nat), (i2 + 1) as int);
-                assert(count_key(s.take((i2 + 1) as int), key as nat) <= count_key(s, key as nat));
-                assert(cursor@[key as int] < offsets@[key as int] + counts@[key as int]);
-                // Every cursor sits inside its key's allocated extent: the prefix
-                // count never exceeds the whole-stream count.
-                assert forall|j: int| 0 <= j < num_keys implies offsets@[j] <= #[trigger] cursor@[j]
-                    <= offsets@[j] + counts@[j] by {
-                    s.lemma_filter_take_len(is_key::<V>(j as nat), i2 as int);
-                }
-                lemma_place_step(
-                    pool@,
-                    offsets@,
-                    counts@,
-                    cursor@,
-                    num_keys as int,
-                    key as int,
-                    val,
-                );
-            }
-
-            pool[pos] = val;
-            cursor[key] = pos + 1;
-
-            proof {
-                assert(pool@ == pool0.update(pos as int, val));
-                assert forall|j: int| 0 <= j < num_keys implies #[trigger] pool@.subrange(
-                    offsets@[j] as int,
-                    cursor@[j] as int,
-                ) == key_slice(s.take((i2 + 1) as int), j as nat) by {
-                    prefix.lemma_filter_push(s[i2 as int], is_key::<V>(j as nat));
-                    if j != key as int {
-                        // untouched region, and the filtered prefix is unchanged
-                    } else {
-                        assert(key_slice(prefix.push(s[i2 as int]), j as nat) =~= key_slice(
-                            prefix,
-                            j as nat,
-                        ).push(val));
-                    }
-                }
-                assert forall|j: int| 0 <= j < num_keys implies #[trigger] cursor@[j] == offsets@[j]
-                    + count_key(s.take((i2 + 1) as int), j as nat) by {
-                    prefix.lemma_filter_len_push(is_key::<V>(j as nat), s[i2 as int]);
-                }
-            }
-            i2 = i2 + 1;
-        }
-        proof {
-            assert(s.take(s.len() as int) =~= s);
-        }
-
-        // ---- spans ----
-        let mut spans: std::vec::Vec<Span> = std::vec::Vec::new();
-        let mut k2: usize = 0;
-        while k2 < num_keys
-            invariant
-                k2 <= num_keys,
-                spans@.len() == k2,
-                counts@.len() == num_keys,
-                offsets@.len() == num_keys,
-                forall|j: int|
-                    0 <= j < k2 ==> (#[trigger] spans@[j]).off == offsets@[j] && spans@[j].len
-                        == counts@[j],
-            decreases num_keys - k2,
-        {
-            spans.push(Span { off: offsets[k2], len: counts[k2] });
-            k2 = k2 + 1;
-        }
-
-        let r = DenseSpanMap { pool, spans, stream: Ghost(s) };
-
-        proof {
-            assert(r.spans@.len() == num_keys);
-            assert(r.pool@.len() == total);
-            // tiling
-            assert(r.wf()) by {
-                if num_keys > 0 {
-                    lemma_count_below_zero(s);
-                    assert(r.spans@[0].off == offsets@[0] == 0);
-                    let last = num_keys - 1;
-                    lemma_count_below_step(s, last as nat);
-                    assert(r.spans@[last].off + r.spans@[last].len == count_below(
-                        s,
-                        (last + 1) as nat,
-                    ));
-                    assert(count_below(s, num_keys as nat) == total);
-                }
-            }
-            assert forall|k: int| 0 <= k < num_keys implies #[trigger] r.view()[k] == key_slice(
-                s,
-                k as nat,
-            ) by {
-                assert(r.view()[k] == r.pool@.subrange(
-                    r.spans@[k].off as int,
-                    r.spans@[k].off + r.spans@[k].len,
-                ));
-                assert(cursor@[k] == offsets@[k] + count_key(s, k as nat));
-                lemma_key_slice_len(s, k as nat);
-                assert(r.spans@[k].off + r.spans@[k].len == cursor@[k]);
-            }
-        }
-        r
+        Self::build_in(SpanArena::new(), stream, num_keys)
     }
 
     /// Total shell: refuses a stream carrying an out-of-range key instead of
@@ -865,6 +1609,33 @@ impl<V: Copy + Default> DenseSpanMap<V> {
             Ok(Self::build(stream, num_keys))
         } else {
             Err(crate::error::ContainerError::IndexOutOfBounds)
+        }
+    }
+
+    /// Total shell for the recycled path: refuses an out-of-range key and hands
+    /// the arena back rather than consuming it on failure.
+    pub fn try_build_in(
+        arena: SpanArena,
+        stream: &[(usize, V)],
+        num_keys: usize,
+    ) -> (r: Result<Self, (SpanArena, crate::error::ContainerError)>)
+        ensures
+            r matches Ok(m) ==> {
+                &&& m.wf()
+                &&& m.view().len() == num_keys
+                &&& m.stream_view() == stream@
+                &&& m.total_spec() == stream@.len()
+                &&& m.refines()
+            },
+            r matches Err((back, e)) ==> {
+                &&& e == crate::error::ContainerError::IndexOutOfBounds
+                &&& true
+            },
+    {
+        if Self::can_build(stream, num_keys) {
+            Ok(Self::build_in(arena, stream, num_keys))
+        } else {
+            Err((arena, crate::error::ContainerError::IndexOutOfBounds))
         }
     }
 }

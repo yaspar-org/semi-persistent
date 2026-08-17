@@ -281,3 +281,139 @@ fn composite_key_rejects_out_of_range_b_and_overflow() {
     // Product leaves usize.
     assert_eq!(DenseSpanMap::<u32>::composite_key(usize::MAX, 0, 2), None);
 }
+
+// ---------------------------------------------------------------------------
+// The recycled build path: generation stamps and span-table reuse
+// ---------------------------------------------------------------------------
+//
+// `build_in` writes only the keys its stream carries and bumps a generation
+// stamp; a key left by an earlier build carries an older stamp and reads as
+// empty. These tests drive that against the same oracle, because the whole point
+// is that reuse is not observable in the contents.
+
+use semi_persistent_containers_verus::SpanArena;
+
+/// Build over an arena, check against the oracle, hand the arena back.
+fn build_check_recycle(
+    arena: SpanArena,
+    stream: &[(usize, u32)],
+    num_keys: usize,
+) -> Result<SpanArena, TestCaseError> {
+    let map = DenseSpanMap::<u32>::try_build_in(arena, stream, num_keys)
+        .unwrap_or_else(|_| panic!("keys in range"));
+    let want = reference(stream, num_keys);
+    prop_assert_eq!(map.len(), num_keys);
+    prop_assert_eq!(map.total(), stream.len());
+    for k in 0..num_keys {
+        prop_assert_eq!(map.get(k), want[&k].as_slice(), "key {}", k);
+        prop_assert_eq!(map.key_len(k), want[&k].len(), "key {} len", k);
+    }
+    Ok(map.recycle())
+}
+
+proptest! {
+    /// A sequence of builds over ONE recycled arena. Every build must match the
+    /// oracle for its own stream, with no trace of the previous generations:
+    /// keys an earlier build occupied and this one does not must read empty.
+    #[test]
+    fn recycled_builds_leave_no_trace(
+        num_keys in 1usize..24,
+        rounds in prop::collection::vec(
+            prop::collection::vec((0usize..24, any::<u32>()), 0..80),
+            1..8,
+        ),
+    ) {
+        let mut arena = SpanArena::new();
+        for entries in rounds {
+            let stream: Vec<(usize, u32)> =
+                entries.into_iter().filter(|&(k, _)| k < num_keys).collect();
+            arena = build_check_recycle(arena, &stream, num_keys)?;
+        }
+    }
+
+    /// Reuse across a shrinking key space: a later build over fewer keys must
+    /// not expose the wider table the arena still carries.
+    #[test]
+    fn recycled_builds_across_key_spaces(
+        wide in 8usize..32,
+        narrow in 1usize..8,
+        a in prop::collection::vec((0usize..32, any::<u32>()), 0..60),
+        b in prop::collection::vec((0usize..8, any::<u32>()), 0..30),
+    ) {
+        let sa: Vec<(usize, u32)> = a.into_iter().filter(|&(k, _)| k < wide).collect();
+        let sb: Vec<(usize, u32)> = b.into_iter().filter(|&(k, _)| k < narrow).collect();
+        let arena = SpanArena::new();
+        let arena = build_check_recycle(arena, &sa, wide)?;
+        // The table is still `wide` long; the narrow build must report `narrow`.
+        prop_assert!(arena.capacity() >= wide);
+        let arena = build_check_recycle(arena, &sb, narrow)?;
+        // And widening again still works.
+        let _ = build_check_recycle(arena, &sa, wide)?;
+    }
+}
+
+#[test]
+fn stale_keys_read_empty_after_rebuild() {
+    // Build A occupies keys 1 and 3; build B over the same arena occupies 0 and 2.
+    let arena = SpanArena::new();
+    let a = DenseSpanMap::<u32>::try_build_in(arena, &[(1, 10), (3, 30), (1, 11)], 4)
+        .unwrap_or_else(|_| panic!("in range"));
+    assert_eq!(a.get(1), &[10, 11]);
+    assert_eq!(a.get(3), &[30]);
+    assert_eq!(a.get(0), &[] as &[u32]);
+    let arena = a.recycle();
+
+    let b = DenseSpanMap::<u32>::try_build_in(arena, &[(0, 100), (2, 200)], 4)
+        .unwrap_or_else(|_| panic!("in range"));
+    // A's keys are stale in B: their spans are still physically in the table,
+    // but they carry the previous generation's stamp.
+    assert_eq!(b.get(1), &[] as &[u32], "key 1 was A's, must be stale");
+    assert_eq!(b.get(3), &[] as &[u32], "key 3 was A's, must be stale");
+    assert_eq!(b.get(0), &[100]);
+    assert_eq!(b.get(2), &[200]);
+    assert_eq!(b.total(), 2);
+    assert_eq!(b.key_len(1), 0);
+}
+
+#[test]
+fn recycled_arena_matches_a_fresh_one() {
+    // The same stream built into a used arena and into a fresh one are equal.
+    let used = DenseSpanMap::<u32>::try_build_in(SpanArena::new(), &[(0, 1), (2, 2)], 3)
+        .unwrap_or_else(|_| panic!("in range"))
+        .recycle();
+    let stream = [(1usize, 7u32), (1, 8), (2, 9)];
+    let from_used =
+        DenseSpanMap::<u32>::try_build_in(used, &stream, 3).unwrap_or_else(|_| panic!("in range"));
+    let fresh = DenseSpanMap::<u32>::try_build(&stream, 3).expect("in range");
+    for k in 0..3 {
+        assert_eq!(from_used.get(k), fresh.get(k), "key {k}");
+    }
+    assert_eq!(from_used.total(), fresh.total());
+}
+
+#[test]
+fn an_empty_stream_makes_every_key_stale() {
+    let arena = SpanArena::new();
+    let a = DenseSpanMap::<u32>::try_build_in(arena, &[(0, 1), (1, 2)], 2)
+        .unwrap_or_else(|_| panic!("in range"));
+    let arena = a.recycle();
+    let b = DenseSpanMap::<u32>::try_build_in(arena, &[], 2).unwrap_or_else(|_| panic!("in range"));
+    assert_eq!(b.total(), 0);
+    for k in 0..2 {
+        assert_eq!(b.get(k), &[] as &[u32], "key {k} must be stale");
+    }
+}
+
+#[test]
+fn try_build_in_returns_the_arena_on_refusal() {
+    let arena = SpanArena::new();
+    match DenseSpanMap::<u32>::try_build_in(arena, &[(9, 1)], 2) {
+        Ok(_) => panic!("out-of-range key must be refused"),
+        Err((back, _)) => {
+            // The arena is handed back, so a refusal costs no allocation.
+            let m = DenseSpanMap::<u32>::try_build_in(back, &[(0, 1)], 2)
+                .unwrap_or_else(|_| panic!("in range"));
+            assert_eq!(m.get(0), &[1]);
+        }
+    }
+}

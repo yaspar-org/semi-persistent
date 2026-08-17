@@ -175,12 +175,95 @@ executable code the proofs never run. The reference model is a
 its key's vector: no pool, no spans, no prefix sums, no cursors, so it cannot
 reproduce an off-by-one in the counting sort because it does not count.
 
-Thirteen tests cover randomized and key-skewed streams, keys with no entries,
+Nineteen tests cover randomized and key-skewed streams, keys with no entries,
 duplicate values, interleaved keys, `u64` values, refusal of out-of-range keys,
 and the composite-key helper's injectivity and two-dimensional round trip. One
 check is worth naming: concatenating every key's slice in key order must equal
 the stream stably sorted by key. That observes the tiling from outside the
 proof, because an overlap duplicates a value and a gap loses one.
+
+## 7. The recycled build path
+
+A dense build writes the whole key space however few values its stream carries:
+`num_keys` counts, `num_keys` offsets, `num_keys` cursors and `num_keys` spans.
+`comparison/span-table-sparsity.md` measures what that costs the e-graph at
+S = 1e6: 40.6 ms per round writing 77 MB of arrays for a 3.2 MB pool at 2 M keys,
+and a delta install of 19.57 ms to make 23 values addressable. Section 4 of
+`16-layered-span-map.md` carries the retraction of the cost claim that omitted
+this term.
+
+`build_in` is the second build path, over a caller-owned `SpanArena` that
+survives the map built into it. The arena holds the span table, the occupancy
+list and a generation stamp. A build bumps the generation and writes only the
+keys its stream carries; a key left by an earlier build carries an older stamp
+and reads as empty. `recycle` hands the arena back. Work is proportional to the
+stream and the keys it occupies, not to the key space.
+
+**The measured numbers are the prototype's, not this container's.** The
+prototype in `egraph/src/span_proto.rs` measured the index build at 65.4 to
+36.5 ms per round and the delta install at 19.57 to 0.010 ms, corpus
+byte-identical. Whether the verified version reproduces them is a measurement
+nobody has taken: it is not yet wired into the e-graph, and `replace_delta` still
+builds its delta generation with the dense path, so the 19.6 ms install stands
+until that changes.
+
+**There is one build, not two.** `build` delegates to `build_in` with a fresh
+arena. Keeping a separate dense path would have meant listing every key in the
+occupancy list, including empty ones, and that breaks the argument in the next
+paragraph.
+
+**`wf()` moves the tiling onto the occupancy order.** It is the same
+`spans_tile` predicate applied to `permute(spans, occ)`, the table read in
+occupancy order, so `lemma_spans_monotone` and `lemma_spans_disjoint` apply
+verbatim and no pairwise-quantified clause enters `wf()`. Injectivity of the
+occupancy list is NOT a `wf()` clause: it is derived by `lemma_occ_injective`
+from the tiling plus "an occupied span is non-empty", both single-variable,
+because a repeated span would have to satisfy `S.off + S.len <= S.off`. That
+derivation is available only because a listed key always carries at least one
+value, which is why the dense path had to go.
+
+`refines()` is unchanged. What changes is the order of keys within the pool:
+extents are assigned in first-occurrence order rather than key order, which a
+per-key filter does not constrain.
+
+### Stamp width and exhaustion
+
+The stamp is a `u64` and stamp 0 is reserved for a never-written entry, so a live
+generation is always positive. On exhaustion the build re-stamps the whole table
+to 0 and resets the generation to 1, O(num_keys) once every 2^64 builds. The
+branch is written and proved rather than argued away, because "unreachable in
+practice" is not a postcondition. It is also not runtime-tested: reaching it
+takes 2^64 builds, so the conformance suite cannot drive it, and that is a
+consequence of choosing `u64` over the prototype's `u32`.
+
+A `{off, len, stamp}` triple at `usize`/`usize`/`u64` is 24 bytes against the
+prototype's 12. The arena is resident where the dense build's arrays were
+transient, so the resident steady state rises; section 7 of the sparsity document
+asks for both peak and steady state to be measured on the largest corpus program
+before the width is settled. That measurement has not been taken.
+
+### What the proof structure cost
+
+The first attempt put all three passes in one function and did not converge. The
+passes are now three contracted functions verified in isolation, `count_pass`,
+`extent_pass` and `place_pass`, composed by `build_in`.
+
+Two diagnoses are worth recording. First, `permute` is a NAMED spec function and
+is `#[verifier::opaque]`, with `lemma_permute_index` and `lemma_permute_len` as
+the only way in. Written as an inline `map_values` closure it was re-elaborated
+at every mention, including once per iteration inside a loop invariant, and
+`place_pass` exceeded the solver budget; naming it and making it opaque removed
+that. Second, `build_in` then failed at rlimit 30, 60 and 200 alike. Per playbook
+section 1 a budget that does not help means a matching loop rather than slow
+search, so the fix was to move the tiling conclusion into `place_pass`, where it
+is proved against the loop invariant that already carries the pieces. `build_in`
+now converges on the default budget with `spinoff_prover` and no `rlimit`
+attribute.
+
+Verus loops see only their invariant, not the enclosing function's
+preconditions. Several obligations that looked like proof failures were facts
+stated in a `requires` and never restated in the loop.
+
 
 ---
 [← Table of Contents](00-table-of-contents.md)

@@ -142,8 +142,10 @@ Revisit only if the index build is measured to dominate after this change lands.
 > (`comparison/span-table-sparsity.md` section 3). The omitted term is three
 > orders of magnitude larger than the one that was stated. The remedy is a build
 > path proportional to the occupied keys, measured at 0.010 ms for the same
-> install; section 7 of that document states the container change it needs, and
-> that change is not yet implemented.
+> install; section 7 of that document states the container change it needs. That
+> container change has since landed as `DenseSpanMap::build_in`
+> (`15-dense-span-map.md` section 7), but `replace_delta` still builds its delta
+> generation with the dense path, so the 19.6 ms stands until it is switched.
 
 ## 5. In-place refresh of one `DenseSpanMap`, rejected
 
