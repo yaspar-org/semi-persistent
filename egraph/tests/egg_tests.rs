@@ -366,6 +366,16 @@ egg_test!(set_flatten_build, "set_flatten_build.egg");
 egg_test!(a_flatten_build, "a_flatten_build.egg");
 egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
 
+// ── A-only matching: a fixed child an earlier atom already bound ──
+// A variadic expansion checks such a child against each window and leaves it bound.
+// Until 2026-08-17 its cleanup cleared every local child, which unbound a variable an
+// enclosing step owned: the next window rebound it (the rule fired on positions the
+// constraint excluded) and a later re-join read it as unbound and panicked.
+// `ematch.rs`'s `expand_a_checks_a_prebound_fixed_child` and its two decomposition
+// counterparts assert the match set directly.
+egg_test!(a_prebound_fixed_child, "a_prebound_fixed_child.egg");
+egg_test!(a_matrix_kron_fusion, "a_matrix_kron_fusion.egg");
+
 // ── AC congruence completeness (superposition + inter-reduction) ──
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");
 egg_test!(ac_complete_superposition, "ac_complete_superposition.egg");

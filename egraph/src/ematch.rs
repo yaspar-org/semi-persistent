@@ -1586,15 +1586,31 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 bind_fixed_and_continue(
                     exec, step_idx, children, seq, offset, eg, index, globals, env, results,
                 );
-                for &cv in children {
-                    if let PatVar::Local(v) = cv {
-                        env.clear(v)
-                    };
-                }
                 env.pop_seq(s);
                 env.pop_seq(p);
             }
         }
+    }
+}
+
+/// The local variables a single fixed-child binding pass bound, in binding order.
+/// Inline for the fixed children of a variadic pattern; a pattern with more than eight
+/// spills to the heap.
+type BoundHere = SmallVec<[VarId; 8]>;
+
+/// Unbind exactly the variables `bound` records.
+///
+/// A child variable already bound when a fixed-child pass runs is checked against the
+/// node's child, not rebound: an earlier step bound it, and its value constrains this
+/// node. Cleanup must therefore clear the variables that pass bound and no others, on
+/// the failure path as well as after the continuation returns. Clearing every local
+/// child instead unbinds a variable an enclosing step owns, with two consequences: a
+/// later re-join keyed on that variable reads it as unbound and `Match::get` panics, and
+/// the next candidate of an enclosing loop rebinds it from its own children rather than
+/// checking it, which drops the constraint and admits matches that violate it.
+fn unbind<Cfg: EGraphConfig>(env: &mut Match<Cfg>, bound: &BoundHere) {
+    for &v in bound {
+        env.clear(v);
     }
 }
 
@@ -1614,31 +1630,31 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let mut bound: BoundHere = BoundHere::new();
     for (i, &cv) in children.iter().enumerate() {
         let val = seq[offset + i];
         match cv {
             PatVar::Global(gid) => {
                 if canon(index, eg, globals.binding(gid)) != canon(index, eg, val) {
+                    unbind(env, &bound);
                     return;
                 }
             }
             PatVar::Local(vid) => {
                 if let Some(existing) = env.nodes[vid.idx()] {
                     if canon(index, eg, existing) != canon(index, eg, val) {
+                        unbind(env, &bound);
                         return;
                     }
                 } else {
                     env.set(vid, val);
+                    bound.push(vid);
                 }
             }
         }
     }
     run_step(exec, step_idx + 1, eg, index, globals, env, results);
-    for &cv in children {
-        if let PatVar::Local(v) = cv {
-            env.clear(v)
-        };
-    }
+    unbind(env, &bound);
 }
 
 // ---------------------------------------------------------------------------
@@ -2432,12 +2448,18 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         seq: Vec<Cfg::G>,
         offset: usize,
         slack: usize,
+        /// The local children the current offset's `bind_fixed` bound, which are the
+        /// ones this frame unbinds when it advances or is dropped.
+        bound: BoundHere,
     },
     ACDecompose {
         elems: Vec<(PatVar, RMult)>,
         rest: Option<MsetVarId>,
         residual: Vec<(Cfg::G, Cfg::M)>,
         ri_at: Vec<usize>,
+        /// Per element, whether the scan bound its variable, which is the condition for
+        /// the undo to unbind it.
+        bound: Vec<bool>,
         ei: usize,
     },
     ACIDecompose {
@@ -2446,6 +2468,8 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         residual: Vec<Cfg::G>,
         used: crate::containers::bitset::BitSet,
         ri_at: Vec<usize>,
+        /// Per element, whether the scan bound its variable.
+        bound: Vec<bool>,
         ei: usize,
     },
 }
@@ -2728,13 +2752,27 @@ where
                     return Enter::Failed;
                 }
                 let slack = seq.len() - nfixed;
-                // Bind offset 0.
-                self.env.push_seq(p, &seq[..0]);
-                self.env.push_seq(s, &seq[nfixed..]);
-                let valid = self.bind_fixed(children, &seq, 0);
-                if !valid {
+                // Scan to the first window the fixed children bind against, the same
+                // search `backtrack` resumes. Entering at offset 0 and reporting failure
+                // there instead drops the frame with the later offsets untried, which is
+                // reachable as soon as a fixed child is pre-bound or global: then window
+                // 0 can fail on a node whose later windows match.
+                let mut bound = BoundHere::new();
+                let mut offset = 0;
+                let mut valid = false;
+                while offset <= slack {
+                    self.env.push_seq(p, &seq[..offset]);
+                    self.env.push_seq(s, &seq[offset + nfixed..]);
+                    if self.bind_fixed(children, &seq, offset, &mut bound) {
+                        valid = true;
+                        break;
+                    }
                     self.env.pop_seq(s);
                     self.env.pop_seq(p);
+                    offset += 1;
+                }
+                if !valid {
+                    return Enter::Failed;
                 }
                 self.frames.push(Frame {
                     kind: FrameKind::SlidingWindow {
@@ -2742,20 +2780,22 @@ where
                         pre: p,
                         suf: s,
                         seq,
-                        offset: 0,
+                        offset,
                         slack,
+                        bound,
                     },
                     step_idx: self.cursor,
                 });
-                Enter::Pushed(valid)
+                Enter::Pushed(true)
             }
             _ => {
                 // Single-shot cases: no generator needed.
+                let mut bound = BoundHere::new();
                 if pre.is_none() && suf.is_none() {
                     if seq.len() != nfixed {
                         return Enter::Failed;
                     }
-                    if !self.bind_fixed(children, &seq, 0) {
+                    if !self.bind_fixed(children, &seq, 0, &mut bound) {
                         return Enter::Failed;
                     }
                     self.cursor += 1;
@@ -2766,7 +2806,7 @@ where
                     }
                     let split = seq.len() - nfixed;
                     self.env.push_seq(p, &seq[..split]);
-                    if !self.bind_fixed(children, &seq, split) {
+                    if !self.bind_fixed(children, &seq, split, &mut bound) {
                         self.env.pop_seq(p);
                         return Enter::Failed;
                     }
@@ -2779,7 +2819,7 @@ where
                         return Enter::Failed;
                     }
                     self.env.push_seq(s, &seq[nfixed..]);
-                    if !self.bind_fixed(children, &seq, 0) {
+                    if !self.bind_fixed(children, &seq, 0, &mut bound) {
                         self.env.pop_seq(s);
                         return Enter::Failed;
                     }
@@ -2815,8 +2855,8 @@ where
             }
         }
         let mut ri_at = vec![0usize; elems.len()];
-        let valid = self.ac_find_first(elems, &mut residual, &mut ri_at, 0);
-        let mut accepted = valid;
+        let mut bound = vec![false; elems.len()];
+        let mut valid = self.ac_find_first(elems, &mut residual, &mut ri_at, &mut bound, 0);
         if valid {
             if let Some(rv) = rest {
                 let zero = Cfg::M::ZERO;
@@ -2827,25 +2867,36 @@ where
                     .collect();
                 self.env.push_mset(rv, &rem);
             } else {
-                // Exact: all residual must be consumed.
+                // Exact: all residual must be consumed. Each element consumes one whole
+                // entry, so an assignment that leaves an entry behind means there are
+                // more entries than elements and no assignment consumes them all. Undo
+                // this one rather than pushing a frame the caller drops, which would
+                // leave the element variables bound for whatever runs next.
                 let zero = Cfg::M::ZERO;
                 if !residual.iter().all(|&(_, m)| m == zero) {
-                    accepted = false;
+                    for e in (0..elems.len()).rev() {
+                        self.ac_undo(elems, &mut residual, e, ri_at[e], &mut bound);
+                    }
+                    valid = false;
                 }
             }
         }
-        let ei = if valid { elems.len() } else { 0 };
+        if !valid {
+            return Enter::Failed;
+        }
+        let ei = elems.len();
         self.frames.push(Frame {
             kind: FrameKind::ACDecompose {
                 elems: elems.to_vec(),
                 rest,
                 residual,
                 ri_at,
+                bound,
                 ei,
             },
             step_idx: self.cursor,
         });
-        Enter::Pushed(accepted)
+        Enter::Pushed(true)
     }
 
     fn enter_aci(
@@ -2868,8 +2919,8 @@ where
         }
         let mut used = crate::containers::bitset::BitSet::new(residual.len());
         let mut ri_at = vec![0usize; elems.len()];
-        let valid = self.aci_find_first(elems, &residual, &mut used, &mut ri_at, 0);
-        let mut accepted = valid;
+        let mut bound = vec![false; elems.len()];
+        let mut valid = self.aci_find_first(elems, &residual, &mut used, &mut ri_at, &mut bound, 0);
         if valid {
             if let Some(rv) = rest {
                 let rem: Vec<Cfg::G> = residual
@@ -2879,14 +2930,19 @@ where
                     .map(|(_, &g)| g)
                     .collect();
                 self.env.push_set(rv, &rem);
-            } else {
-                // Exact: all must be used.
-                if !(0..residual.len()).all(|i| used.test(i)) {
-                    accepted = false;
+            } else if !(0..residual.len()).all(|i| used.test(i)) {
+                // Exact: all must be used. See `enter_ac` for why this undoes the
+                // assignment instead of pushing a frame the caller drops.
+                for e in (0..elems.len()).rev() {
+                    self.aci_undo(elems, &mut used, e, ri_at[e], &mut bound);
                 }
+                valid = false;
             }
         }
-        let ei = if valid { elems.len() } else { 0 };
+        if !valid {
+            return Enter::Failed;
+        }
+        let ei = elems.len();
         self.frames.push(Frame {
             kind: FrameKind::ACIDecompose {
                 elems: elems.to_vec(),
@@ -2894,14 +2950,26 @@ where
                 residual,
                 used,
                 ri_at,
+                bound,
                 ei,
             },
             step_idx: self.cursor,
         });
-        Enter::Pushed(accepted)
+        Enter::Pushed(true)
     }
 
-    fn bind_fixed(&mut self, children: &[PatVar], seq: &[Cfg::G], offset: usize) -> bool {
+    /// Bind the fixed children against `seq[offset..]`, recording in `bound` the local
+    /// variables this call bound. On failure it unbinds them itself and leaves `bound`
+    /// empty. See [`unbind`] for why a pre-bound child is checked rather than rebound and
+    /// must survive the cleanup.
+    fn bind_fixed(
+        &mut self,
+        children: &[PatVar],
+        seq: &[Cfg::G],
+        offset: usize,
+        bound: &mut BoundHere,
+    ) -> bool {
+        bound.clear();
         for (i, &cv) in children.iter().enumerate() {
             let val = seq[offset + i];
             match cv {
@@ -2909,26 +2977,21 @@ where
                     if canon(self.index, self.eg, self.globals.binding(gid))
                         != canon(self.index, self.eg, val)
                     {
-                        for &cv2 in &children[..i] {
-                            if let PatVar::Local(v) = cv2 {
-                                self.env.clear(v);
-                            }
-                        }
+                        unbind(&mut self.env, bound);
+                        bound.clear();
                         return false;
                     }
                 }
                 PatVar::Local(vid) => {
                     if let Some(existing) = self.env.nodes[vid.idx()] {
                         if canon(self.index, self.eg, existing) != canon(self.index, self.eg, val) {
-                            for &cv2 in &children[..i] {
-                                if let PatVar::Local(v) = cv2 {
-                                    self.env.clear(v);
-                                }
-                            }
+                            unbind(&mut self.env, bound);
+                            bound.clear();
                             return false;
                         }
                     } else {
                         self.env.set(vid, val);
+                        bound.push(vid);
                     }
                 }
             }
@@ -2965,12 +3028,9 @@ where
                     seq,
                     offset,
                     slack,
+                    bound,
                 } => {
-                    for &cv in children.iter() {
-                        if let PatVar::Local(v) = cv {
-                            self.env.clear(v)
-                        };
-                    }
+                    unbind(&mut self.env, bound);
                     self.env.pop_seq(*suf);
                     self.env.pop_seq(*pre);
                     *offset += 1;
@@ -2979,15 +3039,10 @@ where
                         let o = *offset;
                         self.env.push_seq(*pre, &seq[..o]);
                         self.env.push_seq(*suf, &seq[o + nfixed..]);
-                        if self.bind_fixed(children, seq, o) {
+                        if self.bind_fixed(children, seq, o, bound) {
                             self.cursor += 1;
                             self.frames.push(frame);
                             return true;
-                        }
-                        for &cv in children.iter() {
-                            if let PatVar::Local(v) = cv {
-                                self.env.clear(v)
-                            };
                         }
                         self.env.pop_seq(*suf);
                         self.env.pop_seq(*pre);
@@ -3000,6 +3055,7 @@ where
                     rest,
                     residual,
                     ri_at,
+                    bound,
                     ei,
                 } => {
                     if *ei == elems.len()
@@ -3008,7 +3064,7 @@ where
                         self.env.pop_mset(rv);
                     }
                     loop {
-                        if !self.ac_advance(elems, residual, ri_at, ei) {
+                        if !self.ac_advance(elems, residual, ri_at, bound, ei) {
                             break;
                         }
                         if let Some(rv) = *rest {
@@ -3040,6 +3096,7 @@ where
                     residual,
                     used,
                     ri_at,
+                    bound,
                     ei,
                 } => {
                     if *ei == elems.len()
@@ -3048,7 +3105,7 @@ where
                         self.env.pop_set(rv);
                     }
                     loop {
-                        if !self.aci_advance(elems, residual, used, ri_at, ei) {
+                        if !self.aci_advance(elems, residual, used, ri_at, bound, ei) {
                             break;
                         }
                         if let Some(rv) = *rest {
@@ -3081,12 +3138,13 @@ where
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
+        bound: &mut [bool],
         from: usize,
     ) -> bool {
         let mut ei = from;
         while ei < elems.len() {
             let start = if ei == from { ri_at[ei] } else { 0 };
-            match self.ac_scan(elems, residual, ei, start) {
+            match self.ac_scan(elems, residual, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
@@ -3097,7 +3155,7 @@ where
                         return false;
                     }
                     ei -= 1;
-                    self.ac_undo(elems, residual, ei, ri_at[ei]);
+                    self.ac_undo(elems, residual, ei, ri_at[ei], bound);
                     ri_at[ei] += 1;
                 }
             }
@@ -3105,14 +3163,20 @@ where
         true
     }
 
+    /// Take one residual entry for element `ei`, recording in `bound[ei]` whether this
+    /// scan bound the element variable. A variable already bound is matched against the
+    /// residual and left alone, and [`Self::ac_undo`] must leave it alone too; see
+    /// [`unbind`].
     fn ac_scan(
         &mut self,
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ei: usize,
         start: usize,
+        bound: &mut [bool],
     ) -> Option<usize> {
         let (var, mult) = &elems[ei];
+        bound[ei] = false;
 
         let bound_repr = match *var {
             PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
@@ -3153,6 +3217,7 @@ where
                 unreachable!()
             };
             self.env.set(vid, repr);
+            bound[ei] = true;
             let take: Cfg::M = match mult {
                 // See the bound-repr path above.
                 RMult::Exact(_) => avail,
@@ -3173,6 +3238,7 @@ where
         residual: &mut [(Cfg::G, Cfg::M)],
         ei: usize,
         ri: usize,
+        bound: &mut [bool],
     ) {
         let (var, mult) = &elems[ei];
         let restore: Cfg::M = match mult {
@@ -3190,9 +3256,12 @@ where
         residual[ri].1 = residual[ri].1.checked_add(restore).expect(
             "ac_undo restores a multiplicity previously subtracted from this entry, so the sum fits",
         );
-        if let PatVar::Local(vid) = *var {
+        if let PatVar::Local(vid) = *var
+            && bound[ei]
+        {
             self.env.clear(vid);
         }
+        bound[ei] = false;
         if let RMult::Var { var: mv, .. } = mult {
             // Only clear if no earlier element uses the same mult variable
             let earlier_uses = elems[..ei]
@@ -3209,6 +3278,7 @@ where
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
+        bound: &mut [bool],
         ei: &mut usize,
     ) -> bool {
         if elems.is_empty() || *ei != elems.len() {
@@ -3217,22 +3287,22 @@ where
         // Undo last element, try next residual entry. If exhausted, undo previous, etc.
         let mut e = elems.len() - 1;
         loop {
-            self.ac_undo(elems, residual, e, ri_at[e]);
+            self.ac_undo(elems, residual, e, ri_at[e], bound);
             ri_at[e] += 1;
             // Try to find a valid entry for element e and all subsequent elements.
             // ac_scan only looks at element e; if it succeeds we try e+1.. from scratch.
-            if let Some(ri) = self.ac_scan(elems, residual, e, ri_at[e]) {
+            if let Some(ri) = self.ac_scan(elems, residual, e, ri_at[e], bound) {
                 ri_at[e] = ri;
                 // Now try to bind e+1..end from scratch.
                 let mut ok = true;
                 for e2 in (e + 1)..elems.len() {
                     ri_at[e2] = 0;
-                    match self.ac_scan(elems, residual, e2, 0) {
+                    match self.ac_scan(elems, residual, e2, 0, bound) {
                         Some(ri2) => ri_at[e2] = ri2,
                         None => {
                             // Undo e2-1..=e+1 that we just bound, then undo e and try next.
                             for undo in (e + 1..e2).rev() {
-                                self.ac_undo(elems, residual, undo, ri_at[undo]);
+                                self.ac_undo(elems, residual, undo, ri_at[undo], bound);
                             }
                             ok = false;
                             break;
@@ -3244,7 +3314,7 @@ where
                     return true;
                 }
                 // ac_scan for e succeeded but downstream failed. Undo e and try next ri.
-                self.ac_undo(elems, residual, e, ri_at[e]);
+                self.ac_undo(elems, residual, e, ri_at[e], bound);
                 ri_at[e] += 1;
                 continue;
             }
@@ -3266,12 +3336,13 @@ where
         residual: &[Cfg::G],
         used: &mut crate::containers::bitset::BitSet,
         ri_at: &mut [usize],
+        bound: &mut [bool],
         from: usize,
     ) -> bool {
         let mut ei = from;
         while ei < elems.len() {
             let start = if ei == from { ri_at[ei] } else { 0 };
-            match self.aci_scan(elems, residual, used, ei, start) {
+            match self.aci_scan(elems, residual, used, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
@@ -3282,7 +3353,7 @@ where
                         return false;
                     }
                     ei -= 1;
-                    self.aci_undo(elems, used, ei, ri_at[ei]);
+                    self.aci_undo(elems, used, ei, ri_at[ei], bound);
                     ri_at[ei] += 1;
                 }
             }
@@ -3290,6 +3361,8 @@ where
         true
     }
 
+    /// Take one residual element for `ei`, recording in `bound[ei]` whether this scan
+    /// bound the element variable. See [`Self::ac_scan`].
     fn aci_scan(
         &mut self,
         elems: &[PatVar],
@@ -3297,8 +3370,10 @@ where
         used: &mut crate::containers::bitset::BitSet,
         ei: usize,
         start: usize,
+        bound: &mut [bool],
     ) -> Option<usize> {
         let var = elems[ei];
+        bound[ei] = false;
         let bound_repr = match var {
             PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
             PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| canon(self.index, self.eg, v)),
@@ -3320,6 +3395,7 @@ where
                 continue;
             }
             self.env.set(vid, residual[ri]);
+            bound[ei] = true;
             used.set(ri);
             return Some(ri);
         }
@@ -3332,11 +3408,15 @@ where
         used: &mut crate::containers::bitset::BitSet,
         ei: usize,
         ri: usize,
+        bound: &mut [bool],
     ) {
         used.clear(ri);
-        if let PatVar::Local(vid) = elems[ei] {
+        if let PatVar::Local(vid) = elems[ei]
+            && bound[ei]
+        {
             self.env.clear(vid);
         }
+        bound[ei] = false;
     }
 
     fn aci_advance(
@@ -3345,6 +3425,7 @@ where
         residual: &[Cfg::G],
         used: &mut crate::containers::bitset::BitSet,
         ri_at: &mut [usize],
+        bound: &mut [bool],
         ei: &mut usize,
     ) -> bool {
         if elems.is_empty() || *ei != elems.len() {
@@ -3352,18 +3433,18 @@ where
         }
         let mut e = elems.len() - 1;
         loop {
-            self.aci_undo(elems, used, e, ri_at[e]);
+            self.aci_undo(elems, used, e, ri_at[e], bound);
             ri_at[e] += 1;
-            if let Some(ri) = self.aci_scan(elems, residual, used, e, ri_at[e]) {
+            if let Some(ri) = self.aci_scan(elems, residual, used, e, ri_at[e], bound) {
                 ri_at[e] = ri;
                 let mut ok = true;
                 for e2 in (e + 1)..elems.len() {
                     ri_at[e2] = 0;
-                    match self.aci_scan(elems, residual, used, e2, 0) {
+                    match self.aci_scan(elems, residual, used, e2, 0, bound) {
                         Some(ri2) => ri_at[e2] = ri2,
                         None => {
                             for undo in (e + 1..e2).rev() {
-                                self.aci_undo(elems, used, undo, ri_at[undo]);
+                                self.aci_undo(elems, used, undo, ri_at[undo], bound);
                             }
                             ok = false;
                             break;
@@ -3374,7 +3455,7 @@ where
                     *ei = elems.len();
                     return true;
                 }
-                self.aci_undo(elems, used, e, ri_at[e]);
+                self.aci_undo(elems, used, e, ri_at[e], bound);
                 ri_at[e] += 1;
                 continue;
             }
@@ -5547,6 +5628,164 @@ mod tests {
             matches.is_empty(),
             "a merge after the index build made `(f x x)` match: {matches:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Pre-bound children of a variadic, multiset or set pattern
+    // -----------------------------------------------------------------------
+    //
+    // Each of the three decompositions binds the pattern's children one at a
+    // time and backtracks over the alternatives. A child variable an earlier
+    // atom already bound is a constraint on the node's children, so the
+    // decomposition checks it and its cleanup leaves it bound. `plan_driven_from`
+    // pins the atom that binds it to the front of the plan, which is what makes
+    // the variable pre-bound when the decomposition runs.
+
+    /// `(g x)` pins `x`, so `(concat ..pre x ..suf)` matches only at the windows
+    /// where `x`'s class sits: two positions per `concat` node, four in total.
+    /// Cleanup that unbinds `x` after a window leaves the next window free to
+    /// rebind it, which admits every position of both nodes.
+    #[test]
+    fn expand_a_checks_a_prebound_fixed_child() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[c]);
+        let cat = eg.ops().id_by_name("concat").unwrap();
+        eg.add(cat, &[a, b, c]);
+        eg.add(cat, &[c, a, b]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(
+            &eg,
+            &["(g x)", "(concat ..pre x ..suf)"],
+            "g",
+            &["g", "concat"],
+        );
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            4,
+            "expected x=a and x=c once per concat node: {matches:?}"
+        );
+
+        // The same plan through the push engine, checked at the binding level:
+        // `b` is a member of both sequences and of neither `g` node, so it is
+        // the class an unbound window admits.
+        let vindex = VariantIndex::naive(&index);
+        let ms = run_query(
+            &driven.1,
+            &eg,
+            &vindex,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        assert_eq!(ms.len(), 4);
+        assert!(has_binding(&ms, &driven.0.shape, &eg, &[("x", "a")]));
+        assert!(has_binding(&ms, &driven.0.shape, &eg, &[("x", "c")]));
+        assert!(!has_binding(&ms, &driven.0.shape, &eg, &[("x", "b")]));
+    }
+
+    /// The same shape at its minimum: one `g` node and one `concat` node, which is
+    /// the case both engines got wrong in the same direction. Before the fix all
+    /// three engines returned three matches, one per window, and the differential
+    /// assertion in [`match_keys`] passed on that answer: the push and pull engines
+    /// carried the same defect, so their agreement was not evidence. The count below
+    /// is the assertion that fails.
+    #[test]
+    fn expand_a_prebound_child_oracle_blind_spot() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("concat").unwrap(), &[a, b, c]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(
+            &eg,
+            &["(g x)", "(concat ..pre x ..suf)"],
+            "g",
+            &["g", "concat"],
+        );
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            1,
+            "only the window at `a` matches: {matches:?}"
+        );
+    }
+
+    /// The multiset counterpart: `(g x)` pins `x`, so `(add x:1 ..rest)` matches
+    /// once per `add` node holding that class, not once per element.
+    #[test]
+    fn decompose_ac_checks_a_prebound_element() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[c]);
+        let add = eg.ops().id_by_name("add").unwrap();
+        eg.add(add, &[a, b, c]);
+        eg.add(add, &[a, b]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(&eg, &["(g x)", "(add x:1 ..rest)"], "g", &["g", "add"]);
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            3,
+            "expected x=a in both add nodes and x=c in the first: {matches:?}"
+        );
+
+        let vindex = VariantIndex::naive(&index);
+        let ms = run_query(
+            &driven.1,
+            &eg,
+            &vindex,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        assert_eq!(ms.len(), 3);
+        assert!(!has_binding(&ms, &driven.0.shape, &eg, &[("x", "b")]));
+    }
+
+    /// The set counterpart of [`decompose_ac_checks_a_prebound_element`].
+    #[test]
+    fn decompose_aci_checks_a_prebound_element() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[c]);
+        let un = eg.ops().id_by_name("union").unwrap();
+        eg.add(un, &[a, b, c]);
+        eg.add(un, &[a, b]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(&eg, &["(g x)", "(union x ..rest)"], "g", &["g", "union"]);
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            3,
+            "expected x=a in both union nodes and x=c in the first: {matches:?}"
+        );
+
+        let vindex = VariantIndex::naive(&index);
+        let ms = run_query(
+            &driven.1,
+            &eg,
+            &vindex,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        assert_eq!(ms.len(), 3);
+        assert!(!has_binding(&ms, &driven.0.shape, &eg, &[("x", "b")]));
     }
 
     // -----------------------------------------------------------------------

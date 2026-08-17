@@ -101,6 +101,18 @@ Split 3: pre=[a,b,c] x=d  y=e  suf=[]
 Each split binds the prefix/suffix rest variables as slices into the
 pool and the fixed elements as individual bindings, then recurses.
 
+A fixed element whose variable an earlier step already bound is checked
+against the child at that position rather than rebound, and the split's
+cleanup leaves it bound: the binding belongs to the step that made it, and
+the expansion is one more constraint on it. Both engines therefore record
+which variables a split bound and clear exactly those, on the failure path
+and after the continuation returns. Clearing every local child instead was a
+soundness defect until 2026-08-17, with two symptoms: the next split rebound
+the variable from its own children, so the rule fired on positions the
+earlier atom excluded, and a re-join keyed on that variable read it as
+unbound and panicked. `DecomposeAC` and `DecomposeACI` carry the same rule
+for a pre-bound element variable.
+
 For exact match (`AExact`): children count must equal pattern count.
 For prefix-only (`APrefix`): fixed elements at the start, rest at end.
 For suffix-only (`ASuffix`): rest at start, fixed elements at end.
@@ -279,6 +291,16 @@ last choice point, advancing or backtracking as needed.
 
 The lazy iterator avoids materializing all matches when only a few
 are needed (e.g., for rules that subsume after the first match).
+
+Pushing a frame and resuming it are two paths to the same search, so both
+have to run it: the sliding-window frame scans forward to the first split
+that binds when it is pushed, exactly as `backtrack` does when it advances.
+Entering at split 0 and reporting failure there dropped the frame with the
+later splits untried, which a pre-bound or global fixed element reaches
+(fixed elements that are all fresh always bind at split 0). The same holds
+for the two decomposition frames: a first assignment that does not consume
+the whole multiset is undone before the frame is dropped, so the element
+variables do not stay bound for whatever the search enters next.
 
 ---
 [← Ch 8: Query Compilation](08-query-compilation.md) · [Table of Contents](00-table-of-contents.md) · [Ch 10: Surface Language →](10-surface-language.md)

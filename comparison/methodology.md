@@ -329,16 +329,41 @@ which side of each fix it was measured on:
     is what made the matrix and eqsolve guards look expressible on a
     first reading, and they now are.
 
-- 2026-08-17, found while translating matrix's A-only native dual, not
-  fixed: **a guarded rewrite over `:assoc` operators can panic the
-  matcher.** With `MMul` and `Kron` declared `:assoc` and the eight
+- 2026-08-17, found while translating matrix's A-only native dual,
+  **fixed the same day**: a variadic expansion unbound variables it had
+  not bound. With `MMul` and `Kron` declared `:assoc` and the eight
   matrix rules that mention them restated n-ary, the guarded Kron/MMul
-  rewrite drives `ematch.rs:229` to read an unbound variable through an
-  `IndexLookup::ByRepr`. Eight of the twelve rules are needed to
-  reproduce it and no smaller synthetic reproduces it; each rule alone
-  and each pair is clean. Consequence: matrix's native column carries
-  native AC on `Times` only, and its A-only half is postponed. Detail in
-  `matrix.deviations.md`.
+  rewrite drove `ematch.rs:229` to read an unbound variable through an
+  `IndexLookup::ByRepr`. The cause: `ExpandA` checks a fixed child whose
+  variable an earlier atom already bound, but its cleanup cleared every
+  local child, including the checked ones. The panic is the milder
+  symptom. The other is silent: the next window rebound the cleared
+  variable from its own children instead of checking it, which erases the
+  constraint the earlier atom carried, so the guarded rewrite fused
+  Kronecker products whose dimensions do not line up. Fixed by recording
+  which variables each binding pass bound and clearing exactly those, in
+  both matcher engines and in all three decompositions; `ematch.rs`'s
+  `expand_a_checks_a_prebound_fixed_child` and the two `a_prebound`
+  fixtures in `egraph/tests/egg/` are the fences.
+
+  **The campaign numbers are unaffected, verified rather than argued.**
+  No committed benchmark program reaches the pattern: all 32 programs in
+  this directory produce byte-identical output before and after the fix,
+  under both strategies and all three scheduling modes, and again under
+  the default type groups. The program that does reach it was never a
+  committed column: it is the A-only draft this entry was written about,
+  now validated and shipped as `matrix.native-A.egg` with counts in
+  `matrix.deviations.md`, measured after the fix and carrying no timing
+  in the section 9 campaign, which predates it.
+
+  **Why the differential oracle did not catch it.** `match_keys` runs
+  every query through three engines and asserts they agree, but the push
+  and pull engines carried the same defect, so on the minimal case
+  (`expand_a_prebound_child_oracle_blind_spot`) all three agreed on the
+  same wrong answer: three matches where the constraint admits one. An
+  agreement between two implementations of one mistake is not evidence;
+  the test that fails pre-fix is the one asserting the match set against
+  the pattern's meaning, not against another engine.
 
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.
