@@ -419,6 +419,45 @@ must bind to the same value:
 (rewrite (Add x:k y:k ..rest) (Balanced x y))
 ```
 
+### Caveat: migrating binary rules to AC patterns
+
+Distinct pattern elements bind distinct children of the multiset.
+This is partition semantics: the elements (plus the rest variable)
+partition the node's distinct children, and no two elements may bind
+the same child. A binary pattern has no such constraint, because its
+two positions are independent. So a rule that was written against a
+binary operator can silently lose its coincidence matches when the
+operator becomes AC and the rule is restated in n-ary form.
+
+Concretely, the binary rule
+
+```
+(rewrite (Mul x (Add a b)) (Add (Mul x a) (Mul x b)))
+```
+
+matches `(Mul t t)` with `t = (Add a b)`, binding `x = t`. After
+flattening, that node is the multiset `Mul{t:2}`, one distinct child
+at multiplicity 2, and the n-ary restatement
+
+```
+(rewrite (Mul x (Add a b) ..rest) ...)
+```
+
+does not match it: `x` and `(Add a b)` are two elements and there is
+only one distinct child. To cover the coincidence case, write the
+multiplicity twin explicitly:
+
+```
+(rewrite (Mul (Add a b):k>=2 ..rest) ...)
+```
+
+This is deliberate. Partition semantics is what makes AC matching
+well defined and enumerable; generating coincidence variants
+automatically is a combinatorial blowup (every subset of mutually
+unifiable elements could coincide). When you translate a binary rule
+whose element subpatterns can unify with each other, decide per rule
+whether the coincidence case matters and write its twin if it does.
+
 ### A Patterns (sequence semantics)
 
 A nodes store ordered sequences. Pattern elements match positionally
