@@ -199,13 +199,16 @@ keys its stream carries; a key left by an earlier build carries an older stamp
 and reads as empty. `recycle` hands the arena back. Work is proportional to the
 stream and the keys it occupies, not to the key space.
 
-**The measured numbers are the prototype's, not this container's.** The
-prototype in `egraph/src/span_proto.rs` measured the index build at 65.4 to
-36.5 ms per round and the delta install at 19.57 to 0.010 ms, corpus
-byte-identical. Whether the verified version reproduces them is a measurement
-nobody has taken: it is not yet wired into the e-graph, and `replace_delta` still
-builds its delta generation with the dense path, so the 19.6 ms install stands
-until that changes.
+**Measured on the verified path.** The e-graph's four index families build
+through `build_in` (`egraph/src/index.rs`, commit 19b4b8c). At S = 1e6 the index
+build falls from 57.61 to 32.64 ms per round and a delta build from 12.75 to
+1.38 ms, with all 26 comparison programs byte-identical. An earlier prototype
+predicted 65.4 to 36.5 ms against a different baseline; the numbers above are the
+ones to cite, because they are the landed path.
+
+`LayeredSpanMap::replace_delta` is a separate case and still builds its delta
+generation through the dense path, so section 4 of `16-layered-span-map.md`
+retracts its install-cost claim and that retraction still stands.
 
 **There is one build, not two.** `build` delegates to `build_in` with a fresh
 arena. Keeping a separate dense path would have meant listing every key in the
@@ -237,10 +240,13 @@ takes 2^64 builds, so the conformance suite cannot drive it, and that is a
 consequence of choosing `u64` over the prototype's `u32`.
 
 A `{off, len, stamp}` triple at `usize`/`usize`/`u64` is 24 bytes against the
-prototype's 12. The arena is resident where the dense build's arrays were
-transient, so the resident steady state rises; section 7 of the sparsity document
-asks for both peak and steady state to be measured on the largest corpus program
-before the width is settled. That measurement has not been taken.
+prototype's 12, and the arena is resident where the dense build's arrays were
+transient. The concern recorded here was that resident steady state would rise to
+pay for it. **It did not: resident memory fell from 1047 to 608 MiB** on the
+largest corpus program (19b4b8c), because recycling one table replaces an
+allocate-and-free of the whole key space every round. The wider triple costs less
+than the churn it removes, so the width question is settled on measurement rather
+than on the estimate that preceded it.
 
 ### What the proof structure cost
 
