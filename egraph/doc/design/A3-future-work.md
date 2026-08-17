@@ -135,11 +135,17 @@ all e-nodes until costs stabilize. This handles the common case
 (smallest AST) but cannot express richer extraction objectives.
 
 A more powerful approach encodes extraction as partial weighted
-Max-SAT. Each e-node becomes a boolean variable ("is this node
-selected?"). Hard clauses enforce structural consistency: exactly one
-node is selected per e-class, and selecting a node forces selection
-of one node in each child class. Soft clauses encode cost
-preferences with weights.
+Max-SAT over the e-graph read as an AND/OR graph: e-classes are OR
+nodes (choose one member), e-nodes are AND nodes (require all
+children). Each e-node becomes a boolean variable ("is this node
+selected?"). Hard clauses are the local constraints of that graph:
+exactly one node is selected per selected e-class, and selecting a
+node forces selection of a node in each of its child classes. Soft
+clauses encode the cost model, with weights carried by both the
+nodes (operator cost) and the edges (parent-child choice cost), so a
+node's price can depend on where it is used. A pseudo-Boolean solver
+is an equivalent backend for the same constraints when the costs are
+linear.
 
 This formulation naturally supports:
 - Per-operator cost weights (not just uniform cost 1)
