@@ -1,25 +1,19 @@
-# eqsolve: dropped, with reason
+# eqsolve: deviation ledger
 
-Source: `egglog/tests/web-demo/eqsolve.egg` at 7b1adf2. Benchmark 10 of the
-intersection set, selected for extraction-path coverage: it solves two small
-linear systems and the result is read out with `(extract …)` rather than
-asserted by a check alone.
+Source: `egglog/tests/web-demo/eqsolve.egg` at 7b1adf2. Benchmark 10 of the intersection
+set, selected for extraction-path coverage: it solves two small linear systems and the
+result is read out with `(extract …)` rather than asserted by a check alone.
 
-**Not translated.** No `.egg` files are shipped for it.
+Files: `eqsolve.egglog.egg` (theirs), `eqsolve.rules.egg` (ours, A and C as explicit
+rewrite rules), this ledger. No native-AC dual ships; the reason is below.
 
-## Why
+**Dropped 2026-08-16, translated 2026-08-17.** The drop was on two missing
+pattern-language features at once, a root-binding form and primitive predicates in
+`:when`; both landed (commits 93d698d and 99c690f) and the benchmark translates with its
+division rule intact. The previous version of this file, which argued the drop, is in the
+history of commit c2558c7; do not cite it as current.
 
-Most of the program translates. Three of its four `(rule …)` forms bind a
-variable to a pattern's root e-class and then use it only in the action, so
-substituting the pattern for the variable is exact:
-
-| theirs | ours |
-|---|---|
-| `(rule ((= (Add x y) z)) ((union (Add z (Neg y)) x)))` | `(rule ((Add x y)) ((union (Add (Add x y) (Neg y)) x)))` |
-| `(rule ((= x (Var v))) ((union (Mul (Num 1) x) x)))` | `(rule ((Var v)) ((union (Mul (Num 1) (Var v)) (Var v))))` |
-| `(rule ((= x (Add x1 x2))) ((union (Mul (Num 1) x) x)))` | `(rule ((Add x1 x2)) ((union (Mul (Num 1) (Add x1 x2)) (Add x1 x2))))` |
-
-The fourth does not:
+## The rule that produces the benchmark's output
 
 ```
 (rule ((= (Mul (Num x) y) (Num z))
@@ -27,38 +21,116 @@ The fourth does not:
       ((union y (Num (/ z x)))))
 ```
 
-It needs two things we do not have, either of which alone is fatal:
+It turns `3y = 12` into `y = 4`, and it is also what keeps the search finite, by
+collapsing classes onto numerals instead of letting the `Add`/`Neg` rearrangements expand.
+It needs two things at once: two patterns constrained to one root e-class, and a
+divisibility test over the two bound literals. Ours:
 
-1. Two patterns sharing a root e-class — `(Mul (Num x) y)` and `(Num z)` must be
-   the *same* class. Our patterns cannot name a root, so a multi-pattern rule
-   listing both is a cross product, not a join on the root. Same gap as `matrix`;
-   the probe is in `matrix.deviations.md`.
-2. A primitive divisibility guard, `(% z x) = 0`. Primitive operators are
-   rejected in left-hand sides outright. Same gap as `bdd`; the probe is in
-   `bdd.deviations.md`.
+```
+(rule ((= (Mul (Num x) y) (Num z))
+       (i64::!= x 0)
+       (i64::== (i64::% z x) 0))
+      ((union y (Num (i64::/ z x)))))
+```
 
-This is the rule that turns `3y = 12` into `y = 4`, so it is the one that
-produces the benchmark's output. Measured, on egglog, at the original `(run 5)`:
+The three other `(rule …)` forms of the source bind a pattern's root and use it only in
+the action; they now translate verbatim rather than by substituting the pattern for the
+variable, which is what the drop-era ledger proposed.
 
-| | extract `(Var "x")` | `(Var "y")` | `(Var "z")` | checks |
-|---|---|---|---|---|
-| as written | `(Num 5)` | `(Num 4)` | `(Num 2)` | 7 of 7 pass |
-| rule removed | — | — | — | fails at check 3 |
+## Adjustments applied to both configurations
 
-Removing the rule fails `(check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))`
-at the original budget, and raising the budget to `(run 9)` to try to recover it
-does not terminate within 120 s — the rule is also what keeps the search finite,
-by collapsing classes onto numerals instead of letting the `Add`/`Neg`
-rearrangements expand. So there is no scoped version of this benchmark that both
-terminates and asserts what it was chosen to assert, and none at all that
-exercises the extraction path on the intended answers.
+**The run budget is 6, not 5.** Measured: at `(run 5)` our engine has not yet joined
+`(Var "x")` to `(Num 5)`, so the three answers are not available, while all seven of the
+benchmark's own checks already pass. At `(run 6)` all three answers hold. egglog's output
+is identical at 5 and at 6, so raising it changes nothing on their side and both engines
+run one program.
 
-Dropped under the drop-don't-fudge rule (`methodology.md` section 5).
+**The three answers are asserted, not only printed.** `(check (= (Var "x") (Num 5)))` and
+its two siblings are added to both files. The source only extracts them, and an extraction
+is not a check; asserting them is what makes the two engines' agreement on the answers
+part of the validation rather than something a reader has to eyeball.
 
-## Consequence for coverage
+## Adjustments on our side only
 
-The intersection set loses its only extraction-path benchmark. Extraction is
-still exercised by our own corpus but not head to head against egglog. Recovering
-it needs the root-binding pattern form and primitive guards together; a
-replacement exhibit built from our own extraction tests would not be a
-comparison.
+**A `x /= 0` guard with no counterpart in theirs.** Their `%` is partial and yields no
+value at zero, so their rule silently does not fire when `x` is `0`; ours is total and
+traps, and `(Num 0)` does reach a `Mul` position in this program. `(i64::!= x 0)` written
+before the divisibility guard restores their behaviour: guards are lowered in the order
+written, so the zero test rejects the match before the remainder is computed. The rule
+fires on exactly the same matches either way.
+
+**`(- 0 n)` becomes `(i64::neg n)`.** A primitive's arguments on a right-hand side must be
+bound literal-value variables, so a literal `0` cannot appear there. `0 - n` and `-n` agree
+on every i64 except `i64::MIN`, which this program does not reach.
+
+**Our extractor prints `(Var "x")` where theirs prints `(Num 5)`.** The classes agree,
+which the three added checks assert. `(Var "x")` and `(Num 5)` are both a constructor over
+one leaf, so they tie on cost and the tie breaks the other way. Not a deviation in what is
+derived, only in which of two equally cheap representatives is printed.
+
+## No native-AC dual, and why
+
+`Add` is AC and `Mul` is commutative-only, so the dual is written the same way as
+`integer_math`'s: declare `(Add Expr :assoc-comm)` and `(Mul Expr Expr :comm)`, delete the
+three A/C rules, and restate the rules that matched an `Add` in n-ary form. Two things
+came out of writing it, and only the first is fixable inside this directory.
+
+**An AC pattern's elements match distinct children, so every n-ary lift of a binary rule
+needs a multiplicity-2 twin.** `(Add (Mul y x) (Mul z x) ..rest)` does not match the node
+`{(Mul 1 y) : 2}`, because the two pattern elements have to bind distinct children;
+`(Add (Mul y x):2 ..rest)` is the case it misses, and it is the one that turns `y + y`
+into `2y`. Reproduction:
+
+```
+(datatype E (N i64) (plus E :assoc-comm) (Mark E))
+(let t (plus (N 1) (N 1)))
+(rule ((= s (plus a b ..rest))) ((union (Mark s) s)))
+(run 3)
+(check (= (Mark t) t))
+```
+
+```
+error: check failed: terms are not equal
+```
+
+`integer_math.native.egg` has the same shape in its constant folds and its factoring rule,
+and its checks pass, so the gap is latent there rather than load-bearing. Worth a pass over
+that file.
+
+**The dual still fails, on AC congruence completeness.** With the twins added, checks 3
+through 7 fail at 6, 8, 10 and 12. The reason is the problem
+`egraph/doc/design/ac-congruence-completeness.md` opens with: `a+b = p` entails
+`a+b+c = p+c`, and deriving that class of consequence is completion's job, not
+canonicalization's. This program needs exactly it, because `z = 6 + (-y)` has to entail
+`z + z = 6 + (-y) + 6 + (-y)`. Measured in the saturated graph:
+
+```
+(let f1 (Add (Add (Num 6) (Neg (Var "y"))) (Add (Num 6) (Neg (Var "y")))))
+(let f2 (Add (Num 6) (Num 6) (Neg (Var "y")) (Neg (Var "y"))))
+(check (= f1 f2))
+```
+
+```
+error: check failed: terms are not equal
+```
+
+`--derive-ac-eqs`, which exists to close exactly this, does not terminate within 120 s on
+this program. So the dual is **postponed, not dropped**: it becomes writable when AC
+completion is fast enough to run on a program of this size, and the test of that is this
+file. The rules configuration ships and is validated, which is the same position `herbie`
+is in for a different reason.
+
+## Validated
+
+All seven of the source's checks plus the three added answer checks pass in both shipped
+configurations, on both engines, at `(run 6)`.
+
+| configuration | nodes | classes | iterations |
+|---|---|---|---|
+| egglog | 2110 | | 6 |
+| ours, rules, naive | 9583 | 1567 | 6 |
+| ours, rules, semi-naive | 9085 | 1534 | 6 |
+
+Node counts are not comparable across engines (methodology section 3). The set keeps its
+extraction-path column: both engines reach the same three answers, and the two agree on
+every class the benchmark asserts.

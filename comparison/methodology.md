@@ -132,19 +132,17 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   becomes a node, so `allgs` now counts on both sides. Justified only
   because the same re-encoding is applied to the egglog program; a
   one-sided emulation would violate the intersection principle.
-- **A-only native duals write their terms pre-flattened** (calc, until).
-  Our `:assoc` does not flatten nested applications and does not collapse
-  singletons, against the sequence normal form
-  `ac-algebraic-properties.md` specifies (section 6 records the defect;
-  `:assoc-comm` is correct). The native files therefore write every
-  sequence in the flat form a correct implementation would have built,
-  and state the singleton law `(rewrite (gmul x) x)` explicitly. Sound:
-  the flat node is the one the nested text denotes, so when the defect is
-  fixed the nested text reproduces these files unchanged. Same shape as
-  the withdrawn literal-matcher workaround. Consequence: calc's blocks 1
-  and 2 become true by canonization, which is the AC/A value proposition
-  and not a weakened check — the same phenomenon as math-add-ac's native
-  column saturating at 25 nodes in one iteration.
+- **Withdrawn 2026-08-17: A-only native duals wrote their terms
+  pre-flattened** (calc, until). `:assoc` now flattens nested
+  applications and collapses singletons (commit e998295), which is the
+  sequence normal form `ac-algebraic-properties.md` specifies, so the
+  workaround is gone from both files and the nested text the source
+  writes reproduces them. Kept here because the pilot's first published
+  numbers for those two benchmarks were measured under it. Its
+  consequence stands and was never a weakened check: calc's blocks 1 and
+  2 become true by canonization, which is the AC/A value proposition,
+  the same phenomenon as math-add-ac's native column saturating at 25
+  nodes in one iteration.
 - **Two type groups compose on the command line** (herbie). It needs
   `RBig` from `bignum` and `String` from `machine`, and
   `--types machine,bignum` supplies both. Resolves the open note in
@@ -207,42 +205,43 @@ tests/files.rs list) are excluded from timing. Qualitative-only exhibits:
 their multiset AC workarounds (eqsat-basic-multiset, factoring-multisets),
 discussed but never timed head-to-head.
 
-**Three of the ten ranked intersection benchmarks are dropped, 2026-08-16,
-on two missing pattern-language features.** Each has a ledger; none is
-fudged into the set.
+**The three benchmarks dropped on 2026-08-16 are translated, 2026-08-17.**
+Both features they needed exist: the root-binding pattern form `(= v pat)`
+(commit 93d698d) and primitive predicates in `:when` (commit 99c690f). The
+drop-era text of this section and of the three ledgers is in the history of
+commit c2558c7; it is superseded and should not be cited.
 
-- **matrix** (ranked 7, mixed AC and A-only). Its subject is one
-  conditional rewrite whose guard is an equality between two derived
-  terms, `:when ((= (ncols A) (nrows C)) …)`. Expressing it needs a
-  root-binding pattern form — egglog's `(= v (f x))` — which we do not
-  have: our patterns are `(Op children…)` and cannot name a root, so two
-  patterns cannot be required to share one. Both of the benchmark's
-  assertions turn on that rule (the positive check derives through it and
-  through nothing else; the `fail` check exists to show the guard blocks
-  it), so removing it leaves fifteen unconditional rules and no
-  assertions. `matrix.deviations.md`.
-- **bdd** (ranked 9, commutative-without-associative). Six rules — the
-  variable-ordering rules that make it a BDD — are guarded by a primitive
-  comparison `:when ((< n m))`. A primitive operator may not appear in a
-  left-hand side at all on our side. The guard is the rules' correctness
-  condition, not a restriction: unguarded, both orderings fire and the
-  ITE tree grows without bound, and the twelve checks assert exactly the
-  canonicity the ordering buys. `bdd.deviations.md`.
-- **eqsolve** (ranked 10, the set's only extraction-path benchmark).
-  Three of its four rules desugar exactly by substituting the pattern for
-  its root variable; the fourth needs both missing features at once — two
-  patterns sharing a root class and a primitive divisibility guard. It is
-  the rule that turns `3y = 12` into `y = 4`, so it produces the
-  benchmark's output. Measured: removing it fails check 3 of 7 at the
-  original `(run 5)`, and raising the budget to `(run 9)` to recover it
-  does not terminate in 120 s, because the rule is also what keeps the
-  search finite. `eqsolve.deviations.md`.
+- **matrix** (ranked 7, mixed AC and A-only). Its conditional Kron/MMul
+  rewrite guards on an equality between two derived terms, written
+  `:when ((= p (ncols a)) (= p (nrows c)) …)`: each conjunct binds one
+  pattern's root e-class, and the repeated variable requires the two to be
+  one class. Both assertions pass. Its native column carries native AC on
+  `Times` only; `MMul` and `Kron` keep their associativity rewrites,
+  because the n-ary restatement panics the matcher (section 6, the
+  2026-08-17 entry). That is the property the benchmark was selected for,
+  so the A-only comparison is postponed rather than delivered.
+  `matrix.deviations.md`.
+- **bdd** (ranked 9, commutative-without-associative). The six
+  variable-ordering rules keep their guard, written `:when ((i64::< n m))`
+  over the two i64 labels the `ITE` patterns bind. Twelve checks pass in
+  all three configurations. `bdd.deviations.md`.
+- **eqsolve** (ranked 10, the set's only extraction-path benchmark). The
+  division rule needs both features at once and now translates. Two
+  adjustments apply to both configurations, and both engines take them: the
+  budget is 6 rather than 5, because at 5 our engine has not yet joined
+  `(Var "x")` to `(Num 5)` while all seven original checks already pass; and
+  the three extracted answers are asserted rather than only printed. The
+  native-AC dual is postponed on AC congruence completion, measured:
+  `--derive-ac-eqs` does not terminate within 120 s on this program, and
+  without it `z = 6 + (-y)` does not entail `z + z = 6 + (-y) + 6 + (-y)`.
+  `eqsolve.deviations.md`.
 
-Consequence for coverage: the set loses its extraction-path column and
-its A-only-operator column, and the honest scoping sentence for the paper
-is that the comparison covers the intersection minus what two pattern
-features would unlock. Both features are named in the ledgers: a
-root-binding pattern form, and primitive predicates in `:when`.
+Consequence for coverage: the set has its extraction-path column, and the
+A-only-operator column is the one still missing, on an engine defect rather
+than on a language gap. The honest scoping sentence for the paper is that
+the comparison covers the ranked intersection, with two native-AC duals
+(eqsolve, herbie) and matrix's A-only half unwritten, each with a measured
+reason.
 
 **herbie's native-AC dual is deferred, not dropped**, and
 `repro-herbie-vanilla` (ranked 4, 471 rewrites) behind it. The scoped
@@ -294,26 +293,34 @@ which side of each fix it was measured on:
   the diagnosis is span-table-sparsity.md. Corpus byte-identical on 26
   programs under both strategies and three scheduling modes.
 
-- 2026-08-16, found while translating, not yet fixed (both in
-  `egraph/src`, reported rather than changed because this pass owns
-  `comparison/` only):
-  - **`:assoc` does not flatten.** A nested application of an A-only
-    operator stays a distinct node — `(seq (seq (Aa) (Bb)) (Cc))` and
-    `(seq (Aa) (Bb) (Cc))` fail `(check (= …))` — and a one-element node
-    is not collapsed to its element. `:assoc-comm` is correct on both
-    counts, so only A-only operators are affected.
-    `ac-algebraic-properties.md` lines 460 and 475 specify the flattened
-    sequence as the normal form. Consequence: the calc and until native
-    columns carry the pre-flattening workaround in section 4, and matrix
-    would have needed it on operators whose whole role is re-association.
-    Reproduction in `calc.deviations.md`.
-  - **`A1-language-guide.md` line 149 documents a `:when` form that does
-    not exist.** `(rewrite (Add x y) (Mul x y) :when ((= x zero)))` is
-    given as the way globals appear in guards; `parse_rule_tags` reads
-    `:when` as a list of `SurfacePattern` and sortcheck rejects `=` as an
-    operator. Not a blocker for anything shipped — no translated
-    benchmark needed it — but it is what made the matrix and eqsolve
-    guards look expressible on a first reading.
+- 2026-08-16, found while translating; both fixed 2026-08-17, and both
+  entries are kept so that the pilot's first published numbers stay
+  attributable:
+  - **Fixed 2026-08-17 in e998295: `:assoc` did not flatten.** A nested
+    application of an A-only operator stayed a distinct node and a
+    one-element node was not collapsed to its element; `:assoc-comm` was
+    correct on both counts. The calc and until native columns no longer
+    carry the pre-flattening workaround. Reproduction, and the record of
+    what the workaround was, in `calc.deviations.md`.
+  - **Fixed 2026-08-17 in 93d698d: `A1-language-guide.md` line 149
+    documented a `:when` form that did not exist.**
+    `(rewrite (Add x y) (Mul x y) :when ((= x zero)))` was given as the
+    way globals appear in guards, and sortcheck rejected `=` as an
+    operator. It is the root-binding form, with a global on one side, and
+    it now resolves to the O(1) equality check the guide describes. This
+    is what made the matrix and eqsolve guards look expressible on a
+    first reading, and they now are.
+
+- 2026-08-17, found while translating matrix's A-only native dual, not
+  fixed: **a guarded rewrite over `:assoc` operators can panic the
+  matcher.** With `MMul` and `Kron` declared `:assoc` and the eight
+  matrix rules that mention them restated n-ary, the guarded Kron/MMul
+  rewrite drives `ematch.rs:229` to read an unbound variable through an
+  `IndexLookup::ByRepr`. Eight of the twelve rules are needed to
+  reproduce it and no smaller synthetic reproduces it; each rule alone
+  and each pair is clean. Consequence: matrix's native column carries
+  native AC on `Times` only, and its A-only half is postponed. Detail in
+  `matrix.deviations.md`.
 
 Comparisons must never mix pre-fix and post-fix numbers in one table; the
 final submission re-runs every table at one pinned commit.

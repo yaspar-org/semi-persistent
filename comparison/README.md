@@ -10,8 +10,9 @@ difference that stands between the three programs being compared.
 
 ## What is here
 
-Seven benchmarks. The first three are the pilot; the rest landed 2026-08-16 and
-complete the translated set.
+Ten benchmarks, the whole ranked intersection set. The first three are the pilot;
+the next four landed 2026-08-16, and the last three on 2026-08-17, once the two
+pattern-language features they needed existed.
 
 | benchmark | source | configurations |
 |---|---|---|
@@ -21,17 +22,25 @@ complete the translated set.
 | `calc` | `egglog/tests/calc.egg`, ranked 6, `:until` goals over four push/pop blocks | 3 |
 | `until` | `egglog/tests/until.egg`, ranked 6, `:until` against a non-terminating generator | 3 |
 | `integer_math` | `egglog/tests/integer_math.egg`, ranked 5, **scoped** | 3 |
+| `matrix` | `egglog/tests/web-demo/matrix.egg`, ranked 7, mixed AC and A-only | 3 |
+| `bdd` | `egglog/tests/web-demo/bdd.egg`, ranked 9, commutative without associative | 3 |
 | `herbie` | `egglog/tests/web-demo/herbie.egg`, ranked 3, **scoped**, no native dual | 2 |
+| `eqsolve` | `egglog/tests/web-demo/eqsolve.egg`, ranked 10, the extraction path, no native dual | 2 |
 
-Three of the ten ranked intersection benchmarks are **dropped**, each with a
-ledger and no `.egg` files: `matrix` (ranked 7), `bdd` (ranked 9) and `eqsolve`
-(ranked 10). All three need a pattern-language feature we lack — a root-binding
-form `(= v pat)`, or primitive predicates in `:when` — for a rule that carries the
-benchmark's assertions. Read `matrix.deviations.md`, `bdd.deviations.md` and
-`eqsolve.deviations.md` before concluding anything about coverage;
-`methodology.md` section 5 is the index. `repro-herbie-vanilla` (ranked 4) and
-herbie's own native-AC dual are deferred, with the reason in
+`matrix`, `bdd` and `eqsolve` were dropped on 2026-08-16 for want of two
+pattern-language features, a root-binding form `(= v pat)` and primitive predicates
+in `:when`. Both landed, and all three now ship with their load-bearing rule intact.
+Their ledgers open with that history; the drop-era ledgers are in the history of
+commit c2558c7 and are not current. Two configurations remain unwritten:
+`eqsolve`'s native-AC dual, postponed on AC congruence completion, and herbie's,
+plus `repro-herbie-vanilla` (ranked 4). Reasons in `eqsolve.deviations.md` and
 `herbie.deviations.md`.
+
+`matrix`'s native column carries native AC on `Times` only; its A-only operators
+keep their associativity rewrites, because a one-element application of an
+`:assoc` operator is not identified with its argument, so an n-ary restatement is
+not writable. That is the benchmark's own selection property, so read
+`matrix.deviations.md` before drawing an A-only conclusion from this set.
 
 `integer_math` and `herbie` are scoped columns: a reduced program, identical in
 every configuration, standing in for the upstream benchmark. Their timings are not
@@ -56,8 +65,10 @@ eqsat-basic's 376 ms against a warm 3.3 ms. And its `ours` binary was built from
 working tree carrying another agent's uncommitted `egraph/src` changes, so it names
 no commit, which `methodology.md` section 1 requires of any table. What the pass
 does establish is validation, not timing: both engines exit non-zero on a failed
-check, so a clean sweep of all 33 cells means every check of every program holds in
-every configuration.
+check, so a clean sweep means every check of every program holds in every
+configuration. That pass covered the seven benchmarks that existed on 2026-08-16;
+`matrix`, `bdd` and `eqsolve` were swept the same way when they landed and their
+counts are in their ledgers.
 
 `gen-herbie.py` regenerates herbie's two programs and `herbie-dropped.txt`, the
 verbatim listing of every form the scoping removes.

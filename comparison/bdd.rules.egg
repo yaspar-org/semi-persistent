@@ -1,0 +1,97 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/bdd.egg (7b1adf2).
+;; Config: commutativity supplied as explicit rewrite rules, their encoding.
+;; See bdd.deviations.md.
+(datatype BDD
+    (ITE i64 BDD BDD))          ; variables labelled by number
+(constructor TrueConst () BDD)
+(let bTrue (TrueConst))
+(constructor FalseConst () BDD)
+(let bFalse (FalseConst))
+
+; compress unneeded nodes
+(rewrite (ITE n a a) a)
+
+(constructor bddand (BDD BDD) BDD)
+(rewrite (bddand x y) (bddand y x))
+(rewrite (bddand bFalse n) bFalse)
+(rewrite (bddand bTrue x) x)
+
+; Low variables sit higher in the tree. The guard is the ordering discipline: without
+; it both (i64::< n m) and (i64::< m n) fire on every pair of distinct labels.
+(rewrite (bddand (ITE n a1 a2) (ITE m b1 b2))
+    (ITE n (bddand a1 (ITE m b1 b2)) (bddand a2 (ITE m b1 b2)))
+    :when ((i64::< n m)))
+(rewrite (bddand (ITE n a1 a2) (ITE n b1 b2))
+    (ITE n (bddand a1 b1) (bddand a2 b2)))
+
+(constructor bddor (BDD BDD) BDD)
+(rewrite (bddor x y) (bddor y x))
+(rewrite (bddor bTrue n) bTrue)
+(rewrite (bddor bFalse x) x)
+(rewrite (bddor (ITE n a1 a2) (ITE m b1 b2))
+    (ITE n (bddor a1 (ITE m b1 b2)) (bddor a2 (ITE m b1 b2)))
+    :when ((i64::< n m)))
+(rewrite (bddor (ITE n a1 a2) (ITE n b1 b2))
+    (ITE n (bddor a1 b1) (bddor a2 b2)))
+
+(constructor bddnot (BDD) BDD)
+(rewrite (bddnot bTrue) bFalse)
+(rewrite (bddnot bFalse) bTrue)
+(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))
+
+(constructor bddxor (BDD BDD) BDD)
+(rewrite (bddxor x y) (bddxor y x))
+(rewrite (bddxor bTrue n) (bddnot n))
+(rewrite (bddxor bFalse x) x)
+(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2))
+    (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2)))
+    :when ((i64::< n m)))
+(rewrite (bddxor (ITE n a1 a2) (ITE n b1 b2))
+    (ITE n (bddxor a1 b1) (bddxor a2 b2)))
+
+(push)
+;;; Tests
+
+(let bv0 (ITE 0 bTrue bFalse))
+(let bv1 (ITE 1 bTrue bFalse))
+(let bv2 (ITE 2 bTrue bFalse))
+
+(let bt0 (bddnot (bddnot bv0)))
+(let bt1 (bddor bv0 (bddnot bv0)))
+(let bt2 (bddand bv0 (bddnot bv0)))
+(let bt3 (bddand bv0 bv0))
+(let bt4 (bddor bv0 bv0))
+(let bt5 (bddxor (bddnot bv0) bv0))
+(let bt6 (bddand (bddor bv1 bv2) bv2))
+
+(let bt7a (bddxor (bddnot bv0) bv1))
+(let bt7b (bddxor bv0 (bddnot bv1)))
+(let bt7c (bddnot (bddxor bv0 bv1)))
+
+(let bt8 (bddand bv1 bv2))
+
+(let bt9 (bddand (bddnot bv1) (bddand (bddnot bv0) (bddxor bv0 bv1))))
+(let bt10 (bddor (bddnot bv1) (bddor (bddnot bv0) (bddxor bv0 (bddnot bv1)))))
+
+(run 30)
+
+(check (= bt0 bv0)) ; bddnot cancels
+(check (= bt1 bTrue))
+(check (= bt2 bFalse))
+(check (= bt3 bv0))
+(check (= bt4 bv0))
+(check (= bt5 bTrue))
+(check (= bt6 bv2))
+
+(check (= bt7a bt7b))
+(check (= bt7a bt7c))
+
+(check (= bt8 (ITE 1 (ITE 2 bTrue bFalse) bFalse)))
+
+(check (= bt9 bFalse))
+(check (= bt10 bTrue))
+
+(print-size)
+(print-stats :file "bdd.rules.stats.json")
+(pop)

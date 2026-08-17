@@ -4,8 +4,7 @@
 Generalizes run-pilot.py from three benchmarks to the whole translated set. Each
 benchmark declares the type groups its translation needs and which of the two
 encodings exist for it, because not every benchmark has a native-AC dual: see the
-per-benchmark deviation ledgers, and methodology.md section 5 for the three
-intersection benchmarks that are dropped rather than translated.
+per-benchmark deviation ledgers.
 
 Every row carries a `label`, and the output file is named after it, so that a
 cheap smoke pass cannot be mistaken for the campaign. The campaign is
@@ -39,8 +38,11 @@ BENCHMARKS = {
     "calc":                {"types": "machine",        "encodings": ("rules", "native")},
     "until":               {"types": "machine",        "encodings": ("rules", "native")},
     "integer_math":        {"types": "machine",        "encodings": ("rules", "native")},
-    # herbie's native-AC dual is not written; see herbie.deviations.md.
+    "matrix":              {"types": "machine",        "encodings": ("rules", "native")},
+    "bdd":                 {"types": "machine",        "encodings": ("rules", "native")},
+    # herbie's and eqsolve's native-AC duals are not written; see their ledgers.
     "herbie":              {"types": "machine,bignum", "encodings": ("rules",)},
+    "eqsolve":             {"types": "machine",        "encodings": ("rules",)},
 }
 
 

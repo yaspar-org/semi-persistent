@@ -1,16 +1,23 @@
-# matrix: dropped, with reason
+# matrix: deviation ledger
 
-Source: `egglog/tests/web-demo/matrix.egg` at 7b1adf2. Benchmark 7 of the
-intersection set, selected for one property: mixed AC and A-only operators in one
-signature. `Times` over `Dim` has both an associativity pair and a commutativity
-rule (AC); `MMul` and `Kron` over `MExpr` have associativity in both directions and
-no commutativity (A-only).
+Source: `egglog/tests/web-demo/matrix.egg` at 7b1adf2. Benchmark 7 of the intersection
+set, selected for one property: mixed AC and A-only operators in one signature. `Times`
+over `Dim` has both an associativity pair and a commutativity rule (AC); `MMul` and `Kron`
+over `MExpr` have associativity in both directions and no commutativity (A-only).
 
-**Not translated.** No `.egg` files are shipped for it.
+Files: `matrix.egglog.egg` (theirs), `matrix.rules.egg` (ours, A and C as explicit rewrite
+rules), `matrix.native.egg` (ours, native AC on `Times` only), this ledger.
 
-## Why
+**Dropped 2026-08-16, translated 2026-08-17.** The drop was on a missing pattern-language
+feature, a root-binding pattern form; that feature landed in commit 93d698d and the
+benchmark translates with its conditional rewrite intact. The previous version of this
+file, which argued the drop, is in the history of commit c2558c7; do not cite it as
+current.
 
-The benchmark's subject is one conditional rewrite:
+## What the guard is and how it is written
+
+The benchmark's subject is one conditional rewrite whose guard is an equality between two
+*derived* terms: the e-class of `(ncols A)` must be the e-class of `(nrows C)`.
 
 ```
 (rewrite (MMul (Kron A B) (Kron C D))
@@ -20,50 +27,91 @@ The benchmark's subject is one conditional rewrite:
         (= (ncols B) (nrows D))))
 ```
 
-The guard is an equality between two *derived* terms: the e-class of `(ncols A)`
-must be the e-class of `(nrows C)`. Expressing it needs a pattern form that binds
-the root e-class of a sub-pattern, which egglog writes `(= v (f x))` and our
-pattern language does not have. Our patterns are `(Op children…)` only; there is no
-way to name a pattern's root, so there is no way to state that two patterns share
-one. Probed directly:
+Ours names the shared root explicitly. Each conjunct binds one pattern's root e-class, and
+the repeated variable is what requires the two to be one class rather than two:
 
 ```
-(datatype E (F i64) (G E) (H E E))
-(rule ((= e (F x))) ((union e (G (F x)))))
+(rewrite (MMul (Kron a b) (Kron c d))
+    (Kron (MMul a c) (MMul b d))
+    :when
+        ((= p (ncols a)) (= p (nrows c))
+         (= q (ncols b)) (= q (nrows d))))
 ```
 
+Both of the benchmark's assertions turn on this rule: `(check (= $ex1 $simple_ex1))`
+derives through it and through nothing else, and the `fail` check exists to show that the
+guard blocks the analogous term whose dimensions do not line up. Dropping the rule would
+leave fifteen unconditional rules and no assertions.
+
+## Adjustments on our side only
+
+**`$`-prefixed names are renamed**, and renamed away from the rule variables. `$A` becomes
+`matA` and `$n` becomes `dimN`, because `A` and `n` are pattern variables in the rules
+above and our globals share one namespace with them. Mechanical.
+
+**`(fail (check (= a b)))` becomes `(check (!= a b))`.** We have no `fail` wrapper; the
+`!=` form asserts what the wrapped check was there to deny, that the two classes are
+distinct. Both forms build their terms before comparing.
+
+**Namespaced primitive.** `(* i j)` becomes `(i64::* i j)`.
+
+**The two demand rules drop the root they never read.** Theirs writes
+`(rule ((= e (MMul A B))) …)` and never mentions `e`; ours writes
+`(rule ((MMul a b)) …)`.
+Exact, and it keeps those two rules delta-restricted: a rule carrying a constraint
+between two atoms' node variables is matched against the whole graph every round
+(chapter 18), so
+binding a root nothing reads would have cost the native column six semi-naive iterations,
+measured at 10 against 4.
+
+## The native configuration, and what it does not cover
+
+`Times` is declared `(Times Dim :assoc-comm)`, its two associativity rewrites and its
+commutativity rewrite are deleted, and its constant fold is restated n-ary:
+`(rewrite (Times (Lit i) (Lit j) ..rest) (Times (Lit (i64::* i j)) ..rest))`.
+
+**`MMul` and `Kron` keep their four associativity rewrites.** They are the A-only half
+of the signature, which is the property this benchmark was selected for, so this is the
+column's limitation and not a convenience.
+
+The n-ary restatement is writable as of commit e998295, which gave `:assoc` operators the
+flattened-sequence normal form: `(MMul a ..rest)`, `(MMul ..pre (Id n) ..suf)` and the
+rest all rely on a one-element application denoting its argument, and it now does. What
+blocks the column is a matcher defect the restatement reaches. With `MMul` and `Kron`
+declared `:assoc` and all eight rules that mention them restated, the guarded Kron/MMul
+rewrite panics:
+
 ```
-sort error: sort error: unknown operator '='
+thread 'main' panicked at egraph/src/ematch.rs:229:29:
+called `Option::unwrap()` on a `None` value
 ```
 
-The same error comes from `:when ((= x zero))`, which
-`egraph/doc/design/A1-language-guide.md` line 149 documents as supported. The
-guide is wrong on that point: `parse_rule_tags` reads `:when` as a list of
-`SurfacePattern`, and sortcheck rejects `=` as an operator. Reported separately;
-it is not a `comparison/` fix.
+`Match::get` through `bucket_in`'s `IndexLookup::ByRepr` arm: the scheduler emitted a
+re-join keyed on a variable that is not bound when the join runs. It needs the guard
+(deleting the `:when` clause, and nothing else, makes the same program run) and it needs
+eight of the twelve rules at once; each rule alone is clean, each pair is clean, and no
+smaller synthetic reproduces it. Reported rather than chased, because it is a matcher
+defect and this pass owns `comparison/`.
 
-Dropping the rule is sound but not honest here, because both of the benchmark's
-substantive assertions turn on it:
+Revisit when that is fixed: the AC half of this column needs no change and the eight
+n-ary restatements are mechanical.
 
-- `(check (= $ex1 $simple_ex1))` — the derivation of
-  `(MMul (Kron (Id n) B) (Kron A (Id m))) = (Kron A B)` goes through exactly this
-  rewrite and through no other.
-- `(fail (check (= $ex2 (Kron $A $C))))` — the negative test, whose whole content
-  is that the guard *blocks* the rewrite when the dimensions disagree.
+## Validated
 
-Removing the rule makes the first check fail and the second pass vacuously. What
-would be left is fifteen unconditional A and AC rules with no assertions: a node
-generator, not the benchmark. Under the drop-don't-fudge rule
-(`methodology.md` section 5) that is a drop, not a scoping.
+Both checks and the negative check pass in every configuration, on both engines, at the
+source's `(run 20)` and `(run 10)`. Both engines exit non-zero on a failed check.
 
-A second, independent blocker would have applied even with the guard: `MMul` and
-`Kron` are A-only, and our `:assoc` does not flatten nested applications (see
-`calc.deviations.md`). The native column would have needed the same pre-flattening
-workaround, on operators whose whole role here is re-association.
+| configuration | nodes | classes | iterations |
+|---|---|---|---|
+| egglog | 53 | | 13 |
+| ours, rules, naive | 92 | 25 | 10 |
+| ours, rules, semi-naive | 91 | 25 | 4 |
+| ours, native, naive | 91 | 25 | 10 |
+| ours, native, semi-naive | 90 | 25 | 4 |
 
-## What would unblock it
-
-A root-binding pattern form — `(= v pat)` in rule left-hand sides and in `:when`,
-binding `v` to the matched node's e-class. That single feature makes the guard
-expressible and is what the language guide already claims. `bdd` and `eqsolve` are
-blocked on primitive guards instead, which is a different gap; see their ledgers.
+The guarded rule is the reason commit 4258fa4 exists: under semi-naive delta restriction
+it never fired, at the source's budget of 20 and at 60, because the merge that makes its
+two roots equal changes no node's tuple and so appears in no variant's delta. A rule
+carrying such a constraint is now matched against the whole graph every round. Without
+that, both of this benchmark's assertions failed under `--use-semi-naive` and passed
+under naive matching, which is how the defect was found.

@@ -137,8 +137,8 @@ classes merge, and a merge of two classes changes neither node's tuple,
 so no variant's delta records it. Measured on the `matrix` translation,
 whose conditional Kron/MMul rewrite guards on
 `(= p (ncols a)) (= p (nrows c))`: under delta restriction that rule
-never fires, at any budget, and the two assertions that depend on it
-fail. A rule with such a constraint is therefore matched against the
+never fires, at the source's budget of 20 and at 60, and the two
+assertions that depend on it fail. A rule with such a constraint is therefore matched against the
 whole graph every round (`saturate::needs_naive_match`), like a rule
 with no scanning atoms at all. A constraint whose local variable is only
 ever a *child* is unaffected: a merge re-canonicalizes the parent's
