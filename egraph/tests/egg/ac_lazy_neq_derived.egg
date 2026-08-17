@@ -1,0 +1,15 @@
+;; EXPECT: check-failed
+;; TYPES: machine
+;; LAZY_AC_EQS: on
+;; Lazy mode makes `!=` stronger, not weaker: the two terms sit in distinct
+;; classes under plain congruence, but completion derives their equality, so
+;; the disequality check must fail.
+(datatype E
+    (Add E :assoc-comm)
+    (Neg E)
+    (Const i64)
+    (Var String))
+(let z (Var "z"))
+(let y (Var "y"))
+(union z (Add (Const 6) (Neg y)))
+(check (!= (Add z z) (Add (Const 6) (Neg y) (Const 6) (Neg y))))

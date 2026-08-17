@@ -41,8 +41,16 @@ struct Cli {
     /// Derive all AC congruence consequences (superposition + inter-reduction) during
     /// rebuild. Off by default: when off, leapfrog matching still enumerates sub-multisets
     /// of AC nodes, but rebuild does not complete the AC rule set. See AC completion docs.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "lazy_ac_eqs")]
     derive_ac_eqs: bool,
+
+    /// Lazy AC completion: saturation runs with completion off; an equality check that
+    /// plain congruence cannot decide runs the completion pass inside a semi-persistent
+    /// transaction (mark, complete, verdict, restore) on the frozen graph, then discards
+    /// everything the pass minted. `!=` checks are confirmed under completion before they
+    /// pass. Mutually exclusive with --derive-ac-eqs.
+    #[arg(long, default_value_t = false)]
+    lazy_ac_eqs: bool,
 
     /// Check AC reduced-basis invariants (min_monomial minimality, Kapur-reducedness) each
     /// completion round and print the report. Diagnostic only: superlinear brute-force
@@ -115,6 +123,15 @@ fn main() {
         SaturationStrategy::Naive
     };
 
+    // The two completion flags conflict (enforced by clap), so at most one is set.
+    let ac_mode = if cli.derive_ac_eqs {
+        semi_persistent_egraph::interpret::AcMode::Eager
+    } else if cli.lazy_ac_eqs {
+        semi_persistent_egraph::interpret::AcMode::Lazy
+    } else {
+        semi_persistent_egraph::interpret::AcMode::Off
+    };
+
     let src = match std::fs::read_to_string(&cli.file) {
         Ok(s) => s,
         Err(e) => {
@@ -166,7 +183,7 @@ fn main() {
                     &surface_cmds,
                     MachineModel,
                     strategy,
-                    cli.derive_ac_eqs,
+                    ac_mode,
                     cli.check_ac_basis,
                     cli.count_match_steps,
                     cli.runtime_scheduling,
@@ -175,7 +192,7 @@ fn main() {
                     &surface_cmds,
                     BignumModel,
                     strategy,
-                    cli.derive_ac_eqs,
+                    ac_mode,
                     cli.check_ac_basis,
                     cli.count_match_steps,
                     cli.runtime_scheduling,
@@ -184,7 +201,7 @@ fn main() {
                     &surface_cmds,
                     AllModel,
                     strategy,
-                    cli.derive_ac_eqs,
+                    ac_mode,
                     cli.check_ac_basis,
                     cli.count_match_steps,
                     cli.runtime_scheduling,
@@ -213,7 +230,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     surface_cmds: &[semi_persistent_egraph::surface_ast::SurfaceCommand],
     model: M,
     strategy: semi_persistent_egraph::saturate::SaturationStrategy,
-    cc: bool,
+    ac_mode: semi_persistent_egraph::interpret::AcMode,
     basis_checks: bool,
     count_match_steps: bool,
     runtime_scheduling: bool,
@@ -232,7 +249,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     let mut interp =
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
     interp.set_strategy(strategy);
-    interp.set_cc(cc);
+    interp.set_ac_mode(ac_mode);
     interp.set_basis_checks(basis_checks);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(

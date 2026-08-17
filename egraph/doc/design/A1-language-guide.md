@@ -109,6 +109,16 @@ Ground terms (no variables) are used in `let`, `union`, `check`,
 (extract a)                   ;; print cheapest term in a's class
 ```
 
+Checks compare canonical forms under plain congruence. AC-entailed
+equalities that flattening erases (see the AC completion docs) are
+decided by the completion pass, in one of two opt-in modes:
+`--derive-ac-eqs` runs it eagerly on every rebuild, and
+`--lazy-ac-eqs` runs it only inside a failing check, in a
+mark/complete/restore transaction that leaves the graph untouched.
+Under the lazy mode `(check (!= …))` is confirmed under completion
+before it passes. The two flags are mutually exclusive;
+`ac-congruence-completeness.md` §13 has the trade-offs.
+
 A bare S-expression at the top level is sugar for insertion:
 
 ```

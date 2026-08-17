@@ -1557,6 +1557,50 @@ reflexive/symmetric/transitive, and closed under
 The verification plan (which proof in Verus, which in Lean, and the staging) is in
 [Future Work](A3-future-work.md), since it concerns what remains to be done.
 
+## 13. Lazy completion: the decision procedure paid per query
+
+Three ways to run an AC workload, selected on the CLI:
+
+- **plain** (default): canonization and plain congruence; the Part I
+  completeness gap stands.
+- **eager** (`--derive-ac-eqs`): every rebuild runs the completion above to
+  fixpoint. Complete, but interleaved with saturation rules the pass re-runs on
+  a growing atom pool every round: rules mint new atoms (folded numerals, fresh
+  terms), which re-breaks the fixed-pool hypothesis Dickson's Lemma needs (§10),
+  and the combined loop has no termination argument. Measured on eqsolve:
+  37 / 146 / 608 / 31k / 204k nodes across round budgets 1-5, each terminating,
+  round 6 beyond 600 s.
+- **lazy** (`--lazy-ac-eqs`): saturation runs plain; an equality check that
+  plain congruence cannot decide runs the decision inside a **semi-persistent
+  transaction** — mark, enable completion, decide, restore — so every node the
+  pass mints is discarded by the O(touched) restore and the persistent graph is
+  never touched. `(check (!= …))` becomes stronger, not weaker: the disequality
+  is confirmed under completion before it passes.
+
+The lazy decision has two phases. Phase 1 is one completion rebuild on the
+frozen graph — no rules interleave, which is exactly the case §10's termination
+argument covers — and it decides pure AC congruence consequences (the doubling
+entailment `z = 6+(-y) ⊢ z+z = 6+(-y)+6+(-y)` in milliseconds). Phase 2, when
+the pair is still apart and the program has rules, hands the pair to the
+saturation driver as an `:until` goal with completion enabled: rounds alternate
+rule matching with completion fixpoints and stop the moment the pair joins,
+bounded by an alternation budget (default 32 rounds) and the completion
+node-growth budget. A joint fixpoint that never joins the pair is a definitive
+"not derivable by these rules plus ground AC congruence"; a budget stop is
+reported as inconclusive, never as a verdict.
+
+Measured on eqsolve's native dual (checks numbered as in its ledger): plain
+decides 1, 2, 8; phase 1 adds nothing (its failures all need the
+rules-and-completion interaction); goal-directed alternation decides check 3
+instantly (against 15 s+ before eager's round 4 reaches it) and check 7 in
+124 s; checks 9-10 sit past the interaction blowup either way. The scope
+boundary is honest: lazy relocates *when* the closure is paid and discards it
+afterwards, and its early exit wins exactly when the queried pair joins well
+before the closure saturates. Two recorded refinements: share one transaction
+across consecutive checks (today each check re-derives), and poll the goal
+inside the completion loop rather than between rounds. Phase 2 runs the
+default ruleset only.
+
 ---
 
 ## References

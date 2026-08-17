@@ -61,6 +61,32 @@ struct Mark<Cfg: EGraphConfig, O> {
     _phantom: std::marker::PhantomData<(Cfg, O)>,
 }
 
+/// How AC congruence completion participates in a program run.
+///
+/// - `Off`: canonization and plain congruence only. Checks decide equality of
+///   materialized canonical forms; AC-entailed equalities through erased
+///   intermediate sums are not derived (the documented completeness gap,
+///   `ac-congruence-completeness.md` Part I).
+/// - `Eager`: every rebuild runs completion to fixpoint (the `--derive-ac-eqs`
+///   behavior). Complete, but interleaving completion with saturation rules
+///   re-runs it on a growing atom pool every round, which diverges on
+///   rule-sets that keep minting new atoms.
+/// - `Lazy`: saturation runs with completion off; an equality check that plain
+///   congruence cannot decide runs completion *inside a semi-persistent
+///   transaction* (mark, complete, read the verdict, restore). The graph the
+///   pass sees is frozen — no rules interleave — which is the case the
+///   termination argument (Dickson antichain over a fixed pool) actually
+///   covers, and the O(touched) restore discards every node the pass minted.
+///   Same decision procedure as `Eager` per query, paid only when a query
+///   needs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AcMode {
+    #[default]
+    Off,
+    Eager,
+    Lazy,
+}
+
 pub struct Interpreter<
     Cfg: EGraphConfig,
     L: LitVal,
@@ -75,6 +101,10 @@ pub struct Interpreter<
     marks: Vec<Mark<Cfg, Cfg::O>>,
     shrink_policy: ShrinkPolicy,
     strategy: crate::saturate::SaturationStrategy,
+    ac_mode: AcMode,
+    /// Alternation budget for a lazy check's second phase (rule rounds
+    /// interleaved with completion fixpoints inside the transaction).
+    lazy_ac_rounds: usize,
     /// Outcome of the most recent `(run …)` command (iterations, saturated, match steps).
     /// `None` until the first run. Exposed for diagnostics and benchmarking.
     last_sat: Option<crate::saturate::SatResult>,
@@ -109,6 +139,8 @@ where
             marks: Vec::new(),
             shrink_policy: ShrinkPolicy::Never,
             strategy: crate::saturate::SaturationStrategy::default(),
+            ac_mode: AcMode::Off,
+            lazy_ac_rounds: 32,
             last_sat: None,
             last_run_time: None,
             index_scratch: crate::index::IndexScratch::new(),
@@ -130,6 +162,8 @@ where
             marks: Vec::new(),
             shrink_policy: ShrinkPolicy::Never,
             strategy: crate::saturate::SaturationStrategy::default(),
+            ac_mode: AcMode::Off,
+            lazy_ac_rounds: 32,
             last_sat: None,
             last_run_time: None,
             index_scratch: crate::index::IndexScratch::new(),
@@ -158,9 +192,90 @@ where
     }
 
     /// Enable/disable the AC congruence-completion pass (default off; see
-    /// `EGraph::set_cc`).
+    /// `EGraph::set_cc`). Equivalent to `set_ac_mode(Eager)` / `set_ac_mode(Off)`.
     pub fn set_cc(&mut self, enabled: bool) {
-        self.eg.set_cc(enabled);
+        self.set_ac_mode(if enabled { AcMode::Eager } else { AcMode::Off });
+    }
+
+    /// Select how AC completion participates in the run (see [`AcMode`]).
+    /// `Lazy` keeps the e-graph's completion flag off; completion runs only
+    /// inside the transaction a lazy check opens.
+    pub fn set_ac_mode(&mut self, mode: AcMode) {
+        self.ac_mode = mode;
+        self.eg.set_cc(mode == AcMode::Eager);
+    }
+
+    /// Alternation budget for a lazy check's second phase (default 32 rounds).
+    pub fn set_lazy_ac_rounds(&mut self, rounds: usize) {
+        self.lazy_ac_rounds = rounds;
+    }
+
+    /// Decide whether `a` and `b` are AC-entailed equal, inside a
+    /// semi-persistent transaction: mark, enable completion, decide, restore.
+    /// The graph is left exactly as it was — every node the pass minted is
+    /// discarded by the O(touched) restore.
+    ///
+    /// Two phases. First, one completion rebuild on the frozen graph — no
+    /// rules interleave, which is the case the termination argument (Dickson
+    /// antichain over a fixed atom pool) covers, and it decides pure AC
+    /// congruence consequences. Second, if the pair is still apart and the
+    /// program has rules, the saturation driver runs the default ruleset with
+    /// the pair as its `:until` goal and completion on, so rounds alternate
+    /// rule matching with completion fixpoints and stop the moment the pair
+    /// joins. This reaches equalities that need the rules-and-completion
+    /// interaction (a completion-derived merge enabling a rule enabling a
+    /// merge), with the alternation bounded by `lazy_ac_rounds` and every
+    /// completion pass bounded by the node-growth budget.
+    ///
+    /// Returns `(equal, inconclusive)`. `inconclusive` means a budget stopped
+    /// the search first; a `false` verdict with `inconclusive == false` is a
+    /// joint fixpoint of rules and completion that never joined the pair, so
+    /// the equality is not derivable by this program's rules plus ground AC
+    /// congruence.
+    fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> (bool, bool) {
+        let token = self.eg.mark(self.shrink_policy);
+        self.eg.set_cc(true);
+        self.eg.rebuild();
+        let mut equal = self.eg.find(a) == self.eg.find(b);
+        let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
+            matches!(
+                eg.completion_outcome(),
+                Some(crate::egraph::CompletionOutcome::AbortedGrowthLimit { .. })
+            )
+        };
+        let mut inconclusive = !equal && aborted(&self.eg);
+        if !equal && !inconclusive && !self.rules.is_empty() {
+            let spec = crate::saturate::RunSpec {
+                limit: self.lazy_ac_rounds,
+                ruleset: None,
+                until: Some(crate::saturate::RunGoal {
+                    left: a,
+                    right: b,
+                    equal: true,
+                }),
+            };
+            let result = match self.strategy {
+                crate::saturate::SaturationStrategy::Naive => self.eg.saturate_spec_in(
+                    &self.rules,
+                    &self.model,
+                    &spec,
+                    &self.globals,
+                    &mut self.index_scratch,
+                ),
+                crate::saturate::SaturationStrategy::SemiNaive => self.eg.saturate_semi_spec_in(
+                    &self.rules,
+                    &self.model,
+                    &spec,
+                    &self.globals,
+                    &mut self.index_scratch,
+                ),
+            };
+            equal = self.eg.find(a) == self.eg.find(b);
+            inconclusive = !equal && (aborted(&self.eg) || !result.saturated);
+        }
+        self.eg.set_cc(false);
+        self.eg.restore(token);
+        (equal, inconclusive)
     }
 
     /// Enable/disable the runtime reduced-basis invariant checks (default off; see
@@ -252,6 +367,20 @@ where
                     self.eg.rebuild();
                 }
                 if self.eg.find(a_id) != self.eg.find(b_id) {
+                    if self.ac_mode == AcMode::Lazy {
+                        match self.lazy_ac_decide(a_id, b_id) {
+                            (true, _) => return Ok(()),
+                            (false, aborted) => {
+                                return Err(InterpError::CheckFailed(if aborted {
+                                    "terms are not equal (lazy AC completion hit its growth \
+                                     budget before deciding; inconclusive)"
+                                        .into()
+                                } else {
+                                    "terms are not equal (lazy AC completion converged)".into()
+                                }));
+                            }
+                        }
+                    }
                     return Err(InterpError::CheckFailed("terms are not equal".into()));
                 }
             }
@@ -264,6 +393,14 @@ where
                 }
                 if self.eg.find(a_id) == self.eg.find(b_id) {
                     return Err(InterpError::CheckFailed("terms are equal".into()));
+                }
+                // Lazy mode makes `!=` stronger, not weaker: distinct classes may
+                // still be AC-entailed equal through erased intermediate sums, so
+                // the disequality is confirmed under completion before it passes.
+                if self.ac_mode == AcMode::Lazy && self.lazy_ac_decide(a_id, b_id).0 {
+                    return Err(InterpError::CheckFailed(
+                        "terms are equal (derived by lazy AC completion)".into(),
+                    ));
                 }
             }
             CCommand::Extract(ct) => {

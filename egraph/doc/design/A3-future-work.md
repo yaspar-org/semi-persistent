@@ -30,11 +30,15 @@ graphs it converges on all but one pathological instance,
 whose AC equation set has a genuinely large canonical basis (the growth is
 input-specific, not size-specific; AC spec §3.3). The shipped backstop is the per-egraph
 node-growth budget (`set_completion_node_budget`), checked between rounds; exceeding it
-aborts soundly and reports `CompletionOutcome::AbortedGrowthLimit`. Turning completion on
-by default additionally wants one of: an in-round budget check (a single blown-up round
-can burn unbounded wall time before the between-rounds check fires; review-debt §1),
-on-demand completion scoped to the sub-graph a query needs, or a degree bound on
-materialized monomials. All of these trade completeness for termination, and the fallback
+aborts soundly and reports `CompletionOutcome::AbortedGrowthLimit`. The on-demand
+direction has since landed as the lazy mode (`--lazy-ac-eqs`, design doc §13):
+completion runs only inside a failing check, in a mark/complete/restore transaction,
+with goal-directed rule/completion alternation as its second phase. Its recorded
+refinements: share one transaction across consecutive checks, poll the goal inside
+the completion loop rather than between rounds, and an in-round budget check (a
+single blown-up round can burn unbounded wall time before the between-rounds check
+fires; review-debt §1). A degree bound on materialized monomials remains the other
+scoping option. All of these trade completeness for termination, and the fallback
 is sound (it derives fewer equalities, never wrong ones; see Ch 14 on the trustworthy
 polarity).
 

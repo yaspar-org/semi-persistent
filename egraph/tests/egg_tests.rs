@@ -9,6 +9,7 @@
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
 //!   ;; DERIVE_AC_EQS: on                                  derive all AC consequences (default off)
+//!   ;; LAZY_AC_EQS: on                                    lazy AC completion at checks (default off)
 //!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
 //!                                                         invariants post-run (default off)
 //!
@@ -29,6 +30,7 @@ struct Directives {
     /// The eval strategies to run under (one each for naive/semi, both for `both`).
     evals: Vec<SaturationStrategy>,
     derive_ac_eqs: bool,
+    lazy_ac_eqs: bool,
     check_ac_basis: bool,
 }
 
@@ -38,6 +40,7 @@ fn parse_directives(src: &str) -> Directives {
         types: "bignum".to_string(),
         evals: vec![SaturationStrategy::Naive, SaturationStrategy::SemiNaive],
         derive_ac_eqs: false,
+        lazy_ac_eqs: false,
         check_ac_basis: false,
     };
     for line in src.lines().take(6) {
@@ -58,6 +61,9 @@ fn parse_directives(src: &str) -> Directives {
         }
         if let Some(rest) = line.strip_prefix(";; DERIVE_AC_EQS:") {
             d.derive_ac_eqs = rest.trim() == "on";
+        }
+        if let Some(rest) = line.strip_prefix(";; LAZY_AC_EQS:") {
+            d.lazy_ac_eqs = rest.trim() == "on";
         }
         if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
             d.check_ac_basis = rest.trim() == "on";
@@ -104,6 +110,9 @@ fn run_with<
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
     interp.set_cc(d.derive_ac_eqs);
+    if d.lazy_ac_eqs {
+        interp.set_ac_mode(semi_persistent_egraph::interpret::AcMode::Lazy);
+    }
     interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
@@ -352,6 +361,9 @@ egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
 egg_test!(ac_coincidence_twin_gap, "ac_coincidence_twin_gap.egg");
 egg_test!(ac_coincidence_twin, "ac_coincidence_twin.egg");
+egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
+egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
+egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 
