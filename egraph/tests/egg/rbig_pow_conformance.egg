@@ -1,0 +1,19 @@
+;; TYPES: machine,bignum
+;; Conformance cases for RBig::pow, from egglog tests/rat-pow-eval.egg
+;; (7b1adf2), restricted to the exponents we define. BLOCKED remainder of the
+;; source: negative exponents (their pow inverts, ours takes checked
+;; non-negative exponents), the 0 to a negative power partiality cases, and
+;; to-i64/from-string. Those cases are the condition for extending the
+;; primitive, not silently dropped.
+(datatype M (Num RBig) (E i64) (P M M))
+(rewrite (P (Num a) (E k)) (Num (RBig::pow a k)))
+(let p00 (P (Num 0/1) (E 0)))
+(let p02 (P (Num 0/1) (E 2)))
+(let p22 (P (Num 2/1) (E 2)))
+(let pf3 (P (Num 2/3) (E 3)))
+(run 2)
+;; 0^0 = 1, the edge case the source pins
+(check (= p00 (Num 1/1)))
+(check (= p02 (Num 0/1)))
+(check (= p22 (Num 4/1)))
+(check (= pf3 (Num 8/27)))

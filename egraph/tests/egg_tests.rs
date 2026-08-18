@@ -385,6 +385,7 @@ egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
 egg_test!(rbig_mult_lift, "rbig_mult_lift.egg");
+egg_test!(rbig_pow_conformance, "rbig_pow_conformance.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 
