@@ -987,6 +987,44 @@ pub fn set_runtime_scheduling(on: bool) {
     RUNTIME_SCHEDULING.with(|c| c.set(on));
 }
 
+/// How the per-binding atom-order choice is selected (design chapter 20, S4).
+///
+/// `Static` and `Runtime` fix [`runtime_scheduling`] for the whole run (the
+/// two existing flags). `Auto` decides per rule per round: the saturation
+/// driver measures each rule's worst access-path skew from the round's
+/// [`FanOuts`](crate::index::FanOuts) and sets the effective flag before the
+/// rule's queries run — skewed paths (a hub bucket) are where a static order
+/// is wrong for exactly the bindings that hit the hub, and flat paths are
+/// where the per-binding overhead buys nothing. The match set is identical in
+/// all three modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SchedulingMode {
+    #[default]
+    Static,
+    Runtime,
+    Auto,
+}
+
+thread_local! {
+    static SCHEDULING_MODE: Cell<SchedulingMode> = const { Cell::new(SchedulingMode::Static) };
+}
+
+/// Select the scheduling mode (see [`SchedulingMode`]). `Static`/`Runtime`
+/// also pin the effective flag; `Auto` leaves it to the saturation driver.
+pub fn set_scheduling_mode(mode: SchedulingMode) {
+    SCHEDULING_MODE.with(|c| c.set(mode));
+    match mode {
+        SchedulingMode::Static => set_runtime_scheduling(false),
+        SchedulingMode::Runtime => set_runtime_scheduling(true),
+        SchedulingMode::Auto => {}
+    }
+}
+
+/// The selected scheduling mode.
+pub fn scheduling_mode() -> SchedulingMode {
+    SCHEDULING_MODE.with(|c| c.get())
+}
+
 /// Whether runtime atom scheduling is in force on this thread.
 pub fn runtime_scheduling() -> bool {
     RUNTIME_SCHEDULING.with(|c| c.get())

@@ -67,6 +67,14 @@ pub use semi_persistent_containers::SortedVecCursor;
 pub struct FanOuts<O> {
     /// Nodes in the class a `ByRepr` probe lands in.
     pub by_repr: f64,
+    /// Skew of each access path: size-biased mean over plain mean bucket size.
+    /// 1 on a flat distribution, about H*K/N on one hub bucket of size H among
+    /// K near-empty buckets. Drives per-rule scheduling-mode auto-selection
+    /// (`saturate::rule_skew`): a skewed path is where a per-round static atom
+    /// order is wrong for the bindings that hit the hub.
+    pub by_child_pos_skew: FastMap<(O, usize), f64>,
+    /// Skew twin of [`by_contains`](Self::by_contains).
+    pub by_contains_skew: FastMap<O, f64>,
     /// `(op, position)` -> `op`-nodes in the bucket a `ByChildPos` probe lands
     /// in, after its intersection with `by_op[op]`. Keyed per op because the
     /// whole defect is that the two ops of one query differ here by three
@@ -84,6 +92,8 @@ impl<O> Default for FanOuts<O> {
     fn default() -> Self {
         Self {
             by_repr: 1.0,
+            by_child_pos_skew: FastMap::default(),
+            by_contains_skew: FastMap::default(),
             by_child_pos: FastMap::default(),
             by_contains: FastMap::default(),
             nodes: 0,
@@ -665,9 +675,9 @@ where
         stride: usize,
         indexed: usize,
     ) -> FanOuts<Cfg::O> {
-        // (sum of bucket sizes, sum of their squares) per key set.
-        let mut cp: FastMap<(Cfg::O, usize), (u128, u128)> = FastMap::default();
-        let mut ct: FastMap<Cfg::O, (u128, u128)> = FastMap::default();
+        // (sum of bucket sizes, sum of their squares, bucket count) per key set.
+        let mut cp: FastMap<(Cfg::O, usize), (u128, u128, u128)> = FastMap::default();
+        let mut ct: FastMap<Cfg::O, (u128, u128, u128)> = FastMap::default();
         // Indexed by the operator's dense id, grown on demand rather than sized
         // from the registry: the registry exposes no count, and the ids that
         // occur here are exactly the ones the buckets hold.
@@ -695,9 +705,10 @@ where
             tally_bucket(bucket, &mut tally, &mut touched);
             for &o in touched.iter() {
                 let c = u128::from(tally[o]);
-                let e = cp.entry((Cfg::O::from_usize(o), pos)).or_insert((0, 0));
+                let e = cp.entry((Cfg::O::from_usize(o), pos)).or_insert((0, 0, 0));
                 e.0 += c;
                 e.1 += c * c;
+                e.2 += 1;
                 tally[o] = 0;
             }
         });
@@ -705,18 +716,27 @@ where
             tally_bucket(bucket, &mut tally, &mut touched);
             for &o in touched.iter() {
                 let c = u128::from(tally[o]);
-                let e = ct.entry(Cfg::O::from_usize(o)).or_insert((0, 0));
+                let e = ct.entry(Cfg::O::from_usize(o)).or_insert((0, 0, 0));
                 e.0 += c;
                 e.1 += c * c;
+                e.2 += 1;
                 tally[o] = 0;
             }
         });
 
-        let biased = |(sum, sq): &(u128, u128)| -> f64 {
+        let biased = |(sum, sq, _): &(u128, u128, u128)| -> f64 {
             if *sum == 0 {
                 1.0
             } else {
                 *sq as f64 / *sum as f64
+            }
+        };
+        // Skew = size-biased mean / plain mean = sq * count / sum^2.
+        let skew = |(sum, sq, count): &(u128, u128, u128)| -> f64 {
+            if *sum == 0 {
+                1.0
+            } else {
+                (*sq as f64 * *count as f64) / (*sum as f64 * *sum as f64)
             }
         };
         let (mut class_sum, mut class_sq) = (0u128, 0u128);
@@ -727,7 +747,9 @@ where
         });
 
         FanOuts {
-            by_repr: biased(&(class_sum, class_sq)),
+            by_repr: biased(&(class_sum, class_sq, 0)),
+            by_child_pos_skew: cp.iter().map(|(&k, v)| (k, skew(v))).collect(),
+            by_contains_skew: ct.iter().map(|(&k, v)| (k, skew(v))).collect(),
             by_child_pos: cp.iter().map(|(&k, v)| (k, biased(v))).collect(),
             by_contains: ct.iter().map(|(&k, v)| (k, biased(v))).collect(),
             nodes: indexed,

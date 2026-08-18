@@ -324,6 +324,30 @@ fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
     })
 }
 
+/// The worst access-path skew any of the rule's scan atoms can meet this
+/// round: the max over the atoms' operators of the measured
+/// size-biased-over-plain bucket-size ratios (`FanOuts` skew maps). Only the
+/// op-keyed paths participate — `by_repr` is graph-global and would flip every
+/// rule together.
+fn rule_skew<O: DenseId + std::hash::Hash, S, V>(
+    rule: &PreparedRule<O, S, V>,
+    stats: &IndexStats<O>,
+) -> f64 {
+    let mut worst: f64 = 1.0;
+    for atom in &rule.query.atoms {
+        let Some(op) = atom_op(atom) else { continue };
+        for (&(o, _), &sk) in &stats.fanouts.by_child_pos_skew {
+            if o == op {
+                worst = worst.max(sk);
+            }
+        }
+        if let Some(&sk) = stats.fanouts.by_contains_skew.get(&op) {
+            worst = worst.max(sk);
+        }
+    }
+    worst
+}
+
 /// Whether an atom's pattern references a let-bound global in a child or
 /// element position (see the fixed-class case in [`needs_naive_match`]).
 fn pattern_refs_global<O, S, V>(a: &RAtom<O, S, V>) -> bool {
@@ -408,6 +432,17 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    // Per-rule scheduling-mode auto-selection (S4 follow-up): under `Auto`,
+    // a rule whose join touches a skewed access path (a hub bucket) runs with
+    // per-binding atom ordering, and a rule over flat paths keeps the static
+    // plan and skips the per-binding overhead. The threshold is calibrated on
+    // the hub-shape gate (`ematch_op_filter.rs`); flat corpora measure below
+    // 4 and the hub shape orders of magnitude above. The match set is the
+    // same either way (chapter 20, S4).
+    if crate::ematch::scheduling_mode() == crate::ematch::SchedulingMode::Auto {
+        const SKEW_THRESHOLD: f64 = 8.0;
+        crate::ematch::set_runtime_scheduling(rule_skew(rule, stats) > SKEW_THRESHOLD);
+    }
     let sampler = crate::index::IndexSampler::new(eg, *vindex);
     let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
     crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);

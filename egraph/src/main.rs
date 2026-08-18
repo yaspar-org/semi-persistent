@@ -66,8 +66,16 @@ struct Cli {
     /// Choose each rule's atom order per binding, from the live bucket lengths,
     /// instead of once per round from the index averages. Off by default; the
     /// match set is the same either way (design chapter 20, S4).
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, conflicts_with = "auto_scheduling")]
     runtime_scheduling: bool,
+
+    /// Choose the scheduling mode per rule per round: a rule whose join meets
+    /// a skewed access path (hub-shaped fan-outs) runs with per-binding atom
+    /// ordering, flat rules keep the static plan. Off by default; the match
+    /// set is the same in every mode. Mutually exclusive with
+    /// --runtime-scheduling.
+    #[arg(long, default_value_t = false)]
+    auto_scheduling: bool,
 
     /// Price a bound key by sampling the emitter atom's relation instead of by
     /// the round's size-biased mean fan-out. Off by default; the match set is
@@ -121,6 +129,15 @@ fn main() {
         SaturationStrategy::SemiNaive
     } else {
         SaturationStrategy::Naive
+    };
+
+    // The two scheduling flags conflict (enforced by clap), so at most one is set.
+    let sched_mode = if cli.auto_scheduling {
+        semi_persistent_egraph::ematch::SchedulingMode::Auto
+    } else if cli.runtime_scheduling {
+        semi_persistent_egraph::ematch::SchedulingMode::Runtime
+    } else {
+        semi_persistent_egraph::ematch::SchedulingMode::Static
     };
 
     // The two completion flags conflict (enforced by clap), so at most one is set.
@@ -186,7 +203,7 @@ fn main() {
                     ac_mode,
                     cli.check_ac_basis,
                     cli.count_match_steps,
-                    cli.runtime_scheduling,
+                    sched_mode,
                 ),
                 LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
                     &surface_cmds,
@@ -195,7 +212,7 @@ fn main() {
                     ac_mode,
                     cli.check_ac_basis,
                     cli.count_match_steps,
-                    cli.runtime_scheduling,
+                    sched_mode,
                 ),
                 LitValChoice::All => run::<$Cfg, AllLit, AllModel, $proofs>(
                     &surface_cmds,
@@ -204,7 +221,7 @@ fn main() {
                     ac_mode,
                     cli.check_ac_basis,
                     cli.count_match_steps,
-                    cli.runtime_scheduling,
+                    sched_mode,
                 ),
             }
         };
@@ -233,7 +250,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     ac_mode: semi_persistent_egraph::interpret::AcMode,
     basis_checks: bool,
     count_match_steps: bool,
-    runtime_scheduling: bool,
+    sched_mode: semi_persistent_egraph::ematch::SchedulingMode,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
     Cfg::O: std::hash::Hash,
@@ -245,7 +262,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     if count_match_steps {
         semi_persistent_egraph::ematch::set_match_step_counting(true);
     }
-    semi_persistent_egraph::ematch::set_runtime_scheduling(runtime_scheduling);
+    semi_persistent_egraph::ematch::set_scheduling_mode(sched_mode);
     let mut interp =
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
     interp.set_strategy(strategy);
