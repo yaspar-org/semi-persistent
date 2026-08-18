@@ -103,6 +103,13 @@ impl<L: LitVal, V: DenseId, const TRACK: bool> LitValStore<L, V, TRACK> {
 
     pub fn restore(&mut self, token: LitValStoreToken) {
         use crate::containers::IndexLike;
+        // Validate the log token BEFORE touching the index: the removals
+        // below are not undoable, so an invalid token must refuse while the
+        // store is still consistent (index and log in step).
+        assert!(
+            self.log.is_valid_token(&token.0),
+            "literal restore: token is not restorable"
+        );
         let saved_len = token.1;
         let live_len = self.len();
         let incremental = crate::caches::restore_incrementally(live_len - saved_len, 0, saved_len);

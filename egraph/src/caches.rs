@@ -110,6 +110,12 @@ pub enum InsertResult<G, L> {
 struct CacheFrame {
     saved_len: usize,
     dirty_start: usize,
+    /// Set when the budget dropped a pre-mark write from `dirty`. Restore must
+    /// then rebuild: the dirty segment is incomplete. The ratio test reaches
+    /// the same verdict arithmetically (an overflowing segment already fails
+    /// it), and this flag states the requirement instead of relying on that
+    /// coupling.
+    dirty_overflow: bool,
 }
 
 /// Restore rebuilds the whole index once the incremental work would exceed
@@ -353,12 +359,14 @@ impl<
         if !TRACK {
             return;
         }
-        let Some(frame) = self.frames.last() else {
+        let Some(frame) = self.frames.last_mut() else {
             return;
         };
-        if local_id.as_usize() >= frame.saved_len
-            || self.dirty.len() - frame.dirty_start > dirty_budget(frame.saved_len)
-        {
+        if local_id.as_usize() >= frame.saved_len {
+            return;
+        }
+        if self.dirty.len() - frame.dirty_start > dirty_budget(frame.saved_len) {
+            frame.dirty_overflow = true;
             return;
         }
         self.dirty.push(local_id);
@@ -379,6 +387,7 @@ impl<
         self.frames.push(CacheFrame {
             saved_len: self.nodes.len().as_usize(),
             dirty_start: self.dirty.len(),
+            dirty_overflow: false,
         });
         token
     }
@@ -388,12 +397,26 @@ impl<
             .frames
             .get(token.frame_index)
             .expect("restore: token minted by this cache's own mark, and not already spent");
-        let live_len = self.nodes.len().as_usize();
-        let incremental = restore_incrementally(
-            live_len - frame.saved_len,
-            self.dirty.len() - frame.dirty_start,
-            frame.saved_len,
+        // Validate every inner token BEFORE touching the index: the deletions
+        // below are not undoable, so an invalid token must refuse while the
+        // cache is still consistent.
+        assert!(
+            self.nodes.is_valid_token(&token.nodes),
+            "restore: node-arena token is not restorable"
         );
+        if let (Some(h), Some(tok)) = (&self.history, token.history.as_ref()) {
+            assert!(
+                h.is_valid_token(tok),
+                "restore: history token is not restorable"
+            );
+        }
+        let live_len = self.nodes.len().as_usize();
+        let incremental = !frame.dirty_overflow
+            && restore_incrementally(
+                live_len - frame.saved_len,
+                self.dirty.len() - frame.dirty_start,
+                frame.saved_len,
+            );
 
         // The arena is append-only, so the nodes added since the mark are the
         // contiguous suffix at or above `saved_len` and theirs are the entries
@@ -763,12 +786,14 @@ impl<
         if !TRACK {
             return;
         }
-        let Some(frame) = self.frames.last() else {
+        let Some(frame) = self.frames.last_mut() else {
             return;
         };
-        if local_id.as_usize() >= frame.saved_len
-            || self.dirty.len() - frame.dirty_start > dirty_budget(frame.saved_len)
-        {
+        if local_id.as_usize() >= frame.saved_len {
+            return;
+        }
+        if self.dirty.len() - frame.dirty_start > dirty_budget(frame.saved_len) {
+            frame.dirty_overflow = true;
             return;
         }
         self.dirty.push(local_id);
@@ -797,6 +822,7 @@ impl<
         self.frames.push(CacheFrame {
             saved_len: self.nodes.len().as_usize(),
             dirty_start: self.dirty.len(),
+            dirty_overflow: false,
         });
         token
     }
@@ -806,12 +832,35 @@ impl<
             .frames
             .get(token.frame_index)
             .expect("restore: token minted by this cache's own mark, and not already spent");
-        let live_len = self.nodes.len().as_usize();
-        let incremental = restore_incrementally(
-            live_len - frame.saved_len,
-            self.dirty.len() - frame.dirty_start,
-            frame.saved_len,
+        // Validate every inner token BEFORE touching the index (as in the
+        // fixed-arity restore above).
+        assert!(
+            self.nodes.is_valid_token(&token.nodes),
+            "restore: node-arena token is not restorable"
         );
+        assert!(
+            self.children.is_valid_token(&token.children),
+            "restore: child-pool token is not restorable"
+        );
+        if let (Some(h), Some(tok)) = (&self.history_nodes, token.history_nodes.as_ref()) {
+            assert!(
+                h.is_valid_token(tok),
+                "restore: history token is not restorable"
+            );
+        }
+        if let (Some(h), Some(tok)) = (&self.history_children, token.history_children.as_ref()) {
+            assert!(
+                h.is_valid_token(tok),
+                "restore: history token is not restorable"
+            );
+        }
+        let live_len = self.nodes.len().as_usize();
+        let incremental = !frame.dirty_overflow
+            && restore_incrementally(
+                live_len - frame.saved_len,
+                self.dirty.len() - frame.dirty_start,
+                frame.saved_len,
+            );
 
         // Delete under the CURRENT keys, before the arena and the child pool
         // roll back: an entry is filed under the fingerprint of the content it
@@ -1024,6 +1073,7 @@ impl<G: DenseId + Hash, O: DenseId + Hash, V: DenseId + Hash, L: DenseId, const 
         self.frames.push(CacheFrame {
             saved_len: self.nodes.len().as_usize(),
             dirty_start: 0,
+            dirty_overflow: false,
         });
         token
     }

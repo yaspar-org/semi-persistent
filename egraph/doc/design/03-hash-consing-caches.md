@@ -83,12 +83,48 @@ During rebuild:
    `(this_global_id, existing_global_id)` to collision list.
 6. Otherwise, insert new entry into index.
 
-### `rebuild_index()`
+### `restore(token)`
 
-After `restore()`, the `HashMap` index may be stale (it is a derived
-structure, not semi-persistent). `rebuild_index()` reconstructs it by
-scanning all surviving nodes. This is O(n) but only happens on
-backtrack, not on every saturation iteration.
+The `HashMap` index is derived, not semi-persistent, so restoring the
+node arena leaves it stale in two ways: it still holds entries for the
+suffix nodes the restore deletes, and entries for pre-mark nodes that
+were recanonized under the mark point at rewritten keys. `restore`
+repairs it in O(touched) when the touched set is small, and rebuilds
+it in O(n) otherwise.
+
+Each `mark` pushes a `CacheFrame { saved_len, dirty_start,
+dirty_overflow }`. `saved_len` splits the arena: ids below it keep
+their entries, ids at or above it are the suffix to delete.
+`dirty_start` cuts a shared `dirty` list into per-frame segments;
+`recanonize_node` appends the local id of every pre-mark node whose
+key it rewrites. Recording stops at a budget of `saved_len /
+REBUILD_RATIO` entries per frame; past it the frame's
+`dirty_overflow` flag is set, which forces the rebuild path, because
+the dirty segment is now incomplete and incremental repair would leave
+rewritten keys in the index.
+
+`restore` proceeds in this order:
+
+1. Assert every `Vec` token in the cache token is restorable
+   (`is_valid_token`), before any mutation. The deletions in step 3
+   are not undoable, so an invalid token must refuse while index and
+   arena still agree.
+2. Decide the path: incremental iff `dirty_overflow` is unset and
+   `REBUILD_RATIO * (suffix + dirty) <= saved_len`.
+3. Incremental: delete the index entries for the suffix
+   `[saved_len..live_len)` and for the frame's dirty segment, reading
+   keys from the still-live arena; restore the arena; re-insert the
+   dirty nodes under their restored keys.
+   Rebuild: restore the arena, then reconstruct the whole index by
+   scanning the surviving nodes.
+4. Truncate `dirty` to `dirty_start` and `frames` to the token's
+   frame, then `debug_assert!(index_matches_rebuild())`.
+
+`REBUILD_RATIO` is 4: deleting an entry costs about what a rebuild
+insert costs and the incremental path re-inserts every dirty node, so
+the paths break even near `suffix + 2 * dirty == live`; a quarter
+keeps the incremental path below break-even and bounds a mispredicted
+restore to a quarter of a rebuild.
 
 ## `VariableArityCache`
 
@@ -128,9 +164,16 @@ parameter; there is no history bit to manage.
 
 The node vectors and children pools are the source of truth: they
 are semi-persistent and rolled back on backtrack. The `HashMap` index
-is derived, rebuilt from the source of truth after backtrack. This separation is deliberate: the index is high-churn
-(every rebuild touches it), and making it semi-persistent would add
-overhead for no benefit since it can be reconstructed in O(n).
+is derived, repaired in O(touched) or reconstructed in O(n) from the
+source of truth after backtrack (see `restore` above). This
+separation is deliberate: the index is high-churn (every rebuild
+touches it), and making it semi-persistent would add overhead on the
+forward path that the repair-on-backtrack scheme avoids.
+
+The same pattern covers the literal store (Chapter 13): its
+value-to-id `HashMap` is derived from a semi-persistent interning log,
+and its restore validates the log token before removing the suffix
+entries from the index, for the same reason as step 1 above.
 
 ---
 [← Ch 2: E-Classes and Union-Find](02-classes-and-union-find.md) · [Table of Contents](00-table-of-contents.md) · [Ch 4: Canonization →](04-canonization.md)
