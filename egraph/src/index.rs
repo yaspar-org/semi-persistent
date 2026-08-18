@@ -681,10 +681,12 @@ where
         // Indexed by the operator's dense id, grown on demand rather than sized
         // from the registry: the registry exposes no count, and the ids that
         // occur here are exactly the ones the buckets hold.
-        let mut tally: Vec<u32> = Vec::new();
+        // u64, not u32: a bucket's per-op count is bounded by the node count,
+        // which the 63-bit configuration allows past 2^32.
+        let mut tally: Vec<u64> = Vec::new();
         let mut touched: Vec<usize> = Vec::new();
 
-        let tally_bucket = |bucket: &[Cfg::G], tally: &mut Vec<u32>, touched: &mut Vec<usize>| {
+        let tally_bucket = |bucket: &[Cfg::G], tally: &mut Vec<u64>, touched: &mut Vec<usize>| {
             touched.clear();
             for &gid in bucket {
                 let o = op_tab[gid.to_usize()].to_usize();
