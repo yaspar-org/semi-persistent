@@ -1,6 +1,12 @@
 # Our execution path on `math-microbenchmark.rules.egg`
 
-This file records where our engine spends the 11.6 seconds it takes to run
+The gap this file diagnoses is closed: the planner's selectivity constants
+were replaced with measured fan-outs (design chapter 20, S1) and the current
+campaign has the rules encoding at parity with egglog on this benchmark
+(`final/final-r3-tables.md`). The file remains as the measurement record of
+the pre-fix engine.
+
+This file records where our engine spent the 11.6 seconds it took to run
 `comparison/math-microbenchmark.rules.egg`, against egglog's 508ms on the same
 rules to the same eleven iterations. It sits beside `throughput-gap-egglog.md`,
 which records the same for egglog. It is a measurement record of one engine on

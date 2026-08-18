@@ -1,18 +1,20 @@
-# egglog comparison: E3 translation pilot and E4 harness
+# egglog comparison: translations, harness, campaigns
 
-This directory holds the pilot for work items E3 (translator) and E4 (harness) of
-`doc/egglog-comparison-plan.md`: three benchmarks from the intersection set, translated
-into our surface language in two encodings each, timed against egglog at its own commit.
+This directory holds the egglog comparison for work items E3 (translator) and
+E4 (harness) of `doc/egglog-comparison-plan.md`: the ten-benchmark intersection
+set, translated into our surface language, timed against egglog at its pinned
+commit. It is not a status page: the per-benchmark ledgers record every
+semantic difference between the programs being compared, and
+`final/final-r3-tables.md` is the current campaign.
 
-It is not a status page. The numbers in `pilot-results.csv` are one machine, one day; the
-protocol below regenerates them, and the per-benchmark ledgers record every semantic
-difference that stands between the three programs being compared.
+Two status words are used throughout, defined in `methodology.md`: a benchmark
+or configuration is **dropped** when it is out of the comparison with the
+reason recorded, and **postponed** when it is blocked on a measured cost with
+the condition that revives it.
 
 ## What is here
 
-Ten benchmarks, the whole ranked intersection set. The first three are the pilot;
-the next four landed 2026-08-16, and the last three on 2026-08-17, once the two
-pattern-language features they needed existed.
+Ten benchmarks, the whole ranked intersection set.
 
 | benchmark | source | configurations |
 |---|---|---|
@@ -24,32 +26,30 @@ pattern-language features they needed existed.
 | `integer_math` | `egglog/tests/integer_math.egg`, ranked 5, **scoped** | 3 |
 | `matrix` | `egglog/tests/web-demo/matrix.egg`, ranked 7, mixed AC and A-only | 4 |
 | `bdd` | `egglog/tests/web-demo/bdd.egg`, ranked 9, commutative without associative | 3 |
-| `herbie` | `egglog/tests/web-demo/herbie.egg`, ranked 3, **scoped**, no native dual | 2 |
-| `eqsolve` | `egglog/tests/web-demo/eqsolve.egg`, ranked 10, the extraction path, no native dual | 2 |
+| `herbie` | `egglog/tests/web-demo/herbie.egg`, ranked 3, **scoped** | 3 |
+| `eqsolve` | `egglog/tests/web-demo/eqsolve.egg`, ranked 10, the extraction path | 3 |
 
-`matrix`, `bdd` and `eqsolve` were dropped on 2026-08-16 for want of two
-pattern-language features, a root-binding form `(= v pat)` and primitive predicates
-in `:when`. Both landed, and all three now ship with their load-bearing rule intact.
-Their ledgers open with that history; the drop-era ledgers are in the history of
-commit c2558c7 and are not current. Two configurations remain unwritten:
-`eqsolve`'s native-AC dual, postponed on AC congruence completion, and herbie's,
-plus `repro-herbie-vanilla` (ranked 4). Reasons in `eqsolve.deviations.md` and
-`herbie.deviations.md`.
+`repro-herbie-vanilla` (ranked 4) is dropped: at the pinned commit it is a
+typed-lowering unsoundness reproduction with no checks, not a benchmark;
+`repro-herbie-vanilla.deviations.md` records the characterization.
 
-`matrix` ships two native columns, which is why it has four configurations rather
-than three: `matrix.native.egg` carries native AC on `Times` only, and
+`eqsolve`'s native encoding is validated but excluded from timed tables: all
+ten of its checks pass under `--lazy-ac-eqs` in one 484 s run, against 123 ms
+for its rules encoding, so the file carries a `REQUIRES` header and no timing
+appears in any campaign. `eqsolve.deviations.md` has the measurements.
+
+`matrix` ships two native configurations, which is why it has four rather than
+three: `matrix.native.egg` carries native AC on `Times` only, and
 `matrix.native-A.egg` adds native A on `MMul` and `Kron` with their four
-associativity rewrites deleted. The second landed 2026-08-17, once the matcher
-defect its restatement reached was fixed (`methodology.md` section 6); the first
-is kept because the pair is what isolates the A-only half of the signature, which
-is the property this benchmark was selected for. Read `matrix.deviations.md`
-before drawing an A-only conclusion from this set.
+associativity rewrites deleted. The pair is what isolates the A-only half of
+the signature, the property this benchmark was selected for. Read
+`matrix.deviations.md` before drawing an A-only conclusion from this set.
 
-`integer_math` and `herbie` are scoped columns: a reduced program, identical in
-every configuration, standing in for the upstream benchmark. Their timings are not
-comparable to anything upstream calls by those names. Both ledgers open with that
-warning and state what the scoping cost — for `integer_math`, 537 term nodes down
-to 100.
+`integer_math` and `herbie` are scoped columns: a reduced program, identical
+in every configuration, standing in for the upstream benchmark. Their timings
+are not comparable to anything upstream calls by those names. Both ledgers
+open with that warning and state what the scoping removes; for `integer_math`,
+537 term nodes down to 100 at the run budget.
 
 | file | engine | encoding |
 |---|---|---|
@@ -57,149 +57,88 @@ to 100.
 | `<name>.rules.egg` | ours | A/C supplied as explicit rewrite rules, their encoding |
 | `<name>.native.egg` | ours | A/C carried by the operator declaration, the A/C rules deleted |
 | `<name>.native-A.egg` | ours | matrix only: the above, plus native A on its two A-only operators |
-| `<name>.deviations.md` | | every semantic difference between the three |
+| `<name>.deviations.md` | | every semantic difference between the configurations |
 
-`run-pilot.py` is the pilot harness and `pilot-results.csv` its output, one line per
-timed run. `run-full.py` covers the whole set with the same protocol; it names its
-output after `--label`, so `smoke-results.csv` is a 1-run-0-warmup pass proving the
-harness runs end to end and `final-results.csv` is reserved for the campaign at one
-pinned commit. Do not read `smoke-results.csv` as a timing result, for two reasons.
-With no warmups its first cell per process pays cold-start cost, visible as
-eqsat-basic's 376 ms against a warm 3.3 ms. And its `ours` binary was built from a
-working tree carrying another agent's uncommitted `egraph/src` changes, so it names
-no commit, which `methodology.md` section 1 requires of any table. What the pass
-does establish is validation, not timing: both engines exit non-zero on a failed
-check, so a clean sweep means every check of every program holds in every
-configuration. That pass covered the seven benchmarks that existed on 2026-08-16;
-`matrix`, `bdd` and `eqsolve` were swept the same way when they landed and their
-counts are in their ledgers.
+## Campaigns and harnesses
 
-`gen-herbie.py` regenerates herbie's two programs and `herbie-dropped.txt`, the
-verbatim listing of every form the scoping removes.
+`run-full.py` runs the whole set under the protocol below and names its output
+after `--label`. The campaign record lives in `final/`:
+`final-r3-tables.md` is the current campaign, and `final-tables.md` (r1) and
+`final-r2-tables.md` are archived campaigns kept because their raw CSVs are
+cited by ledgers and experiment write-ups. Each campaign file carries its own
+pinning block (engine commit, protocol, machine). A `--label smoke` pass with
+1 run and 0 warmups is a validation sweep, not a timing source: both engines
+exit non-zero on a failed check, so a clean sweep means every check of every
+program holds in every configuration.
 
-Beside the pilot, `addac-sweep.md` reports the add-ac width-scaling sweep that answers
-part (b) of the convergence target in
-`egraph/doc/design/20-index-selectivity-and-delta-suffixes.md`: the `math-add-ac` block
-generalized to sum width n = 7..20, three configurations per width, in
-`addac-n<k>.{egglog,rules,native}.egg`. `gen-addac-sweep.py` writes those programs,
-`run-addac-sweep.py` times them, and `addac-sweep.csv` holds the per-run values. Native
-AC holds at 4n - 3 nodes and one iteration across the whole range while the rules
-encoding reaches 37 902 nodes at n = 20; read `addac-sweep.md` for the shape of that
-growth, for the goal-binding deviation that makes the three programs the same problem,
-and for the timing trap that erases the result.
+`run-pilot.py` times the three-benchmark subset (eqsat-basic, math-add-ac,
+math-microbenchmark) with the same protocol; `pilot-results.csv` is its
+output. `gen-herbie.py` regenerates herbie's egglog and rules programs and
+`herbie-dropped.txt`, the verbatim listing of every form the scoping removes;
+`herbie.native.egg` is hand-derived and its ledger is the record of each
+translation decision.
 
-`semi-persistence/` holds work item E6, which quantifies what push/pop is worth:
-the survey of how each engine implements it, a micro-benchmark of push/assert/
-run/check/pop cycles over bases of 1e4 to 1e6 nodes on both engines, the
-internal restore-versus-re-run baseline that needs no cross-engine caveat, and
-`calc.egg` as the multi-block macro exhibit. Read
-`semi-persistence/semi-persistence.md`; its section 8 states what the numbers do
-not establish, which includes the asymptotic separation the experiment was
-designed to find.
+`addac-sweep.md` reports the add-ac width-scaling sweep that answers part (b)
+of the convergence target in
+`egraph/doc/design/20-index-selectivity-and-delta-suffixes.md`: the
+`math-add-ac` block generalized to sum width n = 7..20, three configurations
+per width, in `addac-n<k>.{egglog,rules,native}.egg`. `gen-addac-sweep.py`
+writes those programs, `run-addac-sweep.py` times them, and `addac-sweep.csv`
+holds the per-run values. Native AC holds at 4n - 3 nodes and one iteration
+across the whole range while the rules encoding reaches 37 902 nodes at
+n = 20.
+
+`semi-persistence/` holds work item E6, which quantifies what push/pop is
+worth: the survey of how each engine implements it, a micro-benchmark of
+push/assert/run/check/pop cycles over bases of 1e4 to 1e6 nodes on both
+engines, the internal restore-versus-re-run baseline that needs no
+cross-engine caveat, and `calc.egg` as the multi-block macro exhibit. Read
+`semi-persistence/semi-persistence.md`; its section 8 states what the numbers
+do not establish.
 
 `span-table-sparsity.md` prices the `O(num_keys)` term in the per-round index
-build and states the design that removes it: at S = 1e6 the span tables are
-40.6 ms of a 65.4 ms index build because they are dense over a key space 2.44x
-the values it holds, and installing a semi-naive delta costs 19.6 ms to make 23
-values addressable. `run-span-table.py` regenerates every number in it and
-checks corpus identity across binaries. That document also retracts the cost
-claim in `containers-verus/doc/design/16-layered-span-map.md` section 4 and the
-semi-naive column of `semi-persistence/semi-persistence.md` section 5; read it
-before citing either. Its section 11 records the verified landing: the index
-build goes 57.61 ms to 32.64 per round at S = 1e6, the delta build 12.75 to
-1.38, and peak resident set size 1 047.3 MiB to 608.2. Sections 1 through 10 are
-the diagnosis and their prototype numbers are superseded by section 11.
+build and records the verified fix: the index build goes 57.61 ms to 32.64 ms
+per round at S = 1e6, the class-growth delta build 12.75 ms to 1.38 ms, and
+peak resident set size 1 047.3 MiB to 608.2 MiB. `run-span-table.py`
+regenerates every number in it.
 
-Read the ledgers before the numbers. `math-microbenchmark.deviations.md` in particular
-records a deviation large enough to change how its native column may be read: eleven of
-its rules are restated in n-ary form, because a binary pattern against a variadic AC
-operator is an exact pattern and would silently stop firing on flat nodes of arity three
-or more.
-
-## What the pilot measured
-
-Median wall time over 10 runs after 2 warmups, and the node count each engine reports.
-Regenerate with `run-pilot.py`; the per-run values are in `pilot-results.csv`.
-
-This run followed `registry: memoize completion_column`, so it measures that change and
-chapter 20's S1 together, and egglog's own median calibrates the machine at 523.9 ms
-against the previous run's 508.3 ms on an unchanged binary.
-
-| benchmark | config | median wall | nodes | classes | iterations |
-|---|---|---|---|---|---|
-| eqsat-basic | egglog | 6.6 ms | 11 | not reported | 3 |
-| eqsat-basic | ours, rules, naive | 3.3 ms | 17 | 11 | 3 |
-| eqsat-basic | ours, rules, semi-naive | 3.4 ms | 17 | 11 | 3 |
-| eqsat-basic | ours, native, naive | 3.2 ms | 14 | 11 | 3 |
-| eqsat-basic | ours, native, semi-naive | 3.3 ms | 14 | 11 | 3 |
-| math-add-ac | egglog | 10.7 ms | 1 939 | not reported | 7 |
-| math-add-ac | ours, rules, naive | 10.8 ms | 3 317 | 159 | 7 |
-| math-add-ac | ours, rules, semi-naive | 10.0 ms | 3 359 | 136 | 7 |
-| math-add-ac | ours, native, naive | 3.0 ms | 25 | 25 | 1 |
-| math-add-ac | ours, native, semi-naive | 3.0 ms | 25 | 25 | 1 |
-| math-microbenchmark | egglog | 523.9 ms | 1 047 896 | not reported | 11 |
-| math-microbenchmark | ours, rules, naive | 747.8 ms | 1 233 013 | 507 992 | 11 |
-| math-microbenchmark | ours, rules, semi-naive | 945.3 ms | 1 254 916 | 518 063 | 11 |
-| math-microbenchmark | ours, native, naive | 644.9 ms | 755 926 | 446 915 | 11 |
-| math-microbenchmark | ours, native, semi-naive | 761.7 ms | 755 917 | 446 915 | 11 |
-
-Three results carry the pilot, and chapter 20's S1 has moved two of them since the first
-run. egglog runs `math-microbenchmark` 1.4x faster than our rules encoding runs the same
-program with the same rules to the same 11 iterations, against 22.7x before: the gap was
-one join order on one rule and not per-match throughput, which `throughput-gap-ours.md`
-establishes and this table now confirms end to end. The load-independent control is the
-e-matching step count, which the same change takes from 218,567,542 to 7,284,276 on that
-benchmark. Native AC still beats our rules encoding on `math-add-ac`, by 3.6x at 99%
-fewer nodes, and on `math-microbenchmark` it keeps the node-count result (39% fewer) but
-holds only 1.16x of the wall time against 10.3x, because the rules encoding is the
-configuration S1 sped up. Our semi-naive strategy on `math-microbenchmark` under native AC
-was 13.9x slower than naive and is now 1.18x, from the same fix: its variant plans
-mispriced `by_contains` and drove a Mul-Mul self-join on a shared factor, which cost
-198,571,597 match steps against naive's 3,074,117 and now costs 3,167,101.
-
-Node counts moved slightly against the first run, in the second decimal place, because
-matching now reads the round's index snapshot rather than the live union-find
-(chapter 09, "Which Snapshot"): a match an earlier rule of a round creates is found in the
-next round instead of that one, so a run stopped at a fixed iteration budget ends a little
-differently. `math-add-ac` under the rules encoding ends at 3 317 nodes against 3 256, and
-`math-microbenchmark` under the rules encoding at 1 233 013 against 1 234 680.
-
-Translating `math-microbenchmark` also exposed a matcher defect: a concrete literal inside
-a rule's left-hand side never matches, so `(rewrite (Add a (Const 0)) a)` is dead while
-egglog's identical rule fires. Six of that benchmark's 24 rules are written that way. The
-translations work around it with let-bound globals; the reproduction and the three probes
-that bound the defect are in `math-microbenchmark.deviations.md`.
+Read the ledgers before the numbers. `math-microbenchmark.deviations.md` in
+particular records a deviation large enough to change how its native column
+may be read: eleven of its rules are restated in n-ary form, because a binary
+pattern against a variadic AC operator is an exact pattern and would silently
+stop firing on flat nodes of arity three or more.
 
 ## Protocol
 
-Both engines are built in release mode and driven as separate processes, so the wall time
-includes process start, parse, sortcheck, saturation, and the statistics commands. Each
-(benchmark, configuration) pair runs 2 warmups then 10 timed runs; the summary reports the
-median.
+Both engines are built in release mode and driven as separate processes, so
+the wall time includes process start, parse, sortcheck, saturation, and the
+statistics commands. Each (benchmark, configuration) pair runs 2 warmups then
+10 timed runs; the summary reports the median. A campaign is one such pass
+over the whole set at one engine commit; a run is one timed invocation.
 
-egglog runs `-j 1 --mode no-messages`, which is the plan's protocol: threading is their
-only nondeterminism source, and `no-messages` suppresses the output of `print-size` and
-`print-stats`. Ours runs with default flags plus `--types machine`, which is what puts
-`i64`, `f64` and `String` in scope; the `bignum` group has no `String` sort and would not
-type `math-microbenchmark`.
+egglog runs `-j 1 --mode no-messages`: threading is their only nondeterminism
+source, and `no-messages` suppresses the output of `print-size` and
+`print-stats`. Ours runs with default flags plus the `--types` groups each
+program's header names; herbie needs `machine,bignum`.
 
-Our engine is timed under **both** saturation strategies, because the choice is not
-settled by a default: `src/main.rs` makes naive the default and `--use-semi-naive` the
-opt-in, so `ours-*-naive` is the shipped configuration and `ours-*-semi` is reported
-beside it. On `math-microbenchmark` under native AC the two differ by more than an order
-of magnitude, in naive's favour, which is the reason to keep reporting both.
+Our engine is timed under both saturation strategies, because the choice is
+not settled by a default: `src/main.rs` makes naive the default and
+`--use-semi-naive` the opt-in, so `ours-*-naive` is the shipped configuration
+and `ours-*-semi` is reported beside it.
 
-Two asymmetries in the timing, both stated rather than corrected. First, our timed runs
-compute and print `print-size` while egglog's `no-messages` mode skips that work; at
-1.2 M nodes the listing is a linear pass and 14 lines of output, which is small against an
-11-second run but not zero. Second, both engines write their statistics JSON during the
-timed run, so that cost is symmetric.
+Two asymmetries in the timing, both stated rather than corrected. First, our
+timed runs compute and print `print-size` while egglog's `no-messages` mode
+skips that work: at 1.2 M nodes the listing is a linear pass and 14 lines of
+output. Second, both engines write their statistics JSON during the timed
+run, so that cost is symmetric.
 
-Node counts are not measured the same way by the two engines, and the difference runs in
-egglog's favour: their `print-size` reports table cardinality after rebuild, ours reports
-stored nodes, so a node that congruence turned into a duplicate is still counted by us and
-not by them. `eqsat-basic.deviations.md` demonstrates this on a two-line probe. Our totals
-also include one node per distinct interned literal, which theirs never count.
+Node counts are not measured the same way by the two engines, and the
+difference runs in egglog's favour: their `print-size` reports table
+cardinality after rebuild, ours reports stored nodes, so a node that
+congruence turned into a duplicate is still counted by us and not by them.
+`eqsat-basic.deviations.md` demonstrates this on a two-line probe. Our totals
+also include one node per distinct interned literal, which theirs never
+count.
 
 ## Re-running
 
@@ -207,37 +146,38 @@ Build both engines:
 
 ```
 cd <this repo>          && cargo build --release -p semi-persistent-egraph
-cd <egglog checkout>    && cargo build --release
+cd ~/tools/egglog       && cargo build --release
 ```
 
 Then, from this directory:
 
 ```
-python3 run-pilot.py                       # 2 warmups + 10 runs, writes pilot-results.csv
-python3 run-pilot.py --runs 3 --warmups 1  # quicker pass
+python3 run-full.py --label <name>         # whole set, 2 warmups + 10 runs
+python3 run-pilot.py                       # three-benchmark subset
 python3 run-pilot.py --ours <path> --egglog <path>
 ```
 
-The harness defaults to `../target/release/semi-persistent` and
-`/tmp/egglog/target/release/egglog`.
+The harnesses default to `../target/release/semi-persistent` and
+`~/tools/egglog/target/release/egglog`.
 
 To run one program by hand:
 
 ```
 ../target/release/semi-persistent math-microbenchmark.native.egg --types machine
-<egglog>/target/release/egglog -j 1 math-microbenchmark.egglog.egg
+~/tools/egglog/target/release/egglog -j 1 math-microbenchmark.egglog.egg
 ```
 
-Each program writes `<name>.<config>.stats.json` next to itself. Those files are
-regenerated by every run and are not committed.
+Each program writes `<name>.<config>.stats.json` next to itself. Those files
+are regenerated by every run and are not committed.
 
 ## Building egglog when cargo cannot reach crates.io
 
-On the machine that produced these numbers, `cargo` could not open a connection to
-`index.crates.io` while `curl` to the same host succeeded, so egglog's dependencies were
-vendored by hand: read `name`, `version` and `checksum` for every registry package in
-egglog's `Cargo.lock`, fetch `https://static.crates.io/crates/<name>/<name>-<version>.crate`,
-extract each into `vendor/<name>-<version>/` with a `.cargo-checksum.json` holding that
+On the machine that produced these numbers, `cargo` could not open a
+connection to `index.crates.io` while `curl` to the same host succeeded, so
+egglog's dependencies were vendored by hand: read `name`, `version` and
+`checksum` for every registry package in egglog's `Cargo.lock`, fetch
+`https://static.crates.io/crates/<name>/<name>-<version>.crate`, extract each
+into `vendor/<name>-<version>/` with a `.cargo-checksum.json` holding that
 checksum, and point `.cargo/config.toml` at the directory:
 
 ```toml
@@ -247,22 +187,21 @@ replace-with = "vendored-sources"
 directory = "vendor"
 ```
 
-`cargo build --release --offline -p egglog` then succeeds. Record this only because the
-egglog side of the comparison cannot be reproduced without it on a similarly restricted
-machine. The `.crate` files stay useful: keeping the download cache means a later
-re-vendor needs no network at all, which is how the 2026-08-16 rebuild ran.
+`cargo build --release --offline -p egglog` then succeeds. This is recorded
+because the egglog side of the comparison cannot be reproduced without it on
+a similarly restricted machine. The `.crate` files stay useful: keeping the
+download cache means a later re-vendor needs no network at all.
 
-egglog pins toolchain 1.91.0. It was not installable when the pilot ran, so that build
-used 1.93.0 and produced an 8.98 MB binary. 1.91.0 is installed now and the current
-binary is built at the pinned toolchain: 8.82 MB, and byte-for-byte agreement with the
-committed ledgers on the three benchmarks checked (eqsat-basic 11 nodes / 3 iterations,
-math-add-ac 1 939 / 7, addac-n7 451). The toolchain deviation is withdrawn.
+egglog pins toolchain 1.91.0 and the binary is built at that pin: 8.82 MB,
+byte-for-byte agreement with the committed ledgers on the three benchmarks
+checked (eqsat-basic 11 nodes / 3 iterations, math-add-ac 1 939 / 7,
+addac-n7 451).
 
-## What the pilot does not cover
+## What the comparison does not cover
 
-One machine, no CPU pinning, no isolation from other load; treat differences under about
-10% as noise. Three of the ten intersection benchmarks, chosen by the plan as the pilot
-set. No proof or term-encoding mode on either side. Iterations to fixpoint are not
-reported separately from iterations at the budget, because none of the three benchmarks
-saturates before its budget except `math-add-ac` under native AC, which saturates
-immediately.
+One machine, no CPU pinning, no isolation from other load; treat differences
+under about 10% as noise. No proof or term-encoding mode on either side.
+egglog's own performance suite (`scripts/bench.py`) is lattice, container and
+schedule workloads outside the intersection; the comparison covers the eqsat
+core of their test corpus, not their headline benchmarks, and conversely
+those workloads exercise machinery we do not implement.

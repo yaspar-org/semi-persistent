@@ -45,10 +45,11 @@ struct Cli {
     derive_ac_eqs: bool,
 
     /// Lazy AC completion: saturation runs with completion off; an equality check that
-    /// plain congruence cannot decide runs the completion pass inside a semi-persistent
-    /// transaction (mark, complete, verdict, restore) on the frozen graph, then discards
-    /// everything the pass minted. `!=` checks are confirmed under completion before they
-    /// pass. Mutually exclusive with --derive-ac-eqs.
+    /// plain congruence cannot decide runs goal-directed completion inside a
+    /// semi-persistent transaction shared across consecutive equality checks, with rule
+    /// alternation as its second phase; the restore discards everything the checks
+    /// derived. `!=` checks are confirmed under completion before they pass. Mutually
+    /// exclusive with --derive-ac-eqs.
     #[arg(long, default_value_t = false)]
     lazy_ac_eqs: bool,
 

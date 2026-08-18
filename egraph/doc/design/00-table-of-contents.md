@@ -29,13 +29,16 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 - **[AC Congruence Completeness](ac-congruence-completeness.md)**
 - **[Algebraic Properties of AC Operators](ac-algebraic-properties.md)**
-  Part I explains why flattening AC nodes into canonical multisets erases the 
+  Part I explains why flattening AC nodes into canonical multisets erases the
   intermediate sub-sum subterms and breaks congruence completeness
   (even though matching stays complete), and why `rest`-variable
-  matching doesn't restore completeness. Part II gives the fix — Kapur-style
-  inter-reduction and lcm-superposition critical pairs — and shows it can reuse
-  our existing `DecomposeAC`/`by_contains` machinery, with a correctness/termination
-  argument and a proof sketch. Status and verification plan live in Future Work.
+  matching doesn't restore completeness. Part II gives the repair, Kapur-style
+  inter-reduction and lcm-superposition critical pairs over the existing
+  `DecomposeAC`/`by_contains` machinery, with a correctness and termination
+  argument and a proof sketch. §13 specifies the three completion modes
+  (plain, eager, lazy: the goal-directed transaction at failing checks) and
+  §14 the A-only inter-reduction round with its undecidability boundary.
+  The verification plan lives in Future Work.
 
 - **[AC Completion: `min_monomial`, the matcher bug, and a code-compliance review](ac-completion-spec.md)**
   A focused companion to the above (does not restate it). Defines `min_monomial`, the leximin AC
@@ -56,6 +59,8 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
    `UnionFind` with path compression and union-by-rank.
    `EClasses`: circular use-lists for parent tracking, splice on merge.
    `MergeInfo` for worklist-driven rebuild. Proof-justified union.
+   Merge survivor policy (`--union-by`) on the verified class-size and
+   use-list counters.
 
 3. **[Hash-Consing Caches](03-hash-consing-caches.md)**
    `FixedArityCache` (arity 0–3, commutative), `VariableArityCache`
@@ -152,12 +157,14 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 18. **[Semi-Naive Evaluation](18-semi-naive-evaluation.md)**
     `saturate_semi`: match only what changed each round via the
-    k-variant delta decomposition. `touched` log on the e-graph +
-    `IndexStore::build_delta`; `VariantIndex` three-way mode
-    (delta / full∖delta / full) realized on `Step::Join` via the
-    `Difference` cursor combinator. Per-atom, per-flavor scheduling.
-    Selectable via `SaturationStrategy` / `--strategy semi-naive`;
-    default remains naive, with no automatic fallback.
+    k-variant delta decomposition. `touched` log on the e-graph
+    (created, recanonicalized, and absorbed-class members: the
+    class-growth delta) + `IndexStore::build_delta`; `VariantIndex`
+    three-way mode (delta / full∖delta / full) realized on `Step::Join`
+    via the `Difference` cursor combinator. Root-binding and
+    global-element rules match the whole graph each round. Per-atom,
+    per-flavor scheduling. Selectable via `--use-semi-naive`; default
+    remains naive, with no automatic fallback.
 
 ## Part VIII: Anti-Unification
 
@@ -169,11 +176,41 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     mark/restore, `(antiunify)` / `(checkau)` commands.
 
 20. **[Index Selectivity and Delta Suffixes](20-index-selectivity-and-delta-suffixes.md)**
-    The matching-throughput plan from the egglog comparison: measured
+    The matching-throughput results from the egglog comparison: measured
     per-access-path selectivity constants replacing the fixed-halving
-    cost model, watermark node-id suffixes making semi-naive deltas a
-    range constraint on every index, per-binding driver selection in
-    the leapfrog seek, and the postponed free-join stage re-sorting.
+    cost model, per-binding atom scheduling with per-rule auto-selection
+    from the fan-out skew (`--auto-scheduling`), sampled cross-index
+    selectivity, per-binding driver selection in the leapfrog seek, and
+    the postponed free-join stage re-sorting.
+
+---
+
+## Lexicon
+
+Canonical terms; other phrasings defer to these.
+
+- **multiplicity variant**: the variant of a rule covering a child at
+  multiplicity 2 or more. Pattern elements bind distinct children
+  (chapter 9), so the base rule cannot match a repeated child.
+- **class-growth delta**: the touched-log entries recording the absorbed
+  class's members on a merge, so class growth that recanonicalizes
+  nothing still reaches the next semi-naive round (chapter 18).
+- **survivor policy**: the `--union-by {rank,size,uses,sum}` choice of
+  which class survives a merge (chapter 2).
+- **eager completion** (`--derive-ac-eqs`) and **lazy completion**
+  (`--lazy-ac-eqs`): the two opt-in AC completion modes; plain is the
+  default (AC doc §13).
+- **campaign**: one timed measurement pass of the whole comparison set
+  at one commit; a **run** is a single timed invocation.
+- **native encoding / native column / native dual**: the program style
+  using native algebraic operators, its slot in a results table, and
+  the translated counterpart file of a rules-encoding benchmark.
+- **class key**: the repr-set key naming a class's `ClassData`; "live"
+  is its state adjective.
+- **spelling**: one of a class's `Seq` nodes, the A-only analogue of an
+  AC monomial (AC doc §14).
+- **W-invariants** (W1-W7): defined and proved in
+  `containers-verus/src/eclasses.rs`; every citation points there.
 
 ---
 

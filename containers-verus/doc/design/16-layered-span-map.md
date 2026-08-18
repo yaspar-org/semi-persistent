@@ -10,9 +10,13 @@ representation chosen, the two alternatives rejected and why, what the proofs
 establish about the combined view, and one obligation the container places on
 its caller that the container cannot check.
 
-Nothing here is measured end to end. `LayeredSpanMap` is not yet wired into the
-e-graph, so this chapter records a design and its proofs, not a speedup. The
-number that motivates it is measured, and it is someone else's: see below.
+Deployment status: `LayeredSpanMap` is implemented and verified, and the
+engine does not enable it. The engine's per-round index builds run on the
+`DenseSpanMap` stamped-reuse path (chapter 15), whose measured build cost
+leaves the layered scheme nothing to recover on the engine's workloads.
+This chapter records the design and its proofs; revisit the wiring only if
+an index-build share is measured that the stamped-reuse path does not
+already cover.
 
 ## 1. The number this exists to fix
 

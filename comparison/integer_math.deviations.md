@@ -20,7 +20,7 @@ egglog program too, so the three configurations are the same problem.
 ### 1. The `MathU` universe relation and its 13 grounding rules
 
 The plan's expected strip, and the largest one by consequence. `MathU` is
-egglog's groundedness workaround, not part of the problem — but two rules use it
+egglog's groundedness workaround, not part of the problem: but two rules use it
 for more than grounding:
 
 ```
@@ -62,8 +62,8 @@ Removed: `(rewrite (Div (Const a) (Const b)) (Const (/ a b)) :when ((!= 0 b)))`,
 `(rewrite (Pow x (Const -1)) (Div (Const 1) x) :when (…))`.
 
 Two independent reasons. `is-not-zero` is a relation, and it is derived from
-`MathU`, so it goes with it. And our `:when` takes patterns only — no
-disequality, no primitive predicate — so neither `(is-not-zero a)` nor
+`MathU`, so it goes with it. And our `:when` takes patterns only: no
+disequality, no primitive predicate: so neither `(is-not-zero a)` nor
 `(!= 0 b)` has anything to compile to. Keeping these rules unguarded is not an
 option: each is unsound at zero (`(Div a a) = 1`, `(Pow x 0) = 1`,
 `(Pow x -1) = (Div 1 x)`), which is exactly what the guard is for.
@@ -96,8 +96,8 @@ the check are copied as written.
 
 ## Deviations in the native translation
 
-`Add` and `Mul` are AC — the source has commutativity and associativity rules for
-both — so both are declared variadic `:assoc-comm` and the four A/C rules are
+`Add` and `Mul` are AC: the source has commutativity and associativity rules for
+both: so both are declared variadic `:assoc-comm` and the four A/C rules are
 deleted. AC flattening and singleton collapse are both correct in our engine
 (unlike `:assoc`; see `calc.deviations.md`), so no workaround is needed.
 
@@ -126,16 +126,16 @@ needs no restatement: `Div` is an ordinary binary constructor.
 ## Cross-check
 
 `(check (= startexpr equivexpr))` passes in all three configurations, unchanged
-from the original. Its derivation uses only unguarded rules —
+from the original. Its derivation uses only unguarded rules , 
 `(Mul x (Pow (Const 2) y)) → (LShift x y)`, `(Sub a a) → (Const 0)`,
-`(Add a (Const 0)) → a`, `(Not (Not x)) → x`, `(Mul a (Const 1)) → a` — which is
+`(Add a (Const 0)) → a`, `(Not (Not x)) → x`, `(Mul a (Const 1)) → a`: which is
 why the scoping does not touch it.
 
-Smoke pass (1 run, 0 warmups — not a timing result):
+Smoke pass (1 run, 0 warmups: not a timing result):
 
 | config | nodes | classes | iterations |
 |---|---|---|---|
-| egglog | 100 | — | 4 |
+| egglog | 100 |: | 4 |
 | ours, rules, naive | 116 | 49 | 4 |
 | ours, rules, semi-naive | 117 | 50 | 4 |
 | ours, native, naive | 34 | 24 | 4 |
@@ -145,29 +145,21 @@ Native AC holds the same check at 29% of the rules encoding's nodes. Ours-vs-the
 node counts are not comparable (`methodology.md` section 3); the 116 includes 9
 interned literals that egglog never counts.
 
-## Coincidence twins (2026-08-17)
+## Multiplicity variants
 
-Partition semantics: an AC pattern element binds a distinct child and takes its
-whole multiplicity, which unannotated must be exactly 1. The n-ary lifts above
-therefore missed the same-child-taken-k-times cases (`Add{Const4 : 2}`,
-`Add{(Mul a p) : 2}`), latent here because no shipped input reaches them. Three
-`:k>=2` twins are added next to their general rules (both constant folds, one
-per Add and Mul, and the factoring rule); the bound multiplicity `k` is read on
-the RHS (`i64::* a k`, `i64::pow a k`, `(Const k)` as a factor). The three
-identity/annihilator rules need no twins here: the fold twins normalize a
-repeated Const to a single one, and the identities then fire. Residual, shared
-with every translation: a rule that must keep `k-1` copies of its matched child
-on the RHS (distributivity over a repeated Add child) has no expressible twin;
-verified latent, all checks pass. Re-validated after the change: node, class
-and iteration counts identical to the campaign table under both strategies
-(34 / 24 / 4), so the twins fire zero times on this workload and the numbers
-stand. Fixtures: `egraph/tests/egg/ac_coincidence_twin_gap.egg` (pins the gap),
-`ac_coincidence_twin.egg` (pins the twins).
+Pattern elements bind distinct children and take each child's whole
+multiplicity, so the n-ary lift of a binary rule cannot match a repeated
+child (`Add{Const4 : 2}`, `Add{(Mul a p) : 2}`). Each affected rule in
+`integer_math.native.egg` carries its multiplicity variant, k-generic where
+the count enters arithmetic: both constant folds (`k*a` via `i64::*`, `a^k`
+via `i64::pow`), the factoring rule (`k` reinserted as a `Const` factor),
+the distributivity rule (one copy distributed, `k-1` kept through an RHS
+multiplicity expression), and the LShift rule (`(2^y)^k = 2^(y*k)`). The
+identity and annihilator rules need no variants here: the fold variants
+normalize a repeated `Const` to a single one, and the identities then fire.
 
-**Update, same date, later:** the residual is retired. RHS elements now take
-checked u64 multiplicity expressions (interval-checked at install, 0 omits),
-so the distributivity twin keeps `k-1` copies of the repeated Add factor, and
-the LShift rule's twin folds `(2^y)^k` to `2^(y*k)`. Both added; counts remain
-identical to the campaign under both strategies (34 / 24 / 4), so they fire
-zero times on this workload. Fixtures: `rhs_mult_expr.egg`,
-`rhs_mult_expr_underflow.egg`.
+Every count is identical to the campaign tables under both strategies
+(34 nodes / 24 classes / 4 iterations): the variants fire zero times on
+this workload. Fixtures: `egraph/tests/egg/ac_multiplicity_variant_gap.egg`
+(the base-rule gap), `ac_multiplicity_variant.egg` (the variants),
+`rhs_mult_expr.egg` (the keep-k-1 shape).

@@ -526,7 +526,7 @@ pub struct ListArenaToken {
 }
 
 impl ListArenaToken {
-    /// Reconstruction coordinates of the two components (spec twins).
+    /// Reconstruction coordinates of the two components (spec counterparts).
     pub open(crate) spec fn heads_frame_idx_spec(self) -> nat {
         self.heads.frame_idx as nat
     }
@@ -740,7 +740,7 @@ where
         // full-range arm: max_nat == id_bound, so the hypothesis IS the goal.
     }
 
-    /// The `heads` twin of `lemma_node_push_fits`, over `L`.
+    /// The `heads` counterpart of `lemma_node_push_fits`, over `L`.
     pub(crate) proof fn lemma_head_push_fits(len: nat)
         requires
             len < L::id_bound(),
@@ -799,7 +799,7 @@ where
     pub open(crate) spec fn heads_view(&self) -> Seq<ListHead<N>> {
         self.heads.view()
     }
-    /// Heads/nodes frame-stack depths and snapshot stacks (spec twins;
+    /// Heads/nodes frame-stack depths and snapshot stacks (spec counterparts;
     /// fields are `pub(crate)` — privacy closeout).
     pub open(crate) spec fn heads_depth_spec(&self) -> nat {
         self.heads.depth_spec()
@@ -825,7 +825,7 @@ where
         self.nodes.fork_count_spec()
     }
 
-    /// Model-snapshot stack (spec twin, Phase 7 archive).
+    /// Model-snapshot stack (spec counterpart, Phase 7 archive).
     pub open(crate) spec fn model_snapshots_view(&self) -> Seq<Seq<Seq<usize>>> {
         self.model_snapshots@
     }
@@ -1155,7 +1155,7 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
             // raw effects, for aggregate invariants stated over the model
-            // (egraph-wf W5): the model gains exactly the fresh node at the
+            // (eclasses W5): the model gains exactly the fresh node at the
             // list's front, and no stored payload changes.
             final(self).model_view() == old(self).model_view().update(l as int,
                 seq![old(self).nodes_view().len() as usize]
@@ -1370,7 +1370,7 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
             // raw effects, for aggregate invariants stated over the model
-            // (egraph-wf W5): the model gains exactly the fresh node at the
+            // (eclasses W5): the model gains exactly the fresh node at the
             // list's end, and no stored payload changes.
             final(self).model_view() == old(self).model_view().update(l as int,
                 old(self).model_view()[l as int].push(old(self).nodes_view().len() as usize)),
@@ -1634,7 +1634,7 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len()
                 && m != dst as int && m != src as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
-            // raw effects (egraph-wf W5): concatenated model, no payload moves.
+            // raw effects (eclasses W5): concatenated model, no payload moves.
             final(self).model_view() == old(self).model_view()
                 .update(dst as int,
                     old(self).model_view()[dst as int] + old(self).model_view()[src as int])
@@ -2244,7 +2244,7 @@ where
                 == seq![payload] + old(self).list_seq(l.id_nat() as int),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
-            // raw effects (egraph-wf W5), inherited from `prepend_raw`.
+            // raw effects (eclasses W5), inherited from `prepend_raw`.
             final(self).model_view() == old(self).model_view().update(l.id_nat() as int,
                 seq![old(self).nodes_view().len() as usize]
                     + old(self).model_view()[l.id_nat() as int]),
@@ -2296,7 +2296,7 @@ where
                 == old(self).list_seq(l.id_nat() as int).push(payload),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
-            // raw effects (egraph-wf W5), inherited from `append_raw`.
+            // raw effects (eclasses W5), inherited from `append_raw`.
             final(self).model_view() == old(self).model_view().update(l.id_nat() as int,
                 old(self).model_view()[l.id_nat() as int].push(
                     old(self).nodes_view().len() as usize)),
@@ -2400,7 +2400,7 @@ where
                 &&& forall|m: int| 0 <= m < final(self).model_view().len()
                     && m != dst.id_nat() as int && m != src.id_nat() as int
                     ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m)
-                // raw effects (egraph-wf W5), inherited from `splice_raw`.
+                // raw effects (eclasses W5), inherited from `splice_raw`.
                 &&& final(self).model_view() == old(self).model_view()
                     .update(dst.id_nat() as int, old(self).model_view()[dst.id_nat() as int]
                         + old(self).model_view()[src.id_nat() as int])
@@ -2497,18 +2497,18 @@ where
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
 {
-    /// The arena this iterator walks (spec twin; fields are `pub(crate)` —
+    /// The arena this iterator walks (spec counterpart; fields are `pub(crate)` —
     /// privacy closeout).
     pub open(crate) spec fn arena_ref(&self) -> &'a ListArena<T, L, N, TRACK> {
         self.arena
     }
 
-    /// The (raw) list row (spec twin).
+    /// The (raw) list row (spec counterpart).
     pub open(crate) spec fn list_spec(&self) -> nat {
         self.list as nat
     }
 
-    /// The cursor position (spec twin).
+    /// The cursor position (spec counterpart).
     pub open(crate) spec fn pos_spec(&self) -> nat {
         self.pos as nat
     }

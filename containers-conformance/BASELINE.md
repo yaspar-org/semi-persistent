@@ -1,8 +1,9 @@
 # Performance baseline: verus vs production containers
 
-The migration gate (plan validation matrix) is: **retained containers within
-±10% of production, or a reviewed exception.** This file records the measured
-ratios and how to reproduce them.
+The acceptance condition is: **retained containers within ±10% of
+production, or a reviewed exception.** This file records the measured
+ratios, taken at commit 9122a92, and how to reproduce them; the command
+below regenerates every number.
 
 ## How to run
 

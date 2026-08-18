@@ -1,9 +1,9 @@
 ;; TYPES: machine
-;; The multiplicity twin closes the partition-semantics gap pinned by
-;; ac_coincidence_twin_gap.egg: an element consumes its child's whole
+;; The multiplicity variant closes the partition-semantics gap pinned by
+;; ac_multiplicity_variant_gap.egg: an element consumes its child's whole
 ;; multiplicity, so `(Const a):k>=2` matches the same summand taken k times,
 ;; and k is readable on the RHS as an i64 (prim arg and literal position).
-;; Covers the literal-element twin (k*a, a^k) and the compound-element twin
+;; Covers the literal-element variant (k*a, a^k) and the compound-element variant
 ;; (rest variable inside the doubled element, k reinserted as a factor).
 (datatype Math
     (Add Math :assoc-comm)

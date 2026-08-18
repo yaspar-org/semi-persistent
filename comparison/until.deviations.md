@@ -18,8 +18,8 @@ writes the generator as datalog:
 (allgs $A)
 ```
 
-We have no relations. The generator is not incidental — it is the benchmark, since
-`:until` exists here to stop it — so it is re-encoded rather than dropped, and the
+We have no relations. The generator is not incidental: it is the benchmark, since
+`:until` exists here to stop it: so it is re-encoded rather than dropped, and the
 same re-encoding is applied to the egglog program so that all three configurations
 run one problem:
 
@@ -49,7 +49,7 @@ checks, all passing.
 
 ## Deviations in the native translation
 
-`gmul` is `:assoc`, not `:assoc-comm` — the source has an assoc birewrite and no
+`gmul` is `:assoc`, not `:assoc-comm`: the source has an assoc birewrite and no
 commutativity rule.
 
 The identity and cyclic rules are restated n-ary with prefix and suffix rest
@@ -57,7 +57,7 @@ variables, same table as `calc`: a binary pattern is an exact pattern against a
 flat sequence node and would stop firing at length 3 or more.
 
 **Withdrawn 2026-08-15.** This file carried the `:assoc` flattening workaround
-described in `calc.deviations.md` item 1 — the `gmul` terms written flat and the
+described in `calc.deviations.md` item 1: the `gmul` terms written flat and the
 singleton law `(rewrite (gmul x) x)` stated explicitly. The engine defect is fixed,
 both are gone, and the terms are back to the source's nested form
 (`(let gA4 (gmul gA2 gA2))` and so on). Kept here because the pilot's first
@@ -65,18 +65,18 @@ published numbers for this benchmark were measured under it.
 
 The generator's right-hand side `(gmul gB x)` now flattens when `x` is itself a
 `gmul`, so the native column's `gmul` count is over the flattened chain rather than
-over sequences of length 2. The generator's behaviour is unchanged either way — one
-node per iteration — but the node totals below moved: naive 25 → 22, semi-naive
+over sequences of length 2. The generator's behaviour is unchanged either way: one
+node per iteration: but the node totals below moved: naive 25 → 22, semi-naive
 19 → 17, with the class count and iteration count unchanged at 9 and 2.
 
 ## Cross-check
 
-All three checks pass in all three configurations. Smoke pass (1 run, 0 warmups —
+All three checks pass in all three configurations. Smoke pass (1 run, 0 warmups , 
 not a timing result):
 
 | config | nodes | classes | iterations |
 |---|---|---|---|
-| egglog | 7 | — | 3 |
+| egglog | 7 |: | 3 |
 | ours, rules, naive | 52 | 15 | 3 |
 | ours, rules, semi-naive | 75 | 22 | 4 |
 | ours, native, naive | 22 | 9 | 2 |

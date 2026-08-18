@@ -616,7 +616,7 @@ impl LitModel for AllModel {
             // variants exist: an integer count into an exact rational (total,
             // no rounding — what lets a bound multiplicity feed rational
             // arithmetic), and rational pow with a checked non-negative
-            // integer exponent. The herbie multiplicity twins consume both.
+            // integer exponent. The herbie multiplicity variants consume both.
             v.push(LitOpDesc {
                 name: "RBig::from_int",
                 arg_sorts: &["i64"],

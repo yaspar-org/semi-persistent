@@ -27,7 +27,7 @@
 
 ;; Evaluation, n-ary: fold two constant summands/factors wherever they sit.
 (rewrite (Add (Const a) (Const b) ..rest) (Add (Const (i64::+ a b)) ..rest))
-;; Coincidence twin: an element consumes its child's whole multiplicity and two
+;; Multiplicity variant: an element consumes its child's whole multiplicity and two
 ;; elements bind distinct children (partition semantics), so a Const summand at
 ;; multiplicity k >= 2 needs its own rule; k is readable on the RHS as an i64.
 (rewrite (Add (Const a):k>=2 ..rest) (Add (Const (i64::* a k)) ..rest))
@@ -49,7 +49,7 @@
 
 ;; Distribution, n-ary: peel one summand off the Add factor.
 (rewrite (Mul (Add b ..s) ..rest) (Add (Mul b ..rest) (Mul (Add ..s) ..rest)))
-;; Coincidence twin: the Add factor at multiplicity k >= 2 distributes one
+;; Multiplicity variant: the Add factor at multiplicity k >= 2 distributes one
 ;; copy and keeps k-1 (RHS multiplicity expression; 0 omits).
 (rewrite (Mul (Add b ..s):k>=2 ..rest)
          (Add (Mul b (Add b ..s):(u64::- k 1) ..rest)
@@ -57,7 +57,7 @@
 ;; Factoring, n-ary: two Mul summands sharing a factor, inside any Add.
 (rewrite (Add (Mul a ..p) (Mul a ..q) ..rest)
          (Add (Mul a (Add (Mul ..p) (Mul ..q))) ..rest))
-;; Coincidence twin: the same Mul summand taken k times (t*u + t*u = 2*t*u).
+;; Multiplicity variant: the same Mul summand taken k times (t*u + t*u = 2*t*u).
 (rewrite (Add (Mul a ..p):k>=2 ..rest)
          (Add (Mul a (Const k) ..p) ..rest))
 
@@ -66,7 +66,7 @@
 
 ;; Shift introduction, n-ary: the power-of-two factor may sit anywhere in the product.
 (rewrite (Mul (Pow (Const 2) y) ..rest) (LShift (Mul ..rest) y))
-;; Coincidence twin: (2^y)^k = 2^(y*k).
+;; Multiplicity variant: (2^y)^k = 2^(y*k).
 (rewrite (Mul (Pow (Const 2) y):k>=2 ..rest)
          (LShift (Mul ..rest) (Mul y (Const k))))
 (rewrite (Div x (Pow (Const 2) y)) (RShift x y))

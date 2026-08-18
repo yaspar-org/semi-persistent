@@ -72,7 +72,7 @@ pub struct MapToken {
 }
 
 impl MapToken {
-    /// Reconstruction coordinate (spec twin; the field is `pub(crate)`).
+    /// Reconstruction coordinate (spec counterpart; the field is `pub(crate)`).
     pub open(crate) spec fn frame_idx_spec(self) -> nat {
         self.inner.frame_idx as nat
     }
@@ -110,22 +110,22 @@ where
         self.log.view()
     }
 
-    /// The index map (spec twin; the field is `pub(crate)` — privacy closeout).
+    /// The index map (spec counterpart; the field is `pub(crate)` — privacy closeout).
     pub open(crate) spec fn index_view(&self) -> Map<K, I> {
         self.index@
     }
 
-    /// Frame-stack depth of the log (spec twin).
+    /// Frame-stack depth of the log (spec counterpart).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.log.depth_spec()
     }
 
-    /// Lifetime restore count of the log (spec twin).
+    /// Lifetime restore count of the log (spec counterpart).
     pub open(crate) spec fn fork_count_spec(&self) -> nat {
         self.log.fork_count_spec()
     }
 
-    /// Log snapshot stack (spec twin).
+    /// Log snapshot stack (spec counterpart).
     pub open(crate) spec fn log_snapshots_view(&self) -> Seq<Seq<(K, V)>> {
         self.log.snapshots_view()
     }
@@ -430,7 +430,7 @@ where
     // delegates every capacity/validity question to its single component.
     // ------------------------------------------------------------------
 
-    /// Exec twin of `insert`'s capacity precondition (the log's).
+    /// Exec counterpart of `insert`'s capacity precondition (the log's).
     pub fn can_insert(&self) -> (b: bool)
         requires self.wf(),
         ensures b == (self.log_view().len() + 1 < I::max_nat()),

@@ -29,8 +29,11 @@ pub enum Justification<G: Copy> {
         node_a: G,
         node_b: G,
     },
-    /// AC completion: inter-reduction collapsed a rule's monomial to a smaller normal form,
-    /// merging it with the materialized reduct. (Kapur Algo 1 step 4.)
+    /// A completion inter-reduction merge (Kapur Algo 1 step 4): an AC
+    /// monomial's sub-multiset substituted by a class's minimal monomial, or
+    /// an A-only sequence's contiguous subsequence substituted by the
+    /// shortlex-least spelling (`a_round`). `node_a` is the rewritten node,
+    /// `node_b` its normal form.
     ACInterReduction {
         node_a: G,
         node_b: G,
@@ -74,12 +77,11 @@ impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justificati
 }
 
 /// Semi-persistent union-find: the VERIFIED kernel, with this crate's
-/// [`Justification`] as the proof payload. The struct that lived here —
-/// dual fast/proof forests under `PROOFS`, by-rank unions, two-pass
-/// path-compressing `find`, re-rooting proof edges, LCA `explain` — is now
-/// `containers-verus/src/union_find.rs`, same parameters, same surface,
-/// same panic messages, with W1 (the partition invariant) machine-checked
-/// (doc/design/12-egraph-class-layer-parity.md).
+/// [`Justification`] as the proof payload. The implementation lives in
+/// `containers-verus/src/union_find.rs`: dual fast/proof forests under
+/// `PROOFS`, by-rank and directed unions, two-pass path-compressing `find`,
+/// re-rooting proof edges, LCA `explain`, with W1 (the partition invariant)
+/// machine-checked (doc/design/12-egraph-class-layer-parity.md).
 pub type UnionFind<T, const TRACK: bool = true, const PROOFS: bool = false> =
     crate::containers::union_find::UnionFind<T, Justification<T>, TRACK, PROOFS>;
 

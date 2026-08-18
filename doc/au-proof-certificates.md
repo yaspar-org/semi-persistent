@@ -250,5 +250,5 @@ Out of scope for v1: chains containing the AC-completion labels
 2), so v1 rejects any certificate containing them; sessions that do not
 run AC completion never produce them. Checking them needs work item C4
 first, and then a verified overlap check per label: estimate another one
-to two weeks, deferred until a certificate from a completion-running
+to two weeks, postponed until a certificate from a completion-running
 session is actually wanted.

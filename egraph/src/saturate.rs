@@ -481,7 +481,7 @@ where
     saturate_semi_spec(rules, eg, model, &RunSpec::budget(limit), globals)
 }
 
-/// Semi-naive saturation under a full [`RunSpec`] — the delta-driven twin of
+/// Semi-naive saturation under a full [`RunSpec`] — the delta-driven counterpart of
 /// [`saturate_spec`].
 pub fn saturate_semi_spec<Cfg, L, M, S, const T: bool, const P: bool>(
     rules: &[PreparedRule<Cfg::O, S, L>],
@@ -923,10 +923,10 @@ mod tests {
     // -- ByContains optimization: variadic atom with a bound element --
     //
     // A variadic side-condition atom whose ELEMENT is bound but whose NODE is
-    // not (`(g x)` then `(add x ..rest)`) used to be compiled to drive from the
-    // full `by_op[add]` bucket and filter in DecomposeAC — so match-steps
-    // scaled with the TOTAL number of `add` nodes even though only one contains
-    // `x`. `emit_variadic_join` now intersects `by_op[add]` with
+    // not (`(g x)` then `(add x ..rest)`) must not drive from the full
+    // `by_op[add]` bucket and filter in DecomposeAC: match-steps would scale
+    // with the TOTAL number of `add` nodes even though only one contains
+    // `x`. `emit_variadic_join` intersects `by_op[add]` with
     // `by_contains[x]` (the variadic analogue of `Plain`'s `ByChildPos`), so
     // the driver is the few parents containing `x` and the work is independent
     // of the distractor count.
@@ -1776,18 +1776,18 @@ mod tests {
     // variant's per-atom mode is realized ONLY through `Step::Join.atom_id`
     // (see ematch::run_join — mode is read off the join step). The implicit
     // precondition is therefore: *every join atom emits a `Step::Join` in
-    // every variant's plan.* For variadic atoms (A/AC/ACI) this used to be
-    // VIOLATED — `emit_variadic_join` emitted NO `Step::Join` when the atom's
-    // node var was already bound, so when a variant drove from an enclosing
-    // atom (binding the variadic child via `ExtractChild`) the atom's
-    // `FullMinusDelta` exclusion silently never ran. The fix mirrors the
-    // fixed-arity `Plain` bound-node path: emit a `ByRepr ∩ ByOp` re-join
-    // carrying `atom_id` so the mode is applied.
+    // every variant's plan.* For variadic atoms (A/AC/ACI) the trap is
+    // emitting NO `Step::Join` when the atom's node var is already bound:
+    // a variant driving from an enclosing atom (binding the variadic child
+    // via `ExtractChild`) would leave the atom's `FullMinusDelta` exclusion
+    // silently unexecuted. The bound-node path therefore mirrors the
+    // fixed-arity `Plain` one: emit a `ByRepr ∩ ByOp` re-join carrying
+    // `atom_id` so the mode is applied.
     //
-    // Defect impact had been: redundant re-emission only (the union still
-    // equalled the naive new-match set, and application is idempotent, so
-    // final state was always correct — which is why diff_ac / diff_aci / the
-    // whole .egg corpus stayed green). The fix recovers disjointness, i.e. the
+    // Without the re-join the failure is redundant re-emission only (the
+    // union still equals the naive new-match set, and application is
+    // idempotent, so the final state is correct; diff_ac / diff_aci and the
+    // whole .egg corpus cannot see it). The re-join recovers disjointness, i.e. the
     // lost semi-naive work savings on parent-driven variadic atoms.
     //
     // Asserts BOTH: pairwise-disjoint variant sets AND completeness against

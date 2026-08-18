@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 # Full parity matrix: every drop-in replacement, type by type
 
 Method-by-method comparison of every verified container against its
-production twin, recording each place where control-flow conditions,
+production counterpart, recording each place where control-flow conditions,
 algorithms, or data-structure layout differ, plus the production-vs-verus
 benchmark evidence per pair. Compiled from independent side-by-side
 readings of both crates (four readers, one per area, findings verified
@@ -39,7 +39,7 @@ allowlist-driven surface and listed once per type.
 | B+ tree cursor | bplus/cursor_seek | 562 µs | 592 µs | +5.3% |
 | B+ tree | bplus/from_sorted_then_scan | 8.4 µs | 14.7 µs | **+74%** |
 | BitSet | bitset/set_test_churn | 24.0 µs | 24.2 µs | +0.7% |
-| EClasses/UnionFind | no in-tree production twin (replaced); end-to-end evidence is the saturate_bench pre/post protocol in egraph-wf.md | | | −1.7% to +1.6% at the swap |
+| EClasses/UnionFind | no in-tree production counterpart; end-to-end evidence is the saturate_bench pre/post protocol (criterion save-baseline/baseline, its module doc) | | | −1.7% to +1.6% at the swap |
 
 Open performance items from this ledger: the three B+ tree deltas.
 The vec/try_extend gate scare resolved as machine-state contamination
@@ -52,20 +52,20 @@ call, visible only on this microsecond-scale microbench (insert and
 seek held). ACCEPTED as the totality price after the second audit
 showed the unguarded surface was undefined-behavior-reachable from
 safe code; revisit only if a workload is MEASURED to be
-from_sorted-heavy, and then via verified-internal unguarded twins, not
+from_sorted-heavy, and then via verified-internal unguarded counterparts, not
 by reopening the public boundary. The remaining attribution notes:
-`from_sorted_then_scan` +74%: the twin validates strict ascent in all
+`from_sorted_then_scan` +74%: the counterpart validates strict ascent in all
 builds where production only debug_asserts (one O(n) compare pass per
 build), and its balanced-partition leaf fill produces evenly-filled
 leaves where production packs full chunks (same leaf count on this
-input, different fill). `insert_shuffled` +13.7%: the twin recomputes
+input, different fill). `insert_shuffled` +13.7%: the counterpart recomputes
 `last_leaf` by an O(height) descent after every non-append insert
 (production updates it O(1) only when the split leaf was last), and
 inserts recursively where production uses an iterative path array; per
-contra, the twin's splits build fresh nodes without production's
-per-split heap allocations. `cursor_seek` +5.3%: the twin descends from
+contra, the counterpart's splits build fresh nodes without production's
+per-split heap allocations. `cursor_seek` +5.3%: the counterpart descends from
 the root with hand-rolled compare-and-move-conditionally bisection
-loops where production calls `partition_point`; the twin also lacks
+loops where production calls `partition_point`; the counterpart also lacks
 production's current-leaf locality fast path, which this benchmark's
 fresh-cursor-per-probe shape cannot fire anyway.
 
@@ -180,7 +180,7 @@ restore — reads EQUAL at the condition level.
 
 Reader's summary: the ListArena and sorted cursor are the same
 algorithms with guard-placement differences; the B+ tree is the one
-container whose twin diverges algorithmically (recursive insert,
+container whose counterpart diverges algorithmically (recursive insert,
 balanced bulk build, no seek locality path); the id layer swaps a
 panicking narrowing for a masking one and compensates at call sites.
 
@@ -190,9 +190,9 @@ panicking narrowing for a masking one and compensates at call sites.
    range-checks in `usize` then panics out of range; the verus macro
    and the hand-written DenseId31/63 truncate-then-mask
    (`(n as int) & MASK`), so an out-of-range argument silently aliases.
-   The twin compensates with explicit `try_new` guards at call sites.
+   The counterpart compensates with explicit `try_new` guards at call sites.
    ALGORITHM, and the root of finding 2.
-2. **ListArena capacity is `id_bound - 1` in the twin, `id_bound` in
+2. **ListArena capacity is `id_bound - 1` in the counterpart, `id_bound` in
    production.** The prepend/append guard is `N::try_new(len + 1)`,
    refusing the final id slot production fills (production's own test
    fills all 128 of a 7-bit arena). Same off-by-one on `try_new_list`.
@@ -213,17 +213,17 @@ panicking narrowing for a masking one and compensates at call sites.
    differential) and `bits7_add_singleton_fills_the_full_id_range`
    (aggregate, all component ceilings at once).
 3. **`from_sorted` builds a differently-shaped tree.** Production
-   packs full leaf chunks (last leaf can hold one key); the twin
+   packs full leaf chunks (last leaf can hold one key); the counterpart
    balances (`ceil(n/cap)` groups of near-equal size, non-root leaves
    at least half full). Same key set, same leaf count on uniform
    input, different fill. Separator collection and materialization
    also differ (child-0 descents plus per-level heap vectors vs a
    carried `firsts` array, inline conversion). ALGORITHM.
-4. **Release-build checking trades places.** Sortedness: the twin
+4. **Release-build checking trades places.** Sortedness: the counterpart
    checks strict ascent in all builds and refuses; production only
    debug_asserts, and a release build given unsorted input silently
    builds a wrong tree. Arena exhaustion: production asserts on every
-   allocation in release; the twin has no runtime check (proved
+   allocation in release; the counterpart has no runtime check (proved
    unreachable from the bit-stealing bound).
    The all-builds sortedness check is deliberate and stays: the only
    build path with a sortedness `requires` (`bulk_load`) is private,
@@ -235,34 +235,34 @@ panicking narrowing for a masking one and compensates at call sites.
    `from_sorted_then_scan` ledger entry above.
 5. **Insert control flow.** Production descends iteratively with a
    24-entry path array and propagates splits in an upward loop; the
-   twin recurses, returning the separator pair. Split points and the
+   counterpart recurses, returning the separator pair. Split points and the
    fast-append condition are EQUAL; split mechanics differ (production
-   heap-allocates per split via `to_vec`/scratch vectors, the twin
+   heap-allocates per split via `to_vec`/scratch vectors, the counterpart
    builds fresh nodes allocation-free); `last_leaf` maintenance is
-   production O(1)-conditional vs twin O(height)-always on the slow
+   production O(1)-conditional vs counterpart O(height)-always on the slow
    path.
-6. **The `Branchless` search twin is branchy and never dispatched.**
+6. **The `Branchless` search counterpart is branchy and never dispatched.**
    Production's `Branchless` strategy is genuinely branch-free; the
-   twin's is a branching linear scan, and the verified tree never
+   counterpart's is a branching linear scan, and the verified tree never
    calls the strategy trait at all — `S` is phantom and every descent
    uses hardwired compare-and-select bisection. Instantiating with
    `Branchless` still binary-searches. ALGORITHM (dispatch), plus a
    misleading type parameter.
 7. **Cursor seek locality.** Production tries the current leaf, then
    the linked next leaf, before falling back to a root descent; the
-   twin always descends from the root. EQUAL `step` protocol.
+   counterpart always descends from the root. EQUAL `step` protocol.
 8. **`Opt::get` name collision.** Production `get() -> Option<T>`;
    verus `get() -> T` refusing on None (production's behavior is the
-   twin's `to_option`). Same niche encoding on both sides. API hazard
+   counterpart's `to_option`). Same niche encoding on both sides. API hazard
    for anyone porting call sites by name.
 9. **Empty-source `splice` writes.** Production early-returns with
-   zero writes; the twin unconditionally rewrites the source header,
+   zero writes; the counterpart unconditionally rewrites the source header,
    an extra tracked write observable through diff-log growth and
    `tracking_bytes`.
 10. **Sorted cursor: both sides gallop.** The gallop-vs-bisect premise
     was false — production's concrete cursor (pre-swap, in the egraph
     crate) used the identical doubling probe and final bisect. The one
-    behavioral difference: the twin's trait `step` guards against
+    behavioral difference: the counterpart's trait `step` guards against
     advancing an exhausted cursor (true no-op) where production
     incremented `pos` past the end, unobservably. The unguarded form
     survives as `pub(crate) step_unchecked`.
@@ -276,13 +276,13 @@ panicking narrowing for a masking one and compensates at call sites.
     consts become `min()`/`max()` fns, its checked arithmetic moves to
     free functions guarding against the id MAX (u128-widening mul),
     and the u64 impl gains a 64-bit-target gate.
-12. **Iterator cost (ListArena).** The twin's `ListIter` borrows the
+12. **Iterator cost (ListArena).** The counterpart's `ListIter` borrows the
     whole arena and pays a per-call stale-handle bounds refuse plus a
     position increment production's nodes-only iterator does not have.
     Same traversal order and yields.
 13. **Missing across sides:** production `Default` for ListArena and
-    `MAX_RAW`/`from_raw_unchecked` (test-only) have no twin;
-    twin-only additions are `is_valid_token`, `pos()` on the cursor,
+    `MAX_RAW`/`from_raw_unchecked` (test-only) have no counterpart;
+    counterpart-only additions are `is_valid_token`, `pos()` on the cursor,
     `contains`/`first_key`/`restores_remaining` on the tree,
     `DenseUsize`, the witness id types, and the white-box test
     oracles. BitSet is EQUAL on every method (documented verbatim
@@ -296,20 +296,18 @@ IdFactory conditions (messages differ), mark/restore validation
 posture (same classes as sections 1 and 2) — reads EQUAL at the
 condition level.
 
-## 4. Class layer: validation of `12-egraph-class-layer-parity.md`
+## 4. Class layer findings
 
-A fourth reader re-checked every claim in the class-layer assessment
-against the shipped code. Verdict: every CONFIRMED item holds (the
-dual in-struct forest, production's messages on make_set/add_singleton
-and the PROOFS refusals, two-pass find, verbatim
-reroot_proof/explain/walk_to_root, merge's sequence and the
-UNOBSERVABLE set_none argument, prefer_a_by_uses, mark/restore
-component order, the trust classification), and no
-ACCEPTED/UNOBSERVABLE/STRICTER-SAFE item is wrongly classified. The
-reader also found items document 12 misses or misstates; they are
-recorded here as corrections to it.
+The audited divergences of the shipped class layer, each with its
+classification and resolution. The parity statement itself is
+`12-egraph-class-layer-parity.md`; the confirmed-equal surface (the dual
+in-struct forest, production's messages on make_set/add_singleton and the
+PROOFS refusals, two-pass find, verbatim reroot_proof/explain/walk_to_root,
+merge's sequence and the UNOBSERVABLE set_none argument, prefer_a_by_uses,
+mark/restore component order, the trust classification) is not repeated
+here.
 
-### Corrections and additions to document 12, ranked
+### Findings, ranked
 
 1. **Proof-edge recording order in `merge_justified`.** Production
    records the proof edge inside `uf.union_justified` BEFORE the ring

@@ -34,8 +34,8 @@ checks. All four checks pass.
 
 ## Deviations in the native translation
 
-The group operation is associative and **not** commutative — the original has an
-assoc birewrite and no commutativity rule — so `gmul` is declared `:assoc`, giving
+The group operation is associative and **not** commutative: the original has an
+assoc birewrite and no commutativity rule: so `gmul` is declared `:assoc`, giving
 sequence semantics, not `:assoc-comm`. Declaring AC would compare against a
 strictly stronger system, the same reasoning as `eqsat-basic`'s `:comm`-only dual.
 
@@ -73,7 +73,7 @@ while `(bag (Zero) (A))` correctly reduces to `(A)` under `:assoc-comm`.
 The two workarounds it forced, both now removed:
 
 - **Every `gmul` term was written flat.** `(gmul gA2 gA2)` was written
-  `(gmul gA gA gA gA)`, and so on — exactly the node a correct implementation
+  `(gmul gA gA gA gA)`, and so on: exactly the node a correct implementation
   builds from the nested form, so the program the engine ran was the intended one;
   what the workaround removed was the engine's obligation to normalize. The nested
   text now reproduces these files without change, and does.
@@ -103,7 +103,7 @@ and suffix), which is what lets an interior pattern be expressed:
 
 The two identity rules merge into one, which strictly generalizes both: an
 identity element is deleted wherever it sits, not only at an end. The inverse
-rules keep adjacency, which is the right reading — in a sequence, "adjacent after
+rules keep adjacency, which is the right reading: in a sequence, "adjacent after
 re-association" and "adjacent in the flat sequence" are the same condition,
 because A alone cannot reorder.
 
@@ -112,7 +112,7 @@ because A alone cannot reorder.
 Under sequence semantics `(gmul gA4 gA4)` and `(gmul (gmul gA2 gA2) (gmul gA2 gA2))`
 are the same eight-element node, as are block 2's two goal terms. Both `:until`
 goals therefore hold before the run starts and both checks are true by
-canonization. The blocks are written exactly as the source writes them — the two
+canonization. The blocks are written exactly as the source writes them: the two
 sides of each check are textually the nested originals, and the engine flattens
 them to one node on the way in. This is the same phenomenon as `math-add-ac`'s
 native column saturating in one iteration at 25 nodes, and it is the value
@@ -121,7 +121,7 @@ inverse cancellation, still do real work.
 
 ## Cross-check
 
-All four checks pass in all three configurations. Smoke pass (1 run, 0 warmups —
+All four checks pass in all three configurations. Smoke pass (1 run, 0 warmups , 
 not a timing result):
 
 | config | nodes | iterations |

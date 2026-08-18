@@ -3,18 +3,18 @@
 //! File-based integration tests for the interpreter.
 //!
 //! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
-//! carry directive comments. The three feature directives mirror the CLI verbs (use / derive
-//! / check), so a test file is self-contained, no env var needed:
+//! carry directive comments. The feature directives mirror the CLI flags, so a test file is
+//! self-contained, no env var needed:
 //!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic   outcome (default: ok)
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
-//!   ;; DERIVE_AC_EQS: on                                  derive all AC consequences (default off)
+//!   ;; DERIVE_AC_EQS: on                                  eager AC completion (default off)
 //!   ;; LAZY_AC_EQS: on                                    lazy AC completion at checks (default off)
+//!   ;; UNION_BY: rank|size|uses|sum                       merge survivor policy (default rank)
 //!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
 //!                                                         invariants post-run (default off)
 //!
-//! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome
-//! (the historical default cross-check). DERIVE_AC_EQS renames the old AC_COMPLETE directive.
+//! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome.
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
 //! AC rule set is fully reduced (`min_monomial` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
 //! have anything to check.
@@ -372,8 +372,8 @@ egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 
 // ── AC multiplicity semantics ──
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
-egg_test!(ac_coincidence_twin_gap, "ac_coincidence_twin_gap.egg");
-egg_test!(ac_coincidence_twin, "ac_coincidence_twin.egg");
+egg_test!(ac_multiplicity_variant_gap, "ac_multiplicity_variant_gap.egg");
+egg_test!(ac_multiplicity_variant, "ac_multiplicity_variant.egg");
 egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
 egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
 egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
@@ -396,16 +396,16 @@ egg_test!(set_flatten_build, "set_flatten_build.egg");
 // ── A-only (Seq) build-side normal form ──
 // Associative-but-not-commutative ops flatten to a sequence (order preserved) and
 // collapse a one-element sequence to its element, per
-// `ac-algebraic-properties.md`'s A row and `04-canonization.md`. Both were missing
-// until 2026-08-15; the AC/ACI twins above were correct.
+// `ac-algebraic-properties.md`'s A row and `04-canonization.md`. These two files
+// pin both behaviors; the AC/ACI counterparts above pin the multiset forms.
 egg_test!(a_flatten_build, "a_flatten_build.egg");
 egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
 
 // ── A-only matching: a fixed child an earlier atom already bound ──
 // A variadic expansion checks such a child against each window and leaves it bound.
-// Until 2026-08-17 its cleanup cleared every local child, which unbound a variable an
-// enclosing step owned: the next window rebound it (the rule fired on positions the
-// constraint excluded) and a later re-join read it as unbound and panicked.
+// A cleanup that clears every local child instead unbinds a variable an enclosing
+// step owns: the next window rebinds it (the rule fires on positions the constraint
+// excluded) and a later re-join reads it as unbound and panics.
 // `ematch.rs`'s `expand_a_checks_a_prebound_fixed_child` and its two decomposition
 // counterparts assert the match set directly.
 egg_test!(a_prebound_fixed_child, "a_prebound_fixed_child.egg");
@@ -440,7 +440,7 @@ egg_test!(identity_late_merge_aci, "identity_late_merge_aci.egg");
 egg_test!(identity_late_merge_cc, "identity_late_merge_cc.egg");
 // Adversarial coverage batch (adversarial analysis §B): behaviors that were correct but
 // unpinned. cross_op_unit_isolation is a SOUNDNESS guard (per-op unit-drop); the push/pop
-// pair pins semi-persistence of the unit merge; the direction twin pins the became-a-unit
+// pair pins semi-persistence of the unit merge; the direction counterpart pins the became-a-unit
 // sweep against rank-dependent survivor choice.
 egg_test!(cross_op_unit_isolation, "cross_op_unit_isolation.egg");
 egg_test!(
@@ -560,7 +560,7 @@ egg_test!(
 );
 // Root-binding pattern form `(= v pat)`: `v` names the e-class `pat` matched. Repeating
 // the name across conjuncts joins them on that class, which is what a guard on an
-// equality between two derived terms needs; the negative twin in each file has the same
+// equality between two derived terms needs; the negative counterpart in each file has the same
 // terms present in distinct classes and asserts the rule does not fire.
 egg_test!(root_binding_bind_and_use, "root_binding_bind_and_use.egg");
 egg_test!(root_binding_shared_root, "root_binding_shared_root.egg");
@@ -577,7 +577,7 @@ egg_test!(
 );
 // Primitive predicates in `:when`: a guard is evaluated over the literal values the
 // patterns bound, not matched against the e-graph. Each positive file carries its
-// soundness twin, a term the guard is false for, and asserts the rule did not fire.
+// soundness counterpart, a term the guard is false for, and asserts the rule did not fire.
 egg_test!(when_prim_predicate, "when_prim_predicate.egg");
 egg_test!(
     when_prim_predicate_two_vars,

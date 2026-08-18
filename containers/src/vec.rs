@@ -51,8 +51,8 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.store.len() == I::MIN
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_push(&mut self, value: T) -> Result<(), &'static str> {
@@ -119,8 +119,8 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.store.as_slice()
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_mark(&mut self, policy: ShrinkPolicy) -> Result<VecToken, &'static str> {
@@ -152,8 +152,8 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         token
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_restore(&mut self, token: VecToken) -> Result<(), &'static str>

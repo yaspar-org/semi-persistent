@@ -563,7 +563,7 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
         RhsArg::OneMult { body, mult } => {
             // Multiplicity 0 omits the child without evaluating it, so an
             // omitted term is never materialized (the k-1 = 0 case of a
-            // coincidence twin). Underflow and division by zero were rejected
+            // multiplicity variant). Underflow and division by zero were rejected
             // at install by the interval check; the checked ops here are the
             // second line, like the checked literal primitives.
             let k = eval_mult_expr::<Cfg, V>(mult, m);

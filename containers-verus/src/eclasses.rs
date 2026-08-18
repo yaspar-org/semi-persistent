@@ -1,34 +1,42 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Verified equivalence-class aggregate (stage 2 of `doc/future/egraph-wf.md`):
-//! the e-graph's class layer with W1-W6 as its machine-checked `wf()`.
+//! Verified equivalence-class aggregate: the e-graph's class layer with
+//! W1-W7 as its machine-checked `wf()`.
 //!
-//! Production's `EClasses` (`egraph/src/classes.rs`) composes five structures
-//! and keeps their agreement by argument. This module composes the five
-//! VERIFIED counterparts — `CircularList` ring, `SparseSet` repr set,
-//! `UnionFind`, `ListArena` use-lists, `Vec` min-monomial pool — and states
-//! the agreement as `eg_model_wf`, a predicate over the components'
-//! specification views:
+//! The module composes five verified structures: `CircularList` ring,
+//! `SparseSet` class-key set, `UnionFind`, `ListArena` use-lists, `Vec`
+//! min-monomial pool. Their agreement is `eg_model_wf`, a predicate over the
+//! components' specification views. This table is the authoritative
+//! W-invariant numbering; every other document cites it.
 //!
-//!   - W1 lives inside `UnionFind::wf` (the ghost root map and its measure);
+//!   - W1: the union-find's ghost root map and its measure (inside
+//!     `UnionFind::wf`);
 //!   - W2: `x` is a union-find root iff ring cell `x` carries a present
-//!     payload, and the live keys of the repr set are exactly the root
-//!     payloads (stated as an iff, with injectivity across roots);
-//!   - W3: two nodes share a ring iff they share a root — stated over model
+//!     payload, and the live class keys are exactly the root payloads
+//!     (stated as an iff, with injectivity across roots);
+//!   - W3: two nodes share a ring iff they share a root, stated over model
 //!     coordinates in both directions (same ring implies same root, same
 //!     root implies same ring), which is what discharges `splice_absorb`'s
 //!     distinct-rings precondition inside `merge`;
 //!   - W4: live classes own pairwise-distinct, allocated use-lists;
 //!   - W5: every use-list entry is an allocated node id (freshness across a
-//!     merge is the dirty-set discipline, stage 3 — deliberately not claimed);
+//!     merge is the consumer's dirty-set discipline, deliberately not
+//!     claimed here);
 //!   - W6: the pool is whole rows of `min_width`, live row numbers are
-//!     allocated and pairwise distinct.
+//!     allocated and pairwise distinct;
+//!   - W7: the size stored in a class payload equals its ring's length,
+//!     stated at the ring member that is the class's root. The archive
+//!     invariant (`eg_archive_agrees`) asserts `eg_model_wf` per frame, so
+//!     W7 holds in every archived mark and `restore` preserves it.
 //!
-//! The key stored in a ring payload is production's `Opt<T::Index>` — the
-//! repr-set id as an index-typed cell, 12 bytes at a bit-stealing family
-//! (pinned by the consumer's compile-time asserts). This kernel IS the
-//! production e-graph class layer: `egraph::EClasses` and
-//! `egraph::UnionFind` are type aliases of it since the swap.
+//! Terminology: a "class key" is the `SparseSet` id a root's ring payload
+//! carries; "live" is the key's state while its class exists. The prose
+//! word "frame" and the API word "snapshot" (`*_snapshots_view`) name the
+//! same thing: one archived mark level. The key stored in a ring payload is
+//! `Opt<T::Index>`, an index-typed cell, 12 bytes at a bit-stealing family;
+//! the 16-byte class payload (`ClassData`) is pinned by the consumer's
+//! compile-time asserts. This kernel is the production e-graph class layer:
+//! `egraph::EClasses` and `egraph::UnionFind` are type aliases of it.
 
 use vstd::prelude::*;
 
@@ -185,14 +193,15 @@ pub open(crate) spec fn ss_contains<Idx: IndexLike>(
     &&& indices[sparse[id as int].as_nat() as int].as_nat() == id
 }
 
-/// The value stored for live key `id` (dense slot through the indirection).
+/// The value stored for the live class key `id` (dense slot through the indirection).
 pub open(crate) spec fn ss_value<V, Idx: IndexLike>(
     dense: Seq<V>, sparse: Seq<Idx>, id: nat,
 ) -> V {
     dense[sparse[id as int].as_nat() as int]
 }
 
-/// W2-W6 over the components' views. `ring_model`/`payloads` are the
+/// W2-W7 over the components' views (the module header holds the invariant
+/// table). `ring_model`/`payloads` are the
 /// `CircularList`'s ghost rings and payload cells; `roots` is the
 /// `UnionFind`'s ghost root map; the three `reprs_*` sequences are the
 /// `SparseSet` columns (`live` its element count); `uses_model`/`uses_nodes`
@@ -214,7 +223,7 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
     let live = reprs_dense.len();
     let pool_len = pool.len();
     &&& roots.len() == n
-    // the repr capacity never outgrows the node count (one live key per
+    // the repr capacity never outgrows the node count (one live class key per
     // root, keys minted at most one per node)
     &&& reprs_sparse.len() <= n
     // payload cells decode (Opt well-formedness)
@@ -233,7 +242,7 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
                 && (#[trigger] roots[x]) == x as usize && (#[trigger] roots[y]) == y as usize
                 ==> payloads[x].get_spec()->Some_0.as_nat()
                     != payloads[y].get_spec()->Some_0.as_nat())
-    // W2d (the other direction): every live key is some root's key
+    // W2d (the other direction): every live class key is some root's key
     &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
             ==> exists|x: int| 0 <= x < n && roots[x] == x as usize
                 && (#[trigger] payloads[x]).get_spec()->Some_0.as_nat() == id)
@@ -252,7 +261,7 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
                 ==> c1 == c2)
     // W7: the stored class size is the ring length. Stated at the ring member
     // that is the class's root (every class's root node sits on its own ring),
-    // whose payload carries the live key; the key's ClassData.size counts
+    // whose payload carries the live class key; the key's ClassData.size counts
     // exactly the ring's members. This is what makes `class_size` a verified
     // O(1) read of the member count (the `--union-by size` policy input).
     &&& (forall|c: int, p: int|
@@ -354,7 +363,7 @@ where
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,
 {
-    /// The class ring; each cell carries the class's repr key (as a
+    /// The class ring; each cell carries the class's key (as a
     /// node-typed dense id) while the class is live, absent once absorbed.
     pub(crate) entries: CircularList<Opt<<T as DenseId>::Index>, T, TRACK>,
     /// Per-class data, keyed by repr id.
@@ -398,17 +407,17 @@ where
         self.uf.same_set_spec(a, b)
     }
 
-    /// The repr key stored in `x`'s ring cell (meaningful when `x` is a root).
+    /// The class key stored in `x`'s ring cell (meaningful when `x` is a root).
     pub open(crate) spec fn key_of(&self, x: int) -> nat {
         self.entries.payload_seq()[x].get_spec()->Some_0.as_nat()
     }
 
-    /// The class data of live key `id` (spec).
+    /// The class data of live class key `id` (spec).
     pub open(crate) spec fn class_data_spec(&self, id: nat) -> ClassData<L, T> {
         ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), id)
     }
 
-    /// Key liveness (spec twin of the repr set's membership).
+    /// Key liveness (spec counterpart of the repr set's membership).
     pub open(crate) spec fn contains_key_spec(&self, key: <T as DenseId>::Index) -> bool {
         self.reprs.contains_spec(key)
     }
@@ -424,7 +433,7 @@ where
         &self.uses
     }
 
-    /// The class-ring walk of `start` (spec twin of `iter_class`'s output).
+    /// The class-ring walk of `start` (spec counterpart of `iter_class`'s output).
     pub open(crate) spec fn class_seq(&self, start: int) -> Seq<usize> {
         self.entries.class_seq(start)
     }
@@ -556,7 +565,7 @@ where
         self.uf.find_const(x)
     }
 
-    /// The repr key of node `idx`'s ring cell, `None` once its class was
+    /// The class key of node `idx`'s ring cell, `None` once its class was
     /// absorbed (production's `repr_id`). For a CANONICAL id (a root), `Some`
     /// is guaranteed by W2.
     pub fn repr_id(&self, idx: T) -> (r: Option<<T as DenseId>::Index>)
@@ -579,7 +588,7 @@ where
         p.to_option()
     }
 
-    /// Allocate `id` as its own singleton class, returning its repr key
+    /// Allocate `id` as its own singleton class, returning its class key
     /// (production's surface: the caller supplies the next dense id; the
     /// sequential contract refuses with production's message, which
     /// historically came from `UnionFind::make_set`).
@@ -608,7 +617,7 @@ where
     }
 
     /// Allocate the NEXT fresh node as its own singleton class; returns the
-    /// minted node id and its repr key. Total-with-documented-panic at the
+    /// minted node id and its class key. Total-with-documented-panic at the
     /// capacity ceilings (production allocates through `expect` at the same
     /// points).
     pub fn try_add_singleton(&mut self) -> (r: (T, <T as DenseId>::Index))
@@ -1486,7 +1495,7 @@ where
             assert(o.roots_view()[ab.id_nat() as int] == ab.id_nat() as usize);
             assert(s.id_nat() != ab.id_nat());
         }
-        // the absorbed root's payload is present (W2a) and names a live key
+        // the absorbed root's payload is present (W2a) and names a live class key
         // (W2b): production reads it with get_unchecked; here presence is a
         // theorem.
         let pay_ab = self.entries.payload_of(ab);
@@ -1511,7 +1520,7 @@ where
         // Survivor size fold, BEFORE the splice so the wf lemma sees the final
         // payload: survivor.size += absorbed.size, tied to the merged ring
         // length by W7. The survivor root's payload is present (W2a) and
-        // names a live key (W2b), the same theorem as for `ab` above.
+        // names a live class key (W2b), the same theorem as for `ab` above.
         let pay_s = self.entries.payload_of(s);
         proof {
             assert(pay_s == o.entries.payload_seq()[s.id_nat() as int]);
@@ -1570,7 +1579,7 @@ where
                     + crate::circular_list::rotate(o.entries.model_view()[ca], pa + 1))
                 .update(ca, Seq::<usize>::empty()));
             assert(self.reprs.id_set() =~= o.reprs.id_set().remove(key.as_nat()));
-            // set_live changed only skey's dense slot: distinct live keys sit
+            // set_live changed only skey's dense slot: distinct live class keys sit
             // at distinct dense positions, so every other survivor's value is
             // o's, and skey's is `sdata` (o's value with the size folded).
             assert forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
@@ -1684,7 +1693,7 @@ where
                         == ss_value(odense, osparse, kk).min_row by {
                 if kk != child_key.as_nat() {
                     // positions are injective on the live region, so a
-                    // different live key reads a different dense slot.
+                    // different live class key reads a different dense slot.
                     assert(osparse[kk as int].as_nat() != osparse[child_key.as_nat() as int].as_nat()) by {
                         if osparse[kk as int].as_nat() == osparse[child_key.as_nat() as int].as_nat() {
                             assert(oindices[osparse[kk as int].as_nat() as int].as_nat() == kk);
@@ -1874,7 +1883,7 @@ where
                     self.uses.model_snapshots_view()[k],
                     self.uses.nodes_snapshots_view()[k],
                     pool_k, o.min_width as nat));
-                // no archived live key can hold a row: the old-width W6
+                // no archived live class key can hold a row: the old-width W6
                 // bound reads (r+1)*old_w <= 0 with old_w > 0, or forces
                 // old_w > 0 when a row exists.
                 assert forall|id: nat| #[trigger] ss_contains(sp_k, ix_k, de_k.len(), id)
@@ -2852,7 +2861,7 @@ where
         }
     }
 
-    /// The full runtime-checkable restore precondition (spec twin of
+    /// The full runtime-checkable restore precondition (spec counterpart of
     /// `is_valid_token` plus the frame agreement).
     pub open(crate) spec fn is_restorable_full_spec(&self, token: EClassesToken) -> bool {
         &&& self.entries.is_restorable_spec(token.entries)

@@ -1,14 +1,20 @@
-# Final campaign, second run (final-r2)
+# Campaign r2 (archived)
 
-One measurement pass at one commit (the engine after the semi-naive
-class-growth fix, the coincidence twins, RHS multiplicity expressions, and the
-herbie native dual; methodology section 6 entries dated 2026-08-17). Protocol
-as in `final-tables.md`: process-level wall time, 2 warmups + 10 runs, medians,
-egglog release CLI with `-j 1 --mode no-messages`. Raw rows:
-`final-r2-results.csv`. This run supersedes `final-tables.md` where the two
-differ; the first run remains the pre-fix record and its budget-capped
-semi-naive rows must not be cited as complete derivations (methodology
-section 6).
+> Archived campaign. The current campaign is `final-r3-tables.md`.
+
+One campaign at one engine commit. Protocol as in `final-tables.md`:
+process-level wall time, 2 warmups + 10 runs, medians, egglog release CLI
+with `-j 1 --mode no-messages`. Raw rows: `final-r2-results.csv`.
+
+- **Pinned commit** c97fcc2 (branch egraph-wf: the engine after the
+  semi-naive class-growth fix, the multiplicity variants, RHS multiplicity
+  expressions, and the herbie native encoding; methodology section 6).
+- **Machine** the r1 machine (`final-tables.md`, pinning block).
+- **Binaries** built at the pinned commit and egglog 7b1adf2 at its pinned
+  1.91.0; md5s were not recorded for this campaign.
+- r1's budget-capped semi-naive counts are not complete derivations
+  (methodology section 6, class-growth entry) and are not comparable to the
+  counts here.
 
 What changed since the first run:
 
@@ -25,8 +31,8 @@ What changed since the first run:
   strategy silently skipped derivations. The follow-up (a per-round
   merged-class set consulted by the delta variants, instead of member nodes
   pushed into the touched log per merge) is recorded in the task list.
-- **The twin-carrying native files are byte-identical in counts** to the first
-  run: the coincidence twins and distributivity twins fire zero times on the
+- **The variant-carrying native files are byte-identical in counts** to the first
+  run: the multiplicity variants and distributivity multiplicity variants fire zero times on the
   shipped workloads.
 
 ## Headline: wall-time ratios egglog / ours (geometric means over benchmarks)

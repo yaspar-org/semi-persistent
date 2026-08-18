@@ -129,13 +129,13 @@ carrying such a constraint is now matched against the whole graph every round. W
 that, both of this benchmark's assertions failed under `--use-semi-naive` and passed
 under naive matching, which is how the defect was found.
 
-## Coincidence twin (2026-08-17)
+## Multiplicity variant
 
-Partition semantics (see `integer_math.deviations.md`, same date, for the full
-statement): the n-ary Lit fold's two elements cannot bind the same child, so
-`Times{Lit3 : 2}` went unfolded. Both native files (`matrix.native.egg`,
-`matrix.native-A.egg`) gain the twin
+Pattern elements bind distinct children, so the n-ary Lit fold's two
+elements cannot bind the same child and `Times{Lit3 : 2}` is unmatched by
+the base rule. Both native files (`matrix.native.egg`, `matrix.native-A.egg`)
+carry the variant
 `(rewrite (Times (Lit i):k>=2 ..rest) (Times (Lit (i64::pow i k)) ..rest))`.
-Re-validated: counts identical to the campaign (91/90 nodes, 25 classes) and to
-the native-A validation (62 nodes), so the twin fires zero times on this
-workload and the recorded numbers stand.
+Every count is identical to the campaign tables (91/90 nodes, 25 classes;
+native-A 62 nodes, 23 classes): the variant fires zero times on this
+workload.

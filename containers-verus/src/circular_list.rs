@@ -167,7 +167,7 @@ pub struct CircularListToken {
 }
 
 impl CircularListToken {
-    /// Reconstruction coordinate (spec twin).
+    /// Reconstruction coordinate (spec counterpart).
     pub open(crate) spec fn frame_idx_spec(self) -> nat {
         self.entries.frame_idx as nat
     }
@@ -221,28 +221,28 @@ where T: Sized + Copy + core::default::Default {
         self.entries.view().len()
     }
 
-    /// Entries frame-stack depth (spec twin; fields are `pub(crate)` —
+    /// Entries frame-stack depth (spec counterpart; fields are `pub(crate)` —
     /// privacy closeout).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.entries.depth_spec()
     }
 
-    /// Entries lifetime restore count (spec twin).
+    /// Entries lifetime restore count (spec counterpart).
     pub open(crate) spec fn fork_count_spec(&self) -> nat {
         self.entries.fork_count_spec()
     }
 
-    /// Entries snapshot stack (spec twin).
+    /// Entries snapshot stack (spec counterpart).
     pub open(crate) spec fn entries_snapshots_view(&self) -> Seq<Seq<CircularListNode<T, N>>> {
         self.entries.snapshots_view()
     }
 
-    /// Ring-partition snapshot stack (spec twin, Phase 7 archive).
+    /// Ring-partition snapshot stack (spec counterpart, Phase 7 archive).
     pub open(crate) spec fn model_snapshots_view(&self) -> Seq<Seq<Seq<usize>>> {
         self.model_snapshots@
     }
 
-    /// The entries sequence (spec twin; node payload+next pairs).
+    /// The entries sequence (spec counterpart; node payload+next pairs).
     pub open(crate) spec fn entries_view(&self) -> Seq<CircularListNode<T, N>> {
         self.entries.view()
     }
@@ -623,7 +623,7 @@ where T: Sized + Copy + core::default::Default {
     /// The node-index sequence a ring walk starting at `start` visits, in
     /// order: the ring of `start` rotated so `start` is first. `class_seq[0] ==
     /// start`, its length is the ring size, and it is a permutation of the
-    /// ring's node set — the verified twin of production's `ClassIter` output.
+    /// ring's node set — the verified counterpart of production's `ClassIter` output.
     pub open(crate) spec fn class_seq(&self, start: int) -> Seq<usize> {
         rotate(self.model@[self.locate(start).0], self.locate(start).1)
     }
@@ -640,7 +640,7 @@ where T: Sized + Copy + core::default::Default {
             &&& it.pos_spec() == 0
             &&& !it.done_spec()
             &&& it.cursor_ok()
-            // The walk enumerates exactly `class_seq(start)` (public twin).
+            // The walk enumerates exactly `class_seq(start)` (public counterpart).
             &&& it.walk_seq() == self.class_seq(start.id_nat() as int)
         }),
     {
@@ -1853,7 +1853,7 @@ pub(crate) proof fn lemma_locate_pinned<T, N: DenseId, const TRACK: bool>(
 
 impl<'a, T, N: DenseId, const TRACK: bool> RingIter<'a, T, N, TRACK>
 where T: Sized + Copy + core::default::Default {
-    /// The list this iterator walks (spec twin; fields are `pub(crate)`).
+    /// The list this iterator walks (spec counterpart; fields are `pub(crate)`).
     pub open(crate) spec fn list_ref(&self) -> &'a CircularList<T, N, TRACK> {
         self.list
     }
@@ -1861,9 +1861,9 @@ where T: Sized + Copy + core::default::Default {
     pub open(crate) spec fn start_spec(&self) -> nat { self.start.id_nat() }
     pub open(crate) spec fn pos_spec(&self) -> nat { self.pos@ }
     pub open(crate) spec fn done_spec(&self) -> bool { self.done }
-    /// Ghost located-ring index (spec twin; field is `pub(crate)`).
+    /// Ghost located-ring index (spec counterpart; field is `pub(crate)`).
     pub open(crate) spec fn c_spec(&self) -> int { self.c@ }
-    /// Ghost start-position-within-ring (spec twin).
+    /// Ghost start-position-within-ring (spec counterpart).
     pub open(crate) spec fn p0_spec(&self) -> int { self.p0@ }
 
     /// The located ring (`model[c]`).

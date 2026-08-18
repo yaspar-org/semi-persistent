@@ -584,7 +584,7 @@ where
         crate::saturate::saturate_spec(rules, self, model, spec, globals)
     }
 
-    /// Semi-naive twin of [`saturate_spec`](Self::saturate_spec).
+    /// Semi-naive counterpart of [`saturate_spec`](Self::saturate_spec).
     pub fn saturate_semi_spec<
         M: crate::lit_model::LitModel<Value = L>,
         S: crate::DenseId + Copy,
@@ -612,7 +612,7 @@ where
         crate::saturate::saturate_spec_in(rules, self, model, spec, globals, scratch)
     }
 
-    /// Semi-naive twin of [`saturate_spec_in`](Self::saturate_spec_in).
+    /// Semi-naive counterpart of [`saturate_spec_in`](Self::saturate_spec_in).
     pub fn saturate_semi_spec_in<
         M: crate::lit_model::LitModel<Value = L>,
         S: crate::DenseId + Copy,
@@ -754,7 +754,7 @@ where
             self.flatten_ac_children(op);
         }
 
-        // The A-only (`Seq`) twin of the same law. `ac-algebraic-properties.md` gives every
+        // The A-only (`Seq`) counterpart of the same law. `ac-algebraic-properties.md` gives every
         // associative operator the flattened-sequence normal form (the `:assoc-left` /
         // `-right` / `:assoc` row of the tag-derivation table); only the merge step differs
         // — a multiset union for AC, an order-preserving splice here, since associativity
@@ -874,7 +874,7 @@ where
                 // Degenerate arity ⇒ an existing class (idempotent has no nilpotent clamp, so a
                 // Set monomial only reaches {} via identity-drop, and size-1 via dedup/drop).
                 // Empty without a declared unit is an API-contract violation — panic (see the
-                // MSet twin above).
+                // MSet counterpart above).
                 match self.g_buf.len() {
                     0 => match unit {
                         Some(u) => return u,
@@ -888,14 +888,14 @@ where
                 }
             }
             OpKind::A { .. } => {
-                // Degenerate arity ⇒ an existing class, the A-only twin of the MSet/Set
+                // Degenerate arity ⇒ an existing class, the A-only counterpart of the MSet/Set
                 // degeneracy above: a one-element sequence IS its element (`seq(x) = x`),
                 // so return that child's class instead of minting a node for it. There is
                 // no empty case to resolve — an A-only op cannot declare `:identity` (the
                 // property resolver rejects `:identity` without `:comm`, `sortcheck.rs`),
                 // so the empty sequence names nothing in the algebra. Sortcheck already
                 // rejects a zero-argument A application; reaching here is an API-contract
-                // violation, and panics in ALL builds like the MSet/Set twins.
+                // violation, and panics in ALL builds like the MSet/Set counterparts.
                 match self.g_buf.len() {
                     0 => panic!(
                         "zero-child A term — an A-only operator has no identity, so the \
@@ -3088,7 +3088,7 @@ where
         let mut work = std::mem::take(&mut self.flatten_buf);
         let mut out = std::mem::take(&mut self.g_buf);
         // Seed the worklist reversed, so popping yields the children in sequence order — for
-        // A this is load-bearing, not cosmetic as in the AC twin.
+        // A this is load-bearing, not cosmetic as in the AC counterpart.
         work.clear();
         work.extend(out.iter().rev().copied());
         out.clear();

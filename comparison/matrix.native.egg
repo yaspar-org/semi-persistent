@@ -10,7 +10,7 @@
 ;; declaration above gives Times multiset semantics.
 ;; Constant fold, n-ary: fold two literal factors wherever they sit.
 (rewrite (Times (Lit i) (Lit j) ..rest) (Times (Lit (i64::* i j)) ..rest))
-;; Coincidence twin: an element consumes its child's whole multiplicity and two
+;; Multiplicity variant: an element consumes its child's whole multiplicity and two
 ;; elements bind distinct children (partition semantics), so the same Lit
 ;; dimension at multiplicity k >= 2 needs its own rule.
 (rewrite (Times (Lit i):k>=2 ..rest) (Times (Lit (i64::pow i k)) ..rest))

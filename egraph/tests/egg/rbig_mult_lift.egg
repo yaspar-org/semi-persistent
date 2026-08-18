@@ -2,7 +2,7 @@
 ;; A bound multiplicity lifted into exact rational arithmetic: k copies of a
 ;; rational summand fold to k*a (RBig::scale), k factors to a^k (RBig::pow),
 ;; and a repeated non-literal summand counts as (Num (RBig::from_int k)) times
-;; the child. Multiplicity 3 pins what the fixed :2 twins missed.
+;; the child. Multiplicity 3 pins what fixed :2 variants miss.
 (datatype M
     (Add M :assoc-comm)
     (Mul M :assoc-comm)

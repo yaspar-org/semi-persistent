@@ -5,15 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 # Parity audit 2: interface, safe use, behavior, algorithms, performance, features
 
 Second full audit of every drop-in replacement against its production
-twin, run after the first matrix (`13-parity-matrix.md`) and the fixes it
+counterpart, run after the first matrix (`13-parity-matrix.md`) and the fixes it
 produced (per-family capacity guards, search dispatch through `S`,
 branch-free `Branchless`). Five independent auditors, one per dimension;
 the algorithmic auditor's brief was adversarial: re-derive the first
 audit's EQUAL verdicts from source and try to refute them. Production
 class-layer baselines: `git show 'd14fd17^:egraph/src/classes.rs'`,
 `git show 'b1f1683^:egraph/src/union_find.rs'`; the retired hand-rolled
-ring is at `585d240^` (the first matrix cited `d14fd17^` for it, which
-is already a CircularList consumer — corrected here).
+ring is at `585d240^`.
 
 ## 1. Interface and feature surface
 
@@ -64,7 +63,7 @@ derive impls.
    `literal-types` (verus-only key wrappers), `compat-*` (test-only).
    Deterministic-by-default hashing is the one default that changes
    observable cross-process behavior.
-8. **Verus-only surface with no production twin:** `CircularList`
+8. **Verus-only surface with no production counterpart:** `CircularList`
    family, `SortedVecCursor`, `CaptureBits`, `ContainerError`,
    `guard`, `hasher_spec`, `DenseUsize`/`DenseId31`/`DenseId63`,
    `NoJust`, `contains` on the B+ tree (production has no membership
@@ -129,10 +128,10 @@ two-pass full compression, union tie-breaking (else-of-`<` is exactly
 
 ## 3. Behavioral parity
 
-Reader's summary: conventions first — twin panics carry the
+Reader's summary: conventions first — counterpart panics carry the
 `containers-verus: ` guard prefix, production `try_*` (where it exists)
-is an always-Ok shim around a panicking core while twin `try_*` returns
-typed `ContainerError` without mutating, and the twin's panicking cores
+is an always-Ok shim around a panicking core while counterpart `try_*` returns
+typed `ContainerError` without mutating, and the counterpart's panicking cores
 are pub(crate) where production's are pub. Beyond those, the reader
 confirmed every previously recorded divergence and found the following.
 
@@ -142,19 +141,19 @@ confirmed every previously recorded divergence and found the following.
    fast path answers from the current leaf whenever
    `target <= leaf's last key`, so a backward target below the leaf's
    first key returns the leaf's first key instead of the true global
-   position (containers/src/bplus.rs:855-857). The twin always
+   position (containers/src/bplus.rs:855-857). The counterpart always
    descends from the root and is correct; `seek_first` on a reused
    cursor hits the same clamp. Concrete case (Layout64U32,
    from_sorted 0..28): `seek(20); seek(3)` answers key 14 in
-   production, key 3 in the twin. No existing test constructs a
+   production, key 3 in the counterpart. No existing test constructs a
    backward seek on a positioned cursor. PRODUCTION BUG; the correct
    fast-path condition needs the leaf's first key as a lower bound.
 2. **Rank 255 boundary: wrap vs skip.** Production's rank bump is
    unsaturated u8 arithmetic: at rank 255 a tie-bump panics in debug
    and WRAPS THE SURVIVOR'S RANK TO 0 in release, after which
    survivor selection diverges observably (returned survivor pair,
-   MergeInfo, all subsequent finds). The twin skips the bump. Rank
-   255 is reachable through 255 chained directed unions. The twin's
+   MergeInfo, all subsequent finds). The counterpart skips the bump. Rank
+   255 is reachable through 255 chained directed unions. The counterpart's
    behavior is the defensible one; recorded in doc 12/13 as accepted,
    now with the reachability argument.
 3. **Capacity-guard verdict at HEAD: parity holds.** The per-family
@@ -166,16 +165,16 @@ confirmed every previously recorded divergence and found the following.
    every shared family.
 4. **Ceiling over-admission inverted (Vec/SparseSet).** At an index
    word's ceiling, production admits the element and poisons the
-   container (every later len() panics "len overflow"); the twin
+   container (every later len() panics "len overflow"); the counterpart
    refuses up front and stays usable. SparseSet at u8/255: production
-   add succeeds then every read panics; twin Err(CapacityExhausted).
+   add succeeds then every read panics; counterpart Err(CapacityExhausted).
 5. **Restore validation collapsed and reordered.** Production
    distinguishes four restore-failure causes by message and checks
-   genealogy before frame bound; the twin checks frame bound first
+   genealogy before frame bound; the counterpart checks frame bound first
    and try_restore collapses everything to Err(InvalidToken).
    DepthLimit/ForkLimit are never produced by restore; ForkLimit is
-   produced by no twin code path at all.
-6. **Construction-time env dependence (twin-only).** SpMap::new reads
+   produced by no counterpart code path at all.
+6. **Construction-time env dependence (counterpart-only).** SpMap::new reads
    SP_HASHER_SEED once per process, panics on a malformed value, and
    seals the seed; production reads no env. The seed stays
    unobservable through the API on both sides (index is lookup-only,
@@ -183,24 +182,24 @@ confirmed every previously recorded divergence and found the following.
 7. **Message drift table** (same condition, different text): sparse
    set "id not present" vs "is not live"; AOV genealogy and untracked
    texts; per-method attribution on all std-index panics; interpolated
-   production texts (set_min_width) vs the twin's static refuse
+   production texts (set_min_width) vs the counterpart's static refuse
    strings; make_set/PROOFS texts identical modulo the guard prefix.
    The drifts that were pure regressions are FIXED in the parity batch
    (sparse-set texts, both AOV texts, SpMap Debug shape, IdRangeError
    Display); the guard prefix and static-string constraints remain and
    are documented conventions.
-8. **Inherent-vs-trait shadowing (twin).** SortedVecCursor's inherent
+8. **Inherent-vs-trait shadowing (counterpart).** SortedVecCursor's inherent
    `key` returns bare K and panics on exhaustion; the SortedCursor
    trait impl returns Option. Callers on the concrete type get the
    panicking form where the trait contract says None.
 9. **Debug output**: token field renames/order (frame_idx first,
    parent vs parent_fast, min_pool -> pool after uses), ContainerId
-   tuple form, twin AOV/SpMap Debug restored to production's counter
+   tuple form, counterpart AOV/SpMap Debug restored to production's counter
    shape in the parity batch.
 10. **Determinism confirmed everywhere**: all iteration surfaces are
     index/pointer ordered on both sides; the only survivor-selection
     boundary is rank 255 (finding 2); the hash-seed difference leaks
-    only through the twin's construction-time parse panic.
+    only through the counterpart's construction-time parse panic.
 
 ## 4. Safe use and soundness
 
@@ -245,7 +244,7 @@ and debug monitors.
    (try_new mints, range-checked scans, documented capacity
    arguments). The masking semantics stay a hazard only for FUTURE
    unguarded call sites; production's panicking form fails closed.
-5. **Production release-mode holes the twin closed, confirmed from
+5. **Production release-mode holes the counterpart closed, confirmed from
    source:** unsorted from_sorted builds a silently wrong tree;
    diff_store restore_entry appends at the wrong index on a violated
    debug_assert (silently corrupted rollback); SparseSet composite
@@ -254,13 +253,13 @@ and debug monitors.
    cross-row pool reads and writes; the Director word-truncation
    family (since hardened in egraph). Production's u32 ContainerId
    also wraps silently at 2^32 constructions, after which foreign
-   tokens alias; the twin is u64 + debug assert + optional release
+   tokens alias; the counterpart is u64 + debug assert + optional release
    trap.
 6. **Token defense is closed.** All token fields pub(crate) both
-   crates, no public constructors; every twin restore path
+   crates, no public constructors; every counterpart restore path
    revalidates container id, frame liveness, genealogy, and (for
    aggregates) all-component frame agreement before mutating;
-   BPlusToken's header copies are inert. The twin's SparseSet is the
+   BPlusToken's header copies are inert. The counterpart's SparseSet is the
    one aggregate without a cross-component same-mark check, defended
    by per-component genealogy plus external unconstructibility.
 7. **Miri.** Viable on this crate and adopted as a probe: the misuse
@@ -306,7 +305,7 @@ Two passes, quiet windows, ratios reproducing within about one point.
 2. **bplus/from_sorted_then_scan +86% (ledger +74%).** The ~13-point
    worsening is attributed to the NodeLayout release guards: the
    bulk build pays a guard per leaf_push and the scan a guard per
-   cursor key read. Mitigation identified: pub(crate) unguarded twins
+   cursor key read. Mitigation identified: pub(crate) unguarded counterparts
    for VERIFIED internal callers (the cursor and loader prove the
    requires), guards stay on the public boundary.
 3. **bplus/insert_shuffled +12.5%** (known, ledgered at +13.7%,
@@ -335,14 +334,14 @@ B+ tree TRACK=true mark/restore; SpMap miss-heavy lookup; tracked
 ListArena; SortedVecCursor prod-vs-verus A/B; use-list-heavy EClasses
 group; Vec iteration pair (relevant to the size_hint restoration); and
 NO allocation-parity harness for any container pair - the parity
-matrix's claim that the twin's splits are allocation-free against
+matrix's claim that the counterpart's splits are allocation-free against
 production's per-split to_vec is directly checkable with a counting
 allocator and currently is not checked.
 
 ### Bench-validity findings
 
 The criterion arm-order confound (~+18% second-arm penalty) applies to
-every pair without an interleaved twin; cursor_seek's
+every pair without an interleaved counterpart; cursor_seek's
 fresh-cursor-per-probe shape suppresses production's locality fast
 path entirely; from_sorted_then_scan conflates the deliberate
 all-builds sortedness check with build-shape differences; every verus

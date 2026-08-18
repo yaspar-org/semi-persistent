@@ -302,7 +302,7 @@ impl<O: DenseId + core::hash::Hash, V: DenseId + core::hash::Hash, A: AuIds> Ter
     pub fn children(&self, id: A::Term) -> &[A::Term] {
         let span = *self.child_spans.get(id.to_index());
         let (start, len) = (span.start_usize(), span.len_usize());
-        // Verified `as_slice()` instead of `from_raw_parts` — see the twin in
+        // Verified `as_slice()` instead of `from_raw_parts` — see the counterpart in
         // `space.rs::ContextStore::get`. The children of a term are pushed
         // consecutively when it is interned, so the span is in bounds.
         &self.child_pool.as_slice()[start..start + len]

@@ -56,8 +56,8 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// is on the *new* length, not on the returned index, so that every later
     /// `len()` is infallible by construction; checking only the index would admit a
     /// final push whose successor length traps on the next read.
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_push(&mut self, value: T) -> Result<I, &'static str> {
@@ -109,8 +109,8 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         self.data.iter()
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_mark(&mut self, policy: super::ShrinkPolicy) -> Result<VecToken, &'static str> {
@@ -140,8 +140,8 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         token
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_restore(&mut self, token: VecToken) -> Result<(), &'static str> {

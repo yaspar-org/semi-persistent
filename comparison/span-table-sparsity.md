@@ -576,8 +576,8 @@ scheduling and sampled selectivity comparisons. `cargo clippy --workspace
 
 `DenseSpanMap::occupied_keys` exports the list §11.1 wanted, so `index.rs`'s
 `for_each_occupied` iterates it instead of scanning `0..len()`. Every caller of
-that helper — the fan-out pass, the `phase_timing` occupancy count and the
-debug-build sortedness check — visits the occupied keys and nothing else.
+that helper: the fan-out pass, the `phase_timing` occupancy count and the
+debug-build sortedness check: visits the occupied keys and nothing else.
 
 **0.37 ms per round, not the 7.7 the scan was worth.** Minimum of three runs at
 S = 1e6 on the E6 cycle, `EGRAPH_PHASE=1`, before is 19b4b8c:
@@ -591,7 +591,7 @@ S = 1e6 on the E6 cycle, `EGRAPH_PHASE=1`, before is 19b4b8c:
 The scan was cheap per key and the pass is not proportional to keys. Per round
 `by_child_pos` has 1 925 698 keys and 688 935 occupied ones, and `by_repr` about
 1.0 M keys against 801 932 classes, so the change removes roughly 1.44 M key
-visits — each of them a sequential 24-byte span read and a stamp compare, which
+visits: each of them a sequential 24-byte span read and a stamp compare, which
 prices out at about 0.26 ns. What stays is what the pass is made of: 787 960
 bucket entries per round, each a random load into the `op` table, and one hash
 map update per occupied bucket per operator. `by_contains` contributed nothing
@@ -604,7 +604,7 @@ is still a reduction, measured; it is smaller than the key counts alone predict,
 and that scatter is a candidate reason.
 
 **The fan-out pass is still the largest single term in the index build**, 7.30 ms
-of 31.61. Removing more of it means not reading the `op` table per bucket entry —
+of 31.61. Removing more of it means not reading the `op` table per bucket entry , 
 a different change, on the pass rather than on the iteration.
 
 `egraph/tests/index_fanouts_occupancy.rs` fences the statistics: it recomputes

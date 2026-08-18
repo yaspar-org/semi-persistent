@@ -11,7 +11,7 @@ site violates a precondition today; this plan makes that a property of the
 type system rather than of an audit.
 
 The mechanism throughout: a partial verified core (`pub(crate)`), and a total
-public shell. Each shell function evaluates a verified exec twin of the
+public shell. Each shell function evaluates a verified exec counterpart of the
 core's precondition and branches; Verus proves the branch discharges the
 core's `requires`, so the check and the contract cannot drift — the exact
 failure mode that produced the `exec_tnum` divergence. Wrappers return
@@ -36,17 +36,17 @@ Phases 1–4 drain the allowlist to empty; the gates then hold unconditionally.
 `bplus_layout` primitives and the `NodeLayout` accessors over them to
 `pub(crate)` (contract proptests move in-crate — the only UB-capable external
 surface); `SortedVec.data` private behind sorted/sorting constructors;
-`DenseId31/63::new` guarded like their `define_id*!` twins; inherent
+`DenseId31/63::new` guarded like their `define_id*!` counterparts; inherent
 `SortedVecCursor::step` renamed `step_unchecked` and `pub(crate)` (inherent
 resolution silently bypassed the guarded trait impl); production
-`ListArena::splice` gains the `dst != src` assert its verified twin has;
+`ListArena::splice` gains the `dst != src` assert its verified counterpart has;
 production `from_sorted` gains the sortedness `debug_assert` that
 `containers-verus/src/bplus.rs`'s doc comment falsely claims exists.
 
 **2. Pilot on `Vec`** — the hot-path stress case, so the open perf question
 resolves first. `ContainerError` (`non_exhaustive`: `CapacityExhausted`,
 `DepthLimit`, `ForkLimit`, `InvalidToken`, `NotSorted`, `SameRing`,
-`IndexOutOfBounds`); exec precondition twins (`can_mark`, `can_push`) with
+`IndexOutOfBounds`); exec precondition counterparts (`can_mark`, `can_push`) with
 `ensures b == spec`; `try_` wrappers proved total; and the reservation
 witness for hot loops — `reserve(n) -> Result<PushBudget>` checked once,
 `push_within(x, &mut budget)` total and branch-free, the bound ghost-carried
@@ -100,7 +100,7 @@ property; the gates only catch accidental re-`pub`s.
 
 **5. Consumer migration and parity re-scope.** E-graph call sites move to
 `?`/`unwrap`/witness forms, with the audit's per-site justifications becoming
-comments at the `unwrap`s. Production grows `try_` twins where the
+comments at the `unwrap`s. Production grows `try_` counterparts where the
 differential suite needs them, and the parity claim re-scopes to a pinned
 correspondence: verus `Err(X)` exactly where production panics, asserted by
 the misuse suite. Trust ledger and design docs move in the same commits.
@@ -109,7 +109,7 @@ the misuse suite. Trust ledger and design docs move in the same commits.
 
 The allowlist stands at 35, every entry in a named floor class with its
 argument recorded in the list header: uninterp type-class obligations (no
-exec twin is expressible), unreachable receivers (store constructors are
+exec counterpart is expressible), unreachable receivers (store constructors are
 pub(crate) — compiler-enforced), hot sorted-input contracts (an O(n) check
 would sit on the join/search hot path; debug builds assert), the
 witness-pending trio (ring-id witness, snapshot-wf archival), and the
@@ -131,7 +131,7 @@ witness-pending trio. Per floor:
   nothing to change.
 - **Uninterp type-class obligations (`map.rs::new`'s key-model law,
   `tagged.rs` laws, `guard::check_precondition`,
-  `capture_bits::set_true`): no exec twin is expressible.** These are
+  `capture_bits::set_true`): no exec counterpart is expressible.** These are
   trait-law trust items of the same kind as `Ord` for a sorted map:
   the requires binds the TYPE's laws, not a runtime condition a
   wrapper could test. `check_precondition` is itself the

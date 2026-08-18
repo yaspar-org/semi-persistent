@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Verified union-find over two semi-persistent columns (stage 1 of
-//! `doc/future/egraph-wf.md`: W1 as a machine-checked invariant).
+//! `eclasses.rs` module header: W1 as a machine-checked invariant).
 //!
 //! `parent` and `rank` are verified `Vec`s over `InlineStore`, production's
 //! `VecI` columns (`egraph/src/union_find.rs`). The abstract state is a ghost

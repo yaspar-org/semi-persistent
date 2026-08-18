@@ -216,8 +216,8 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
     }
 
     /// Create a new empty list.
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_new_list(&mut self) -> Result<L, &'static str> {
@@ -231,8 +231,8 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
     }
 
     /// Prepend a payload to the front of the list.
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_prepend(&mut self, l: L, payload: T) -> Result<(), &'static str> {
@@ -254,8 +254,8 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
     }
 
     /// Append a payload to the back of the list.
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_append(&mut self, l: L, payload: T) -> Result<(), &'static str> {
@@ -284,7 +284,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
     /// `src` is cleared to empty — the handle remains valid but reads as empty.
     pub fn splice(&mut self, dst: L, src: L) {
         // Same-list splice would link the tail to its own head (a cycle iter()
-        // never exits) and then overwrite the header; the verified twin traps
+        // never exits) and then overwrite the header; the verified counterpart traps
         // this and the misuse suite pins the panic. Keep the crates aligned.
         assert!(
             dst != src,
@@ -337,8 +337,8 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         }
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_mark(&mut self, policy: ShrinkPolicy) -> Result<ListArenaToken, &'static str> {
@@ -352,8 +352,8 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         }
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_restore(&mut self, token: ListArenaToken) -> Result<(), &'static str> {

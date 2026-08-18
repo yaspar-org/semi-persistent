@@ -1,7 +1,7 @@
 # Public exec fns with a `requires` clause: the total-API plan's
 # drain list (doc/future/total-api-plan.md). May only shrink.
 #
-# PERMANENT floor (no exec twin possible):
+# PERMANENT floor (no exec counterpart possible):
 #   - uninterp type-class obligations: map.rs::new (obeys_key_model);
 #     tagged.rs trait laws.
 #   - guard.rs::check_precondition: it IS the verified-caller guard.
@@ -20,9 +20,15 @@
 # unconditional. Zero runtime cost; verified callers discharge the
 # hypothesis and keep the full contract.
 #
-# WITNESS-PENDING (drains when the ring-id witness / snapshot-wf archival
-# land - plan doc phase-3 deferrals):
-#   circular_list.rs::{splice, splice_absorb}, sparse_set.rs::restore.
+# COMPONENT-BOUNDARY floor: circular_list.rs::{splice, splice_absorb} and
+# sparse_set.rs::restore keep `requires` clauses on their public component
+# surface (distinct rings; snapshot well-formedness). Inside the EClasses
+# aggregate both obligations are theorems: merge_with discharges the
+# distinct-rings precondition from W2 + W3, and the aggregate's archive
+# discharges restore's snapshot well-formedness (eclasses.rs). The entries
+# stay listed because a direct external caller of the component APIs still
+# carries the obligation; they drain if those functions gain requires-free
+# conditional contracts or crate-private visibility.
 #
 # RECHECKED floor: bplus_layout.rs's NodeLayout methods keep their requires
 # (verified callers consume the obligations) but every impl body now opens

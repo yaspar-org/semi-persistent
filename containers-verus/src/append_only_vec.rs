@@ -50,7 +50,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         self.snapshots@
     }
 
-    /// Frame-stack depth (spec twin of `depth()`; fields are `pub(crate)` —
+    /// Frame-stack depth (spec counterpart of `depth()`; fields are `pub(crate)` —
     /// privacy closeout — so public contracts phrase frame counts through this).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.frames@.len()
@@ -313,7 +313,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     // Total shell (total-API plan phase 3): same pattern as Vec's pilot.
     // ------------------------------------------------------------------
 
-    /// Exec twin of `push`'s capacity precondition.
+    /// Exec counterpart of `push`'s capacity precondition.
     pub fn can_push(&self) -> (b: bool)
         requires self.wf(),
         ensures b == (self.view().len() + 1 < I::max_nat()),

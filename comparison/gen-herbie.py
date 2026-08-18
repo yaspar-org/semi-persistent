@@ -22,11 +22,12 @@ herbie.deviations.md cites. See that ledger for the counted consequence.
 """
 
 import re
+import os
 import sys
 from collections import Counter
 from pathlib import Path
 
-SRC = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/egglog/tests/web-demo/herbie.egg")
+SRC = Path(sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/tools/egglog/tests/web-demo/herbie.egg"))
 OUT = Path(__file__).resolve().parent
 
 

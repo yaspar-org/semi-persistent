@@ -117,7 +117,7 @@ follow, and both run in `EGraph::add`:
    parent's sequence, at the child's position, to a fixpoint
    (`flatten_seq_children`). `op(op(a,b),c)`, `op(a,op(b,c))` and `op(a,b,c)`
    are one node. Order is preserved: associativity licenses re-association, not
-   reordering, which is the only difference from the AC twin
+   reordering, which is the only difference from the AC counterpart
    (`flatten_ac_children`), where the multiset union sorts.
 2. **Collapse the singleton.** A one-element sequence is its element, so `add`
    returns that child's class instead of minting a node — the same degenerate-arity
@@ -168,7 +168,7 @@ case to answer. Re-flattening is not possible there in any event —
 `recanonize_node` rewrites children into the node's existing span, which can
 shrink but not grow.
 
-The build-only placement matches the AC twin, where it is a lemma
+The build-only placement matches the AC counterpart, where it is a lemma
 (`ac-congruence-completeness.md` §6c: recanon-flatten is vacuous, because a
 stored child is atomic from creation onward). For A-only the placement leaves a
 gap the AC side closes by completion: if a class stored as a `Seq` child later

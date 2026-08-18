@@ -77,8 +77,8 @@ impl<T: Clone, Idx: IndexLike + Tagged, S: DiffStore<T, Idx, TRACK>, const TRACK
         self.dense.is_empty()
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_add(&mut self, value: T) -> Result<Idx, &'static str> {
@@ -161,8 +161,8 @@ impl<T: Clone, Idx: IndexLike + Tagged, S: DiffStore<T, Idx, TRACK>, const TRACK
         &self.dense
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_mark(&mut self, policy: ShrinkPolicy) -> Result<SparseSetToken, &'static str> {
@@ -177,8 +177,8 @@ impl<T: Clone, Idx: IndexLike + Tagged, S: DiffStore<T, Idx, TRACK>, const TRACK
         }
     }
 
-    /// Total-API twin (parity with the verified crate's shell): production's
-    /// core panics on misuse, so the twin always returns Ok and the panic
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
     /// stays the documented behavior. Exists so shared prod/verus harness
     /// bodies can use one calling convention.
     pub fn try_restore(&mut self, token: SparseSetToken) -> Result<(), &'static str>

@@ -5,7 +5,7 @@
 ;; is restated against flattened multisets: root patterns are lifted n-ary
 ;; with a rest variable, nested same-operator patterns are reshaped or, when
 ;; flattening makes both sides the same multiset, deleted as tautologies.
-;; Coincidence twins (:2 / :k>=2) cover repeated children where expressible;
+;; Multiplicity variants (:2 / :k>=2) cover repeated children where expressible;
 ;; the per-rule record is in herbie.deviations.md. Derived by hand from
 ;; herbie.rules.egg (gen-herbie.py output); not itself generated.
 ;; Renamings as in the rules configuration.
@@ -49,8 +49,8 @@
 
 ;; First, constant folding!
 
-; Cases (n-ary lifts; the :2 twins fold a repeated numeral; k >= 3 has no
-; expressible twin because the multiplicity is an i64 and RBig arithmetic
+; Cases (n-ary lifts; the :2 multiplicity variants fold a repeated numeral; k >= 3 has no
+; expressible multiplicity variant because the multiplicity is an i64 and RBig arithmetic
 ; cannot consume it -- see the ledger's residual note)
 (rewrite (Add (Num a) (Num b) ..rest) (Add (Num (RBig::+ a b)) ..rest))
 (rewrite (Add (Num a):k>=2 ..rest) (Add (Num (RBig::scale a k)) ..rest))

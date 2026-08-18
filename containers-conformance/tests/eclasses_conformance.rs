@@ -5,7 +5,7 @@
 //! operation traces (allocation, directed and by-rank merges, use-lists,
 //! find, mark/restore).
 //!
-//! There is no production-crate `EClasses` twin (the hand-rolled aggregate
+//! There is no production-crate `EClasses` counterpart (the hand-rolled aggregate
 //! lived in the e-graph and is replaced by the verified kernel), so the
 //! oracle here is a transparent model: a naive union-find over `Vec<usize>`,
 //! class membership as sorted vectors, use-lists as `Vec<Vec<usize>>`, and
@@ -294,7 +294,7 @@ fn differential_long_trace() {
 }
 
 // ---------------------------------------------------------------------------
-// 63-bit twin: the same relation checks over the wide id family
+// 63-bit counterpart: the same relation checks over the wide id family
 // ---------------------------------------------------------------------------
 
 fn ce64(n: usize) -> CE64 {

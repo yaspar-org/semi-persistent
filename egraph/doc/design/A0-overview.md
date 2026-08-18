@@ -107,15 +107,20 @@ own it does *not* provide full AC congruence closure: recanonicalizing
 an AC node substitutes equal *atoms*, never equal *sub-sums*, so given
 `+(a,b) = c` and `+(b,d) = e`, the entailed equality `+(c,d) = +(a,e)`
 (via the shared `b`) is not discovered by canonization alone. The
-missing steps — Kapur-style superposition and rule inter-reduction
+missing steps, Kapur-style superposition and rule inter-reduction
 (FSCD 2021 / LMCS 2023, including the semantic-property facets:
-identity, idempotent, nilpotent, cancelative, inverse-pair) — are
-implemented in the completion pass that `rebuild` runs when opted in
-(`EGraph::set_cc(true)` / `--derive-ac-eqs`). Completion stays **off by
-default** for divergence *scoping* (rare pathological inputs have a
-genuinely large canonical basis), not because the algorithm is absent. See
-[AC Congruence Completeness](ac-congruence-completeness.md) for the full
-problem/fix analysis and [Future Work](A3-future-work.md) for status.
+identity, idempotent, nilpotent, cancelative, inverse-pair), are
+implemented in the completion pass, which runs in one of three modes:
+**plain** (the default: canonization and congruence only, because rare
+pathological inputs have a genuinely large canonical basis), **eager**
+(`--derive-ac-eqs`: every rebuild completes to fixpoint), and **lazy**
+(`--lazy-ac-eqs`: a failing equality check runs goal-directed
+completion inside a semi-persistent transaction and the restore
+discards everything it minted). `--union-by` selects the merge
+survivor policy on the verified per-class counters. See
+[AC Congruence Completeness](ac-congruence-completeness.md) §13 for
+the modes and [Future Work](A3-future-work.md) for the verification
+plan.
 
 ### Relational pattern matching via leapfrog triejoin
 

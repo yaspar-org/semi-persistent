@@ -327,7 +327,7 @@ fn branchless_differential_prod_vs_verus() {
 /// Backward seeks on a positioned cursor: production's current-leaf fast
 /// path answered from the current leaf whenever `target <= leaf last key`,
 /// so a target below the leaf's FIRST key returned the leaf's first
-/// position instead of the true global position (the twin always descends
+/// position instead of the true global position (the counterpart always descends
 /// and is absolute). Pins the corrected lower bound: both sides now agree
 /// on random forward/backward seek sequences, checked against the sorted
 /// key set directly.

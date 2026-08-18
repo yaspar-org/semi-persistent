@@ -111,7 +111,7 @@ impl<T: Tagged> Opt<T> {
     }
 
     /// The embedded value even when the option bit says `None` — the verified
-    /// twin of the e-graph's `EClassEntry::repr_id_unchecked`. A class that has
+    /// counterpart of the e-graph's `EClassEntry::repr_id_unchecked`. A class that has
     /// been absorbed keeps its (now-absent) repr key in place; the merge path
     /// reads it back to look up the absorbed class's data before the key is
     /// removed from the sparse set. `Tagged::from_repr` already strips the tag,
@@ -124,7 +124,7 @@ impl<T: Tagged> Opt<T> {
     }
 
     /// Set the option bit to `None` **in place, preserving the value** — the
-    /// verified twin of `EClassEntry::set_absent`. `Tagged::set_tag`'s contract
+    /// verified counterpart of `EClassEntry::set_absent`. `Tagged::set_tag`'s contract
     /// is exactly "flips the tag, keeps `value_of`", so the value stays readable
     /// through `get_unchecked` afterwards.
     pub fn set_none(&mut self)
@@ -137,7 +137,7 @@ impl<T: Tagged> Opt<T> {
         T::set_tag(&mut self.repr);
     }
 
-    /// The raw repr (spec twin; the field is `pub(crate)` — privacy closeout).
+    /// The raw repr (spec counterpart; the field is `pub(crate)` — privacy closeout).
     pub open(crate) spec fn repr_spec(self) -> T::Repr {
         self.repr
     }
@@ -301,7 +301,7 @@ pub trait DenseId:
     /// arena. `is_bit_stealing()` selects the arm so generic tree code can branch.
     spec fn is_bit_stealing() -> bool;
 
-    /// Exec twin of `is_bit_stealing` (total-API plan phase 3): a static
+    /// Exec counterpart of `is_bit_stealing` (total-API plan phase 3): a static
     /// type property, so every impl is a literal and the check const-folds;
     /// it exists so the B+tree's total shell can refuse a non-bit-stealing
     /// key at runtime instead of carrying a `requires`.
@@ -326,7 +326,7 @@ pub struct DenseUsize {
 }
 
 impl DenseUsize {
-    /// The raw value (spec twin; the field is `pub(crate)` — privacy
+    /// The raw value (spec counterpart; the field is `pub(crate)` — privacy
     /// closeout). The open trait-impl spec fn delegates here.
     pub open(crate) spec fn raw_spec(self) -> nat {
         self.raw as nat

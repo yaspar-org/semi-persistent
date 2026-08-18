@@ -7,26 +7,29 @@ change that introduces a difference between the two systems adds a row
 here, with the justification and the measured consequence. A divergence
 that cannot be justified drops the benchmark; nothing is fudged.
 
+Two status words, used with these meanings everywhere in comparison/:
+**dropped** means out of the comparison, with the reason recorded;
+**postponed** means blocked on a measured cost, with the condition that
+revives it stated. Three encoding words, by role: the **native encoding**
+is the program style (A/C carried by operator declarations), a **native
+column** is that encoding's slot in a table, and a benchmark's **native
+dual** is the translated counterpart file itself.
+
 ## 1. Systems under test and pinning
 
-- egglog: commit 7b1adf2 (egraphs-good/egglog), built `--release`, checkout
-  at `~/tools/egglog` (moved out of /tmp 2026-08-18 after the periodic /tmp
-  cleaner destroyed the engine worktree's metadata; nothing in this study may
-  live in /tmp).
-  Registry dependencies vendored from static.crates.io because cargo
-  could not reach index.crates.io here; procedure in comparison/README.md.
-  **Toolchain deviation withdrawn 2026-08-16:** the earlier build used
-  Rust 1.93.0 because the repo's pinned 1.91.0 was not installable on this
-  machine. 1.91.0 is installed now, so the binary is built at the pinned
-  toolchain and the deviation is gone. The rebuilt binary is 8.82 MB
-  against 8.98, and reproduces the committed ledgers exactly: eqsat-basic
-  11 nodes / 3 iterations, math-add-ac 1 939 / 7, addac-n7 451 — every
-  figure identical to the published tables, which is the evidence that
-  the toolchain change moved nothing observable.
-- semi-persistent: branch egraph-wf at the commit each measurement names;
-  the study landed engine fixes mid-flight (section 6), so every table
-  states its binary's commit. Timed binaries are pinned copies under
-  /tmp/addac-bin with recorded md5s where cross-agent rebuilds were a risk.
+- egglog: commit 7b1adf2 (egraphs-good/egglog), built `--release` at its
+  pinned Rust 1.91.0, checkout at `~/tools/egglog`. Nothing in this study
+  lives under /tmp, because the operating system reaps files there by
+  access age. Registry dependencies vendored from static.crates.io because
+  cargo could not reach index.crates.io here; procedure in
+  comparison/README.md. The pinned-toolchain binary is 8.82 MB and
+  reproduces the committed ledgers exactly (eqsat-basic 11 nodes / 3
+  iterations, math-add-ac 1 939 / 7, addac-n7 451).
+- semi-persistent: branch egraph-wf at the commit each campaign's pinning
+  block names; the study landed engine fixes mid-flight (section 6), so
+  every table states its binary's commit. E6's tables were timed against
+  pinned binary copies with recorded md5s because concurrent rebuilds were
+  a risk during that experiment; the E6 doc states them.
 - Hardware: one Apple Silicon machine, single-threaded on both engines
   (`-j 1` for egglog; ours has no threading). The exact machine model, OS
   build, binary md5s and measured load are recorded in section 9, which the
@@ -106,7 +109,7 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   Larger than anticipated: two of the rules driven by `MathU` introduce an
   `Add`-with-zero and a `Mul`-with-one for every node, and are what makes
   the benchmark grow, so the strip takes term nodes from 537 to 100 at
-  `(run 4)` — 81%. integer_math therefore ships as a **scoped column**,
+  `(run 4)`, an 81% reduction. integer_math therefore ships as a **scoped column**,
   the same reduced program in all three configurations, and its timings
   are not comparable to anything upstream calls integer_math. Its
   `evals-to` relation is removed with no consequence (provably a no-op:
@@ -116,51 +119,35 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   unsound at zero; its three bitwise constant folds are removed for want
   of i64 bitwise primitives, at a measured cost of zero (0 matches, node
   count identical either way). Ledger: `integer_math.deviations.md`.
-- **Interval-lattice functions stripped** (herbie, translated
-  2026-08-16): the 2-function hi/lo lattice plus the `non-zero` relation
-  it feeds — 32 forms, of which 12 are gated rewrites — and 5 constant
-  folds over rational `pow`/`log`/`ceil`/`floor`/`round`, which our RBig
-  primitive set lacks. Applied to the egglog program too. 163 of 180
-  rewrites and 12 of 14 test blocks survive; the two dropped blocks were
-  identified by running the stripped program and reading which checks
-  failed, not by inspection, and both engines then agree on all twelve
-  remaining checks. herbie is a **scoped column**. This supersedes the
-  calc-substitution row below and the plan's closing claim that herbie is
-  out of the intersection set: it is in, scoped. Ledger:
-  `herbie.deviations.md`; `gen-herbie.py` regenerates it.
+- **Interval-lattice functions stripped** (herbie): the 2-function hi/lo
+  lattice plus the `non-zero` relation it feeds (32 forms, of which 12 are
+  gated rewrites), and 5 constant folds over rational
+  `pow`/`log`/`ceil`/`floor`/`round`, which our RBig primitive set lacks.
+  Applied to the egglog program too. 163 of 180 rewrites and 12 of 14 test
+  blocks survive; the two dropped blocks were identified by running the
+  stripped program and reading which checks failed, not by inspection, and
+  both engines agree on all twelve remaining checks. herbie is a **scoped
+  column**. Ledger: `herbie.deviations.md`; `gen-herbie.py` regenerates
+  the egglog and rules programs.
 - **A datalog relation re-encoded as a constructor, on both sides**
-  (until). Its generator rule is the benchmark — it is what `:until` has
-  to cut short — so `(relation allgs (G))` becomes
+  (until). Its generator rule is the benchmark, the thing `:until` has
+  to cut short, so `(relation allgs (G))` becomes
   `(constructor allgs (G) U)` into an empty sort in all three
   configurations rather than being dropped. Consequence: a relation row
   becomes a node, so `allgs` now counts on both sides. Justified only
   because the same re-encoding is applied to the egglog program; a
   one-sided emulation would violate the intersection principle.
-- **Withdrawn 2026-08-17: A-only native duals wrote their terms
-  pre-flattened** (calc, until). `:assoc` now flattens nested
-  applications and collapses singletons (commit e998295), which is the
-  sequence normal form `ac-algebraic-properties.md` specifies, so the
-  workaround is gone from both files and the nested text the source
-  writes reproduces them. Kept here because the pilot's first published
-  numbers for those two benchmarks were measured under it. Its
-  consequence stands and was never a weakened check: calc's blocks 1 and
-  2 become true by canonization, which is the AC/A value proposition,
-  the same phenomenon as math-add-ac's native column saturating at 25
-  nodes in one iteration.
 - **Two type groups compose on the command line** (herbie). It needs
   `RBig` from `bignum` and `String` from `machine`, and
-  `--types machine,bignum` supplies both. Resolves the open note in
-  README.md's protocol section that the `bignum` group has no `String`
-  sort; no benchmark is untypeable for that reason.
+  `--types machine,bignum` supplies both; no benchmark is untypeable for
+  a missing sort.
 - **Ruleset default reading.** Our `(run N)` runs the default ruleset
   (untagged rules), egglog-style; the alternative (run everything) would
   let scoped AC rules fire in main runs and destroy the isolated add-ac
   experiment.
-- **calc.egg substitutes for herbie.egg in the E6 macro exhibit.** Their
-  `tests/web-demo/herbie.egg` needs `BigRat`, two `:merge` lattice functions
-  and one relation, all outside the intersection set, and the analysis they
-  support gates a large share of its 180 rewrites. `calc.egg` translates
-  with two renamings and nothing else: `(datatype G)` with no variants
+- **calc.egg is the E6 macro exhibit.** herbie's blocks all run under
+  1 ms on both engines, so E6 exhibits multi-block push/pop on `calc.egg`,
+  which translates with two renamings and nothing else: `(datatype G)` with no variants
   becomes `(sort G)`, and identifiers outside our lexical class are renamed
   (`g*` -> `gmul`, `$X` -> `gX`). Measured consequence: none on cost, all
   four blocks run under 1 ms on both engines, which is the finding
@@ -176,39 +163,19 @@ Per-benchmark detail lives in `<name>.deviations.md`; the registry rows:
   recorded md5s; the doc states them and states that the first, mixed pass
   reproduces sections 3, 4 and 6 within 8%, which bounds what the in-flight
   engine changes could have moved.
-- **Literal-matcher workaround, since withdrawn.** Six math-microbenchmark
-  rules used let-bound globals while a matcher defect made LHS literals
-  dead (section 6); after the fix, direct literals reproduce the
-  workaround runs exactly (node counts to the digit; the 2-node delta is
-  the dropped let commands). History kept in the ledger.
-
 - **Node and class counts at truncated budgets are order-sensitive under
-  incomplete closure.** The add_use prepend (use-list registration order
-  reversed) leaves every saturating program byte-identical (congruence
-  closure is confluent at a fixpoint) and nodes/match-steps identical
-  everywhere, but math-microbenchmark's `(run 11)` stops mid-closure and
-  its class count moves 507,992 -> 507,995 (+3, 6 ppm): the final round's
-  rebuild had discharged three fewer pending merges when the budget
-  expired. Both partitions are sound. Consequence: class counts on
-  non-saturating programs are reported with this caveat, and final tables
-  re-run at one pinned commit as already required.
-
-  **Widened 2026-08-17 by the final campaign: node counts move too, and by
-  more than class counts do.** This entry was written for class counts, on
-  the evidence that the add_use prepend moved only those. math-add-ac's
-  rules encoding, whose `(run add_ac 7)` its ledger records as saturating
-  under neither strategy, moves 3 256 nodes / 148 classes -> 3 317 / 159
-  naive and 3 304 / 134 -> 3 359 / 136 semi-naive between the ledger's
-  2026-08-15 measurement and the pinned campaign: 61 nodes, 1.9%, against
-  the 6 ppm this entry cites. The cause is the same mechanism at larger
-  amplitude, roughly twenty ematch and scheduling commits landing in that
-  window that change which matches are found in which round (90e2d5f,
-  5d85c53, ca2088b among them). The counts are deterministic at the pin
-  (five naive and three semi-naive runs agree), the check passes in every
-  configuration, and the egglog column is unchanged at 1 939 nodes / 7
-  iterations, so what moved is how much work the budget buys and not what
-  the run concludes. The superseded figures stay in
-  `math-add-ac.deviations.md` marked not to be cited.
+  incomplete closure.** A run stopped at a budget before saturation ends
+  wherever the match order put it, so any change that reorders matching
+  moves those counts without changing what the run concludes. Measured at
+  two amplitudes: the add_use prepend moved math-microbenchmark's class
+  count 507 992 -> 507 995 (+3, 6 ppm) with every saturating program
+  byte-identical; a window of about twenty ematch and scheduling commits
+  moved math-add-ac's rules encoding 3 256 nodes -> 3 317 (1.9%), with
+  the egglog column unchanged at 1 939 nodes / 7 iterations. Counts are
+  deterministic at any one commit (repeated runs agree), which is why
+  campaigns pin one commit. Counts on non-saturating programs carry this
+  caveat wherever they appear; figures from other commits are marked in
+  `math-add-ac.deviations.md` as not to be cited.
 
 ## 5. Benchmark selection and exclusions
 
@@ -226,52 +193,43 @@ tests/files.rs list) are excluded from timing. Qualitative-only exhibits:
 their multiset AC workarounds (eqsat-basic-multiset, factoring-multisets),
 discussed but never timed head-to-head.
 
-**The three benchmarks dropped on 2026-08-16 are translated, 2026-08-17.**
-Both features they needed exist: the root-binding pattern form `(= v pat)`
-(commit 93d698d) and primitive predicates in `:when` (commit 99c690f). The
-drop-era text of this section and of the three ledgers is in the history of
-commit c2558c7; it is superseded and should not be cited.
+Per-benchmark notes on the selections that carry conditions:
 
 - **matrix** (ranked 7, mixed AC and A-only). Its conditional Kron/MMul
   rewrite guards on an equality between two derived terms, written
-  `:when ((= p (ncols a)) (= p (nrows c)) …)`: each conjunct binds one
+  `:when ((= p (ncols a)) (= p (nrows c)) ...)`: each conjunct binds one
   pattern's root e-class, and the repeated variable requires the two to be
-  one class. Both assertions pass. Its native column carries native AC on
-  `Times` only; `MMul` and `Kron` keep their associativity rewrites,
-  because the n-ary restatement panics the matcher (section 6, the
-  2026-08-17 entry). That is the property the benchmark was selected for,
-  so the A-only comparison is postponed rather than delivered.
-  `matrix.deviations.md`.
+  one class. Both assertions pass. Two native configurations ship:
+  `matrix.native.egg` with native AC on `Times`, and `matrix.native-A.egg`
+  adding native A on `MMul` and `Kron`, which is the A-only half the
+  benchmark was selected for. `matrix.deviations.md`.
 - **bdd** (ranked 9, commutative-without-associative). The six
   variable-ordering rules keep their guard, written `:when ((i64::< n m))`
   over the two i64 labels the `ITE` patterns bind. Twelve checks pass in
   all three configurations. `bdd.deviations.md`.
-- **eqsolve** (ranked 10, the set's only extraction-path benchmark). The
-  division rule needs both features at once and now translates. Two
-  adjustments apply to both configurations, and both engines take them: the
-  budget is 6 rather than 5, because at 5 our engine has not yet joined
-  `(Var "x")` to `(Num 5)` while all seven original checks already pass; and
-  the three extracted answers are asserted rather than only printed. The
-  native-AC dual is postponed on AC congruence completion, measured:
-  `--derive-ac-eqs` does not terminate within 120 s on this program, and
-  without it `z = 6 + (-y)` does not entail `z + z = 6 + (-y) + 6 + (-y)`.
+- **eqsolve** (ranked 10, the set's only extraction-path benchmark). Two
+  adjustments apply to every configuration, and both engines take them:
+  the budget is 6 rather than 5, because at 5 our engine has not joined
+  `(Var "x")` to `(Num 5)` while all seven original checks already pass;
+  and the three extracted answers are asserted rather than only printed.
+  The native encoding is validated under `--lazy-ac-eqs` (all ten checks,
+  one 484 s run) and excluded from timed tables on that cost; the rules
+  encoding's gap to egglog is e-matching volume, measured at 2.74 M match
+  steps on 9.6 k nodes with extraction contributing nothing measurable.
   `eqsolve.deviations.md`.
+- **herbie** (ranked 3, scoped). Both encodings ship and are timed; the
+  native program is hand-derived because nested same-operator patterns
+  must be reshaped rather than lifted (a rule pair whose two sides
+  flatten to one multiset is contentless and is deleted, not restated).
+  `repro-herbie-vanilla` (ranked 4) is dropped: at the pinned commit it
+  is a typed-lowering unsoundness reproduction with no checks, not a
+  benchmark. `herbie.deviations.md`,
+  `repro-herbie-vanilla.deviations.md`.
 
-Consequence for coverage: the set has its extraction-path column, and the
-A-only-operator column is the one still missing, on an engine defect rather
-than on a language gap. The honest scoping sentence for the paper is that
-the comparison covers the ranked intersection, with two native-AC duals
-(eqsolve, herbie) and matrix's A-only half unwritten, each with a measured
-reason.
-
-**herbie's native-AC dual is deferred, not dropped**, and
-`repro-herbie-vanilla` (ranked 4, 471 rewrites) behind it. The scoped
-rules column ships and is validated; the dual needs a rule-by-rule pass
-because nested same-operator patterns must be reshaped rather than
-lifted — `(Mul (Mul a b) (Mul a b))` and `(Mul (Mul a a) (Mul b b))` are
-the same multiset under AC, so that rule pair becomes a tautology and
-must be deleted, and a mechanical n-ary lift would leave patterns that
-silently match nothing. `herbie.deviations.md`.
+Coverage, as the paper states it: the comparison covers the ranked
+intersection set; every benchmark has rules and native encodings timed,
+except eqsolve's native encoding, which is validated and excluded from
+timed tables on its measured completion cost.
 
 ## 6. Engine changes landed during the study (provenance)
 
@@ -281,13 +239,11 @@ which side of each fix it was measured on:
 - 165cc9f: LHS literals never matched (empty-lookup join scheduled first
   by a cost-1 estimate). Found by translation; fix verified by exact
   node-count equivalence against the workaround.
-- 3f4e066 + successor (in flight at time of writing): order-dependent
-  match-count discrepancy characterization and the planner selectivity
-  constants (fixed-halving cost model vs measured fan-outs 2.51/1239;
-  bad order was 95.3% of the rules-encoding run; counterfactual
-  13.57 s -> 0.89 s). Post-fix numbers re-run the affected tables.
-- Semi-naive access-path audit and hot-path locality audit in flight;
-  their findings and any fixes append here.
+- 3f4e066 + 16ddfea: order-dependent match sets fixed by snapshot
+  canonicalization, then the planner selectivity constants replaced the
+  fixed-halving cost model with measured fan-outs (2.51/1239; the bad
+  join order was 95.3% of the rules-encoding run; 13.57 s -> 0.89 s).
+  Post-fix numbers re-ran the affected tables.
 - 2026-08-16, restore stopped rebuilding the hashcons index: the ten node
   caches and the literal interner delete the index entries of what the
   scope added instead of re-inserting every live entry, with the rebuild
@@ -373,24 +329,23 @@ final submission re-runs every table at one pinned commit.
 
 - 2026-08-17, semi-naive class-growth blindness: a merge whose surviving
   representative is the id the parents already store recanonicalizes
-  nothing, so a match created purely by class-membership growth never
-  reached any delta — which union direction you got decided whether the
-  rule fired. Found by the herbie native dual (block 9, 11/12), reduced
-  to two four-line repros, fixed in two halves: merges under semi-naive
-  record the absorbed class's members in the touched log, and rules
-  referencing a let-bound global in a child/element position match full
-  every round (4258fa4's category). herbie native semi is 12/12; the 35
-  programs pass both strategies; semi-naive node counts on budget-capped
-  programs shifted (eqsolve.rules 9085 -> 9398, math-microbenchmark.rules
-  1 254 903 -> 1 248 629) because the strategy now derives per round what
-  it silently missed — those rows are re-measured in the next campaign,
-  and pre-fix semi numbers on capped programs must not be cited as
-  complete derivations.
+  nothing, so a match created purely by class-membership growth reached
+  no delta, and which union direction occurred decided whether the rule
+  fired. Found by the herbie native encoding (block 9, 11/12), reduced
+  to two four-line reproductions, fixed in two halves: merges under
+  semi-naive record the absorbed class's members in the touched log, and
+  rules referencing a let-bound global in a child or element position
+  match the whole graph every round. herbie native semi-naive is 12/12;
+  the corpus passes both strategies; semi-naive counts on budget-capped
+  programs moved (eqsolve.rules 9085 -> 9398,
+  math-microbenchmark.rules 1 254 903 -> 1 248 629) because the strategy
+  now derives per round what it missed. Pre-fix semi-naive counts on
+  capped programs are not complete derivations and are not cited.
 
 - 2026-08-18, integer-to-rational lift: RBig::from_int / RBig::scale /
   RBig::pow in the mixed literal model (exact, checked), making herbie's
-  multiplicity twins k-generic; its ledger's residual list shrinks to
-  the parity-shaped cases. Twelve checks pass both strategies, counts
+  multiplicity variants k-generic; the ledger's residual list is the
+  parity-shaped cases only. Twelve checks pass both strategies, counts
   unchanged. Fixture rbig_mult_lift.egg pins multiplicity 3.
 
 - 2026-08-18, merge survivor policy (--union-by): directed merges on
@@ -399,36 +354,36 @@ final submission re-runs every table at one pinned commit.
   policies pass every check on the corpus; node counts move only within
   the documented order-sensitivity class. math-microbenchmark rules-semi
   drops 1.69 s (rank) to 0.60 s (size/uses/sum) with complete
-  derivation, closing the class-growth-delta cost the 2026-08-17 fix
-  introduced; the r3 campaign runs under the default (rank) unless noted.
+  derivation, which prices the class-growth delta the 2026-08-17 fix
+  maintains; campaigns run under the default (rank) unless a table says
+  otherwise.
 
 - 2026-08-17, RHS multiplicity expressions: RHS elements of a variadic
   operator take checked u64 expressions over bound multiplicities
   (`(Add b ..s):(u64::- k 1)`), interval-checked at rule install against
   the LHS constraints (a possible underflow or zero divisor is a compile
-  error) with multiplicity 0 omitting the element. This retires the last
-  inexpressible twin shape (keep k-1 copies): distributivity twins landed
-  in `integer_math.native` (plus its LShift rule) and
+  error) with multiplicity 0 omitting the element. This makes the
+  keep-k-1-copies multiplicity variant expressible: the distributivity
+  variants are in `integer_math.native` (plus its LShift rule) and
   `math-microbenchmark.native`, counts identical to the campaign under
   both strategies (they fire zero times on the shipped workloads).
   Fixtures `rhs_mult_expr.egg` / `rhs_mult_expr_underflow.egg`.
 
-- 2026-08-17, coincidence twins and multiplicity on the RHS: AC matching
-  is a partition of distinct children (an element takes its child's whole
-  multiplicity; unannotated, that multiplicity must be exactly 1), so the
-  n-ary lifts of binary rules missed same-child coincidences
-  (`Mul{t : 2}` unmatched by two-element patterns, `Add{0 : 2}` unmatched
-  by a bare identity element). Ruled intended semantics, not a matcher
-  defect; the language guide's two contrary examples were corrected. The
-  engine gained the pieces the twins need: a bound multiplicity variable
-  is readable on the RHS in i64 positions, and `i64::pow` exists. Twins
-  were added by hand to `integer_math.native`, `math-microbenchmark
-  .native` and both `matrix` native files (per-benchmark ledgers, same
-  date). Every re-validated count is identical to the campaign tables
-  under both strategies: the twins fire zero times on the shipped
-  workloads, so no table is re-measured. Fixtures
-  `ac_coincidence_twin_gap.egg` / `ac_coincidence_twin.egg` pin the gap
-  and the twins.
+- 2026-08-17, multiplicity variants: AC matching is a partition of
+  distinct children (an element takes its child's whole multiplicity;
+  unannotated, that multiplicity must be exactly 1), so the n-ary lift of
+  a binary rule cannot match a repeated child (`Mul{t : 2}` unmatched by
+  two-element patterns, `Add{0 : 2}` unmatched by a bare identity
+  element) and each such rule carries a multiplicity variant covering
+  multiplicity 2 or more. This is the intended semantics, not a matcher
+  defect. The engine reads a bound multiplicity variable on the RHS in
+  i64 positions, and `i64::pow` exists, which is what k-generic variants
+  need. The variants are hand-written in `integer_math.native`,
+  `math-microbenchmark.native` and both `matrix` native files
+  (per-benchmark ledgers). Every count is identical to the campaign
+  tables under both strategies: the variants fire zero times on the
+  shipped workloads. Fixtures `ac_multiplicity_variant_gap.egg` /
+  `ac_multiplicity_variant.egg` pin the base-rule gap and the variants.
 
 ## 7. Threats to validity
 
@@ -454,13 +409,16 @@ appends any new divergence with justification and consequence. The
 deviation ledgers stay per-benchmark; this registry is the index a
 reviewer reads.
 
-## 9. Final campaign (2026-08-17)
+## 9. Campaign records
 
-**FINAL.** The run section 6 requires: every table measured in one campaign,
-at one pinned commit of each engine, on one quiet machine, with the hardware
-recorded. Results in `final/final-tables.md`; raw data in
-`final/final-results.csv`. This campaign supersedes every earlier timing table
-in comparison/ for the ten benchmarks it covers.
+A campaign is one timed pass over the whole set at one pinned commit of
+each engine, on one quiet machine, with the hardware recorded. Each
+campaign file in `final/` carries its own pinning block; the current
+campaign is `final/final-r3-tables.md`, and r1 (`final-tables.md`) and r2
+(`final-r2-tables.md`) are archived records whose raw CSVs stay cited by
+ledgers and experiment write-ups. The r1 campaign's pinning block follows,
+because it is the fullest record (machine, load, binary md5s) and the r2
+and r3 blocks refer to it for the machine.
 
 - **Pinned commit** c25fb2547b69fbfa0c5172ccf0e32c3ec637fbc6, branch
   egraph-wf, clean tree.

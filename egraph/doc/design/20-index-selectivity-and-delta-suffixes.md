@@ -284,10 +284,19 @@ time — the state it needs is which atoms are used and which variables are
 bound, two masks. The atom order is also the part of the plan every
 measurement in this chapter is about.
 
-**Implemented 2026-08-16, flag-guarded, default off.**
+**Flag-guarded, default off, with a per-rule automatic mode.**
 `ematch::set_runtime_scheduling`, or `--runtime-scheduling` on the CLI. With
 the flag off the matcher runs the precompiled step array and every corpus
-number below is unchanged to the digit.
+number below is unchanged to the digit. `--auto-scheduling` selects the mode
+per rule per round: the index's fan-out measurement records each access
+path's skew (the size-biased mean bucket size over the plain mean, the
+`FanOuts` skew maps; 1 on a flat distribution, large in the presence of a
+hub bucket), `run_rule_variant` takes the worst skew over the rule's
+scan-atom operators, and the rule runs per-binding above a threshold of 8,
+calibrated between the flat corpus (below 4) and the hub-shape condition in
+`ematch_op_filter.rs` (orders of magnitude above). `by_repr`'s skew is
+excluded because it is graph-global and would switch every rule together.
+The match set is identical in all three modes.
 
 **What it does.** With the flag on there is no precompiled step array. The
 executor runs the two phases of the scheduling loop (chapter 08) at each
@@ -356,8 +365,11 @@ nothing to find and pays 3.2%. Both are consistent with the reading that the
 per-binding decision costs about what one avoided partial match saves, and
 with the audit's verdict that this path is compute-bound: the decision
 resolves each candidate atom's buckets and `run_join` then resolves the
-winner's again, which is the obvious thing to remove before the flag is
-worth turning on by default.
+winner's again, which is the obvious thing to remove before per-binding
+ordering is worth running unconditionally. `--auto-scheduling` is the
+shipped middle ground: flat rules keep the static plan and skip the
+per-binding price, skewed rules pay it where the fan-out table says it
+buys steps.
 
 The flag changes no match set. Node counts are identical to `9e3da18` on all
 twenty programs under `comparison/` in the naive driver, the hundred and

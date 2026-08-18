@@ -1,6 +1,8 @@
 # Verified Semi-Persistent Containers: Design & Proof Notes
 
-A Verus port of [`semi-persistent-containers`](../../../containers).
+The verified semi-persistent containers: the container layer the e-graph
+engine runs on. The unverified reference implementation is
+[`containers/`](../../../containers).
 
 ## Semi-persistence
 
@@ -42,11 +44,10 @@ will accept: each `mark` opens a branch in a fork history, each `restore` cuts t
 branches it discards, and a token naming a discarded state is rejected. The
 development uses no `admit`s or `assume`s; run `cargo verus verify` for the
 per-module tally. (That does not mean nothing is trusted; the trust boundary is
-25 `external_body` items in the default build, enumerated in
-[Chapter 2](02-trust-boundary.md), of which only four carry load-bearing
-contracts.)
+27 `external_body` items in the default build, 32 with `literal-types`,
+enumerated in [Chapter 2](02-trust-boundary.md).)
 
-## Reference: what is in the crate (chapters 01–02, 09–10)
+## Reference: what is in the crate
 
 01. **[Master Verification Design](01-verification-design.md)**: the layout,
     the `wf` invariant, the `overlay` reconstruction model, and branch-cut safety.
@@ -63,15 +64,31 @@ contracts.)
     audit that the verified containers match production's layouts, algorithms and
     `TRACK=false` erasure — and the measurement discipline that audit taught.
 12. **[The Sorted-Vec Cursor](12-sorted-vec-cursor.md)**: the galloping seek,
-    verified. The first proof here whose subject is a query-engine algorithm
+    verified. A proof whose subject is a query-engine algorithm
     rather than a container; reuses the B+tree's `seek_target_idx` unchanged.
 15. **[The Dense-Span Multimap](15-dense-span-map.md)**: the build-once index
     behind the e-graph's per-round index families: a two-pass counting build
-    refined to the per-key filter of its input stream, with no mark/restore.
+    refined to the per-key filter of its input stream, plus the
+    generation-stamped arena-reuse build path.
 16. **[The Layered Span Map](16-layered-span-map.md)**: incremental maintenance
     over chapter 15: a base generation, one delta generation, per-key
     invalidation, and the cross-generation sortedness lemma with the caller
-    obligation it rests on.
+    obligation it rests on. Verified; the engine does not enable it.
+
+## The class layer
+
+The verified aggregate `EClasses` (rings, union-find, class keys, use-lists,
+min-monomial pool) carries invariants W1..W7 as its `wf()`; the invariant
+table is the `eclasses.rs` module header. Three documents cover it (their
+filename numbers are not part of the chapter sequence above):
+
+- **[E-Graph Class-Layer Parity](12-egraph-class-layer-parity.md)**: the
+  production-parity statement: the engine's `EClasses`/`UnionFind` are type
+  aliases of the kernel, and the API surface both sides share.
+- **[The Parity Matrix](13-parity-matrix.md)**: the method-by-method parity
+  audit table (control flow, layout, erasure) with its findings.
+- **[Parity Audit 2](14-parity-audit-2.md)**: the second, adversarial audit
+  pass over the same surface.
 
 ## Techniques: reusable lessons (chapters 03–08)
 

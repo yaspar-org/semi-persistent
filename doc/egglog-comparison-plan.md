@@ -127,54 +127,21 @@ Order: E1 and E2 (our-side features, one agent, two commits), then E3, then
 E4 with a pilot on benchmarks 1, 2, 8 before the full set; E5/E6 after the
 in-flight engine fixes land, at one pinned commit.
 
-Status 2026-08-15: E1, E2 done. E3 and E4 landed as the pilot on benchmarks 1,
-2 and 8 in `comparison/` (three configurations each, both of our saturation
-strategies, protocol and per-benchmark deviation ledgers in that directory).
-Native AC beats our own rules encoding 10.3x on math-microbenchmark and 3.6x
-on the add-ac block (pilot numbers at the pre-fix engine). The pilot's
-22.7x matching-throughput gap and the semi-naive 13.9x regression were both
-traced to the planner's selectivity constants and fixed (ch 20 S1, commits
-3f4e066 + 16ddfea): the rules encoding now runs 747.8 ms against egglog's
-523.9 ms (1.4x), and native semi-naive costs 1.03x naive's match steps
-(was 64.6x). The literal-matcher defect translation exposed is fixed
-(165cc9f) and the workaround withdrawn with exact node-count equivalence.
-Post-fix pilot tables are in comparison/; the full set runs at one pinned
-commit per methodology.md.
-
-Status 2026-08-16: E6 measured, in `comparison/semi-persistence/`. Their push
-deep-copies the e-graph (`egglog src/lib.rs:697`, down to the row buffers and
-hash index at `core-relations/src/table/mod.rs:154`), so both engines are
-linear in base size S per cycle and the expected flat-versus-linear separation
-does not appear: our pop rebuilds ten hashcons indexes from scratch
-(`egraph/src/caches.rs:318, 634, 767`), which is the only O(S) term on the
-path and the condition that would revive the separation if removed. What holds
-at S = 1e6: our assume/derive/retract cycle costs 12.6 ms against their 33.0 ms
-(2.6x), our in-scope work is O(touched) where theirs is not, and restoring to a
-mark beats re-running the base 102x on that cycle, 4.5x once the cycle also
-saturates. Against that, egglog finishes the full cycle 10.5x faster, because
-one incremental round costs them 1.8 ms and costs our naive matcher 353 ms:
-that gap, not push/pop, decides the workload. herbie.egg is out of the
-intersection set (BigRat, lattice merges, one relation) so calc.egg is the
-macro exhibit, and every block of it is under 1 ms on both engines.
-
-Status 2026-08-17: the intersection set is complete at ten benchmarks in 46
-configurations, measured in one pinned campaign (`comparison/methodology.md`
-section 9, tables in `comparison/final/`). matrix's A-only native column, the
-one configuration E3 still owed, landed after the campaign: its n-ary
-restatement reached a matcher defect that unbound variables a variadic
-expansion had checked rather than bound, which panicked on one path and
-silently dropped a guard's constraint on the other. Fixed in both matcher
-engines and in all three decompositions, fenced by two `.egg` fixtures and
-four match-set tests, and registered in methodology.md section 6 with the
-verification that no committed benchmark reaches the pattern: all 32 programs
-in `comparison/` are byte-identical across the fix under both strategies and
-three scheduling modes, so the campaign numbers stand. `matrix.native-A.egg`
-is validated (62 nodes, 23 classes, three assertions passing under both
-strategies) and carries no timing from that campaign, which predates it.
-
-Status 2026-08-17 (later): herbie's native-AC dual is delivered and validated
-(naive 12/12; semi-naive blocked by an engine defect recorded in its ledger).
-Benchmark 4, repro-herbie-vanilla, is dropped with corrected premises: at
-7b1adf2 it is a typed-lowering unsoundness repro with no checks, not the
-simplify layer at 2.9x; `comparison/repro-herbie-vanilla.deviations.md` has
-the characterization and the conditions under which it becomes translatable.
+Status: every work item is delivered. E1 and E2 (constructor support and the
+benchmark-support surface) are in the engine. E3 and E4 cover the full
+ten-benchmark intersection set in `comparison/`, every benchmark with rules
+and native encodings and a per-benchmark deviation ledger; eqsolve's native
+encoding is validated under `--lazy-ac-eqs` and excluded from timed tables
+on its measured completion cost, and `repro-herbie-vanilla` (ranked 4) is
+dropped: at 7b1adf2 it is a typed-lowering unsoundness reproduction with no
+checks, not the simplify layer at 2.9x
+(`comparison/repro-herbie-vanilla.deviations.md`). E5 is answered by the
+add-ac width sweep (`comparison/addac-sweep.md`: native AC flat at 4n-3
+nodes and one iteration while the rules encoding reaches 37 902 nodes at
+n = 20) and by the campaign's native columns. E6 is measured in
+`comparison/semi-persistence/`: egglog's push deep-copies the e-graph, our
+restore is O(touched), and at S = 1e6 the assume/derive/retract cycle costs
+us 12.6 ms against their 33.0 ms while restoring to a mark beats re-running
+the base 102x. The current campaign is `comparison/final/final-r3-tables.md`
+(rules encoding at parity with egglog on solver-dominated workloads, native
+2.4-2.8x faster); `comparison/methodology.md` is the divergence registry.

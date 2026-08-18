@@ -238,11 +238,25 @@ with no node of its own is outside the e-matching relation. That residual case
 requires materializing a sub-sum no equation justifies and is not claimed; it is the
 open AC-unification problem (AC chapter §11), separate from congruence completeness.
 
-### 3.4 Completion restores completeness for C, A, AC, ACI
+### 3.4 Completion restores completeness for C and AC/ACI; A has a proper boundary
 
-C and A canonicalization are complete on their own: commutativity is decided by
-sorting the two arguments, and associativity by flattening, so axiom-equal
-applications reach the same canonical form directly. No completion pass is needed.
+C canonicalization is complete on its own: commutativity is decided by sorting
+the two arguments, so axiom-equal applications reach the same canonical form
+directly, and no completion pass is needed.
+
+A canonicalization is not complete. Build-time flattening splices a
+pure-sequence child into its parents, which erases the class reference, and a
+class can never become pure late because merges only add members and an atom
+member never leaves. The one escape is therefore two pure-sequence classes
+merging: the class then holds two spellings of one sequence, an equation the
+parents that spliced different spellings cannot see through congruence. Under
+either completion mode the A-only inter-reduction round repairs exactly that
+case, rewriting contiguous occurrences of the larger spelling to the
+shortlex-least one ([AC chapter §14](ac-congruence-completeness.md)). Full A
+completeness is unattainable: it is the word problem for finitely presented
+monoids, which is undecidable, so unlike the AC case there is no completeness
+theorem to converge to. What the round derives is sound; what a full closure
+would add cannot be computed in general.
 
 AC and ACI require completion. Reading each AC node as a rewrite rule, the missing
 operations are superposition (which derives the cross-rule equalities, AC chapter §6
@@ -272,7 +286,10 @@ confirm the rule set is reduced at a fixpoint are in the
   and rests on the critical-pair lemma, Dickson's lemma, and Newman's lemma; it is
   conditional on completion converging and is not yet machine-checked.
 - **Complete today.** Literal evaluation (§3.1), plain congruence closure (§3.2),
-  and C/A canonicalization (§3.4) are complete without a completion pass.
+  and C canonicalization (§3.4) are complete without a completion pass. A
+  canonicalization is complete only up to the merged-spellings case, which the
+  A-only inter-reduction round repairs under completion and which no procedure
+  closes in general (§3.4).
 
 ---
 [Ch 13: Literal Model](13-literal-model.md) · [Table of Contents](00-table-of-contents.md) · [Ch 15: Proof Logging](15-proof-logging.md)

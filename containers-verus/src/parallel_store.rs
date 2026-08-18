@@ -45,7 +45,7 @@ where
     T: Sized + Copy,
     I: IndexLike,
 {
-    /// Spec twins (privacy closeout): the open trait-impl spec fns delegate
+    /// Spec counterparts (privacy closeout): the open trait-impl spec fns delegate
     /// here so they contain no direct field access.
     pub open(crate) spec fn data_spec(&self) -> Seq<T> {
         self.data@

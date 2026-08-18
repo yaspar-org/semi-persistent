@@ -880,7 +880,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         s.len()
     }
 
-    /// Pool size (spec twin of `total()`; fields are `pub(crate)`, so the public
+    /// Pool size (spec counterpart of `total()`; fields are `pub(crate)`, so the public
     /// contract phrases the value count through this).
     pub open(crate) spec fn total_spec(&self) -> nat {
         self.pool@.len()
@@ -949,7 +949,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
         self.arena
     }
 
-    /// Exec twin of the build precondition: every key in the stream is in range.
+    /// Exec counterpart of the build precondition: every key in the stream is in range.
     pub fn can_build(stream: &[(usize, V)], num_keys: usize) -> (b: bool)
         ensures
             b == (forall|i: int| 0 <= i < stream@.len() ==> (#[trigger] stream@[i]).0 < num_keys),

@@ -15,7 +15,7 @@
 
 (run 10)
 (check (= (Ok (N 1) (N 2)) (N 9)))
-;; The soundness twin: no merge reaches this pair, so the join finds nothing.
+;; The soundness counterpart: no merge reaches this pair, so the join finds nothing.
 (F (N 3))
 (G (N 4))
 (run 10)

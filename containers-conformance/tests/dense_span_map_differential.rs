@@ -3,7 +3,7 @@
 //! Conformance of the verified `DenseSpanMap`: a reference-model differential
 //! over randomized `(key, value)` streams.
 //!
-//! There is no production-crate twin, because `DenseSpanMap` replaces the
+//! There is no production-crate counterpart, because `DenseSpanMap` replaces the
 //! e-graph's per-round index families, which were open-coded `Vec<Vec<_>>`
 //! rebuilds. The oracle is a transparent model written from the semantics rather
 //! from the implementation: a `HashMap<usize, Vec<V>>` filled by walking the

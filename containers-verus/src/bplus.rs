@@ -405,7 +405,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
         crate::bplus_tree::tree_keys(self.tree@)
     }
 
-    // Spec twins (privacy closeout): all fields are `pub(crate)`, so public
+    // Spec counterparts (privacy closeout): all fields are `pub(crate)`, so public
     // contracts phrase the tree's coordinates through these.
 
     /// The ghost tree.
@@ -3890,7 +3890,7 @@ pub(crate) proof fn reconstruct_child_split_links<K, L, S, const TRACK: bool>(
 }
 
 /// Reconstruct the two halves of a PARENT split (the child `cp` split into
-/// `(ncl, ncr)` AND this parent was full). The twin of `reconstruct_child_split_
+/// `(ncl, ncr)` AND this parent was full). The counterpart of `reconstruct_child_split_
 /// absorb` (which handles the "had room" case): `lt` (kept at `gid`) and `rt`
 /// (fresh at `rid`) are both `subtree_wf` at height `h`, separated by the promoted
 /// median, with combined model `cur's ∪ {key}`. Single arena, three snapshots of
@@ -9704,7 +9704,7 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
     /// The cursor's model index (`gidx`), as a convenience for specs.
     pub open(crate) spec fn idx(self) -> int { self.gidx@ }
 
-    /// The tree this cursor walks (spec twin; the field is `pub(crate)` —
+    /// The tree this cursor walks (spec counterpart; the field is `pub(crate)` —
     /// privacy closeout).
     pub open(crate) spec fn tree_ref(self) -> &'a BPlusTreeSet<K, L, S, TRACK> {
         self.tree
@@ -10288,7 +10288,7 @@ pub struct BPlusToken {
 }
 
 impl BPlusToken {
-    /// Reconstruction coordinate of the inner arena token (spec twin).
+    /// Reconstruction coordinate of the inner arena token (spec counterpart).
     pub open(crate) spec fn frame_idx_spec(self) -> nat {
         self.nodes.frame_idx as nat
     }

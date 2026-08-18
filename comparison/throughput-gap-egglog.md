@@ -1,5 +1,8 @@
 # egglog's execution path on `math-microbenchmark`
 
+This is the egglog half of a closed diagnosis; see the note at the head of
+`throughput-gap-ours.md`.
+
 This file records what egglog does when it runs
 `comparison/math-microbenchmark.egglog.egg`, in enough detail to sit beside the
 same account for our engine. It is a measurement record and a source reading of

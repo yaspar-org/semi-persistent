@@ -1,17 +1,26 @@
-# Final campaign, third run (final-r3)
+# Campaign r3 (current)
 
-One measurement pass at one commit (the engine after the `--union-by` survivor
-policy with the W7-verified class-size counter, the integer-to-rational lift
-with herbie's k-generic twins, and the eqsolve extraction-attribution
-correction; methodology section 6 entries dated 2026-08-18). Protocol as in
+The current campaign: one campaign at one engine commit. Protocol as in
 `final-tables.md`. Raw rows: `final-r3-results.csv`.
 
-**This run is a reproduction: every row matches `final-r2-tables.md` within
-noise, and every node, class and iteration count is identical.** That is the
-predicted outcome — the survivor-policy win sits behind a non-default flag
-(the campaign measures the shipped default, `rank`), the new herbie twins are
-verified latent on the shipped inputs, and the extractor rewrite was dropped
-after profiling refuted its premise (`eqsolve.deviations.md`, same date).
+- **Pinned commit** b0c6dbb (branch egraph-wf: the engine with the
+  `--union-by` survivor policy on the W7-verified class-size counter, the
+  integer-to-rational lift with herbie's k-generic multiplicity variants,
+  and the eqsolve match-volume measurement; methodology section 6).
+- **Machine** the r1 machine (`final-tables.md`, pinning block).
+- **Binaries** built at the pinned commit and egglog 7b1adf2 at its pinned
+  1.91.0; md5s were not recorded for this campaign.
+- **Statistic** the headline here and in r2 is a geometric mean of
+  per-benchmark ratios; r1's headline is a median of ratios. The two
+  statistics are not comparable across files.
+
+**This campaign is a reproduction: every median matches `final-r2-tables.md`
+within noise, and every node, class and iteration count is identical.** The
+survivor policy sits behind a non-default flag and the campaign measures the
+shipped default (`rank`); herbie's k-generic multiplicity variants are
+verified latent on the shipped inputs; and extraction was measured at zero
+share of eqsolve's wall time (`eqsolve.deviations.md`), so no timed
+configuration exercises a changed code path.
 
 ## Headline: wall-time ratios egglog / ours (geometric means)
 

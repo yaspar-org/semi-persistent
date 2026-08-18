@@ -2,7 +2,7 @@
 
 Source: `egglog/tests/repro-herbie-vanilla.egg` at 7b1adf2. Planned in
 `doc/egglog-comparison-plan.md` as benchmark 4 ("471 rewrites, same signature
-and same analysis as herbie") and deferred behind herbie's native dual in
+and same analysis as herbie") and ranked behind herbie's native encoding in
 `herbie.deviations.md`. Both descriptions are wrong at the pinned commit, and
 the correction is what decides the drop.
 

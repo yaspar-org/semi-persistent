@@ -359,7 +359,8 @@ multiplicity, which must satisfy the element's annotation. A bare
 variable `x` (and a bare concrete element like `(Zero)`) implicitly
 means `:1`: it only binds a child whose total multiplicity is exactly
 one. Children not bound by any element go to the rest variable, again
-with their whole multiplicity. The accepted forms are:
+with their whole multiplicity. Chapter 9 (Pattern Matching Execution)
+is the normative statement of these semantics. The accepted forms are:
 
 - Exact: `(Add x (Zero) y)`. Total multiplicities must match
   exactly.
@@ -462,12 +463,11 @@ must bind to the same value:
 
 ### Caveat: migrating binary rules to AC patterns
 
-Distinct pattern elements bind distinct children of the multiset.
-This is partition semantics: the elements (plus the rest variable)
+Partition semantics (chapter 9): the elements plus the rest variable
 partition the node's distinct children, and no two elements may bind
 the same child. A binary pattern has no such constraint, because its
 two positions are independent. So a rule that was written against a
-binary operator can silently lose its coincidence matches when the
+binary operator can silently lose its repeated-child matches when the
 operator becomes AC and the rule is restated in n-ary form.
 
 Concretely, the binary rule
@@ -485,8 +485,8 @@ at multiplicity 2, and the n-ary restatement
 ```
 
 does not match it: `x` and `(Add a b)` are two elements and there is
-only one distinct child. To cover the coincidence case, write the
-multiplicity twin explicitly:
+only one distinct child. To cover the repeated child, write the
+multiplicity variant explicitly:
 
 ```
 (rewrite (Mul (Add a b):k>=2 ..rest) ...)
@@ -495,10 +495,10 @@ multiplicity twin explicitly:
 The same applies to a *single* element facing a repeated child: an
 element takes its child's whole multiplicity, and unannotated it
 requires exactly 1, so `(rewrite (Add (Const 0) ..rest) (Add ..rest))`
-does not fire on `Add{0:2, x}`. Its twin
+does not fire on `Add{0:2, x}`. Its multiplicity variant
 `(rewrite (Add (Const 0):k>=2 ..rest) (Add ..rest))` drops all copies
 at once. Where the right-hand side needs the count, read it as an
-i64: a constant fold's twin is
+i64: a constant fold's multiplicity variant is
 
 ```
 (rewrite (Add (Const a):k>=2 ..rest) (Add (Const (i64::* a k)) ..rest))
@@ -506,12 +506,12 @@ i64: a constant fold's twin is
 ```
 
 This is deliberate. Partition semantics is what makes AC matching
-well defined and enumerable; generating coincidence variants
+well defined and enumerable; generating the variants
 automatically is a combinatorial blowup (every subset of mutually
 unifiable elements could coincide). When you translate a binary rule
 whose element subpatterns can unify with each other, or whose element
-can face a repeated child, decide per rule whether the coincidence
-case matters and write its twin if it does. The keep-`k-1`-copies
+can face a repeated child, decide per rule whether the repeated-child
+case matters and write its multiplicity variant if it does. The keep-`k-1`-copies
 shape (distributing one factor out of `(x+y)^k · z`) is written with
 an RHS multiplicity expression, `(Add b ..s):(u64::- k 1)` — see the
 multiplicity section above.

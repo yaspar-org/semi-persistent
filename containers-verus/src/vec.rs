@@ -668,14 +668,14 @@ where
         self.snapshots@
     }
 
-    /// Frame-stack depth (spec twin of `depth()`). Public contracts phrase
+    /// Frame-stack depth (spec counterpart of `depth()`). Public contracts phrase
     /// frame counts through this — the `frames` field is `pub(crate)`
     /// (privacy closeout).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.frames@.len()
     }
 
-    /// Diff-log length (spec twin of `diff_log_len()`).
+    /// Diff-log length (spec counterpart of `diff_log_len()`).
     pub open(crate) spec fn diff_log_len_spec(&self) -> nat {
         self.diff_log@.len()
     }
@@ -1313,12 +1313,12 @@ where
 
     // ------------------------------------------------------------------
     // Total shell (total-API plan phase 2): no `requires` beyond wf; every
-    // precondition of the partial core is evaluated by a verified exec twin
+    // precondition of the partial core is evaluated by a verified exec counterpart
     // and the branch discharges the core's contract as a proof obligation,
     // so the check and the contract cannot drift.
     // ------------------------------------------------------------------
 
-    /// Exec twin of `push`'s capacity precondition.
+    /// Exec counterpart of `push`'s capacity precondition.
     pub fn can_push(&self) -> (b: bool)
         requires self.wf(),
         ensures b == (self.view().len() + 1 < I::max_nat()),
@@ -1408,7 +1408,7 @@ where
         Ok(())
     }
 
-    /// Exec twin of `mark`'s preconditions (TRACK, depth headroom, length
+    /// Exec counterpart of `mark`'s preconditions (TRACK, depth headroom, length
     /// representable in the token's saved_len).
     pub fn can_mark(&self) -> (b: bool)
         requires self.wf(),
@@ -3284,7 +3284,7 @@ where
         self.vec.view()
     }
 
-    /// The underlying vec (spec twin; the field is `pub(crate)` — privacy
+    /// The underlying vec (spec counterpart; the field is `pub(crate)` — privacy
     /// closeout).
     pub open(crate) spec fn vec_ref(&self) -> &Vec<T, I, S, TRACK> {
         self.vec
@@ -3338,12 +3338,12 @@ where
     I: IndexLike,
     S: DiffStore<T, I, TRACK>,
 {
-    /// The underlying vec (spec twin; the field is `pub(crate)`).
+    /// The underlying vec (spec counterpart; the field is `pub(crate)`).
     pub open(crate) spec fn vec_ref(&self) -> &Vec<T, I, S, TRACK> {
         self.vec
     }
 
-    /// The cursor position (spec twin; the field is `pub(crate)`).
+    /// The cursor position (spec counterpart; the field is `pub(crate)`).
     pub open(crate) spec fn pos_spec(&self) -> nat {
         self.pos as nat
     }

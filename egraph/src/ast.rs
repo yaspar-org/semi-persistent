@@ -227,7 +227,7 @@ impl RhsTerm {
 pub enum RhsChild {
     Term(RhsTerm),
     /// `term:mult` under a variadic op — the term contributed `mult` times.
-    /// Multiplicity 0 omits the term (the k−1 = 0 case of a coincidence twin).
+    /// Multiplicity 0 omits the term (the k−1 = 0 case of a multiplicity variant).
     TermMult {
         term: RhsTerm,
         mult: MultExpr,

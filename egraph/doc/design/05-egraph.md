@@ -113,6 +113,16 @@ classes), cascading (congruence collisions generate new worklist
 entries), and guaranteed to terminate (each merge reduces the number
 of distinct classes).
 
+The pseudo-code above is the plain-congruence pass. Under a completion
+mode (`--derive-ac-eqs`, or inside a lazy check's transaction), `rebuild`
+interleaves that pass with AC completion rounds and the A-only
+inter-reduction round to a joint fixpoint, polls the completion goal pair
+between passes and inside a round's apply loops, and stops a blown-up
+round at the node-growth budget mid-apply. The completion algorithm, the
+goal-directed early stop, and the budget are specified in
+[ac-congruence-completeness.md](ac-congruence-completeness.md) §8, §13
+and §14.
+
 ## The Key Invariant: All Marked States Are Post-Rebuild States
 
 Every `mark()` on the e-graph triggers a full rebuild before pushing

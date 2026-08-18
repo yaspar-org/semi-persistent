@@ -4,7 +4,7 @@
 //! merge/find/mark-restore workloads the e-graph's saturation loop is made
 //! of, isolated from e-matching and instantiation.
 //!
-//! There is no production-crate twin to A/B against (the hand-rolled
+//! There is no production-crate counterpart to A/B against (the hand-rolled
 //! aggregate lived in the e-graph and is gone); revision-to-revision
 //! comparison uses criterion baselines, the same protocol as the e-graph's
 //! `saturate_bench` (see its module doc for why two arms in one group would

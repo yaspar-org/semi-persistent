@@ -100,7 +100,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=180.0)
     ap.add_argument("--ours", default=os.path.join(HERE, "..", "target", "release",
                                                    "semi-persistent"))
-    ap.add_argument("--egglog", default="/tmp/egglog/target/release/egglog")
+    ap.add_argument("--egglog", default=os.path.expanduser("~/tools/egglog/target/release/egglog"))
     ap.add_argument("-n", dest="widths", type=int, action="append")
     args = ap.parse_args()
 

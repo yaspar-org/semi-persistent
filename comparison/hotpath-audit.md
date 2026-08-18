@@ -1,5 +1,9 @@
 # Hot-path audit: recomputation and cache locality in the matcher
 
+The defects this audit found are fixed; the fixes and their measured results
+are in `methodology.md` section 6 and design chapter 20. The file remains as
+the measurement record that located them.
+
 Audits the matching hot path of the e-graph engine on
 `comparison/math-microbenchmark.rules.egg` for redundant recomputation and for
 cache-locality defects, and decides between the two with a hardware-counter
@@ -21,7 +25,7 @@ Engine at `c895265` (branch `egraph-wf`), release profile (`lto = "fat"`,
 file is committed to the engine. Runs are
 `semi-persistent math-microbenchmark.rules.egg --types machine`, naive strategy.
 egglog is the same build the companion file measured, at
-`/tmp/egglog/target/release/egglog -j 1 math-microbenchmark.egglog.egg`.
+`~/tools/egglog/target/release/egglog -j 1 math-microbenchmark.egglog.egg`.
 
 Machine: Apple M4 Pro. Every process launched from this shell runs on the
 efficiency cores: a dependent-`add` chain of known length reports 2.60 GHz in

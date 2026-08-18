@@ -198,9 +198,9 @@ variable is read once and cached, so leaving it unset costs one load per plan.
 
 The dump answers what is bound when a step runs, which is the question behind
 both classes of matcher defect: a re-join keyed on a variable no earlier step
-binds, and a variadic expansion whose fixed children were bound elsewhere. The
-backtracking bug fixed on 2026-08-17 was diagnosed from it, by reading a `Join`
-on `v0` scheduled after an `ExpandA` that listed `v0` among its children.
+binds, and a variadic expansion whose fixed children were bound elsewhere. A
+`Join` on `v0` scheduled after an `ExpandA` that lists `v0` among its children
+is the shape to look for.
 
 ---
 [← Ch 7: Leapfrog Triejoin](07-leapfrog.md) · [Table of Contents](00-table-of-contents.md) · [Ch 9: Pattern Matching →](09-pattern-matching.md)

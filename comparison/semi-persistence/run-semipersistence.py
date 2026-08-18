@@ -20,7 +20,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OURS = os.path.join(HERE, "..", "..", "target", "release", "semi-persistent")
-DEFAULT_EGGLOG = "/tmp/egglog/target/release/egglog"
+DEFAULT_EGGLOG = os.path.expanduser("~/tools/egglog/target/release/egglog")
 
 SIZES = [880, 2_650, 8_900, 27_000, 100_000]
 VARIANTS = ["base", "empty", "cycles", "norun", "rerun", "rerunnorun"]

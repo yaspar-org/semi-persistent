@@ -330,7 +330,7 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
             pool_span::<Cfg>(start, self.mset_pool.len(), "Match::mset_pool");
     }
 
-    /// The ACI twin: bind `v` to the residual ids not consumed by the
+    /// The ACI counterpart: bind `v` to the residual ids not consumed by the
     /// element assignment (same write-through mechanism).
     pub fn push_set_residual(
         &mut self,

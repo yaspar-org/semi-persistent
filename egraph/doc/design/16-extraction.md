@@ -83,8 +83,8 @@ cheaper representations are discovered through equivalences. In practice the
 fixpoint converges in two passes on every workload measured, which is why the
 worklist variant was not adopted (`doc/perf-results/E12-worklist-fixpoint.md`).
 
-The dense-array representation is a measured choice over the map form this
-document previously showed: 22-29% faster where the fixpoint dominates
+The dense-array representation is a measured choice over a map form: 22-29%
+faster where the fixpoint dominates
 (`doc/perf-results/E4-extract-dense-tables.md`).
 
 `reconstruct` then builds a printable term tree from `best_node`:

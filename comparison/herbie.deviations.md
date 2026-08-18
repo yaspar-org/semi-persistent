@@ -5,28 +5,19 @@ intersection set: part of Herbie's simplification layer, 180 rewrites over
 `BigRat` with an interval analysis, run in fourteen `push`/`run`/`check`/`pop`
 blocks.
 
-Files: `herbie.egglog.egg`, `herbie.rules.egg`, `herbie-dropped.txt`, this ledger.
-`gen-herbie.py` regenerates the two programs and the dropped-form listing from
-their original; it is the reproducible record of the strip.
+Files: `herbie.egglog.egg`, `herbie.rules.egg`, `herbie.native.egg`,
+`herbie-dropped.txt`, this ledger. `gen-herbie.py` regenerates the egglog and
+rules programs and the dropped-form listing from the original;
+`herbie.native.egg` is hand-derived and this ledger records its accounting.
 
-**No native-AC dual.** Deferred, with reason, at the end of this file.
+**This is a scoped column**: the same reduced program runs in every
+configuration, and its timings are not comparable to anything upstream calls
+herbie.
 
-**Read the scoping section before the numbers.** This is a scoped column: the same
-reduced program runs in both configurations.
+## Scoping, applied to every configuration
 
-## Correction to the plan's figures
-
-`doc/egglog-comparison-plan.md` says 183 rewrites and fifteen push/run/check/pop
-blocks. Counted at 7b1adf2 the file has **180** `(rewrite …)`, 16 `(rule …)` and
-**14** blocks. The plan's earlier statement that herbie is out of the intersection
-set entirely (its closing section, and `methodology.md` section 4's calc row)
-turns out to be too strong: with the analysis stripped, 163 of the 180 rewrites
-and 12 of the 14 blocks survive and both engines agree on all twelve checks.
-
-## Scoping, applied to both configurations
-
-`gen-herbie.py` removes 37 top-level forms and two test blocks. The listing with
-every removed form verbatim is `herbie-dropped.txt`.
+`gen-herbie.py` removes 37 top-level forms and two test blocks. The listing
+with every removed form verbatim is `herbie-dropped.txt`.
 
 ### 1. The interval lattice and the non-zero analysis (32 forms)
 
@@ -36,43 +27,41 @@ every removed form verbatim is `herbie-dropped.txt`.
 (relation non-zero (Math))
 ```
 
-Three declarations, 15 rules that propagate the interval through the operators,
-and 14 forms that mention `non-zero` (2 rules deriving it from the interval, 12
-rewrites guarded by it). None of it is in the intersection set: we have no lattice
-functions with `:merge`, no `set` action, no datalog relations, and our `:when`
-takes patterns only, so a relation guard has nothing to compile to. The multi-fact
-rules would also need the root-binding form `(= la (lo a))` that we lack
-(see `matrix.deviations.md`).
-
-This is the strip `methodology.md` section 4 anticipated. It is applied to the
-egglog program as well, so neither side gets the analysis.
+Three declarations, 15 rules that propagate the interval through the
+operators, and 14 forms that mention `non-zero` (2 rules deriving it from the
+interval, 12 rewrites guarded by it). None of it is in the intersection set:
+we have no lattice functions with `:merge`, no `set` action, and no datalog
+relations, so a relation guard has nothing to compile to. The strip is
+applied to the egglog program as well, so neither side gets the analysis.
 
 ### 2. Five constant folds over unavailable primitives
 
 `(Pow (Num a) (Num b))`, `(Log (Num a))`, `(Ceil (Num a))`, `(Floor (Num a))`,
-`(Round (Num a))`. Our `RBig` primitive set is `+ - * / neg abs min max` and the
-comparisons; `pow`, `log`, `ceil`, `floor` and `round` are not in it. Two of the
-five are additionally guarded by primitive definedness —
-`:when ((= res (pow a b)))`, which succeeds only when the rational power exists —
-and that partiality test is not expressible on our side either.
+`(Round (Num a))`. Our `RBig` primitives are `+ - * / neg abs min max`, the
+comparisons, `from_int`, `scale`, and integer-exponent `pow`; rational-exponent
+`pow`, `log`, `ceil`, `floor` and `round` are not among them. Two of the five
+folds are additionally guarded by primitive definedness,
+`:when ((= res (pow a b)))`, which succeeds only when the rational power
+exists, and that partiality test is not expressible on our side.
 
 ### 3. Two test blocks
 
-- **`$e10`**, `(Div (Mul x 3) x) = 3`. Provable only through the non-zero-gated
-  `Div` rules. Measured: with the analysis stripped and this block kept, it is the
-  single failing check out of fourteen.
-- **`$e14`**, the golden-ratio identity. Needs the `pow` constant fold. Measured:
-  with `$e10` also removed, it is the single remaining failing check.
+- **`$e10`**, `(Div (Mul x 3) x) = 3`. Provable only through the
+  non-zero-gated `Div` rules. Measured: with the analysis stripped and this
+  block kept, it is the single failing check out of fourteen.
+- **`$e14`**, the golden-ratio identity. Needs the rational-exponent `pow`
+  constant fold. Measured: with `$e10` also removed, it is the single
+  remaining failing check.
 
-Both were found by running the stripped program on egglog and reading which checks
-failed, not by inspection.
+Both were found by running the stripped program on egglog and reading which
+checks failed, not by inspection.
 
 ### Counted consequence
 
 | | original | scoped |
 |---|---|---|
-| `(rewrite …)` | 180 | 163 (90.6%) |
-| `(rule …)` | 16 | 0 |
+| `(rewrite ...)` | 180 | 163 (90.6%) |
+| `(rule ...)` | 16 | 0 |
 | push/run/check/pop blocks | 14 | 12 |
 | checks | 14 | 12 |
 
@@ -81,147 +70,76 @@ failed, not by inspection.
 Mechanical, all applied by `gen-herbie.py`:
 
 1. **`BigRat` becomes `RBig`.**
-2. **Rational literals.** `(bigrat (bigint N) (bigint D))` becomes `N/D`, which is
+2. **Rational literals.** `(bigrat (bigint N) (bigint D))` becomes `N/D`,
    our surface syntax for an `RBig` literal.
 3. **Literal-op qualification.** `(+ a b)`, `(- a b)`, `(* a b)`, `(neg a)`,
-   `(abs a)` become `RBig::`-qualified. `/` does not appear after the strip — the
-   only rational division was in the non-zero-gated `Div` fold.
-4. **Identifier renaming.** `$x` → `x`, with hyphens removed: `$r-zero` → `rzero`,
-   `$neg-one` → `negone`. Pure renaming.
-5. **Type groups.** Runs under `--types machine,bignum`, not `machine` alone: the
-   datatype needs `RBig` from `bignum` and `String` from `machine`. This is the
-   first benchmark in the set to need two groups, and it answers the note in
-   `README.md`'s protocol section that the `bignum` group has no `String` sort —
-   the groups compose on the command line.
+   `(abs a)` become `RBig::`-qualified. `/` does not appear after the strip:
+   the only rational division was in the non-zero-gated `Div` fold.
+4. **Identifier renaming.** `$x` becomes `x`, with hyphens removed:
+   `$r-zero` becomes `rzero`, `$neg-one` becomes `negone`. Pure renaming.
+5. **Type groups.** Runs under `--types machine,bignum`: the datatype needs
+   `RBig` from `bignum` and `String` from `machine`; the groups compose on
+   the command line.
 
-Nothing else changes: all 163 rewrites, all 12 blocks, all 12 checks, same budgets.
+Nothing else changes: all 163 rewrites, all 12 blocks, all 12 checks, same
+budgets.
 
-## Cross-check
+## The native encoding
 
-All twelve checks pass on both engines. That is the substantive cross-check for
-this benchmark: the same twelve equalities are derived from the same 163 rewrites
-by both systems.
+`herbie.native.egg` declares `Add` and `Mul` variadic `:assoc-comm` and
+restates every rule that matched either operator against flattened multisets,
+rule by rule, with the twelve checks as the oracle. Counts, each verifiable
+by grep against the two files:
 
-Smoke pass (1 run, 0 warmups — not a timing result):
-
-| config | nodes | classes | iterations |
-|---|---|---|---|
-| egglog | 6 | — | 24 |
-| ours, rules, naive | 11 | 11 | 1 |
-| ours, rules, semi-naive | 11 | 11 | 1 |
-
-Neither the node column nor the iteration column means anything here. Every block
-is inside `push`/`pop`, so the node counts are the base state after the last
-`(pop)`; and egglog's stats file accumulates one entry per iteration over all
-twelve `(run …)` commands while ours reports the last one only. Wall time is the
-metric for this benchmark. Same caveat as `calc` and `until`.
-
-## Native-AC dual: delivered (2026-08-17)
-
-`herbie.native.egg` is the hand-derived dual: `Add` and `Mul` are declared
-variadic `:assoc-comm` and every rule that matched either operator is restated
-against flattened multisets, per-rule, with the twelve checks as the oracle.
-The file is not generated; the record of each decision is this section plus
-the file's comments. The accounting closes exactly against the 163 rewrites of
-the rules configuration:
-
-| bucket | count |
+| | count |
 |---|---|
-| A/C rules deleted (2 commutativity, 4 associativity) | 6 |
+| source rewrites (`herbie.rules.egg`) | 163 |
+| native rewrites (`herbie.native.egg`) | 151 |
+| A/C rules carried by the declarations | 6 |
 | deleted as multiset tautologies | 2 |
-| C-redundant pairs collapsed to one native rule | 12 pairs |
-| restated verbatim (no AC position) | 84 |
-| lifted n-ary or reshaped to multiset form (`:2`/`:3` elements) | 59 |
-| coincidence twins added | 9 |
-| native rewrites total | 152 |
+| C-redundant pairs collapsed to one rule each | 12 pairs |
+| multiplicity variants (`:k>=2` rules) | 10 |
 
 The two tautologies are the nested difference-of-squares pair
 `(Mul (Mul a b) (Mul a b)) <-> (Mul (Mul a a) (Mul b b))`: both sides flatten
-to `{a:2, b:2}`, so the rules are contentless under native canonization and a
-mechanical lift would have left patterns that match nothing (the failure mode
-the deferral predicted). The two cube-root chains
-`(Mul (Mul c c) c)` / `(Mul c (Mul c c))` flatten to one multiset
-`{Cbrt x : 3}` and are one `:3` rule, counted among the 12 collapses.
+to `{a:2, b:2}`, so the rules are contentless under native canonization, and
+a mechanical lift would leave patterns that match nothing. The two cube-root
+chains `(Mul (Mul c c) c)` / `(Mul c (Mul c c))` flatten to one multiset
+`{Cbrt x : 3}` and are one `:3` rule, counted among the collapses. Squared
+and cubed factors are multiset elements with multiplicity, so every
+`(Mul t t)` subpattern is restated as `t:2` and `x*x*x` as `x:3`.
 
-Squared and cubed factors are multiset elements with multiplicity, so every
-`(Mul t t)` subpattern is restated as `t:2` (`sin`/`cos`/`cosh`/`sinh`
-identities, square roots, `Fabs`, difference of squares) and `x*x*x` as `x:3`.
-The nine twins cover repeated children where the source's binary patterns
-match by positional coincidence: the two `Num` folds at `:2`, the counting
-rule at `:3` (`three` is a global), the `Neg`-pair and `exp`-pair rules at
-`:2`, `zero`/`one`/`negone` identity elements at `:k>=2`, and the `Mul`
-annihilator at `:k>=2`. Residuals, verified latent by the oracle: a `Num`
-fold at multiplicity k >= 3 (the multiplicity is an i64 and RBig arithmetic
-cannot consume it), counting at k >= 4, and any rule that must keep k-1
-copies of its matched child on the right-hand side (the language carries no
-multiplicity arithmetic; see the language guide's caveat section).
+The multiplicity variants exist because pattern elements bind distinct
+children: an n-ary lift of a binary rule cannot match a repeated child, so
+each affected rule carries the variant that covers multiplicity 2 or more.
+They are k-generic where the count enters arithmetic, through the
+integer-to-rational lift: the `Num` folds as `k*a` (`RBig::scale`) and `a^k`
+(`RBig::pow`), counting as `(Num (RBig::from_int k))` times the child (this
+one rule also carries the source's `x + x` counting rule), and the `Neg`,
+`Pow` and `exp` pairs through `RBig::from_int`. The remaining uncovered
+multiplicities are parity-shaped, not count-shaped: `negone`, `Sqrt`, `Fabs`,
+`Neg` and `Cbrt` beyond their written `:2`/`:3` forms need an even/odd split
+the rule language does not carry. Every parity-shaped case is verified
+latent: the twelve checks pass without them.
 
-**Validation: naive passes 12/12; semi-naive passes 11/12 and is blocked by an
-engine defect, not by the translation.** Block 9 (`e9 = (Sub (Add x one) one)`
-at `(run 4)`) needs 8 semi-naive rounds where naive needs 3, and the minimal
-repro is independent of this file:
+## Validation and measurement
 
-```
-(rewrite (Sub x x) zero)
-(rewrite (Add zero ..rest) (Add ..rest))
-(let t (Add x (Sub one one)))
-(run 2)
-(check (= t x))        ; naive ok, semi-naive fails
-```
+All twelve checks pass on both engines, in every configuration, under both
+of our saturation strategies. Campaign medians (`final/final-r3-tables.md`):
+egglog 120.2 ms; ours rules 28.9 ms naive, 37.1 ms semi-naive; ours native
+14.1 ms naive, 20.6 ms semi-naive.
 
-Replace the rule-derived merge by a literal `(union (Sub one one) zero)` and
-semi-naive passes: when a merge produced by a rule recanonizes a parent AC
-node (the child class collapses into `zero`'s class, so the parent's multiset
-gains `zero` as an element), the recanonized parent is not visible to the next
-round's delta for the rule that binds that element. Same family as the
-root-binding gap fixed in 4258fa4. The budget is not raised to hide the lag:
-the file keeps the source's `(run 4)` and the semi-naive column is blocked
-until the engine fix lands, at which point the twelve checks re-validate it.
-
-Smoke pass (1 run, 0 warmups; same base-state and last-block caveats as the
-rules table above; wall time is the benchmark's metric and every block is
-sub-millisecond on both configurations):
+Base-state counts after the last `(pop)` (not a work measurement; every
+block's work is popped):
 
 | config | nodes | classes | iterations |
 |---|---|---|---|
-| ours, native, naive | 11 | 11 | 1 |
-| ours, native, semi-naive | 11 | 11 | 1 |
+| egglog | 6 | | 24 |
+| ours, rules, either strategy | 11 | 11 | 1 |
+| ours, native, either strategy | 11 | 11 | 1 |
 
-**The engine defect above is fixed and the semi-naive column passes 12/12.**
-The diagnosis sharpened during the fix: the merge need not recanonicalize the
-parent at all — when the surviving representative is the id the parents
-already store, nothing recanonicalizes anywhere, and the new match arises
-purely from class membership growth, invisible to a node delta. Two halves,
-both landed: every merge under semi-naive records the absorbed class's member
-nodes in the touched log (covers rules that scan the class through any atom,
-including literal elements over pre-existing nodes), and a rule referencing a
-let-bound global in a child or element position matches the whole graph every
-round (no atom scans a global's class, so no delta can carry it; same
-category as the root-binding rules of 4258fa4). Regression fixtures:
-`semi_recanon_parent_delta.egg` (the global half, this file's repro) and
-`semi_merge_membership_delta.egg` (the membership half, with the merged
-literal pre-existing).
-
-`repro-herbie-vanilla.egg` is not behind this file after all: surveyed at
-7b1adf2 it is not herbie's simplify layer at 2.9x but a typed-lowering
-unsoundness repro with no checks; `repro-herbie-vanilla.deviations.md` has
-the corrected characterization and the drop.
-
-**Update on the residuals (same date, later):** the keep-`k-1`-copies shape is
-now expressible (RHS multiplicity expressions, checked u64 arithmetic,
-interval-checked at install), so the herbie rules in that residual class can
-gain twins on the file's next pass; the RBig-fold residual stands, since it
-needs an integer-to-RBig cast primitive, not multiplicity arithmetic. Recorded
-here so the residual list is read against the current language.
-
-**Residuals retired (2026-08-18).** `RBig::from_int` (an integer count into an
-exact rational, total), `RBig::scale` (rational times integer count) and
-`RBig::pow` (checked non-negative integer exponent) landed in the mixed
-literal model, and the multiplicity-bounded twins are k-generic: both `Num`
-folds (`k*a`, `a^k`), counting (one `x:k>=2` rule subsuming the `:2`/`:3`
-pair), the `Neg` pair, the `Pow` pair, and the `exp` pair. What remains
-residual is parity-shaped, not count-shaped: `negone`/`Sqrt`/`Fabs`/`Neg`/
-`Cbrt` at multiplicities beyond their written `:2`/`:3` forms need an
-even/odd split the rule language does not carry, and every such case is
-verified latent. Re-validated: twelve checks pass under both strategies,
-counts unchanged (11 nodes base state).
+Neither the node column nor the iteration column measures the blocks' work:
+every block is inside `push`/`pop`, so the counts are the base state, and
+egglog's stats file accumulates one entry per iteration across every
+`(run ...)` while ours reports the last one only (24 against 1). Wall time
+is the metric for this benchmark, as for `calc` and `until`.

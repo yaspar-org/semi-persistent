@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; TYPES: machine
 ;; A one-element sequence IS its element: `add` returns the child's class instead of
-;; minting a node, the A-only twin of the MSet/Set degenerate-arity resolution. This
+;; minting a node, the A-only counterpart of the MSet/Set degenerate-arity resolution. This
 ;; is what lets an n-ary rewrite whose right-hand side shrinks to one element land on
 ;; that element, so a program does not have to state `(rewrite (seq x) x)` itself.
 

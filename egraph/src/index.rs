@@ -73,7 +73,7 @@ pub struct FanOuts<O> {
     /// (`saturate::rule_skew`): a skewed path is where a per-round static atom
     /// order is wrong for the bindings that hit the hub.
     pub by_child_pos_skew: FastMap<(O, usize), f64>,
-    /// Skew twin of [`by_contains`](Self::by_contains).
+    /// Skew counterpart of [`by_contains`](Self::by_contains).
     pub by_contains_skew: FastMap<O, f64>,
     /// `(op, position)` -> `op`-nodes in the bucket a `ByChildPos` probe lands
     /// in, after its intersection with `by_op[op]`. Keyed per op because the

@@ -89,7 +89,7 @@ where
         self.sparse.view().len()
     }
 
-    /// Sparse column (spec twin; fields are `pub(crate)` — privacy closeout).
+    /// Sparse column (spec counterpart; fields are `pub(crate)` — privacy closeout).
     pub open(crate) spec fn indices_view(&self) -> Seq<Idx> {
         self.indices.view()
     }
@@ -110,7 +110,7 @@ where
         self.sparse.view()
     }
 
-    /// Dense-column reference (spec twin, for `data()`'s ensures).
+    /// Dense-column reference (spec counterpart, for `data()`'s ensures).
     pub open(crate) spec fn dense_ref(&self) -> &SpVec<T, Idx, S, TRACK> {
         &self.dense
     }
@@ -151,7 +151,7 @@ where
         &&& self.indices.fork_count_spec() + 1 <= u32::MAX
     }
 
-    /// The three column snapshots a token names (spec twin for restore's
+    /// The three column snapshots a token names (spec counterpart for restore's
     /// contract).
     pub open(crate) spec fn snap_at(&self, token: SparseSetToken) -> (Seq<T>, Seq<Idx>, Seq<Idx>) {
         (self.dense.snapshots_view()[token.dense_frame_idx_spec() as int],
@@ -159,12 +159,12 @@ where
          self.indices.snapshots_view()[token.indices_frame_idx_spec() as int])
     }
 
-    /// Dense snapshot stack (spec twin).
+    /// Dense snapshot stack (spec counterpart).
     pub open(crate) spec fn dense_snapshots_view(&self) -> Seq<Seq<T>> {
         self.dense.snapshots_view()
     }
 
-    /// Add-capacity headroom (spec twin for `add`'s requires).
+    /// Add-capacity headroom (spec counterpart for `add`'s requires).
     pub open(crate) spec fn can_add_spec(&self) -> bool {
         &&& self.dense.view().len() + 1 < Idx::max_nat()
         &&& self.sparse.view().len() + 1 < Idx::max_nat()
@@ -370,7 +370,7 @@ where
     }
 
     /// Overwrite a live id's value, liveness already established (the
-    /// pub(crate) twin of `set`, same effects without the re-check).
+    /// pub(crate) counterpart of `set`, same effects without the re-check).
     pub(crate) fn set_live(&mut self, id: Idx, value: T)
         requires
             old(self).wf(),
@@ -413,7 +413,7 @@ where
                 &&& final(self).id_set() == old(self).id_set()
                 &&& final(self).free_pool() == old(self).free_pool()
             },
-            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // snapshot-stack framing (eclasses: the aggregate's archive is
             // keyed on the component stacks).
             final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
             final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
@@ -477,7 +477,7 @@ where
                             final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
                         == old(self).dense_view()[
                             old(self).sparse_view()[k.as_nat() as int].as_nat() as int],
-            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // snapshot-stack framing (eclasses: the aggregate's archive is
             // keyed on the component stacks).
             final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
             final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
@@ -676,7 +676,7 @@ where
                                 == old(self).dense_view()[
                                     old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
             },
-            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // snapshot-stack framing (eclasses: the aggregate's archive is
             // keyed on the component stacks).
             final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
             final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
@@ -987,7 +987,7 @@ where
     // doc/future/total-api-plan.md.
     // ------------------------------------------------------------------
 
-    /// Exec twin of `add`'s three-column capacity precondition.
+    /// Exec counterpart of `add`'s three-column capacity precondition.
     pub fn can_add(&self) -> (b: bool)
         requires self.wf(),
         ensures b == self.can_add_spec(),
@@ -1022,7 +1022,7 @@ where
                                 == old(self).dense_view()[
                                     old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
             },
-            // snapshot-stack framing (egraph-wf: the aggregate's archive is
+            // snapshot-stack framing (eclasses: the aggregate's archive is
             // keyed on the component stacks).
             final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
             final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),

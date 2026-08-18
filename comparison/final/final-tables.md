@@ -1,16 +1,11 @@
 # FINAL comparison tables
 
-> **Superseded where they differ by `final-r2-tables.md`** (2026-08-17, second
-> pass at the post-fix engine): herbie gains a native column, matrix's
-> native-A column gains timings, and the semi-naive rows of eqsolve.rules and
-> math-microbenchmark.rules move because the pre-fix strategy under-derived
-> (methodology section 6, class-growth entry). Everything else reproduces
-> within noise.
+> Archived campaign (r1). The current campaign is `final-r3-tables.md`; the
+> numbers here predate the engine changes recorded in `../methodology.md`
+> section 6.
 
-**FINAL.** Every number here is measured in one campaign, on one quiet
-machine, at one pinned commit of each engine, on 2026-08-17. This file
-supersedes every earlier timing table in comparison/ for the benchmarks it
-covers. The protocol, the divergence registry and the per-benchmark ledgers it
+**Campaign record.** Every number here is measured in one campaign, on one
+quiet machine, at one pinned commit of each engine, on 2026-08-17. The protocol, the divergence registry and the per-benchmark ledgers it
 depends on are in `../methodology.md` section "Final campaign"; the caveats
 that registry attaches to individual benchmarks are restated inline below, so
 that a table is never read without the qualification that governs it.
@@ -23,8 +18,8 @@ Ten benchmarks, the ranked intersection set. Each runs in up to five
 configurations: egglog, and our two encodings (rules, which writes AC as
 explicit rewrites, and native, which declares the operator AC) under each of
 our two strategies (naive, our shipped default, and semi-naive). Two
-benchmarks ship no native dual: `herbie`'s is deferred and `eqsolve`'s is
-postponed, each for the measured reason its section states. 46 configurations,
+benchmarks ship no native encoding at this campaign's commit: `herbie`'s and
+`eqsolve`'s native programs postdate it. 46 configurations,
 2 warmups and 10 timed runs each, medians reported.
 
 ## Headline
@@ -216,7 +211,7 @@ Selected as the commutative-without-associative case, so its native dual declare
 | ours, rules, naive | 28.6 | 11 | 11 | 1 |
 | ours, rules, semi-naive | 37.0 | 11 | 11 | 1 |
 
-**Scoped column, and multi-block: wall time is the metric.** The 2-function interval lattice, the `non-zero` relation it feeds, and five rational constant folds are stripped from the egglog program as well as ours, leaving 163 of 180 rewrites and 12 of 14 blocks, on which both engines agree. The iteration columns are not comparable: egglog's stats accumulate one entry per iteration across all twelve `(run ...)` commands while ours reports the last only, which is the 24 against 1 that methodology section 3 records. Its native-AC dual is deferred. Ledger: `herbie.deviations.md`.
+**Scoped column, and multi-block: wall time is the metric.** The 2-function interval lattice, the `non-zero` relation it feeds, and five rational constant folds are stripped from the egglog program as well as ours, leaving 163 of 180 rewrites and 12 of 14 blocks, on which both engines agree. The iteration columns are not comparable: egglog's stats accumulate one entry per iteration across all twelve `(run ...)` commands while ours reports the last only, which is the 24 against 1 that methodology section 3 records. Its native encoding postdates this campaign's commit. Ledger: `herbie.deviations.md`.
 
 ### eqsolve
 

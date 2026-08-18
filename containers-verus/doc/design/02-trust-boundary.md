@@ -405,27 +405,27 @@ which is a one-line `if`. Nothing algorithmic hides here. (See
 [Ch. 3 §5](03-fork-history.md) for the `u32` fork-history limit these guards
 protect, and the `restores_remaining()` query that reports the headroom.)
 
-## 3. What used to be here: the casts (now eliminated)
+## 3. The integer casts are proved, not trusted
 
-For contrast: the `IndexLike::as_usize` / `try_from_usize` casts on the primitive
-integers (`u8`/`u16`/`u32`/`u64`/`usize`) and the `DenseId::as_usize` casts
-*were* `external_body` (they wrap machine-integer `as` casts) and have now been
-**proved**, removing 10 items from the trust surface:
+The `IndexLike::as_usize` / `try_from_usize` casts on the primitive integers
+(`u8`/`u16`/`u32`/`u64`/`usize`) and the `DenseId::as_usize` casts carry
+value-preserving `ensures` and verify; none is `external_body`:
 
 - `u8`/`u16`/`u32` widening (and the guarded narrowings of `try_from_usize`)
   verify directly; Verus models these casts.
 - `u64` and `DenseId63` (a `u64` payload) rely on the cast being the value
   identity on a 64-bit host: `usize::MAX == u64::MAX`. This is discharged by
   `index_like::lemma_u64_usize_64bit` over the crate-wide `global size_of
-  usize == 8` pin, and the whole `u64`/`usize` index path is already
-  `#[cfg(target_pointer_width = "64")]`-gated, so verifying them adds **no new
-  assumption** beyond the existing target gate.
+  usize == 8` pin, and the whole `u64`/`usize` index path is
+  `#[cfg(target_pointer_width = "64")]`-gated, so verifying them adds no new
+  assumption beyond the target pin.
 
-The lesson (recorded in the [proof attempts log](proof-attempts-log.md)): "wraps a cast" is not
-the same as "must be trusted." A cast with a value-preserving `ensures` is
-usually provable once the host-width fact is pinned; only genuine side effects
-(§1b), intentional abstraction (§1a/§1c), and spec-free plumbing (§2) are the
-real boundary.
+The principle (with its worked examples in the
+[proof attempts log](proof-attempts-log.md)): "wraps a cast" is not the same
+as "must be trusted". A cast with a value-preserving `ensures` is provable
+once the host-width fact is pinned; only genuine side effects (§1b),
+intentional abstraction (§1a/§1c), and spec-free plumbing (§2) are the real
+boundary.
 
 ## 3.5. Groups D and E: migration-parity trusted surfaces
 
@@ -605,7 +605,7 @@ All 27 default-build `external_body` markers plus the 1 default-build axiom
 | 13 | `clone_key_exact` | D | projects key-model requirement (3) out of vstd's prose-stated `obeys_key_model`; no new assumption | no (vstd provides no lemma) |
 | 14 | `values_equal` | E | no ensures — unconstrained bool, nothing derivable; avoids `obeys_eq_spec` plumbing | by threading vstd eq specs; declined for production shape |
 | 15 | `debug_check_different_rings` | E | debug-only mirror of a spec-only precondition | n/a (diagnostic) |
-| 16 | `ListHead::white_box_head` | E | contract-free read-only test accessor (unpacks the niche for the white-box walkers; inside `verus!` so it needs the marker; its node-side twin `white_box_next` sits outside `verus!` and needs none) | n/a (no contract) |
+| 16 | `ListHead::white_box_head` | E | contract-free read-only test accessor (unpacks the niche for the white-box walkers; inside `verus!` so it needs the marker; its node-side counterpart `white_box_next` sits outside `verus!` and needs none) | n/a (no contract) |
 | 17 | `ExIndexHasher` registration | D | contract-free opaque registration; names `IndexHasher` in specs so the hasher axiom can trigger on it | n/a (no contract) |
 | 18 | `ExFoldHasher` registration | D | same — names foldhash's `FoldHasher` (`IndexHasher`'s associated `Hasher` type) so the `BuildHasher` impl type-checks under Verus | n/a (no contract) |
 | — | `axiom_index_hasher_builds_valid_hashers` | D | `broadcast axiom fn` — mirrors vstd's shipped `axiom_random_state_builds_valid_hashers`; `builds_valid_hashers` asserts only byte-determinism, which `IndexHasher` satisfies at least as strongly as std's `RandomState` (seed stored by value, so `build_hasher` is a pure function of it — §3.5 D-hasher) | no (predicate is `uninterp`; vstd `admit()`s the identical fact for `RandomState`) |

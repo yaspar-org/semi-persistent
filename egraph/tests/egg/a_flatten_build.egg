@@ -31,7 +31,7 @@
 (check (!= (seq (a) (a) (b)) (seq (a) (b))))
 
 ;; Order is preserved: flattening must not sort. This is the whole difference from
-;; the AC twin (ac_flatten_build.egg), where the two sides ARE equal.
+;; the AC counterpart (ac_flatten_build.egg), where the two sides ARE equal.
 (check (!= (seq (a) (b)) (seq (b) (a))))
 (check (!= (seq (seq (a) (b)) (c)) (seq (c) (b) (a))))
 

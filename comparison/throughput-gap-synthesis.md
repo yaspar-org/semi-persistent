@@ -1,5 +1,10 @@
 # The 22.7x rules-encoding gap: side-by-side verdict
 
+The gap is closed: the work items this synthesis opens are delivered
+(design chapter 20, S1; `methodology.md` section 6) and the current campaign
+has the rules encoding at parity on this benchmark. The file remains as the
+measurement record of the diagnosis.
+
 Synthesizes `throughput-gap-ours.md` (cb2170b) and
 `throughput-gap-egglog.md` (8daa1f0) on
 `comparison/math-microbenchmark.rules.egg`: same rules, same 11 iterations,

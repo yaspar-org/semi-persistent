@@ -867,7 +867,7 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         A::Index::try_from_usize(id.to_usize()).expect("MCGS id exceeds configured index width")
     }
 
-    /// Node count, in the configured index word; see the OR-stats twin.
+    /// Node count, in the configured index word; see the OR-stats counterpart.
     fn len(&self) -> A::Index {
         self.parent.len()
     }
@@ -1518,10 +1518,10 @@ fn or_postorder<A: AuIds, O: DenseId>(
     // in edge then child order). Computed once per frame, at push time: a
     // fully expanded node with e edges of arity k has e*k children and its
     // frame stays on the stack for e*k cursor steps, so recollecting the list
-    // at every step (as this function did before 2026-08-15) is quadratic in
-    // the fan-out. On the anytime pilot's ac m64c16 root (4096 transport
-    // edges x 289 cells) that recollection copied ~1.4e12 ids inside
-    // `close_completed_dag`, a multi-minute stall at the first budget that
+    // at every step is quadratic in the fan-out. On the anytime pilot's ac
+    // m64c16 root (4096 transport edges x 289 cells) that recollection copies
+    // ~1.4e12 ids inside `close_completed_dag`, a multi-minute stall at the
+    // first budget that
     // completes expansion (playouts = members^2 = 4096); computed once, the
     // same closure finishes in under a second. Pinned by
     // `or_postorder_is_linear_in_the_expanded_fan_out`.
@@ -3664,11 +3664,11 @@ mod tests {
     /// `or_postorder` on a single OR node with a wide expanded fan (E edges of
     /// arity K): each node exactly once, children before the parent, and the
     /// traversal is linear in the E*K fan-out. The linearity half is a
-    /// release-only timing canary because the traversal recollected the
-    /// parent's full flattened child list on every cursor step before
-    /// 2026-08-15, quadratic in E*K, which stalled `close_completed_dag` for
-    /// minutes on the anytime pilot's ac m64c16 root (4096 edges x 289 cells)
-    /// at the first budget that completes expansion. At E=1024, K=64 that
+    /// release-only timing canary because a traversal that recollects the
+    /// parent's full flattened child list on every cursor step is quadratic
+    /// in E*K, which stalls `close_completed_dag` for minutes on the anytime
+    /// pilot's ac m64c16 root (4096 edges x 289 cells) at the first budget
+    /// that completes expansion. At E=1024, K=64 that
     /// recollection copies ~4e9 ids (seconds under release codegen); the
     /// per-frame collection finishes in milliseconds.
     #[test]

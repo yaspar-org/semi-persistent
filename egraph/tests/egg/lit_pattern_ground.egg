@@ -11,7 +11,7 @@
 (run 5)
 (check (= t (Var "p")))
 
-;; Soundness twin: the literal pins the payload, it does not merely reach the `@i64`
+;; Soundness counterpart: the literal pins the payload, it does not merely reach the `@i64`
 ;; nodes. A different constant in the same position must not match.
 (let u (Add (Var "q") (Const 5)))
 (run 5)

@@ -264,7 +264,7 @@ impl<V: Copy + Default> LayeredSpanMap<V> {
         self.base.is_empty()
     }
 
-    /// Value count of the delta generation (spec twin: fields are `pub(crate)`,
+    /// Value count of the delta generation (spec counterpart: fields are `pub(crate)`,
     /// so public contracts phrase counts through these).
     pub open(crate) spec fn delta_total_spec(&self) -> nat {
         self.delta.total_spec()

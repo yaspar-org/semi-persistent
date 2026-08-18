@@ -72,13 +72,16 @@ struct Mark<Cfg: EGraphConfig, O> {
 ///   re-runs it on a growing atom pool every round, which diverges on
 ///   rule-sets that keep minting new atoms.
 /// - `Lazy`: saturation runs with completion off; an equality check that plain
-///   congruence cannot decide runs completion *inside a semi-persistent
-///   transaction* (mark, complete, read the verdict, restore). The graph the
-///   pass sees is frozen — no rules interleave — which is the case the
-///   termination argument (Dickson antichain over a fixed pool) actually
-///   covers, and the O(touched) restore discards every node the pass minted.
-///   Same decision procedure as `Eager` per query, paid only when a query
-///   needs it.
+///   congruence cannot decide runs goal-directed completion inside a
+///   semi-persistent transaction shared across consecutive equality checks.
+///   The queried pair is the completion goal: every pass stops with
+///   `CompletionOutcome::GoalMet` the moment the pair joins, a second phase
+///   alternates default-ruleset rule rounds with completion passes when the
+///   graph's own closure does not decide the pair, and the node-growth budget
+///   is checked inside a round's apply loops. The first non-equality-check
+///   command restores the mark, so the O(touched) restore discards everything
+///   the checks derived. Same decision procedure as `Eager` per query, paid
+///   only when a query needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum AcMode {
     #[default]

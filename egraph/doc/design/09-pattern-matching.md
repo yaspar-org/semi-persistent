@@ -106,12 +106,12 @@ against the child at that position rather than rebound, and the split's
 cleanup leaves it bound: the binding belongs to the step that made it, and
 the expansion is one more constraint on it. Both engines therefore record
 which variables a split bound and clear exactly those, on the failure path
-and after the continuation returns. Clearing every local child instead was a
-soundness defect until 2026-08-17, with two symptoms: the next split rebound
-the variable from its own children, so the rule fired on positions the
-earlier atom excluded, and a re-join keyed on that variable read it as
-unbound and panicked. `DecomposeAC` and `DecomposeACI` carry the same rule
-for a pre-bound element variable.
+and after the continuation returns. Clearing every local child is unsound,
+with two failure shapes the fixtures pin: the next split rebinds the
+variable from its own children, so the rule fires on positions the earlier
+atom excluded, and a re-join keyed on that variable reads it as unbound and
+panics. `DecomposeAC` and `DecomposeACI` carry the same rule for a
+pre-bound element variable.
 
 For exact match (`AExact`): children count must equal pattern count.
 For prefix-only (`APrefix`): fixed elements at the start, rest at end.
@@ -124,18 +124,28 @@ subset of an AC-node's `(id, multiplicity)` children.
 
 ### Maximum Partition Semantics
 
-Each pattern element must match a distinct child. The matcher
-allocates multiplicities from the available pool:
+This section is the normative statement of AC matching; the language
+guide's AC section and its migration caveat summarize it for rule
+authors. A match is a partition of the node's distinct children among
+the pattern elements and the rest variable:
 
-1. For each pattern element, find a child whose remaining multiplicity
-   satisfies the constraint.
-2. Subtract the matched multiplicity from the child.
-3. Remaining children (with remaining multiplicities) form the rest.
+1. Each pattern element binds a distinct child and takes that child's
+   whole multiplicity. The element's annotation constrains the total:
+   an unannotated element binds only a child whose total multiplicity
+   is exactly 1.
+2. No two elements bind the same child, so a repeated child needs an
+   element that names its multiplicity (`x:2`, `x:k>=2`). This is why
+   an n-ary lift of a binary rule needs its multiplicity variant: the
+   binary pattern's two positions can coincide on one term, the two
+   multiset elements cannot (language guide, migration caveat).
+3. The rest variable takes every unbound child, each with its whole
+   multiplicity.
 
 ### Multiplicity Constraints
 
-Each multiplicity variable has a global interval `[min, max]`
-computed at compile time by intersecting all constraints:
+Each multiplicity variable has a global interval `[min, max]`, computed at
+compile time by intersecting all constraints. The interval constrains the
+bound child's total multiplicity:
 
 | Syntax | Interval |
 |--------|----------|
@@ -164,9 +174,9 @@ What we do and do not enumerate:
 
 1. Bound or concrete pattern elements cost O(1). When a pattern element's
    variable is already bound (its e-class is known), the matcher does a
-   direct lookup of that class in the residual multiset, checks
-   multiplicity, and subtracts. (In `decompose_ac_elem`, this is the
-   `bound_repr.is_some()` fast path.)
+   direct lookup of that class in the residual multiset, checks its total
+   multiplicity against the element's interval, and removes the child.
+   (In `decompose_ac_elem`, this is the `bound_repr.is_some()` fast path.)
 2. Only unbound scalar variables cause branches, and they branch
    over the distinct residual elements, not over sub-multisets. The matched
    multiplicity is taken whole, so we do not enumerate "1 of this element,

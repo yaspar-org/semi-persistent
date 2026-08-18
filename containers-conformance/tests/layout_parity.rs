@@ -39,7 +39,7 @@ fn node_size_matches_production() {
 ///
 /// Both are asserted, because a single-width check is exactly what would let a future
 /// `u32` count slip back in unnoticed: it is free at 31 bits and only wrong at 63.
-/// Production's own in-crate twin is `head_is_two_words_plus_a_same_width_count`
+/// Production's own in-crate counterpart is `head_is_two_words_plus_a_same_width_count`
 /// (`containers/src/list.rs`), which can see the private type directly.
 #[test]
 fn head_size_matches_production() {

@@ -1,10 +1,10 @@
 ;; TYPES: machine
 ;; REQUIRES: --lazy-ac-eqs (and a ~600 s budget)
 ;; Native-AC dual of eqsolve. Add is :assoc-comm variadic, Mul :comm binary;
-;; the three A/C rules are deleted; Add rules restated n-ary with coincidence
-;; twins. Validated 2026-08-17: all ten checks pass under lazy AC completion
-;; (shared transaction + goal-directed polling, design doc section 13) in one
-;; 484 s run; under plain canonization checks 3-10 fail on congruence
+;; the three A/C rules are deleted; Add rules are restated n-ary with their
+;; multiplicity variants. All ten checks pass under lazy AC completion
+;; (shared transaction plus goal-directed polling, design doc section 13) in
+;; one 484 s run; under plain canonization checks 3-10 fail on congruence
 ;; completeness and under eager completion the run diverges. Excluded from the
 ;; timed tables (run-full.py) and from default-flag sweeps; see
 ;; eqsolve.deviations.md.
@@ -15,7 +15,7 @@
   (Mul Expr Expr :comm)
   (Var String))
 
-;; constant folding, n-ary + twin
+;; constant folding, n-ary + multiplicity variant
 (rewrite (Add (Num x) (Num y) ..rest) (Add (Num (i64::+ x y)) ..rest))
 (rewrite (Add (Num x):2 ..rest) (Add (Num (i64::+ x x)) ..rest))
 
@@ -29,7 +29,7 @@
 (rule ((= x (Var v))) ((union (Mul (Num 1) x) x)))
 (rule ((= x (Add ..rest))) ((union (Mul (Num 1) x) x)))
 
-;; factoring, n-ary + twin
+;; factoring, n-ary + multiplicity variant
 (rewrite (Add (Mul y x) (Mul z x) ..rest) (Add (Mul (Add y z) x) ..rest))
 (rewrite (Add (Mul y x):2 ..rest) (Add (Mul (Add y y) x) ..rest))
 
