@@ -368,6 +368,9 @@ egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
 egg_test!(semi_merge_membership_delta, "semi_merge_membership_delta.egg");
 egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
 egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
+egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
+egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
+egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 

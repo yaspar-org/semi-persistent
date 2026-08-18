@@ -1622,6 +1622,44 @@ to its 73 nodes when the check run ends. The instance stays out of the timed
 comparison tables — 484 s against the rules encoding's 123 ms — but the mode
 now decides everything the eager mode diverges on, for this benchmark.
 
+## 14. The A-only transfer: inter-reduction for sequences, and where it must stop
+
+The same erased-reference gap exists for associativity-only (`Seq`) operators:
+build-time flattening splices a pure-`op`-sequence child into its parents, so
+the class reference disappears and congruence can no longer connect two
+parents that spliced different spellings. The case analysis is tighter than
+AC's, because a class can never *become* pure late — merges only add members
+and an atom member never leaves — so the one way an A-equation escapes
+congruence is **two pure-sequence classes merging**: the class then holds two
+distinct `op`-sequence spellings, a ground string equation `seq_1 = seq_2`
+that no parent can see.
+
+The repair (`a_round`, run inside the completion loop, so only when
+completion is enabled; plain mode and its published counts are untouched):
+orient each such equation shortlex — longer to shorter, ties by element ids —
+and rewrite contiguous occurrences of the larger spelling inside other
+`op`-sequences, adding the rewritten sequence and merging with its source
+(justification `ACInterReduction`, the same substitute-for-class shape).
+Every rewrite is shortlex-decreasing, so a round terminates, and rounds drain
+in the loop under the same budget and goal polls as the AC pass. The three
+`a_interreduction_*` fixtures pin the gap (plain mode fails, by design) and
+the repair under both eager and lazy completion.
+
+**Where it must stop, and why this is a boundary rather than a debt.** The AC
+pass has a completeness theorem to aim for because ground AC completion is
+Gröbner-shaped: left sides are multisets over a finite pool, Dickson's Lemma
+makes the reduced antichain finite (§10), and Narendran-Rusinowitch gives the
+finite canonical system. The A-only analogue is completion of a **ground
+string rewriting system** (a semi-Thue presentation of a finitely presented
+monoid), and there the word problem is undecidable (Markov, Post): no
+algorithm decides all A-entailed equalities, and a critical-pair chase can
+run forever without a bound to point to. So `a_round` deliberately closes the
+single-substitution gap — the erased-reference case above, which is what
+flattening actually costs — and does not chase critical pairs. What it
+derives is sound; what a full closure would add is not attainable in general,
+and the contrast (AC decidable via Dickson, A undecidable via the monoid word
+problem) is a property of the theories, not of this implementation.
+
 ---
 
 ## References

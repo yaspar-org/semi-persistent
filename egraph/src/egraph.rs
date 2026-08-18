@@ -157,6 +157,15 @@ pub enum CompletionOutcome {
     GoalMet { rounds: usize },
 }
 
+/// Shortlex order on canonical element lists: shorter first, ties broken
+/// element-wise by id. The orientation of the A-only inter-reduction rules
+/// (`a_round`); well-founded, so rewriting under it terminates.
+fn shortlex<G: crate::containers::DenseId>(a: &[G], b: &[G]) -> std::cmp::Ordering {
+    a.len()
+        .cmp(&b.len())
+        .then_with(|| a.iter().map(|g| g.to_usize()).cmp(b.iter().map(|g| g.to_usize())))
+}
+
 /// Type alias for the default 31-bit configuration.
 pub type EGraph31<L, const TRACK: bool = true, const PROOFS: bool = false> =
     EGraph<crate::nodes::DefaultConfig, L, TRACK, PROOFS>;
@@ -1420,7 +1429,9 @@ where
             let before = self.node_count();
             let mark = self.touched.len();
             let was_full = full;
-            let changed = self.cc_round(full, prev_mark, mark);
+            // `|`, not `||`: the A-only pass runs every iteration, its changes
+            // and the AC round's alike drain through the same fixpoint.
+            let changed = self.cc_round(full, prev_mark, mark) | self.a_round();
             prev_mark = mark;
             if trace {
                 eprintln!(
@@ -1633,6 +1644,126 @@ where
                 }
             }
         }
+    }
+
+    /// One A-only (`Seq`) inter-reduction round: the transfer of the AC
+    /// repair to associativity-only operators, run inside the same completion
+    /// loop (so only when completion is enabled — plain mode is untouched and
+    /// its node counts stand).
+    ///
+    /// The gap it closes: build-time flattening splices a pure-`op`-sequence
+    /// child into its parents, erasing the class reference, and a class can
+    /// never *become* pure late (merges only add members, and an atom member
+    /// never leaves) — so the one way an A-equation escapes congruence is two
+    /// pure-sequence classes merging. That class then holds two distinct
+    /// `op`-sequence spellings: a ground string equation `seq_1 = seq_2` that
+    /// parents which spliced different spellings cannot see. Each such
+    /// equation is oriented shortlex (longer to shorter, ties by element ids)
+    /// and contiguous occurrences of the larger spelling inside other
+    /// `op`-sequences are rewritten: the rewritten sequence is added and
+    /// merged with its source, justification `ACInterReduction` (the same
+    /// sub-term-for-class substitution shape as the AC case).
+    ///
+    /// Every rewrite is shortlex-decreasing, so a round terminates, and the
+    /// loop above drains rounds to a joint fixpoint under the same budget and
+    /// goal polls as the AC pass. **Deliberately no critical-pair chase**:
+    /// completing a ground string system is Knuth-Bendix on a semi-Thue
+    /// system, and the word problem for finitely presented monoids is
+    /// undecidable — unlike the AC side, where Dickson's Lemma bounds the
+    /// basis, there is no completeness theorem to aim for. This pass closes
+    /// the single-substitution gap (the erased-reference case above) and
+    /// stops; what it derives is sound, what it misses is documented.
+    fn a_round(&mut self) -> bool {
+        use crate::containers::DenseId;
+        use crate::typed_routing::NodeIds;
+        let n_seq = self.nodes.seq.len().to_usize();
+        if n_seq == 0 {
+            return false;
+        }
+        // (op, class) -> the class's `op`-sequence spellings.
+        let mut groups: std::collections::HashMap<(Cfg::O, Cfg::G), Vec<Cfg::G>> =
+            std::collections::HashMap::new();
+        for i in 0..n_seq {
+            let l = <Cfg::Ids as NodeIds>::LSeq::from_usize(i);
+            let g = self.nodes.seq.get(l).global_id();
+            let cls = self.classes.find_const(g);
+            groups.entry((self.node_op(g), cls)).or_default().push(g);
+        }
+        // Oriented rules: larger spelling -> the class's shortlex-least one.
+        let mut rules: Vec<(Cfg::O, Vec<Cfg::G>, Vec<Cfg::G>)> = Vec::new();
+        let mut buf: Vec<Cfg::G> = Vec::new();
+        for ((op, _cls), nodes) in groups.iter().filter(|(_, v)| v.len() > 1) {
+            let mut spellings: Vec<Vec<Cfg::G>> = Vec::with_capacity(nodes.len());
+            for &n in nodes {
+                self.seq_children(n, &mut buf);
+                for e in buf.iter_mut() {
+                    *e = self.classes.find_const(*e);
+                }
+                spellings.push(buf.clone());
+            }
+            let least = spellings
+                .iter()
+                .min_by(|a, b| shortlex(a, b))
+                .expect("non-empty spelling group")
+                .clone();
+            for elems in spellings {
+                if shortlex(&elems, &least) == std::cmp::Ordering::Greater {
+                    rules.push((*op, elems, least.clone()));
+                }
+            }
+        }
+        if rules.is_empty() {
+            return false;
+        }
+        // Rewrite pass over the round-start sequences (nodes added below are
+        // visited next round). One rewrite per node per round: the fixpoint
+        // loop supplies the iteration.
+        let mut changed = false;
+        let mut new_children: Vec<Cfg::G> = Vec::new();
+        for i in 0..n_seq {
+            if self.cc_should_stop() {
+                break;
+            }
+            let l = <Cfg::Ids as NodeIds>::LSeq::from_usize(i);
+            let g = self.nodes.seq.get(l).global_id();
+            let g_op = self.node_op(g);
+            self.seq_children(g, &mut buf);
+            for e in buf.iter_mut() {
+                *e = self.classes.find_const(*e);
+            }
+            for (op, lhs, rhs) in &rules {
+                if *op != g_op || lhs.len() > buf.len() {
+                    continue;
+                }
+                let Some(s) = (0..=buf.len() - lhs.len())
+                    .find(|&s| &buf[s..s + lhs.len()] == lhs.as_slice())
+                else {
+                    continue;
+                };
+                new_children.clear();
+                new_children.extend_from_slice(&buf[..s]);
+                new_children.extend_from_slice(rhs);
+                new_children.extend_from_slice(&buf[s + lhs.len()..]);
+                let nid = self.add(*op, &new_children);
+                if self.classes.find_const(nid) != self.classes.find_const(g) {
+                    let m = if PROOFS {
+                        self.merge_justified(
+                            g,
+                            nid,
+                            Justification::ACInterReduction {
+                                node_a: g,
+                                node_b: nid,
+                            },
+                        )
+                    } else {
+                        self.merge(g, nid)
+                    };
+                    changed |= m.is_some();
+                }
+                break;
+            }
+        }
+        changed
     }
 
     /// One AC congruence-completion round (Kapur FSCD 2021 Algorithm 1, the steps our
