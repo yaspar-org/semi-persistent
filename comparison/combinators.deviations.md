@@ -36,3 +36,5 @@ strategies. Both engines extract the identical term for `(Comb test)`:
 cross-check for the cost model (the extractor must route around the
 `:cost 1000000` wrapper and the `:cost 10000` unconverted forms). Node count
 ours: 635 at `(run 11)`.
+
+Both programs end with `(print-stats :file "...")` so the harness can read node, class, and iteration counts; egglog's `no-messages` timing runs suppress the terminal output either way.

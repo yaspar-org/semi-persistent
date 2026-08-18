@@ -96,3 +96,4 @@
 (extract (Comb test))
 (check (= test (N 3)))
 (print-size)
+(print-stats :file "combinators.rules.stats.json")

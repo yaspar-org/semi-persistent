@@ -29,3 +29,5 @@ rearranged).
 
 The check `(= test1 (Num 13))` passes on both engines, under both of our
 strategies. Node count ours at `(run 100)`: 276 under both strategies.
+
+Both programs end with `(print-stats :file "...")` so the harness can read node, class, and iteration counts; egglog's `no-messages` timing runs suppress the terminal output either way.

@@ -38,3 +38,5 @@
 (let _r9 (Add _r8 _lit8))
 (run 10000)
 (check (= _r9 _v9))
+(print-size)
+(print-stats :file "acgen.egglog.stats.json")

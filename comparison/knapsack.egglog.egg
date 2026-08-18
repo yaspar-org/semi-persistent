@@ -43,4 +43,5 @@
 (run 100)
 
 (check (= $test1 (Num 13)))
-
+(print-size)
+(print-stats :file "knapsack.egglog.stats.json")

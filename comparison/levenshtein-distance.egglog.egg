@@ -69,3 +69,5 @@
 
 (extract (Unwrap $Test3))
 (check (= $Test3 (Num 5)))
+(print-size)
+(print-stats :file "levenshtein-distance.egglog.stats.json")

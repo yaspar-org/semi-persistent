@@ -43,3 +43,4 @@
 (run 10000)
 (check (= _r9 _v9))
 (print-size)
+(print-stats :file "acgen.rules.stats.json")

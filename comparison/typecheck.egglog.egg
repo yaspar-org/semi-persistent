@@ -100,3 +100,5 @@
 (check (= $t-free-2 (TArr $TUnit (TArr (TArr $TUnit $TUnit) $TUnit))))
 ; this will err
 ; (extract $t-free-ill)
+(print-size)
+(print-stats :file "typecheck.egglog.stats.json")

@@ -96,5 +96,5 @@
 ; Which is kind of compelling
 ; (rule ((or (pat x)))  )
 ; or let a unification expansion happen and use thos
-
-
+(print-size)
+(print-stats :file "resolution.egglog.stats.json")

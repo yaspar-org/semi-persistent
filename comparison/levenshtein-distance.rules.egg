@@ -65,3 +65,4 @@
 (extract test3)
 (check (= test3 (Num 5)))
 (print-size)
+(print-stats :file "levenshtein-distance.rules.stats.json")

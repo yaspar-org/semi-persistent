@@ -24,3 +24,5 @@ commutative.
 Both checks pass on both engines, under both of our strategies: the
 preserved equality `f(f(a3)) = f(f(b3))` and the non-equality
 `f(a3) != f(b3)`. Node count ours at `(run 100)`: 28 under both strategies.
+
+Both programs end with `(print-stats :file "...")` so the harness can read node, class, and iteration counts; egglog's `no-messages` timing runs suppress the terminal output either way.

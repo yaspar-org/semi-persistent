@@ -40,3 +40,4 @@
 
 (check (= test1 (Num 13)))
 (print-size)
+(print-stats :file "knapsack.rules.stats.json")

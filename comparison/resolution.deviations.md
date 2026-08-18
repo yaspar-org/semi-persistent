@@ -52,3 +52,5 @@ All three checks (`tt != ff`, `p0 = ff`, `p2 = ff`) pass on both engines,
 under both of our strategies, in both encodings. Node counts ours at
 `(run 10)`: rules 72, native 19; the set canonization removes the
 rearrangement chains the rules encoding materializes.
+
+Both programs end with `(print-stats :file "...")` so the harness can read node, class, and iteration counts; egglog's `no-messages` timing runs suppress the terminal output either way.

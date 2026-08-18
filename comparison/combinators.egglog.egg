@@ -100,3 +100,5 @@
 (run 11)
 (extract (Comb $test))
 (check (= $test (N 3)))
+(print-size)
+(print-stats :file "combinators.egglog.stats.json")

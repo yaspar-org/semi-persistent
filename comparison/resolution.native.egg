@@ -50,3 +50,4 @@
 (check (= p0 ff))
 (check (= p2 ff))
 (print-size)
+(print-stats :file "resolution.native.stats.json")

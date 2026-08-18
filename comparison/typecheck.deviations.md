@@ -30,3 +30,5 @@ counts ours at `(run 15)`: 73 naive, 62 semi-naive; the strategies
 materialize different demand scaffolding on the way to the same checked
 classes, the path dependence methodology section 3 records for
 demand-driven programs.
+
+Both programs end with `(print-stats :file "...")` so the harness can read node, class, and iteration counts; egglog's `no-messages` timing runs suppress the terminal output either way.

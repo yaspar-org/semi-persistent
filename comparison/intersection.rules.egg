@@ -44,3 +44,4 @@
 ;; but not f(a) = f(b), it was only in e-graph 1
 (check (!= (f a3) (f b3)))
 (print-size)
+(print-stats :file "intersection.rules.stats.json")

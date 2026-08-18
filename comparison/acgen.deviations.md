@@ -44,3 +44,5 @@ construction, so the check holds before any rule fires: 41 nodes, and the
 run is startup-dominated. This is the benchmark's point in both directions:
 it is our worst rules-encoding cell and the largest native separation in the
 set. Campaign medians come from run-full.py.
+
+Both programs end with `(print-stats :file "...")` so the harness can read node, class, and iteration counts; egglog's `no-messages` timing runs suppress the terminal output either way.

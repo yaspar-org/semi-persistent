@@ -75,3 +75,4 @@
 (extract tfree2)
 (check (= tfree2 (TArr tunit (TArr (TArr tunit tunit) tunit))))
 (print-size)
+(print-stats :file "typecheck.rules.stats.json")
