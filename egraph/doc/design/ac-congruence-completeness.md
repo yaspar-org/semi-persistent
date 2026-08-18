@@ -1596,10 +1596,31 @@ instantly (against 15 s+ before eager's round 4 reaches it) and check 7 in
 124 s; checks 9-10 sit past the interaction blowup either way. The scope
 boundary is honest: lazy relocates *when* the closure is paid and discards it
 afterwards, and its early exit wins exactly when the queried pair joins well
-before the closure saturates. Two recorded refinements: share one transaction
-across consecutive checks (today each check re-derives), and poll the goal
-inside the completion loop rather than between rounds. Phase 2 runs the
-default ruleset only.
+before the closure saturates. Phase 2 runs the default ruleset only.
+
+Three refinements landed after the first measurements:
+
+- **One transaction across consecutive checks.** The mark is taken at the
+  first failing check and the restore happens at the first non-equality-check
+  command (or program end), so a run of checks accumulates completion and
+  alternation state instead of each re-deriving from scratch. A bare
+  `(check t)` closes the transaction too: it materializes its term
+  permanently, which an open transaction would discard.
+- **Goal polling inside the completion loop.** The queried pair is installed
+  as the e-graph's completion goal; the loop polls it between passes *and
+  inside a round's two apply loops*, and stops with
+  `CompletionOutcome::GoalMet` mid-closure the moment the pair joins. Every
+  completion pass inside the alternation is goal-directed the same way.
+- **In-round budget check.** The node-growth budget is now also consulted
+  inside a round's apply loops, so a single blown-up round stops mid-apply
+  instead of burning to the between-rounds check (review-debt §1).
+
+With the three refinements, eqsolve's native dual passes **all ten checks**
+under lazy completion in one 484 s run (the pre-refinement mode reached
+check 7 at 124 s per check and never checks 9-10), and the graph is restored
+to its 73 nodes when the check run ends. The instance stays out of the timed
+comparison tables — 484 s against the rules encoding's 123 ms — but the mode
+now decides everything the eager mode diverges on, for this benchmark.
 
 ---
 

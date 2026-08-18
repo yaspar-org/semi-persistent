@@ -175,3 +175,15 @@ this benchmark: 129 ms, all ten checks, because binary nodes keep the
 intermediate sums whose plain congruence decides these entailments for free.
 The native column stays postponed; what would unblock it is completion cost,
 not translation.
+
+## The native dual ships, validated under lazy completion (2026-08-17, later)
+
+The three lazy refinements (design doc section 13: one transaction shared
+across consecutive checks, goal polling inside the completion loop, in-round
+budget check) bring the remaining checks into reach: `eqsolve.native.egg`
+passes **all ten checks** under `--lazy-ac-eqs` in one 484 s run, ending at
+the restored 73-node graph. The file carries a `REQUIRES` header and is
+excluded from the timed tables and default-flag sweeps: 484 s against the
+rules encoding's 123 ms is a validation result, not a competitive column
+(matrix.native-A precedent: validated, no timing row). The rules encoding
+remains the shipped configuration for this benchmark.

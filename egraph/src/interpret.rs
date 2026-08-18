@@ -105,6 +105,10 @@ pub struct Interpreter<
     /// Alternation budget for a lazy check's second phase (rule rounds
     /// interleaved with completion fixpoints inside the transaction).
     lazy_ac_rounds: usize,
+    /// The shared lazy-check transaction: `Some(mark)` while a run of
+    /// consecutive equality checks accumulates completion state. Closed (and
+    /// the graph restored) by the first non-check command or program end.
+    lazy_txn: Option<EGraphToken>,
     /// Outcome of the most recent `(run …)` command (iterations, saturated, match steps).
     /// `None` until the first run. Exposed for diagnostics and benchmarking.
     last_sat: Option<crate::saturate::SatResult>,
@@ -141,6 +145,7 @@ where
             strategy: crate::saturate::SaturationStrategy::default(),
             ac_mode: AcMode::Off,
             lazy_ac_rounds: 32,
+            lazy_txn: None,
             last_sat: None,
             last_run_time: None,
             index_scratch: crate::index::IndexScratch::new(),
@@ -164,6 +169,7 @@ where
             strategy: crate::saturate::SaturationStrategy::default(),
             ac_mode: AcMode::Off,
             lazy_ac_rounds: 32,
+            lazy_txn: None,
             last_sat: None,
             last_run_time: None,
             index_scratch: crate::index::IndexScratch::new(),
@@ -210,22 +216,43 @@ where
         self.lazy_ac_rounds = rounds;
     }
 
-    /// Decide whether `a` and `b` are AC-entailed equal, inside a
-    /// semi-persistent transaction: mark, enable completion, decide, restore.
-    /// The graph is left exactly as it was — every node the pass minted is
-    /// discarded by the O(touched) restore.
+    /// Open the shared lazy-check transaction if it is not already open: mark
+    /// the graph, then enable completion. Consecutive equality checks keep it
+    /// open and accumulate completion/alternation state; the first non-check
+    /// command (or the end of the program) closes it via `lazy_txn_close`,
+    /// and the O(touched) restore discards everything the checks derived.
+    fn lazy_txn_open(&mut self) {
+        if self.lazy_txn.is_none() {
+            self.lazy_txn = Some(self.eg.mark(self.shrink_policy));
+            self.eg.set_cc(true);
+        }
+    }
+
+    /// Close the shared lazy-check transaction (no-op when none is open).
+    fn lazy_txn_close(&mut self) {
+        if let Some(token) = self.lazy_txn.take() {
+            self.eg.set_cc(false);
+            self.eg.set_cc_goal(None);
+            self.eg.restore(token);
+        }
+    }
+
+    /// Decide whether `a` and `b` are AC-entailed equal, inside the shared
+    /// semi-persistent transaction (`lazy_txn_open`): every node the decision
+    /// mints is discarded when the transaction closes, and consecutive checks
+    /// continue from the accumulated state instead of re-deriving.
     ///
-    /// Two phases. First, one completion rebuild on the frozen graph — no
-    /// rules interleave, which is the case the termination argument (Dickson
-    /// antichain over a fixed atom pool) covers, and it decides pure AC
-    /// congruence consequences. Second, if the pair is still apart and the
-    /// program has rules, the saturation driver runs the default ruleset with
-    /// the pair as its `:until` goal and completion on, so rounds alternate
-    /// rule matching with completion fixpoints and stop the moment the pair
-    /// joins. This reaches equalities that need the rules-and-completion
-    /// interaction (a completion-derived merge enabling a rule enabling a
-    /// merge), with the alternation bounded by `lazy_ac_rounds` and every
-    /// completion pass bounded by the node-growth budget.
+    /// Two phases, both goal-directed: the pair is installed as the
+    /// completion goal (`set_cc_goal`), so every completion pass — including
+    /// the ones inside the alternation — stops mid-closure the moment the
+    /// pair joins. First, one completion rebuild on the current graph — with
+    /// no rules interleaving, the case the termination argument (Dickson
+    /// antichain over a fixed atom pool) covers — decides pure AC congruence
+    /// consequences. Second, if the pair is still apart and the program has
+    /// rules, the saturation driver runs the default ruleset with the pair as
+    /// its `:until` goal and completion on, so rounds alternate rule matching
+    /// with completion passes, bounded by `lazy_ac_rounds` and by the
+    /// node-growth budget (checked in-round, not only between rounds).
     ///
     /// Returns `(equal, inconclusive)`. `inconclusive` means a budget stopped
     /// the search first; a `false` verdict with `inconclusive == false` is a
@@ -233,8 +260,8 @@ where
     /// the equality is not derivable by this program's rules plus ground AC
     /// congruence.
     fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> (bool, bool) {
-        let token = self.eg.mark(self.shrink_policy);
-        self.eg.set_cc(true);
+        self.lazy_txn_open();
+        self.eg.set_cc_goal(Some((a, b)));
         self.eg.rebuild();
         let mut equal = self.eg.find(a) == self.eg.find(b);
         let aborted = |eg: &EGraph<Cfg, L, TRACK, PROOFS>| {
@@ -273,8 +300,7 @@ where
             equal = self.eg.find(a) == self.eg.find(b);
             inconclusive = !equal && (aborted(&self.eg) || !result.saturated);
         }
-        self.eg.set_cc(false);
-        self.eg.restore(token);
+        self.eg.set_cc_goal(None);
         (equal, inconclusive)
     }
 
@@ -311,8 +337,22 @@ where
             crate::ematch::set_match_step_counting(true);
         }
         for cmd in cmds {
-            self.exec_checked(cmd)?;
+            // The lazy-check transaction is shared across a run of consecutive
+            // equality checks (each check continues the accumulated
+            // completion/alternation state instead of re-deriving); any other
+            // command must see the untouched graph, so the transaction closes
+            // first. `(check t)` closes it too: a bare check materializes its
+            // term permanently, which an open transaction would discard.
+            if !matches!(cmd, CCommand::CheckEq(..) | CCommand::CheckNeq(..)) {
+                self.lazy_txn_close();
+            }
+            let r = self.exec_checked(cmd);
+            if r.is_err() {
+                self.lazy_txn_close();
+            }
+            r?;
         }
+        self.lazy_txn_close();
         Ok(())
     }
 
@@ -365,6 +405,12 @@ where
                 let before = self.eg.node_count();
                 let (a_id, _) = self.build_cterm(a);
                 let (b_id, _) = self.build_cterm(b);
+                // Install the goal before any rebuild: with the shared
+                // transaction open, the term-build rebuild runs completion,
+                // and the goal keeps it from running past the answer.
+                if self.ac_mode == AcMode::Lazy {
+                    self.eg.set_cc_goal(Some((a_id, b_id)));
+                }
                 if self.eg.node_count() > before {
                     self.eg.rebuild();
                 }
@@ -385,15 +431,20 @@ where
                     }
                     return Err(InterpError::CheckFailed("terms are not equal".into()));
                 }
+                self.eg.set_cc_goal(None);
             }
             CCommand::CheckNeq(a, b) => {
                 let before = self.eg.node_count();
                 let (a_id, _) = self.build_cterm(a);
                 let (b_id, _) = self.build_cterm(b);
+                if self.ac_mode == AcMode::Lazy {
+                    self.eg.set_cc_goal(Some((a_id, b_id)));
+                }
                 if self.eg.node_count() > before {
                     self.eg.rebuild();
                 }
                 if self.eg.find(a_id) == self.eg.find(b_id) {
+                    self.eg.set_cc_goal(None);
                     return Err(InterpError::CheckFailed("terms are equal".into()));
                 }
                 // Lazy mode makes `!=` stronger, not weaker: distinct classes may

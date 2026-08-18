@@ -76,6 +76,15 @@ pub struct EGraph<
     /// nodes in `touched` (see `merge_in_classes`). Only semi-naive saturation
     /// consumes it; off everywhere else so merges pay no ring walk.
     track_merge_members: bool,
+    /// Goal pair for goal-directed completion (the lazy-check transaction):
+    /// the completion loop polls it between passes and inside a round's apply
+    /// loops, and stops with [`CompletionOutcome::GoalMet`] as soon as the
+    /// two classes join. `None` everywhere else.
+    cc_goal: Option<(Cfg::G, Cfg::G)>,
+    /// Node count at the start of the current completion run, for the
+    /// in-round budget check (`cc_should_stop`): a single blown-up round is
+    /// stopped mid-apply instead of only between rounds.
+    cc_start_nodes: usize,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
     /// inter-reduction). **Default off** — but NOT for the historical flattening reason
     /// (nested same-op flattening, `WF_flat`, landed in `flatten_ac_children`): the
@@ -141,6 +150,11 @@ pub enum CompletionOutcome {
     /// Completion aborted because the node-growth budget was exceeded. The e-graph is
     /// sound-but-incomplete: some AC-entailed equalities may be missing.
     AbortedGrowthLimit { added_nodes: usize, limit: usize },
+    /// Completion stopped early because the goal pair (`set_cc_goal`) joined.
+    /// The e-graph is a valid plain-congruence-closed state; completion is
+    /// deliberately unfinished — the caller asked a question and it is
+    /// answered. Only the lazy-check transaction sets a goal.
+    GoalMet { rounds: usize },
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -185,6 +199,8 @@ where
             mset_buf: Vec::new(),
             touched: Vec::new(),
             track_merge_members: false,
+            cc_goal: None,
+            cc_start_nodes: 0,
             cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
@@ -216,6 +232,26 @@ where
     /// ago) — see the `cc` field docs and `doc/future/ac-completion-review-debt.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
         self.cc = enabled;
+    }
+
+    /// Set or clear the completion goal pair (see the `cc_goal` field). With a
+    /// goal set, `rebuild` under completion returns
+    /// [`CompletionOutcome::GoalMet`] as soon as the pair joins, without
+    /// finishing the closure.
+    pub fn set_cc_goal(&mut self, goal: Option<(Cfg::G, Cfg::G)>) {
+        self.cc_goal = goal;
+    }
+
+    /// Goal-directed early stop for the completion loops: the goal pair
+    /// joined, or the in-round node budget is exhausted. `rebuild` sorts out
+    /// which of the two happened.
+    fn cc_should_stop(&self) -> bool {
+        if let Some((a, b)) = self.cc_goal
+            && self.classes.find_const(a) == self.classes.find_const(b)
+        {
+            return true;
+        }
+        self.node_count() > self.cc_start_nodes.saturating_add(self.completion_node_budget)
     }
 
     /// Enable or disable the AC reduced-basis invariant checks in `rebuild` (default off,
@@ -1351,6 +1387,7 @@ where
         // abort is REPORTED (`CompletionOutcome::AbortedGrowthLimit`), never silent.
         let budget = self.completion_node_budget;
         let start_nodes = self.node_count();
+        self.cc_start_nodes = start_nodes;
         let basis_dump = self.basis_checks;
         let mut round = 0usize;
         // Watermark into the `touched` log: rules whose `(op, monomial)` changed since the
@@ -1368,6 +1405,15 @@ where
         let mut full = true; // round 0 is full (base case)
         loop {
             self.rebuild_congruence();
+            // Goal-directed early stop (the lazy-check transaction): the pair
+            // joined, so the question is answered — stop mid-closure. The
+            // graph is plain-congruence-closed at this point, a valid state.
+            if let Some((ga, gb)) = self.cc_goal
+                && self.classes.find_const(ga) == self.classes.find_const(gb)
+            {
+                self.completion_outcome = Some(CompletionOutcome::GoalMet { rounds: round });
+                return;
+            }
             if basis_dump {
                 self.cc_basis_dump(&format!("round {round} pre"));
             }
@@ -2124,6 +2170,12 @@ where
         let mut nf_out: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut nf_ping: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, mset, class, node, _is_rule) in targets {
+            // In-round stop: the goal pair joined, or this round's minting
+            // blew the node budget — bail mid-apply instead of burning the
+            // rest of the round (review-debt §1). `rebuild` reads which.
+            if self.cc_should_stop() {
+                break;
+            }
             nf_refs.clear();
             nf_refs.extend(
                 rules
@@ -2232,6 +2284,10 @@ where
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, origin, r1, r2) in crit {
+            // Same in-round stop as the (A′) loop above.
+            if self.cc_should_stop() {
+                break;
+            }
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
             // already coincide as multisets), so skip the two full normalizations entirely
             // when r1 == r2 already.
