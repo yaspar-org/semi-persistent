@@ -5,7 +5,7 @@ E4 (harness) of `doc/egglog-comparison-plan.md`: the ten-benchmark intersection
 set plus seven additions from the second survey pass, translated into our
 surface language, timed against egglog at its pinned commit. It is not a status page: the per-benchmark ledgers record every
 semantic difference between the programs being compared, and
-`final/final-r3-tables.md` is the current campaign.
+`final/final-r4-tables.md` is the current campaign.
 
 Two status words are used throughout, defined in `methodology.md`: a benchmark
 or configuration is **dropped** when it is out of the comparison with the
@@ -84,9 +84,9 @@ open with that warning and state what the scoping removes; for `integer_math`,
 
 `run-full.py` runs the whole set under the protocol below and names its output
 after `--label`. The campaign record lives in `final/`:
-`final-r3-tables.md` is the current campaign, and `final-tables.md` (r1) and
-`final-r2-tables.md` are archived campaigns kept because their raw CSVs are
-cited by ledgers and experiment write-ups. Each campaign file carries its own
+`final-r4-tables.md` is the current campaign, and `final-tables.md` (r1),
+`final-r2-tables.md` and `final-r3-tables.md` are archived campaigns kept
+because their raw CSVs are cited by ledgers and experiment write-ups. Each campaign file carries its own
 pinning block (engine commit, protocol, machine). A `--label smoke` pass with
 1 run and 0 warmups is a validation sweep, not a timing source: both engines
 exit non-zero on a failed check, so a clean sweep means every check of every
