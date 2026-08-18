@@ -25,12 +25,21 @@ representative enumeration.
 
 ## Union-Find
 
+The e-graph's `UnionFind` is a type alias over the verified kernel in
+`containers-verus`, instantiated with `Justification` as the proof payload:
+
 ```rust
-pub struct UnionFind<T: DenseId, const TRACK: bool, const PROOFS: bool> {
-    parent_fast: VecI<T, T::Index, TRACK>,
-    rank: VecI<u8, T::Index, TRACK>,  // max rank = ⌊log₂(n)⌋ ≤ 63, so u8 suffices
-    parent_proof: Option<VecI<T, T::Index, TRACK>>,
-    justification: Option<VecI<Justification<T>, T::Index, TRACK>>,
+// egraph/src/union_find.rs
+pub type UnionFind<T, const TRACK: bool = true, const PROOFS: bool = false> =
+    crate::containers::union_find::UnionFind<T, Justification<T>, TRACK, PROOFS>;
+
+// containers-verus/src/union_find.rs
+pub struct UnionFind<T: DenseId, J, const TRACK: bool = true, const PROOFS: bool = false> {
+    parent: SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>,
+    rank: SpVec<u8, T::Index, InlineStore<u8, T::Index>, TRACK>,  // max rank = ⌊log₂(n)⌋ ≤ 63, so u8 suffices
+    parent_proof: Option<SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>>,
+    justification: Option<SpVec<J, T::Index, InlineStore<J, T::Index>, TRACK>>,
+    // ghost state (root map, path-length measure, snapshot archives) elided
 }
 ```
 
@@ -38,7 +47,7 @@ pub struct UnionFind<T: DenseId, const TRACK: bool, const PROOFS: bool> {
 
 The union-find maintains two parent vectors when `PROOFS = true`:
 
-- `parent_fast`: path-compressed. Used by `find()` for O(α(n))
+- `parent`: path-compressed. Used by `find()` for O(α(n))
   lookups. Path compression destroys the original merge tree: after
   `find(a)`, every node on the path from `a` to the root points
   directly to the root.
@@ -77,25 +86,42 @@ classes, `None` if already equivalent.
 
 ```
 Before: find(a)=rₐ, find(b)=r_b, rank(rₐ)=2, rank(r_b)=1
-After:  parent_fast[r_b] = rₐ  (shorter under taller)
+After:  parent[r_b] = rₐ  (shorter under taller)
         parent_proof[r_b] = rₐ  (if PROOFS)
         justification[r_b] = just  (if PROOFS)
 ```
 
 ### Semi-Persistence
 
-All vectors (`parent_fast`, `rank`, `parent_proof`, `justification`)
+All vectors (`parent`, `rank`, `parent_proof`, `justification`)
 are semi-persistent. `mark()`/`restore()` snapshots and undoes all
 union operations and path compressions.
 
 ## `EClasses` — E-Class Membership and Parent Tracking
 
+The e-graph's `EClasses` is a type alias over the verified aggregate in
+`containers-verus`:
+
 ```rust
-pub struct EClasses<T: DenseId, L: DenseId, N: DenseId, const TRACK: bool, const PROOFS: bool> {
-    entries: VecI<EClassEntry<T>, T::Index, TRACK>,
-    reprs: SparseSet<L, T::Index, ...>,
-    uf: UnionFind<T, TRACK, PROOFS>,
-    uses: ListArena<T, L, N, TRACK>,
+// egraph/src/classes.rs
+pub type EClasses<T, L, N, const TRACK: bool, const PROOFS: bool> =
+    containers::eclasses::EClasses<T, L, N, Justification<T>, TRACK, PROOFS>;
+
+// containers-verus/src/eclasses.rs
+pub struct EClasses<T: DenseId, L: DenseId, N: DenseId, J, const TRACK: bool, const PROOFS: bool> {
+    entries: CircularList<Opt<T::Index>, T, TRACK>,   // class rings
+    reprs: SparseSet<ClassData<L, T>, T::Index, ..., TRACK>,  // per-class data, keyed by repr id
+    uf: UnionFind<T, J, TRACK, PROOFS>,
+    uses: ListArena<T, L, N, TRACK>,                  // per-class parent lists
+    min_pool: SpVec<Opt<T>, usize, ParallelStore<Opt<T>, usize>, TRACK>,  // min-monomial pool
+    min_width: usize,                                 // pool row width; 0 until set_min_width
+}
+
+pub struct ClassData<L: DenseId, T: DenseId> {
+    pub use_list: L,
+    pub min_row: Option<T::Index>,
+    pub atomic: bool,
+    pub size: T::Index,   // member-node count, feeds --union-by size/sum
 }
 ```
 
@@ -106,8 +132,9 @@ information lives in the `OpRegistry`, not in `EClasses`.
 ### `reprs: SparseSet`
 
 The `reprs` sparse set supports direct enumeration of all current
-e-class representatives. Each entry stores a `UseListId`, the head
-of the class's parent use-list. When classes merge, the absorbed
+e-class representatives. Each entry stores a `ClassData`; its
+`use_list` field is the head of the class's parent use-list. When
+classes merge, the absorbed
 class's representative is removed from the set. This avoids scanning
 all entries to find roots.
 
@@ -149,7 +176,7 @@ Union-by-rank chooses survivors for tree balance, blind to what a merge costs
 downstream: the absorbed side's parents recanonicalize, and under semi-naive
 evaluation the absorbed side's member nodes enter the touched log (the
 class-growth delta). `--union-by {rank,size,uses,sum}` selects the criterion:
-`rank` is the historical default; `size` absorbs the smaller class by member
+`rank` is the default; `size` absorbs the smaller class by member
 count, making the touched-log pushes amortized O(n log n) (a node is absorbed
 at most log n times); `uses` absorbs the side with the shorter use-list,
 bounding recanonization the same way; `sum` adds the two counters and bounds
@@ -160,8 +187,8 @@ length, at every method boundary and in every archived frame) is part of
 `eg_model_wf`. Both counters are `Index`-typed, so their width follows the id
 configuration.
 
-Survivor choice is semantically free — every class property the engine reads
-is merge-folded (§9a) — so all four policies produce identical check outcomes,
+Survivor choice is semantically free (every class property the engine reads
+is merge-folded, §9a), so all four policies produce identical check outcomes,
 measured across the comparison corpus. Node counts are identical on
 path-independent programs and move only within the documented
 order-sensitivity class (budget-capped, goal-stopped, or

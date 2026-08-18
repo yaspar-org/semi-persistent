@@ -21,13 +21,21 @@ fixpoint or the iteration limit.
 ```rust
 pub struct Interpreter<Cfg, L, M, const TRACK: bool, const PROOFS: bool> {
     pub eg: EGraph<Cfg, L, TRACK, PROOFS>,
-    model: M,
+    pub model: M,
     rules: Vec<PreparedRule<Cfg::O, Cfg::S, L>>,
     globals: GlobalCtx<Cfg::S, Cfg::G>,
-    marks: Vec<Mark>,
+    marks: Vec<Mark<Cfg, Cfg::O>>,
+    shrink_policy: ShrinkPolicy,
+    strategy: SaturationStrategy,          // naive or semi-naive (run N) dispatch
+    ac_mode: AcMode,                       // Off, Eager, or Lazy completion
+    lazy_ac_rounds: usize,                 // alternation budget for a lazy check's second phase
+    lazy_txn: Option<EGraphToken>,         // the shared lazy-check transaction, Some while open
+    last_sat: Option<SatResult>,           // outcome of the most recent (run …)
+    last_run_time: Option<Duration>,       // wall time of the most recent (run …)
+    index_scratch: IndexScratch<Cfg>,      // index build scratch, reused across runs
 }
 
-struct Mark {
+struct Mark<Cfg, O> {
     token: EGraphToken,
     rules_len: usize,
     globals_len: usize,
@@ -140,18 +148,17 @@ interp.set_strategy(SaturationStrategy::SemiNaive);
 
 `(run N)` dispatches on the selected strategy: `Naive` calls
 `saturate`, `SemiNaive` calls `saturate_semi`. On the CLI the strategy
-is chosen with `--strategy naive|semi-naive` (default `naive`), and
-match-step counting is enabled with `--count-match-steps`, which prints
-the total match work at the end of the run. The default is unchanged,
-so existing programs behave identically. Semi-naive is sound,
-fixpoint-equivalent to naive, and has no automatic fallback. Its
-mechanism — the `touched` log, delta index, `VariantIndex`, and the
-k-variant fan-out — is the subject of Chapter 18.
+is chosen with `--use-semi-naive` or `--use-naive` (mutually exclusive;
+the default is naive), and match-step counting is enabled with
+`--count-match-steps`, which prints the total match work at the end of
+the run. Semi-naive is sound, fixpoint-equivalent to naive, and has no
+automatic fallback. Its mechanism (the `touched` log, delta index,
+`VariantIndex`, and the k-variant fan-out) is the subject of Chapter 18.
 
 ## Run Control: Rulesets and Goals
 
-`(run N)` runs the **default** ruleset — the rules with no `:ruleset` tag
-— exactly as before rulesets existed. `(run name N)` runs the rules
+`(run N)` runs the **default** ruleset: the rules with no `:ruleset`
+tag. `(run name N)` runs the rules
 tagged `:ruleset name` and nothing else. Both directions of that scoping
 matter: a scoped experiment (an AC block, say) must not fire under the
 main run, and the main run's rules must not fire under it. Ruleset ids
@@ -162,7 +169,7 @@ rule per round.
 Rulesets are static: they are not scoped by `(push)`/`(pop)`, and the
 name table lives for one `sortcheck_program` call.
 
-`(run [ruleset] N :until (= a b))` — or `(!= a b)` — stops the run as
+`(run [ruleset] N :until (= a b))`, or `(!= a b)`, stops the run as
 soon as the goal holds. The goal's terms are ground, so they are built
 once, before the run; only their classes move afterwards, and the check
 is two `find`s. It runs **before** every iteration, including the first,
@@ -171,7 +178,7 @@ distinguishes stopping on the goal from reaching a fixpoint: the goal
 can be met with rules still firing.
 
 Building the goal's terms adds those nodes to the e-graph, which is
-observable — the same nodes a `(check …)` of the goal would add.
+observable: the same nodes a `(check …)` of the goal would add.
 
 ## Statistics
 

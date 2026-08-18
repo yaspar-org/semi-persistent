@@ -121,7 +121,7 @@ semantics, the `:until` goal, and the statistics commands.
 same operator; the keyword sets one bit. A constructor is a term former: its
 nodes carry `FLAG_CONSTRUCTOR`, and it is the declaration form that the
 extraction tags are meant for. Every variant of a `(datatype …)` is a
-constructor. Congruence, matching, and canonization treat the two identically —
+constructor. Congruence, matching, and canonization treat the two identically:
 unlike egglog, where `function` is a partial map with a mandatory merge lattice
 and `constructor` is the eqsort term former.
 

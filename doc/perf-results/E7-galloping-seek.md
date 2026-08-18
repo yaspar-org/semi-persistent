@@ -2,10 +2,10 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E7 — galloping seek in `SortedVecCursor` (B2) — **accepted**
+# E7: galloping seek in `SortedVecCursor` (B2): **accepted**
 
 **Verdict: accepted. 4-6% end-to-end on the join-heavy rows, 70-97% on the seek
-itself, and no shape regresses — including the two designed to break it.**
+itself, and no shape regresses, including the two designed to break it.**
 
 `SortedVecCursor::seek` ran `partition_point` over the whole remaining slice. It
 now gallops: double an offset from the cursor until it lands on or past the
@@ -15,7 +15,7 @@ O(log *d*) in the distance actually advanced.
 ## The premise, measured first
 
 B2's payoff depends entirely on the stride distribution, so that was instrumented
-before any code was written — a temporary histogram in `seek` over the real
+before any code was written: a temporary histogram in `seek` over the real
 saturation workloads:
 
 | workload | seeks | *d* = 0 | *d* ≤ 1 | *d* ≤ 3 | median log₂*d* | mean log₂(remaining) |
@@ -27,25 +27,25 @@ saturation workloads:
 | `ac10/naive`   | 333 921 |  0.0% | 64.9% | 85.1% | 1 |  7.9 |
 | `ac10/semi`    | 218 602 |  0.5% | 64.8% | 86.2% | 1 |  7.1 |
 
-Two things fall out. **The strides are short** — on the AC rows a majority of
+Two things fall out. **The strides are short**: on the AC rows a majority of
 seeks advance by at most one element and ~85% by at most three, while the slice
 being searched averages 2^4.7 to 2^7.9 elements, so binary search was paying 5-8
 probes to move one position. And **on two of the three semi-naive rows, a quarter
-to a third of seeks do not move at all** (*d* = 0 — 24.7% on `ac6/semi`, 30.6% on
+to a third of seeks do not move at all** (*d* = 0: 24.7% on `ac6/semi`, 30.6% on
 `plain7/semi`), because the `Difference` combinator seeks both sides to the same
 key; those now cost a single compare and an early return. `ac10/semi` is the
 exception at 0.5%, so the early return is a real but row-dependent win, not a
 property of semi-naive evaluation as such.
 
 `plain7/naive` is the exception with median log₂*d* = 7, and it is the row that
-gains least below — consistent, and the reason the sweep in the next section
+gains least below: consistent, and the reason the sweep in the next section
 matters.
 
 Note the plan's framing ("full-slice `partition_point` per seek") was already half
 addressed: the old code sliced from `self.pos` first, so it was O(log *rem*), not
 O(log *n*). The remaining gap is *rem* vs *d*, which is what this closes.
 
-## Stride sweep — the acceptance condition
+## Stride sweep: the acceptance condition
 
 E7's condition was that short strides improve **without long jumps regressing past
 the random baseline**. `benches/seek_microbench.rs` only drives stride-1 seeks, so
@@ -72,7 +72,7 @@ That is a stronger result than the plan expected, and the mechanism is why the
 its target by at most a factor of two, so the bisection that follows searches a
 window no wider than the distance covered. A long jump therefore costs
 2·log *d* rather than log *rem*, and since *d* ≤ *rem* always, the gallop is never
-asymptotically worse — it can only lose by a constant, and here it does not lose
+asymptotically worse: it can only lose by a constant, and here it does not lose
 at all because the ladder's early probes are sequential and cache-friendly where
 binary search's first probes are not.
 
@@ -110,7 +110,7 @@ Standalone confirmation per protocol item 7, min of 40/200 reps:
 | `accompl32`  |  1.4435 ms |  1.4383 ms | −0.4% |
 
 **The completion rows' criterion +2 to +2.8% is an artifact.** Standalone they are
-flat (+0.1%, −0.4%) — the same pattern E6 hit on the same two rows, and the reason
+flat (+0.1%, −0.4%), the same pattern E6 hit on the same two rows, and the reason
 protocol item 7 exists. Checksums are identical throughout (`ac10` 41920, `ac6`
 17400, `accompl64` 127200, `accompl32` 63200).
 
@@ -119,9 +119,9 @@ protocol item 7 exists. Checksums are identical throughout (`ac10` 41920, `ac6`
 `cargo test --workspace --release`: 81 test binaries, 0 failures. `cargo fmt --all
 --check` and `cargo clippy --release --all-targets` clean.
 
-`seek` already had direct coverage — `leapfrog::tests::difference::basic_seek` and
+`seek` already had direct coverage: `leapfrog::tests::difference::basic_seek` and
 `seek_matches_filter` (a proptest comparing seek against a filter), plus
-`index::tests::seek_and_step` — and the whole join layer sits on top of it, so
+`index::tests::seek_and_step`. The whole join layer sits on top of it, so
 582 lib tests exercise it indirectly. Mutation-checked to confirm that coverage
 actually gates the new code:
 
@@ -137,12 +137,12 @@ tests for `seek` (`mod seek_props`) and the same mutations now fail 36 / 57 / 16
 a proof-vs-tests column, is in
 [containers-verus chapter 12](../../containers-verus/doc/design/12-sorted-vec-cursor.md) §5.
 
-One rewrite that looked like an off-by-one — bisecting `data[lo..hi]` instead of
-`data[lo + 1..hi]` — left every test passing, and that is correct rather than a
+One rewrite that looked like an off-by-one (bisecting `data[lo..hi]` instead of
+`data[lo + 1..hi]`) left every test passing, and that is correct rather than a
 coverage gap: `data[lo] < target` holds by the loop invariant, so
 `partition_point` over the wider window returns at least 1 and both forms give the
 same index. The shipped form is the narrower one because it makes the invariant
-visible at the call. That reading is now settled rather than inferred — the
+visible at the call. That reading is now settled rather than inferred: the
 equivalent mutation re-verifies clean in Verus once the invariant is relaxed to
 match (chapter 12 §5, M3′).
 

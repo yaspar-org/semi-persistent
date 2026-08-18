@@ -49,6 +49,10 @@ enumerated in [Chapter 2](02-trust-boundary.md).)
 
 ## Reference: what is in the crate
 
+Filename numbers are stable ids, not the reading sequence: the sequence is
+this listing's order, and numbers missing here (03-08, 13-14) belong to
+the Techniques and class-layer sections below.
+
 01. **[Master Verification Design](01-verification-design.md)**: the layout,
     the `wf` invariant, the `overlay` reconstruction model, and branch-cut safety.
     Start here.
@@ -62,7 +66,7 @@ enumerated in [Chapter 2](02-trust-boundary.md).)
     propagation, the cursor soundness theorems, `mark`/`restore`, proof status.
 11. **[Layout, Algorithm & Erasure Parity](11-layout-parity.md)**: the living
     audit that the verified containers match production's layouts, algorithms and
-    `TRACK=false` erasure — and the measurement discipline that audit taught.
+    `TRACK=false` erasure, and the measurement discipline that audit taught.
 12. **[The Sorted-Vec Cursor](12-sorted-vec-cursor.md)**: the galloping seek,
     verified. A proof whose subject is a query-engine algorithm
     rather than a container; reuses the B+tree's `seek_target_idx` unchanged.
@@ -79,10 +83,11 @@ enumerated in [Chapter 2](02-trust-boundary.md).)
 
 The verified aggregate `EClasses` (rings, union-find, class keys, use-lists,
 min-monomial pool) carries invariants W1..W7 as its `wf()`; the invariant
-table is the `eclasses.rs` module header. Three documents cover it (their
-filename numbers are not part of the chapter sequence above):
+table is the `eclasses.rs` module header. Three documents cover it (where
+a filename keeps a number, the number is a stable id, not a position in
+the reading sequence above):
 
-- **[E-Graph Class-Layer Parity](12-egraph-class-layer-parity.md)**: the
+- **[E-Graph Class-Layer Parity](egraph-class-layer-parity.md)**: the
   production-parity statement: the engine's `EClasses`/`UnionFind` are type
   aliases of the kernel, and the API surface both sides share.
 - **[The Parity Matrix](13-parity-matrix.md)**: the method-by-method parity
@@ -117,7 +122,7 @@ Not part of the chapter sequence: a chronological log and a maintenance playbook
 
 ## Future work
 
-- **[Feature-Parity Audit](../future/parity-audit-and-plan.md)**: method-by-method
+- **[Feature-Parity Audit](parity-audit.md)**: method-by-method
   coverage vs. production; what has no verus counterpart.
 - **[Byte-Accounting Diagnostics (Group B)](../future/verify-byte-accounting.md)**:
   the plan to verify `tracking_bytes`/`total_bytes`/`heap_bytes`, removing the last

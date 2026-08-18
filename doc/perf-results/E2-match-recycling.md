@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E2 — match buffer recycling (A2)
+# E2: match buffer recycling (A2)
 
 **Change.** `run_step` emitted one `env.clone()` per solution, and `Match`'s
 `Clone` allocates nine `Vec`s. The `Vec<Match>` was then dropped at the end of
@@ -11,7 +11,7 @@ to nine allocations and nine frees, per query, per round.
 
 Added `ematch::MatchPool`: a `Vec<Match>` plus a live length. `clear()` drops the
 previous query's results by setting `len = 0` without releasing storage, and
-`push` overwrites an existing slot via `Match::clone_from` (newly implemented —
+`push` overwrites an existing slot via `Match::clone_from` (newly implemented:
 nine `Vec::clone_from`s, which reuse capacity) instead of allocating a new
 `Match`. Only the first query pays; after that the pool sits at its high-water
 mark.
@@ -26,7 +26,7 @@ pool outside the round loop:
   is where reuse compounds: a semi-naive round runs one query per
   (rule, join atom), all with similar match counts.
 
-`saturate_trace` still uses `run_query` — it prints every binding, so allocation
+`saturate_trace` still uses `run_query`: it prints every binding, so allocation
 is not its cost.
 
 **Verdict: accepted, and it is the largest win in the series so far.** 22-33% on
@@ -50,7 +50,7 @@ Three full-suite runs, `MALLOC_MMAP_THRESHOLD_=65536`.
 | `accompl64`     |  −1.2% |  −2.3% |  −1.5% | +4.2% | n/a |
 
 Every row is `p = 0.00` on all three runs, and the spread between runs is under
-1.5 points everywhere — no ambiguity to resolve here.
+1.5 points everywhere: no ambiguity to resolve here.
 
 The completion rows are again the interesting case, and again not evidence about
 this change: they do zero e-matching and their allocation counts are unchanged
@@ -76,7 +76,7 @@ Bytes allocated tell the story more sharply than counts, because recycling
 removes the *large* allocations (the rest-slice pools) rather than the small
 ones: `plain7/naive` 27.5 MB → **11.1 MB** (−60%), `plain7/semi` 12.7 MB →
 **4.6 MB** (−63%), `ac10/naive` 107.6 MB → **81.0 MB** (−25%). Peak live bytes
-are unchanged, as expected — the pool holds the same data, it just stops
+are unchanged, as expected: the pool holds the same data, it just stops
 returning it to the allocator between queries.
 
 Allocations per match step on `plain7/naive`: 1.01 (E0) → 0.85 (E1) → **0.65**.

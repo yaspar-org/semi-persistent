@@ -11,7 +11,8 @@ aliases of `EClasses<T, L, N, J, TRACK, PROOFS>`,
 `Justification<T>` as `J` (`egraph/src/classes.rs`,
 `egraph/src/union_find.rs`). There is no adapter layer. This chapter states
 what the kernel provides and where its behavior deliberately differs from
-the pre-swap production code; the method-by-method audit evidence is
+the reference implementation (`containers/` and the recorded baselines in
+the audits); the method-by-method audit evidence is
 [`13-parity-matrix.md`](13-parity-matrix.md) and
 [`14-parity-audit-2.md`](14-parity-audit-2.md).
 
@@ -23,7 +24,7 @@ the pre-swap production code; the method-by-method audit evidence is
   `union_justified_directed`; `reroot_proof`; `explain` into
   `ProofBuf<T, J>`; `mark`/`restore` archiving fast and proof columns in
   lockstep.
-- **EClasses**: `add_singleton(id)`; `add_use` (refuses an out-of-range
+- **EClasses**: `add_singleton(id)` and `try_add_singleton`; `add_use` (refuses an out-of-range
   parent, W5); `use_list_id`, `use_list_len` (the header's cached count,
   verified by the list's `cache_len` clause), `class_size` (the W7-verified
   member count), `atomic`, `set_atomic`, `min_monomial`,
@@ -33,7 +34,9 @@ the pre-swap production code; the method-by-method audit evidence is
   supplies the survivor: the engine's `--union-by` policies compute it from
   `class_size`/`use_list_len`), `merge_justified`,
   `merge_justified_directed`; `splice_uses`, `uses()`, `iter_uses`,
-  `iter_class`; `mark`/`restore`.
+  `iter_class`; `len`, `is_empty`, `num_classes`, `min_width`; `explain`
+  into `ProofBuf`; `mark`/`restore` with `is_valid_token` and
+  `try_restore`.
 - **Invariants**: W1..W7 as `wf()`, the table in the `eclasses.rs` module
   header. `merge` folds the survivor's size before the ring splice and the
   merge lemma re-establishes W7 from the two operand classes' instances.
@@ -51,7 +54,7 @@ Verifying path-reversal termination would need proof-forest acyclicity as
 a ghost invariant maintained through reversal; that is real proof work
 with no invariant payoff, and it is not scheduled.
 
-## Deliberate divergences from the pre-swap production code
+## Deliberate divergences from the reference implementation
 
 - **Saturating rank bump.** Production's `u8` rank bump wraps after 255
   forced-survivor bumps on one root; the kernel saturates at 255. Identical

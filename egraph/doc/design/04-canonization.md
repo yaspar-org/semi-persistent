@@ -27,7 +27,7 @@ Canonization applies `find()` to each child in place, with no
 reordering. This strategy covers Plain0 through Plain3, PlainN, and
 A nodes. (`OrderedCanon` is the variable-arity form, used by PlainN
 and Seq.) A nodes carry an additional *build-time* normal form on top
-of this — see "A-Only Operators" below.
+of this; see "A-Only Operators" below.
 
 ## `CCanon` — Commutative Pair
 
@@ -53,8 +53,8 @@ sorted by id. Canonization:
    multiplicities (sum them).
 3. Re-sort by canonical id.
 4. Apply the op's algebraic laws (`CanonMode`): drop the identity (unit) class
-   if the op declares one — the unit is resolved through `find` at canonize time, so a
-   summand that merged into the unit's class later still drops — then the count clamp
+   if the op declares one (the unit is resolved through `find` at canonize time, so a
+   summand that merged into the unit's class later still drops), then the count clamp
    (nilpotent: counts mod n, zeroed summands removed). `SetCanon`'s dedup IS the
    idempotent clamp; nilpotent ops are stored MSet precisely because dedup would destroy
    the parity the mod-n clamp needs (see `ac-algebraic-properties.md`).
@@ -65,7 +65,7 @@ sorted by id. Canonization:
    the surviving side have unchanged child representatives, so nothing re-visits them,
    but the unit-drop rule now applies to their children. This is deliberately not solved
    by forcing the unit's class to be the union survivor: (1) canonical forms must be
-   independent of the choice of representative (`ac-congruence-completeness.md` §6c) —
+   independent of the choice of representative (`ac-congruence-completeness.md` §6c):
    any behavior conditioned on which element survives a union is order-dependent and
    therefore not canonical; (2) a class may be the unit of one op and an ordinary
    operand of another, so a single per-class survivor cannot encode per-op unit status;
@@ -109,7 +109,7 @@ After:  (or {e3, e7})
 
 `ac-algebraic-properties.md` gives every associative operator the same normal
 form: a flat sequence. The `:assoc-left` / `:assoc-right` / `:assoc` row of the
-tag-derivation table reads "A — sequence — flatten", and the parameter table
+tag-derivation table reads "A, sequence, flatten", and the parameter table
 records associativity as structural, needing no declared element. Two laws
 follow, and both run in `EGraph::add`:
 
@@ -120,7 +120,7 @@ follow, and both run in `EGraph::add`:
    reordering, which is the only difference from the AC counterpart
    (`flatten_ac_children`), where the multiset union sorts.
 2. **Collapse the singleton.** A one-element sequence is its element, so `add`
-   returns that child's class instead of minting a node — the same degenerate-arity
+   returns that child's class instead of minting a node: the same degenerate-arity
    resolution the MSet and Set arms perform, and the reason a program does not have
    to state `(rewrite (op x) x)` for itself. There is no empty case: an A-only
    operator has no identity (see below), so the empty sequence names nothing.
@@ -137,7 +137,7 @@ Both halves answer the representative trap (`ac-congruence-completeness.md`
 union-find happened to make representative, so it is a function of merge history
 rather than of e-graph state, and the resulting normal form is not canonical.
 Class membership and least node id are both functions of the equality relation
-alone — node ids are assigned at creation and never renumbered — so every
+alone (node ids are assigned at creation and never renumbered), so every
 spelling of a child splices to the same sequence and the parents land in one
 class.
 
@@ -146,7 +146,7 @@ it on every class whose op has no completion column, which includes every `Seq`
 class, so for A-only operators it is constantly true. Purity plays the same
 role: a class holding only `op`-sequences has no standalone atom form, so
 spelling it out is forced, and a class that also holds an atom is left alone.
-That case is not hypothetical — once a rule proves `gmul(b, inv(b)) = I`, the
+That case is not hypothetical: once a rule proves `gmul(b, inv(b)) = I`, the
 identity's class holds a `Seq` node, and splicing it into every later sequence
 would rewrite uphill and grow terms without bound.
 
@@ -154,8 +154,8 @@ would rewrite uphill and grow terms without bound.
 
 Rejected at registration, and this is the spec's answer, not an omission.
 `OpKind::A` carries no identity field, and the property-tag resolver
-(`sortcheck.rs`) rejects `:identity` — along with `:idempotent`, `:nilpotent`
-and `:inverse` — on an operator that is not also `:comm`. The unit-drop law and
+(`sortcheck.rs`) rejects `:identity` (along with `:idempotent`, `:nilpotent`
+and `:inverse`) on an operator that is not also `:comm`. The unit-drop law and
 the empty-monomial degeneracy it enables are therefore MSet/Set-only, and the A
 arm of `add` has no unit to resolve.
 
@@ -164,7 +164,7 @@ arm of `add` has no unit to resolve.
 Nothing changes on the recanonize path: `OrderedCanon` applies `find()` and
 preserves both order and arity, so a `Seq` node's canonical form after a merge
 is the same node with canonical children, and `degeneracy_merge` has no `Seq`
-case to answer. Re-flattening is not possible there in any event —
+case to answer. Re-flattening is not possible there in any event:
 `recanonize_node` rewrites children into the node's existing span, which can
 shrink but not grow.
 
@@ -183,7 +183,7 @@ equality states the rule.
 the intermediate sub-term, so a rule written against the nested shape has
 nothing to match. The A-only case inherits it exactly. After `op(op(a,b),c)`
 flattens, no node spells the intermediate `op(a,b)` *as a child*, so a binary
-pattern `(op ?x ?y)` no longer matches the three-element term — it is an exact
+pattern `(op ?x ?y)` no longer matches the three-element term: it is an exact
 pattern against a sequence of a different length. Patterns over A operators are
 written with rest variables (`(op ..p ?x ..s)`), which is what makes an interior
 position expressible at all; `comparison/calc.native.egg` is the worked example.
@@ -198,7 +198,7 @@ disappear".
 
 Both laws are silent under `PROOFS`. Flattening changes which node `add` builds,
 and the singleton collapse returns an existing class rather than merging two;
-neither records a justification, because neither is an inference — they are the
+neither records a justification, because neither is an inference: they are the
 definition of the operator's canonical form, in the same sense as the MSet
 unit-drop and the MSet/Set degeneracy resolution, which are equally silent. An
 explanation therefore never contains a re-association step, and a term's proof is

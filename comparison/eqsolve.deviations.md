@@ -88,8 +88,8 @@ table. What would change this is completion cost, not translation.
 
 ## The rules encoding's gap to egglog is match volume
 
-Campaign medians (`final/final-r3-tables.md`): egglog 24.9 ms; ours rules
-127.7 ms naive, 118.0 ms semi-naive. Measured attribution: deleting the
+Campaign medians (`final/final-r4-tables.md`): egglog 24.6 ms; ours rules
+124.5 ms naive, 115.8 ms semi-naive. Measured attribution: deleting the
 program's three `(extract ...)` commands moves wall time by nothing (157 ms
 with, 155 ms without, 3 runs each), and the run performs 2 741 637
 e-matching steps on a 9 583-node graph, 286 steps per node, the same

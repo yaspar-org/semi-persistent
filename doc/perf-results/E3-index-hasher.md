@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E3 — index hasher (A3)
+# E3: index hasher (A3)
 
 **Superseded for the index families, 2026-08-16.** `IndexStore`'s four families
 are no longer hash maps: they are dense-keyed `DenseSpanMap`s, read by array
@@ -14,7 +14,7 @@ not cite it as the current state of the index.
 **Change.** The maps keyed by internal dense ids now use foldhash instead of
 std's default SipHash:
 
-- `index::IndexStore`'s four crosscutting maps — `by_op` (op id),
+- `index::IndexStore`'s four crosscutting maps: `by_op` (op id),
   `by_repr`/`by_contains` (class id), `by_child_pos` (`(class id, u32)`). These
   are rebuilt every round and probed on every join step, so they are the whole
   point of the experiment.
@@ -26,7 +26,7 @@ std's default SipHash:
 
 **Why foldhash and not `rustc-hash`.** The plan proposed adding `rustc-hash`.
 foldhash is already a workspace dependency and is hashbrown 0.17's default,
-which makes it what production `Map` and verified `SpMap` already hash with — see
+which makes it what production `Map` and verified `SpMap` already hash with. See
 the `foldhash` note in the workspace `Cargo.toml`. Using one hasher across the
 workspace is worth more than any marginal per-probe difference between the two
 fast options, and it adds no dependency.
@@ -58,7 +58,7 @@ delta) and runs one query per (rule, join atom) rather than one per rule, so bot
 the construction hashing and the probe hashing are multiplied.
 
 `ac10` barely moves. Its time is dominated by AC decompose frames and rest-slice
-splicing, not index probes — the same reason it barely moved under E1.
+splicing, not index probes, the same reason it barely moved under E1.
 
 The completion rows land within ±2%, i.e. inside the ±1% rebuild-noise band plus
 measurement spread, and one of the six readings is negative. They contain no
@@ -67,8 +67,8 @@ nothing here is evidence about them either way.
 
 ## Mechanism
 
-Allocation counts are unchanged by construction — this experiment does not touch
-allocation — and `allocprobe` confirms it (`plain7/naive` 148 110 before, 148 111 after —
+Allocation counts are unchanged by construction (this experiment does not touch
+allocation) and `allocprobe` confirms it (`plain7/naive` 148 110 before, 148 111 after:
 the one extra is the `RandomState` seed). The mechanism is instructions per probe, not allocator traffic, so the
 supporting evidence is the naive-vs-semi ratio above rather than an
 `allocprobe` delta: a change that made probes cheaper should help the driver that
@@ -78,7 +78,7 @@ probes twice as much roughly twice as much, and it does.
 
 `schedule.rs:131` iterates `by_op` to build `IndexStats::op_card`. Changing the
 hasher changes that iteration order. It is safe because the result is collected
-into a map keyed by op — order does not reach the output — but it is the kind of
+into a map keyed by op (order does not reach the output), but it is the kind of
 thing that turns into a nondeterministic test failure elsewhere, so it was
 checked rather than assumed. No other site iterates any of these maps outside
 tests.

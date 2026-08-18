@@ -1,6 +1,6 @@
 # FINAL comparison tables
 
-> Archived campaign (r1). The current campaign is `final-r3-tables.md`; the
+> Archived campaign (r1). The current campaign is `final-r4-tables.md`; the
 > numbers here predate the engine changes recorded in `../methodology.md`
 > section 6.
 

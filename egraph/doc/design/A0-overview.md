@@ -41,7 +41,7 @@ coherent execution engine:
   with several candidate representations under consideration; see
   [Future Work](A3-future-work.md).
 
-The contribution of The project is making all these mechanisms coexist in
+The contribution is making all these mechanisms coexist in
 a single engine. Semi-persistence is the unifying mechanism: the
 e-graph's hash-cons is a functional database, pattern matching is a
 relational join, and generations serve as both undo checkpoints and
@@ -55,7 +55,7 @@ The entire e-graph state (nodes, e-classes, union-find, hash-cons
 caches, literal store, registries) can be snapshotted with `(push)`
 and restored with `(pop)`. A snapshot is a single frame push across all
 containers; its *memory* cost is only the cells subsequently modified
-(a sparse diff), never a copy of the e-graph — that is the decisive
+(a sparse diff), never a copy of the e-graph: that is the decisive
 saving. (The push also resets each container's per-cell capture flags,
 which is sublinear, not a copy; see the containers design docs.) Restore
 is O(k), where k is the number of cells modified since the snapshot, not
@@ -233,13 +233,18 @@ these features.
 
 The chapters that follow describe each layer in detail:
 
-- **Foundations** (dense ids, semi-persistent vectors and containers) — documented in the `semi-persistent-containers` crate
+- **Foundations** (dense ids, semi-persistent vectors and containers): documented in the `semi-persistent-containers` crate
 - Chapters 1–5: E-graph core (nodes, classes, union-find, caches, canonization, rebuild)
 - Chapters 6-9: Matching engine (indexes, leapfrog join, scheduling, pattern execution)
 - Chapters 10-12: Language and compilation (surface syntax, sortcheck, rule application)
 - Chapters 13-14: Literal model and soundness
 - Chapters 15-16: Proofs and extraction
 - Chapter 17: Interpreter and saturation loop
+- Chapter 18: Semi-naive evaluation (`saturate_semi`: match only what changed each round, via the `touched` log, delta indexes, and the k-variant delta decomposition)
+- Chapter 19: Anti-unification (exact memoized solver and Monte-Carlo graph search over the AND/OR graph of e-class-pair subproblems)
+- Chapter 20: Index selectivity and delta suffixes (measured per-access-path selectivity constants in the leapfrog cost model, per-binding atom scheduling, per-binding driver selection)
+- [ac-algebraic-properties.md](ac-algebraic-properties.md) and [ac-congruence-completeness.md](ac-congruence-completeness.md): why multiset canonization breaks congruence completeness, and the Kapur-style completion that repairs it
+- [ac-completion-spec.md](ac-completion-spec.md): `min_monomial`, the leximin AC representative, with a code-compliance review of the completion implementation
 
 ## References
 

@@ -134,7 +134,7 @@ code is surfaced as a possible code defect, never silently re-documented.
 
 | Agent | Role |
 |---|---|
-| `elicitation` | world model, assumptions, formal specification (SMT-LIB twin plus controlled-English requirements) |
+| `elicitation` | world model, assumptions, formal specification (SMT-LIB counterpart plus controlled-English requirements) |
 | `gap-analysis` | abductive detection of specification gaps (advisor to elicitation) |
 | `architect` | candidate architectures, coupling metrics, interface contracts |
 | `algorithm-expert` | algorithm and data-structure feasibility (advisor to the architect) |
@@ -160,7 +160,7 @@ Foundations: `principles` (the twelve principles and property provenance),
 (verdict semantics and loop discipline for producers).
 
 Requirements: `requirements-format` (precision requirements, the
-controlled-English logic surfaces, the SMT-LIB twin),
+controlled-English logic surfaces, the SMT-LIB counterpart),
 `abductive-requirement-refinement` (from user story to interface-grounded
 acceptance criteria), `theory-building` (world model, assumptions, rationale
 log, sensitivity).
@@ -172,7 +172,7 @@ inter-procedural contract inference for Verus), `bi-abduction-arena`
 (dynamic-frames verification of arena-allocated, integer-indexed, internally
 aliased structures), `smt-bug-finding` (differential SMT search with
 confirmation on the real system), `proof-slop-check` (inventory and
-classification of proof escape hatches: `assume`, `admit`, `external_body`,
+classification of proof bypasses: `assume`, `admit`, `external_body`,
 vacuous preconditions, contentless postconditions, assertion-free tests).
 
 Dynamic analysis: `runtime-contract-instrumentation` (properties as executable

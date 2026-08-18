@@ -11,18 +11,18 @@ regenerates.
 
 Comments across `containers-verus/` and `containers-conformance/` cite
 "migration plan §N", "PR 1", and "PR 2". Those refer to a working plan document
-that was a process artifact and is not retained — it tracked task state, and
+that was a process artifact and is not retained: it tracked task state, and
 most of its content was either wrong by the end or is now asserted by a gate.
 The vocabulary is decoded here so the references resolve to something:
 
-- **PR 1** — build the verified crate to production's API surface, with the
+- **PR 1**: build the verified crate to production's API surface, with the
   consumer untouched. Complete.
-- **PR 2** — switch the e-graph onto it. Complete; that is this change.
-- **"migration plan §2.x"** — the token/identity boundary work: 2.2 the
+- **PR 2**: switch the e-graph onto it. Complete; that is this change.
+- **"migration plan §2.x"**: the token/identity boundary work: 2.2 the
   "restorable now" `is_valid_token`, 2.4 the panic-on-misuse parity, 2.5 the
   forged-state and misuse test suites (`tests/misuse.rs` plus in-module unit
   tests), 2.6 the `u64` `ContainerId` widening.
-- **"§Phase N"** — sequencing only (1.1 compat-test gates, 1.3 the canary, 4
+- **"§Phase N"**: sequencing only (1.1 compat-test gates, 1.3 the canary, 4
   the flat root re-export surface, 5.x composites/SparseSet/ListArena, 6 the id
   macros, 8 B+tree, 9.x final gates). Nothing depends on the numbering.
 
@@ -37,7 +37,7 @@ mint a filler) where production accepted `T: Clone`. Every payload these hold in
 this workspace is `Copy`; genuinely non-`Copy` payloads live in `AppendOnlyVec`,
 which keeps production's unbounded `T`, and in `SpMap`, whose keys and values are
 `Clone`. This is a real narrowing, accepted because nothing needed the
-generality — the canary's `aov_clone_only_payload` fixture pins the Clone-only
+generality: the canary's `aov_clone_only_payload` fixture pins the Clone-only
 case that must keep working.
 
 **64-bit only**, pinned by `global size_of usize == 8`.
@@ -49,7 +49,7 @@ with shadow-on-overwrite, so a late edit is read-clone-modify-`insert` (see
 `clone_key_maps` in the canary for the shape).
 
 The one consumer call site was `OpRegistry::set_constructor`, and it did not
-migrate to `insert` — the `is_constructor` flag it set is **write-only** in the
+migrate to `insert`: the `is_constructor` flag it set is **write-only** in the
 e-graph today (set, read nowhere), so the method is now a documented no-op with
 identical observable behavior. That is a latent trap: the day the flag gains a
 reader, `set_constructor` will silently do nothing. The note at
@@ -57,7 +57,7 @@ reader, `set_constructor` will silently do nothing. The note at
 registration, where it is already known.
 
 **Token semantics are stronger than production's, not equal.** Verus
-`is_valid_token` means "restorable now" — identity, frame liveness, genealogy,
+`is_valid_token` means "restorable now": identity, frame liveness, genealogy,
 and counter headroom. Production checks genealogy alone and traps reuse later,
 inside `restore`, via a `frame_index < frames.len()` assert. Frame indices are
 REUSED after a branch cut, so the two answers genuinely differ on a token whose
@@ -79,8 +79,8 @@ asserted as exact constants in
 
 Two `u32` alternatives were measured and rejected. An *absorbing poison band*
 (top 2^32 reserved, counter clamped on overflow) is sound but needs a second
-atomic store to actually absorb — a plain `fetch_add` climbs through the band
-and wraps to live low ids — and that second store measures 21.8% slower on
+atomic store to actually absorb (a plain `fetch_add` climbs through the band
+and wraps to live low ids), and that second store measures 21.8% slower on
 constant-count push loops. A *fail-closed* `eq` measures at parity but is
 outright **unsound**: `eq` is `external_body` with
 `ensures b == (self.id() == other.id())`, so returning false for `self.eq(self)`
@@ -88,8 +88,8 @@ would falsify an assumed postcondition and poison every proof downstream of it.
 
 A runtime exhaustion trap is available behind `strict-id-exhaustion`, off by
 default for the same 21.8%; `debug_assert!` covers debug builds either way. The
-trap's cost is real and separately reproducible — adding the same diverging arm
-to production's `token.rs` degrades production identically — but note that the
+trap's cost is real and separately reproducible (adding the same diverging arm
+to production's `token.rs` degrades production identically), but note that the
 *mechanism* originally recorded for it (a basic-block split in
 `Vec::with_store`) was later **retracted**: it was read off a reproducer, not
 off the binary criterion ran. See the retraction in
@@ -146,7 +146,7 @@ saturation rounds) killed that:
 | incremental: production B+tree | ~7 s | 620 ms |
 | incremental: verus B+tree | 6.15 s | 8.77 s |
 
-Rebuild wins 6–11×, and — the decisive part — *identically so for
+Rebuild wins 6–11×, and (the decisive part) *identically so for
 `std::BTreeSet`*. The gap is strategy-level physics (sequential re-sort
 bandwidth, with pdqsort detecting runs in nearly-sorted data, versus random DRAM
 probes), not implementation quality, so no amount of node-layout work makes
@@ -155,7 +155,7 @@ incremental competitive for this access pattern.
 `BPlusTreeSet` therefore stays a fully verified library component with no
 consumer wiring and no performance gates. Revisit only if a future e-graph
 workload is *measured* to be restore-heavy (O(diff) rollback beats full rebuild)
-or query/update-interleaved — the two regimes where incremental can win.
+or query/update-interleaved, the two regimes where incremental can win.
 
 ## Reading the performance evidence
 
@@ -170,7 +170,7 @@ The enforced numbers are `containers-conformance/benches/perf_gate.rs`, which
 interleaves the arms per sample and reduces by min, with per-row recorded
 ceilings and their measured spreads in `containers-conformance/BASELINE.md`.
 The full bisection, including the disassembly, is
-`containers-verus/doc/design/11-layout-parity.md` — which is also where three
+`containers-verus/doc/design/11-layout-parity.md`, which is also where three
 overstated performance claims are explicitly retracted, and worth reading for
 that alone before recording a new ratio.
 

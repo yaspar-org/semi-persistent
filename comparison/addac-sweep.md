@@ -119,7 +119,8 @@ Both engines are built in release mode and driven as separate processes, so the 
 time includes process start, parse, sortcheck, term construction, saturation, and the
 statistics commands. Each pair runs 1 warmup then 5 timed runs; the tables report the
 median. egglog runs `-j 1 --mode no-messages` and ours runs `--types machine`, which is
-what puts `f64` in scope. This matches `run-pilot.py`.
+what puts `f64` in scope. This matches the campaign harness (`run-full.py`)
+except for the run counts stated above.
 
 Node counts are not measured the same way by the two engines, and the difference runs in
 egglog's favour: their `print-size` reports table cardinality after rebuild, ours reports

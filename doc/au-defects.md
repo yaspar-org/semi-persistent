@@ -1,7 +1,10 @@
 # AU defects: minimal triggers and proposed fixes
 
 Companion to `au-review.md`: the detailed account of the three defects
-the 2026-08-14 review found in `egraph/src/au/`, each with the smallest
+the 2026-08-14 review found in `egraph/src/au/`, all three fixed in the
+tree (the resolution banner in `au-review.md` names the fix and the
+regression test per defect; line references below are to the reviewed
+snapshot). Each account gives the smallest
 input known to trigger it, the mechanism traced through the code, the
 candidate fixes with their trade-offs, and the regression test to land
 with the fix. The review's differential fuzzer (2400 randomized cases,
@@ -230,10 +233,8 @@ cross-op actions survive.
 that both solvers can return a generalization headed by either
 operator when the seed forces each.
 
-## Order of work
+## Order of work (executed)
 
-D3 first (one line, closes a coverage hole, zero risk). D1 second
-with the debug budget assert in the same commit. D2 third behind its
-context-plumbing design. Each lands with its regression tests and a
-rerun of the review's fuzz harness shape at reduced count; the AU
-test baseline (106 passing) must stay green throughout.
+All three shipped in the order proposed here: D3 first, D1 with the
+budget assert in the same commit, D2 behind its context-plumbing
+design, each with its regression tests.

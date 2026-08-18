@@ -211,8 +211,8 @@ because they read different index slices (Chapter 18).
 `IndexStore::build_delta(eg, touched)` builds the same four families
 restricted to the `touched` node set (the nodes whose canonical form
 changed this round, logged on the e-graph). Semi-naive evaluation pairs
-a full index with a delta index in a `VariantIndex`, which selects—per
-query atom—whether that atom scans the full index, the delta, or
+a full index with a delta index in a `VariantIndex`, which selects, per
+query atom, whether that atom scans the full index, the delta, or
 `full ∖ delta`. See Chapter 18.
 
 ---

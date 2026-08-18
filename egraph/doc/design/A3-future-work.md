@@ -14,7 +14,7 @@ listed below.
 ## AC Completion: remaining work
 
 The algorithm is implemented, including multiple AC/ACI symbols and the semantic-property
-facets — the per-op `min_monomial` pool (per-class rows, one column per completion op),
+facets: the per-op `min_monomial` pool (per-class rows, one column per completion op),
 both MSet and Set partitions driven by the round, identity (unit-drop at build AND
 recanonize, `CanonMode`), idempotent and nilpotent count clamps, the per-rule *axiom*
 critical pairs (Kapur Lemmas 4.1(ii), 4.2(ii)/4.5) that clamping alone cannot derive, the
@@ -23,15 +23,15 @@ cancel-closure, and `:inverse` pair-level cancellation (which implies cancelativ
 `ac-completion-spec.md` §3 (the Kapur-correspondence table) and
 `ac-algebraic-properties.md` (the storage and property-tag design). **Full Abelian-group
 completion (§5.4, Gaussian elimination) is postponed indefinitely** (see
-`future/ac-completion-review-debt.md` §3). Two pieces remain — scoping and verification.
+`future/ac-completion-review-debt.md` §3). Two pieces remain: scoping and verification.
 
 **Enable by default (scoping).** Completion is off by default. On a sweep of stress
 graphs it converges on all but one pathological instance,
 whose AC equation set has a genuinely large canonical basis (the growth is
 input-specific, not size-specific; AC spec §3.3). The shipped backstop is the per-egraph
 node-growth budget (`set_completion_node_budget`), checked between rounds; exceeding it
-aborts soundly and reports `CompletionOutcome::AbortedGrowthLimit`. The on-demand
-direction has since landed as the lazy mode (`--lazy-ac-eqs`, design doc §13):
+aborts soundly and reports `CompletionOutcome::AbortedGrowthLimit`. The lazy mode
+(`--lazy-ac-eqs`, `ac-congruence-completeness.md` §13) covers the on-demand direction:
 completion runs only inside a failing check, in a mark/complete/restore transaction,
 with goal-directed rule/completion alternation as its second phase. Its recorded
 refinements: share one transaction across consecutive checks, poll the goal inside
@@ -162,8 +162,9 @@ The Max-SAT encoding can be solved by off-the-shelf solvers (e.g.,
 RC2, Open-WBO) or by a specialized branch-and-bound algorithm that
 exploits the tree structure of the e-graph.
 
-See `design_future/sp-optimal-term-extraction.md` for the cost
-model and encoding details.
+See [`doc/internship-subjects.md`](../../../doc/internship-subjects.md)
+subject 3 (the Max-SAT term extractor) for the cost model and
+encoding details.
 
 ### Stratified Negation
 
@@ -183,16 +184,16 @@ The implementation requires:
 - A variable safety check (every variable in a negative literal must
   be bound by some positive literal)
 
-See `design_future/sp-stratified-negation.md` for the full
-design including interaction with e-class merging.
+See [`../future/stratified-negation.md`](../future/stratified-negation.md)
+for the full design including interaction with e-class merging.
 
 ## Anti-Unification: remaining work
 
 Anti-unification is implemented and documented in
-[Ch 19: Anti-Unification](19-anti-unification.md). The remaining work —
-structural factoring for unequal-length associative (Seq) operators, PUCT and prior
+[Ch 19: Anti-Unification](19-anti-unification.md). The remaining work
+(structural factoring for unequal-length associative (Seq) operators, PUCT and prior
 processors, value-guided AND selectors, non-injective ACI matching, golden traces,
-and JSON export — is collected in `doc/future/au-associative-operators.md`.
+and JSON export) is collected in `doc/future/au-associative-operators.md`.
 
 ---
 [← Developer Guide](A2-developer-guide.md) · [Table of Contents](00-table-of-contents.md) · [Ch 1: Node Storage →](01-node-storage.md)

@@ -2908,7 +2908,7 @@ where
 // ---------------------------------------------------------------------------
 // Justified merges and explain (trusted glue; the partition work is the
 // verified core, the proof edge and LCA walk are production's algorithms in
-// the union-find's glue — doc/design/12-egraph-class-layer-parity.md).
+// the union-find's glue — doc/design/egraph-class-layer-parity.md).
 // ---------------------------------------------------------------------------
 
 impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>

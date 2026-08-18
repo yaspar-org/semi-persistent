@@ -1,12 +1,12 @@
-# Chapter 8 — B+ Tree Parameterization: Benchmark Analysis
+# Chapter 8: B+ Tree Parameterization, Benchmark Analysis
 
 [← Ch 7: BPlusTreeSet](07-bplus-tree.md) · [Table of Contents](00-table-of-contents.md)
 
 Microbenchmark sweep across the two compile-time parameters added to
 `BPlusTreeSet`:
 
-- **`NodeLayout`** — `Layout64`, `Layout128`, `Layout256` (node size in bytes).
-- **`SearchKind`** — `BinarySearch` (`slice::partition_point`) vs
+- **`NodeLayout`**: `Layout64`, `Layout128`, `Layout256` (node size in bytes).
+- **`SearchKind`**: `BinarySearch` (`slice::partition_point`) vs
   `Branchless` (linear sum of `(k < target) as usize`, auto-vectorizable).
 
 Source: [`containers/benches/bplus_bench.rs`](../../benches/bplus_bench.rs).
@@ -27,8 +27,8 @@ worst-case branching factor of that layout.
 ## Workloads
 
 All workloads use 1M unique `u32` keys generated from a fixed-seed LCG
-(`bench_all` in `bplus_bench.rs`). `TRACK = false` for every configuration
-— we measure the raw tree, not the mark/restore protocol.
+(`bench_all` in `bplus_bench.rs`). `TRACK = false` for every configuration:
+we measure the raw tree, not the mark/restore protocol.
 
 | Workload | Description |
 |---|---|
@@ -68,11 +68,11 @@ at 30 keys it's a wash; at 62 keys `BinarySearch` wins on seek (log₂ 62 ≈ 6
 probes vs. a 62-element linear scan the compiler is not fully vectorizing
 on this target). Net: keep `BinarySearch` as the default. `Branchless` may
 still be the right call on targets where LLVM emits good SIMD for the linear
-form — worth re-measuring before shipping to a different ISA.
+form; worth re-measuring before shipping to a different ISA.
 
 **vs. `std::BTreeSet`.** We beat it by ~8× on bulk build (our
 `from_sorted` is a single bottom-up pass; `BTreeSet::from_iter` is `n`
-insertions). Seeks match within ~10%. Random insertion is ~9% slower — the
+insertions). Seeks match within ~10%. Random insertion is ~9% slower: the
 `VecI` arena copy-modifies a whole node on each mutation, whereas `BTreeSet`
 mutates in place. That gap is the price of semi-persistence; it disappears
 in workloads that care about build or query more than mutation.
@@ -109,9 +109,9 @@ matters more than throughput.
   is likely to move the `Branchless` numbers; re-run before changing that
   default for other targets.
 - `TRACK = false` throughout. Once the `IndexStore` integration (the
-  configurable B+tree index backend — see the egraph crate's
+  configurable B+tree index backend; see the egraph crate's
   `doc/future/semi-naive-deferred-work.md`) lands, re-measure with
-  `TRACK = true` — mark/restore cost scales
+  `TRACK = true`: mark/restore cost scales
   with node size, so the "bigger nodes win" conclusion could soften.
 - `insert_random` is the worst case for a B+ tree (no locality). Real
   e-graph index updates are more clustered; a future bench should cover

@@ -43,7 +43,7 @@
 //! re-rooting and LCA `explain` logic is production's code verbatim,
 //! running as in-struct trusted glue over the verified columns — the same
 //! trust class it has in production, at the same structural address
-//! (doc/design/12-egraph-class-layer-parity.md). Verifying that logic
+//! (doc/design/egraph-class-layer-parity.md). Verifying that logic
 //! means modeling proof-forest acyclicity through path reversal; postponed
 //! until a consumer needs `explain` under a proof.
 
@@ -1465,7 +1465,7 @@ pub open(crate) spec fn parent_root_self_parent_clause<T: DenseId>(
 
 // ---------------------------------------------------------------------------
 // Proof forest logic (trusted glue over the verified columns; production's
-// algorithms verbatim — see doc/design/12-egraph-class-layer-parity.md).
+// algorithms verbatim — see doc/design/egraph-class-layer-parity.md).
 // ---------------------------------------------------------------------------
 
 /// Reusable scratch buffers for proof extraction. Allocate once, reuse

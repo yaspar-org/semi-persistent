@@ -1,4 +1,4 @@
-# Chapter 7 — `BPlusTreeSet` — Arena-Backed B+ Tree
+# Chapter 7: `BPlusTreeSet`, Arena-Backed B+ Tree
 
 [← Ch 6: SparseSet](06-sparse-set.md) · [Ch 8: Benchmark Analysis →](08-bplus-benchmark-analysis.md) · [Table of Contents](00-table-of-contents.md)
 
@@ -17,7 +17,7 @@ preserving cache-friendly ordered iteration through linked leaf nodes.
 
 ## Node Layout
 
-All nodes — leaf and internal — share a single 64-byte
+All nodes, leaf and internal, share a single 64-byte
 cache-aligned struct stored in a flat semi-persistent `Vec<BPlusNode>` arena:
 
 ```rust
@@ -92,7 +92,7 @@ binary search trees for ordered iteration.
 
 All nodes live in a single `Vec<BPlusNode>`. Node indices are `u32`
 values into this arena. Allocation is append-only (`push` to the
-arena), and there is no free-list or deallocation — the tree grows
+arena), and there is no free-list or deallocation: the tree grows
 monotonically. This is appropriate for use cases where the tree is
 built, queried, and then discarded (or rebuilt from scratch).
 
@@ -125,7 +125,7 @@ pub struct BPlusTreeSet<const TRACK: bool = true> {
 fields (`root`, `last_leaf`, `len`) into a `BPlusToken`. `restore()`
 replays the arena's diff log in reverse and restores the scalars.
 
-This means inserts — including node splits and pointer rewrites — are
+This means inserts, including node splits and pointer rewrites, are
 fully reversible. New nodes allocated after the mark are reclaimed by
 truncation; modifications to existing nodes (key shifts, child pointer
 updates during splits) are undone by the diff log.
@@ -149,13 +149,13 @@ len_flags (u16):
 
 Count never exceeds 14, so only 4 bits are needed. Bit 15 is the
 leaf/internal discriminant. Bit 14 is free in both node types and
-serves as the zero-overhead capture flag — no extra memory per node.
+serves as the zero-overhead capture flag: no extra memory per node.
 
 The `Tagged` impl for `BPlusNode`:
 - `tag()`: reads bit 14
 - `set_tag()`: sets bit 14
 - `clear_tag()`: clears bit 14
-- `from_repr()`: strips bit 14 (and only bit 14 — the leaf flag and
+- `from_repr()`: strips bit 14 (and only bit 14: the leaf flag and
   count are preserved)
 
 This gives the B+ tree the same zero-overhead semi-persistence as

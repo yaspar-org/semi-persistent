@@ -2,11 +2,11 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E10 — branchless duplicate merge in `update_multiset` (B3) — **closed on its own gate**
+# E10: branchless duplicate merge in `update_multiset` (B3): **closed on its own gate**
 
-B3 proposed rewriting `canon.rs`'s compaction loop — the one branching on
+B3 proposed rewriting `canon.rs`'s compaction loop (the one branching on
 `buf[r].a == buf[w].a` to decide whether to merge a duplicate or advance the
-write cursor — into a branchless form. Its gate, and the plan's own lowest
+write cursor) into a branchless form. Its gate, and the plan's own lowest
 priority item: **only if a profile attributes measurable time to
 `update_multiset`; else close.**
 
@@ -44,7 +44,7 @@ do not reach it.
 ## Why the benchmarks never reach it
 
 `update_multiset` runs only from `MSetCanon::canonize`, which is reached only
-from `NodeStore::recanonize_node::<MSetCanon>` — the *rebuild* path for a dirty
+from `NodeStore::recanonize_node::<MSetCanon>`, the *rebuild* path for a dirty
 MSet node. A second, independent probe (an `eprintln!` at that dispatch arm in
 `node_store.rs:372`) also fired 0 times on all six workloads, confirming the
 attribution rather than just the count.
@@ -55,8 +55,8 @@ nothing merges classes underneath an existing MSet node. Recanonizing an MSet
 node requires a union that changes one of its children's representatives, and
 these workloads do not produce one.
 
-So the situation resembles E9's — an optimization aimed at code no benchmark
-executes — but the diagnosis is different and worth distinguishing. E9's target
+So the situation resembles E9's (an optimization aimed at code no benchmark
+executes), but the diagnosis is different and worth distinguishing. E9's target
 was in a matcher engine with *no consumers at all*; this one is on a live,
 correct, reachable path that simply is not exercised by the shapes in
 `saturate_bench`. That is a gap in the bench suite as much as a property of the
@@ -66,7 +66,7 @@ code.
 
 Two things, together:
 
-1. **A workload that repeatedly dirties MSet nodes** — one where unions merge
+1. **A workload that repeatedly dirties MSet nodes**: one where unions merge
    classes that appear as children of AC nodes, round after round. The corpus
    reaches 118 calls; a workload would need orders of magnitude more before the
    loop is worth counting instructions in.
@@ -77,8 +77,8 @@ Two things, together:
 
 If a caller ever shows up with both, the measurement is cheap: a call counter and
 an in/out size ratio in `update_multiset`, which is what produced the table
-above. Note also that the loop is already close to minimal — one compare, one
-add, one conditional store — so the ceiling on a branchless rewrite is small even
+above. Note also that the loop is already close to minimal (one compare, one
+add, one conditional store), so the ceiling on a branchless rewrite is small even
 where it applies. B3 was ranked last in the plan for that reason and the
 measurement agrees.
 

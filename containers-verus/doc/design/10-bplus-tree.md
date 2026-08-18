@@ -291,7 +291,7 @@ oracle).
 
 **Trust boundary:** four `external_body` functions in `bplus_layout`, all
 introduced to make a *proved* fact reach the machine code rather than to assume a
-new one — `arr_get`/`arr_set` (the bounds check is dead: `i < N` is a verified
+new one: `arr_get`/`arr_set` (the bounds check is dead: `i < N` is a verified
 precondition at every call site), `sel_usize` (the `cmov` lowering, §5.1.1;
 `unsafe`-free), and `arr_shift_up` (one `memmove` where Verus's invariant rules
 force an element loop; also `unsafe`-free). `bplus`, `bplus_tree`, and
@@ -310,7 +310,7 @@ The tree is generic over `S: SearchKind` exactly as production is, and
 production's contracts. It then **never called `S`**: `grep -c 'S::'` over
 `bplus.rs` returned **0**, against six call sites in production
 (`containers/src/bplus.rs:653,661,796,800,850,858`). Five hand-written **linear**
-scans stood in its place — the child pick in `insert_rec`, the leaf position in
+scans stood in its place: the child pick in `insert_rec`, the leaf position in
 `insert_rec_leaf` and `insert_root_leaf`, and both scans in `contains`.
 
 Worse, `bplus.rs` *already contained* two verified binary searches whose `ensures`
@@ -318,18 +318,18 @@ clauses are verbatim the postconditions those linear loops hand-proved:
 `leaf_find_ge` and `find_child`. Only `seek_leaf` called them.
 
 Each linear scan existed because its loop invariant sits inside the surrounding
-proof context — it threads `binds`, the ghost key sequence, and the arena frame,
+proof context: it threads `binds`, the ghost key sequence, and the arena frame,
 all of which a call to a separate function must re-derive (via
 `lemma_tree_wf_sorted_seps_view` plus `lemma_inner_facts` /
 `lemma_binds_leaf_facts`). Locally that is the cheaper proof. Globally it is
 O(cap) per node visited, on a 256-key layout.
 
-All five now dispatch to the verified binary searches. The proofs got *smaller* —
+All five now dispatch to the verified binary searches. The proofs got *smaller*:
 each ~35-line scan-plus-invariant became a call plus a ~6-line postcondition lift,
 and the whole-crate count fell from 1383 to 1378 (exactly one retired loop each).
 
 **Why the type parameter is still not `S`.** `SearchKind::find_ge` takes `&[W]`,
-and `NodeLayout` exposes keys only one at a time through `L::key(n, i)` — there is
+and `NodeLayout` exposes keys only one at a time through `L::key(n, i)`: there is
 no slice to hand it, since a packed node's keys and child pointers share one
 `data` array. `leaf_find_ge`/`find_child` are the same algorithm against the
 `L::key` accessor. Making `S` genuinely pluggable needs a slice accessor on
@@ -339,7 +339,7 @@ production's default.
 #### 5.1.1 Matching the search's *lowering*, not just its algorithm
 
 Hardwiring to binary search was necessary and not sufficient. Production does not
-write a bisection — it calls `slice::partition_point`, and inheriting that
+write a bisection: it calls `slice::partition_point`, and inheriting that
 function's **machine code**, not merely its asymptotics, turned out to be worth
 ~20% of every descent.
 
@@ -353,15 +353,15 @@ Two properties have to match, and only the first is about the algorithm:
    `base = if lt { mid } else { base }` through `core::hint::select_unpredictable`,
    which forces `cmovbe`. Written as a plain `if`, the same expression *reads*
    branchless but LLVM's if-conversion heuristic judges the compare predictable and
-   emits `ja`/`jmp` — and an arithmetic mask (`(a & !m) | (b & m)`) gets folded
+   emits `ja`/`jmp`, and an arithmetic mask (`(a & !m) | (b & m)`) gets folded
    straight back to that same branch. On shuffled keys the compare is a coin flip,
    so it mispredicts at about half the levels of every descent.
 
 Property 2 is the entire effect. Shape alone, with the `if` form, measured under
 1%; adding the `cmov` took the verified descent from **+15…+21% slower** than
 production to about **19-21% faster** (100k/400k keys, Layout256, both build
-orders). All four bisections — `bplus.rs`'s `leaf_find_ge` and `find_child`, and
-`bplus_search.rs`'s `BinarySearch::find_ge`/`find_gt` — now go through
+orders). All four bisections (`bplus.rs`'s `leaf_find_ge` and `find_child`, and
+`bplus_search.rs`'s `BinarySearch::find_ge`/`find_gt`) now go through
 `bplus_layout::sel_usize`, an `external_body` wrapper over the intrinsic
 (chapter 2 accounts for the marker; it contains no `unsafe`, and
 `select_unpredictable` is a codegen hint whose documented semantics are exactly
@@ -372,7 +372,7 @@ the compare's own flag, which is cheaper than a forced `cmov` and is what
 `partition_point`'s tail compiles to. Routing it through `sel_usize` was measured
 and reverted.
 
-`Branchless` needs no change — its compare-accumulate is branch-free by
+`Branchless` needs no change: its compare-accumulate is branch-free by
 construction.
 
 **Honest cost.** `cmov` is a small pessimization where the branch genuinely *is*
@@ -380,22 +380,22 @@ predictable: ascending insert moved -0.9% → +1.7%, and `from_sorted` +843% →
 +965%. Trading ~2 points on ascending workloads for ~14 on shuffled ones is the
 right call, but it is a trade.
 
-The process lesson — *a source-level optimization that measures as no-change has
-two readings, and only disassembly tells them apart* — is recorded in
+The process lesson (*a source-level optimization that measures as no-change has
+two readings, and only disassembly tells them apart*) is recorded in
 chapter 11, because an earlier pass wrote off branch prediction on exactly that
 false negative.
 
 ### 5.2 The two body-level performance gaps: root cause and fixes
 
 (Both are now fixed. §5.2.1 records how the cause was pinned down, §5.2.2 the append
-fast path, §5.2.3 the batched bulk append — which also corrects §5.2.1's account —
+fast path, §5.2.3 the batched bulk append (which also corrects §5.2.1's account)
 and §5.2.4 the bottom-up loader that closed the last of it.)
 
 The constructor *exists* and is verified, but its body began as `Self::new()` plus a
 loop of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
 leaves (`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above
 them, which is O(n) with no split propagation and no per-key descent. §5.2.3 closed
-most of that gap and — importantly — corrects the account of its cause given in
+most of that gap and, importantly, corrects the account of its cause given in
 §5.2.1 below, which the append fast path invalidated. §5.2.4 replaced the insert
 loop outright and reached parity.
 
@@ -416,7 +416,7 @@ After routing all five scans through the verified binary searches:
 | 10 000 | 9.9 µs | 642 µs | 65x | 349 µs | 644 µs | 1.8x | 1 073 µs | 1 002 µs | **0.9x** |
 | 100 000 | 113.5 µs | 8 223 µs | 72x | 3 577 µs | 8 257 µs | 2.3x | 13 359 µs | 12 817 µs | **1.0x** |
 
-**Random-order insertion is now at parity** (marginally ahead — same effect as
+**Random-order insertion is now at parity** (marginally ahead, same effect as
 [Chapter 12](12-sorted-vec-cursor.md)'s cursor, where the explicit verified
 bisection beat `partition_point`). Two gaps remained, and the parity of that third
 column is what let them be told apart.
@@ -426,10 +426,10 @@ column is what let them be told apart.
 Ratios do not identify a cause. What does: **price each production feature against
 production's own baseline.** Production is the only implementation with *both* the
 bulk loader and the append fast path, so it can measure each one in isolation with
-no cross-crate confound at all — same binary, same heap, same codegen.
+no cross-crate confound at all: same binary, same heap, same codegen.
 
-Three production columns — **A** `from_sorted` (bulk load), **B** ascending
-`insert` (fast path + descent available), **C** shuffled `insert` (descent only) —
+Three production columns (**A** `from_sorted` (bulk load), **B** ascending
+`insert` (fast path + descent available), **C** shuffled `insert` (descent only))
 plus verus against them, in nanoseconds *per key*:
 
 | n | A bulk | B fast+desc | C descent | B/A | C/B | V sorted | V ins rand | V/A | Vrand/C |
@@ -451,7 +451,7 @@ path runs*.
   data and a deeper tree with no change in per-key cost is only possible if the
   tree is **not being descended**. That flat line *is* the fast path.
 - Column A **falls** with n (4.75 → 0.74 ns/key), where B is flat and 40x above it.
-  This was read at the time as a complexity-class difference. **It is not** — see
+  This was read at the time as a complexity-class difference. **It is not**: see
   §5.2.3, which prices the actual mechanism (a per-key whole-node copy) and notes
   the tell this reading missed: B and A are *both* O(n) in node visits once the fast
   path is available, so no complexity argument can separate them by 40x.
@@ -464,13 +464,13 @@ n=1M    :  0.62 (Vrand/C)  x  4.4 (C/B)  x  39.8 (B/A)  = 108.6   measured 108.6
 n=100k  :  0.65            x  3.7        x  48.0        = 115     measured 114.0
 ```
 
-Three significant figures at two different `n`. Nothing is left over — which makes
+Three significant figures at two different `n`. Nothing is left over, which makes
 the factorization *arithmetically* sound, and is exactly why it was trusted too far.
 A correct decomposition tells you which **column** the cost lives in; it does not
 tell you **what that column is paying for**. `B/A = 40x` was measured accurately and
 then explained wrongly. §5.2.3 keeps the decomposition and replaces the explanation.
 
-#### 5.2.2 The append fast path — FIXED (ascending insert now 1.0-1.1x)
+#### 5.2.2 The append fast path: FIXED (ascending insert now 1.0-1.1x)
 
 `insert` now begins with `fast_append` (production `bplus.rs:625`): read the cached
 `last_leaf`, and if the leaf is non-empty, has room, and `key` exceeds its last
@@ -486,9 +486,9 @@ The proof rests on three pieces:
 
 1. **`last_leaf_ok`, a `wf` clause** (`last_leaf.as_nat() == last_leaf_id(tree@)`).
    Making the cache's honesty part of `wf` is what lets the fast path *trust* the
-   field with no runtime check — the whole point of caching it.
+   field with no runtime check: the whole point of caching it.
 2. **`lemma_append_last_wf`**: `tree_append_last` preserves `tree_wf` at the same
-   height. The ordering obligation is where the fast path earns its keep — the
+   height. The ordering obligation is where the fast path earns its keep: the
    updated child sits at index `kids.len() - 1 == seps.len()`, and `tree_wf`'s
    upper-bound clause `keys_all_lt(kids[i], seps[i])` only ranges over
    `i < seps.len()`. **The rightmost child has no separator above it**, so growing
@@ -503,20 +503,20 @@ The proof rests on three pieces:
 the model is `tree_keys`, which *ends* with the rightmost leaf's keys
 (`lemma_last_leaf_binds`) and is strictly sorted. That is exactly (2)'s hypothesis.
 
-**One deliberate divergence.** Production maintains `last_leaf` *incrementally* —
+**One deliberate divergence.** Production maintains `last_leaf` *incrementally*:
 its split does `if old_link == nil { set_last_leaf(new_right) }`
 (`containers/src/bplus.rs:706`). The verified tree instead **recomputes** it with an
 O(depth) rightmost-spine walk (`rightmost_leaf_of`) on the slow path. The reason:
 `insert_rec`'s contract preserves a subtree's *leftmost* leaf (a split always
 splices the fresh node to the **right**), not its rightmost, and strengthening it to
 track the last leaf would thread a new clause through ~1500 lines of split/absorb
-proof. Recomputing costs one extra descent on a path that already performed one —
+proof. Recomputing costs one extra descent on a path that already performed one,
 and only on the slow path, since the fast path returns before reaching it. The
 measured result is parity, so the incremental version buys nothing here.
 
 `restore` rolls the cache back through a third element in `header_archive`
 (`(root, nkeys, last_leaf)`), with `tree_archive_agrees` carrying
-`headers[k].2 as nat == last_leaf_id(trees[k])` — so `restore` re-establishes
+`headers[k].2 as nat == last_leaf_id(trees[k])`, so `restore` re-establishes
 `last_leaf_ok` from the archive alone.
 
 **Runtime backing:** `differential_bplus_ascending_fast_path` drives ascending runs
@@ -525,7 +525,7 @@ must *decline* (re-inserting the current maximum; a key below it) and
 `mark`/`restore` across ascending runs, where a `last_leaf` not rolled back with the
 arena would surface as a lost or duplicated key.
 
-#### 5.2.3 The batched append — an intermediate step (`from_sorted` 72x → 6.3x)
+#### 5.2.3 The batched append: an intermediate step (`from_sorted` 72x → 6.3x)
 
 This step is **superseded** by §5.2.4, which deleted the insert loop entirely; it is
 kept because its measurements are what identified the per-key node copy, and because
@@ -541,14 +541,14 @@ read and one arena write, and fell through to `insert` only at the leaf-full bou
 | 100 000 | 111.3 µs | 705.3 µs | **6.3x** |
 
 **Correcting the root cause recorded above.** §5.2.1 attributed this column to a
-complexity-class difference — "sequential memcpy versus per-key work". After the
+complexity-class difference ("sequential memcpy versus per-key work"). After the
 fast path landed that framing stopped holding, and the tell was in production's own
 numbers: with `fast_append` available, both sides do O(n) node visits, yet
 production's own append loop (column B) is still 20-48x slower than production's own
 bulk load (column A). Two O(n) loops cannot differ by 40x for a complexity reason.
 
 The real mechanism is the **per-key whole-node copy**. `get_index`/`set_index` move
-a whole `L::Node` — 64 to 512 bytes — in and out of the arena *per key*. Priced in
+a whole `L::Node` (64 to 512 bytes) in and out of the arena *per key*. Priced in
 isolation (a plain array of node-sized structs, no tree logic, no splits, varying
 only by-value versus `&mut` and nothing else):
 
@@ -561,7 +561,7 @@ only by-value versus `&mut` and nothing else):
 The absolute numbers match the real trees (19.5-24.7 against 31-41 ns/key measured
 append; 0.76-1.17 against 0.75-1.63 bulk), so this accounts for essentially the
 whole gap. It is flat in node size because a 64 B and a 256 B memcpy both cost a
-handful of cycles — what is paid is *fixed overhead per copy*, not bytes moved.
+handful of cycles: what is paid is *fixed overhead per copy*, not bytes moved.
 
 That mechanism dictates the fix directly: not "do fewer descents" but **amortize the
 copy across every key bound for the same leaf**. `fast_append_run` read the leaf
@@ -573,7 +573,7 @@ swept node size across layouts, found append cost flat (41/31/36 ns/key), and re
 that as falsifying the copy. It is not a valid falsifier: bigger nodes copy more
 bytes per key but split proportionally *less* often, so the two effects cancel and
 manufacture flatness. To test a per-item cost, hold everything fixed and vary only
-that cost — never a geometry parameter other costs also depend on. This is the same
+that cost, never a geometry parameter other costs also depend on. This is the same
 failure mode as Chapter 11's positional confound, in a different disguise.
 
 **What the residual 6.3x is.** Splits, entirely. Sweeping `leaf_cap` moves split
@@ -589,30 +589,30 @@ divided by split count is constant, which is the discriminator:
 Constant within 27% across a 4x span in *both* split count and node size. Each
 boundary key pays a full root-to-leaf descent plus a split plus (per §5.2.2's
 divergence) a rightmost-spine recompute, where production's loader pays none of the
-three. Closing it means building the levels above the leaves directly — a tree that
+three. Closing it means building the levels above the leaves directly: a tree that
 satisfies `wf()` *by construction* rather than inductively, which needs a fresh
 invariant for the leaf-fill loop and another for the level-build loop. That is
 §5.2.4, and this prediction is what it confirmed: with the split cycle gone, so is
 the whole 6.3x.
 
 **How the shuffled column earned its keep.** It was introduced to isolate the fast
-path — in random order the path cannot fire, so the residual is everything *else*.
+path: in random order the path cannot fire, so the residual is everything *else*.
 Reading it as "flat across decades ⟹ constant-factor codegen artifact" was
 correct about the shape and wrong about the cause: the constant factor was a
-linear scan inside a fixed-capacity node, which is O(256) — bounded, therefore
+linear scan inside a fixed-capacity node, which is O(256): bounded, therefore
 flat, therefore easy to mistake for codegen. **A flat ratio bounds where the
 problem is, not whether one exists.** Chapter 11's discriminator separates
 structural from constant; it does not license dismissing the constant. Having been
 driven to parity, that same column became the *baseline* §5.2.1's factorization is
-built on — it is what proves the descent itself is not the problem.
+built on: it is what proves the descent itself is not the problem.
 
-#### 5.2.4 The bottom-up loader — FIXED (`from_sorted` 6.3x → **0.85x**)
+#### 5.2.4 The bottom-up loader: FIXED (`from_sorted` 6.3x → **0.85x**)
 
 `from_sorted` is now a thin wrapper over `bulk_load`: one pass per level into a fresh
 arena, no per-key `insert`, therefore no split cycle.
 
 Measured on `onesite_bplus.rs` (Layout256, n = 100k, one call site, both orders,
-best-of-5 after 20 warmups), **not** `bulkload.rs` — see the methodology note below,
+best-of-5 after 20 warmups), **not** `bulkload.rs`. See the methodology note below,
 because the two harnesses disagreed by 40 points and only one of them was right:
 
 | row | before the loader | after |
@@ -632,7 +632,7 @@ consequence of how the proof is structured rather than an optimization bolted on
    inline. Production fills the leaves, then re-reads and rewrites every one of them
    to thread the chain.
 3. **No `first_key_word` descent.** Each level hands the level above one word per
-   node — its smallest key — so a separator is a single array read. Production
+   node (its smallest key), so a separator is a single array read. Production
    recovers each separator by walking child-0 pointers down to a leftmost leaf,
    O(height) node reads per separator.
 
@@ -640,7 +640,7 @@ consequence of how the proof is structured rather than an optimization bolted on
 `chunks(cap)` leaves an underfull remainder (for n = 63 on Layout256, a one-key
 leaf), and `tree_wf` requires non-root nodes to hold `>= (cap+1)/2`; the same recurs
 at every internal level. Production gets away with it because its search never relies
-on occupancy — ours does, and five lemmas downstream depend on the floor. So the
+on occupancy. Ours does, and five lemmas downstream depend on the floor. So the
 loader partitions into `k = ceil(m/c)` groups of `floor(m/k)` or `ceil(m/k)`
 (`lemma_balanced_group_min`), and the bound is provably tight: the smallest group
 `floor(m/ceil(m/c))` exactly equals the required minimum, zero slack, for all six
@@ -652,7 +652,7 @@ direction every existing lemma runs in:
 
 - **One flat chain fact, not a recursive one.** Every level of a tree has the same
   in-order leaf sequence, and the links live in leaf slots that internal levels never
-  touch — so `chain_links_to` is proved once at the leaf level and reused verbatim by
+  touch, so `chain_links_to` is proved once at the leaf level and reused verbatim by
   every level above. Threading a recursive `forest_links_to` up level by level would
   need each level's successor-of-the-last-group *before that group exists*.
 - **The root form is strictly weaker, and cannot be re-derived.** At the top of the
@@ -665,12 +665,12 @@ direction every existing lemma runs in:
 - **`last_leaf` needs no descent.** Leaf ids are `0..m` in order, so the rightmost
   leaf is `m - 1` (`lemma_last_leaf_id`), where the insert path pays an O(depth) walk.
 - **Two currencies for the arena budget.** `push` needs `< max_nat`; the exec `lo + c`
-  additions need `<= usize::MAX`. For a `usize` arena `max_nat == usize::MAX + 1` —
-  one too many to serve both — so the driver carries `lo + 2*c <= 2*m`,
+  additions need `<= usize::MAX`. For a `usize` arena `max_nat == usize::MAX + 1`
+  (one too many to serve both), so the driver carries `lo + 2*c <= 2*m`,
   `2*m <= n`, and `n < usize::MAX` instead of trying to spend one bound twice.
 
 **Two per-key costs the first loader still paid, both found by `objdump`.** The
-loader landed at +29.1% and the structure above does not explain that — one pass per
+loader landed at +29.1% and the structure above does not explain that: one pass per
 level cannot be a third slower than one pass per level. Disassembling
 `bulk_fill_leaf` showed its innermost loop, and the answer was two instructions
 production does not execute, once per key:
@@ -685,10 +685,10 @@ production does not execute, once per key:
   f336:  jb   f300            <-- arr_shift_up's length dispatch, per key
 ```
 
-1. **A bounds check on `keys[at + j]`** — dead code: `at + take <= keys.len()` and
+1. **A bounds check on `keys[at + j]`**, dead code: `at + take <= keys.len()` and
    `j < take` are both loop invariants. `slice_get` (the slice analogue of the
    existing `arr_get`) removes it, same trust and same shape.
-2. **`arr_shift_up`'s length dispatch** — also dead: this loop always appends
+2. **`arr_shift_up`'s length dispatch**, also dead: this loop always appends
    (`pos == count`), so the shift window is empty and the scalar arm always wins.
    LLVM cannot fold it, because `pos` and `count` arrive as separate runtime values
    through a trait method. `leaf_push` puts `pos == count` in the *signature*, which
@@ -700,12 +700,12 @@ is one 4-byte store is most of the loop. Production pays neither because it fill
 whole leaf with one `copy_from_slice`.
 
 **A methodological correction, and it is the important part of this section.**
-`bulkload.rs` read this same code at **1.0x** — parity — while `onesite_bplus.rs` read
+`bulkload.rs` read this same code at **1.0x** (parity) while `onesite_bplus.rs` read
 it at +29.1%. `bulkload` was wrong, and it was wrong in the flattering direction: it
 builds prod then verus in a fixed order inside one iteration, which
 [Chapter 11](11-layout-parity.md) documents as worth ~18% to whichever arm runs second
 (glibc heap reuse) plus ~18% from hot-loop alignment. Its production column swung
-0.72 → 4.5 ns/key across sweeps of the *same* build while verus stayed at 0.9 — the
+0.72 → 4.5 ns/key across sweeps of the *same* build while verus stayed at 0.9: the
 tell that the harness, not the code, was moving. A fine-grained `n` sweep also
 produced a 2.4x spike at exactly n = 10 000 that *moved to n = 8 000* when the sweep
 list changed: positional, not algorithmic. The rule this chapter and Chapter 11 share
@@ -722,7 +722,7 @@ inequality succeeds one line earlier. The technique that isolated it: enumerate 
 callee precondition as an explicit `assert` immediately before the call.
 
 **Not currently a shipping cost either way:** `egraph` never calls `from_sorted` and
-never instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its
+never instantiates `BPlusTreeSet` outside benchmarks and conformance tests: its
 indexes are `SortedVec`. The gap was latent; it is now closed regardless.
 
 ## 6. Reused machinery

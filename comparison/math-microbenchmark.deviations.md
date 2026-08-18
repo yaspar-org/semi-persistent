@@ -195,8 +195,8 @@ of 11 iterations, which all five configurations reach without saturating.
 Our two node counts each dropped by 2 on 2026-08-15, when the ground-literal workaround
 was withdrawn and its three `(let …)` commands with it. The wall times are the pilot's
 medians, taken under the workaround; the post-fix single runs land inside their spread
-(11 597 ms and 1 097 ms), so they are not restated here. Re-run `run-pilot.py` to refresh
-the medians.
+(11 597 ms and 1 097 ms), so they are not restated here. Re-run
+`run-full.py --benchmark math-microbenchmark` to refresh the medians.
 
 Per operator, in the same three configurations (the counts below predate the global-constant
 workaround by at most a few hundred nodes; the totals above are the current ones):

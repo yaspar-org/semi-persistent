@@ -10,7 +10,7 @@ algorithms, or data-structure layout differ, plus the production-vs-verus
 benchmark evidence per pair. Compiled from independent side-by-side
 readings of both crates (four readers, one per area, findings verified
 against the definitions). The class layer's own assessment is
-`12-egraph-class-layer-parity.md`; this document covers the container
+`egraph-class-layer-parity.md`; this document covers the container
 tier and aggregates the benchmark ledger.
 
 Baseline conventions, stated once: spec/proof code erases at runtime and
@@ -81,7 +81,7 @@ choices.
    `TRACK`, container id, and genealogy but NOT frame liveness: a
    just-consumed token reports valid while `restore` would panic; it can
    also panic inside at the u32 ceilings. The verus form answers
-   "restorable now" — adds `frame_idx < frames.len()`, returns false at
+   "restorable now": adds `frame_idx < frames.len()`, returns false at
    the ceilings, never panics. Different answers on consumed tokens.
    STRICTER-SAFE, and it is what makes `try_restore` total.
 2. **Token and id widths.** `VecToken.frame_index` u32 (prod) vs
@@ -104,7 +104,7 @@ choices.
    `pop`/`truncate` retire capture bits production leaves stale. Same
    observable state, different work placement per op.
 7. **Iterator regression (verus).** `VecViewIter` lacks `size_hint` and
-   `ExactSizeIterator`; production has both. MISSING — worth fixing.
+   `ExactSizeIterator`; production has both. MISSING: worth fixing.
 8. **`Default` impls and token `PartialEq` missing on the verus side**;
    `is_empty` reads `store.len()` in production (trap-capable on an
    overflowed store) vs an untrapped emptiness check in verus.
@@ -112,11 +112,11 @@ choices.
    panics under a feature; production wraps silently (at a 2^32 range vs
    verus's 2^64).
 
-Everything else — push/pop/set/get capture mechanics including the
+Everything else (push/pop/set/get capture mechanics including the
 first-write-wins condition and short-circuit order, prepare_mark's
 stratum handling, the backward replay, finish_restore's survivor pass,
 fork genealogy walk (same three exits), InlineStore's tag-preservation
-guard, TRACK=false erasure — reads EQUAL at the condition level, with
+guard, TRACK=false erasure) reads EQUAL at the condition level, with
 panic-site/message differences only.
 
 ## 2. AppendOnlyVec, SpMap, SparseSet
@@ -132,7 +132,7 @@ reproducibility, token semantics, restore atomicity, and API shape.
    default builder, while verus defaults to DETERMINISTIC seed 0
    (overridable: SP_HASHER_SEED env, set_default_seed with
    seal-on-first-use, with_seed, or the hasher-random-seed feature). The
-   table is std's HashMap vs the hashbrown crate — both SwissTable, not
+   table is std's HashMap vs the hashbrown crate: both SwissTable, not
    guaranteed the same probe internals. Unobservable through the map API
    (the index is lookup-only; iteration walks the log); it IS observable
    as cross-process reproducibility, which the verus side chose
@@ -142,7 +142,7 @@ reproducibility, token semantics, restore atomicity, and API shape.
    restore would panic; verus answers "restorable now" (frame bound +
    headrooms). Same finding as the vec family's #1.
 3. **SparseSet restore atomicity.** Production restores its three columns
-   in sequence, each validating its own token — an invalid second token
+   in sequence, each validating its own token: an invalid second token
    panics AFTER the first column rolled back, leaving an observable
    invariant-violating state if caught. Verus prevalidates all three
    tokens before mutating anything. STRICTER-SAFE, and the reason
@@ -162,19 +162,19 @@ reproducibility, token semantics, restore atomicity, and API shape.
    counters.
 7. **Stricter capacity on the recycle path:** at `cap == Idx::MAX - 1`
    with a non-empty free pool, production's `add` succeeds (the sparse
-   columns don't grow on recycle) where verus `try_add` refuses — its
+   columns don't grow on recycle) where verus `try_add` refuses: its
    three-column headroom check is conservative.
 8. **`insert`'s clone destination is swapped** (production clones the
-   key into the log, verus into the index) — indistinguishable for
+   key into the log, verus into the index): indistinguishable for
    well-behaved `Clone`.
 9. **Verus-only key wrappers** (`CanonicalF64`, `BitsF64`,
    `CanonicalRational` in canonical_keys.rs) exist to make the key-model
    axioms true by construction; production uses foreign key types raw.
 
-Everything else — the three-step liveness test in the same order, add's
+Everything else (the three-step liveness test in the same order, add's
 recycle/mint mechanics, remove's swap-remove write order, the freed id's
 parking slot, mark/restore delegation, index rebuild order after
-restore — reads EQUAL at the condition level.
+restore) reads EQUAL at the condition level.
 
 ## 3. ListArena, B+ tree, sorted cursor, id/value types
 
@@ -197,7 +197,7 @@ panicking narrowing for a masking one and compensates at call sites.
    refusing the final id slot production fills (production's own test
    fills all 128 of a 7-bit arena). Same off-by-one on `try_new_list`.
    The only capacity-boundary divergence found in any container.
-   FIXED — the blanket `len + 1 < id_bound` precondition split per id
+   FIXED: the blanket `len + 1 < id_bound` precondition split per id
    family, the same split `UnionFind::try_make_set` already had: a
    bit-stealing id holds its full range (the storage word has a spare
    bit, so the word bound follows from `len < id_bound` alone); only
@@ -228,7 +228,7 @@ panicking narrowing for a masking one and compensates at call sites.
    The all-builds sortedness check is deliberate and stays: the only
    build path with a sortedness `requires` (`bulk_load`) is private,
    so `from_sorted`/`try_from_sorted` are the whole public surface and
-   both re-check the erased precondition at runtime — unverified
+   both re-check the erased precondition at runtime: unverified
    callers cannot violate it. The check becomes removable when the
    callers are themselves verified against `bulk_load`'s requires; the
    O(n) cost against the build's O(n log n) is priced in the
@@ -244,7 +244,7 @@ panicking narrowing for a masking one and compensates at call sites.
 6. **The `Branchless` search counterpart is branchy and never dispatched.**
    Production's `Branchless` strategy is genuinely branch-free; the
    counterpart's is a branching linear scan, and the verified tree never
-   calls the strategy trait at all — `S` is phantom and every descent
+   calls the strategy trait at all: `S` is phantom and every descent
    uses hardwired compare-and-select bisection. Instantiating with
    `Branchless` still binary-searches. ALGORITHM (dispatch), plus a
    misleading type parameter.
@@ -260,8 +260,9 @@ panicking narrowing for a masking one and compensates at call sites.
    an extra tracked write observable through diff-log growth and
    `tracking_bytes`.
 10. **Sorted cursor: both sides gallop.** The gallop-vs-bisect premise
-    was false — production's concrete cursor (pre-swap, in the egraph
-    crate) used the identical doubling probe and final bisect. The one
+    was false: production's concrete cursor (the retired egraph-crate
+    impl, `git show 'd14fd17^:egraph/src/index.rs'`) used the identical
+    doubling probe and final bisect. The one
     behavioral difference: the counterpart's trait `step` guards against
     advancing an exhausted cursor (true no-op) where production
     incremented `pos` past the end, unobservably. The unguarded form
@@ -288,19 +289,19 @@ panicking narrowing for a masking one and compensates at call sites.
     oracles. BitSet is EQUAL on every method (documented verbatim
     port, contracts absent by design).
 
-Everything else — geometry constants across all six layouts, NIL
+Everything else (geometry constants across all six layouts, NIL
 sentinels, leaf and internal split points, separator placement, parent
 absorb order, `Opt` niche mechanics, id mask/cap constants and
 comparison/hash semantics, the `new` range condition with its message,
 IdFactory conditions (messages differ), mark/restore validation
-posture (same classes as sections 1 and 2) — reads EQUAL at the
+posture (same classes as sections 1 and 2)) reads EQUAL at the
 condition level.
 
 ## 4. Class layer findings
 
 The audited divergences of the shipped class layer, each with its
 classification and resolution. The parity statement itself is
-`12-egraph-class-layer-parity.md`; the confirmed-equal surface (the dual
+`egraph-class-layer-parity.md`; the confirmed-equal surface (the dual
 in-struct forest, production's messages on make_set/add_singleton and the
 PROOFS refusals, two-pass find, verbatim reroot_proof/explain/walk_to_root,
 merge's sequence and the UNOBSERVABLE set_none argument, prefer_a_by_uses,
@@ -318,11 +319,11 @@ here.
    document 12's "same order"/"verbatim ordering" wording is not
    literally true of the shipped code. UNOBSERVABLE-completed /
    CONTROL-FLOW-mid-panic.
-   RESOLVED — the kernel order is kept, deliberately: `merge_with`
+   RESOLVED. The kernel order is kept, deliberately: `merge_with`
    refuses only at its prevalidation boundary before any mutation, its
    verified union-and-splice body has no panic path (every assert is
    static), and `record_proof_edge`'s glue has no explicit panic site
-   over the already-validated ids — so no execution can stop between
+   over the already-validated ids, so no execution can stop between
    the union and the record, and the intermediate state production's
    record-first order protected against is unreachable. Production
    needed record-first because its splice could panic mid-merge; the
@@ -341,11 +342,11 @@ here.
    `None` in both build profiles; the kernel checks the column bound
    first and refuses on the same inputs. Also, with a live row,
    production release builds silently read ANOTHER CLASS'S pool cell
-   when `col >= min_width` but the flat pool index stays in range —
+   when `col >= min_width` but the flat pool index stays in range;
    the kernel refuses. Stricter-safe, but a caller relying on the
    `None` path changes behavior.
 4. **Dropped `Default` impls** on `UnionFind` and `EClasses`
-   (production had both; no in-tree caller uses them) — the same gap
+   (production had both; no in-tree caller uses them): the same gap
    the vec and map families show.
 5. **`UnionFind::mark`/`restore` are `pub(crate)` now** (production:
    `pub`); only `try_mark`/`try_restore` are public, and
@@ -361,10 +362,9 @@ here.
    `merge_directed_with`, `is_valid_token`/`try_restore` on
    `EClasses`, the `try_` family public on `UnionFind`, `NoJust`.
 8. **Token `Debug` differences** (field order, `parent` vs
-   `parent_fast`) and **stale kernel module docs** (union_find.rs
-   still says "path halving"; eclasses.rs says the kernel "does not
-   replace production" — it does). Doc-only; the module comments
-   should be fixed.
+   `parent_fast`). The two stale kernel module docs this item flagged
+   (union_find.rs on compression, eclasses.rs on its role) are fixed in
+   the tree; the `Debug` field-name difference remains, doc-only.
 9. **Panic identity on misuse:** `merge_directed` on a PROOFS instance
    refuses with the PROOFS message before computing
    `prefer_a_by_uses`; production computed it first, so a misuse with

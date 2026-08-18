@@ -40,13 +40,18 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   §14 the A-only inter-reduction round with its undecidability boundary.
   The verification plan lives in Future Work.
 
-- **[AC Completion: `min_monomial`, the matcher bug, and a code-compliance review](ac-completion-spec.md)**
+- **[AC Completion: `min_monomial`, a matcher invariant, and a code-compliance review](ac-completion-spec.md)**
   A focused companion to the above (does not restate it). Defines `min_monomial`, the leximin AC
   representative of a class, with its exact properties and how it yields the tightest
-  closure; traces the `(f (add x ..r1) (add x ..r2))` matcher bug over concrete nodes
-  (cause and fix); and checks the code clause-by-clause against the algorithm, explaining
+  closure; traces over concrete nodes the binding-restore invariant the
+  `(f (add x ..r1) (add x ..r2))` matcher join must maintain; and checks the code clause-by-clause against the algorithm, explaining
   the observed per-round growth as the genuine basis size on a dense, deeply-merged graph
   (not a bug, and not an artifact of approximate `min_monomial`).
+
+- **[AC Completion: performance record](ac-completion-performance.md)**
+  The dated record of completion-round performance work: what was measured,
+  what was accepted, what was rejected with its numbers. The survivor-policy
+  work it closes is superseded by `--union-by` (noted inline).
 
 ## Part I: E-Graph Core
 
@@ -105,7 +110,7 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 10. **[Surface Language and Parser](10-surface-language.md)**
     Unified `(op children...)` syntax. `SurfacePattern` with
     prefix/suffix rest vars. `RhsTerm` with comprehensions.
-    No bracket dispatch — operator kind resolved later.
+    No bracket dispatch: operator kind resolved later.
 
 11. **[Sortchecking and Resolution](11-sortcheck-and-resolution.md)**
     Three-phase pipeline: parse → sortcheck → interpret.
@@ -138,7 +143,7 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 15. **[Proof Logging](15-proof-logging.md)**
     Copy-on-first-re-canonization via history bit. `Justification`
     enum: `Rewrite`, `Congruence`, `Axiom`. Dual parent pointers
-    (`parent_fast` + `parent_proof`). Two LCA algorithms: naive
+    (`parent` + `parent_proof`). Two LCA algorithms: naive
     walk-up for single queries, Euler-tour BFC for batch extraction.
     `ProofBuf` for path extraction. `PROOFS` const generic.
 
@@ -177,8 +182,8 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 20. **[Index Selectivity and Delta Suffixes](20-index-selectivity-and-delta-suffixes.md)**
     The matching-throughput results from the egglog comparison: measured
-    per-access-path selectivity constants replacing the fixed-halving
-    cost model, per-binding atom scheduling with per-rule auto-selection
+    per-access-path selectivity constants in the leapfrog cost model,
+    per-binding atom scheduling with per-rule auto-selection
     from the fan-out skew (`--auto-scheduling`), sampled cross-index
     selectivity, per-binding driver selection in the leapfrog seek, and
     the postponed free-join stage re-sorting.
@@ -216,8 +221,8 @@ Canonical terms; other phrasings defer to these.
 
 ## See Also
 
-- `semi-persistent-containers` crate — dense IDs, semi-persistent vectors, and container types
-- `semi-persistent-traversals` crate — stack-safe tree traversal algorithms
+- `semi-persistent-containers` crate: dense IDs, semi-persistent vectors, and container types
+- `semi-persistent-traversals` crate: stack-safe tree traversal algorithms
 
 ---
 [Table of Contents](00-table-of-contents.md) · [Overview: Why Semi-Persistent →](A0-overview.md)

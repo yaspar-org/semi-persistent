@@ -1,7 +1,8 @@
-# Campaign r3 (current)
+# Campaign r3 (archived)
 
-The current campaign: one campaign at one engine commit. Protocol as in
-`final-tables.md`. Raw rows: `final-r3-results.csv`.
+An archived campaign record; the current campaign is `final-r4-tables.md`.
+One campaign at one engine commit, protocol as in `final-tables.md`. Raw
+rows: `final-r3-results.csv`.
 
 - **Pinned commit** b0c6dbb (branch egraph-wf: the engine with the
   `--union-by` survivor policy on the W7-verified class-size counter, the

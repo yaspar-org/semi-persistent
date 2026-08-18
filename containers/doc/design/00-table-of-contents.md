@@ -1,9 +1,14 @@
-# Semi-Persistent Containers — Design Documents
+# Semi-Persistent Containers: Design Documents
 
 Semi-persistent data structures with memory-cheap snapshots (a sparse diff,
-not a copy) and O(k) restoration. Building blocks for applications that need
-fast state snapshots and backtracking — e-graph engines, SAT solvers,
-constraint propagators, game-tree searchers, and similar systems.
+not a copy) and O(k) restoration. This crate is the unverified reference
+implementation: the engine links the verified counterpart
+(`containers-verus`, aliased as `semi-persistent-containers`), and this
+crate serves as the differential-conformance oracle and performance
+baseline (`containers-conformance`). The design applies to applications
+that need fast state snapshots and backtracking: e-graph engines, SAT
+solvers, constraint propagators, game-tree searchers, and similar
+systems.
 
 All containers are built on top of a single core primitive: the
 semi-persistent vector (Chapter 2), which uses a diff-log protocol
@@ -28,15 +33,15 @@ to record mutations and replay them in reverse on restore.
    Semi-persistent hash map backed by `AppendOnlyVec` + transient
    `HashMap`. Useful for small registries and symbol tables.
 
-5. **[`ListArena` — Intrusive Linked Lists](05-list-arena.md)**
+5. **[`ListArena`, Intrusive Linked Lists](05-list-arena.md)**
    Arena of singly-linked list nodes. O(1) prepend, O(n) splice.
    Useful for adjacency lists and dependency tracking.
 
-6. **[`SparseSet` — O(1) Membership](06-sparse-set.md)**
+6. **[`SparseSet`, O(1) Membership](06-sparse-set.md)**
    Three-vector sparse set with O(1) add/remove/contains, stable
    id recycling, and full semi-persistence.
 
-7. **[`BPlusTreeSet` — Arena-Backed B+ Tree](07-bplus-tree.md)**
+7. **[`BPlusTreeSet`, Arena-Backed B+ Tree](07-bplus-tree.md)**
    Cache-line-aligned B+ tree set with O(log n) insert, O(log n)
    seek, and O(1) step via linked leaves. Semi-persistent via
    a tag bit stolen from the node header.

@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E0 — release profile (C1)
+# E0: release profile (C1)
 
 **Change.** Added to the workspace `Cargo.toml`:
 
@@ -16,7 +16,7 @@ There was no `[profile.release]` section and no `.cargo/config.toml`, so release
 builds ran cargo's defaults: `codegen-units = 16`, no LTO.
 
 **Why it should matter.** The hot code is generic and instantiated across a crate
-boundary — `SortedCursor::seek`/`step`, `VecI` indexing, `DenseId` conversions all
+boundary: `SortedCursor::seek`/`step`, `VecI` indexing, `DenseId` conversions all
 live in `containers-verus` and are called from `egraph`'s join and rebuild loops.
 Without LTO those calls do not inline across the boundary; with 16 codegen units
 they may not inline within `egraph` either.
@@ -48,13 +48,13 @@ Absolute baseline times (defaults): `plain7/naive` 23.54 ms, `plain7/semi`
 
 Compile cost, full release rebuild of `egraph` benches + examples: thin 1m45,
 fat 1m47, both from a warm dependency graph. The difference is inside run-to-run
-variation — fat LTO is not measurably more expensive here.
+variation: fat LTO is not measurably more expensive here.
 
 ## Why fat, not thin
 
 On the six rewrite-driven rows thin and fat tie: both land in a −5% to −9% band
 and their run-to-run spread overlaps completely. The two AC-completion rows
-separate them cleanly. Thin gives −0.6%, −1.3%, +0.4% on `accompl32` — one run
+separate them cleanly. Thin gives −0.6%, −1.3%, +0.4% on `accompl32`: one run
 is a regression, so thin's effect there is indistinguishable from zero. Fat gives
 −4.1%, −7.8%, −6.0% on the same row and −6.6% to −7.2% on `accompl64`, never
 overlapping thin's range.

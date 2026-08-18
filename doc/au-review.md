@@ -1,5 +1,14 @@
 # AU subsystem review: bugs and performance paths (2026-08-14)
 
+*Resolution: all three defects below are fixed in the tree. P0-1: the
+transport module is exact-integer only (`egraph/src/au/transport.rs`
+accepts no float costs and carries a relaxation budget). P0-2: regression
+test `exact_identity_class_with_ac_member_terminates` in
+`egraph/src/au/exact.rs`. P1-3: the operator is part of the dedup
+signature (`egraph/src/au/actions.rs`). The performance paths landed as
+A0-A8 in `au-solver-plan.md`. This file is the dated review record; line
+references below are to the reviewed snapshot, not the current tree.*
+
 Second-look review of `egraph/src/au/`, run as a differential-fuzz plus
 profiling pass against the shipped code on branch `egraph-wf`. Method:
 2400 randomized cases (leaves, unary and binary ops, mset and set

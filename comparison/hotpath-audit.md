@@ -574,5 +574,7 @@ Peak resident memory rises 3.2% on the rules encoding, 247 to 255 MB, which is
 the span tables: they are sized by the largest key in use rather than by the
 number of occupied keys.
 
-Match steps and node counts are unchanged on all twenty programs under
-`comparison/`, under both scheduling strategies.
+Match steps and node counts are unchanged, under both scheduling
+strategies, on all twenty programs under `comparison/` at the pinned
+commit above (the corpus has since grown; this line is part of the dated
+record, not a standing guarantee).

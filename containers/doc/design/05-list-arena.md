@@ -1,4 +1,4 @@
-# Chapter 5 — `ListArena` — Intrusive Linked Lists
+# Chapter 5: `ListArena`, Intrusive Linked Lists
 
 [← Ch 4: Map](04-map.md) · [Table of Contents](00-table-of-contents.md) · [Ch 6: SparseSet →](06-sparse-set.md)
 
@@ -18,10 +18,10 @@ encodes "end of list").
 | Operation | Cost |
 |-----------|------|
 | `new_list()` → `ListHead` | O(1) |
-| `prepend(head, val)` | O(1) — allocate node, link to old head |
-| `append(head, val)` | O(n) — walk to tail, link new node |
-| `splice(dst, src)` | O(n) — link src's tail to dst's head |
-| `iter(head)` | O(n) — follow next pointers |
+| `prepend(head, val)` | O(1): allocate node, link to old head |
+| `append(head, val)` | O(n): walk to tail, link new node |
+| `splice(dst, src)` | O(n): link src's tail to dst's head |
+| `iter(head)` | O(n): follow next pointers |
 
 Semi-persistent via the underlying `Vec` of nodes. On restore, nodes
 allocated after the mark are reclaimed by truncation, and modifications

@@ -1,5 +1,11 @@
 # Alpha-Equivalent E-Graphs: Unified Design
 
+**Status**: design for future work. Of the three variants below, only the
+Director variant has landed primitives: `egraph/src/director.rs` (the
+bitmatrix types and `PortArity`). Nothing is wired into the e-graph: no
+module outside `director.rs` uses it, and the `PortAlgebra` trait does not
+exist in the tree.
+
 ## 1. Overview
 
 This document describes a unified e-graph design that supports alpha-equivalence

@@ -5,7 +5,7 @@ through W7 form its machine-checked `wf()`, every public mutator preserves
 them, and the archive clauses extend them to every outstanding mark. The
 authoritative invariant table, one line per clause, is the `eclasses.rs`
 module header; the production-parity statement is
-[`../design/12-egraph-class-layer-parity.md`](../design/12-egraph-class-layer-parity.md).
+[`../design/egraph-class-layer-parity.md`](../design/egraph-class-layer-parity.md).
 This document holds only what is not yet proved.
 
 ## D1: the dirty-set discipline

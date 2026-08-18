@@ -1,6 +1,6 @@
 # Layout, Algorithm, and Erasure Parity with Production
 
-*Status: living audit, updated with fix 3 (2026-08-02). The
+*Status: living audit; the perf-row ledger is `13-parity-matrix.md`. The
 conformance crate (`containers-conformance`) enforces the testable rows:
 `tests/layout_parity.rs` (sizes), `tests/differential.rs` +
 `tests/list_arena_differential.rs` (behavior),
@@ -27,27 +27,27 @@ compiles to the same `Vec::push` code as production's.
 
 | container | layout | algorithm | niche/bit-stealing | erasure | perf (prod → verus) |
 |---|---|---|---|---|---|
-| `Vec` + `ParallelStore` | data `Vec<T>` + packed `Vec<u64>` capture words (fix 2) | first-write-wins capture; on-demand flag materialization at `set_bit`, with `prepare_mark` EAGERLY bulk-resizing the word vector to cover the data length (production's protocol verbatim — `zero_and_materialize`; see the fix-3 note below), `finish_restore` zeroing in place | flag bits packed 64/word, same as production's bitset | ✅ TRACK=false push/pop = plain `Vec` ops | untracked push +20% residue (codegen, see below), pop verus faster; tracked mark-churn at parity |
-| `Vec` + `InlineStore` | `Vec<T::Repr>` — the value IS its repr | tag-bit capture in the stolen MSB; `prepare_mark` = production's SPARSE clear (only prev-frame diff slots, O(diffs) — backed by the new no-stray-flags wf invariant); `finish_restore` = set-only O(surviving) | ✅ same stolen-MSB scheme | ✅ TRACK-gated | mark-churn sweep (200 marks × 8 writes): **verus faster at 1k/100k/1M** (8.0/10.2/11.5 µs vs 9.8/15.2/16.3) |
-| `ListArena` | node/head ELEMENT layouts production-identical (8B/12B @ 31-bit, asserted by layout_parity). ARENA representation differs: inner vecs are `ParallelStore` with `usize` diff indices (production: `VecI`/InlineStore with typed `N::Index` diffs) — tracked mode carries two side bitmaps production doesn't | same: intrusive singly-linked arena, O(1) append/prepend/splice via cached tail, single head read per op | ✅ next/head pointers niche-packed via the verified `Opt<N>` MSB tag; the arena's capture flags are side-bitmap (production: stolen bit in the element repr) | ✅ (arena is TRACK-gated through its inner Vecs) | TRACK=false: append_iter **verus 20% faster**, build+splice composite **verus 8% faster** (setup-dominated — does not isolate splice); tracked arena still unbenchmarked (the gated ring rows use `CircularList`) |
+| `Vec` + `ParallelStore` | data `Vec<T>` + packed `Vec<u64>` capture words (fix 2) | first-write-wins capture; on-demand flag materialization at `set_bit`, with `prepare_mark` EAGERLY bulk-resizing the word vector to cover the data length (production's protocol verbatim: `zero_and_materialize`; see the fix-3 note below), `finish_restore` zeroing in place | flag bits packed 64/word, same as production's bitset | ✅ TRACK=false push/pop = plain `Vec` ops | untracked push +20% residue (codegen, see below), pop verus faster; tracked mark-churn at parity |
+| `Vec` + `InlineStore` | `Vec<T::Repr>`: the value IS its repr | tag-bit capture in the stolen MSB; `prepare_mark` = production's SPARSE clear (only prev-frame diff slots, O(diffs), backed by the new no-stray-flags wf invariant); `finish_restore` = set-only O(surviving) | ✅ same stolen-MSB scheme | ✅ TRACK-gated | mark-churn sweep (200 marks × 8 writes): **verus faster at 1k/100k/1M** (8.0/10.2/11.5 µs vs 9.8/15.2/16.3) |
+| `ListArena` | node/head ELEMENT layouts production-identical (8B/12B @ 31-bit, asserted by layout_parity). ARENA representation differs: inner vecs are `ParallelStore` with `usize` diff indices (production: `VecI`/InlineStore with typed `N::Index` diffs). Tracked mode carries two side bitmaps production doesn't | same: intrusive singly-linked arena, O(1) append/prepend/splice via cached tail, single head read per op | ✅ next/head pointers niche-packed via the verified `Opt<N>` MSB tag; the arena's capture flags are side-bitmap (production: stolen bit in the element repr) | ✅ (arena is TRACK-gated through its inner Vecs) | TRACK=false: append_iter **verus 20% faster**, build+splice composite **verus 8% faster** (setup-dominated; does not isolate splice); tracked arena still unbenchmarked (the gated ring rows use `CircularList`) |
 | `AppendOnlyVec` | `Vec<T>` + frame lengths | push-only, restore = truncate | n/a | ✅ | parity (85.4 vs 85.8 µs) |
 | `SparseSet` | 3 parallel columns | swap-remove permutation, LIFO id pool | inline stores steal the id MSB | ✅ | **verus 14% faster** |
-| `SpMap` | `AppendOnlyVec` log + `std::collections::HashMap<K, usize, IndexHasher>` index | log = source of truth, index rebuilt on restore — same algorithm; index uses production's hash ALGORITHM (hashbrown 0.17 default = foldhash), seeded deterministically by default | n/a | ✅ | **parity across u64/String/composite — exception CLOSED, see below** |
-| `BPlusTreeSet` | fat nodes (documented divergence; frozen per rev 3 descope) | verified insert/cursor | arena ids niche-packed | ✅ | not gated (descope) |
-| `CircularList` | `payload + usize` ring | O(1) ring splice | not packed (PR 3 consumer work) | ✅ | not gated until PR 3 |
+| `SpMap` | `AppendOnlyVec` log + `std::collections::HashMap<K, usize, IndexHasher>` index | log = source of truth, index rebuilt on restore (same algorithm); index uses production's hash ALGORITHM (hashbrown 0.17 default = foldhash), seeded deterministically by default | n/a | ✅ | **parity across u64/String/composite: exception CLOSED, see below** |
+| `BPlusTreeSet` | fat nodes (documented divergence, frozen; descoped) | verified insert/cursor | arena ids niche-packed | ✅ | not gated (descoped: not instantiated by the engine) |
+| `CircularList` | `payload + usize` ring | O(1) ring splice | not packed (packing is future consumer work) | ✅ | gated: the tracked-ring row, ledger in `13-parity-matrix.md` |
 
 ## Closed exception: SpMap index hasher (was map/intern +100%)
 
 Originally the verified `SpMap` index was `std::collections::HashMap` with
 its default `RandomState` (SipHash), while production's `Map` index is
-`hashbrown::HashMap` (foldhash) — a +48–100% gap depending on key shape.
+`hashbrown::HashMap` (foldhash): a +48–100% gap depending on key shape.
 The fix does NOT require a hashbrown model. The KEY OBSERVATION: vstd models
 `std::collections::HashMap<K, V, S>` GENERICALLY over any `S: BuildHasher`
 (`insert`/`get`/`contains_key`/`len`/`clear`/`default` are all `S`-generic,
 gated on `builds_valid_hashers::<S>()`), and std's HashMap is hashbrown
 internally. So the index is now
 `std::HashMap<K, usize, IndexHasher>`, where `IndexHasher` is an 8-byte
-crate-local `BuildHasher` delegating to foldhash's `fast` family — the same
+crate-local `BuildHasher` delegating to foldhash's `fast` family, the same
 hash ALGORITHM production uses, in the SAME container vstd already models.
 Full production speed, zero algorithmic change.
 
@@ -57,7 +57,7 @@ Two precision notes, since "the same hasher" is easy to overclaim:
   `hashbrown::DefaultHashBuilder`, a newtype wrapping
   `foldhash::fast::RandomState` that forwards every `write_*` to it
   (hashbrown-0.17.1/src/hasher.rs:14). `IndexHasher` is a different newtype
-  over the same foldhash algorithm — same speed, one wrapper apart.
+  over the same foldhash algorithm: same speed, one wrapper apart.
 - **Hash values ARE reproducible by default** (unlike production). Production's
   `DefaultHashBuilder` draws a random per-process seed. `IndexHasher` instead
   defaults to a fixed seed and lets the operator control it (`SP_HASHER_SEED`,
@@ -65,12 +65,12 @@ Two precision notes, since "the same hasher" is easy to overclaim:
   reproducible. This is a deliberate divergence FROM production, in the
   reproducibility direction; it changes no observable `SpMap` behaviour (the
   index is transient, rebuilt from the log in insertion order, never iterated),
-  only the internal bucket layout — see `src/hasher_spec.rs`.
+  only the internal bucket layout (see `src/hasher_spec.rs`).
 
 Cost: exactly one axiom,
 `hasher_spec::axiom_index_hasher_builds_valid_hashers`, mirroring
 vstd's own shipped `axiom_random_state_builds_valid_hashers` for std's
-`RandomState` — same shape, same strength, same `admit()` justification
+`RandomState`: same shape, same strength, same `admit()` justification
 (the predicate is `uninterp`; `builds_valid_hashers` asserts only
 byte-determinism, which `IndexHasher` satisfies at least as strongly, its seed
 being stored by value). Plus 2 contract-free type registrations
@@ -105,11 +105,11 @@ restore / capture paths:
 
 - Production's `prepare_mark` (`containers/src/diff_store.rs:118-127`) zeroes
   the materialized capture words AND THEN calls
-  `captured.resize(data.len().div_ceil(64), 0)` — one bulk memset that
+  `captured.resize(data.len().div_ceil(64), 0)`: one bulk memset that
   materializes every word the frame could need.
 - The verified `prepare_mark` called `zero_all()` only. Words were still
   materialized correctly, but LAZILY, inside `set_true`'s one-word-at-a-time
-  push loop — so a frame paid the growth loop on its own write path.
+  push loop, so a frame paid the growth loop on its own write path.
 
 The divergence is invisible when a frame's writes are clustered and severe when
 they are spread, which is why the depth-2 nested case (few writes, 100k-element
@@ -145,11 +145,11 @@ OPEN rather than explained.
 The `mark`/`set`/`restore` rows are now at parity or verus-faster for a
 substantive reason, and a previous conclusion in this chapter is **retracted**.
 
-**What was wrong.** After the PR-2 consumer swap, `nested_mark` shifted toward
+**What was wrong.** After the consumer swap (`doc/migration/README.md`), `nested_mark` shifted toward
 +7–11% and this chapter concluded "code-layout alignment, not an algorithmic
 regression", citing a dead-code experiment (200 never-called functions in the
 pre-swap crate reproduced the shift). The dead-code result is real and layout
-effects at that scale are real — but the conclusion was **wrong**, and the error
+effects at that scale are real, but the conclusion was **wrong**, and the error
 was one of *scope*: a genuine per-op regression was present at the same time, and
 a plausible artifact explanation was accepted for it without a test that could
 distinguish the two. The tell was ignored: the egraph's own
@@ -186,12 +186,12 @@ no layout change accompanied the fix.
 1. A confirmed artifact mechanism does not license attributing the *next* gap to
    it. "Layout" was a real phenomenon used as an unfalsifiable explanation.
    The dead-code test shows layout *can* produce a shift; it does not show that
-   *this* shift was layout. Ask what observation would distinguish them — here,
-   scaling with n — and make it.
+   *this* shift was layout. Ask what observation would distinguish them (here,
+   scaling with n) and make it.
 2. Gate on **phases, not cycles.** A whole mark/set/restore cycle is
    set-dominated, so it read −25% while `restore` alone was +30%. `perf_gate`
    now carries a separate `restore_replay` row for exactly this reason, and the
-   gate is one-sided (only *slower* fails — an `abs()` gate failed the build for
+   gate is one-sided (only *slower* fails: an `abs()` gate failed the build for
    beating production).
 
 **Standing check:** production's `#[inline]` attributes are part of the interface
@@ -244,7 +244,7 @@ penalty to `prod` (verus 57.1, prod 67.6). The cause is glibc's `brk`-heap
 reuse state after a prior arm has grown and freed 2 MiB: forcing every large
 allocation to `mmap` (`MALLOC_MMAP_THRESHOLD_=65536`) collapses the spread from
 +18% to within 3.5%. Pre-warming the heap from inside the benchmark does NOT
-fix it — the relevant state is per-arena and not reachable from there.
+fix it: the relevant state is per-arena and not reachable from there.
 
 ### Confound 2: hot-loop cache line alignment (~+18%)
 
@@ -267,7 +267,7 @@ closing the gap, which is why it looked like a real regression.
 ### Why the code cannot account for it
 
 Both arms compile to byte-identical code. Disassembling the actual bench binary
-(not a reproducer — that was the earlier mistake):
+(not a reproducer; that was the earlier mistake):
 
 - the push loop is the same 8 instructions, same registers, same shape;
 - both call the *same* `alloc::raw_vec::RawVec::grow_one` symbol;
@@ -301,7 +301,7 @@ the failure mode is the lesson.
    exhaustion panic each split the basic block in `Vec::with_store`, spilling
    the partially-initialized `Vec` and costing +21.8%. The shapes were real and
    reproducible *in the reproducer*, and a control experiment even reproduced
-   them in production's `token.rs` — but the reproducer was not the program
+   them in production's `token.rs`, but the reproducer was not the program
    criterion compiles, and the real bench shows none of it. The allocator was
    nonetheless simplified to production's plain `fetch_add` (see
    `src/container_id.rs`), which is the right shape on its own merits; the
@@ -318,7 +318,7 @@ and are now the first thing to do.
 Do not record a prod-vs-verus ratio from criterion's two arms alone. Before
 attributing any gap:
 
-1. swap the registration order — if the penalty follows the slot, it is
+1. swap the registration order: if the penalty follows the slot, it is
    positional, not real;
 2. reproduce it through `examples/onesite.rs`, which holds call site and code
    offset fixed;
@@ -328,11 +328,12 @@ attributing any gap:
 `push_only_untracked` arms are not comparable to each other. It is deliberately
 left un-"fixed" so the artifact stays on record.
 
-**Status of the ±10% gate.** The tracked-Vec rows are now CLOSED by the
-`set_true` inline fix above (see that section's table): `mark_set_restore`
-−14.7%, `restore_replay` +3.3%, `nested_mark` +2.3%/+2.6%, and the egraph's own
-`vec_bench mark/bitset` 10–22% faster than production at every size from 1k to
-1M. `perf_gate` gates all four rows and passes. The historical readings for these
+**Status of the ±10% gate.** The tracked-Vec rows are CLOSED by the
+`set_true` inline fix above; the current per-row figures live in the
+benchmark ledger of `13-parity-matrix.md`, the single source for perf
+rows (this chapter does not duplicate them). The egraph's own `vec_bench
+mark/bitset` runs 10–22% faster than production at every size from 1k to
+1M, and `perf_gate` gates the rows and passes. The historical readings for these
 rows (`nested_mark` +31%/+14%, `mark_set_restore` straddling ±10%) are superseded:
 they were the missing-inline regression plus the two confounds, not separate
 open questions.
@@ -351,7 +352,7 @@ Still open:
 A RETRACTED claim, kept as a caution: an earlier revision of this chapter
 recorded `tracked_vecp` mark-churn @1M as "**verus 45% faster** (247 vs
 453 µs)". It does not reproduce. Production measures 453–455 µs (matching), but
-verus measures 466–471 µs — roughly 4% SLOWER, not 45% faster. Two independent
+verus measures 466–471 µs: roughly 4% SLOWER, not 45% faster. Two independent
 runs confirmed. Same class of overstatement as the retracted `map/intern`
 "1.6× faster" above: a single isolated measurement read as an algorithmic
 result. Do not record a ratio here without a repeat run in a second context.
@@ -369,8 +370,8 @@ now **~20% faster** than production, and the cause was one instruction.
 **The mechanism.** Production searches a node with `slice::partition_point`, which
 internally uses `core::hint::select_unpredictable`. That lowers the loop's
 `base` update to `cmovbe`. Our hand-written bisection had already been rewritten
-into `partition_point`'s *shape* — `size` shrinks by `half` unconditionally, so
-the trip count is exactly `log2(n)` and only `base` is data-dependent — and it
+into `partition_point`'s *shape* (`size` shrinks by `half` unconditionally, so
+the trip count is exactly `log2(n)` and only `base` is data-dependent), and it
 *read* branchless:
 
 ```rust
@@ -396,26 +397,26 @@ only its source shape.
 The tail step deliberately keeps the plain `if`: it lowers to `adc` on the
 compare's own flag, which is cheaper than a forced `cmov`, and is what
 `partition_point`'s tail compiles to. `bplus_search.rs`'s `SearchKind::find_ge`/
-`find_gt` got the same treatment. `Branchless` (the counting scan) needs none —
+`find_gt` got the same treatment. `Branchless` (the counting scan) needs none:
 its accumulate is branch-free by construction.
 
 **Cost in trust and proof:** one `external_body` wrapper (`sel_usize`, a total
-expression with no `unsafe`, whose postcondition *is* `if c { b } else { a }` —
+expression with no `unsafe`, whose postcondition *is* `if c { b } else { a }`;
 `select_unpredictable` is a codegen hint, not a semantic one) and **zero** proof
 debt. `bplus` 185, `bplus_layout` 305, `bplus_search` 9, whole crate **1471
-verified / 0 errors** (`cargo verus verify`, exit 0) — the layout work itself added no
+verified / 0 errors** (`cargo verus verify`, exit 0): the layout work itself added no
 obligations; the `bplus`/`bplus_tree` growth is the bulk loader of
 [Ch. 10 §5.2.4](10-bplus-tree.md).
 
 **One cost, recorded honestly:** the `cmov` is a small pessimization where the
 branch genuinely *is* predictable. `insert asc` moved −0.9% → **+1.7%** and
 `from_sorted` +843% → **+965%**, both ascending workloads where the compare
-always falls the same way. This is the right trade — shuffled descent is the
-common case and worth ~14 points against ~2 — but it is a trade, not a free win.
+always falls the same way. This is the right trade (shuffled descent is the
+common case and worth ~14 points against ~2), but it is a trade, not a free win.
 Those `from_sorted` figures were dominated by something else entirely: it had no
 bulk loader and looped `insert`. With the loader in place
-([Ch. 10 §5.2.4](10-bplus-tree.md)) `from_sorted` is **−14.6%** — faster than
-production — and never enters the descent this section is about, so the `cmov` no
+([Ch. 10 §5.2.4](10-bplus-tree.md)) `from_sorted` is **−14.6%** (faster than
+production) and never enters the descent this section is about, so the `cmov` no
 longer prices into it at all. That section is also this chapter's rule applied to a
 *favorable* reading for once: `bulkload.rs` scored the loader at 1.0x, the one-call-site
 harness at +29%, and the disassembly settled it.
@@ -434,8 +435,8 @@ have been written down as a cause without the measurement.
    disassembly, and it looks decisive. It is worth **±1%**: a probe bisecting a
    random arena through both shapes across 32 KB / 1 MB / 64 MB measured +1.8% /
    +1.1% / −0.6%. LLVM forwards neither copy into the arena, so both arms pay the
-   same materialization. (In-place search — bisecting the arena slot without
-   copying at all — *is* 28–35% faster than either, so there is a real
+   same materialization. (In-place search, bisecting the arena slot without
+   copying at all, *is* 28–35% faster than either, so there is a real
    optimization here; it is just not a prod-vs-verus difference.)
 2. **Arena node ordering.** Production unwinds splits bottom-up from a
    `path: [(ArenaIdx, usize); 24]` array; ours unwinds a recursive `insert_rec`,
@@ -446,7 +447,7 @@ have been written down as a cause without the measurement.
    the same probe against each: the gap was +15.3% and +15.5%. Ordering is
    innocent.
 3. **Footprint.** A counting global allocator gives prod 1048640 bytes / 4096
-   nodes / 24.4 keys-per-node against verus 1048576 / 4096 / 24.4 — ratio
+   nodes / 24.4 keys-per-node against verus 1048576 / 4096 / 24.4: ratio
    **1.000x**. Identical node count, heap size, and split policy.
 
 ### The process lesson: "branchless in source" is not a measurement
@@ -456,18 +457,18 @@ clean but did not move the benchmark, so branch prediction is not the cause."
 That conclusion was **wrong**, and the error is worth naming: the *source* was
 branchless and the *machine code* never was, so the hypothesis had not been
 tested at all. Priced standalone, the branchy bisection cost +137% on 31-key
-nodes with random targets — the signal was there; the tree run simply never
+nodes with random targets: the signal was there; the tree run simply never
 exercised the branchless version.
 
 What finally found it was diffing the two arms' disassembly of the *same*
 function and reading the branch instructions: `cmovbe` at production's bisection
 against `ja` at ours. That is this chapter's rule 3 ("if attributing to codegen,
-disassemble the bench binary") applied to a *negative* result — and the general
+disassemble the bench binary") applied to a *negative* result, and the general
 form is the addition:
 
 **When a source-level optimization measures as no-change, verify it was
 compiled before concluding the mechanism is absent.** A no-op result has two
-readings — the mechanism is innocent, or the change never happened — and they are
+readings (the mechanism is innocent, or the change never happened), and they are
 distinguished by reading the asm, not by re-running the benchmark.
 
 ## Closed: the mutation gap was one `memmove` and one redundant node read
@@ -497,14 +498,14 @@ shift lengths a real insert produces:
 
 The crossover is ~18 elements and a shuffled insert into a 62-slot leaf averages a
 30-element shift, so the scalar loop cost **+156%** on the distribution that
-occurs. `arr_shift_up` dispatches on length and takes *both* ends — the scalar
-walk's short-tail advantage and `memmove`'s throughput — so it is faster than
+occurs. `arr_shift_up` dispatches on length and takes *both* ends (the scalar
+walk's short-tail advantage and `memmove`'s throughput), so it is faster than
 production rather than merely equal. Its `#[inline(always)]` is load-bearing: an
 `external_body` fn is a real call boundary, and left out of line the change cost
 *more* than the loop it replaced.
 
 **2. The double node read.** `insert_rec` copies the whole node by value to test
-`is_leaf`, then `insert_rec_leaf` re-read the *same* arena slot — 248 bytes copied
+`is_leaf`, then `insert_rec_leaf` re-read the *same* arena slot: 248 bytes copied
 twice for no new information. `insert_rec_leaf` now takes `node: &L::Node` with
 `*node == old(self).arena()[idx]` as a precondition, so every proof that spoke
 about the removed local read speaks about the parameter instead, with no
@@ -513,7 +514,7 @@ baseline, three runs each, non-overlapping: 11.0/10.5/11.2% → 9.7/9.6/9.6%).
 
 ### A fourth hypothesis that died: the per-level stack frame
 
-`insert_rec` compiles to `sub $0x600,%rsp` — 1536 bytes **per level**, because
+`insert_rec` compiles to `sub $0x600,%rsp`: 1536 bytes **per level**, because
 Verus allocates the split-arm locals unconditionally even though a split fires at
 most once per ~30 inserts, where production keeps one frame for the whole descent.
 A probe allocating 1536 bytes/level measured +146%/+74%/+57%/+41% at heights 1–4,
@@ -521,22 +522,22 @@ and this chapter's first draft of this section recorded frame size as the domina
 remaining mechanism.
 
 It was an artifact of the probe. That arm wrote `let mut scratch = [0u64; 160]`,
-whose initializer is a real memset — so it priced 1280 bytes of **stores** per
+whose initializer is a real memset, so it priced 1280 bytes of **stores** per
 level, a cost the real code (whose split locals go unwritten on the common path)
 never pays. Reserving the same frame via `MaybeUninit` and only keeping it alive
 measures **−3.9% / −0.6% / −0.2% / −1.4%**: reserving stack is free, initializing
 it is not.
 
 The wrong reading also produced a wrong fix. Marking `leaf_split_at` /
-`internal_split_at` `#[inline(never)]` — to keep the split's two by-value nodes out
-of the descent frame — made the frame *grow* (0x600 → 0x900, since out-of-line
+`internal_split_at` `#[inline(never)]` (to keep the split's two by-value nodes out
+of the descent frame) made the frame *grow* (0x600 → 0x900, since out-of-line
 returns need caller-side return slots) and `insert shuffled` went +11.3% → +13.0%.
 Reverting recovered it.
 
 **Rule added:** when a probe is meant to isolate stack *size*, reserve with
 `MaybeUninit` and keep it alive with `black_box(ptr)`. If the arm has an
 initializer, it is measuring stores, not the frame. And `sub $N,%rsp` is not a
-mechanism — chase what the code reads and writes.
+mechanism: chase what the code reads and writes.
 
 ## The honest new bounds (verified surfaces production's silent wraps)
 
@@ -556,7 +557,7 @@ after 2^32 containers and silently reuses ids; the verified crate widens the
 counter to `u64` (4 billion times the range) but, by default, does **not** trap
 on the 2^64 boundary. A trap is available behind `strict-id-exhaustion`. It is
 off by default because branching the freshly minted id to a diverging arm costs
-+21.8% on constant-count push loops — this was itself one of the retracted
++21.8% on constant-count push loops: this was itself one of the retracted
 attributions above before the bench artifact was understood, but the +21.8% is
 a real, separately reproducible cost of the trap (it degrades production's
 `token.rs` identically when added there). The default posture is therefore

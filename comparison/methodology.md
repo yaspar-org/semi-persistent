@@ -40,7 +40,7 @@ dual** is the translated counterpart file itself.
 ## 2. Timing protocol
 
 Process-level wall clock over the release CLIs, N runs after warmups
-(pilot: 10 after 2; sweep: 5 after 1), medians reported, all raw runs in
+(campaigns: 10 after 2; sweeps: 5 after 1), medians reported, all raw runs in
 the CSVs. egglog run `--mode no-messages -j 1`; ours with default flags
 and the strategy stated per table (naive is our shipped default; both
 strategies reported where relevant). Machine-readable stats:
@@ -226,10 +226,16 @@ Per-benchmark notes on the selections that carry conditions:
   benchmark. `herbie.deviations.md`,
   `repro-herbie-vanilla.deviations.md`.
 
-Coverage, as the paper states it: the comparison covers the ranked
-intersection set; every benchmark has rules and native encodings timed,
-except eqsolve's native encoding, which is validated and excluded from
-timed tables on its measured completion cost.
+Coverage, as the paper states it: the comparison covers the seventeen-benchmark
+set (the ranked ten-benchmark intersection plus seven second-pass
+additions). Every ranked-intersection benchmark has rules and native
+encodings timed except eqsolve, whose native encoding is validated and
+excluded from timed tables on its measured completion cost; of the seven
+additions, acgen has both encodings and the other six (combinators,
+resolution, typecheck, knapsack, levenshtein-distance, intersection) ship
+rules-only. Selection conditions for the additions and for the BLOCKED
+carriers (array, subsume) are in `comparison/README.md`; their
+per-benchmark notes live in the `*.deviations.md` ledgers.
 
 ## 6. Engine changes landed during the study (provenance)
 
@@ -414,8 +420,8 @@ reviewer reads.
 A campaign is one timed pass over the whole set at one pinned commit of
 each engine, on one quiet machine, with the hardware recorded. Each
 campaign file in `final/` carries its own pinning block; the current
-campaign is `final/final-r3-tables.md`, and r1 (`final-tables.md`) and r2
-(`final-r2-tables.md`) are archived records whose raw CSVs stay cited by
+campaign is `final/final-r4-tables.md`, and r1 (`final-tables.md`), r2
+(`final-r2-tables.md`) and r3 (`final-r3-tables.md`) are archived records whose raw CSVs stay cited by
 ledgers and experiment write-ups. The r1 campaign's pinning block follows,
 because it is the fullest record (machine, load, binary md5s) and the r2
 and r3 blocks refer to it for the machine.

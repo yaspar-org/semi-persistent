@@ -2,7 +2,10 @@
 
 Plans the solver work that the crossover, certification, and rollout analyses
 of 2026-08-15 motivate, and the benchmark program that measures it. It is a
-work plan, not a status page: what is done is what the suites assert. The
+work plan, not a status page: what is done is what the suites assert.
+Every item except B4 is delivered, with its Done note inline; the file is
+kept for the soundness arguments the Done notes record, and B4 is the one
+open item. The
 findings this plan builds on are recorded in the crossover test's module doc,
 the search-graph dump (`egraph/src/au/dump.rs`), and the anytime pilot
 (`egraph/tests/au_anytime_bench.rs`).
@@ -49,7 +52,7 @@ the search-graph dump (`egraph/src/au/dump.rs`), and the anytime pilot
 
 **A0. MCGS expansion cost: single-descriptor clone (and cursor at scale).**
 Clone one action descriptor instead of the whole cached vector at expansion
-(`mcgs.rs:1753`): measured 4.3x on width d4w512 at 4096 playouts (30.0 s to
+(`mcgs.rs`): measured 4.3x on width d4w512 at 4096 playouts (30.0 s to
 7.0 s). The per-node cursor for the first-empty-slot scan is worthwhile only
 for certification-scale budgets where p approaches A; implement it with the
 same change but do not expect it to move the pilot numbers. The 1.7 GB pilot
@@ -99,11 +102,11 @@ early and A2's pruning bites sooner; surface the incumbent on guard timeout
 so exact degrades to anytime-with-proof-on-completion instead of
 all-or-nothing. The remaining computation after the optimum is found is then
 exactly the proof of optimality. Days, after A2.
-Done 2026-08-15 (ordering and the anytime incumbent; A2's pruning is still
-pending, so ordering is not yet expected to move runtime): exact sorts each
+Done 2026-08-15 (ordering and the anytime incumbent; A2's pruning landed
+after this item, as its own Done note records): exact sorts each
 frame's structural actions by the lazy-completion estimate shared with the
 MCGS initial rollout (`static_generalize_quality`), and
-`AuConfig::exact_deadline` (default `None`) makes exact anytime — on expiry
+`AuConfig::exact_deadline` (default `None`) makes exact anytime: on expiry
 it unwinds and returns the root incumbent as
 `Completion::BudgetExhausted`, never claiming `Exact`. The differential
 fixture is byte-identical (exact lines included), no tie-dependent
@@ -130,7 +133,7 @@ is against an exact alternative, not an estimate. Note the honest limit: on
 the width family the actions are genuinely under the generalize value, so
 A(v) stays width^2 there; the win is on cycle-heavy and mutation-heavy
 shapes. About a week.
-Done 2026-08-15 (both uses; the closing rule needed no new code — it falls
+Done 2026-08-15 (both uses; the closing rule needed no new code: it falls
 out of the existing `num_actions == 0` terminal condition, and the
 generalize seed is offered at every node-creation site): `dominance_pruning`
 (`AuConfig`/`McgsConfig`, default false) drops, at OR-stats creation, every
@@ -179,7 +182,7 @@ c8/c9/c10 with both flags on.
 
 **A7. Hybrid MCGS + exact below a threshold.** The consumer hook exists:
 `results.mark_exact` already makes an OR node terminal for certification
-(`mcgs.rs:1300`). Add exact entry at an arbitrary `(l, r, ctx)` (today it
+(`mcgs.rs`). Add exact entry at an arbitrary `(l, r, ctx)` (today it
 assumes root entry with empty contexts), and a trigger: when a frontier
 node's hardness estimate (reachable-pair count from the snapshot bitset, or
 bs as a height proxy) falls under a threshold, run A2-exact with a budget
@@ -229,8 +232,8 @@ are in comparison/au/anytime-corpus.md section (g).
 the certification budget on deep search graphs is set by the selection rule
 rather than by the ladder: MCGS keeps descending into subgraphs whose every
 action is already realized, so those playouts realize nothing. Give every OR
-node a bit — terminal, or every slot realized and every child of every
-realized AND closed — maintain it incrementally, and exclude closed subtrees
+node a bit (terminal, or every slot realized and every child of every
+realized AND closed), maintain it incrementally, and exclude closed subtrees
 from selection at both node kinds. Acceptance: the deep families' knee
 collapses from uncertified at 2^18 to the wide families' within-2x band, and
 no gap curve regresses. Days, after A5.
@@ -352,8 +355,8 @@ certificate, and excluding it from selection removes nothing but those
 visits; the certificate's claim is unchanged, because closure is defined by
 the same exhaustiveness `is_structurally_complete` checks (which stays as the
 debug oracle for the equivalence). Closure is exactly what `mark_exact`
-asserts — this node's stored result is its optimum over the same action space
-under the same cycle mode — so writing the proof through to `BestResults` is
+asserts (this node's stored result is its optimum over the same action space
+under the same cycle mode), so writing the proof through to `BestResults` is
 the A7 argument applied to a subproblem MCGS proved itself; `offer`'s
 strict-improvement rule and a debug assertion pin that nothing ever beats a
 marked result afterward. Cycles are excluded for free: closure is a least

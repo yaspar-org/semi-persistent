@@ -1,4 +1,4 @@
-# Chapter 3 — `AppendOnlyVec`
+# Chapter 3: `AppendOnlyVec`
 
 [← Ch 2: Semi-Persistent Vectors](02-semi-persistent-vectors.md) · [Table of Contents](00-table-of-contents.md) · [Ch 4: Map →](04-map.md)
 

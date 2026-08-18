@@ -81,7 +81,7 @@ impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justificati
 /// `containers-verus/src/union_find.rs`: dual fast/proof forests under
 /// `PROOFS`, by-rank and directed unions, two-pass path-compressing `find`,
 /// re-rooting proof edges, LCA `explain`, with W1 (the partition invariant)
-/// machine-checked (doc/design/12-egraph-class-layer-parity.md).
+/// machine-checked (doc/design/egraph-class-layer-parity.md).
 pub type UnionFind<T, const TRACK: bool = true, const PROOFS: bool = false> =
     crate::containers::union_find::UnionFind<T, Justification<T>, TRACK, PROOFS>;
 

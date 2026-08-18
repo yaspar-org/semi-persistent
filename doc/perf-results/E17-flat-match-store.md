@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E17 — MatchPool stores its matches in the flat MatchSet — **accepted**
+# E17: MatchPool stores its matches in the flat MatchSet: **accepted**
 
 **Verdict: accepted, on every workload that emits matches: plain7 −14.6% /
 −7.8%, ac10 −13.8% / −12.6%, ac6 −10.7% / −9.7% against the post-E15
@@ -16,7 +16,7 @@ movement, not mechanism. Workspace 1334/0, clippy 0.**
 E16 postponed the flat store because the apply-order READ was slower and
 nothing showed match storage mattered. The per-workload attribution run
 changed that: counters showed every remaining step-proportional allocation
-class was `MatchPool`'s fresh-slot arm — `slots.push(env.clone())` — firing
+class was `MatchPool`'s fresh-slot arm (`slots.push(env.clone())`) firing
 exactly the pool's high-water per workload: 76 320 slots on ac10/naive,
 20 505 on plain7/naive, each slot allocating ~5 vectors. `clone_from`
 recycling only pays off at steady state; a saturation whose rounds grow
@@ -28,7 +28,7 @@ precisely the side E16 measured the flat store winning by 10.5-14.3%.
 
 `MatchPool` keeps its name, its API role, and its E14 loan buffers, but
 stores matches in a `MatchSet` (which gains the `lit_vals` column it
-lacked, `empty()`, and `reshape` — adopting a query's strides while keeping
+lacked, `empty()`, and `reshape`, adopting a query's strides while keeping
 every flat allocation, so one warm store serves differently-shaped rules
 across a saturation). `run_query_into` reshapes instead of clearing.
 
@@ -37,7 +37,7 @@ variable kind plus the two scalar writes RHS comprehensions perform, and
 `clear`) is implemented by the in-progress `Match` and by `MatchRow`, and
 `apply_action`/`eval`/`eval_arg` are generic over it. On the owned `Match`,
 `clear` restores the panic-on-read guard; the flat store holds no unbound
-state, so a row's `clear` leaves the stale value — equivalent for every
+state, so a row's `clear` leaves the stale value, equivalent for every
 compiled action sequence, which sets a comprehension variable before each
 read.
 

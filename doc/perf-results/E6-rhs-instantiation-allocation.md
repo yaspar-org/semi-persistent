@@ -2,21 +2,21 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E6 — allocation in RHS instantiation (A6) — **accepted**
+# E6: allocation in RHS instantiation (A6): **accepted**
 
 **Verdict: accepted. 5-11% on every rewrite row, backed by an 82% allocation
 reduction on `plain7` and 37% on `ac10`.**
 
 `apply::eval` allocated a fresh `Vec` for every node it instantiated:
 
-- `RhsOp::App` — `let mut children = Vec::new()`, one per node built, per applied
+- `RhsOp::App`: `let mut children = Vec::new()`, one per node built, per applied
   match.
-- `RhsOp::PrimApp` — `raw_vals: Vec<L>` and `refs: Vec<&L>`, two more per
+- `RhsOp::PrimApp`: `raw_vals: Vec<L>` and `refs: Vec<&L>`, two more per
   primitive call.
 
 All three are now `SmallVec`. `eval_arg` recurses, so `children` is one live
 buffer per recursion level; the plan flagged that as needing a per-depth scratch
-stack or a bump arena, but a `SmallVec` handles it without either — each level's
+stack or a bump arena, but a `SmallVec` handles it without either: each level's
 inline storage lives in its own stack frame, which is exactly the per-depth scratch
 the plan described, obtained for free.
 
@@ -37,7 +37,7 @@ the plan described, obtained for free.
 
 `plain7` drops from 0.65 to 0.12 allocations per match step. The completion rows
 are unchanged **by construction**: `accompl*` runs with no rules, so `eval` is
-never called on that path. See "The completion rows" below — this matters for
+never called on that path. See "The completion rows" below: this matters for
 reading the timing table.
 
 ## Inline capacity
@@ -54,7 +54,7 @@ Swept on `examples/acsite.rs` (min of 40 reps) and `allocprobe`:
 | **16** | **79.69 ms** | **1 070 299** |
 | 32 | 79.60 ms | — |
 
-16 is the knee — 32 buys 0.1% for twice the stack — and it is worth 6% over the
+16 is the knee (32 buys 0.1% for twice the stack) and it is worth 6% over the
 naive choice of 4. Confirmed at the macro level: cap 4 gave −4.6 to −5.9% on the
 AC rows where cap 16 gives −9.3 to −11.7%, with the `plain7` rows unchanged between
 them (a larger frame costs nothing there because those lists are 2 children).
@@ -90,7 +90,7 @@ same e-graph.
 
 Criterion reports −1.8 to −3.7% on `accompl32`/`accompl64`, and **that is an
 artifact, not a result.** Those workloads run with `cc = true` and no rules, so
-`apply::eval` is never reached — allocprobe confirms their counts are byte-identical
+`apply::eval` is never reached: allocprobe confirms their counts are byte-identical
 before and after. `complsite.rs` puts `accompl64` at 4.7332 ms against a 4.7011 ms
 baseline, i.e. +0.7%, inside the band E4b measured for that site.
 
@@ -108,8 +108,8 @@ been the only evidence, the same ±3% doubt would apply to them too.
 The type change is the gate here: `eval_arg` takes `&mut ChildVec<Cfg>` instead of
 `&mut Vec<Cfg::G>`, so any caller that assumed `Vec` fails to compile rather than
 silently mis-behaving, and `eg.add(*o, &children)` still receives a slice through
-`Deref`. Behaviour is identical by construction — `SmallVec` has the same
-`push`/`extend_from_slice` semantics — which the unchanged checksums confirm
+`Deref`. Behaviour is identical by construction (`SmallVec` has the same
+`push`/`extend_from_slice` semantics), which the unchanged checksums confirm
 empirically.
 
 ## Not done

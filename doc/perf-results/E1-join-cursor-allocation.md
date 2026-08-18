@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E1 — join cursor allocation (A1)
+# E1: join cursor allocation (A1)
 
 **Change.** `LeapfrogJoin` holds a `SmallVec<[C; 4]>` (`leapfrog::CursorVec`)
 instead of a `Vec<C>`, and `LeapfrogJoin::new` no longer allocates:
@@ -17,7 +17,7 @@ instead of a `Vec<C>`, and `LeapfrogJoin::new` no longer allocates:
 
 `ematch::run_join`'s three per-mode cursor collections and
 `MatchIterator::enter_join` now build `CursorVec`s. `enter_join` also dropped its
-intermediate `Vec<&SortedVec<_>>` — `resolve_lookup` borrows from the index,
+intermediate `Vec<&SortedVec<_>>`: `resolve_lookup` borrows from the index,
 which outlives the frame, so the references never needed materialising.
 
 Inline capacity is 4 because a join's arity is the number of index lookups for
@@ -72,8 +72,8 @@ AC workloads barely, and completion not at all.
 
 ## Why the completion rows are not a regression
 
-`accompl32`/`accompl64` run with an empty rule list. Their `match_steps` is 0 —
-they never construct a `LeapfrogJoin` — and their allocation counts are
+`accompl32`/`accompl64` run with an empty rule list. Their `match_steps` is 0
+(they never construct a `LeapfrogJoin`) and their allocation counts are
 *byte-identical* before and after. There is no path by which this change alters
 the work they do.
 
@@ -84,12 +84,12 @@ Three checks, in the order `11-layout-parity.md` prescribes:
    −0.7%/+0.4%, −0.8%/+0.1%. So a fresh binary alone moves these rows by ±1%.
    That is smaller than what A1 shows, which is why the next two checks matter.
 2. **Filtered vs full-suite runs.** Run with `-- accompl` only, A1 reads +2.9 to
-   +5.5% and +5.3 to +7.4% — *worse* than in the full suite, where `accompl`
+   +5.5% and +5.3 to +7.4%, *worse* than in the full suite, where `accompl`
    follows `ac10`'s 107 MB of allocator churn. A code effect would not depend on
    which benches ran before it in the process.
 3. **Outside criterion.** `examples/complsite.rs` runs the `accompl64` workload
    in a standalone binary, 200 reps, reduced by minimum. Baseline: 4.686, 4.843,
-   4.694 ms. A1: 4.849, 4.703, 4.664 ms. Minima 4.686 vs 4.664 — the gap is
+   4.694 ms. A1: 4.849, 4.703, 4.664 ms. Minima 4.686 vs 4.664, so the gap is
    absent.
 
 The conclusion is the one this repo has reached twice before (both retracted
@@ -112,7 +112,7 @@ cargo run --release --example complsite 64 200
 
 `cargo test --workspace --release`: 80 test binaries, 0 failures. This includes
 `leapfrog.rs`'s own dual-width suite (18 join cases across both id widths) and
-the e-matching proptests, which are what would catch the sort change — ties are
+the e-matching proptests, which are what would catch the sort change: ties are
 now ordered unstably, and Algorithm 1 requires the ring sorted by key but not any
 particular order among equal keys. `cargo fmt --check` and
 `clippy --workspace --all-targets -D warnings` clean.

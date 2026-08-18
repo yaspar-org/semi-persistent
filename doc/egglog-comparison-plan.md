@@ -1,10 +1,11 @@
 # Egglog comparison: constructor support, translation, and the AC benchmark
 
-Plans the cross-engine comparison against egglog (surveyed at 7b1adf2). It is
-a work plan, not a status page. Companion surveys: egglog's constructor
-semantics and benchmark inventory (2026-08-15, recorded below in condensed
-form), and our surface-language inventory
-(`doc/design/A1-language-guide.md` holds the grammar).
+Plans the cross-engine comparison against egglog (surveyed at 7b1adf2).
+Every work item is delivered (the Status section at the end names where);
+the file is kept for the surveys the ledgers still cite: egglog's
+constructor semantics and benchmark inventory (2026-08-15, recorded below
+in condensed form), and our surface-language inventory
+(`egraph/doc/design/A1-language-guide.md` holds the grammar).
 
 ## What the comparison is
 
@@ -96,8 +97,9 @@ where translation fails: emit egglog programs from our metamorphic and AC
 families (`ac_vs_rules.rs` already generates the two-encoding pair from
 one instance and is the precedent).
 
-**E4. Harness.** Process-level timing (their protocol: release CLI, 15
-runs, 3 warmups, hyperfine-style), matched budgets, JSON/CSV rows
+**E4. Harness.** Process-level timing (release CLI; as delivered the
+protocol is 2 warmups + 10 timed runs, `comparison/README.md`), matched
+budgets, JSON/CSV rows
 (benchmark, config, time, nodes, classes, iterations), three configurations
 per benchmark. Their machine-readable stats via `print-stats :file`; ours
 via E2's stats output.
@@ -123,14 +125,11 @@ restore-to-mark vs re-running the program prefix from scratch, which is
 the honest "what would you do without semi-persistence" comparison.
 Deviation rules of methodology.md apply throughout.
 
-Order: E1 and E2 (our-side features, one agent, two commits), then E3, then
-E4 with a pilot on benchmarks 1, 2, 8 before the full set; E5/E6 after the
-in-flight engine fixes land, at one pinned commit.
-
 Status: every work item is delivered. E1 and E2 (constructor support and the
-benchmark-support surface) are in the engine. E3 and E4 cover the full
-ten-benchmark intersection set in `comparison/`, every benchmark with rules
-and native encodings and a per-benchmark deviation ledger; eqsolve's native
+benchmark-support surface) are in the engine. E3 and E4 cover the seventeen-benchmark set in `comparison/` (the ranked
+ten-benchmark intersection plus seven second-pass additions), every
+benchmark with a rules encoding, eleven with native encodings, and a
+per-benchmark deviation ledger; eqsolve's native
 encoding is validated under `--lazy-ac-eqs` and excluded from timed tables
 on its measured completion cost, and `repro-herbie-vanilla` (ranked 4) is
 dropped: at 7b1adf2 it is a typed-lowering unsoundness reproduction with no
@@ -142,6 +141,7 @@ n = 20) and by the campaign's native columns. E6 is measured in
 `comparison/semi-persistence/`: egglog's push deep-copies the e-graph, our
 restore is O(touched), and at S = 1e6 the assume/derive/retract cycle costs
 us 12.6 ms against their 33.0 ms while restoring to a mark beats re-running
-the base 102x. The current campaign is `comparison/final/final-r3-tables.md`
-(rules encoding at parity with egglog on solver-dominated workloads, native
-2.4-2.8x faster); `comparison/methodology.md` is the divergence registry.
+the base 102x. The current campaign is `comparison/final/final-r4-tables.md`
+(rules encoding at parity with egglog on solver-dominated workloads,
+geomean ratios 1.16 naive / 1.03 semi-naive; native encodings 3.9-6.3x
+faster); `comparison/methodology.md` is the divergence registry.

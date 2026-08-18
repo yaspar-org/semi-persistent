@@ -44,8 +44,8 @@ Operators map argument sorts to a return sort:
 (function Mul (Expr Expr) Expr)
 ```
 
-`(constructor …)` declares the same operator as `(function …)` — same
-congruence, same matching — and additionally marks it a term former,
+`(constructor …)` declares the same operator as `(function …)` (same
+congruence, same matching) and additionally marks it a term former,
 which is the declaration extraction tags belong on:
 
 ```
@@ -98,7 +98,7 @@ individual datatype variants:
 ## Ground Terms and Let Bindings
 
 Ground terms (no variables) are used in `let`, `union`, `check`,
-`insert`, and `extract` commands:
+and `extract` commands:
 
 ```
 (let a (Add (Num 3) (Num 4))) ;; bind name 'a' to a term
@@ -119,10 +119,11 @@ Under the lazy mode `(check (!= …))` is confirmed under completion
 before it passes. The two flags are mutually exclusive;
 `ac-congruence-completeness.md` §13 has the trade-offs.
 
-A bare S-expression at the top level is sugar for insertion:
+A bare S-expression at the top level is an insertion; there is no
+separate insert command:
 
 ```
-;; equivalent to (insert (Add (Num 1) (Num 2)))
+;; inserts the term into the e-graph
 (Add (Num 1) (Num 2))
 ```
 
@@ -513,7 +514,7 @@ whose element subpatterns can unify with each other, or whose element
 can face a repeated child, decide per rule whether the repeated-child
 case matters and write its multiplicity variant if it does. The keep-`k-1`-copies
 shape (distributing one factor out of `(x+y)^k · z`) is written with
-an RHS multiplicity expression, `(Add b ..s):(u64::- k 1)` — see the
+an RHS multiplicity expression, `(Add b ..s):(u64::- k 1)`; see the
 multiplicity section above.
 
 ### A Patterns (sequence semantics)
@@ -660,7 +661,7 @@ which is how a search reports time-to-goal rather than time-to-budget:
 
 The goal is checked before every iteration, including the first, so a
 goal that already holds costs no iterations. Its terms are built once,
-before the run — the same nodes a `(check …)` of the goal would add.
+before the run: the same nodes a `(check …)` of the goal would add.
 
 ## Statistics
 

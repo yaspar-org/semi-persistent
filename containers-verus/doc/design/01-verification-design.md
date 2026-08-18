@@ -655,4 +655,4 @@ arena provably never overflows; `mark`/`restore`; insert-only,
 DoS-free bounded-capture pop, [Chapter 6](06-restore-regrow-alternatives.md));
 `as_slice` omitted (a backend-specific fast path outside the persistence
 contract). The full method-by-method coverage vs. production is the
-[parity audit](../future/parity-audit-and-plan.md).
+[parity audit](parity-audit.md).

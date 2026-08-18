@@ -125,9 +125,9 @@ latent: the twelve checks pass without them.
 ## Validation and measurement
 
 All twelve checks pass on both engines, in every configuration, under both
-of our saturation strategies. Campaign medians (`final/final-r3-tables.md`):
-egglog 120.2 ms; ours rules 28.9 ms naive, 37.1 ms semi-naive; ours native
-14.1 ms naive, 20.6 ms semi-naive.
+of our saturation strategies. Campaign medians (`final/final-r4-tables.md`):
+egglog 119.2 ms; ours rules 28.7 ms naive, 36.2 ms semi-naive; ours native
+14.4 ms naive, 20.4 ms semi-naive.
 
 Base-state counts after the last `(pop)` (not a work measurement; every
 block's work is popped):

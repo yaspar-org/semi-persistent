@@ -12,7 +12,9 @@ the algorithmic auditor's brief was adversarial: re-derive the first
 audit's EQUAL verdicts from source and try to refute them. Production
 class-layer baselines: `git show 'd14fd17^:egraph/src/classes.rs'`,
 `git show 'b1f1683^:egraph/src/union_find.rs'`; the retired hand-rolled
-ring is at `585d240^`.
+ring is at `585d240^`. The class-layer rows are a frozen record of the
+swap against those pinned baselines, not a live parity claim about the
+tree; the container rows remain checkable against `containers/src`.
 
 ## 1. Interface and feature surface
 
@@ -58,7 +60,7 @@ derive impls.
    archival (total-api-plan.md), recorded here as the one asymmetric
    restore surface.
 7. **Feature flags.** Production has none; verus: `hasher-random-seed`
-   (production-parity randomized hashing — parity requires ENABLING
+   (production-parity randomized hashing; parity requires ENABLING
    it), `strict-id-exhaustion` (production wraps silently),
    `literal-types` (verus-only key wrappers), `compat-*` (test-only).
    Deterministic-by-default hashing is the one default that changes
@@ -128,7 +130,7 @@ two-pass full compression, union tie-breaking (else-of-`<` is exactly
 
 ## 3. Behavioral parity
 
-Reader's summary: conventions first — counterpart panics carry the
+Reader's summary: conventions first. Counterpart panics carry the
 `containers-verus: ` guard prefix, production `try_*` (where it exists)
 is an always-Ok shim around a panicking core while counterpart `try_*` returns
 typed `ContainerError` without mutating, and the counterpart's panicking cores
@@ -161,7 +163,7 @@ confirmed every previously recorded divergence and found the following.
    family; boundaries 0, id_bound-1, id_bound, and the usize ceilings
    all agree with production (panic vs refuse channel aside).
    Residual: the pub(crate) `new_list` core's runtime guard omits the
-   full-range successor clause — unreachable externally, vacuous for
+   full-range successor clause: unreachable externally, vacuous for
    every shared family.
 4. **Ceiling over-admission inverted (Vec/SparseSet).** At an index
    word's ceiling, production admits the element and poisons the
@@ -207,7 +209,7 @@ Reader's summary: every public requires-carrying fn classifies as
 RECHECKED (runtime guard mirrors the erased requires) or INVARIANT-ONLY
 (wf-class requires that unverified code cannot violate: constructors
 establish it, mutators preserve it, fields are pub(crate), no Clone, no
-&mut leaks) — with the exceptions below. 124 guard sites; three unsafe
+&mut leaks), with the exceptions below. 124 guard sites; three unsafe
 expression sites in the whole crate, all in bplus_layout, all
 external_body pub(crate) with verified bounds at internal call sites
 and debug monitors.
@@ -217,7 +219,7 @@ and debug monitors.
 1. **The one UB-class hole: the bplus_layout public surface.** The
    node structs export ALL-PUB fields (count, data, is_leaf) and the
    public NodeLayout exec methods plus `internal_insert_at` route
-   through the bounds-elided primitives with no release check —
+   through the bounds-elided primitives with no release check:
    external safe code forging `count` or passing an out-of-range
    index reaches `get_unchecked` out of bounds: UB in release, panic
    in debug. Production has zero unsafe (misuse panics on checked
@@ -235,7 +237,7 @@ and debug monitors.
 3. **Open spec-carrying traits.** IndexLike, DenseId, Tagged,
    NodeLayout, SearchKind, DiffStore, OptElem are publicly
    implementable; a law-breaking foreign impl voids invariants
-   (wrong answers, corrupted rollback) without UB — same open-trait
+   (wrong answers, corrupted rollback) without UB: same open-trait
    posture as production, which fails by panic instead. Recorded as
    the trait-law trust item beside the key model.
 4. **Masking from_usize: all call sites guarded.** Every

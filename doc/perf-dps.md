@@ -2,15 +2,15 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# Destination-passing analysis: remaining temporary allocations after E1-E14
+# Destination-passing analysis: temporary allocations on the hot paths (through E17)
 
 Where the hot paths still build a temporary and copy it into its real
 destination, and what writing through to the destination buys. Findings from
 instrumented runs of `examples/allocprobe` on this revision (egraph-wf, after
 the verified-aggregate swap); each proposed change carries the experiment
-that decides it, per the E-series protocol. This extends
-`doc/perf-opportunities.md` (the A/B/C/S list, 2026-08-06), whose allocation
-items A1/A2/A6/A7 landed as E1/E2/E6/E14.
+that decides it, per the E-series protocol; outcomes are folded in where
+they exist (D1 landed as E15, and the flat match store as E17, per the
+closing section).
 
 ## The measured envelope
 
@@ -30,7 +30,7 @@ match spill, both already scratch-recycled by E2/E4b). The AC matcher still
 allocates about 2.3 times per e-matching step. That residue is where
 destination passing applies.
 
-## D1. Rest-binding temporaries in the AC assignment search — the headline
+## D1. Rest-binding temporaries in the AC assignment search: the headline
 
 `ematch.rs`, `decompose_ac_elem` and `decompose_aci_elem` (the LIVE recursive
 engine, one level below the child buffers E14 recycled): at every leaf of the
@@ -58,10 +58,12 @@ identical shape). At three growth allocations per binding that is ~660k
 allocations across the run, which accounts for the bulk of what the ac
 workloads still allocate: the ac10 pair alone is 1.05M.
 
-**Change**: `Match::push_mset_filtered(rv, residual)` writes the
+**Change (landed as E15; the record is
+`doc/perf-results/E15-rest-binding-write-through.md`, ac10 allocations
+−21.5%, wall −17.5%)**: `Match::push_mset_filtered(rv, residual)` writes the
 filter/map directly onto the tail of `mset_pool` and records the span from
 the tail length, with `push_set_filtered(rv, residual, used)` as the
-set-variant twin. Zero allocations per binding once the pool is warm, which
+set-variant counterpart. Zero allocations per binding once the pool is warm, which
 is the same mechanism `push_mset` itself already relies on. The temporary,
 its growth walk, and the copy all disappear.
 
@@ -125,8 +127,8 @@ the rewrite workloads; no attributed step-proportional class remains.
 Shrinking the class-ring cell from 12 to 8 bytes (bit-stealing `Opt<T>`
 payload instead of the `BoolTagged` key word) was nominated on a
 walk-density mechanism. `iter_class` has zero non-test consumers in the
-e-graph — rings are read one cell at a time (`repr_id`) and written by
-`splice` — so the mechanism has no workload and the change would buy only
+e-graph: rings are read one cell at a time (`repr_id`) and written by
+`splice`, so the mechanism has no workload and the change would buy only
 4 bytes per node of footprint against a full kernel payload refactor and a
 deliberate break of the layout-parity pins. Revisit only if a ring-walking
 consumer appears.

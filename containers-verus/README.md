@@ -102,7 +102,7 @@ chapter 1's subject; the trust framing is chapter 2's. The verified set:
   size equals the class ring's length, in the current state and in every
   archived frame. The engine's `--union-by` survivor policies read these
   verified counters. See the `eclasses.rs` module header for the invariant
-  table and [`doc/design/12-egraph-class-layer-parity.md`](doc/design/12-egraph-class-layer-parity.md)
+  table and [`doc/design/egraph-class-layer-parity.md`](doc/design/egraph-class-layer-parity.md)
   for the production-parity statement.
 
 Runtime property tests (146 across 21 files) exercise the executable code

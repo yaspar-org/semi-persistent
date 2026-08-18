@@ -21,13 +21,13 @@ earlier phase already visited it), the cached result is reused rather
 than recomputed. The memo table is what stores those cached results.
 Three strategies ship with the crate.
 
-The default is `Dense`, which allocates a `Vec<Option<A>>` sized to the
-full store. Lookup is an array index, so each memo hit is effectively
+The default is `memo::Vec` (alias `Dense`), which allocates a
+`Vec<Option<A>>` sized to the full store. Lookup is an array index, so each memo hit is effectively
 free. The downside is the allocation: if the store has a million nodes
-but a fold only visits a thousand of them, `Dense` still allocates a
+but a fold only visits a thousand of them, `memo::Vec` still allocates a
 million memo slots.
 
-`Sparse` replaces the vector with a hashmap. Allocation grows only with
+`memo::Map` (alias `Sparse`) replaces the vector with a hashmap. Allocation grows only with
 the nodes actually visited, so folding a small subtree of a large store
 costs proportional to the subtree, not the store. Each memo operation
 now pays a hash and a probe, so folds that visit most of the store run
@@ -41,13 +41,13 @@ saved branch gives a small but consistent speedup.
 
 ### Fold throughput
 
-| Depth | dense | sparse | none |
+| Depth | memo::Vec | memo::Map | memo::None |
 |-------|------:|-------:|-----:|
 | 10 | 189 M/s | 60 M/s | close to dense |
 | 14 | 188 M/s | 64 M/s | close to dense |
 | 18 | 186 M/s | 61 M/s | close to dense |
 
-Sparse runs about 3× slower than dense on the benchmark. The benchmark
+`memo::Map` runs about 3× slower than `memo::Vec` on the benchmark. The benchmark
 folds the whole tree on each iteration, so sparse pays its hash cost on
 every node and gets no compensating memory win. In the opposite regime,
 a 1K-node subtree inside a 1M-node store, sparse allocates a hashmap of
@@ -61,9 +61,9 @@ throughput matters, use `memo::None`. The API is the same in all three
 cases; only the argument to `with_strategy` changes.
 
 ```rust
-use semi_persistent_traversals::{Sparse, memo};
+use semi_persistent_traversals::memo;
 
-let r = s.with_strategy::<Sparse>().fold(root, alg_stmt, alg_expr);
+let r = s.with_strategy::<memo::Map>().fold(root, alg_stmt, alg_expr);
 let r = s.with_strategy::<memo::None>().fold(root, alg_stmt, alg_expr);
 ```
 
@@ -79,7 +79,7 @@ The two constructors return different types. `new()` gives back a
 `LangStore<false>` and `new_dedup()` gives back a `LangStore<true>`,
 where the boolean is a `const DEDUP: bool` parameter on the store. The
 generic impls fold `if DEDUP` branches into monomorphized code, so a
-`<false>` store has the same runtime shape as before the refactor and a
+`<false>` store pays nothing for the dedup machinery and a
 `<true>` store pays the hashmap lookups unconditionally. The type
 distinction also gates in-place mutation: `set_*` methods and
 `ZipperMut::new` only exist on `LangStore<false>`, making mutation on a

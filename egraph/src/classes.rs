@@ -16,7 +16,7 @@
 //! carries the dual, uncompressed proof forest exactly as the hand-rolled
 //! one did; the re-rooting and LCA logic is the same algorithm, hosted as
 //! the kernel's trusted glue over verified columns
-//! (`containers-verus/doc/design/12-egraph-class-layer-parity.md`).
+//! (`containers-verus/doc/design/egraph-class-layer-parity.md`).
 
 use crate::containers::{self, DenseId, Opt, Tagged};
 use crate::union_find::Justification;

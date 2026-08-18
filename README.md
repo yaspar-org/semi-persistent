@@ -8,25 +8,40 @@ Three contributions:
 
 2. **Native A/AC/ACI theories with leapfrog matching**: associative, commutative, and idempotent operators are handled structurally through canonical representations (sorted multisets for AC, sorted sets for ACI, sequences for A), not rewrite rules. Pattern matching extends leapfrog triejoin with maximum partition semantics: branching is over distinct elements, not multiplicities, avoiding exponential blowup.
 
-The engine is compared against egglog on a ten-benchmark intersection set
-(`comparison/`): rules encoding at parity on solver-dominated workloads,
-native AC 2.4-2.8x faster, in the current campaign
-(`comparison/final/final-r3-tables.md`).
-
 3. **Proof logging with compile-time opt-out**: a dual-parent-pointer union-find with copy-on-first-re-canonization preserves original node structure for proof reconstruction. Euler-tour LCA enables O(n) preprocessing, O(1)-per-query batch extraction. A `const PROOFS: bool` generic eliminates all proof machinery at compile time when not needed.
 
 Both semi-persistence (`const TRACK: bool`) and proof logging (`const PROOFS: bool`) are compile-time opt-out with zero residual overhead when disabled.
+
+The engine is compared against egglog on a seventeen-benchmark set (the
+ten-benchmark ranked intersection plus seven second-pass additions,
+`comparison/`): in the current campaign
+(`comparison/final/final-r4-tables.md`), rules encoding at parity on
+solver-dominated workloads (geomean ratios 1.16 naive / 1.03 semi-naive)
+and the native encodings 3.9-6.3x faster (geomean over the benchmarks
+with a native translation).
 
 ## Workspace
 
 | Crate | Description |
 |-------|-------------|
-| [`semi-persistent`](semi-persistent/) | CLI front-end and integration surface for the engine. |
+| [`semi-persistent`](semi-persistent/) | Umbrella crate re-exporting `containers`, `egraph`, and `traversals`; the `semi-persistent` CLI binary ships from the `egraph` crate. |
 | [`containers-verus`](containers-verus/) | The engine's semi-persistent container layer, Verus-verified: `Vec`, `Map`, `SparseSet`, `ListArena`, circular lists, union-find, the e-class aggregate, `DenseSpanMap`. Snapshots cost only the changed cells (a sparse diff, not a copy); O(k) restore. `egraph` consumes this crate as `semi-persistent-containers`. |
 | [`containers`](containers/) | The unverified reference implementation of the container layer, kept as the differential-conformance oracle and performance baseline (`containers-conformance`). ([design docs](containers/doc/design/00-table-of-contents.md)) |
 | [`egraph`](egraph/) | Equality saturation engine: e-graphs, e-matching, rewrite scheduling, term extraction, proofs. ([design docs](egraph/doc/design/00-table-of-contents.md)) |
 | [`traversals`](traversals/) | Arena-based recursion schemes. Stack-safe folds, unfolds, transforms, zippers. Includes `traversals-derive` proc-macro. ([tutorial](traversals/TUTORIAL.md)) |
-| [`abstract-domains`](abstract-domains/) | Verified bitvector abstract domains (Tnums, Anums, Unums, Intervals, reduced products). 754 Verus proofs, 0 admits. Built separately from the default workflow. |
+| [`abstract-domains`](abstract-domains/) | Verified bitvector abstract domains (Tnums, Anums, Unums, Intervals, reduced products). 952 verified lemmas, 0 admits. Built separately from the default workflow. |
+
+## Documentation
+
+Design chapters live beside their crates:
+[`egraph/doc/design/`](egraph/doc/design/00-table-of-contents.md),
+[`containers-verus/doc/design/`](containers-verus/doc/design/00-table-of-contents.md),
+[`containers/doc/design/`](containers/doc/design/00-table-of-contents.md).
+Cross-cutting records are under [`doc/`](doc/): the performance experiment
+ledger ([`doc/perf-results/`](doc/perf-results/README.md)), the AU solver
+records, and [`doc/internship-subjects.md`](doc/internship-subjects.md),
+the three proposed student projects. The egglog comparison and its
+methodology live in [`comparison/`](comparison/README.md).
 
 ## Building
 

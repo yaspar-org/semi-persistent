@@ -29,15 +29,15 @@ The recorded ceilings are a contract for the baseline machine below. The
 prod/verus ratio is itself machine-dependent, not merely noisy: one GitHub
 shared-runner run read `mark_set_restore` at +1.9% against a −12…−17% recorded
 range and, in the same run, `class_merge_restore` at −28.6% against −7.9…−8.2%
-recorded (0.3pp local spread) — ~14–20pp shifts in opposite directions. A
+recorded (0.3pp local spread): ~14–20pp shifts in opposite directions. A
 `NOISE_MARGIN` wide enough to cover that collapses every ceiling to the blanket
 10% the per-row design exists to avoid.
 
 So the gate has two modes:
 
-- **default** — per-row recorded ceilings, for the baseline machine. This is
+- **default**: per-row recorded ceilings, for the baseline machine. This is
   the mode any re-record must be measured in.
-- **absolute** (`PERF_GATE_ABSOLUTE=1`, set by the `perf-gate` CI job) — every
+- **absolute** (`PERF_GATE_ABSOLUTE=1`, set by the `perf-gate` CI job): every
   gated row is held to the one-sided `MIGRATION_GATE` (+10%) only. This is the
   migration plan's own criterion, the strongest claim that transfers across
   machines. The recorded ceilings are still printed for comparison.
@@ -47,7 +47,7 @@ default mode on a machine other than the one below is measuring the CPU, not
 the code.
 
 Per-row pinning is the point. Under the blanket `pct <= 10` gate this file
-previously described, `mark_set_restore` — recorded at −12…−17% — could have
+previously described, `mark_set_restore` (recorded at −12…−17%) could have
 degraded all the way to +9% and still printed `ok`: a 26pp regression behind a
 green gate. A row that is currently verus-*faster* now has to stay verus-faster.
 
@@ -85,23 +85,23 @@ Ratios are stable across runs; absolute µs drift with machine load and with how
 often the fixture is rebuilt, the delta does not.
 
 Observed range and spread are over **seven consecutive runs** on one otherwise
-idle machine. `recorded` is the least favourable end of that range — the value
-pinned in `perf_gate.rs` — and `ceiling` is what the build actually fails above.
+idle machine. `recorded` is the least favourable end of that range (the value
+pinned in `perf_gate.rs`), and `ceiling` is what the build actually fails above.
 
 | bench                 | observed range  | spread | recorded | ceiling | notes |
 |-----------------------|-----------------|--------|----------|---------|-------|
 | `vec/try_extend`      | +1.6% (PROVISIONAL: dev arm64, single run) | — | +3.0% | +9.0% | the total shell's batch path vs production's raw push loop, 100k u64 untracked: one capacity check licenses the batch, so the shell costs one branch per batch. Re-record on the baseline machine with the spread before treating the margin as a contract |
 | `mark_set_restore`    | −12.1% … −17.0% | 4.9pp  | −12.0%   | −6.0%   | tracked mark / 50k set / restore; verus faster. Noisiest row: the timed unit includes the 50k-set phase |
-| `restore_replay`      | −1.1% … +1.4%   | 2.5pp  | +1.5%    | +7.5%   | restore phase ALONE; see "gate on phases" below. Timed unit is 8 independent restores (`RESTORE_BATCH`): a single ~40 µs restore proved within reach of the per-build layout artifact on a shared runner (+13.0% on ubuntu-latest at a commit not touching the restore path, −3.0% locally — the `class_walk` signature). The ratio is dimensionless; the recorded range carries over |
+| `restore_replay`      | −1.1% … +1.4%   | 2.5pp  | +1.5%    | +7.5%   | restore phase ALONE; see "gate on phases" below. Timed unit is 8 independent restores (`RESTORE_BATCH`): a single ~40 µs restore proved within reach of the per-build layout artifact on a shared runner (+13.0% on ubuntu-latest at a commit not touching the restore path, −3.0% locally: the `class_walk` signature). The ratio is dimensionless; the recorded range carries over |
 | `class_splice`        | +3.9% … +4.7%   | 0.8pp  | +4.7%    | +10.0%  | ceiling is `MIGRATION_GATE`-capped (4.7+6 > 10). Residual is the extra payload write clearing the absorbed key's presence bit |
-| `class_walk`          | −0.6% … +0.3%   | 0.9pp  | +0.5%    | +6.5%   | parity, as the disassembly argues. Timed unit is 8 walk passes (`WALK_PASSES`): at one pass (~11 µs on a shared runner) a per-build binary-layout artifact breached even the absolute gate (+12.9% on ubuntu-latest under Rust 1.97) while the two walk loops were instruction-identical in the same binary — 8 insns each, both 16-aligned. The ratio is dimensionless, so the recorded range carries over; re-measure on the baseline machine at the next re-record |
+| `class_walk`          | −0.6% … +0.3%   | 0.9pp  | +0.5%    | +6.5%   | parity, as the disassembly argues. Timed unit is 8 walk passes (`WALK_PASSES`): at one pass (~11 µs on a shared runner) a per-build binary-layout artifact breached even the absolute gate (+12.9% on ubuntu-latest under Rust 1.97) while the two walk loops were instruction-identical in the same binary (8 insns each, both 16-aligned). The ratio is dimensionless, so the recorded range carries over; re-measure on the baseline machine at the next re-record |
 | `class_merge_restore` | −7.9% … −8.2%   | 0.3pp  | −7.8%    | −1.8%   | tightest row; the e-graph's real rebuild/backtrack shape |
-| `nested_mark/depth2`  | +2.6% … +8.1%   | 5.5pp  | ungated  | n/a     | 0.38 µs — below the layout-noise floor |
-| `nested_mark/depth32` | +0.0% … +5.1%   | 5.1pp  | ungated  | n/a     | 2.6 µs — layout floor |
+| `nested_mark/depth2`  | +2.6% … +8.1%   | 5.5pp  | ungated  | n/a     | 0.38 µs, below the layout-noise floor |
+| `nested_mark/depth32` | +0.0% … +5.1%   | 5.1pp  | ungated  | n/a     | 2.6 µs, layout floor |
 
 The three `class_*` rows gate the consumer swap in `egraph/src/classes.rs`;
 their production arm is the hand-rolled ring the swap deleted, preserved verbatim
-in `src/prod_class_ring.rs`. That is the only honest baseline — the implementation
+in `src/prod_class_ring.rs`. That is the only honest baseline: the implementation
 the swap replaced, not some other container.
 
 Note the two ungated `nested_mark` rows have a *wider* spread (5.1–5.5pp) than
@@ -114,7 +114,7 @@ End-to-end in the consumer, `egraph/benches/vec_bench.rs mark/bitset` is
 ### The gate is one-sided
 
 Only verus being *slower* fails. A symmetric `abs()` gate failed the build at
-−25% — for beating production — which is not a regression.
+−25% (for beating production), which is not a regression.
 
 ### Gate on phases, not cycles
 
@@ -129,8 +129,8 @@ mark / sets / restore; `examples/restoresplit.rs` scales restore by diff count
 
 An earlier revision of this file explained `nested_mark`'s +7–11% as code-layout
 alignment, on the strength of a dead-code experiment. That experiment was sound
-but the conclusion was **wrong**: a real regression — `CaptureBits::set_true`
-missing production's `#[inline(always)]` — was present at the same time. The
+but the conclusion was **wrong**: a real regression (`CaptureBits::set_true`
+missing production's `#[inline(always)]`) was present at the same time. The
 missed tell: the egraph's `mark/bitset` row was +12.8% **uniformly from n = 1k to
 1M**, and layout deltas do not track n over three decades. Fixing the inline
 returned `nested_mark` to +2.3% with no layout change, which disproves the
@@ -142,14 +142,14 @@ artifact reading. Full account and the two process lessons:
 A tight allocate-and-push loop is the one workload no in-process A/B harness can
 time fairly: its per-iteration work is a few instructions, so the result is
 dominated by whether the compiler inlines `Vec::push` into the timing closure
-and where the loop lands modulo the cache line — and LLVM makes those choices
+and where the loop lands modulo the cache line, and LLVM makes those choices
 independently for the prod and verus closures (in the gate binary prod's `push`
 out-lines while verus's inlines, a ~+22% artifact even with per-sample
 interleave). The push loop, `RawVec::grow_one`, `drop_in_place`, and allocation
 counts are **byte-identical** between the crates (`doc/design/11-layout-parity.md`),
 so parity is established by that disassembly. The closest a timing gets is
-`examples/onesite.rs` — both arms through one `run(which)` call site, identical
-inlining — which reads **+0.1%**.
+`examples/onesite.rs` (both arms through one `run(which)` call site, identical
+inlining), which reads **+0.1%**.
 
 ## Rows still to add
 

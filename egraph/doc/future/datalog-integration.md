@@ -1,10 +1,14 @@
 # Datalog Integration
 
+**Status**: design for future work; nothing in this document is
+implemented. The engine has no relation declaration form (this is why
+`comparison/`'s `array` benchmark is a BLOCKED carrier).
+
 ## 1. Relations as Unit-Typed Functions
 
 The formal encoding: a relation `R(t1, ..., tk)` is a function `R: (S1, ..., Sk) -> Unit`. The unit sort has a single e-class `UNIT_CLASS`, a sentinel outside the union-find that never participates in any merge. Asserting `R(a, b)` inserts the e-node `R(canon(a), canon(b))` into the appropriate mode-specific hashcons pointing to `UNIT_CLASS`. Querying `R(a, b)` is a hashcons lookup after canonicalizing the arguments.
 
-This encoding is zero-overhead: no additional machinery is needed. Relations over sort-typed arguments automatically benefit from the union-find's canonical representation — a query for `R(a, b)` where `a` and `c` have been unified will find entries for both under `R(canon(a), b)`.
+This encoding is zero-overhead: no additional machinery is needed. Relations over sort-typed arguments automatically benefit from the union-find's canonical representation: a query for `R(a, b)` where `a` and `c` have been unified will find entries for both under `R(canon(a), b)`.
 
 Plain relations use `hashcons_plain`. Commutative relations use `hashcons_c`. Set-valued relations use `hashcons_aci`. The mode-specific hashcons choice is part of the relation declaration.
 
@@ -16,7 +20,7 @@ Semi-naïve evaluation avoids re-deriving facts already computed in previous ite
 ΔRule_j: A1(full), ..., Aj-1(full), ΔAj(new only), Aj+1(full), ..., Am(full) → head
 ```
 
-The diff for atom `Aj` is the set of e-nodes added to `Aj`'s backing hashcons since the previous generation boundary — read directly from the `semi_persistent::containers::Vec` length difference, no bookkeeping required.
+The diff for atom `Aj` is the set of e-nodes added to `Aj`'s backing hashcons since the previous generation boundary, read directly from the `semi_persistent_containers` `Vec` length difference, no bookkeeping required.
 
 Correctness: the union of all delta rule results equals the set of new facts derivable in this iteration that were not derivable in the previous iteration. This is Theorem 4.1 of the egglog paper, and the proof carries over directly since the engine's generational diff is exactly the ΔDB in the semi-naïve algorithm.
 

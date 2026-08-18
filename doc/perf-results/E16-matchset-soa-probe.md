@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E16 — MatchSet (flat SoA) from the consumer's side — **postponed**
+# E16: MatchSet (flat SoA) from the consumer's side: **postponed**
 
 **Verdict: postponed. The flat store wins population by 10.5-14.3% but LOSES
 the apply-pattern read by 1.5% at 1k matches and 10% at 16k; the combined
@@ -11,18 +11,18 @@ not justify rewiring `apply` while match storage is no measured bottleneck
 (E2 already removed its allocation cost). Revisit if a workload is measured
 to carry large per-query match sets where population dominates, or if a
 column-order consumer (batched RHS instantiation over one variable at a
-time) becomes real — that access pattern is the one this layout is shaped
+time) becomes real: that access pattern is the one this layout is shaped
 for and the probe did not exercise it.**
 
-The hypothesis was that `MatchSet` — the stride-packed flat storage that has
-sat unused beside `MatchPool` since A2 — would pay off on the CONSUMER side:
+The hypothesis was that `MatchSet` (the stride-packed flat storage that has
+sat unused beside `MatchPool` since A2) would pay off on the CONSUMER side:
 `apply` reads every binding of every match, and one flat array per variable
 kind should stream better than per-match slots of nine vectors each.
 
 `benches/matchset_bench.rs`: both stores kept warm (`clear`, not drop;
 `MatchSet` gained the `clear` it lacked), populated from the same pre-built
 envs (4 node vars, 2 mults, one 10-element multiset rest), then read in
-apply order — per match, every node and mult binding plus the rest-slice
+apply order: per match, every node and mult binding plus the rest-slice
 walk, XOR/add sink.
 
 | benchmark | MatchPool | MatchSet | set vs pool |

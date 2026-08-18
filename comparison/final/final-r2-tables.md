@@ -1,6 +1,6 @@
 # Campaign r2 (archived)
 
-> Archived campaign. The current campaign is `final-r3-tables.md`.
+> Archived campaign. The current campaign is `final-r4-tables.md`.
 
 One campaign at one engine commit. Protocol as in `final-tables.md`:
 process-level wall time, 2 warmups + 10 runs, medians, egglog release CLI

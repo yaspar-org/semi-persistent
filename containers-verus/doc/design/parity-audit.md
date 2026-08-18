@@ -1,7 +1,9 @@
 # Feature-Parity Audit
 
-Method-by-method coverage of the verified `containers-verus` crate versus the
-production [`semi-persistent-containers`](../../../containers) crate.
+Method-by-method coverage of the verified `containers-verus` crate versus
+the unverified reference crate [`containers/`](../../../containers). A
+status record: every gap it lists is closed or recorded as a deliberate
+divergence.
 
 [Design Table of Contents](../design/00-table-of-contents.md)
 
@@ -35,7 +37,6 @@ the rest are deliberate. Everything else (`Vec`, `AppendOnlyVec`, `SparseSet`,
 |---|---|---|
 | `Map` / `MapToken` | **`SpMap`** / `MapToken` | *forced*: `Map` collides with `vstd::map::Map` (a spec type). Token name matches. |
 | `View` / `ViewIter` | **`VecView`** / **`VecViewIter`** | *forced*: `View` collides with vstd's `View` trait (the `@` operator). |
-| `BoolTagged` | **`BoolTagged`** | aligned (was briefly `BoolPair`; renamed to match, incl. field `tag` → `tagged`). |
 | *(e-graph `EClassEntry`)* | **`CircularList`** / `CircularListNode` | the class-membership ring lives in `egraph/src/classes.rs`, not `containers/`; given a descriptive container name here. |
 
 Verus-internal types with no production public equivalent (proof scaffolding or
@@ -59,7 +60,7 @@ diagnostic); **✗** absent.
 | `is_valid_token` + ForkHistory | ✓ | branch-cut safety: `is_valid` exec-walk proved == `fork_valid` spec; stale/cross-branch tokens rejected |
 | `View` / `ViewIter` iteration | ✓ | read-only handle + iterator, contracted |
 | `TRACK = false` | ✓ | proved observationally a plain `std::Vec`, zero diff-log overhead while unmarked |
-| `as_slice` | ◐ | `external_body`, no spec (a backend-specific fast path outside the persistence contract) |
+| `as_slice` | ✓ | contracted: `r matches Some(s) ==> s@ == self.view()` |
 | `total_bytes` / `tracking_bytes` / `heap_bytes` | ◐ | `external_body` capacity diagnostics; no spec content (production identical) |
 
 The Vec spec is, if anything, **stronger** than production: production never
@@ -111,22 +112,21 @@ explicit ghost ring-partition model. (This ports the e-graph's
 
 ## 3. Production features with NO verus counterpart
 
-Four items listed here as gaps in earlier revisions of this audit have since
-been closed; they are recorded below with their current home, because in-code
-comments and the design chapters still cite this section:
+Every item in this section is closed; each is recorded with its current
+home, because in-code comments and the design chapters cite this section:
 
-1. **`id.rs`: the `define_id7/15/31/63!` macros + their generated id types** —
+1. **`id.rs`: the `define_id7/15/31/63!` macros + their generated id types**:
    **closed**. `src/id_macros.rs` provides the family with full proofs, and
    `src/lib.rs` re-exports the generated `SparseSetId`/`UseListId`/`UseNodeId`.
    `DenseId31` remains the hand-written instance the niche proofs build on.
-2. **`IdFactory`** (sequential id allocation) — **closed**. `src/id_factory.rs`
+2. **`IdFactory`** (sequential id allocation): **closed**. `src/id_factory.rs`
    provides `IdFactory` plus `IdRangeError` (`alloc`/`try_alloc`/`count`).
-3. **`bitset.rs`** as a public `BitSet` type — **closed**. `src/bitset.rs`
+3. **`bitset.rs`** as a public `BitSet` type: **closed**. `src/bitset.rs`
    provides it, deliberately kept outside the container proofs; the *internal*
    packed-bit need is still met by the verified `CaptureBits` inside
    `ParallelStore`.
 4. **`sorted_cursor.rs`**: the `SortedCursor` trait and ordered cursor
-   iteration — **closed**. `src/sorted_cursor.rs` defines the trait and
+   iteration: **closed**. `src/sorted_cursor.rs` defines the trait and
    `src/sorted_vec_cursor.rs` verifies the galloping `SortedVecCursor` the
    e-graph's `seek` runs on.
 
@@ -146,35 +146,35 @@ carries its full model transition; in-order traversal and `seek` are proven soun
 the arena provably never overflows; `mark`/`restore` work. Insert-only, matching
 production (no `remove`).
 
-**Performance gaps, no soundness gap.** All latent — `egraph` never calls
-`from_sorted` and never instantiates `BPlusTreeSet` outside benches — but each is a
+**Performance gaps, no soundness gap.** All latent (`egraph` never calls
+`from_sorted` and never instantiates `BPlusTreeSet` outside benches), but each is a
 place where a *verified* method is materially worse than its production
 counterpart. A 1:1 body diff against `containers/src/bplus.rs` found three
 ([Design Ch. 10 §5](../design/10-bplus-tree.md), harness at
-`containers-conformance/examples/onesite_bplus.rs` — *not* `bulkload.rs`, which
+`containers-conformance/examples/onesite_bplus.rs`, *not* `bulkload.rs`, which
 understates gaps; see Ch. 11); all three are fixed, and a fourth, invisible to any
 body diff because it lives below the source, was found later and fixed too:
 
-- **The `S: SearchKind` parameter was never called — FIXED.** `grep -c 'S::'` over
+- **The `S: SearchKind` parameter was never called: FIXED.** `grep -c 'S::'` over
   the verified tree returned 0, against six production call sites. Five
   hand-written linear scans stood in for it, while two verified binary searches
   (`leaf_find_ge`, `find_child`) sat in the same file used only by `seek`. All five
   now dispatch to them. Random-order insertion went from 1.4-1.5x to **0.9-1.0x**
   on `bulkload.rs`, and the proofs got smaller. (That 0.9-1.0x reading was the
-  harness flattering us — on `onesite_bplus.rs` the same build was still ~1.3x,
+  harness flattering us: on `onesite_bplus.rs` the same build was still ~1.3x,
   which is what the fourth item below fixes.)
-- **`insert` had no append fast path — FIXED** (was 1.4-2.3x and growing with `n`,
+- **`insert` had no append fast path: FIXED** (was 1.4-2.3x and growing with `n`,
   now **1.0-1.1x**). Production caches `last_leaf` and appends in O(1) when the key
   extends the rightmost leaf, skipping the descent entirely. Not specific to bulk
-  building — it cost on *any* ascending insertion, the common case for id-keyed
+  building: it cost on *any* ascending insertion, the common case for id-keyed
   indexes. Verified via `last_leaf_ok` as a `wf` clause plus `lemma_append_last_wf`
   / `lemma_binds_append_last`; sound because the rightmost child has no separator
   above it, so growing it upward cannot break cross-node ordering.
-- **`from_sorted` looped `insert` instead of bulk loading — FIXED** (was 30-72x, now
+- **`from_sorted` looped `insert` instead of bulk loading: FIXED** (was 30-72x, now
   **−14.6%**, i.e. ~15% *faster* than production on `onesite_bplus`). It is a thin wrapper
   over `bulk_load`, a verified bottom-up loader: one pass per level into a fresh
   arena, no per-key `insert` and therefore no split cycle. Two intermediate steps got
-  it to 6.3x — the append fast path, then a batched whole-leaf append — and the
+  it to 6.3x (the append fast path, then a batched whole-leaf append), and the
   residual after those was entirely the split that min-occupancy forces at every leaf
   boundary, which building the levels directly removes. The loader partitions
   *balanced* rather than by `chunks(cap)`, because `tree_wf`'s non-root minimum
@@ -185,14 +185,14 @@ body diff because it lives below the source, was found later and fixed too:
   (`pos == count` in the *signature*). See
   [Design Ch. 10 §5.2.4](../design/10-bplus-tree.md) for the measurements, the three
   places the verified loader does *less* work than production, the proof structure
-  (one flat chain fact, the root/non-root invariant split) — and for why `bulkload.rs`
+  (one flat chain fact, the root/non-root invariant split), and for why `bulkload.rs`
   read this same code at a flattering 1.0x while the confound-free harness read +29%.
-- **The bisections had production's *shape* but not its *lowering* — FIXED** (pure
+- **The bisections had production's *shape* but not its *lowering*: FIXED** (pure
   descent was +15…+21%, now **~20% faster** than production). Production calls
   `slice::partition_point`, which uses `core::hint::select_unpredictable` internally
   and therefore compiles its base update to `cmovbe`. Our hand-written loop had the
   same unconditional-`size -= half` shape and *read* branchless as
-  `base = if lt { mid } else { base }` — but LLVM's if-conversion heuristic judged
+  `base = if lt { mid } else { base }`, but LLVM's if-conversion heuristic judged
   the compare predictable and emitted `ja`/`jmp`; an arithmetic mask folds back to
   the same branch. On shuffled keys that compare is a coin flip, mispredicting at
   ~half the levels of every descent. All four bisections now route the base update
@@ -200,11 +200,11 @@ body diff because it lives below the source, was found later and fixed too:
   the intrinsic); the tail step keeps a plain `if`, which lowers to `adc`. See
   [Design Ch. 10 §5.1.1](../design/10-bplus-tree.md).
 
-**How the root cause was pinned down — and first got wrong.** Not by comparing verus
+**How the root cause was pinned down, and first got wrong.** Not by comparing verus
 to production, which only yields ratios. By pricing each production feature against
 **production's own** baseline: production is the only implementation with *both*
 features, so measuring bulk-load vs ascending-insert vs shuffled-insert *within one
-binary* isolates each with zero cross-crate confound. Two shapes did the work —
+binary* isolates each with zero cross-crate confound. Two shapes did the work:
 production's ascending-insert cost is **flat** in `n` (34.70 → 36.89 ns/key from 10k
 to 1M, which is only possible if no descent is happening), and its bulk-load cost
 *falls* with `n`. The three independently-measured factors multiply back to the
@@ -212,26 +212,25 @@ observed total to three significant figures at two different `n`.
 
 The shuffled column was then over-read. At 0.80-1.03x on `bulkload.rs` it was taken
 to prove "the descent itself was never the problem, so recursion, bounds checks, and
-proof machinery cost nothing measurable" — a conclusion about *three* mechanisms
+proof machinery cost nothing measurable": a conclusion about *three* mechanisms
 drawn from *one* aggregate number, on the harness that understates gaps. On
 `onesite_bplus.rs` the descent was +15…+21%, and it was a real mechanism (the
 bisection's lowering, fourth item above). **A ratio near 1.0 bounds a sum, not each
-addend** — and only if you trust the harness that produced it.
+addend**, and only if you trust the harness that produced it.
 
-**But the *explanation* attached to that decomposition was wrong**, and it stayed
-wrong in these docs for a while: the bulk-vs-append column was called a
-complexity-class difference. Once the append fast path landed, both sides do O(n)
+**But calling the bulk-vs-append column a complexity-class difference is
+wrong** (a retracted explanation, kept so it is not re-derived). Once the append fast path landed, both sides do O(n)
 node visits, and production's own append loop is *still* 20-48x slower than
-production's own bulk load — two O(n) loops cannot differ by 40x for a complexity
+production's own bulk load: two O(n) loops cannot differ by 40x for a complexity
 reason. The actual mechanism is the **per-key whole-node copy** (`get_index`/
 `set_index` move 64-512 bytes in and out per key; priced in isolation, 20-25x an
 in-place slot write). **A correct factorization tells you which column the cost is
-in, not what that column is buying** — that distinction is the transferable lesson,
+in, not what that column is buying**: that distinction is the transferable lesson,
 and it is what turned a "needs a whole new proof" item into a 100-line one, since
 amortizing a copy needs far less than building a tree bottom-up.
 
 **The audit's question was too narrow.** This table asks "is this method
-verified?" — `from_sorted` answered yes while touching one node per key where
+verified?": `from_sorted` answered yes while touching one node per key where
 production touched one per leaf, and the missing fast path was invisible to both the
 proof and the property tests, since neither observes how many nodes were touched.
 The `SearchKind` case is sharper still: the *signature* matched production exactly,
@@ -242,18 +241,18 @@ Four habits follow, and the other containers deserve all four:
 
 1. **Diff the production body**, for fast paths and cached state, not just the
    signature and the contract.
-2. **Check that generic strategy parameters are actually dispatched to** — `grep -c
+2. **Check that generic strategy parameters are actually dispatched to**: `grep -c
    'S::'`. A pluggable-strategy A/B that shows *no* difference between impls is
    evidence neither one is running, not evidence they are equivalent.
 3. **To test a per-item cost, vary only that cost.** The first probe of the
    node-copy hypothesis swept node size across layouts, saw flat per-key cost, and
    called the hypothesis falsified. Invalid: bigger nodes copy more bytes per key
    but split proportionally *less* often, so the effects cancel and manufacture
-   flatness. Never vary a geometry parameter that other costs also depend on — the
+   flatness. Never vary a geometry parameter that other costs also depend on: the
    same failure mode as Ch. 11's positional confound, in a different disguise.
 4. **When a source-level optimization measures as no-change, check that it was
-   compiled.** A null result has two readings — the mechanism is innocent, or the
-   change never reached the machine code — and only disassembly separates them. A
+   compiled.** A null result has two readings (the mechanism is innocent, or the
+   change never reached the machine code), and only disassembly separates them. A
    branchless rewrite of the bisection was written, verified, benchmarked, measured
    at ±1%, and used to acquit branch prediction; the source was branchless and the
    object code never was. Diffing the two arms' asm for the *same* function
@@ -280,7 +279,7 @@ here.
   via the `gen_layout_u32!`/`gen_layout_u64!` macros), matching production's
   geometry.
 
-## 6. What the PR claims
+## 6. What is verified
 
 > Verifies the semi-persistent **vector** (exact diff-log reconstruction at
 > arbitrary mark nesting, incl. pop into a marked region; fork-history
@@ -303,8 +302,10 @@ here.
 > methods (`iter`/`get_mut`/key-count `len`) are omitted from otherwise-verified
 > containers.
 
-Per-module verified counts are in `cargo verus verify -- --time-expanded` output; the tally is 1471
-verified, 0 errors, 0 `admit`s/`assume`s across 31 module entries.
+Per-module verified counts are in `cargo verus verify -- --time-expanded`
+output; the invariant the CI job asserts is 0 errors and 0
+`admit`/`assume`, with the `external_body` counts pinned in
+`.github/workflows/verus.yml` and Ch. 2.
 
 ---
 [Design Table of Contents](../design/00-table-of-contents.md)

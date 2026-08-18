@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E15 — write rest bindings through to the match pools (D1) — **accepted**
+# E15: write rest bindings through to the match pools (D1): **accepted**
 
 **Verdict: accepted. −21.5% / −17.5% on ac10, −12.5% / −9.6% on ac6,
 reproducing within 0.5 points across two comparison runs; 42% fewer
@@ -12,13 +12,13 @@ At every leaf of the AC assignment search that carries a rest variable, the
 recursive matcher built the residual binding as a fresh `Vec` (a
 zero-size-hint `collect` through a filter, so a 4/8/16 growth walk at the
 measured mean residual of 9.9) and passed it to `push_mset`, which copied it
-into `Match::mset_pool` — the destination it could have been written to
+into `Match::mset_pool`, the destination it could have been written to
 directly. `doc/perf-dps.md` (D1) sized the site at 221 388 bindings per
 allocprobe run, one level below the child buffers E14 recycled.
 
 The change is two methods and two call sites: `Match::push_mset_residual`
 filters the residual straight onto the pool tail and records the span from
-the tail length; `push_set_residual` is the ACI twin (zero executions on
+the tail length; `push_set_residual` is the ACI counterpart (zero executions on
 these workloads, fixed for symmetry). The temporary, its growth walk, and
 the copy are gone; a warm pool makes the binding allocation-free.
 
@@ -43,8 +43,8 @@ calibration (30-41% allocation cut bought 13.5%) predicted low double
 digits; the larger realized win is consistent with the removed allocations
 sitting on the search's leaf path rather than its interior.
 
-The plain7 changes are NOT attributable to this mechanism — plain joins
-execute zero rest bindings — and plain7/naive's interval is sixteen times
+The plain7 changes are NOT attributable to this mechanism (plain joins
+execute zero rest bindings) and plain7/naive's interval is sixteen times
 wider than the ac ones. Read them as code-placement movement of the kind
 `containers-verus/doc/design/11-layout-parity.md` documents, not as part of
 this experiment's claim.

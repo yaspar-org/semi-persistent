@@ -1,12 +1,12 @@
-# Chapter 1 — Dense Identifiers and the `Tagged` Trait
+# Chapter 1: Dense Identifiers and the `Tagged` Trait
 
 [← Table of Contents](00-table-of-contents.md) · [Ch 2: Semi-Persistent Vectors →](02-semi-persistent-vectors.md)
 
 
 ## Motivation
 
-Many high-performance systems — e-graph engines, SAT solvers, constraint
-propagators, game-tree searchers — allocate objects in dense pools indexed
+Many high-performance systems (e-graph engines, SAT solvers, constraint
+propagators, game-tree searchers) allocate objects in dense pools indexed
 by small integers. These ids are used as array indices into flat vectors,
 with no pointer chasing and no hash lookups on the hot path.
 
@@ -112,7 +112,7 @@ and uses the tag bit to encode `Some/None, etc.
 | `Opt<T>` | "none": slot is absent |
 | `ListHead` | "empty list" flag |
 
-## `Opt<T>` — Tagged Nullable
+## `Opt<T>`: Tagged Nullable
 
 `Opt<T>` reuses `T`'s tag bit to encode `None`, wrapping a single
 `T::Repr`:
@@ -126,7 +126,7 @@ same bit for capture tracking that `Opt` uses for None, corrupting
 both. Instead, `Opt<T>` appears only as a field inside a struct that
 implements `Tagged` via a *different* field.
 
-## `BoolTagged<T>` — Out-of-Band Tag
+## `BoolTagged<T>`: Out-of-Band Tag
 
 For types that cannot offer a spare bit, `BoolTagged<T>` stores the tag as
 a separate `bool`. In that case we pay the padding overhead but can still

@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E18 — seek strategy: galloping, bisection, stride-hinted galloping — **galloping held, hinting rejected**
+# E18: seek strategy: galloping, bisection, stride-hinted galloping. **galloping held, hinting rejected**
 
 **Verdict: galloping stays, unchanged. Bisecting the remaining run never wins
 anywhere in the region the workloads occupy, and starting the gallop's ladder at

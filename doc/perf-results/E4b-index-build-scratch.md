@@ -2,23 +2,23 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E4b — index build allocations (A5) — **rejected, both halves**
+# E4b: index build allocations (A5): **rejected, both halves**
 
 A5 was two independent changes to `IndexStore::build_from`. Measured separately,
 neither survives:
 
-- **A5a — hoist the per-node `seen` scratch `Vec`.** No effect outside the noise
+- **A5a: hoist the per-node `seen` scratch `Vec`.** No effect outside the noise
   band. Rejected. (`seen` was later hoisted anyway, into the `IndexScratch` the
   round loop keeps for the four build streams: it costs nothing to carry there,
   and this file's number says not to expect anything from it.)
-- **A5b — build the maps as `SortedVec` and sort in place, so `finalize` stops
+- **A5b: build the maps as `SortedVec` and sort in place, so `finalize` stops
   rehashing every key.** A consistent 6-8% *regression* on the completion
   workload, reproduced outside criterion. Rejected.
 
 This file is also the one that caught a measurement error affecting the rows
-below — see "What criterion was reporting".
+below. See "What criterion was reporting".
 
-## A5a — hoist `seen`
+## A5a: hoist `seen`
 
 `build_from`'s variadic branch allocated `let mut seen = Vec::new()` per node to
 deduplicate that node's children. Hoisted above the loop and `clear()`ed per node.
@@ -44,13 +44,13 @@ The mechanism agrees. `allocprobe`, baseline → A5a:
 | `ac10/naive`   | 1 702 889 | 1 699 028 | 0.2% |
 
 `plain7` removes *nothing*, because the branch is only taken for variadic nodes
-and `plain7` has none — every node is `f/2`. On the AC rows it removes 0.2-0.6%.
+and `plain7` has none: every node is `f/2`. On the AC rows it removes 0.2-0.6%.
 A change that eliminates half a percent of allocations cannot produce 5%.
 
-## A5b — build as `SortedVec`, sort in place
+## A5b: build as `SortedVec`, sort in place
 
 `finalize` consumed each `FastMap<K, Vec<G>>` with `into_iter().collect()` to
-produce `FastMap<K, SortedVec<G>>` — rehashing every key to change the value
+produce `FastMap<K, SortedVec<G>>`, rehashing every key to change the value
 type. The change built the maps as the final type and sorted the buckets in
 place through `values_mut()`, which needs a hand-written `Default` for
 `SortedVec` (the derive would demand `G: Default`).
@@ -75,12 +75,12 @@ anything the change touches, and three hypotheses were tested and eliminated:
    `HashMap` iterator uses its size hint and lands on the same capacity class.
    Eliminated.
 2. **Allocation count.** A5b removes 4 allocations per build (the four
-   `collect()` tables) — `accompl64` 7972 → 7968. Not a mechanism for 8%.
+   `collect()` tables): `accompl64` 7972 → 7968. Not a mechanism for 8%.
 3. **Build cost.** `IndexStore::build` timed alone, min of 2000: `accompl64`
    70.4 µs baseline → **67.7 µs** under A5b. The changed code got 4% *faster*
    while the workload got 8% slower.
 
-So the regression is downstream of the build, in code A5b does not modify — the
+So the regression is downstream of the build, in code A5b does not modify: the
 `SortedVec` value type is now written through a different path, which changes the
 resulting `Vec`s' allocation addresses and hence the layout every later join
 probe reads. That is a layout effect, but a *durable* one rather than a
@@ -94,8 +94,8 @@ bottleneck, and its downside is a reproducible 8% on a shipped workload.
 
 The AC rows moved −4% to −5% for A5a alone, −4% for A5b alone, and −4% for both
 together. Three changes cannot each cause the same 4% and then not compound. What
-they share is not code but the fact that a rebuild happened, and — the part
-protocol item 6 did not previously cover — **a criterion delta on an AC row can
+they share is not code but the fact that a rebuild happened, and (the part
+protocol item 6 did not previously cover) **a criterion delta on an AC row can
 be an artifact of that size, not just the ±1% the README currently claims.**
 
 E1's completion regression established the check for the completion path and

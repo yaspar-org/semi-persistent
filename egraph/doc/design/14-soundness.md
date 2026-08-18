@@ -71,9 +71,9 @@ derives a subset of the entailed equalities, never a superset. The AC completion
 pass enlarges that subset toward the entailed set; with it off, the engine still
 decides every equality plain congruence reaches and merely misses some AC
 consequences (§3.3). Nothing it does assert becomes wrong. This is why completion
-can default off — and why a growth-budget abort mid-completion (the divergence
+can default off, and why a growth-budget abort mid-completion (the divergence
 backstop, reported as `CompletionOutcome::AbortedGrowthLimit`) leaves a sound,
-plain-congruence-closed state — without endangering any consumer that respects the
+plain-congruence-closed state, without endangering any consumer that respects the
 polarity above.
 
 ## 2. Soundness
@@ -183,7 +183,7 @@ monomial plus an `atomic` flag (AC chapter §9a). A single `min_monomial` slot p
 would be unsound in the presence of two AC operators: a class may hold monomials of two
 different AC operators at once (assert `a+b = a*b` and the class contains both a `+`-node
 and a `*`-node), each with its own minimum. One slot cannot hold both minima, so a
-`+`-rule could read the `*`-monomial as its RHS — a wrong closure, not merely a weaker
+`+`-rule could read the `*`-monomial as its RHS: a wrong closure, not merely a weaker
 one.
 
 The engine therefore stores the per-class minima as a per-op POOL row: one column per
@@ -193,7 +193,7 @@ element-wise, behind the `min_mono(op, class)` accessor (see
 `+` column, so the conflation hazard is structurally unrepresentable. The completion
 algorithm itself needs nothing further for multiple symbols: it already runs per-op
 (superposition and normalization filter on the rule's op), and the union-find handles
-the one cross-operator interaction — a constant equal to monomials in two operators is
+the one cross-operator interaction: a constant equal to monomials in two operators is
 just one e-class holding both nodes, with the same `find`, no fresh constant needed
 (Kapur's shared-constant case).
 

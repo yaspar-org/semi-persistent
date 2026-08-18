@@ -2,12 +2,12 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E8 — union-find path compression (S1) — **closed on its own gate**
+# E8: union-find path compression (S1): **closed on its own gate**
 
 S1 was framed as a study, not a recommendation: compare on-the-fly compression
 (status quo) against a systematic sweep after each `rebuild` and against a
-threshold sweep. Its gate was instrumentation first — hops per `find_const` plus a
-chain-length histogram — and **prototype the sweeps only if mean hops ≫ 1**.
+threshold sweep. Its gate was instrumentation first (hops per `find_const` plus a
+chain-length histogram) and **prototype the sweeps only if mean hops ≫ 1**.
 
 **Mean hops is 0.000 to 0.433, and the deepest chain observed anywhere is 2.**
 There is nothing for a sweep to compress. Closed without prototyping.
@@ -40,7 +40,7 @@ is why those rows are `find_const` only.
 
 Three things compound, and each is already in the code:
 
-1. **Union by rank** keeps height logarithmic in class size — and the classes here
+1. **Union by rank** keeps height logarithmic in class size, and the classes here
    are small, so log of them is 1 or 2.
 2. **On-the-fly compression in `find`** flattens every chain it walks, and `find`
    is called 2.7M times on `ac10/naive` against 3.0M `find_const` calls. The
@@ -48,7 +48,7 @@ Three things compound, and each is already in the code:
    continuously doing the work a sweep would do in bulk.
 3. **`rebuild` recanonicalizes eagerly.** Node children are rewritten to
    representatives every round, so the ids that later get looked up are mostly
-   already roots — which is exactly what the h = 0 column shows: 100% on
+   already roots, which is exactly what the h = 0 column shows: 100% on
    `ac10/naive`.
 
 The three candidate policies differ only in *when* chains get flattened. When the
@@ -59,7 +59,7 @@ O(n) pass per round to save at most one pointer hop on a tenth of the lookups.
 ## What this says about the concurrency constraint
 
 The plan noted that `find_const` deliberately does not mutate so it can run
-concurrently, and that this constraint stands. It does — and this measurement makes
+concurrently, and that this constraint stands. It does, and this measurement makes
 the constraint free rather than a tradeoff. The reason a non-mutating `find_const`
 is normally a cost is that it forgoes compression; here there is essentially
 nothing to forgo, since its mean is 0.000-0.433 hops without compressing anything.
@@ -71,10 +71,10 @@ Recorded here so that the design note survives the close.
 ## If this comes back
 
 The measurement is workload-dependent, and these workloads have small classes.
-A workload that merges large classes in a pattern union-by-rank handles poorly —
-in particular one that leans on `union_directed`, which explicitly overrides
+A workload that merges large classes in a pattern union-by-rank handles poorly
+(in particular one that leans on `union_directed`, which explicitly overrides
 union-by-rank and whose doc comment already warns that ranks can climb faster and
-`find` may be slower — could produce deeper trees. The probe is ~20 lines
+`find` may be slower) could produce deeper trees. The probe is ~20 lines
 (a hop counter in `find_const`/`find` plus a histogram dump); re-add it against
 the workload in question rather than assuming these numbers transfer.
 

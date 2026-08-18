@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Director bitmatrices for alpha-invariant e-graphs.
 //!
-//! See `doc/future/semi-persistent-director-bitmatrices.md` for the full design.
+//! See `egraph/doc/future/alpha-equivalence.md` for the full design.
 
 use core::fmt;
 use core::hash::Hash;

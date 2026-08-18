@@ -184,9 +184,9 @@ What we do and do not enumerate:
    multiplicity sub-count blowup is avoided, and branching is restricted to
    distributing unique residual elements among unbound variables.
 3. The `rest` variable absorbs the entire remainder in one binding. A
-   pattern `(+ ?x ..rest)` yields `O(distinct elements)` matches — bind `?x`
+   pattern `(+ ?x ..rest)` yields `O(distinct elements)` matches (bind `?x`
    to each distinct element, `rest` captures the rest as one multiset-typed
-   binding — not `O(2ⁿ)` over sub-multisets of the residual.
+   binding), not `O(2ⁿ)` over sub-multisets of the residual.
 
 So for a pattern with `k` unbound scalar variables against a node with `d`
 distinct children, the branching is the `k`-permutations of `d`, i.e.
@@ -205,8 +205,8 @@ from the equational theory:
 
 > Given a pattern `p` and a subject `s`, a match is a substitution `σ` with
 > `pσ =_AC s`, where `=_AC` is equality modulo associativity and
-> commutativity. The set of matches is well-defined — and finite, since the
-> AC-equivalence class of `s` is finite — before any matching algorithm is
+> commutativity. The set of matches is well-defined, and finite since the
+> AC-equivalence class of `s` is finite, before any matching algorithm is
 > written.
 
 Specialized here: `s` is an AC node with child multiset `M` over e-class
@@ -218,7 +218,7 @@ to a sub-multiset, and `pσ =_AC s` becomes the multiset equation
 ```
 
 We claim *soundness* against this relation: every `σ` that `DecomposeAC`
-emits satisfies the equation — its images, with multiplicities, plus the
+emits satisfies the equation: its images, with multiplicities, plus the
 `rest` binding sum to `M`, and every multiplicity constraint holds, so no
 spurious match is produced. This is the property we rely on, and the one that
 makes matching safe to drive rebuild, our matcher never fabricates a binding.
@@ -235,7 +235,7 @@ verification plan is where that would be taken up.
 
 One scope note, so the relation itself is not misread. The variables in `σ`
 range over what exists: an e-class id for a scalar, an existing sub-multiset
-for `rest`. A scalar variable is not quantified over implicit sub-sums —
+for `rest`. A scalar variable is not quantified over implicit sub-sums:
 matching `(+ ?x ?y)` against a node stored only as `+(a, b, c)` does not
 admit `?x = a+b`, because `a+b` is not an e-class id. That extension is AC
 *unification*, a strictly larger problem whose decision would require
@@ -243,7 +243,7 @@ materializing every sub-sum (the `O(3ⁿ)` blowup the multiset representation
 exists to avoid); Contejean and Conchon et al. (2012, §8) leave it aside.
 The entailed equalities this scope leaves out are recovered not by a larger
 matcher but by congruence closure in rebuild materializing the relevant
-sub-sum nodes — see
+sub-sum nodes; see
 [ac-congruence-completeness.md §5b](ac-congruence-completeness.md).
 
 ## Subset Matching (ACI operators)

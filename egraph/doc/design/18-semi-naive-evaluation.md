@@ -3,8 +3,8 @@
 [← Ch 17: Interpreter and Saturation Loop](17-interpreter.md) · [Table of Contents](00-table-of-contents.md) · [Ch 19: Anti-Unification →](19-anti-unification.md)
 
 **Status**: implemented. Select with `saturate_semi` / the
-`SaturationStrategy::SemiNaive` interpreter strategy / `--strategy
-semi-naive` on the CLI. The default remains naive; there is no
+`SaturationStrategy::SemiNaive` interpreter strategy / `--use-semi-naive`
+on the CLI. The default remains naive; there is no
 automatic fallback. Deferred: delta-size fallback, trigger pre-filter,
 and the pluggable B+tree full-index backend (see Open Questions).
 
@@ -43,7 +43,7 @@ then |M_0| ≤ |M_1| ≤ … ≤ |M_N|. The total match-discovery work is
 across rounds is just |M_N|.
 
 On a saturation with 100 rounds and 1M final matches, that's ~98%
-wasted work in the outer loop of e-matching — rediscovering matches
+wasted work in the outer loop of e-matching: rediscovering matches
 the engine has already applied.
 
 Semi-naive evaluation fixes this by running, each round, only the
@@ -84,7 +84,7 @@ by position:
 | `j > i`           | `full` (unrestricted)       |
 
 **Why this partitioning is sound and complete.** Every match has a
-well-defined "first new atom" — the smallest position `i` such that
+well-defined "first new atom": the smallest position `i` such that
 atom `i` is in `delta`. By construction, atoms `< i` are not in
 `delta` (they're in `full \ delta`). Variant `i` is the unique
 variant that matches this match:
@@ -99,8 +99,8 @@ variant that matches this match:
   Fails.
 
 Every match with at least one new atom is found by exactly one
-variant. Matches with zero new atoms — i.e., all atoms in
-`full \ delta` — are never found, which is correct: these are old
+variant. Matches with zero new atoms (i.e., all atoms in
+`full \ delta`) are never found, which is correct: these are old
 matches already emitted in prior rounds.
 
 The `full \ delta` restriction on atoms `< i` is non-negotiable.
@@ -110,7 +110,7 @@ duplicate emissions.
 
 ### Which Atoms Count as Positions
 
-The "k atoms" above are the **join-producing atoms** — those that
+The "k atoms" above are the **join-producing atoms**: those that
 scan an index to generate candidate nodes. In our `RAtom` enum these
 are `Plain`, `AExact`, `APrefix`, `ASuffix`, `ABoth`, `ACExact`,
 `ACSub`, `ACIExact`, `ACISub`, `Lit`, and `LitBind`. The built-in
@@ -160,7 +160,7 @@ every round** (`saturate::needs_naive_match`):
 ## Worked Example: Nested Patterns and Flattening
 
 The invariant above talks about k atoms in abstract. For our e-graph,
-atoms come from flattening nested patterns — so it's worth walking
+atoms come from flattening nested patterns, so it's worth walking
 through a concrete case to see how nesting interacts with the
 k-variant partition.
 
@@ -193,7 +193,7 @@ pattern variables:
 - Atom 0's `?rhs` ≡ atom 2's binding target.
 - Atom 1's `?y` ≡ atom 2's `?y` (non-linear join).
 
-After flattening, there is no "nested" atom anymore — there are three
+After flattening, there is no "nested" atom anymore: there are three
 atoms sitting in a flat list, joined by shared variables. **Semi-naive
 operates on this flat list**; it never sees the pattern tree.
 
@@ -239,7 +239,7 @@ outer-mul, it probes atom 1 and atom 2 using the
 
 Now the scheduler drives from `delta_by_op[add]` (atom 1's delta-
 restricted index). For each new add-node, it looks up its parents via
-`by_child_pos[(c, 0)]` — but with mode `FullMinusDelta`, so any
+`by_child_pos[(c, 0)]`, but with mode `FullMinusDelta`, so any
 parent mul that is itself in the current round's delta is skipped.
 Atom 2 is probed normally from full.
 
@@ -268,7 +268,7 @@ happen if the round added several fresh nodes that happen to align.
 - **Variant 2** rejects it: atom 0 must be in `full \ delta`, but
   `n_0 ∈ delta`. ✗
 
-The match is found exactly once, by variant 0 — the variant associated
+The match is found exactly once, by variant 0, the variant associated
 with its leftmost new atom (position 0).
 
 Now consider a mixed match where only atom 1 is new:
@@ -285,10 +285,10 @@ Again, found exactly once.
 
 ### Why the Upper Half Stays Unrestricted
 
-Why not symmetric — why not restrict *both* halves (lower and upper)
+Why not symmetric: why not restrict *both* halves (lower and upper)
 to `full \ delta` around the one delta atom?
 
-Consider `(n_0 ∈ full\delta, n_1 ∈ delta, n_2 ∈ delta)` — two new
+Consider `(n_0 ∈ full\delta, n_1 ∈ delta, n_2 ∈ delta)`: two new
 atoms, both at positions ≥ 1.
 
 With upper-half restriction (atom 2 forced to `full \ delta`):
@@ -301,7 +301,7 @@ With our actual rule (upper half unrestricted):
 - Variant 2: atom 0 ∈ full\delta ✓, atom 1 ∈ full\delta? `n_1 ∈ delta`. ✗
 
 So variant 1 correctly finds the match. Symmetric restriction would
-miss it entirely — no variant would catch it.
+miss it entirely: no variant would catch it.
 
 The asymmetry exists because the partition is defined by
 **leftmost new atom**. Variant `i` owns matches whose leftmost new
@@ -311,12 +311,12 @@ atom is at position `i`. For such a match:
   atom would be at some `j < i`, and the match belongs to variant
   `j`, not `i`).
 - Atom at position `i` is new by definition.
-- Atoms at positions `> i` can be anything — their newness is
+- Atoms at positions `> i` can be anything: their newness is
   *irrelevant to which bin this match falls into*, because they
   don't change what the leftmost new atom's position is.
 
 Restricting positions `> i` would further split each bin into
-sub-bins keyed on which higher positions are also new — that's
+sub-bins keyed on which higher positions are also new: that's
 `2^k` variants instead of `k`. Linearity is what makes the algorithm
 tractable.
 
@@ -336,11 +336,11 @@ evaluated.
 What "execution order" means here precisely: the scheduler emits a
 **fixed step sequence per variant per round**, chosen from that round's
 runtime cardinalities. It is *dynamic across rounds and variants* (each
-is scheduled afresh — see "Scheduling Is Dynamic, Every Round"), but it
+is scheduled afresh: see "Scheduling Is Dynamic, Every Round"), but it
 is *not* re-decided mid-traversal per partial match. It does not need to
 be: reordering atoms cannot change *which* matches a conjunctive query
 yields (the result set is order-invariant), only the cost of finding
-them — and within a chosen order, leapfrog already adapts to the actual
+them. Within a chosen order, leapfrog already adapts to the actual
 data per binding. So a single order picked from per-atom driver
 cardinalities captures the win; nothing is gained by re-deciding the
 order for each partial match.
@@ -350,20 +350,20 @@ from atom 1 (delta, tiny) first, even though atom 1 is "in the
 middle" of the pattern tree. It then follows join constraints
 upward to atom 0 and across to atom 2. The `FullMinusDelta`
 restriction on atom 0 applies regardless of whether the scheduler
-probed it first or last — it's a filter on atom 0's index, not an
+probed it first or last: it's a filter on atom 0's index, not an
 ordering constraint.
 
 ### The Payoff
 
 For this rule, naive matching each round scans `by_op[mul]` and
 `by_op[add]` at their full sizes. Semi-naive runs three variants,
-each with its driver restricted to that atom's delta index —
+each with its driver restricted to that atom's delta index,
 typically 1000× smaller than full. The total work per round drops
 proportionally, while still finding every new match exactly once.
 
 The flattener did the hard work of turning the pattern tree into a
 flat join problem. Once that's done, semi-naive is *oblivious to
-nesting* — it just picks which atom is delta-driven, using the same
+nesting*: it just picks which atom is delta-driven, using the same
 k-variant machinery that would apply to a non-nested rule with k
 independent atoms.
 
@@ -382,7 +382,7 @@ variant, and the scheduler drives from it.
 - Variant `i`'s driver: atom `i`, restricted to delta. Outer loop
   size `|delta|`.
 - Total outer-loop work per round: `k · |delta|` instead of `|full|`.
-- Savings factor per round: `|full| / (k · |delta|)` — typically
+- Savings factor per round: `|full| / (k · |delta|)`, typically
   100×–1000× on converging saturations.
 
 Note: the scheduler doesn't need to know about "delta" as a concept.
@@ -429,7 +429,7 @@ filtered step, applied only on atoms at positions `< i`.
 | Naive   | 20,000 | 3 × 8 = 24   | -                       | ~480,000   |
 
 **Effective speedup: ~15×.** Lower than the 25× raw outer-loop
-ratio because later variants pay more `FullMinusDelta` overhead —
+ratio because later variants pay more `FullMinusDelta` overhead,
 but still a dominant win.
 
 ### Wall-Clock Estimates
@@ -462,7 +462,7 @@ Fix `|full| = 100K`, k = 4. Vary `|delta|`:
 
 **Threshold for semi-naive to help**: `k · |delta| < |full|`, i.e.,
 `|delta| / |full| < 1/k`. For 4 atoms, that's 25%. Above that, the
-k-variant overhead exceeds the savings — at which point falling back
+k-variant overhead exceeds the savings, at which point falling back
 to the naive path is the right move (see Open Questions).
 
 For converging saturations where rounds add 0.1–1% new nodes,
@@ -515,7 +515,7 @@ saturations that reach a near-fixpoint long before converging fully.
 ### Caveats
 
 These numbers assume **uniform selectivity across atoms**. Real
-patterns have bottleneck atoms — one very rare op can drive the join
+patterns have bottleneck atoms: one very rare op can drive the join
 to near-linear in that atom's size, making naive already cheap and
 cutting semi-naive's advantage. Typical real workloads see 10–50×
 speedup in practice, not the theoretical 100×+ from uniform models.
@@ -535,10 +535,10 @@ Semi-naive requires three logical index flavors per index family
 | `delta`           | nodes new/changed this round  | rebuilt each round from the touched log         |
 | `full \ delta`    | old nodes only                | **derived view**; never materialized            |
 
-`full \ delta` is a **derived view** — never materialized. It is
+`full \ delta` is a **derived view**: never materialized. It is
 computed lazily by a `Difference` cursor *combinator* that is generic
 over any two `SortedCursor`s (so it works for `SortedVecCursor` today
-and `BPlusCursor` later — no backend coupling) and itself implements
+and `BPlusCursor` later, with no backend coupling) and itself implements
 `SortedCursor`, so leapfrog consumes it like any other cursor:
 
 ```rust
@@ -563,7 +563,7 @@ combinator yields exactly the full keys absent from delta. It is
 correct because leapfrog only ever seeks **monotonically forward**, so
 the delta sub-cursor sweeps forward in lockstep and never rewinds; the
 whole difference costs `O(|full| + |delta|)` across a scan. No third
-index is materialized, and the base cursors stay untouched — exclusion
+index is materialized, and the base cursors stay untouched: exclusion
 is layered on as a combinator, not baked into the cursor trait.
 
 It is built **only** for `full \ delta` atoms (`j < i`); full and delta
@@ -573,12 +573,12 @@ two cursor types coexist without an enum or trait object.
 ### The Delta Index
 
 The delta index exists for exactly one round. It's built from a
-**touched log** — an append-only list of node ids that were created,
+**touched log**: an append-only list of node ids that were created,
 recanonicalized, or members of a class absorbed by a merge during the
 round (the class-growth delta). (The same
 log has a second consumer: AC completion's incremental superposition
-watermarks it to superpose only critical pairs with a changed endpoint
-— so completion-materialized nodes flow into the matcher's next delta,
+watermarks it to superpose only critical pairs with a changed endpoint,
+so completion-materialized nodes flow into the matcher's next delta,
 and matcher-created nodes into completion's, through one mechanism.) At the
 end of each round:
 
@@ -593,7 +593,7 @@ end of each round:
 the two agree on every key and `delta ⊆ full` per key holds for the whole
 round. The canonicalization behind those keys is stored once, on `full`
 (`IndexStore::repr`), and every canonicalization the matcher performs reads
-it rather than the live union-find — including the ones inside a variant's
+it rather than the live union-find, including the ones inside a variant's
 `Difference` cursors, which would otherwise subtract a delta bucket from a
 full bucket that a mid-round merge had moved. Chapter 09, "Which Snapshot",
 states the contract and why it is what makes a variant's match count
@@ -614,12 +614,12 @@ favors contiguous memory.
 
 ### Global, Not Per-Cache
 
-The delta is stored **globally** — one delta `IndexStore` for the whole
+The delta is stored **globally**: one delta `IndexStore` for the whole
 e-graph, mirroring the global full `IndexStore`. It is *not* partitioned
 per node cache. This falls directly out of how indexing works today:
 
 - The full `IndexStore` is global and keyed by **crosscutting
-  attributes** — `by_op[op]`, `by_repr[repr]`, `by_child_pos[(repr,
+  attributes**: `by_op[op]`, `by_repr[repr]`, `by_child_pos[(repr,
   pos)]`, `by_contains[repr]`. It is built by scanning every node id
   `0..node_count` once. It is not organized by arity-class.
 - The node **caches** (`FixedArityCache` for arity 0–3 / commutative,
@@ -631,7 +631,7 @@ per node cache. This falls directly out of how indexing works today:
 
 So even though the touched *events* originate inside per-cache
 `recanonize_node` calls, a per-cache delta would have to be re-bucketed
-into the global crosscutting keys before matching could use it — buying
+into the global crosscutting keys before matching could use it, buying
 nothing. Instead:
 
 - **Origin (per-cache + global)**: each cache's `recanonize_node` pushes
@@ -657,7 +657,7 @@ are different from delta's:
   an incrementally-maintained backend (via `insert`) is the deferred
   alternative.
 - **Occasionally rolled back**: if the user calls `mark`/`restore`,
-  the full index must return to its earlier state — either by diff-log
+  the full index must return to its earlier state, either by diff-log
   replay or by bulk rebuild from the e-graph.
 
 This is where the backend choice becomes interesting.
@@ -665,7 +665,7 @@ This is where the backend choice becomes interesting.
 ## Backend Choice for the Full Index
 
 Today the full index is **Option A below**: `SortedVec<G>`, bulk-rebuilt
-each round — the same index the naive loop uses. Semi-naive's match-work
+each round, the same index the naive loop uses. Semi-naive's match-work
 savings are independent of this choice. Making the backend configurable
 (so the full index could instead be maintained incrementally) is
 **deferred**; the analysis here records the three candidates and why
@@ -677,7 +677,7 @@ microbenchmarks alone cannot settle.
 What the current `IndexStore` does. Zero incremental-maintenance cost,
 zero semi-persistence overhead. Pays O(|full|) per round to rebuild.
 
-- **Pro**: simplest to implement — no new machinery; regression path
+- **Pro**: simplest to implement: no new machinery; regression path
   against the existing naive loop.
 - **Pro**: perfectly sorted arrays with no tombstones, great constants
   for leapfrog outer iteration.
@@ -697,12 +697,12 @@ across rounds via the same touched-node log points that feed the delta
 index (`register_if_fresh` + the `recanonize_node` change check).
 Rebuilt from scratch on `restore` (no diff log to replay).
 
-- **Pro**: amortizes index maintenance across rounds — per-round cost
+- **Pro**: amortizes index maintenance across rounds: per-round cost
   is O(|delta|) instead of O(|full|). Matches the match-work savings
   from semi-naive on the rebuild side too.
 - **Pro**: cursor fast-path makes probes constant-time for small
   skips (~5 ns/seek in `seek_microbench`, ~8× faster than SortedVec at
-  1M entries) — and leapfrog is seek-heavy.
+  1M entries), and leapfrog is seek-heavy.
 - **Con**: `restore` triggers a full rebuild from the e-graph. Only
   costly if workloads backtrack often.
 - **Con**: slightly higher constant factor than SortedVec for tiny
@@ -712,7 +712,7 @@ Rebuilt from scratch on `restore` (no diff log to replay).
 ### Option C: `BPlusTreeSet<G, TRACK=true>`, semi-persistent
 
 Same as B, plus diff-log tracking. `restore` rolls the tree back in
-O(k) where k is the number of mutations since the mark — no rebuild
+O(k) where k is the number of mutations since the mark: no rebuild
 needed.
 
 - **Pro**: `restore` is O(k) where k is mutations since mark, not
@@ -739,7 +739,7 @@ microbenchmarks alone. The three axes that matter are:
    each round roughly doubles the graph.
 3. **Backtracking frequency.** Favours C when `mark`/`restore` is
    called often and the full index is large. Favours A or B when
-   backtracking is rare — the diff-log overhead doesn't pay for
+   backtracking is rare: the diff-log overhead doesn't pay for
    itself.
 
 Microbenchmarks answer parts of (1) but nothing about (2) or (3).
@@ -749,7 +749,7 @@ Those need a full saturation loop with representative rulesets.
 
 Option A is what ships: the full index is `SortedVec`, bulk-rebuilt each
 round. Making the backend a type parameter of `IndexStore` (a small
-`IndexBackend<G>` trait — `from_sorted`, `insert`, `cursor`, `len`),
+`IndexBackend<G>` trait: `from_sorted`, `insert`, `cursor`, `len`),
 building the end-to-end harness needed to choose between A/B/C honestly,
 and optionally exposing the choice as a user config are deferred and
 tracked in
@@ -775,7 +775,7 @@ and the semi-naive loop. Concretely (see `saturate.rs`):
   index with `IndexStore::build(eg)`, derives fresh stats with
   `IndexStats::from_index(&index)`, and `apply_rule` calls
   `schedule_with_stats(&rule.query, &stats)` per rule. The plan for a
-  rule in round N is built from round N's cardinalities — a rule whose
+  rule in round N is built from round N's cardinalities: a rule whose
   ops grew or shrank since round N−1 may get a different atom order.
 
 - **Semi-naive** (`saturate_semi`): each round rebuilds `full` (and, for
@@ -786,17 +786,17 @@ and the semi-naive loop. Concretely (see `saturate.rs`):
   plan from them. So the K variants of one rule may each order their
   atoms differently, and all of them may differ from the previous round.
 
-Nothing is memoized across rounds or across variants — re-scheduling is
+Nothing is memoized across rounds or across variants: re-scheduling is
 O(k²) in atom count (k typically 2–6), microseconds, and re-running it is
 strictly better than reusing a stale order as cardinalities shift. (Plan
 *caching* is an explicit non-goal; see Open Question 3.)
 
 The runtime information the scheduler consumes is the **driver-scan
-cardinality** of each atom — how many nodes that atom would iterate if it
-drove the join — read from the freshly-built index. That is the only
+cardinality** of each atom (how many nodes that atom would iterate if it
+drove the join), read from the freshly-built index. That is the only
 input the atom-ordering decision needs, and it is fully known at
 index-build time. (The complementary "how much does a *bound* element
-narrow a probe" quantity — `|by_contains[x]|` for a specific runtime `x` —
+narrow a probe" quantity, `|by_contains[x]|` for a specific runtime `x`,
 is *not* a scheduling input; it varies per match and is handled inside
 leapfrog at execution. See "Why This Composes with Semi-Naive".)
 
@@ -806,7 +806,7 @@ The scheduler is not a simple "order atoms by selectivity." It's a
 plan compiler that emits a flat sequence of `Step`s via an
 interleaved two-phase loop:
 
-**Phase 1 — Eager propagation.** Repeatedly scan all unused atoms
+**Phase 1: Eager propagation.** Repeatedly scan all unused atoms
 looking for ones that are already satisfiable given the current set
 of bound variables:
 
@@ -822,9 +822,9 @@ of bound variables:
 These are zero-cost or near-zero-cost steps. The eager pass fires
 them greedily until nothing more can be resolved.
 
-**Phase 2 — Pick one expensive atom.** When the eager pass stalls,
+**Phase 2: Pick one expensive atom.** When the eager pass stalls,
 pick the single cheapest remaining atom via `estimate_cost` (which
-reads the atom's cardinality from `IndexStats` — `atom_card[atom_id]`
+reads the atom's cardinality from `IndexStats`: `atom_card[atom_id]`
 if set for this flavor, else `op_card[op]`; see "Why This Composes").
 Emit its `Join` step (leapfrog over `ByOp ∩ ByChildPos` for any
 already-bound children), then `ExtractChild` for each unbound child.
@@ -853,7 +853,7 @@ With `|by_op[mul]| = 5000`, `|by_op[add]| = 20000`:
    - `ExtractChild(?x, ?lhs, 0)`
    - `ExtractChild(?y, ?lhs, 1)`
 
-Atom 1 never scans `by_op[add]` at full size — it only intersects
+Atom 1 never scans `by_op[add]` at full size: it only intersects
 within `?lhs`'s class. The eager pass caught it because `?lhs` was
 bound by atom 0's child extraction.
 
@@ -870,7 +870,7 @@ semi-naive-specific logic in the scheduler.
 This is necessarily **per-atom, not per-op**: two atoms sharing an op
 can have different modes in one flavor (e.g. `(f (f x y) z)`, variant 1:
 atom 0 is `full − delta`, atom 1 is `delta`, both op `f`). A per-op
-cardinality map cannot represent that — one number for `f` would mis-size
+cardinality map cannot represent that: one number for `f` would mis-size
 one of the two atoms. So `IndexStats` carries a per-atom override
 (`atom_card[atom_id]`) that `variant_stats` fills for every join atom;
 `estimate_cost` reads it, falling back to `op_card` (the naive default,
@@ -879,9 +879,9 @@ where every atom of an op reads the same full bucket).
 Note this answers "schedule each flavor from *actual* index cardinality"
 without any runtime/per-match machinery. The atom-ordering decision needs
 only the **driver-scan** cardinality (`|by_op[op]|` in the atom's flavor),
-which is known the moment the indexes are built. The *other* cardinality —
-how much a bound element narrows a probe, e.g. `|by_contains[x]|` for a
-specific runtime `x` — varies per match and is **not** a scheduling input:
+which is known the moment the indexes are built. The *other* cardinality
+(how much a bound element narrows a probe, e.g. `|by_contains[x]|` for a
+specific runtime `x`) varies per match and is **not** a scheduling input:
 leapfrog already drives from the smaller cursor at execution, for free, per
 binding. So flavor-aware ordering is a plan-time decision over per-atom
 driver cardinalities; nothing needs to be deferred into the matcher.
@@ -901,7 +901,7 @@ struct VariantIndex<'a, Cfg: EGraphConfig> {
 }
 ```
 
-This is **not a new abstraction** — it is exactly the context one
+This is **not a new abstraction**. It is exactly the context one
 variant needs: the two indexes and which atom is the delta atom.
 Equivalent to passing `run_variant(plan, full, delta, i)`.
 
@@ -916,21 +916,21 @@ atom's mode by comparing the step's `atom_id` to `delta_atom`:
 
 The plan is immutable and mode-agnostic. `LeapfrogJoin` is unchanged.
 The mode is realized purely in *which cursors get built* for that
-join — see "How a Variant Executes".
+join: see "How a Variant Executes".
 
 ### `atom_id` on `Step::Join`
 
 `Step::Join` carries a stable
-`atom_id: usize` — the atom's position in the compile-time numbering
+`atom_id: usize`, the atom's position in the compile-time numbering
 (left-to-right, bottom-up pattern traversal). The scheduler stamps it
 during planning (it knows which `RAtom` it's emitting). It is the bridge
 between the **fixed numbering** that defines the variants and the
 **execution order** the scheduler chooses per variant per round (next
 section). At execution it selects each atom's index mode (delta / full /
 full ∖ delta). At planning it also keys the per-atom cardinality
-(`atom_card[atom_id]`) that `estimate_cost` reads — so two same-op atoms
+(`atom_card[atom_id]`) that `estimate_cost` reads, so two same-op atoms
 in one flavor are costed independently. (It does *not* alter the shape of
-the steps emitted for an atom — only their cost and, at run time, their
+the steps emitted for an atom: only their cost and, at run time, their
 cursor flavor.)
 
 Note: when the eager pass resolves an atom whose node is already bound
@@ -938,7 +938,7 @@ Note: when the eager pass resolves an atom whose node is already bound
 its mode is determined the same way. This applies to **variadic** atoms
 (A/AC/ACI) too: when a variant drives from an enclosing atom and binds a
 variadic child via `ExtractChild`, `emit_variadic_join` must still emit a
-`ByRepr ∩ ByOp` re-join carrying the atom's id — otherwise the atom has
+`ByRepr ∩ ByOp` re-join carrying the atom's id: otherwise the atom has
 no `Step::Join` and its variant mode (notably `full ∖ delta`) is never
 applied, and the parent-driven variant re-discovers matches the
 delta-driven variants already own (a disjointness/efficiency regression,
@@ -959,7 +959,7 @@ for di in join_atom_indices(&rule.query) {
 }
 ```
 
-`join_atom_indices` is the join (relation-scanning) atoms only —
+`join_atom_indices` is the join (relation-scanning) atoms only:
 `Eq`/`EqGlobal`/`Lit` are excluded (no delta). A rule with no join atoms
 falls back to a single naive-view run so its matches are never missed.
 
@@ -973,21 +973,21 @@ the other atoms keep their full / full ∖ delta sizes.
 
 Unchanged:
 
-- `schedule_with_stats` — same algorithm. Sees stats, picks cheapest,
+- `schedule_with_stats`: same algorithm. Sees stats, picks cheapest,
   emits steps. It is simply *called more often* (per variant per round),
   not modified.
-- `LeapfrogJoin` — unchanged. Generic over `SortedCursor`; instantiated
+- `LeapfrogJoin`: unchanged. Generic over `SortedCursor`; instantiated
   with `Base` or `Difference<Base, Base>` per join.
-- The base cursors (`SortedVecCursor`, `BPlusCursor`) — unchanged.
+- The base cursors (`SortedVecCursor`, `BPlusCursor`): unchanged.
   Exclusion is a separate `Difference` combinator, never baked in.
-- The step shapes `emit_atom` produces for an atom — unchanged.
+- The step shapes `emit_atom` produces for an atom: unchanged.
 
 Changed (small, localized):
 
 - `IndexStats` has `atom_card: HashMap<atom_id, usize>` beside
   `op_card`; `estimate_cost` takes `atom_id` and reads `atom_card` first,
   falling back to `op_card`. This is the one cost-model difference from
-  naive — see "Why This Composes with Semi-Naive".
+  naive: see "Why This Composes with Semi-Naive".
 - `Step::Join` carries `atom_id`.
 - `run_join` has a mode-branch (it builds full / delta / `Difference`
   cursors for this atom, then runs the generic leapfrog).
@@ -1005,43 +1005,43 @@ traversal.
 
 Two orderings coexist and must not be conflated:
 
-- **Atom numbering** `0..k-1` — fixed at compile time by the pattern
+- **Atom numbering** `0..k-1`: fixed at compile time by the pattern
   traversal. The variant decomposition is defined *over this
   numbering*: variant `i` makes atom `i` delta, atoms `[0, i)` full ∖
   delta, atoms `(i, k)` full.
-- **Execution order** — chosen dynamically per variant by the
+- **Execution order**: chosen dynamically per variant by the
   scheduler from selectivity stats. May visit atoms in any order.
 
 These are independent. The bridge is `Step::Join.atom_id`, the atom's
 *stable number*. When execution reaches a join, its mode is computed as
-`compare(atom_id, i)` — a pure function of the number and the variant,
+`compare(atom_id, i)`: a pure function of the number and the variant,
 **independent of where that join sits in execution order**.
 
 Why this is correct regardless of order: a variant is a conjunctive
 query with a per-atom membership restriction (`n_i ∈ Δ`, `n_{j<i} ∉ Δ`,
 `n_{j>i} ∈` full). The *result set* of a conjunctive query is
-invariant under join-execution order — reordering changes speed, not
+invariant under join-execution order: reordering changes speed, not
 the set. So mode-by-number is sound for any order the scheduler picks.
 
 Execution order matters only for **speed**: we want to drive from the
 small (delta) cursor. We get that for free by feeding the scheduler
-delta cardinality for atom `i` (next subsections) — it then chooses to
+delta cardinality for atom `i` (next subsections): it then chooses to
 drive from atom `i`. But even if it drove from elsewhere, the variant
 would still produce exactly its slice of matches. Correctness rests on
 numbering; the scheduler only optimizes.
 
 ### Why a Whole Atom Shares One Mode
 
-An atom binds **one** node `n` — the leapfrog *intersection* of its
+An atom binds **one** node `n`: the leapfrog *intersection* of its
 lookups (`by_op[f] ∩ by_child_pos[(c,0)] ∩ …`). The mode restricts
 that one node: delta (`n` new), full∖delta (`n` old), or full.
 
 Restricting the *intersection* to/from `Δ` distributes over the
 operands. With `A = by_op[f]`, `B = by_child_pos[(c,0)]`:
 
-- delta: `(A∩Δ) ∩ B = (A∩B) ∩ Δ = (A∩Δ) ∩ (B∩Δ)` — restricting **one**
+- delta: `(A∩Δ) ∩ B = (A∩B) ∩ Δ = (A∩Δ) ∩ (B∩Δ)`. Restricting **one**
   operand or **all** gives the same set.
-- full∖delta: `(A∖Δ) ∩ B = (A∩B) ∖ Δ = (A∖Δ) ∩ (B∖Δ)` — likewise.
+- full∖delta: `(A∖Δ) ∩ B = (A∩B) ∖ Δ = (A∖Δ) ∩ (B∖Δ)`, likewise.
 
 So the mode is semantically a **property of the atom (its node)**, and
 applying it to one cursor would suffice. We apply it **uniformly to all
@@ -1056,13 +1056,13 @@ per-cursor rather than per-atom.
 
 The scheduler needs each atom's cardinality up front (`estimate_cost`
 reads the per-atom `atom_card`, which `variant_stats` fills). For a
-`full ∖ delta` atom — executed via a `Difference` cursor that filters on
-the fly — this looks problematic, but its size is known **analytically**,
+`full ∖ delta` atom (executed via a `Difference` cursor that filters on
+the fly), this looks problematic, but its size is known **analytically**,
 no scan:
 
 For every index key `k`, `delta[k] ⊆ full[k]`. Both indexes are built
 from the same post-rebuild e-graph, both skip `FLAG_SUBSUMED`, both are
-deduped — so every delta entry also appears in full. Therefore:
+deduped, so every delta entry also appears in full. Therefore:
 
 ```
 |full ∖ delta|[k]  =  |full[k]|  −  |delta[k]|
@@ -1079,7 +1079,7 @@ and free. `variant_stats(rule, i, full, delta)` uses this directly:
 | `>  i` (full)         | `|full.by_op[op]|`                        |
 
 So the scheduler sees a tiny number for the delta atom and drives from
-it, and an accurate (smaller) number for full ∖ delta atoms — all from
+it, and an accurate (smaller) number for full ∖ delta atoms, all from
 length arithmetic, never touching a cursor. The value is keyed by **atom**
 (`atom_card[j]`), not by op, so same-op atoms in one flavor are sized
 independently.
@@ -1107,13 +1107,13 @@ The touched log is append-only per round, cleared at round
 boundaries, and materialized into delta sorted-vecs at the start of
 each match phase. Mechanically it is a scratch `Vec<Cfg::G>` field on
 `EGraph`, exactly like the existing `collisions`, `g_buf`, and
-`mset_buf` fields — cleared at the start of a round and threaded by
+`mset_buf` fields: cleared at the start of a round and threaded by
 `&mut` into `recanonize_node`.
 
 ### Not To Be Confused With `has_history` (Proofs)
 
 The cache `recanonize_node` methods already do a copy-on-first-
-recanonicalize **for proof reconstruction** — unrelated to semi-naive.
+recanonicalize **for proof reconstruction**, unrelated to semi-naive.
 The touched-log push co-locates with it (both sit right after the
 no-change early-return) but the two are independent and behave
 differently:
@@ -1126,7 +1126,7 @@ differently:
 | condition | `PROOFS && !has_history()` | unconditional |
 | frequency | **once per node, ever** (first recanonicalize) | **every round** the node's canonical form changes |
 
-The touched-log push is **not** conditioned on `has_history()` — a node
+The touched-log push is **not** conditioned on `has_history()`: a node
 that changes in three different rounds must appear in the delta three
 times, once per round, whereas its original is saved to the proof
 history only on the first recanonicalize. They share only the
@@ -1148,7 +1148,7 @@ The first two conditions are sufficient for correctness: the semi-
 naive join enumerates all matches involving at least one "new this
 round" atom, where "new" means "in delta." Any match discoverable
 this round but not last round must involve at least one node whose
-canonical form differs from last round — and that node is captured
+canonical form differs from last round, and that node is captured
 by one of the two conditions.
 
 Being a *superset* is fine (finding false-positive deltas causes
@@ -1172,30 +1172,22 @@ The touched log is round-local scratch, not part of the persistent
 e-graph state. It is a plain `Vec<Cfg::G>` (no `TRACK` parameter):
 cleared at every round boundary and on `restore`. Because matching
 for a round happens entirely between rebuild and the next round
-boundary, the log never needs to survive a `mark`/`restore` — after a
+boundary, the log never needs to survive a `mark`/`restore`: after a
 restore, the loop simply starts the next round with an empty log and
 repopulates it during the following rebuild. No semi-persistent
 coordination is required.
-
-`RoundBoundary` (the snapshot of cache lengths) is a value type. The
-saturation loop owns it. It doesn't need to be semi-persistent because
-after a restore, the loop would recompute it from the restored cache
-lengths anyway.
 
 ## Implementation Status
 
 This design is **implemented**: `saturate_semi` in `egraph/src/saturate.rs`,
 selectable via `Interpreter::set_strategy(SaturationStrategy::SemiNaive)` and
-the `--strategy semi-naive` CLI flag (default is naive — no behavior change for
-existing callers). The phased build history (ordered tasks, the required
-soundness tests, and how they were sequenced) is preserved in the branch's
-commit log.
+the `--use-semi-naive` CLI flag (the default is naive).
 
 This chapter is the **rationale and correctness** reference (why the
 decomposition is sound, how it composes with flattening and the
 scheduler, where the savings come from). Work intentionally left for
-later — the configurable B+tree index backend, the delta-size fallback,
-the trigger pre-filter, and the end-to-end performance harness — is
+later (the configurable B+tree index backend, the delta-size fallback,
+the trigger pre-filter, and the end-to-end performance harness) is
 tracked in
 [`../future/semi-naive-deferred-work.md`](../future/semi-naive-deferred-work.md).
 
@@ -1208,7 +1200,7 @@ tracked in
 
 2. **Cost model for `FullMinusDelta`.** The filter adds an
    `O(log |delta|)` check per step. Does the scheduler need to account
-   for this when estimating costs? Probably not at first — delta is
+   for this when estimating costs? Probably not at first: delta is
    small enough that the filter cost is dominated by the underlying
    full-cursor cost. Revisit if profiling says otherwise.
 
@@ -1219,7 +1211,7 @@ tracked in
    re-scheduling; add caching only if measurement justifies it.
 
 4. **Trigger filtering.** A `root_ops: HashSet<O>` per `PreparedRule`
-   could skip rules whose join atoms' ops have no delta this round — a
+   could skip rules whose join atoms' ops have no delta this round: a
    cheap pre-filter that avoids the entire variant loop for many rules
    when the delta is sparse. Worth implementing as a hardening step now
    that the core fan-out is validated; see
@@ -1228,7 +1220,7 @@ tracked in
 5. **Delta size bounds.** If a single round's merge cascade
    recanonicalizes a large fraction of the e-graph, `|delta|`
    approaches `|full|` and the semi-naive savings vanish. Should the
-   loop fall back to the naive path in that case? Probably — with a
+   loop fall back to the naive path in that case? Probably, with a
    threshold like `|delta| > α · |full|` for some α ∈ (0, 1).
    Design TBD.
 
@@ -1244,16 +1236,16 @@ tracked in
    still does the precise multiplicity/position check). `emit_variadic_join`
    takes the atom's element `PatVar`s and adds one `ByContains { child }`
    lookup per bound element. Match work is now independent of the variadic op's
-   total node count — witnessed by `by_contains_narrows_variadic_driver`
+   total node count: witnessed by `by_contains_narrows_variadic_driver`
    (match-step instrumentation), and soundness across A/AC/ACI under both
    strategies (incl. `PROOFS=true`) by the differential suite.
 
    `estimate_cost` accounts for the narrowing: a variadic atom is discounted
-   by one halving per bound element (`cost_discounted`), the same heuristic
+   by one halving per bound element, the same heuristic
    `Plain`/`AExact` use for bound children via `by_child_pos`. So the scheduler
    sees a fully-bound variadic atom as cheap and drives from it, instead of
-   mis-costing it as a full `by_op` scan. The discount is a plan-time heuristic
-   — it cannot read the true runtime `by_contains[e]` slice size (which depends
+   mis-costing it as a full `by_op` scan. The discount is a plan-time heuristic:
+   it cannot read the true runtime `by_contains[e]` slice size (which depends
    on `e`'s class-rep), but it correctly orders bound vs. unbound atoms. Tests:
    `bound_element_discounts_variadic_cost`,
    `scheduler_drives_variadic_from_bound_element`.
@@ -1261,7 +1253,7 @@ tracked in
 ## Testing Strategy
 
 Correctness is established by **differential testing** against the
-naive path — the same rules and input run both ways, with semi-naive
+naive path: the same rules and input run both ways, with semi-naive
 required to reach the same result. As built:
 
 - **Observational equivalence** (the core check): build two `EGraph`s
@@ -1273,7 +1265,7 @@ required to reach the same result. As built:
   rule pool, naive vs semi-naive, asserting the partition agrees
   (default 512 cases; verified to 5000).
 - **Whole-corpus differential**: every `.egg` integration test runs
-  under *both* strategies and must reach the same `EXPECT` outcome — so
+  under *both* strategies and must reach the same `EXPECT` outcome, so
   semi-naive is checked against naive across the entire program corpus
   (arithmetic, AC multiplicity, ACI, extraction, folding, subsumption,
   globals, push/pop) for free.
@@ -1302,9 +1294,9 @@ required to reach the same result. As built:
 
 Note: a strict *structural isomorphism* check is **not** used as the
 differential oracle. Node count and per-class node multiset are
-order-dependent — the append-only node store and merge-representative
+order-dependent (the append-only node store and merge-representative
 choice cause two equivalent runs to materialize different numbers of
-congruent transient nodes — so the valid invariant is the equivalence
+congruent transient nodes), so the valid invariant is the equivalence
 *partition*, not structural identity. (The randomized proptest
 surfaced exactly this.)
 
@@ -1314,12 +1306,12 @@ also the prerequisite for the backend-selection sweep above.
 ## References
 
 - Abiteboul, Hull, Vianu, *Foundations of Databases* (1995), Chapter
-  13 — the canonical treatment of semi-naive evaluation in Datalog,
+  13: the canonical treatment of semi-naive evaluation in Datalog,
   including why built-in predicates are excluded from the
   decomposition.
 - Zhang, Z. et al. "Better Together: Unifying Datalog and Equality
-  Saturation" (PLDI 2023) — modern application to e-graph engines.
-- [`../future/semi-naive-deferred-work.md`](../future/semi-naive-deferred-work.md) — the remaining,
+  Saturation" (PLDI 2023): modern application to e-graph engines.
+- [`../future/semi-naive-deferred-work.md`](../future/semi-naive-deferred-work.md): the remaining,
   intentionally-deferred work (configurable index backend, delta-size
   fallback, trigger pre-filter, performance harness).
 

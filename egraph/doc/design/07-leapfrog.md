@@ -8,9 +8,9 @@
 Pattern matching in an e-graph is a multi-way join. The pattern
 `(f (g x) (h x))` produces three constraints:
 
-1. `by_op(f)` — all f-nodes
-2. `by_child_pos(class_of_g_node, 0)` — parents with this child at pos 0
-3. `by_child_pos(class_of_h_node, 1)` — parents with this child at pos 1
+1. `by_op(f)`: all f-nodes
+2. `by_child_pos(class_of_g_node, 0)`: parents with this child at pos 0
+3. `by_child_pos(class_of_h_node, 1)`: parents with this child at pos 1
 
 The answer is the intersection of these sorted sets. A naive nested
 loop is O(n²) for a 2-way join. Leapfrog triejoin computes the
@@ -67,13 +67,13 @@ until it lands on or past the target, then bisects the bounded window that
 doubling produced. Cost is O(log *d*) in the distance actually advanced rather
 than O(log *n*) in the list length, and since *d* ≤ *n* it is never
 asymptotically worse. That matters because leapfrog's seeks are overwhelmingly
-short — a majority advance by at most one element — so a full binary search
+short (a majority advance by at most one element), so a full binary search
 paid 5-8 probes to move one position
 (`doc/perf-results/E7-galloping-seek.md`). The total work is proportional to the
 output size times log *n*, which is worst-case optimal for the AGM bound on join
 output; galloping improves the constant, not that bound.
 
-That choice was re-measured on the arena layout the index has since R2, together
+That choice was re-measured on the index's arena layout, together
 with the one alternative the join has enough information to compute: starting the
 ladder at an estimated stride rather than at 1, since the expected advance
 distance is the ratio of the two intersecting cursors' remaining lengths and is
@@ -92,9 +92,9 @@ control.
 
 The seek is verified, and it is the verified code that runs: `index.rs`
 re-exports `containers-verus`'s `SortedVecCursor` rather than defining one, so
-the proof — it lands on the first key ≥ the target and skips no present key, for
-every list and every target — covers what ships. The swap was measured
-performance-neutral end-to-end
+the proof (it lands on the first key ≥ the target and skips no present key, for
+every list and every target) covers what ships. Re-exporting the verified cursor
+is performance-neutral end-to-end
 ([containers-verus Ch. 12](../../../containers-verus/doc/design/12-sorted-vec-cursor.md) §7a).
 `SortedCursor for SortedVecCursor` is therefore implemented in that crate, not
 here; `leapfrog.rs` carries no cursor impl of its own.

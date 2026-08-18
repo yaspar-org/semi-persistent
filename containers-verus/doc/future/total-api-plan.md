@@ -1,7 +1,7 @@
 # Total public API: no partial function leaves the crate
 
 The target property: the public surface of `containers-verus` contains only
-total functions. A function with a `requires` clause is partial — Verus erases
+total functions. A function with a `requires` clause is partial: Verus erases
 the clause at runtime, so an unverified caller that violates it gets whatever
 the body does, which today ranges from a clean panic (index bounds on `std`
 vecs) through silently wrong answers (`SortedVecCursor::new` on unsorted
@@ -13,7 +13,7 @@ type system rather than of an audit.
 The mechanism throughout: a partial verified core (`pub(crate)`), and a total
 public shell. Each shell function evaluates a verified exec counterpart of the
 core's precondition and branches; Verus proves the branch discharges the
-core's `requires`, so the check and the contract cannot drift — the exact
+core's `requires`, so the check and the contract cannot drift: the exact
 failure mode that produced the `exec_tnum` divergence. Wrappers return
 `Result<_, ContainerError>` for operational exhaustion; contract violations
 that indicate caller bugs keep panicking guards, now unreachable from outside
@@ -34,7 +34,7 @@ Phases 1–4 drain the allowlist to empty; the gates then hold unconditionally.
 
 **1. The six audited gaps**, closed without API redesign:
 `bplus_layout` primitives and the `NodeLayout` accessors over them to
-`pub(crate)` (contract proptests move in-crate — the only UB-capable external
+`pub(crate)` (contract proptests move in-crate, the only UB-capable external
 surface); `SortedVec.data` private behind sorted/sorting constructors;
 `DenseId31/63::new` guarded like their `define_id*!` counterparts; inherent
 `SortedVecCursor::step` renamed `step_unchecked` and `pub(crate)` (inherent
@@ -43,12 +43,12 @@ resolution silently bypassed the guarded trait impl); production
 production `from_sorted` gains the sortedness `debug_assert` that
 `containers-verus/src/bplus.rs`'s doc comment falsely claims exists.
 
-**2. Pilot on `Vec`** — the hot-path stress case, so the open perf question
+**2. Pilot on `Vec`**: the hot-path stress case, so the open perf question
 resolves first. `ContainerError` (`non_exhaustive`: `CapacityExhausted`,
 `DepthLimit`, `ForkLimit`, `InvalidToken`, `NotSorted`, `SameRing`,
 `IndexOutOfBounds`); exec precondition counterparts (`can_mark`, `can_push`) with
 `ensures b == spec`; `try_` wrappers proved total; and the reservation
-witness for hot loops — `reserve(n) -> Result<PushBudget>` checked once,
+witness for hot loops: `reserve(n) -> Result<PushBudget>` checked once,
 `push_within(x, &mut budget)` total and branch-free, the bound ghost-carried
 by the witness. Exit criterion is a measured `perf_gate` row for the shell
 path within the migration ceiling on the baseline machine; if the witness
@@ -85,7 +85,7 @@ migrating a consumer would break the e-graph build mid-history):
   add, insert, add_singleton, from_sorted, …): the `try_` sibling exists;
   the core goes `pub(crate)` and the e-graph's few, cold call sites become
   `try_*().unwrap()` with a one-line justification (the consumer asserting
-  its own invariant — the audit's per-site arguments become visible code).
+  its own invariant; the audit's per-site arguments become visible code).
 - *Index/capacity family* (get, set, len, push with the deferred trap, …):
   hot-path, panic-parity with production, already total-with-panic in
   behavior. These convert IN PLACE: drop the `requires`, make the check an
@@ -110,7 +110,7 @@ the misuse suite. Trust ledger and design docs move in the same commits.
 The allowlist stands at 35, every entry in a named floor class with its
 argument recorded in the list header: uninterp type-class obligations (no
 exec counterpart is expressible), unreachable receivers (store constructors are
-pub(crate) — compiler-enforced), hot sorted-input contracts (an O(n) check
+pub(crate), compiler-enforced), hot sorted-input contracts (an O(n) check
 would sit on the join/search hot path; debug builds assert), the
 witness-pending trio (ring-id witness, snapshot-wf archival), and the
 measured-decline NodeLayout calculus (refuse-branches would reinstate the

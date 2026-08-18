@@ -62,10 +62,10 @@ Acceptance: math-microbenchmark rules encoding under 1 s with no
 hand-pinned orders (measured headroom says ~0.89 s); the full egg fixture
 suite green; the benchmark equivalence check of `comparison/` reproduced.
 
-**Done (2026-08-15).** `IndexStore::fanouts` measures the three access
-paths per round and `schedule::estimate_cost` multiplies one measured
-fraction per bound key. Match steps on math-microbenchmark, the
-load-independent measure, over the same eleven iterations:
+`IndexStore::fanouts` measures the three access paths per round and
+`schedule::estimate_cost` multiplies one measured fraction per bound
+key. Match steps on math-microbenchmark, the load-independent measure,
+over the same eleven iterations (measured 2026-08-15):
 
 | encoding, strategy | before | after | ratio |
 |---|---|---|---|
@@ -74,16 +74,17 @@ load-independent measure, over the same eleven iterations:
 | native, naive | 3,074,117 | 3,074,106 | 1.00x |
 | native, semi-naive | 198,571,597 | 3,167,101 | 62.7x |
 
-The rules encoding runs in 0.89 s against 10.7 s measured on this change
-alone, and the comparison pilot re-run after `registry: memoize
-completion_column` landed puts it at 747.8 ms against egglog's 523.9 ms in
-the same run, 1.4x from 22.7x. Semi-naive under native AC was the second
-defect the constants fixed: it cost 64.6x naive's match steps on that
-encoding and now costs 1.03x, from the same mispricing on `by_contains`
-rather than `by_child_pos`.
+The rules encoding runs in 0.89 s against 10.7 s measured on the
+constants alone; with `OpRegistry::completion_column` memoized, the
+comparison pilot measures 747.8 ms against egglog's 523.9 ms in the same
+run, 1.4x against the 22.7x measured before the constants. The constants
+also fix semi-naive under native AC, a second defect from the same
+mispricing (on `by_contains` rather than `by_child_pos`): it costs 1.03x
+naive's match steps on that encoding, where the mispriced planner cost
+64.6x.
 
-The backward-distributivity rule no longer drives from a `Mul` atom into a
-`Mul`-`Mul` join, which is what the acceptance asked for, but it does not
+The backward-distributivity rule does not drive from a `Mul` atom into a
+`Mul`-`Mul` join, which is what the acceptance asked for, and it does not
 drive from the `Add` atom either. It scans `Mul`, the smaller relation, and
 joins `Add` second through `by_child_pos`, which leaves the second `Mul` a
 `by_repr` re-join within the class the `Add` bound:
@@ -182,16 +183,17 @@ mechanism that neutralizes skew: hub bindings and leaf bindings get
 different drivers automatically, per binding, with no cost model at all.
 S1 fixes the average; S3 fixes the variance.
 
-**Landed 2026-08-16: the operator restriction is chosen per binding.** The
-first per-binding choice in the seek is not which iterator drives but whether
-a `ByOp` lookup joins the ring at all. `790ba05` demoted it to a per-candidate
-operator test whenever the atom had another lookup, unconditionally, and
-measured 19% of cycles on math-microbenchmark. The demotion is right when the
-candidate set is small and wrong when the operator relation is: the test costs
+**The operator restriction is chosen per binding.** The first
+per-binding choice in the seek is not which iterator drives but whether
+a `ByOp` lookup joins the ring at all. Whenever the atom has another
+lookup, the restriction can run as a per-candidate operator test instead
+of joining the ring; applied unconditionally, the test measured 19% of
+cycles on math-microbenchmark. The test is right when the candidate set
+is small and wrong when the operator relation is: the test costs
 `m` loads into the round's `op` table whatever the intersection turns out to
 be, while the operand costs `min(m, n)` leapfrog iterations, so a hub class
 with 262 144 parents read against a 26-node relation runs 600x slower under
-the test than under the operand. `run_join` now reads both lengths before it
+the test than under the operand. `run_join` reads both lengths before it
 opens either cursor: `m`, the smallest of the atom's other buckets, and
 `n = |by_op[op]|`. Both are `len` calls on buckets the join is opening anyway.
 It takes the test when
@@ -268,9 +270,9 @@ pinning either mechanism returns the same matches; both are timing-free and run
 in every build profile. `ematch_op_filter::adaptive_policy_is_within_1_2x_of_the_better_mechanism`
 holds the policy to within 1.2x of the better mechanism at both extremes and
 runs only under release codegen, following the binary-search canary in
-`containers-conformance`. Match steps and final node counts are identical to
-`e2eb260` on all twenty programs under `comparison/` in both the naive and the
-semi-naive driver.
+`containers-conformance`. The policy leaves match steps and final node
+counts unchanged on all twenty programs under `comparison/`, in both the
+naive and the semi-naive driver (checked 2026-08-16).
 
 ## S4. Per-binding atom scheduling
 
@@ -280,7 +282,7 @@ requires moving from LFTJ's fixed variable order to stage-structured
 execution. That argument is right about stages and wrong about atoms. An
 atom's join binds one variable, and which atom binds next is a choice the
 executor can make as cheaply at depth 5 as the planner makes it at compile
-time — the state it needs is which atoms are used and which variables are
+time: the state it needs is which atoms are used and which variables are
 bound, two masks. The atom order is also the part of the plan every
 measurement in this chapter is about.
 
@@ -303,8 +305,8 @@ executor runs the two phases of the scheduling loop (chapter 08) at each
 depth, against the environment rather than against the round's averages:
 the eager pass to fixpoint, then the unused atom whose join opens the
 shortest bucket under the current bindings. The price is a `len` on each of
-the atom's lookups — `by_repr[env[node]]`, `by_child_pos[(env[child], pos)]`,
-`by_contains[env[elem]]`, `by_op[op]` — resolved in the slice the atom's
+the atom's lookups (`by_repr[env[node]]`, `by_child_pos[(env[child], pos)]`,
+`by_contains[env[elem]]`, `by_op[op]`), resolved in the slice the atom's
 semi-naive mode reads, and it is a bound on the candidates the leapfrog
 intersection can propose, exact when the join has one lookup. Ties keep the
 lowest atom index, so the choice is a function of the bindings and the atom
@@ -312,12 +314,12 @@ numbering. Nothing else changes: each atom still lowers through `emit_atom`,
 so an AC atom's `ExpandA`/`DecomposeAC` sequence stays one block, and the
 delta restriction is still per atom and position-independent
 (`VariantIndex::mode` reads the compile-time numbering), which
-`saturate::variants_disjoint_and_complete` now asserts under both modes.
+`saturate::variants_disjoint_and_complete` asserts under both modes.
 
 Two implementation decisions worth recording. **Lowering is memoized per
 `(atom, bound-mask, used-mask)`**, because `emit_atom`'s output is a
-function of exactly those and a run reaches few of them — a handful for a
-three-atom rule — so the blocks are lowered once and re-entered by refcount
+function of exactly those and a run reaches few of them (a handful for a
+three-atom rule), so the blocks are lowered once and re-entered by refcount
 thereafter; the memo is a linear-scanned vector, since comparing three words
 over a few entries beats hashing one on the per-partial-match path. **The
 choice is re-made per binding, not batched.** Batching every B bindings was
@@ -351,8 +353,8 @@ operator-restriction canary above.
 **Where it does not.** The `fan = 1` row is the honest one: the two orders
 cost the same steps, the choice is made 1 024 times for nothing, and the run
 is 1.4x slower. The same shows on the workload S1 was fitted to, where the
-plan-time order is already good — math-microbenchmark, medians of fifteen
-interleaved runs, ranges in brackets:
+plan-time order is already good (math-microbenchmark, medians of fifteen
+interleaved runs, ranges in brackets):
 
 | encoding | steps off | steps on | wall off | wall on |
 |---|---|---|---|---|
@@ -371,20 +373,21 @@ shipped middle ground: flat rules keep the static plan and skip the
 per-binding price, skewed rules pay it where the fan-out table says it
 buys steps.
 
-The flag changes no match set. Node counts are identical to `9e3da18` on all
-twenty programs under `comparison/` in the naive driver, the hundred and
-seven files of `tests/egg/` run under both scheduling modes and both
-evaluation strategies, and `ematch::match_keys` — the differential helper
-behind the snapshot-semantics tests — now runs the adaptive push engine
-against the static pull engine, which share neither a control structure nor
-an atom order. Under semi-naive the corpus node counts move on six of twenty
+The flag changes no match set. With the flag on, node counts are
+unchanged on all twenty programs under `comparison/` in the naive driver
+(checked 2026-08-16), the hundred and seven files of `tests/egg/` run
+under both scheduling modes and both evaluation strategies, and
+`ematch::match_keys` (the differential helper behind the
+snapshot-semantics tests) runs the adaptive push engine against the
+static pull engine, which share neither a control structure nor an atom
+order. Under semi-naive the corpus node counts move on six of twenty
 programs; so do naive's against semi-naive's with the flag off (addac-n7:
 501 against 531), because a `:until` goal stops the run as soon as it holds
 and a different application order reaches it at a different point. What is
 invariant there is the match set, and that is what
 `variants_disjoint_and_complete` asserts directly.
 
-What is still not implemented is what S4 originally named: egglog's
+What is not implemented is what S4 originally named: egglog's
 re-sorting of whole stages, which would reorder the variables inside an
 atom's join and not just the atoms. Nothing measured so far asks for it.
 
@@ -399,7 +402,7 @@ probe is the joint distribution over (emitter node, probe bucket). The
 two disagree whenever the emitter's nodes avoid the hub classes that set
 the mean, and then the mean over-prices the probe by the hub's size.
 
-**Implemented 2026-08-16, flag-guarded, default off.**
+**Flag-guarded, default off.**
 `schedule::set_sampled_selectivity`, or `--sampled-selectivity` on the
 CLI, with `--sampler-k`, `--sampler-bootstrap` and `--sampler-cv` for the
 three fields of `SamplerConfig`. With the flag off,
@@ -408,7 +411,7 @@ never consulted (`schedule::tests::the_flag_off_path_never_samples`), and
 every corpus number below is unchanged to the digit.
 
 **What it does.** The greedy loop already tracks which variables are
-bound. It now also tracks which atom bound each one and where in that
+bound. It also tracks which atom bound each one and where in that
 atom's node the variable sits: `KeySite` is the node's own class, a child
 position, or an element of a variadic node, which is what the runtime
 extraction reads. Costing a candidate atom on a bound key, the loop draws
@@ -497,10 +500,11 @@ rather than on noise; it is timing-free and runs in every build profile,
 following S4's. The sweep regenerates the table.
 
 **Where it does not.** The corpus, which is what S1's constants were
-fitted to. Final node counts are identical to `dd20d36` on all twenty
-programs under `comparison/` in both the naive and the semi-naive driver,
-and match steps are identical on thirty-four of the forty (program,
-driver) configurations. The six that move all move down:
+fitted to. Final node counts under the sampled model match the mean
+model on all twenty programs under `comparison/` in both the naive and
+the semi-naive driver, and match steps are identical on thirty-four of
+the forty (program, driver) configurations. The six that move all move
+down:
 
 | program, encoding, driver | steps, mean | steps, sampled |
 |---|---|---|
@@ -585,9 +589,9 @@ profiles on a workload measured to run the same ruleset over many
 similar e-graphs, which is the case where a profile amortizes. Neither
 condition holds on the twenty programs under `comparison/`.
 
-## Convergence target (2026-08-15)
+## Convergence target
 
-The program's acceptance is now: (a) within 10% of egglog wall clock on
+The program's acceptance is: (a) within 10% of egglog wall clock on
 non-canonizing workloads, i.e. the shared rules encoding, on the
 intersection benchmarks; (b) demonstrated separation under native AC
 canonization, as a width-scaling sweep of the add-ac block (n = 7..20):
@@ -623,15 +627,16 @@ delta-heavy incremental workload (to be added beside the comparison
 pilots: repeated small-edit re-saturation under mark/restore, the shape
 S2 exists for).
 
-## Convergence target met (2026-08-16)
+## The convergence target is met
 
 Acceptance (a) is met on the rules encoding: 566.7 ms against egglog's
-523.8 ms, 8.2%, medians of seven interleaved runs on the machine and
-under the placement `comparison/hotpath-audit.md` describes. The nine
-changes that took it there are recorded with per-commit numbers in that
-file's 2026-08-16 addendum; the summary is 6.89 G to 5.54 G instructions
-and 1.96 G to 1.47 G cycles from `5289140`, with match steps and final
-node counts identical on all twenty programs under `comparison/`.
+523.8 ms, 8.2%, medians of seven interleaved runs (measured 2026-08-16)
+on the machine and under the placement `comparison/hotpath-audit.md`
+describes. The nine changes behind that figure are recorded with
+per-commit numbers in that file's 2026-08-16 addendum; their sum is
+6.89 G to 5.54 G instructions and 1.96 G to 1.47 G cycles, with match
+steps and final node counts identical on all twenty programs under
+`comparison/`.
 
 The lever list above needs two corrections.
 
@@ -642,11 +647,12 @@ counterfactual, whose remaining joins intersect `by_repr` buckets of 2.51
 entries. The order S1's constants actually choose is the one printed
 above: two of its three joins intersect a bound-child bucket with a whole
 relation, and the whole-relation cursor is a doubling gallop plus a
-bisection per partial match. Landed as `790ba05`.
+bisection per partial match. S3 above states the shipped per-binding
+form of the test.
 
-**Lever (3)'s premise, that the residual is instruction count, no longer
-holds.** The audit's verdict was compute-bound at 19.6x instructions, and
-it was right about that configuration. We now retire 5.54 G instructions
+**Lever (3)'s premise, that the residual is instruction count, does not
+survive the S1 measurements.** The audit's verdict was compute-bound at
+19.6x instructions, and it was right about that configuration. We retire 5.54 G instructions
 against egglog's 5.74 G, 0.965x, and take 1.082x their wall time: the
 whole residual is IPC, 3.78 against 4.25. From here the levers that can
 still pay are the re-layouts the audit listed and did not implement (R2,
@@ -656,15 +662,16 @@ random memory accesses where a prepend does one. The prepend is measured
 at 552 ms, 1.054 of egglog, and is blocked on re-verifying
 `EClasses::add_use`, whose proof body asserts the appended list shape.
 
-S3's first half is now measured and landed: the operator restriction is
-chosen per binding from the two bucket lengths, which corrects `790ba05`'s
-unconditional demotion without giving back its 19% (math-microbenchmark
-rules 565.1 ms against 562.0 ms, inside the run-to-run spread). S3's second
-half, per-binding selection of which iterator drives the seek, is still
-unmeasured, and it attacks a smaller target than the audit's: after `790ba05`
-the leapfrog seek is 5.2% of the profile where the audit measured it at 26.3%.
+S3's first half is measured and shipped: the operator restriction is
+chosen per binding from the two bucket lengths, which keeps the
+unconditional test's 19% saving without its hub-class pathology
+(math-microbenchmark rules 565.1 ms against 562.0 ms, inside the
+run-to-run spread). S3's second half, per-binding selection of which
+iterator drives the seek, is unmeasured, and it attacks a smaller target
+than the audit's: with the per-candidate operator test in place the
+leapfrog seek is 5.2% of the profile where the audit measured it at 26.3%.
 
-## R2 and R3 landed together (2026-08-16)
+## R2 and R3: implemented together on `DenseSpanMap`
 
 **R2 (arena-backed index buckets) and R3 (a class-indexed `by_child_pos`) are
 implemented, as one change, on the verified `DenseSpanMap`.** The two proposals
@@ -723,25 +730,27 @@ Every one of the twenty comparison programs was checked under both scheduling
 strategies: node counts, class counts, iteration counts and match steps are
 identical to the values before the change.
 
-**R1 (folding the operator into the `by_child_pos` key) is still not
+**R1 (folding the operator into the `by_child_pos` key) is not
 implemented, and R3 makes its cost concrete.** R1 multiplies the key count by
-the number of operators, and the key count is now the length of a span table
+the number of operators, and the key count is the length of a span table
 that is allocated per round. The measurement to make before attempting it is the
 span table's occupancy: R1 is worth its memory only if the buckets it splits are
 long enough that the split removes more probe work than the wider table costs.
 
-## The span table stopped being written per round (2026-08-16)
+## The span table is written on demand
 
-**The `O(num_keys)` term in the index build is gone, and the fan-out pass is now
-the largest term left in the build.** R2 gave every family a span table dense
-over its key space, and chapter 6 recorded the space that costs. What it did not
-record is that the build *writes* that table every round whether or not the keys
-occur. `comparison/span-table-sparsity.md` measures the consequence at S = 1e6 on
-the E6 cycle: `by_child_pos` addresses 801 008 values with 2 003 967 keys, and
-the four builds spend 40.6 ms per round on span tables for a 3.2 MB pool.
+**The index build has no `O(num_keys)` term; the fan-out pass is the
+largest term left in the build.** Every family's span table is dense
+over its key space (R2), and chapter 6 records the space that costs. A
+build that writes the whole table every round pays `O(num_keys)` whether
+or not the keys occur: `comparison/span-table-sparsity.md` measures that
+cost at S = 1e6 on the E6 cycle, where `by_child_pos` addresses 801 008
+values with 2 003 967 keys and the four builds spend 40.6 ms per round
+on span tables for a 3.2 MB pool.
 
-The families now build through `DenseSpanMap::build_in` over a caller-owned
-`SpanArena` that outlives the map (`containers-verus` commit 3779a56). A build
+The families instead build through `DenseSpanMap::build_in` over a caller-owned
+`SpanArena` that outlives the map
+(`containers-verus/doc/design/15-dense-span-map.md`). A build
 bumps a generation stamp and writes only the keys its stream carries; a key an
 earlier build wrote reads as empty. Chapter 6 states how the arenas are owned and
 recycled. Per round at S = 1e6:
@@ -758,8 +767,8 @@ recycled. Per round at S = 1e6:
 needs the occupied keys of `by_child_pos`, `by_contains` and `by_repr`. The arena
 maintains exactly that list and the build keeps it current, but it is
 `pub(crate)`, so `index.rs` scans `0..len()` and skips empty buckets. That scan
-is the `O(num_keys)` term this change removed from every other phase, and at
-7.69 ms it is now 24% of the index build. Exporting the occupancy list from
+is the `O(num_keys)` term the on-demand build removes from every other phase,
+and at 7.69 ms it is 24% of the index build. Exporting the occupancy list from
 `containers-verus` is the next reduction and needs no e-graph change beyond
 calling it. S5's sampler reads the same tally, so it would benefit too.
 
@@ -770,11 +779,12 @@ The round total falls anyway, 170.5 ms to 151.2 ms. The trade reverses on a
 workload whose rounds probe much more than they build; which one applies is a
 measurement, not an inference.
 
-## Seek strategy closed, and one lever with it (2026-08-16)
+## Seek strategy: galloping, with no distance estimate
 
 **Galloping is the right search on the arena layout, and the stride estimate the
 join could compute does not improve it.** The lever list above prices the
-leapfrog seek at 5.2% of the profile after `790ba05` and leaves the search itself
+leapfrog seek at 5.2% of the profile with the per-candidate operator test in
+place and leaves the search itself
 unexamined; `doc/perf-results/E18-seek-strategy.md` examines it. Bisecting the
 remaining run loses every point of a sweep over bucket-sized spans (64 to
 262 144 keys, advances 1 to 1024), by 3.5% at its closest and 32x at its
@@ -795,8 +805,8 @@ where it costs most. A prototype ran 0.4 to 1.4% slower end to end than its own
 control on `math-microbenchmark`, both encodings, both strategies, medians of
 seven.
 
-**S3's second half is narrower than it was.** Choosing per binding which iterator
-drives the seek was already attacking 5.2% of the profile; the sweep now says the
+**S3's second half is narrower than the audit priced it.** Choosing per binding
+which iterator drives the seek attacks 5.2% of the profile; the sweep says the
 search inside that 5.2% is within 12% to 41% of the best any distance-aware
 strategy could do, and that the remaining margin is not reachable from a
 plan-time length ratio. What is left of S3's second half is the ordering

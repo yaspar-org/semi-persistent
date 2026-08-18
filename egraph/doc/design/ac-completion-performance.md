@@ -8,7 +8,7 @@ convergent graphs and ~16 % slower on the diverging one (§5.6). The standing co
 once the redundant per-pair clone is removed, the remaining cost is algorithmic at the round
 level, so the next lever is scoping (when completion runs), not further inner-loop tuning (§6).
 The algorithm and its correctness are unchanged throughout. Companion to
-[ac-completion-review-debt.md](ac-completion-review-debt.md) (§1, the divergence budget)
+[ac-completion-review-debt.md](../future/ac-completion-review-debt.md) (§1, the divergence budget)
 and the design chapter (`../design/ac-congruence-completeness.md`).
 
 ## Addendum (2026-07-09): the destination-passing round landed, and two new observations
@@ -22,7 +22,7 @@ destination-passing; the rule dedup is clone-free (sort + `dedup_by`);
 `node_monomial_into` no longer allocates internally; flatten/materialize scratch is
 hoisted. Combined-branch measurements on rule-heavy convergent workloads (vs. the
 pre-conformance base, release): 4.5×–440×, dominated by the admissible-order fix
-producing far smaller bases (one instance: 91 rounds/20k nodes → 44 rounds/2.7k nodes) —
+producing far smaller bases (one instance: 91 rounds/20k nodes → 44 rounds/2.7k nodes):
 the old tie-break minted guard-truncated junk rules.
 
 Two operational observations from the same measurements: (i) the transition into the
@@ -49,7 +49,7 @@ paired before/after timing on the converging stress sweep
   closure. Result: ~40% **slower**, equal RSS. Reverted. Short-lived same-size `Vec`s are
   recycled by the allocator; the closure added per-iteration cost to the normalizer inner
   loop. Allocation per se is not the cost. (Distinct from the *hoist* in §5.4, which keeps
-  the clone but does it once per round instead of once per pair — that one paid.)
+  the clone but does it once per round instead of once per pair; that one paid.)
 - **Full-graph scan to find AC nodes.** Both per-round scan loops iterated
   `0..node_count()` and filtered with `is_mset`. Changed to iterate the AC node partition
   (`self.nodes.mset`) directly. Result: ~1% (within noise) on the AC-dense sweep, because
@@ -166,7 +166,7 @@ Rejected (recorded so they are not re-derived):
    did not finish in 6+ min vs ~137 s baseline); small/converging cases unaffected. Reverted.
    §6 explains why.
 3. **RHS-shift delta (targeted confirmation round).** Hypothesis: the per-round full
-   confirmation pass is wasteful because incremental rounds keep *falsely* converging — they
+   confirmation pass is wasteful because incremental rounds keep *falsely* converging: they
    miss critical pairs whose rule RHS shifted (the rule's own class merged, changing
    `min_monomial`/`atomic`, without its node being recanonicalized), so a full round has to recover
    them. Fix attempted: track those survivor classes in `fold_min_monomial` (`ac_rhs_shifted`) and
@@ -177,7 +177,7 @@ Rejected (recorded so they are not re-derived):
    case (seed 42) likewise unchanged (81 rounds / 25 full, ~1.11 M crit, ~12.8 s either way).
    The premise was wrong: the full rounds on these benchmarks are the *structurally
    mandatory* ones (round 0, which legitimately generates every pair as the base case, plus the
-   single final certifying round) — roughly two per config — not false-convergence triggers.
+   single final certifying round, roughly two per config), not false-convergence triggers.
    There are no mid-completion false-convergence full rounds here for the delta enrichment to
    eliminate. The "full rounds = 54.6 % of all critical pairs" figure that motivated this
    conflated *round 0 generating all pairs (correct, unavoidable)* with *wasteful
@@ -196,7 +196,7 @@ Rejected (recorded so they are not re-derived):
    `MERGE_BY_USES`. Measured ON vs OFF on one binary: **no help, slightly worse.** Convergent
    sweep a wash (~2.55 s either way); the diverging pathological case (seed 42) consistently
    ~16 % *slower* (≈19.7 s → ≈22.8 s). Reasons: (a) the post-merge recanonicalization cost is
-   not the round bottleneck — `Bclose` is (§2), and survivor choice does not change the
+   not the round bottleneck (`Bclose` is, §2), and survivor choice does not change the
    critical-pair count; (b) forcing the survivor against rank gives up union-by-rank's height
    optimality, so `find` climbs slower trees, and `find` is on the hot path of every multiset
    canonicalization; (c) it changes which intermediate monomial nodes get materialized, which
@@ -204,7 +204,12 @@ Rejected (recorded so they are not re-derived):
    nodes at the backstop). It was sound (the leaf equivalence relation was verified identical
    under both policies before removal), but since it did not pay, the `merge_by_uses` flag and
    the wiring at the two rebuild merge sites were **removed**; rebuild is back to plain
-   rank-based `merge`. What was **kept** is the reusable infrastructure that has value
+   rank-based `merge`. Superseded 2026-08-18: survivor selection returned as the
+   `--union-by {rank,size,uses,sum}` CLI surface over the directed-merge
+   primitives kept below, with a measured win recorded in
+   `comparison/methodology.md` §6 (math-microbenchmark rules-semi 1.69 s
+   rank to 0.60 s size); this section stays as the record of why the
+   uses-heuristic alone did not pay inside completion. What was **kept** is the reusable infrastructure that has value
    independent of the heuristic: `ListArena::len` (O(1) cached count, semi-persistent), and the
    `UnionFind::union_directed` / `EClasses::merge_directed` primitives (forced-survivor union,
    covered by their own unit tests). They cost nothing when unused and are the building blocks
@@ -214,7 +219,7 @@ Accepted:
 
 4. **Per-round `nf_rules` hoist.** The (B) close loop normalizes both reducts of every
    critical pair against the rule set. The rule set is identical for every pair in the round,
-   but it was being rebuilt (one `NfRule` clone per rule) *inside* the per-pair loop — the
+   but it was being rebuilt (one `NfRule` clone per rule) *inside* the per-pair loop: the
    `O(crit × rules)` clone term §2 names as the dominant `Bclose` cost. Building it once,
    outside the loop, removes that term without changing any work *count*. Paired measurement
    on the convergent sweep: **6.7 s → 1.63 s (~4×)**, identical node counts, byte-identical
@@ -250,7 +255,7 @@ intrinsically large on the diverging graph; on the converging graphs the round i
 cheap.
 
 One important qualification, learned from §5.4: there *was* one local win, but it was not in
-the inner *test* — it was a per-pair *clone of the rule set* sitting redundantly inside the
+the inner *test*: it was a per-pair *clone of the rule set* sitting redundantly inside the
 critical-pair loop. Hoisting it out (build the `NfRule` set once per round, not once per
 pair) cut the convergent sweep ~4× with byte-identical work counts. The distinction matters:
 that clone was `O(crit × rules)` *work the algorithm never needed to repeat*, whereas the
@@ -262,10 +267,10 @@ irreducible subset-test count, and no further local optimization on this benchma
 The levers that reduce the *irreducible* work are algorithmic at the round/driver level, not
 the inner loop:
 
-- **Scope completion so it never runs on the pathological dense case** (the growth guard /
-  on-demand / degree-bound options in plan §0.5). The real answer: do not pay the
+- **Scope completion so it never runs on the pathological dense case** (growth guard,
+  on-demand, or degree-bound scoping). The real answer: do not pay the
   `O(crit × rules)` cost at all when the basis is exploding.
-- **Incremental driver (S3b worklist, plan §9a):** process only the delta each round instead
+- **Incremental driver (a per-round worklist):** process only the delta each round instead
   of re-deriving and re-superposing the whole rule set. This changes *what work is done*, so
   it can pay where indexing cannot.
 

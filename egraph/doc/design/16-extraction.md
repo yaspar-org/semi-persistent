@@ -17,8 +17,8 @@ Given an e-class (a set of equivalent terms), find the smallest
 
 Each operator has a per-node cost, declared as `:cost n` on its
 declaration and defaulting to 1. The cost of a term is the sum of its
-nodes' costs, so an undeclared program pays exactly the old model: the
-number of nodes in the term tree. For AC nodes, child multiplicities
+nodes' costs, so an undeclared program pays one per node. For AC
+nodes, child multiplicities
 are accounted for: a child with multiplicity k contributes k ×
 child_cost.
 
@@ -28,7 +28,7 @@ represent unknowns in patterns, not concrete terms).
 An operator declared `:unextractable` is excluded from the candidate
 set: the extractor never selects one of its nodes, though the node
 stays in the e-graph and stays matchable. This is a filter, not a large
-cost — a cost cannot express "never", and the two behave differently
+cost: a cost cannot express "never", and the two behave differently
 when the alternative is expensive.
 
 The costs and the exclusion are read from `OpInfo` (`cost`,
@@ -118,10 +118,10 @@ For AC/ACI nodes, children are expanded from the pool.
 Extraction returns `ExtractError` rather than an empty option, so the
 caller can say why:
 
-- `AllUnextractable { class, ops }` — the class has nodes, but every one
+- `AllUnextractable { class, ops }`: the class has nodes, but every one
   of them is an `:unextractable` op. Reachable, and named: the error
   carries the class and the offending op names.
-- `NoGroundTerm { class }` — no node in the class has a fully costed
+- `NoGroundTerm { class }`: no node in the class has a fully costed
   child set. Defensive: `add` builds children before parents, so every
   class is grounded through the leaves it was built from.
 

@@ -2,9 +2,11 @@
 
 Work item E6 of `doc/egglog-comparison-plan.md`: quantify the value of
 semi-persistence. This file records the mechanism survey, the four
-cost-per-cycle tables, and what the numbers do and do not establish. It is not a
-claim that our push/pop is asymptotically better than egglog's: the measurement
-says it is not, and section 6 says why.
+cost-per-cycle tables, and what the numbers do and do not establish. On
+the asymptotic comparison, sections 11.1 to 11.4 are authoritative: 11.1
+measures flat-versus-linear per-cycle cost, and 11.4 retracts section 8's
+earlier no-separation reading (do not cite section 8; 12.3 records the
+retraction's scope).
 
 Read `comparison/methodology.md` first. Every divergence this pass introduces is
 registered there.
@@ -493,9 +495,8 @@ python3 run-semipersistence.py --configs ours-naive,ours-semi \
     --skip-calc --ours <pinned>/semi-persistent --out <csv>
 ```
 
-`--configs`, `--variants` and `--skip-calc` select a subset of the sweep and are
-new in this pass; without them the runner behaves as section 10 documents.
-`empty20k` is the 20 000-pair twin of `empty`, generated always and never run by
+`--configs`, `--variants` and `--skip-calc` select a subset of the sweep; without them the runner behaves as section 10 documents.
+`empty20k` is the 20 000-pair variant of `empty`, generated always and never run by
 default, because 20 000 pairs of a snapshot-copying engine is minutes per run.
 
 ## 12. Addendum, 2026-08-16: the index build stopped writing the whole key space

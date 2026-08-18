@@ -2,7 +2,7 @@
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# E5 — `Branchless` as the B+tree search default (B1) — **closed, premise does not hold**
+# E5: `Branchless` as the B+tree search default (B1): **closed, premise does not hold**
 
 **The default is not on any hot path, because `BPlusTreeSet` is not instantiated
 outside benchmarks and tests.** Flipping `S = BinarySearch` to `S = Branchless`
@@ -27,7 +27,7 @@ the workspace:
 | `containers-verus/canary/src/lib.rs:386,402` | verified-vs-production canary |
 
 Nothing in `egraph/src`, `abstract-domains/src` or `traversals/src` constructs
-one. What the e-graph's join path actually reads is `index::SortedVec` — a plain
+one. What the e-graph's join path actually reads is `index::SortedVec`, a plain
 sorted `Vec` with `partition_point`, which is B2's target, not B1's. The
 `leapfrog_bench` comparison against `BPlusTreeSet` is a *comparison*: it exists to
 show what the tree would cost if the index used one.
@@ -57,7 +57,7 @@ runs with the default flipped, which is only worth doing for a real instantiatio
 
 Taken at face value they do reproduce B1's caveat exactly, and in the direction
 the caveat predicted: `Branchless` wins on random probes (`insert_random`, −3% to
-−14%) and **splits on seeks** — −6.8% at 64-byte nodes, +4.4% at 512-byte nodes.
+−14%) and **splits on seeks**: −6.8% at 64-byte nodes, +4.4% at 512-byte nodes.
 The crossover is node size, which is the mechanism: a 64-byte node holds ≤ 14
 `u32` keys, few enough that a counting loop beats a branch chain, while a
 512-byte node holds ≤ 62 `u64` keys, enough that binary search's ~6 branches beat
@@ -69,7 +69,7 @@ right default for the widest layouts, which is what a default should suit.
 ## If this comes back
 
 A consumer instantiating `BPlusTreeSet` on a seek-heavy path with small nodes
-should measure `Branchless` for its own layout. The sweep is already in place —
+should measure `Branchless` for its own layout. The sweep is already in place:
 add the combination to `bench_all` in `containers/benches/bplus_bench.rs` and run
 the two variants across separate criterion runs, not as two arms.
 

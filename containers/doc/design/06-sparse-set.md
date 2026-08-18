@@ -1,4 +1,4 @@
-# Chapter 6 — `SparseSet` — O(1) Membership with Stable IDs
+# Chapter 6: `SparseSet`, O(1) Membership with Stable IDs
 
 [← Ch 5: ListArena](05-list-arena.md) · [Table of Contents](00-table-of-contents.md) · [Ch 7: BPlusTreeSet →](07-bplus-tree.md)
 

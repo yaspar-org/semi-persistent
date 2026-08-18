@@ -277,7 +277,7 @@ Convergence properties. UCT's policy at every OR node converges to the minimum-s
   by rotation. The value-guided selectors (`uct_and`, `lct_and`, §3.3.5) provide it
   through their exploration term, `C · sqrt(Σ_j N(n,j)) / (1 + N(n,i))`, which
   diverges for any neglected non-terminal child; terminal children are skipped, which
-  is admissible because their values are exact and immutable — fairness exists to
+  is admissible because their values are exact and immutable: fairness exists to
   converge child estimates, and a terminal's estimate is already converged. A
   heuristic AND selector without such a guarantee would starve a child and leave the
   additive AND value permanently biased.
@@ -695,7 +695,7 @@ contexts; after generation, actions are deduplicated by canonical
 class can produce identical actions from different member pairs, and duplicates would
 otherwise surface as separate statistics edges, biasing selection toward the duplicated
 action. The e-graph stores each operator's nodes in the canonical form of its kind,
-and the generator dispatches on that kind. Plain ordered nodes (`Plain0..3`, `PlainK`)
+and the generator dispatches on that kind. Plain ordered nodes (`Plain0..3`, `PlainN`)
 use exactly the classic rule, positional zipping of same-operator, same-arity member
 pairs (§3.4.1); the canonical `SPair`, `Seq`, `MSet`, and `Set` kinds are a strict
 extension of that action language (§3.4.2–3.4.5). AC/ACI (`MSet`, `Set`) operator
@@ -814,7 +814,7 @@ oracle nevertheless
 enumerates *all* feasible integer matrices, by row-by-row distribution: fix row i, choose
 `x_i1 ∈ [0, min(mᵢ, residual n₁)]`, recurse across the columns (the last column takes the
 remainder), then recurse on the next row. This is complete by construction. The reason
-for not restricting to vertices is a pitfall worth recording: combining an
+for not restricting to vertices is worth stating: combining an
 all-or-nothing allocation rule with a monotonically increasing row-major cell index
 does NOT enumerate all vertices. The vertex
 `[[1,1],[1,0]]` above has cell (0,0) holding 1 while both residuals start at 2; a
@@ -1217,7 +1217,7 @@ term depth.
 
 All persistent storage uses this repository's semi-persistent containers:
 
-- semi-persistent `Vec<T, I, S>`: the workhorse. `mark()` pushes a frame (saved
+- semi-persistent `Vec<T, I, S>`: the base container. `mark()` pushes a frame (saved
   length, diff-log position) and returns a token; writes below the saved length log
   the old value once per index per frame (first-write-wins, enforced by a capture bit
   per element); `restore(token)` truncates or regrows to the saved length and replays
@@ -1260,7 +1260,7 @@ both the structural path (`Cfg::M`) and the min-cost-transport solver (the solve
 narrower flow capacity): `AndStatsData::child_counts` and the count argument of
 `TermPool::intern_action_result`. Nothing narrows a multiplicity, so reading one cannot
 overflow. A *sum* of multiplicities can exceed `Cfg::M`, and `generate_actions` answers
-that by enumerating no actions from the offending member — a search-completeness loss,
+that by enumerating no actions from the offending member: a search-completeness loss,
 not an error, so it does not fail the snapshot.
 
 ### 5.4 Arena schemas
@@ -1370,7 +1370,7 @@ expressible in one `.egg` file, implemented as ordinary interpreter commands nex
 ```
 
 Each command builds its two terms (rebuilding the e-graph if that added nodes), builds
-a snapshot of the frozen e-graph, runs, and — for `antiunify` — prints the result
+a snapshot of the frozen e-graph, runs, and (for `antiunify`) prints the result
 (term, size, compression ratio, completion flag); `checkau` instead fails when the
 result's size exceeds `:max_size`. `push`/`pop` around the commands behave as
 expected. `:algorithm` selects `exact` or `uct`; unknown names are rejected.
@@ -1529,7 +1529,7 @@ The search also tries pairing the `f(x)` member of `class_x` with `f(y)` from
 `class_x ≠ class_y` and neither has a common operator, `AU(class_x, class_y) =
 Variants(x, y)`, size 2. Thus the candidate is `f(Variants(x, y))`, size 1+0+1+1 = 3.
 
-Both candidates have size 3, so size alone cannot separate them — yet they are not
+Both candidates have size 3, so size alone cannot separate them. Yet they are not
 equally good anti-unifiers: `Variants(x, f(y))` has an empty backbone (everything
 diverges), while `f(Variants(x, y))` factors the constructor `f` into shared
 structure. The compression ratio (§2.5) is size-derived and identical for both.
@@ -1548,8 +1548,8 @@ backbone. The exact solver remains exact for this order: sizes and vmasses both 
 over an AND node's children, so per-child lexicographic minimization composes.
 On this example the search therefore returns `f(Variants(x, y))`.
 
-Ties in `(size, vmass)` both — e.g. two different bijections of an AC matching with
-symmetric children — remain resolved by first-found (action order), which is
+Ties in `(size, vmass)` both (e.g. two different bijections of an AC matching with
+symmetric children) remain resolved by first-found (action order), which is
 deterministic (§5.7). Enumerating all co-optimal anti-unifiers
 is a possible extension: the exact memo would store a set of optimal terms per state
 instead of one, with the usual combinatorial caveats.

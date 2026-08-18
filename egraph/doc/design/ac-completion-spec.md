@@ -1,4 +1,4 @@
-# AC Completion: `min_monomial`, the matcher bug, and a compliance review
+# AC Completion: `min_monomial`, a matcher invariant, and a compliance review
 
 A focused companion to [ac-congruence-completeness.md](ac-congruence-completeness.md) (the
 full specification: e-graph as a rule set §0b, the fix §6, collapse §6b, per-class data §9a,
@@ -8,7 +8,8 @@ algorithm; §, Def, Lemma, Thm numbers below are Kapur's):
 
 1. the `min_monomial` invariants the engine must keep (§9a defines `min_monomial`; this states the
    checkable properties and the one maintenance gap from Kapur's "reduced") (§1);
-2. the `(f (add x ..r1) (add y ..r2))` matcher bug, over concrete nodes (§2);
+2. the binding-restore invariant the `(f (add x ..r1) (add y ..r2))` matcher join must
+   maintain, over concrete nodes (§2);
 3. a clause-by-clause check that the code matches Kapur's algorithm, with the observed
    growth explained (§3).
 
@@ -24,10 +25,10 @@ rewrites to the other under those constant rules.
 
 The main doc §9a defines the per-class data: a class carries `find(c)` (the union-find tag,
 not necessarily an AC monomial) and `min_monomial(c)` (the `≫_f`-least `+`-monomial of the
-class, the rule RHS; `≫_f` is the admissible monomial order for op `f` — degree-lex:
+class, the rule RHS; `≫_f` is the admissible monomial order for op `f`: degree-lex,
 total size, then lexicographic from the largest class id down, Kapur's deglex), and the rule RHS is: the **empty monomial** if `c` is the op's identity
-(unit) class — Kapur's `f({}) = e`; rewriting with the atom `{e}` instead would leak unit
-summands into reducts that normalization (which has no `f(x,e) = x` law) can never remove —
+(unit) class: Kapur's `f({}) = e`; rewriting with the atom `{e}` instead would leak unit
+summands into reducts that normalization (which has no `f(x,e) = x` law) can never remove;
 else `{c}` if `atomic(c)`, else `monomial_of(min_monomial(c))`. This
 section does not re-derive that. It states the four invariants `min_monomial` must satisfy *as
 checkable properties* (the ground-truth checkers of §3 verify them), and the one place
@@ -71,10 +72,10 @@ reason).
 
 ---
 
-## 2. The `(f (add x ..r1) (add y ..r2))` matcher bug, over concrete nodes
+## 2. The `(f (add x ..r1) (add y ..r2))` matcher invariant, over concrete nodes
 
 Pattern: `(rewrite (f (add x ..r1) (add y ..r2)) (g x))`. The scalar/rest vars may repeat or
-differ; the bug is about node-var binding, not var identity. Regression inputs:
+differ; the invariant is about node-var binding, not var identity. Regression inputs:
 `ac_two_same_op_atoms.egg` (completion off), `ac_complete_nested_match.egg` (completion on).
 This is our own e-matching machinery, not from the papers.
 
@@ -146,7 +147,7 @@ fixtures `ac_two_same_op_atoms.egg`, `ac_complete_nested_match.egg`).
 | per-rule axiom critical pairs: idempotent `(f(N⊎{a}), f(N))`, nilpotent `(f(N⊎{a:n−m}), f(M−{a:m}))` | Lemma 4.1(ii); Lemma 4.2(ii)/4.5 (superpose each rule with the op's own axiom) | ✓ (checker `cc_axiom_cps_nonjoinable` under `CHECK_AC_BASIS`) |
 | identity-class rule RHS = the empty monomial; unit-drop at build AND recanonize (`CanonMode`) | `f({}) = e` (§2.4); Lemma 4.3's standing normalization `f(x,e) → x` | ✓ |
 | (C1) rule cancel-close + (C2) cancelative disjoint superposition + §5.2(iii)(b) per-constant closure over the summand pool | §5.1–§5.3: CancelClose, cancelative disjoint superposition (SC2 / Example 4 fixtures) | ✓ (pool-relative per-constant closure, full-round net for late constants) |
-| `:inverse` ⟹ cancelative; inverse-PAIR cancellation at build + in the round (hash-cons probe) | §5.4's group law at pair level (`x ∘ inv(x) = e`) | partial by design — full §5.4 (Gaussian elimination) postponed indefinitely; completion-off late pairs uncancelled (review-debt §3) |
+| `:inverse` ⟹ cancelative; inverse-PAIR cancellation at build + in the round (hash-cons probe) | §5.4's group law at pair level (`x ∘ inv(x) = e`) | partial by design: full §5.4 (Gaussian elimination) postponed indefinitely; completion-off late pairs uncancelled (review-debt §3) |
 | `min_monomial` best-effort RHS | step 4(ii) fully normalizes RHS (reduced) | **partial: §1.2 gap** |
 
 ### 3.2 The two deviations from "fully reduced", checked against ground truth
@@ -155,9 +156,9 @@ Kapur's output is the *unique reduced* canonical system (Thm 3.6): no rule's LHS
 reducible by the others. Two ground-truth checkers (`ac_invariants.rs`) measure how far we
 are from that, brute-forcing the true values rather than the cheap proxies:
 
-- `ac_min_used_nonminimal`: per (class, op), the true `monomial_cmp`-least same-op monomial,
+- `cc_min_used_nonminimal`: per (class, op), the true `monomial_cmp`-least same-op monomial,
   compared to the RHS completion actually uses.
-- `ac_not_kapur_reduced`: rules whose LHS / RHS is `normalize_ms`-reducible by the *others*
+- `cc_not_kapur_reduced`: rules whose LHS / RHS is `normalize_ms`-reducible by the *others*
   (multi-step), not merely by direct sub-multiset containment.
 
 Both brute-force superlinearly, so they run only when the per-rebuild **basis-checks switch**
@@ -175,13 +176,13 @@ The three features have matching control surfaces at each layer:
 `--derive-ac-eqs` off leaves sub-multiset enumeration in leapfrog matching intact but
 skips completion. `--check-ac-basis` needs derive on to have anything to check; in
 the egg harness `;; CHECK_AC_BASIS: on` additionally **asserts** the post-run basis is fully
-reduced (`ac_min_used_nonminimal == 0`, `kapur_lhs_reducible == 0`), turning the diagnostic
+reduced (`cc_min_used_nonminimal == 0`, `kapur_lhs_reducible == 0`), turning the diagnostic
 into a test. `;; EVAL: both` runs the file under naive and semi-naive and asserts the same
 outcome (the historical cross-check, now an explicit default).
 
 **Deviation 1 (RHS minimality, §1.2): best-effort, measured a no-op here.** `min_monomial` is
 maintained on merge only, so the RHS is oriented but not guaranteed the global minimum.
-Measured: `ac_min_used_nonminimal = 0` at every round. Refreshing `min_monomial` at
+Measured: `cc_min_used_nonminimal = 0` at every round. Refreshing `min_monomial` at
 recanonicalization (the natural fix) was implemented and lowered a stored min **zero times**,
 because `monomial_cmp` is degree-first and a *child* merge preserves degree (`+{a,b,c}` with
 `b~c` becomes `+{a,b:2}`, still degree 3). So recanonicalization can never lower a node's
@@ -219,10 +220,10 @@ trivial CP:            0  147  832 10878 35655         (the bulk, filtered out)
 kapur_lhs_reducible:   9    0    0   57  370  1017     (see below)
 ```
 
-- `trivial CP` is the bulk and is discarded; before the trivial-pair filter each minted
-  spurious rule-nodes (node growth at rounds 3–4 was `+9094/+30155`, now `+1240/+2816`).
-- Dedup shaved the duplicates (round 0 `active(rules)` for (B) 68→64, `crit(B)` 75→59) but
-  the overall growth is essentially unchanged: duplicates were a *small* contributor. The
+- `trivial CP` is the bulk; the trivial-pair filter discards each before it can mint a
+  spurious rule-node (node growth at rounds 3–4 is `+1240/+2816`).
+- Duplicates are a *small* contributor: the overall growth is invariant under dedup
+  (round 0 `active(rules)` for (B) is 64, `crit(B)` 59). The
   bulk of `antichain_core` is genuinely distinct, irreducible rules. The stress graph makes
   many overlapping pure-sum classes; each overlapping pair is a legitimate Kapur
   superposition (Def 3.2) yielding a new irreducible rule. Dickson (Thm 3.4) bounds the
@@ -232,9 +233,9 @@ kapur_lhs_reducible:   9    0    0   57  370  1017     (see below)
   documented within-round lag. Round N's congruence step recanonicalizes nodes into newly
   reducible forms *after* round N−1's collapse ran; they are collapsed in round N's own
   `(A′)`, not before round N's "pre" snapshot is taken. On a graph that actually reaches a
-  fixpoint, this lag clears (§3.4). The earlier hypothesis that this residual was a collapse
-  bug driving the growth is **not** supported: the growth is unchanged after the dedup fix,
-  and the residual is transient per-round churn, not surviving reducible rules.
+  fixpoint, this lag clears (§3.4). The residual does not drive the growth: the growth is
+  invariant under dedup, and the residual is transient per-round churn, not surviving
+  reducible rules.
 
 **Divergence is input-specific, not size-specific.** A sweep over a grid of stress configs
 (`investigate_completion_sweep`) shows **10 of 11 converge**, including three at the diverging
@@ -263,7 +264,7 @@ always show in-flight churn. On a *converging* graph (`investigate_completion_sm
 ground-truth checker reports, at **every** round and in the final dump:
 
 ```
-ac_min_used_nonminimal = 0   kapur_lhs_reducible = 0   kapur_rhs_reducible = 0
+cc_min_used_nonminimal = 0   kapur_lhs_reducible = 0   kapur_rhs_reducible = 0
 ```
 
 So when collapse is allowed to run to a fixpoint, the active set is fully Kapur-reduced (both

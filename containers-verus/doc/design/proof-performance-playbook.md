@@ -86,7 +86,7 @@ prove it converges at a **low** rlimit: a pass at `rlimit(50)` is robust; a pass
 at `rlimit(800)` is borrowed time. `spinoff_prover` legitimately isolates a heavy
 proof into its own solver instance, but it does not make a matching loop converge.
 
-> **Footgun:** a per-function `#[verifier::rlimit(N)]` **silently overrides** the
+> **Trap:** a per-function `#[verifier::rlimit(N)]` **silently overrides** the
 > `--rlimit` CLI flag. A "starve it to see if it fails fast" experiment via
 > `--rlimit 5` is a no-op if the function carries an attribute; you're still at
 > `N`. To probe the budget, edit the attribute, not the flag.
@@ -103,7 +103,7 @@ with the trigger Verus reported: `#[trigger]` on the chosen subexpression for a
 single trigger, or `#![trigger e1, e2]` / multiple `#![trigger ...]` clauses for a
 multi-trigger set. Match exactly what the note printed; a single `#[trigger]`
 where Verus wanted a *set* can change solver behavior. `#![auto]` records the
-auto-choice explicitly, but it is **not** risk-free — it accepts whatever Verus
+auto-choice explicitly, but it is **not** risk-free: it accepts whatever Verus
 picked, and Verus sometimes picks the quantifier's *conclusion* (see §9). To
 suppress the notes wholesale during iteration, pass `--triggers-mode silent`, which
 is also why a proof can look "clean" under one invocation and noisy under another.
@@ -123,10 +123,9 @@ Casts (`x as usize`, `n as u32`) are often *provable*, not inherently
 second declaration errors with "can only be set once per crate" (it lives in
 `bplus_layout.rs`; `index_like.rs` reuses it). Pair such casts with a
 `#[cfg(target_pointer_width = "64")]` gate so the host assumption is explicit. This
-is how the crate took its cast-related trust surface from 16 `external_body`
-items down to 6 (later additions — a runtime-guard primitive, the byte reporters,
-and the migration's glue — bring the current default-build total to 21);
-see [Trust Boundary §3](02-trust-boundary.md).
+is how the crate keeps its cast-related trust surface small; the current
+default-build `external_body` total is pinned in
+[Trust Boundary §3](02-trust-boundary.md) and by the CI gate.
 
 ## 8. Process & commit hygiene that paid off
 
@@ -150,7 +149,7 @@ see [Trust Boundary §3](02-trust-boundary.md).
 
 The single most expensive pathology in this crate. A trigger set containing two
 terms whose **bound variables are disjoint** lets the solver instantiate over
-every *pair* of matching terms — cost quadratic in the term set, and the term set
+every *pair* of matching terms: cost quadratic in the term set, and the term set
 is everything in scope.
 
 The canonical instance is the arena disjointness invariant, which is idiomatic
@@ -166,10 +165,10 @@ forall|l1: int, p1: int, l2: int, p2: int|
 
 Proved **inline in an exec body**, where both pre- and post-state `wf()` plus every
 exec local are in scope, `list::splice_raw` measured **223,553 ms / 1.56 B rlimit /
-26.5 M instantiations** — 94% of the whole crate's verification cost, in one
+26.5 M instantiations**: 94% of the whole crate's verification cost, in one
 function, hidden behind an `rlimit(800)`.
 
-The fix is not a trigger annotation (there is no better trigger — the shape is
+The fix is not a trigger annotation (there is no better trigger: the shape is
 inherently pairwise). It is to **move the goal somewhere nothing else is in
 scope**: a lemma over the bare `Seq<Seq<usize>>`, requiring only the old
 disjointness rather than a `wf()`:
@@ -202,8 +201,8 @@ Recipes:
 
 ## 10. Closed ground terms: skip the solver with `by(compute_only)`
 
-If an `assert` is a closed term over concrete values — no free variables, no
-quantifiers — Verus can *evaluate* it in its interpreter instead of asking z3 to
+If an `assert` is a closed term over concrete values (no free variables, no
+quantifiers), Verus can *evaluate* it in its interpreter instead of asking z3 to
 prove it. `abstract-domains::nats` had a ladder of `exp(n) == 2^n` lemmas built
 from iterated `cons`, each proved by unfolding chains with
 `reveal_with_fuel(lshi, 33)` and a hand-rolled `rlimit(10000)`. Replaced by
