@@ -142,3 +142,29 @@ start of each saturation iteration or explicitly via `rebuild()`.
 
 ---
 [← Ch 1: Node Storage](01-node-storage.md) · [Table of Contents](00-table-of-contents.md) · [Ch 3: Hash-Consing Caches →](03-hash-consing-caches.md)
+
+## Merge survivor policy (`--union-by`)
+
+Union-by-rank chooses survivors for tree balance, blind to what a merge costs
+downstream: the absorbed side's parents recanonicalize, and under semi-naive
+evaluation the absorbed side's member nodes enter the touched log (the
+class-growth delta). `--union-by {rank,size,uses,sum}` selects the criterion:
+`rank` is the historical default; `size` absorbs the smaller class by member
+count, making the touched-log pushes amortized O(n log n) (a node is absorbed
+at most log n times); `uses` absorbs the side with the shorter use-list,
+bounding recanonization the same way; `sum` adds the two counters and bounds
+both. The counters are verified: the use-list header's cached length was
+already tied to the model by `wf` (`cache_len`), and the class member count is
+a `ClassData` field whose accuracy clause (W7: stored size equals the ring
+length, at every method boundary and in every archived frame) is part of
+`eg_model_wf`. Both counters are `Index`-typed, so their width follows the id
+configuration.
+
+Survivor choice is semantically free — every class property the engine reads
+is merge-folded (§9a) — so all four policies produce identical check outcomes,
+measured across the comparison corpus. Node counts are identical on
+path-independent programs and move only within the documented
+order-sensitivity class (budget-capped, goal-stopped, or
+scaffolding-path-dependent runs; methodology section 4). Measured on
+math-microbenchmark's rules encoding under semi-naive, the class-growth delta
+cost drops from 1.69 s under `rank` to 0.60 s under `size`/`uses`/`sum`.

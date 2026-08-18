@@ -216,6 +216,11 @@ where
         self.lazy_ac_rounds = rounds;
     }
 
+    /// Select the merge survivor policy (see `EGraph::set_union_by`).
+    pub fn set_union_by(&mut self, u: crate::egraph::UnionBy) {
+        self.eg.set_union_by(u);
+    }
+
     /// Open the shared lazy-check transaction if it is not already open: mark
     /// the graph, then enable completion. Consecutive equality checks keep it
     /// open and accumulate completion/alternation state; the first non-check

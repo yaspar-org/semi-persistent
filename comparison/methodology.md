@@ -384,6 +384,15 @@ final submission re-runs every table at one pinned commit.
   and pre-fix semi numbers on capped programs must not be cited as
   complete derivations.
 
+- 2026-08-18, merge survivor policy (--union-by): directed merges on
+  verified per-class counters (member count with the new W7 accuracy
+  clause in the kernel's wf; use-list length already verified). All four
+  policies pass every check on the corpus; node counts move only within
+  the documented order-sensitivity class. math-microbenchmark rules-semi
+  drops 1.69 s (rank) to 0.60 s (size/uses/sum) with complete
+  derivation, closing the class-growth-delta cost the 2026-08-17 fix
+  introduced; the r3 campaign runs under the default (rank) unless noted.
+
 - 2026-08-17, RHS multiplicity expressions: RHS elements of a variadic
   operator take checked u64 expressions over bound multiplicities
   (`(Add b ..s):(u64::- k 1)`), interval-checked at rule install against

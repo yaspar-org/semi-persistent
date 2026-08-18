@@ -32,6 +32,7 @@ struct Directives {
     derive_ac_eqs: bool,
     lazy_ac_eqs: bool,
     check_ac_basis: bool,
+    union_by: semi_persistent_egraph::UnionBy,
 }
 
 fn parse_directives(src: &str) -> Directives {
@@ -42,6 +43,7 @@ fn parse_directives(src: &str) -> Directives {
         derive_ac_eqs: false,
         lazy_ac_eqs: false,
         check_ac_basis: false,
+        union_by: semi_persistent_egraph::UnionBy::Rank,
     };
     for line in src.lines().take(6) {
         let line = line.trim();
@@ -67,6 +69,16 @@ fn parse_directives(src: &str) -> Directives {
         }
         if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
             d.check_ac_basis = rest.trim() == "on";
+        }
+        if let Some(rest) = line.strip_prefix(";; UNION_BY:") {
+            use semi_persistent_egraph::UnionBy;
+            d.union_by = match rest.trim() {
+                "rank" => UnionBy::Rank,
+                "size" => UnionBy::Size,
+                "uses" => UnionBy::Uses,
+                "sum" => UnionBy::Sum,
+                other => panic!("unknown UNION_BY directive: {other}"),
+            };
         }
     }
     d
@@ -113,6 +125,7 @@ fn run_with<
     if d.lazy_ac_eqs {
         interp.set_ac_mode(semi_persistent_egraph::interpret::AcMode::Lazy);
     }
+    interp.set_union_by(d.union_by);
     interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(

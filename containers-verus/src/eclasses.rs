@@ -56,6 +56,12 @@ pub struct ClassData<L: DenseId, T: DenseId> {
     pub use_list: L,
     pub min_row: Option<<T as DenseId>::Index>,
     pub atomic: bool,
+    /// Member-node count of the class, in the node-id family's index type so
+    /// the width follows the configuration (the `min_row` pattern). Set to 1
+    /// at `add_singleton`, folded survivor += absorbed at `merge_with`,
+    /// carried unchanged by every other payload write. Feeds the
+    /// `--union-by size`/`sum` survivor policy.
+    pub size: <T as DenseId>::Index,
 }
 
 impl<L: DenseId, T: DenseId> Clone for ClassData<L, T> {
@@ -69,7 +75,12 @@ impl<L: DenseId, T: DenseId> Clone for ClassData<L, T> {
 impl<L: DenseId, T: DenseId> core::default::Default for ClassData<L, T> {
     fn default() -> (r: ClassData<L, T>)
     {
-        ClassData { use_list: L::default(), min_row: None, atomic: false }
+        ClassData {
+            use_list: L::default(),
+            min_row: None,
+            atomic: false,
+            size: <T::Index as IndexLike>::min(),
+        }
     }
 }
 
@@ -84,6 +95,7 @@ pub struct ClassDataRepr<LR, I> {
     pub row: I,
     pub present: bool,
     pub atomic: bool,
+    pub size: I,
 }
 
 impl<LR: Copy, I: Copy> Clone for ClassDataRepr<LR, I> {
@@ -106,6 +118,7 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
             use_list: L::value_of(r.a),
             min_row: if r.present { Some(r.row) } else { None },
             atomic: r.atomic,
+            size: r.size,
         }
     }
     open spec fn tag_of(r: Self::Repr) -> bool {
@@ -131,13 +144,20 @@ impl<L: DenseId, T: DenseId> Tagged for ClassData<L, T> {
             None => (<T::Index as IndexLike>::min(), false),
         };
         proof { <T::Index as IndexLike>::lemma_min_as_nat(); }
-        ClassDataRepr { a: self.use_list.into_repr(), row, present, atomic: self.atomic }
+        ClassDataRepr {
+            a: self.use_list.into_repr(),
+            row,
+            present,
+            atomic: self.atomic,
+            size: self.size,
+        }
     }
     fn from_repr(r: &Self::Repr) -> (v: Self) {
         ClassData {
             use_list: L::from_repr(&r.a),
             min_row: if r.present { Some(r.row) } else { None },
             atomic: r.atomic,
+            size: r.size,
         }
     }
     fn tag(r: &Self::Repr) -> (b: bool) {
@@ -230,6 +250,17 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
                 && roots[(#[trigger] ring_model[c1][p1]) as int]
                     == roots[(#[trigger] ring_model[c2][p2]) as int]
                 ==> c1 == c2)
+    // W7: the stored class size is the ring length. Stated at the ring member
+    // that is the class's root (every class's root node sits on its own ring),
+    // whose payload carries the live key; the key's ClassData.size counts
+    // exactly the ring's members. This is what makes `class_size` a verified
+    // O(1) read of the member count (the `--union-by size` policy input).
+    &&& (forall|c: int, p: int|
+            0 <= c < ring_model.len() && 0 <= p < ring_model[c].len()
+                && roots[(#[trigger] ring_model[c][p]) as int] == ring_model[c][p]
+                ==> ss_value(reprs_dense, reprs_sparse,
+                        payloads[ring_model[c][p] as int].get_spec()->Some_0.as_nat())
+                    .size.as_nat() == ring_model[c].len())
     // W4: live classes own pairwise-distinct, allocated use-lists
     &&& (forall|id: nat| #[trigger] ss_contains(reprs_sparse, reprs_indices, live, id)
             ==> ss_value(reprs_dense, reprs_sparse, id).use_list.id_nat()
@@ -605,8 +636,12 @@ where
             Err(_) => crate::guard::refuse("EClasses::add_singleton: use-list id range exhausted"),
         };
         // 3. repr slot
+        let one = match <T::Index as IndexLike>::try_from_usize(1) {
+            Some(o) => o,
+            None => crate::guard::refuse("EClasses::add_singleton: index width below 1"),
+        };
         let key = match self.reprs.try_add(ClassData {
-            use_list: list_id, min_row: None, atomic: false,
+            use_list: list_id, min_row: None, atomic: false, size: one,
         }) {
             Ok(k) => k,
             Err(_) => crate::guard::refuse("EClasses::add_singleton: repr capacity exhausted"),
@@ -662,7 +697,7 @@ where
             assert(self.reprs.contains_spec(key));
             assert(ss_contains(sparse, indices, live, kn));
             assert(ss_value(dense, sparse, kn)
-                == ClassData::<L, T> { use_list: list_id, min_row: None, atomic: false });
+                == ClassData::<L, T> { use_list: list_id, min_row: None, atomic: false, size: one });
 
             // survivors: old liveness and values carry over, id-for-nat
             assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
@@ -958,7 +993,7 @@ where
     /// ring splice with payload clear, repr removal). Extracted for the same
     /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
     /// and root quantifiers e-match against both states' full `wf`.
-    proof fn lemma_merge_wf(&self, o: Self, s: T, ab: T, key_ab: nat,
+    proof fn lemma_merge_wf(&self, o: Self, s: T, ab: T, key_ab: nat, skey: nat,
         ab_pay: Opt<<T as DenseId>::Index>, cs: int, ps: int, ca: int, pa: int)
         requires
             o.wf(),
@@ -977,6 +1012,10 @@ where
             key_ab == o.key_of(ab.id_nat() as int),
             ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
                 o.reprs.n_spec(), key_ab),
+            skey == o.key_of(s.id_nat() as int),
+            ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), skey),
+            skey != key_ab,
             0 <= cs < o.entries.model_view().len(),
             0 <= ps < o.entries.model_view()[cs].len(),
             o.entries.model_view()[cs][ps] == s.id_nat() as usize,
@@ -1000,12 +1039,29 @@ where
             self.reprs.cap_spec() == o.reprs.cap_spec(),
             self.reprs.id_set() == o.reprs.id_set().remove(key_ab),
             forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
-                && k.as_nat() != key_ab
+                && k.as_nat() != key_ab && k.as_nat() != skey
                 ==> self.reprs.contains_spec(k)
                     && ss_value(self.reprs.dense_view(), self.reprs.sparse_view(),
                             k.as_nat())
                         == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                             k.as_nat()),
+            // the survivor's key stays live with only its size folded:
+            // new size = old survivor size + absorbed size.
+            forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
+                && k.as_nat() == skey
+                ==> self.reprs.contains_spec(k),
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).use_list
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).use_list,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).min_row
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).min_row,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey).atomic
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey).atomic,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), skey)
+                .size.as_nat()
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), skey)
+                    .size.as_nat()
+                    + ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key_ab)
+                        .size.as_nat(),
             self.uses.model_view() == o.uses.model_view(),
             self.uses.nodes_view() == o.uses.nodes_view(),
             self.min_pool.view() == o.min_pool.view(),
@@ -1095,11 +1151,17 @@ where
             assert(roots[x] == crate::union_find::merge_roots(oroots, sn, abn)[x]);
         }
 
-        // survivors + dead-stay-dead, in the nat form the clauses use
+        // survivors + dead-stay-dead, in the nat form the clauses use: values
+        // carry field-for-field, fully except the survivor key's folded size.
         assert forall|kk: nat| #[trigger] ss_contains(osparse, oindices, olive, kk)
             && kk != key_ab
             implies ss_contains(sparse, indices, live, kk)
-                && ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {
+                && ss_value(dense, sparse, kk).use_list
+                    == ss_value(odense, osparse, kk).use_list
+                && ss_value(dense, sparse, kk).min_row
+                    == ss_value(odense, osparse, kk).min_row
+                && (kk != skey ==> ss_value(dense, sparse, kk)
+                    == ss_value(odense, osparse, kk)) by {
             let kw = oindices[osparse[kk as int].as_nat() as int];
             assert(kw.as_nat() == kk);
             assert(o.reprs.contains_spec(kw));
@@ -1262,7 +1324,8 @@ where
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             implies ss_value(dense, sparse, kk).use_list.id_nat() < um.len() by {
             assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
-            assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+            assert(ss_value(dense, sparse, kk).use_list
+                == ss_value(odense, osparse, kk).use_list);
         }
         assert forall|k1: nat, k2: nat|
             ss_contains(sparse, indices, live, k1)
@@ -1271,8 +1334,10 @@ where
                 != #[trigger] ss_value(dense, sparse, k2).use_list.id_nat() by {
             assert(ss_contains(osparse, oindices, olive, k1) && k1 != key_ab);
             assert(ss_contains(osparse, oindices, olive, k2) && k2 != key_ab);
-            assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
-            assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
+            assert(ss_value(dense, sparse, k1).use_list
+                == ss_value(odense, osparse, k1).use_list);
+            assert(ss_value(dense, sparse, k2).use_list
+                == ss_value(odense, osparse, k2).use_list);
         }
         // --- W5 (uses untouched)
         assert forall|l: int, p: int|
@@ -1287,7 +1352,8 @@ where
                 && (ss_value(dense, sparse, kk).min_row->Some_0.as_nat() + 1)
                     * (self.min_width as nat) <= self.min_pool.view().len() by {
             assert(ss_contains(osparse, oindices, olive, kk) && kk != key_ab);
-            assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+            assert(ss_value(dense, sparse, kk).min_row
+                == ss_value(odense, osparse, kk).min_row);
         }
         assert forall|k1: nat, k2: nat|
             ss_contains(sparse, indices, live, k1)
@@ -1298,8 +1364,58 @@ where
                 != ss_value(dense, sparse, k2).min_row->Some_0.as_nat() by {
             assert(ss_contains(osparse, oindices, olive, k1) && k1 != key_ab);
             assert(ss_contains(osparse, oindices, olive, k2) && k2 != key_ab);
-            assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
-            assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
+            assert(ss_value(dense, sparse, k1).min_row
+                == ss_value(odense, osparse, k1).min_row);
+            assert(ss_value(dense, sparse, k2).min_row
+                == ss_value(odense, osparse, k2).min_row);
+        }
+        // --- W7: the stored class size is the ring length.
+        // s sits on the merged ring: rotate(orm[cs], ps+1)[lcs-1] == orm[cs][ps].
+        let lcs = orm[cs].len() as int;
+        assert(merged[lcs - 1] == orm[cs][ps]);
+        assert forall|c: int, p: int|
+            0 <= c < rm.len() && 0 <= p < rm[c].len()
+                && roots[(#[trigger] rm[c][p]) as int] == rm[c][p]
+            implies ss_value(dense, sparse,
+                    pay[rm[c][p] as int].get_spec()->Some_0.as_nat())
+                .size.as_nat() == rm[c].len() by {
+            let m = rm[c][p];
+            if c == ca {
+                assert(rm[ca].len() == 0);
+            } else if c == cs {
+                // every merged member roots to s, so the root member IS s.
+                assert(roots[m as int] == su);
+                assert(m == su);
+                assert(pay[m as int] == opay[m as int]);
+                assert(pay[m as int].get_spec()->Some_0.as_nat() == skey);
+                // o's W7 at the two old rings gives the two old sizes.
+                assert(oroots[orm[cs][ps] as int] == orm[cs][ps]);
+                assert(ss_value(odense, osparse, skey).size.as_nat()
+                    == orm[cs].len());
+                assert(oroots[orm[ca][pa] as int] == orm[ca][pa]);
+                assert(ss_value(odense, osparse, key_ab).size.as_nat()
+                    == orm[ca].len());
+                assert(merged.len() == orm[cs].len() + orm[ca].len());
+                assert(ss_value(dense, sparse, skey).size.as_nat()
+                    == orm[cs].len() + orm[ca].len());
+            } else {
+                assert(rm[c] == orm[c]);
+                // the root member kept its old root (it is neither s's nor
+                // ab's class member: those all live on cs/ca in o).
+                assert(oroots[m as int] != abu && oroots[m as int] != su);
+                assert(roots[m as int] == oroots[m as int]);
+                assert(oroots[m as int] == m);
+                assert(m != abu && m != su);
+                assert(pay[m as int] == opay[m as int]);
+                let kk = opay[m as int].get_spec()->Some_0.as_nat();
+                assert(ss_contains(osparse, oindices, olive, kk));
+                assert(ss_value(odense, osparse, kk).size.as_nat() == orm[c].len());
+                // kk is neither the absorbed key nor the survivor key (W2c on
+                // o: distinct roots carry distinct keys).
+                assert(kk != key_ab);
+                assert(kk != skey);
+                assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
+            }
         }
         assert(eg_model_wf::<T, L, N>(rm, pay, roots, dense, sparse, indices,
             um, un, self.min_pool.view(), self.min_width as nat));
@@ -1392,6 +1508,37 @@ where
             assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                 key.as_nat()));
         }
+        // Survivor size fold, BEFORE the splice so the wf lemma sees the final
+        // payload: survivor.size += absorbed.size, tied to the merged ring
+        // length by W7. The survivor root's payload is present (W2a) and
+        // names a live key (W2b), the same theorem as for `ab` above.
+        let pay_s = self.entries.payload_of(s);
+        proof {
+            assert(pay_s == o.entries.payload_seq()[s.id_nat() as int]);
+            assert(pay_s.wf());
+            assert(pay_s.get_spec() is Some);
+        }
+        let skey = pay_s.get();
+        proof {
+            assert(skey.as_nat() == o.key_of(s.id_nat() as int));
+            assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
+                o.reprs.n_spec(), skey.as_nat()));
+            assert(self.reprs.contains_spec(skey));
+            // distinct roots carry distinct keys (W2c).
+            assert(skey.as_nat() != key.as_nat());
+        }
+        let mut sdata = self.reprs.get_live(skey);
+        proof {
+            assert(sdata == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                skey.as_nat()));
+        }
+        sdata.size = match crate::index_like::checked_add(sdata.size, data.size) {
+            Some(v) => v,
+            None => crate::guard::refuse(
+                "EClasses::merge: class size overflows the index width"),
+        };
+        self.reprs.set_live(skey, sdata);
+        let ghost m1 = *self;
         // distinct rings, from W3a: were s and ab on one ring, they would
         // share a root, and they are distinct roots.
         let ghost cs = self.entries.locate(s.id_nat() as int).0;
@@ -1423,7 +1570,40 @@ where
                     + crate::circular_list::rotate(o.entries.model_view()[ca], pa + 1))
                 .update(ca, Seq::<usize>::empty()));
             assert(self.reprs.id_set() =~= o.reprs.id_set().remove(key.as_nat()));
-            self.lemma_merge_wf(o, s, ab, key.as_nat(), none_pay, cs, ps, ca, pa);
+            // set_live changed only skey's dense slot: distinct live keys sit
+            // at distinct dense positions, so every other survivor's value is
+            // o's, and skey's is `sdata` (o's value with the size folded).
+            assert forall|k: <T as DenseId>::Index| #[trigger] o.reprs.contains_spec(k)
+                && k.as_nat() != key.as_nat() && k.as_nat() != skey.as_nat()
+                implies self.reprs.contains_spec(k)
+                    && ss_value(self.reprs.dense_view(), self.reprs.sparse_view(),
+                            k.as_nat())
+                        == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                            k.as_nat()) by {
+                assert(m1.reprs.contains_spec(k));
+                assert(o.reprs.sparse_view()[k.as_nat() as int].as_nat()
+                    != o.reprs.sparse_view()[skey.as_nat() as int].as_nat()) by {
+                    if o.reprs.sparse_view()[k.as_nat() as int].as_nat()
+                        == o.reprs.sparse_view()[skey.as_nat() as int].as_nat() {
+                        assert(o.reprs.indices_view()[o.reprs.sparse_view()
+                            [k.as_nat() as int].as_nat() as int].as_nat() == k.as_nat());
+                    }
+                }
+                assert(ss_value(m1.reprs.dense_view(), m1.reprs.sparse_view(),
+                        k.as_nat())
+                    == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
+                        k.as_nat()));
+            }
+            assert(m1.reprs.contains_spec(skey));
+            assert(ss_contains(m1.reprs.sparse_view(), m1.reprs.indices_view(),
+                m1.reprs.n_spec(), skey.as_nat()));
+            assert(ss_value(m1.reprs.dense_view(), m1.reprs.sparse_view(),
+                skey.as_nat()) == sdata);
+            assert(self.reprs.contains_spec(skey));
+            assert(ss_value(self.reprs.dense_view(), self.reprs.sparse_view(),
+                skey.as_nat()) == sdata);
+            self.lemma_merge_wf(o, s, ab, key.as_nat(), skey.as_nat(),
+                none_pay, cs, ps, ca, pa);
         }
         Some(MergeInfo {
             survivor: s,
@@ -1978,6 +2158,10 @@ where
                 == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
                     .use_list,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
+                .size
+                == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(), key.as_nat())
+                    .size,
+            ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
                 .min_row is Some,
             ss_value(self.reprs.dense_view(), self.reprs.sparse_view(), key.as_nat())
                 .min_row->Some_0 == row,
@@ -2022,7 +2206,9 @@ where
         // untouched; W6 is the hypothesis set.
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             implies ss_value(dense, sparse, kk).use_list
-                == ss_value(odense, osparse, kk).use_list by {
+                    == ss_value(odense, osparse, kk).use_list
+                && ss_value(dense, sparse, kk).size
+                    == ss_value(odense, osparse, kk).size by {
             if kk != key.as_nat() {
                 assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
             }
@@ -2172,6 +2358,19 @@ where
             assert(l.id_nat() < self.uses.model_view().len());
         }
         self.uses.len(l).as_usize()
+    }
+
+    /// O(1) member-node count of class `key`, widened to `usize` at the
+    /// boundary like `use_list_len` (the stored counter is `T::Index`-wide,
+    /// so the width follows the configuration). Refuses a dead key. Feeds the
+    /// `--union-by size`/`sum` survivor policy.
+    pub fn class_size(&self, key: <T as DenseId>::Index) -> (n: usize)
+        requires self.wf(),
+    {
+        if !self.reprs.contains(key) {
+            crate::guard::refuse("EClasses::class_size: class key is not live");
+        }
+        self.reprs.get_live(key).size.as_usize()
     }
 
     /// Read completion column `col` of a pool row number carried in
@@ -2722,6 +2921,17 @@ where
     /// Justified counterpart of [`Self::merge_directed`].
     pub fn merge_justified_directed(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
         let prefer_a = self.prefer_a_by_uses(a, b);
+        let r = self.merge_with(a, b, true, prefer_a);
+        if r.is_some() {
+            self.uf.record_proof_edge(a, b, just);
+        }
+        r
+    }
+
+    /// Justified counterpart of [`Self::merge_directed_with`]: the caller
+    /// computed its own survivor policy (`--union-by`).
+    pub fn merge_justified_directed_with(&mut self, a: T, b: T, prefer_a: bool, just: J)
+        -> Option<MergeInfo<T, L>> {
         let r = self.merge_with(a, b, true, prefer_a);
         if r.is_some() {
             self.uf.record_proof_edge(a, b, just);

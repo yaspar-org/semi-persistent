@@ -96,6 +96,25 @@ struct Cli {
     /// discarded for the mean. Needs --sampler-bootstrap.
     #[arg(long, default_value_t = 1.0)]
     sampler_cv: f64,
+
+    /// Merge survivor policy: rank (union-find rank, the default), size
+    /// (absorb the smaller class by member count), uses (absorb the side with
+    /// the shorter use-list), sum (member count + use-list length). The match
+    /// set and every check outcome are identical in all four; the directed
+    /// policies bound the semi-naive delta and recanonization work.
+    #[arg(long, default_value = "rank", value_parser = parse_union_by)]
+    union_by: semi_persistent_egraph::UnionBy,
+}
+
+fn parse_union_by(s: &str) -> Result<semi_persistent_egraph::UnionBy, String> {
+    use semi_persistent_egraph::UnionBy;
+    match s {
+        "rank" => Ok(UnionBy::Rank),
+        "size" => Ok(UnionBy::Size),
+        "uses" => Ok(UnionBy::Uses),
+        "sum" => Ok(UnionBy::Sum),
+        _ => Err(format!("expected rank|size|uses|sum, got '{s}'")),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,6 +223,7 @@ fn main() {
                     cli.check_ac_basis,
                     cli.count_match_steps,
                     sched_mode,
+                    cli.union_by,
                 ),
                 LitValChoice::Bignum => run::<$Cfg, BignumLit, BignumModel, $proofs>(
                     &surface_cmds,
@@ -213,6 +233,7 @@ fn main() {
                     cli.check_ac_basis,
                     cli.count_match_steps,
                     sched_mode,
+                    cli.union_by,
                 ),
                 LitValChoice::All => run::<$Cfg, AllLit, AllModel, $proofs>(
                     &surface_cmds,
@@ -222,6 +243,7 @@ fn main() {
                     cli.check_ac_basis,
                     cli.count_match_steps,
                     sched_mode,
+                    cli.union_by,
                 ),
             }
         };
@@ -251,6 +273,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
     basis_checks: bool,
     count_match_steps: bool,
     sched_mode: semi_persistent_egraph::ematch::SchedulingMode,
+    union_by: semi_persistent_egraph::UnionBy,
 ) where
     Cfg: semi_persistent_egraph::config::EGraphConfig,
     Cfg::O: std::hash::Hash,
@@ -267,6 +290,7 @@ fn run<Cfg, L, M, const PROOFS: bool>(
         semi_persistent_egraph::interpret::Interpreter::<Cfg, L, M, true, PROOFS>::new(model);
     interp.set_strategy(strategy);
     interp.set_ac_mode(ac_mode);
+    interp.set_union_by(union_by);
     interp.set_basis_checks(basis_checks);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(

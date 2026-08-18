@@ -53,15 +53,24 @@ const _: () = assert!(
     "e-class ring cell must stay 12 bytes at 31-bit ids"
 );
 
-// The per-class slot: a use-list head plus `min_row` plus two flags, packed to
-// 12 bytes at 31-bit ids (the row NUMBER, not a pointer-width offset — see the
-// kernel's `ClassData::min_row` doc). The kernel stores the same fields; its
-// named repr struct has the same layout the old tuple had.
+// The per-class slot: a use-list head, `min_row`, the member-count word (the
+// `--union-by` policy input, `T::Index`-wide so it follows the id
+// configuration), and two flags — 16 bytes at 31-bit ids. Was 12 before the
+// verified size counter landed; the count word is the deliberate growth.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     core::mem::size_of::<<ClassData<crate::id::UseListId, crate::id::ENodeId> as Tagged>::Repr>()
-        == 12,
-    "per-class slot must stay 12 bytes at 31-bit ids"
+        == 16,
+    "per-class slot must stay 16 bytes at 31-bit ids"
+);
+
+// The 63-bit configuration's slot: the same fields at 8-byte words.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(
+    core::mem::size_of::<
+        <ClassData<crate::nodes::UseListId64, crate::nodes::ENodeId64> as Tagged>::Repr,
+    >() <= 32,
+    "per-class slot exceeds 32 bytes at 63-bit ids"
 );
 
 #[cfg(test)]

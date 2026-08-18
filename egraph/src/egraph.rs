@@ -76,6 +76,8 @@ pub struct EGraph<
     /// nodes in `touched` (see `merge_in_classes`). Only semi-naive saturation
     /// consumes it; off everywhere else so merges pay no ring walk.
     track_merge_members: bool,
+    /// Survivor policy for class merges (see [`UnionBy`]).
+    union_by: UnionBy,
     /// Goal pair for goal-directed completion (the lazy-check transaction):
     /// the completion loop polls it between passes and inside a round's apply
     /// loops, and stops with [`CompletionOutcome::GoalMet`] as soon as the
@@ -157,6 +159,24 @@ pub enum CompletionOutcome {
     GoalMet { rounds: usize },
 }
 
+/// Survivor policy for class merges (`--union-by`). `Rank` leaves the choice
+/// to the union-find's rank heuristic (the historical default). The directed
+/// criteria absorb the cheap side, reading the verified per-class counters:
+/// `Size` compares member counts (bounds the semi-naive touched-log pushes to
+/// amortized O(n log n) — a node is absorbed at most log n times), `Uses`
+/// compares use-list lengths (bounds recanonization work the same way), and
+/// `Sum` adds the two, bounding both. Survivor choice is semantically free:
+/// every class property the engine reads is merge-folded (design doc §9a), so
+/// all four policies produce identical match sets and check outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum UnionBy {
+    #[default]
+    Rank,
+    Size,
+    Uses,
+    Sum,
+}
+
 /// Shortlex order on canonical element lists: shorter first, ties broken
 /// element-wise by id. The orientation of the A-only inter-reduction rules
 /// (`a_round`); well-founded, so rewriting under it terminates.
@@ -208,6 +228,7 @@ where
             mset_buf: Vec::new(),
             touched: Vec::new(),
             track_merge_members: false,
+            union_by: UnionBy::Rank,
             cc_goal: None,
             cc_start_nodes: 0,
             cc: false,
@@ -241,6 +262,27 @@ where
     /// ago) — see the `cc` field docs and `doc/future/ac-completion-review-debt.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
         self.cc = enabled;
+    }
+
+    /// Select the merge survivor policy (see [`UnionBy`]).
+    pub fn set_union_by(&mut self, u: UnionBy) {
+        self.union_by = u;
+    }
+
+    /// The weight the `--union-by` criterion assigns to the class of repr `r`.
+    fn union_weight(&self, r: Cfg::G) -> usize {
+        let Some(k) = self.classes.repr_id(r) else {
+            return 0;
+        };
+        match self.union_by {
+            UnionBy::Rank => 0,
+            UnionBy::Size => self.classes.class_size(k),
+            UnionBy::Uses => self.classes.use_list_len(k),
+            UnionBy::Sum => self
+                .classes
+                .class_size(k)
+                .saturating_add(self.classes.use_list_len(k)),
+        }
     }
 
     /// Set or clear the completion goal pair (see the `cc_goal` field). With a
@@ -1194,24 +1236,56 @@ where
         b: Cfg::G,
         just: Option<Justification<Cfg::G>>,
     ) -> Option<crate::classes::MergeInfo<Cfg::G, Cfg::UL>> {
+        let ra = self.classes.find_const(a);
+        let rb = self.classes.find_const(b);
+        if ra == rb {
+            return None;
+        }
+        // Survivor policy (--union-by): `Rank` leaves the choice to the
+        // union-find; the directed criteria keep the heavier side, so the
+        // absorbed side is the cheap one and is known before the union.
+        let prefer_a = match self.union_by {
+            UnionBy::Rank => None,
+            _ => Some(self.union_weight(ra) >= self.union_weight(rb)),
+        };
+        // Semi-naive merge tracking: collect the absorbed side's members
+        // before the splice. Under a directed policy only the (small)
+        // absorbed ring is walked; under rank the survivor is unknown until
+        // the union decides, so both rings are collected and the absorbed
+        // one pushed after.
         let pre = if self.track_merge_members {
-            let ra = self.classes.find_const(a);
-            let rb = self.classes.find_const(b);
-            if ra == rb {
-                return None;
+            match prefer_a {
+                Some(pa) => {
+                    let absorbed_repr = if pa { rb } else { ra };
+                    let v: Vec<Cfg::G> = self.classes.iter_class(absorbed_repr).collect();
+                    Some((absorbed_repr, v, None))
+                }
+                None => {
+                    let va: Vec<Cfg::G> = self.classes.iter_class(ra).collect();
+                    let vb: Vec<Cfg::G> = self.classes.iter_class(rb).collect();
+                    Some((ra, va, Some(vb)))
+                }
             }
-            let va: Vec<Cfg::G> = self.classes.iter_class(ra).collect();
-            let vb: Vec<Cfg::G> = self.classes.iter_class(rb).collect();
-            Some((ra, va, vb))
         } else {
             None
         };
-        let m = match just {
-            Some(j) => self.classes.merge_justified(a, b, j),
-            None => self.classes.merge(a, b),
+        let m = match (prefer_a, just) {
+            (None, None) => self.classes.merge(a, b),
+            (None, Some(j)) => self.classes.merge_justified(a, b, j),
+            (Some(pa), None) => self.classes.merge_directed_with(a, b, pa),
+            (Some(pa), Some(j)) => self.classes.merge_justified_directed_with(a, b, pa, j),
         }?;
-        if let Some((ra, va, vb)) = pre {
-            let absorbed = if m.absorbed == ra { va } else { vb };
+        if let Some((r0, v0, v1)) = pre {
+            let absorbed = match v1 {
+                None => v0,
+                Some(v1) => {
+                    if m.absorbed == r0 {
+                        v0
+                    } else {
+                        v1
+                    }
+                }
+            };
             self.touched.extend(absorbed);
         }
         Some(m)

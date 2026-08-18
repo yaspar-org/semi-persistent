@@ -56,7 +56,7 @@ pub use containers::{DenseId, IdFactory, IndexLike, SparseSet};
 // Flat re-exports from egraph module
 pub use egraph::{
     CompletionOutcome, DEFAULT_COMPLETION_NODE_BUDGET, EGraph, EGraph31, EGraph63, EGraphM16,
-    EGraphToken,
+    EGraphToken, UnionBy,
 };
 
 // Flat re-exports from other modules
