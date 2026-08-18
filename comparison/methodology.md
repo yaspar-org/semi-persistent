@@ -9,7 +9,10 @@ that cannot be justified drops the benchmark; nothing is fudged.
 
 ## 1. Systems under test and pinning
 
-- egglog: commit 7b1adf2 (egraphs-good/egglog), built `--release`.
+- egglog: commit 7b1adf2 (egraphs-good/egglog), built `--release`, checkout
+  at `~/tools/egglog` (moved out of /tmp 2026-08-18 after the periodic /tmp
+  cleaner destroyed the engine worktree's metadata; nothing in this study may
+  live in /tmp).
   Registry dependencies vendored from static.crates.io because cargo
   could not reach index.crates.io here; procedure in comparison/README.md.
   **Toolchain deviation withdrawn 2026-08-16:** the earlier build used

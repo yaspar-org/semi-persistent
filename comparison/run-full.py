@@ -117,7 +117,8 @@ def main():
     ap.add_argument("--ours",
                     default=os.path.join(HERE, "..", "target", "release",
                                          "semi-persistent"))
-    ap.add_argument("--egglog", default="/tmp/egglog/target/release/egglog")
+    ap.add_argument("--egglog",
+                    default=os.path.expanduser("~/tools/egglog/target/release/egglog"))
     ap.add_argument("--benchmark", action="append", choices=sorted(BENCHMARKS),
                     help="restrict to one benchmark; repeatable, defaults to all")
     args = ap.parse_args()
