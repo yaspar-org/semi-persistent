@@ -18,7 +18,11 @@ pub trait LitVal: Clone + Eq + Hash + fmt::Debug + fmt::Display {}
 ///
 /// Carries the log length at the mark alongside the container's own token:
 /// restore reads it to find the suffix of values interned since, which is
-/// exactly the set of lookup entries it has to drop.
+/// exactly the set of lookup entries it has to drop. The length is not a
+/// second branch-history encoding: branch validity lives entirely in the
+/// `VecToken`, which restore asserts valid before touching the index, and
+/// the length only tells it which suffix values to read from the log while
+/// they are still live (after the log restore they are gone).
 #[derive(Clone, Copy, Debug)]
 pub struct LitValStoreToken(crate::containers::VecToken, usize);
 

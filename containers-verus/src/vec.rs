@@ -47,6 +47,12 @@ pub enum ShrinkPolicy {
 /// cross-container use. `frame_idx` and `depth` are numerically equal at mark
 /// but are DIFFERENT quantities (reconstruction index vs. validity depth) —
 /// see 02-fork-history.md §0.5.
+///
+/// `branch_id` and `depth` are u32 by design, independent of the element
+/// index width: they count forks and open marks, not elements. The cap is
+/// 2^32 - 1 live branches / mark depth, enforced by the headroom
+/// preconditions on `fork` and the headroom clauses of `is_valid_token`,
+/// not by wrapping.
 #[derive(Copy, Clone)]
 pub struct VecToken {
     pub(crate) frame_idx: usize,
