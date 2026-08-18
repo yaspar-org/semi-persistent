@@ -1,0 +1,42 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/knapsack.egg (7b1adf2).
+;; Demand-driven dynamic programming: 0/1 knapsack with arithmetic guards and
+;; min/max folding. No associative or commutative operator, so no native
+;; column. Deviations: comparison/knapsack.deviations.md.
+(datatype expr
+    (Num i64)
+    (Add expr expr)
+    (Max expr expr))
+(rewrite (Add (Num a) (Num b)) (Num (i64::+ a b)))
+(rewrite (Max (Num a) (Num b)) (Num (i64::max a b)))
+
+; list of (weight, value) pairs
+(datatype objects
+    (Cons i64 i64 objects))
+(constructor NilConst () objects)
+(let nil (NilConst))
+
+(constructor Knap (i64 objects) expr)
+
+(rule ((= f (Knap capacity (Cons weight val rest))) (i64::<= weight capacity))
+      ((union (Knap capacity (Cons weight val rest))
+            (Max
+                (Add (Num val) (Knap (i64::- capacity weight) rest))
+                (Knap capacity rest)))))
+
+(rule ((= f (Knap capacity (Cons weight val rest))) (i64::> weight capacity))
+      ((union (Knap capacity (Cons weight val rest))
+            (Knap capacity rest))))
+
+(rule ((= f (Knap capacity (NilConst))))
+      ((union (Knap capacity nil) (Num 0))))
+
+(let test1 (Knap 13 (Cons 5 5 (Cons 3 3 (Cons 12 12 (Cons 5 5 nil))))))
+(let test2 (Knap 5 (Cons 6 6 nil)))
+(let test3 (Knap 5 (Cons 1 1 (Cons 1 1 (Cons 1 1 nil)))))
+(let test4 (Knap 15 (Cons 12 40 (Cons 2 20 (Cons 1 20 (Cons 1 10 (Cons 4 100 nil)))))))
+
+(run 100)
+
+(check (= test1 (Num 13)))
+(print-size)
