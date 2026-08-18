@@ -187,3 +187,15 @@ excluded from the timed tables and default-flag sweeps: 484 s against the
 rules encoding's 123 ms is a validation result, not a competitive column
 (matrix.native-A precedent: validated, no timing row). The rules encoding
 remains the shipped configuration for this benchmark.
+
+## The rules-encoding gap to egglog is match volume, not extraction (2026-08-18)
+
+Measured: deleting the program's three `(extract …)` commands moves wall time
+by nothing (157 ms with, 155 ms without, 3 runs each), and the run performs
+2 741 637 e-matching steps on a 9 583-node graph — 286 steps per node, the
+same signature as bdd's rules column. The loss to egglog (25.9 ms) is
+e-matching volume from the A/C rules encoding, dominated by the isolation
+rule matching every Add decomposition each round; the planned extractor
+rewrite was profiled first and its premise refuted, so it was not built. The
+native dual removes the A/C rules but sits behind completion cost (above);
+extraction's future is the Max-SAT design in `A3-future-work.md`.
