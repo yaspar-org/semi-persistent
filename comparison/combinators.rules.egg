@@ -1,0 +1,98 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/combinators.egg (7b1adf2).
+;; Substitution in lambda calculus via S/K/I combinators, with a dual
+;; representation (Expr and CExpr) linked by conversion rules. No operator is
+;; associative or commutative, so the benchmark ships one encoding and no
+;; native column; its value is extraction under extreme cost asymmetry
+;; (:cost 100 / 10000 / 1000000). Deviations: comparison/combinators.deviations.md.
+(datatype Expr
+    (Var String :cost 100)
+    (Abs String Expr)
+    (If Expr Expr Expr)
+    (N i64)
+    (Add Expr Expr)
+    (App Expr Expr))
+(constructor TConst () Expr)
+(let tt (TConst))
+(constructor FConst () Expr)
+(let ff (FConst))
+
+; (\x. (if x then 0 else 1) + 2) false
+(let test
+    (App
+        (Abs "x" (Add (If (Var "x") (N 0) (N 1)) (N 2))) ff))
+
+(datatype CExpr
+    (CVar String :cost 10000)
+    (CAbs String CExpr :cost 10000)
+    (CN i64)
+    (CApp CExpr CExpr))
+(constructor CTConst () CExpr)
+(let ctt (CTConst))
+(constructor CFConst () CExpr)
+(let cff (CFConst))
+(constructor CIfConst () CExpr)
+(let cif (CIfConst))
+(constructor CAddConst () CExpr)
+(let cadd (CAddConst))
+(constructor SConst () CExpr)
+(let scomb (SConst))
+(constructor KConst () CExpr)
+(let kcomb (KConst))
+(constructor IConst () CExpr)
+(let icomb (IConst))
+
+;;;; Conversion functions
+(constructor Comb (Expr) CExpr :cost 1000000)
+(constructor Uncomb (CExpr) Expr)
+(rewrite (Comb (Uncomb cx)) cx)
+(rewrite (Uncomb (Comb x)) x)
+
+; Mechanical mappings back and forth (S/K/I are not resugared).
+(rule ((= x (N n))) ((union (Comb x) (CN n))))
+(rule ((= cx (CN n))) ((union (Uncomb cx) (N n))))
+(rule ((= x (TConst))) ((union (Comb x) ctt)))
+(rule ((= cx (CTConst))) ((union (Uncomb cx) tt)))
+(rule ((= x (FConst))) ((union (Comb x) cff)))
+(rule ((= cx (CFConst))) ((union (Uncomb cx) ff)))
+
+(rule ((= x (If c t f)))
+    ((union (Comb x) (CApp (CApp (CApp cif (Comb c)) (Comb t)) (Comb f)))))
+(rule ((= cx (CApp (CApp (CApp cif cc) ct) cf)))
+    ((union (Uncomb cx) (If (Uncomb cc) (Uncomb ct) (Uncomb cf)))))
+
+(rule ((= x (Add l r)))
+    ((union (Comb x) (CApp (CApp cadd (Comb l)) (Comb r)))))
+(rule ((= cx (CApp (CApp cadd cl) cr)))
+    ((union (Uncomb cx) (Add (Uncomb cl) (Uncomb cr)))))
+(rule ((= x (App f a))) ((union (Comb x) (CApp (Comb f) (Comb a)))))
+
+(rule ((= x (Var v))) ((union (Comb x) (CVar v))))
+(rule ((= x (Abs v body))) ((union (Comb x) (CAbs v (Comb body)))))
+
+;;;; Abstraction elimination
+(rewrite (CAbs v (CVar v)) icomb)
+(rewrite (CAbs v1 (CVar v2)) (CApp kcomb (CVar v2))
+    :when ((String::!= v1 v2)))
+(rewrite (CAbs v (CN n)) (CApp kcomb (CN n)))
+(rewrite (CAbs v ctt) (CApp kcomb ctt))
+(rewrite (CAbs v cff) (CApp kcomb cff))
+(rewrite (CAbs v cif) (CApp kcomb cif))
+(rewrite (CAbs v cadd) (CApp kcomb cadd))
+(rewrite (CAbs v (CApp x y)) (CApp (CApp scomb (CAbs v x)) (CAbs v y)))
+(rewrite (CAbs v (CApp kcomb (CVar v))) kcomb)
+
+;;;; Primitive evaluation rules (surface syntax)
+(rewrite (If tt t f) t)
+(rewrite (If ff t f) f)
+(rewrite (Add (N n) (N m)) (N (i64::+ n m)))
+
+;;;; Substitution rules (combinator representation)
+(rewrite (CApp icomb cx) cx)
+(rewrite (CApp (CApp kcomb cx) cy) cx)
+(rewrite (CApp (CApp (CApp scomb cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))
+
+(run 11)
+(extract (Comb test))
+(check (= test (N 3)))
+(print-size)
