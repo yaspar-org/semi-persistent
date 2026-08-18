@@ -384,6 +384,12 @@ final submission re-runs every table at one pinned commit.
   and pre-fix semi numbers on capped programs must not be cited as
   complete derivations.
 
+- 2026-08-18, integer-to-rational lift: RBig::from_int / RBig::scale /
+  RBig::pow in the mixed literal model (exact, checked), making herbie's
+  multiplicity twins k-generic; its ledger's residual list shrinks to
+  the parity-shaped cases. Twelve checks pass both strategies, counts
+  unchanged. Fixture rbig_mult_lift.egg pins multiplicity 3.
+
 - 2026-08-18, merge survivor policy (--union-by): directed merges on
   verified per-class counters (member count with the new W7 accuracy
   clause in the kernel's wf; use-list length already verified). All four

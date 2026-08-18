@@ -612,6 +612,44 @@ impl LitModel for AllModel {
             v.extend_from_slice(ibig_ops!(AllLit));
             v.extend_from_slice(ubig_ops!(AllLit));
             v.extend_from_slice(rbig_ops!(AllLit));
+            // Mixed-domain lifts, only expressible where both groups'
+            // variants exist: an integer count into an exact rational (total,
+            // no rounding — what lets a bound multiplicity feed rational
+            // arithmetic), and rational pow with a checked non-negative
+            // integer exponent. The herbie multiplicity twins consume both.
+            v.push(LitOpDesc {
+                name: "RBig::from_int",
+                arg_sorts: &["i64"],
+                ret_sort: "RBig",
+                eval: |a| match a[0] {
+                    AllLit::I64(x) => AllLit::RBig(BigRational::from_integer((*x).into())),
+                    _ => panic!(),
+                },
+            });
+            v.push(LitOpDesc {
+                name: "RBig::scale",
+                arg_sorts: &["RBig", "i64"],
+                ret_sort: "RBig",
+                eval: |a| match (a[0], a[1]) {
+                    (AllLit::RBig(x), AllLit::I64(k)) => {
+                        AllLit::RBig(x * BigRational::from_integer((*k).into()))
+                    }
+                    _ => panic!(),
+                },
+            });
+            v.push(LitOpDesc {
+                name: "RBig::pow",
+                arg_sorts: &["RBig", "i64"],
+                ret_sort: "RBig",
+                eval: |a| match (a[0], a[1]) {
+                    (AllLit::RBig(x), AllLit::I64(e)) => {
+                        let e = i32::try_from(*e).expect("RBig::pow exponent out of range");
+                        assert!(e >= 0, "RBig::pow negative exponent");
+                        AllLit::RBig(x.pow(e))
+                    }
+                    _ => panic!(),
+                },
+            });
             v
         });
         &OPS

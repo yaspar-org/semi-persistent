@@ -213,3 +213,15 @@ interval-checked at install), so the herbie rules in that residual class can
 gain twins on the file's next pass; the RBig-fold residual stands, since it
 needs an integer-to-RBig cast primitive, not multiplicity arithmetic. Recorded
 here so the residual list is read against the current language.
+
+**Residuals retired (2026-08-18).** `RBig::from_int` (an integer count into an
+exact rational, total), `RBig::scale` (rational times integer count) and
+`RBig::pow` (checked non-negative integer exponent) landed in the mixed
+literal model, and the multiplicity-bounded twins are k-generic: both `Num`
+folds (`k*a`, `a^k`), counting (one `x:k>=2` rule subsuming the `:2`/`:3`
+pair), the `Neg` pair, the `Pow` pair, and the `exp` pair. What remains
+residual is parity-shaped, not count-shaped: `negone`/`Sqrt`/`Fabs`/`Neg`/
+`Cbrt` at multiplicities beyond their written `:2`/`:3` forms need an
+even/odd split the rule language does not carry, and every such case is
+verified latent. Re-validated: twelve checks pass under both strategies,
+counts unchanged (11 nodes base state).

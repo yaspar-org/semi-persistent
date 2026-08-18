@@ -53,10 +53,10 @@
 ; expressible twin because the multiplicity is an i64 and RBig arithmetic
 ; cannot consume it -- see the ledger's residual note)
 (rewrite (Add (Num a) (Num b) ..rest) (Add (Num (RBig::+ a b)) ..rest))
-(rewrite (Add (Num a):2 ..rest) (Add (Num (RBig::+ a a)) ..rest))
+(rewrite (Add (Num a):k>=2 ..rest) (Add (Num (RBig::scale a k)) ..rest))
 (rewrite (Sub (Num a) (Num b)) (Num (RBig::- a b)))
 (rewrite (Mul (Num a) (Num b) ..rest) (Mul (Num (RBig::* a b)) ..rest))
-(rewrite (Mul (Num a):2 ..rest) (Mul (Num (RBig::* a a)) ..rest))
+(rewrite (Mul (Num a):k>=2 ..rest) (Mul (Num (RBig::pow a k)) ..rest))
 (rewrite (Neg (Num a)) (Num (RBig::neg a)))
 (rewrite (Fabs (Num a)) (Num (RBig::abs a)))
 
@@ -76,10 +76,9 @@
 (rewrite (Mul (Div b c) ..rest) (Div (Mul b ..rest) c))
 (rewrite (Div a (Mul b ..p)) (Div (Div a b) (Mul ..p)))
 
-;; Counting. The source rule is exact x + x; :2 is that shape on a multiset,
-;; and :3 covers the triple (three is a global). k >= 4 is a residual.
-(rewrite (Add x:2 ..rest) (Add (Mul two x) ..rest))
-(rewrite (Add x:3 ..rest) (Add (Mul three x) ..rest))
+;; Counting, k-generic: x taken k times is k*x, the count lifted to an exact
+;; rational (RBig::from_int). Subsumes the source's x + x and the :3 triple.
+(rewrite (Add x:k>=2 ..rest) (Add (Mul (Num (RBig::from_int k)) x) ..rest))
 
 ;; Distributivity
 (rewrite (Mul (Add b ..s) ..rest) (Add (Mul b ..rest) (Mul (Add ..s) ..rest)))
@@ -92,7 +91,8 @@
 (rewrite (Mul (Neg a) ..rest) (Neg (Mul a ..rest)))
 (rewrite (Neg (Add a ..s)) (Add (Neg a) (Neg (Add ..s))))
 (rewrite (Add (Neg a) (Neg b) ..rest) (Add (Neg (Add a b)) ..rest))
-(rewrite (Add (Neg a):2 ..rest) (Add (Neg (Add a a)) ..rest))
+(rewrite (Add (Neg a):k>=2 ..rest)
+         (Add (Neg (Mul (Num (RBig::from_int k)) a)) ..rest))
 (rewrite (Div (Neg a) b) (Neg (Div a b)))
 (rewrite (Neg (Div a b)) (Div (Neg a) b))
 
@@ -107,7 +107,8 @@
 (rewrite (Add (Mul a:2) (Neg one) ..rest)
          (Add (Mul (Add a one) (Sub a one)) ..rest))
 (rewrite (Pow a b) (Mul (Pow a (Div b two)) (Pow a (Div b two))))
-(rewrite (Mul (Pow a b):2 ..rest) (Mul (Pow a (Mul two b)) ..rest))
+(rewrite (Mul (Pow a b):k>=2 ..rest)
+         (Mul (Pow a (Mul (Num (RBig::from_int k)) b)) ..rest))
 
 (rewrite (Sub x x) zero)
 (rewrite (Mul zero ..rest) zero)
@@ -181,7 +182,8 @@
 
 (rewrite (Mul (Unary "exp" a) (Unary "exp" b) ..rest)
          (Mul (Unary "exp" (Add a b)) ..rest))
-(rewrite (Mul (Unary "exp" a):2 ..rest) (Mul (Unary "exp" (Add a a)) ..rest))
+(rewrite (Mul (Unary "exp" a):k>=2 ..rest)
+         (Mul (Unary "exp" (Mul (Num (RBig::from_int k)) a)) ..rest))
 (rewrite (Div one (Unary "exp" a)) (Unary "exp" (Neg a)))
 (rewrite (Div (Unary "exp" a) (Unary "exp" b)) (Unary "exp" (Sub a b)))
 (rewrite (Unary "exp" (Mul a ..p)) (Pow (Unary "exp" a) (Mul ..p)))
