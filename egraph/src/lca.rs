@@ -4,12 +4,14 @@
 //!
 //! Two implementations:
 //! - [`LcaTable`]: stores full absolute depths. Simpler, faster queries.
-//! - [`LcaTableCompact`]: stores `i8` deltas + block-start depths. ~4× less
-//!   memory for the depth array, queries do a short prefix sum (~16 adds).
+//! - [`LcaTableCompact`]: stores `i8` deltas + block-start depths instead of
+//!   one absolute depth per tour entry; queries do a short prefix sum.
 //!
-//! Both use O(n) preprocessing and O(1) queries. Both handle forests by
-//! introducing a virtual root that parents all actual roots, preserving
-//! the ±1 depth property across the entire Euler tour.
+//! Both use O(n) preprocessing. `LcaTable` has O(1) queries;
+//! `LcaTableCompact` reconstructs candidate depths with an O(log n)-length
+//! in-block prefix sum. Both handle forests by introducing a virtual root
+//! that parents all actual roots, preserving the ±1 depth property across
+//! the entire Euler tour.
 //!
 //! # Staleness
 //!
@@ -50,10 +52,9 @@ fn tour_pos<T: DenseId>(pos: usize) -> T::Index {
 /// `euler` and `depth` have length 2*(n+1)-1 (virtual root included).
 /// `first` and `tree_id` have length n+1 (index n = virtual root).
 ///
-/// Depths are stored as `u16`. This is safe because proof tree depth is
-/// bounded by the number of union operations (at most n), and with
-/// union-by-rank the depth is O(log n). Even without rank optimization,
-/// depths in practice stay well below 65535. A debug assertion checks this.
+/// Depths use `usize`, so every forest that can be represented in memory can
+/// also represent its maximum depth. The proof forest is re-rooted around the
+/// original nodes and does not inherit the representative forest's rank bound.
 ///
 /// # The unvisited marker in `first`
 ///
@@ -67,7 +68,7 @@ fn tour_pos<T: DenseId>(pos: usize) -> T::Index {
 fn euler_tour<T: DenseId, const TRACK: bool>(
     pp: &crate::containers::VecI<T, T::Index, TRACK>,
     n: usize,
-) -> (Vec<T>, Vec<u16>, Vec<T::Index>, Vec<T::Index>) {
+) -> (Vec<T>, Vec<usize>, Vec<T::Index>, Vec<T::Index>) {
     let vroot = n;
     // The virtual root gets its own id, one past the real nodes, so that `lca` can
     // recognize it in the tour and report "different trees". It used to be *aliased onto
@@ -96,14 +97,14 @@ fn euler_tour<T: DenseId, const TRACK: bool>(
 
     let cap = 2 * (n + 1);
     let mut euler = Vec::with_capacity(cap);
-    let mut depth: Vec<u16> = Vec::with_capacity(cap);
+    let mut depth: Vec<usize> = Vec::with_capacity(cap);
     let unvisited = <T::Index as IndexLike>::min();
     let mut first = vec![unvisited; n + 1];
     let mut tree_id = vec![unvisited; n + 1];
 
     // Single DFS from virtual root
     // Stack: (node, child_index, depth)
-    let mut stack: Vec<(usize, usize, u16)> = Vec::new();
+    let mut stack: Vec<(usize, usize, usize)> = Vec::new();
     stack.push((vroot, 0, 0));
     euler.push(vroot_id);
     depth.push(0);
@@ -122,10 +123,9 @@ fn euler_tour<T: DenseId, const TRACK: bool>(
             let child_ordinal = *ci;
             let child = children[*node][*ci];
             *ci += 1;
-            let child_depth = d.checked_add(1).expect(
-                "proof tree depth exceeds u16::MAX (65535); this should never happen \
-                 with union-by-rank (max depth = log₂(n) ≈ 31)",
-            );
+            let child_depth = d
+                .checked_add(1)
+                .expect("proof tree depth exceeds addressable memory");
             // Every entry of `children` is a real node index below `n` (the parent array
             // has `n` rows), so this is in range without clamping.
             euler.push(T::from_usize(child));
@@ -161,22 +161,22 @@ struct BlockDecomp<I> {
     /// Tour position of the minimum-depth entry in each block.
     block_min: Vec<I>,
     /// ±1 pattern for each block.
-    block_type: Vec<u16>,
+    block_type: Vec<usize>,
 }
 
-fn block_decompose<T: DenseId>(depth: &[u16], m: usize) -> BlockDecomp<T::Index> {
+fn block_decompose<T: DenseId>(depth: &[usize], m: usize) -> BlockDecomp<T::Index> {
     let block_size = ((usize::BITS - m.leading_zeros()) as usize / 2).max(1);
     let num_blocks = m.div_ceil(block_size);
 
     let mut block_min = vec![<T::Index as IndexLike>::min(); num_blocks];
-    let mut block_type = vec![0u16; num_blocks];
+    let mut block_type = vec![0usize; num_blocks];
 
     for b in 0..num_blocks {
         let start = b * block_size;
         let end = (start + block_size).min(m);
         let mut min_idx = start;
         let mut min_depth = depth[start];
-        let mut pattern: u16 = 0;
+        let mut pattern: usize = 0;
         for i in start..end {
             if depth[i] < min_depth {
                 min_depth = depth[i];
@@ -198,7 +198,10 @@ fn block_decompose<T: DenseId>(depth: &[u16], m: usize) -> BlockDecomp<T::Index>
     }
 }
 
-fn build_sparse_table<T: DenseId>(depth: &[u16], bd: &BlockDecomp<T::Index>) -> Vec<Vec<T::Index>> {
+fn build_sparse_table<T: DenseId>(
+    depth: &[usize],
+    bd: &BlockDecomp<T::Index>,
+) -> Vec<Vec<T::Index>> {
     let num_blocks = bd.num_blocks;
     let log_blocks = if num_blocks > 1 {
         (usize::BITS - (num_blocks - 1).leading_zeros()) as usize
@@ -227,13 +230,13 @@ fn build_sparse_table<T: DenseId>(depth: &[u16], bd: &BlockDecomp<T::Index>) -> 
     sparse
 }
 
-fn build_block_lookup<I>(depth: &[u16], bd: &BlockDecomp<I>, m: usize) -> Vec<Vec<u16>> {
+fn build_block_lookup<I>(depth: &[usize], bd: &BlockDecomp<I>, m: usize) -> Vec<Vec<u16>> {
     let block_size = bd.block_size;
-    let num_patterns = 1u16 << block_size.saturating_sub(1);
-    let mut block_lookup: Vec<Vec<u16>> = vec![Vec::new(); num_patterns as usize];
+    let num_patterns = 1usize << block_size.saturating_sub(1);
+    let mut block_lookup: Vec<Vec<u16>> = vec![Vec::new(); num_patterns];
 
     for b in 0..bd.num_blocks {
-        let bt = bd.block_type[b] as usize;
+        let bt = bd.block_type[b];
         if !block_lookup[bt].is_empty() {
             continue;
         }
@@ -264,15 +267,11 @@ fn build_block_lookup<I>(depth: &[u16], bd: &BlockDecomp<I>, m: usize) -> Vec<Ve
 
 /// Precomputed LCA structure with O(1) queries.
 ///
-/// Depths are stored as `u16` (2 bytes each instead of 8). This is safe
-/// because proof tree depth is bounded by the number of union operations,
-/// and union-by-rank keeps depth O(log n) — at most 31 for 2³¹ nodes.
-/// Even degenerate chains would need 65536 unions to overflow, which is
-/// far beyond any practical proof tree. A debug assertion in `euler_tour`
-/// checks this invariant.
+/// Absolute depths use `usize`: proof-edge re-rooting can form a linear chain,
+/// independently of the rank bound on the representative forest.
 pub struct LcaTable<T: DenseId> {
     euler: Vec<T>,
-    depth: Vec<u16>,
+    depth: Vec<usize>,
     /// First tour position of each node, or [`IndexLike::min`] if it has none.
     first: Vec<T::Index>,
     tree_id: Vec<T::Index>,
@@ -280,7 +279,7 @@ pub struct LcaTable<T: DenseId> {
     block_size: usize,
     sparse: Vec<Vec<T::Index>>,
     block_lookup: Vec<Vec<u16>>,
-    block_type: Vec<u16>,
+    block_type: Vec<usize>,
 }
 
 impl<T: DenseId> LcaTable<T> {
@@ -393,7 +392,7 @@ impl<T: DenseId> LcaTable<T> {
     }
 
     fn in_block_min(&self, b: usize, i: usize, j: usize) -> usize {
-        let bt = self.block_type[b] as usize;
+        let bt = self.block_type[b];
         let table = &self.block_lookup[bt];
         let rel = table[i * self.block_size + j] as usize;
         b * self.block_size + rel
@@ -405,24 +404,23 @@ impl<T: DenseId> LcaTable<T> {
 // ---------------------------------------------------------------------------
 
 /// Precomputed LCA structure with delta-encoded depths.
-/// Uses ~4× less memory for the depth representation. Queries do a
-/// short prefix sum (~block_size ≈ 16 additions) to recover absolute
-/// depths when comparing candidates.
+/// It avoids one absolute-depth word per Euler entry. Queries do a short
+/// prefix sum to recover absolute depths when comparing candidates.
 pub struct LcaTableCompact<T: DenseId> {
     euler: Vec<T>,
     /// ±1 deltas between consecutive Euler tour depths. Length = tour_len - 1.
     delta: Vec<i8>,
     /// Absolute depth at the start of each block.
-    block_depth: Vec<u16>,
+    block_depth: Vec<usize>,
     /// First tour position of each node, or [`IndexLike::min`] if it has none.
     first: Vec<T::Index>,
     tree_id: Vec<T::Index>,
     n: usize,
     block_size: usize,
     /// Sparse table entries: (tour_position, absolute_depth).
-    sparse: Vec<Vec<(T::Index, u16)>>,
+    sparse: Vec<Vec<(T::Index, usize)>>,
     block_lookup: Vec<Vec<u16>>,
-    block_type: Vec<u16>,
+    block_type: Vec<usize>,
 }
 
 impl<T: DenseId> LcaTableCompact<T> {
@@ -451,12 +449,17 @@ impl<T: DenseId> LcaTableCompact<T> {
         // Build delta array
         let mut delta: Vec<i8> = Vec::with_capacity(m.saturating_sub(1));
         for i in 1..m {
-            let d = depth[i] as i32 - depth[i - 1] as i32;
-            debug_assert!(
-                d == 1 || d == -1,
-                "±1 property violated: delta={d} at position {i}"
+            let d = match depth[i].cmp(&depth[i - 1]) {
+                std::cmp::Ordering::Greater => 1,
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+            };
+            debug_assert_eq!(
+                depth[i].abs_diff(depth[i - 1]),
+                1,
+                "±1 property violated at position {i}"
             );
-            delta.push(d as i8);
+            delta.push(d);
         }
 
         let bd = block_decompose::<T>(&depth, m);
@@ -475,9 +478,9 @@ impl<T: DenseId> LcaTableCompact<T> {
             } else {
                 1
             };
-            let mut sparse: Vec<Vec<(T::Index, u16)>> = Vec::with_capacity(log_blocks);
+            let mut sparse: Vec<Vec<(T::Index, usize)>> = Vec::with_capacity(log_blocks);
             // Level 0
-            let level0: Vec<(T::Index, u16)> = bd
+            let level0: Vec<(T::Index, usize)> = bd
                 .block_min
                 .iter()
                 .map(|&pos| (pos, depth[pos.as_usize()]))
@@ -546,18 +549,21 @@ impl<T: DenseId> LcaTableCompact<T> {
     }
 
     /// Recover absolute depth at tour position `pos` from block-start depth + prefix sum.
-    fn depth_at(&self, pos: usize) -> u16 {
+    fn depth_at(&self, pos: usize) -> usize {
         let b = pos / self.block_size;
         let offset = pos % self.block_size;
-        let base = self.block_depth[b] as i32;
         let block_start = b * self.block_size;
-        let mut d = base;
-        // offset ≤ block_size ≈ 16, so this is at most 16 additions
+        let mut d = self.block_depth[b];
         for i in block_start..block_start + offset {
-            d += self.delta[i] as i32;
+            if self.delta[i] > 0 {
+                d += 1;
+            } else {
+                d = d
+                    .checked_sub(1)
+                    .expect("Euler-tour depth cannot become negative");
+            }
         }
-        debug_assert!(d >= 0, "negative depth in prefix sum at position {pos}");
-        d as u16
+        d
     }
 
     fn rmq(&self, i: usize, j: usize) -> usize {
@@ -591,7 +597,7 @@ impl<T: DenseId> LcaTableCompact<T> {
         best
     }
 
-    fn sparse_query(&self, bl: usize, br: usize) -> (usize, u16) {
+    fn sparse_query(&self, bl: usize, br: usize) -> (usize, usize) {
         let len = br - bl + 1;
         let k = (usize::BITS - len.leading_zeros()) as usize - 1;
         let left = self.sparse[k][bl];
@@ -604,7 +610,7 @@ impl<T: DenseId> LcaTableCompact<T> {
     }
 
     fn in_block_min(&self, b: usize, i: usize, j: usize) -> usize {
-        let bt = self.block_type[b] as usize;
+        let bt = self.block_type[b];
         let table = &self.block_lookup[bt];
         let rel = table[i * self.block_size + j] as usize;
         b * self.block_size + rel

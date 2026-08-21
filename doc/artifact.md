@@ -79,7 +79,20 @@ assert a floor on how many were checked, so they cannot pass by skipping
 everything.
 
 There is no reproduction command for `D = OPT`, because no current theorem
-states it. The missing proof steps are listed in `claims.md` section 3.
+states it. The missing proof steps are listed in `claims.md` section 4.
+
+## Proof export
+
+```bash
+cargo run -p semi-persistent-egraph -- \
+  egraph/tests/egg/constructor_cost.egg \
+  --proofs --dump-proofs /tmp/all-proofs.txt
+```
+
+The output starts with `semi-persistent-proof-dump v1` and ends with aggregate
+term/nontrivial/step counts. One deterministic proof-path record is written per
+e-node. No independent replay checker currently turns this format into a
+certificate.
 
 ## The measurements
 

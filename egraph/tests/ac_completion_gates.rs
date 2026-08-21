@@ -1,11 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Regression gates for formerly-known AC/ACI completion gaps.
-//!
-//! These started life as intentionally-`#[ignore]`d witnesses of missing Set/ACI coverage
-//! in the basis diagnostics and `CcSnapshot`. Both gaps were closed (2026-07-10:
-//! Set-aware basis diagnostics; representation-agnostic `CcSnapshot`), so the gates were
-//! flipped and now run in the normal suite as ordinary regressions.
+//! Regression coverage for Set/ACI completion-basis diagnostics and the
+//! representation-agnostic `CcSnapshot`.
 
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::cc::CcSnapshot;
@@ -28,7 +24,7 @@ fn set_fixture() -> (
 
 #[test]
 fn basis_report_counts_set_completion_nodes() {
-    // GATE (flipped 2026-07-10): ac_invariants scans both completion partitions now.
+    // ac_invariants must scan both completion partitions.
     let (eg, ab) = set_fixture();
 
     let report = eg.cc_basis_report();
@@ -41,7 +37,7 @@ fn basis_report_counts_set_completion_nodes() {
 
 #[test]
 fn cc_snapshot_counts_set_completion_nodes_if_kept() {
-    // GATE (flipped 2026-07-10): CcSnapshot is representation-agnostic — kept, not deleted.
+    // CcSnapshot must be representation-agnostic.
     let (eg, ab) = set_fixture();
 
     let snap = CcSnapshot::build(&eg);

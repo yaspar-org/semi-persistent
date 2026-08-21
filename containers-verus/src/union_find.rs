@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Verified union-find over two semi-persistent columns (stage 1 of
-//! `eclasses.rs` module header: W1 as a machine-checked invariant).
+//! Verified union-find over two semi-persistent columns. It establishes the
+//! acyclic-root invariant consumed by `eclasses.rs`.
 //!
 //! `parent` and `rank` are verified `Vec`s over `InlineStore`, production's
 //! `VecI` columns (`egraph/src/union_find.rs`). The abstract state is a ghost
@@ -28,8 +28,8 @@
 //! `u8::MAX` instead of carrying the `rank <= log2(n)` argument: rank is a
 //! survivor-selection heuristic and no `wf` clause reads its value.
 //!
-//! Semi-persistence composes from the two columns the way `ListArena`'s does
-//! from its two arenas (list.rs, Phase 7): one mark pushes one frame on each
+//! Semi-persistence composes from the two columns the way `ListArena` composes
+//! from its two arenas: one mark pushes one frame on each
 //! column and archives the ghost `(roots, dist)` pair; restore prevalidates
 //! both tokens, rolls both columns back, and reinstates the archived pair.
 //!
@@ -109,7 +109,7 @@ pub open(crate) spec fn uf_model_wf<T: DenseId>(
                 ==> dist[parent[i].id_nat() as int] < dist[i]))
 }
 
-/// Archive agreement (Phase 7): each frame's archived `(roots, dist)` pair
+/// Archive agreement: each frame's archived `(roots, dist)` pair
 /// describes that frame's column snapshots. Opaque for the same reason as
 /// `arena_archive_agrees` (list.rs): its nested quantifiers would join every
 /// wf-requiring proof's matching context; ops preserve it by congruence
@@ -171,7 +171,7 @@ impl crate::tagged::Tagged for NoJust {
     }
 }
 
-/// Proof-column snapshot lockstep (Phase 7, PROOFS arm): the proof stacks
+/// Proof-column snapshot lockstep for the `PROOFS` arm: the proof stacks
 /// have one frame per fast frame, each frame's columns as long as the fast
 /// parent's. Opaque like its siblings.
 #[verifier::opaque]
@@ -1115,7 +1115,7 @@ where
         Some((s, ab))
     }
 
-    // ---- semi-persistence: compose from the two columns (Phase 7) ----
+    // ---- semi-persistence: compose from the two columns ----
 
     pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: UnionFindToken)
         requires
@@ -1515,6 +1515,14 @@ impl<T: DenseId, J, const TRACK: bool, const PROOFS: bool> UnionFind<T, J, TRACK
 where
     J: crate::tagged::Tagged + Copy + core::default::Default,
 {
+    /// Read-only proof-parent column for batch proof indexing.
+    ///
+    /// `None` when `PROOFS = false`. A successful justified union or restore
+    /// invalidates any index derived from this forest.
+    pub fn proof_parent(&self) -> Option<&SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>> {
+        self.parent_proof.as_ref()
+    }
+
     /// Union with justification. Only meaningful when `PROOFS = true`.
     pub fn union_justified(&mut self, a: T, b: T, just: J) -> Option<(T, T)> {
         let r = self.union_core(a, b);
@@ -1587,7 +1595,6 @@ where
             return false;
         }
         let pp = self.parent_proof.as_ref().unwrap();
-        let j = self.justification.as_ref().unwrap();
 
         // Walk a → root into path_a
         buf.path_a.clear();
@@ -1610,10 +1617,31 @@ where
             }
         }
 
+        self.explain_with_lca(a, b, lca, buf)
+    }
+
+    /// Explain `a ≡ b` using an LCA supplied by a batch proof-forest index.
+    ///
+    /// This is the extraction half paired with the e-graph's Euler-tour LCA
+    /// table. It avoids rebuilding ancestor sets for every query. The method
+    /// validates that `lca` lies on both paths and rolls back appended steps if
+    /// a stale or unrelated index supplied an invalid node.
+    pub fn explain_with_lca(&self, a: T, b: T, lca: T, buf: &mut ProofBuf<T, J>) -> bool {
+        if !PROOFS || self.find_const(a) != self.find_const(b) {
+            return false;
+        }
+        let pp = self.parent_proof.as_ref().unwrap();
+        let j = self.justification.as_ref().unwrap();
+        let steps_start = buf.steps.len();
+
         // a → lca
         let mut cur = a;
         while cur != lca {
             let parent = pp.get(cur);
+            if parent == cur {
+                buf.steps.truncate(steps_start);
+                return false;
+            }
             let just = j.get(cur);
             buf.steps.push((cur, parent, just));
             cur = parent;
@@ -1623,6 +1651,11 @@ where
         cur = b;
         while cur != lca {
             let parent = pp.get(cur);
+            if parent == cur {
+                buf.steps.truncate(steps_start);
+                buf.rev.truncate(rev_start);
+                return false;
+            }
             let just = j.get(cur);
             buf.rev.push((parent, cur, just));
             cur = parent;

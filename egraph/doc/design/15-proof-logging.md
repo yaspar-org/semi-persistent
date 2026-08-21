@@ -9,17 +9,17 @@ When two e-nodes are found equal, the user may want to know *why*.
 A chain of axioms and congruences led to the equality, and the proof
 system must reconstruct that chain on demand.
 
-the engine's approach: zero overhead when proofs are off, full
-reconstruction when proofs are on. The `PROOFS` const generic
-selects code paths at compile time. When `false`, no proof arrays
-are allocated, no history is recorded, and the history bit is never
-touched. When `true`, the engine maintains an uncompressed proof
+The `PROOFS` const generic selects code paths at compile time. When `false`, no
+proof/history vectors are allocated, no history is recorded, and const-gated
+proof work is eliminated. The `Option` fields that would own those vectors
+remain as `None` in the generic structs. When `true`, the engine maintains an uncompressed proof
 forest and a copy-on-first-re-canonization history store.
 The engine optionally records a proof forest that can reconstruct the
 chain of axioms and congruences leading to any equality.
 
 Enabled by `const PROOFS: bool = true` on the `EGraph` type parameter.
-When `false`, all proof machinery compiles away.
+When `false`, proof-specific execution compiles away; empty `Option` fields
+remain in the data layout.
 
 ## The History Bit
 
@@ -45,21 +45,30 @@ multiple rebuild cycles.
 
 ```rust
 pub enum Justification<G: Copy> {
-    Rewrite { rule_id: u32 },
+    Filler,
+    Rewrite { rule_id: RuleId },
     Congruence { node_a: G, node_b: G },
-    Axiom { axiom_id: u32 },
+    Axiom { axiom_id: AxiomId },
+    ACSuperposition { node_a: G, node_b: G },
+    ACInterReduction { node_a: G, node_b: G },
+    ACAxiomCP { node_a: G, node_b: G },
+    Cancellative { node_a: G, node_b: G },
+    InverseCancel { node_a: G, node_b: G },
 }
 ```
 
+- `Filler`: default-initialization value; it is never a real proof edge.
 - `Rewrite`: two nodes were merged by a rewrite rule firing.
 - `Congruence`: two nodes were merged because their children became
   equal (detected during rebuild).
-- `Axiom`: two nodes were merged by an explicit `(union ...)` command
-  or a built-in axiom (e.g., commutativity).
+- `Axiom`: two nodes were merged by an explicit `(union ...)` command or
+  another caller-supplied axiom merge.
+- The five AC-specific variants identify critical-pair, inter-reduction,
+  semantic-axiom, cancellative, and inverse-cancellation merges.
 
 The distinction between `Rewrite` and `Axiom` matters for proof
 presentation: rewrites reference user-defined rules (by index),
-while axioms reference built-in equalities.
+while axioms reference caller-registered equality assertions.
 
 ## Proof Forest
 
@@ -85,9 +94,10 @@ algorithm on the proof forest. Two implementations are available:
 
 ### Naive Walk-Up (default)
 
-Walk up from both nodes simultaneously, marking visited nodes in a
-hash set. The first node visited by both paths is the LCA. This is
-O(depth) per query and requires no preprocessing.
+Build each node-to-root path, put the first path's ids in a hash set, then
+scan the second path to its first shared node. This is O(depth) expected
+time per query under the hash table's usual assumptions and requires no
+preprocessing.
 
 ```
 Proof tree (edges = parent pointers with justifications):
@@ -113,12 +123,13 @@ pub fn explain(&self, a: G, b: G, buf: &mut ProofBuf<G>) -> bool {
 
 ### Euler-Tour Based (batch queries)
 
-For batch proof checking and proof export, the `LcaTable` and
-`LcaTableCompact` implementations use the Bender–Farach-Colton
-algorithm: O(n) preprocessing and O(1) per LCA query. The algorithm
-reduces LCA to range minimum query (RMQ) via an Euler tour of the
-proof tree, then exploits the ±1 property of the depth array to
-build a block-decomposed lookup table.
+For batch proof checking and proof export, `LcaTable` uses the
+Bender–Farach-Colton algorithm: O(n) preprocessing and O(1) per LCA
+query. The algorithm reduces LCA to range minimum query (RMQ) via an
+Euler tour of the proof tree, then exploits the ±1 property of the
+depth array to build a block-decomposed lookup table. The alternative
+`LcaTableCompact` stores depth deltas and reconstructs candidate depths
+with an O(log n)-length in-block prefix sum.
 
 ```
 Tree:           C                    Depth:
@@ -147,34 +158,75 @@ LCA(E, F):
 Two variants are provided:
 
 - `LcaTable`: stores full absolute depths. Simpler, faster queries.
-- `LcaTableCompact`: stores `i8` deltas + block-start depths. ~4×
-  less memory for the depth array, queries do a short prefix sum.
+- `LcaTableCompact`: stores `i8` deltas + block-start depths. It avoids
+  one absolute-depth word per Euler entry, but its total-memory effect is
+  workload- and index-width-dependent; queries do a short prefix sum.
 
-| Scenario | Naive walk-up | Euler-tour BFC |
-|----------|--------------|----------------|
-| Single explain(a, b) | O(depth) | O(depth) (not worth preprocessing) |
-| Batch proof checking | O(k × depth) | O(n) + O(1) per query |
-| Proof export/compression | O(k × depth) | O(n) + O(1) per query |
+| Scenario | Naive walk-up | Full-depth Euler-tour table |
+|----------|---------------|-----------------------------|
+| Single `explain(a, b)` | O(depth) | O(n) build + O(1) LCA + O(depth) path output |
+| `k` batch queries | O(k × depth) | O(n) build + O(k) LCA + output paths |
+| Proof export | O(k × depth) | O(n) build + O(k) LCA + emitted proof steps |
+
+The compact table has the same O(n) build bound and O(log n) query bound
+because its block size is O(log n).
+
+The production batch path is `EGraph::dump_all_proofs`, exposed by
+`--proofs --dump-proofs FILE`. It builds one `LcaTable`, queries one LCA per
+e-node, and writes the path from each node to its current representative.
+Writing remains O(total emitted proof steps); O(1) describes the LCA query,
+not serialization of an arbitrarily long path.
 
 `ProofBuf` accumulates the justification chain:
 
 ```rust
 pub struct ProofBuf<G> {
-    steps: Vec<Justification<G>>,
+    steps: Vec<(G, G, Justification<G>)>,
+    path_a: Vec<G>,
+    path_b: Vec<G>,
+    seen: HashSet<usize>,
+    rev: Vec<(G, G, Justification<G>)>,
+    children_a: Vec<G>,
+    children_b: Vec<G>,
+    group_a: Vec<G>,
+    group_b: Vec<G>,
 }
 ```
 
+`steps` records each directed proof edge and its justification. The
+remaining fields are reusable scratch for path discovery, reversal, and
+deep child grouping.
+
 ## `explain_deep`
 
-For a more detailed proof, `explain_deep` recursively explains
-congruence steps: if two nodes were merged by congruence, it
-explains why each pair of children is equal.
+For a more detailed proof, `explain_deep` expands congruence steps: if two
+nodes were merged by congruence, it explains why each pair of children is
+equal. The implementation iterates by index through the growing
+`ProofBuf.steps` vector, so it does not recurse on the Rust call stack. It does
+not maintain a separate visited set for deep expansions; `ProofBuf.seen` is
+scratch for the shallow LCA walk.
 
 ## Semi-Persistence
 
 The proof forest is stored in the union-find's parent/justification
-vectors, which are semi-persistent. `push`/`pop` correctly
-snapshots and restores proof state.
+vectors. In a `TRACK = true` graph those vectors are semi-persistent, and
+`push`/`pop` snapshots and restores proof state. `TRACK = false` retains
+forward proof logging when `PROOFS = true` but does not support marks.
+
+## Verification Boundary
+
+The verified union-find core proves the fast parent forest's partition and
+well-foundedness invariants and proves storage/restore contracts for the
+optional proof-parent and justification columns. Proof-path rerooting, the
+proof-parent forest invariant, the naive explanation walk, `LcaTable`
+construction/query, `explain_deep`, and serialization remain ordinary Rust
+covered by executable tests.
+
+`dump_all_proofs` emits one deterministic node-to-representative path for each
+e-node. It does not enumerate alternative proofs and does not call
+`explain_deep`. No independent replay checker currently validates the dump.
+Accordingly, this chapter does not claim a machine-checked theorem that every
+emitted explanation is a valid independently checked certificate.
 
 ---
 [← Ch 14: Soundness](14-soundness.md) · [Table of Contents](00-table-of-contents.md) · [Ch 16: Extraction →](16-extraction.md)

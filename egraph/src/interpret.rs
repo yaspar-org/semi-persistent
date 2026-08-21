@@ -67,10 +67,11 @@ struct Mark<Cfg: EGraphConfig, O> {
 ///   materialized canonical forms; AC-entailed equalities through erased
 ///   intermediate sums are not derived (the documented completeness gap,
 ///   `ac-congruence-completeness.md` Part I).
-/// - `Eager`: every rebuild runs completion to fixpoint (the `--derive-ac-eqs`
-///   behavior). Complete, but interleaving completion with saturation rules
-///   re-runs it on a growing atom pool every round, which diverges on
-///   rule-sets that keep minting new atoms.
+/// - `Eager`: every rebuild attempts completion (the `--derive-ac-eqs`
+///   behavior). `CompletionOutcome::Converged` reports the fixpoint; the
+///   growth budget can stop earlier with `AbortedGrowthLimit`. Interleaving
+///   completion with saturation rules re-runs it on a growing atom pool every
+///   round, which diverges on rule-sets that keep minting new atoms.
 /// - `Lazy`: saturation runs with completion off; an equality check that plain
 ///   congruence cannot decide runs goal-directed completion inside a
 ///   semi-persistent transaction shared across consecutive equality checks.

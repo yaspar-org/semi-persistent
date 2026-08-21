@@ -57,6 +57,8 @@ reconstructed from the source of truth after restore.
 | Leapfrog gives worst-case-optimal multiway intersection for the relational join component | algorithm + tests | this does not make the complete AC matcher worst-case optimal |
 | Backtrack cleanup clears only variables it bound | measured | regression fixture; the defect it fixes is recorded |
 | Proof-specific work is absent when `PROOFS=false` | compiler-enforced + code | the union-find retains two `None` proof options and the node store retains 13 `None` history options; no proof/history vectors are allocated and const-gated recording/history work is eliminated |
+| Batch proof export uses one O(n) Euler-tour index and O(1) LCA queries | code + tests | `--proofs --dump-proofs FILE`; path output remains linear in the number of emitted proof steps |
+| The proof dump emits one deterministic proof-path record per e-node | **measured** | format `semi-persistent-proof-dump v1`; records are paths to the current representative, not independently replay-checked certificates, and some algebraic labels do not yet carry sufficient premises for such a checker |
 | Full AC/ACI completion completeness is conditional | **argued** | requires completion to run and converge; the proof is a paper argument, not a verified theorem |
 
 | Across all 17 translated benchmarks, egglog/ours was 1.19x rules-naive and 1.11x rules-semi | **historical** | `final-r6`, source snapshot based on `8f041483`; geometric mean of per-benchmark process-wall ratios |

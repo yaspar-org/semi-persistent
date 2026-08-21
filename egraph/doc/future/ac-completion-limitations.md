@@ -174,6 +174,9 @@ superposition, and inter-reduction. The late-unit case asserts reconstruction
 only; it does not assert a faithful unit-drop label. Generic deep
 reconstruction tests cover MSet and Set congruence.
 
+`EGraph::dump_all_proofs`, exposed by `--proofs --dump-proofs FILE`, uses one
+Euler-tour LCA table and writes one proof path per e-node.
+
 ### Gap
 
 The following are not yet established:
@@ -199,9 +202,10 @@ or compact witnesses needed to reconstruct overlap, clamp, cancellation, and
 inter-reduction steps. Then add completion-specific deep tests and an
 independent replay checker.
 
-A shared certificate/checker specification must cover both AU projections and
-AC completion. The AC tests here must establish that every completion label
-accepted by that future checker has enough data.
+The shared certificate/checker design belongs with
+[the AU proof-certificate specification](au-proof-certificates.md); the AC
+tests here must establish that every completion label accepted by that checker
+has enough data.
 
 ### Acceptance criteria
 

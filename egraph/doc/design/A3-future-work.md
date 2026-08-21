@@ -15,6 +15,7 @@ listed below.
 
 - [AC completion limits and validation](../future/ac-completion-limitations.md)
 - [AU correctness and validation](../future/au-correctness-and-validation.md)
+- [AU proof certificates](../future/au-proof-certificates.md)
 - [Associative AU and other solver features](../future/au-associative-operators.md)
 - [Lattice-valued functions](../future/lattice-functions.md)
 - [Verified query compiler](../future/verified-query-compiler.md)
@@ -208,8 +209,9 @@ collected in
 [the associative-operator specification](../future/au-associative-operators.md).
 The target theorem, production refinements, universal bound/transport lemmas,
 formalizer validation, and delegation calibration are in
-[AU correctness and validation](../future/au-correctness-and-validation.md).
-The value-guided AND
+[AU correctness and validation](../future/au-correctness-and-validation.md);
+independently checkable projection proofs are in
+[AU proof certificates](../future/au-proof-certificates.md). The value-guided AND
 selectors listed here previously are delivered: `uct_and` and `lct_and` are
 selectable via `and_selector` alongside `round_robin`, with `lct_and` the
 default.

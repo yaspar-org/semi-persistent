@@ -24,6 +24,11 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     proofs: bool,
 
+    /// Write one proof-path record per e-node to FILE after the program finishes.
+    /// Requires --proofs.
+    #[arg(long, value_name = "FILE", requires = "proofs")]
+    dump_proofs: Option<std::path::PathBuf>,
+
     /// Comma-separated type groups: machine, bignum
     #[arg(long, default_value = "bignum", value_delimiter = ',')]
     types: Vec<String>,
@@ -221,6 +226,7 @@ fn main() {
         count_match_steps: cli.count_match_steps,
         sched_mode,
         union_by: cli.union_by,
+        dump_proofs: cli.dump_proofs.clone(),
     };
 
     macro_rules! dispatch {
@@ -267,6 +273,7 @@ struct EngineOptions {
     count_match_steps: bool,
     sched_mode: semi_persistent_egraph::ematch::SchedulingMode,
     union_by: semi_persistent_egraph::UnionBy,
+    dump_proofs: Option<std::path::PathBuf>,
 }
 
 fn run<Cfg, L, M, const PROOFS: bool>(
@@ -308,6 +315,36 @@ fn run<Cfg, L, M, const PROOFS: bool>(
         eprintln!("error: {e}");
         process::exit(1);
     }
+    if let Some(path) = &opts.dump_proofs {
+        use std::io::Write as _;
+
+        let file = match std::fs::File::create(path) {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!("error creating proof dump '{}': {e}", path.display());
+                process::exit(1);
+            }
+        };
+        let mut writer = std::io::BufWriter::new(file);
+        let stats = match interp.eg.dump_all_proofs(&mut writer) {
+            Ok(stats) => stats,
+            Err(e) => {
+                eprintln!("error writing proof dump '{}': {e}", path.display());
+                process::exit(1);
+            }
+        };
+        if let Err(e) = writer.flush() {
+            eprintln!("error flushing proof dump '{}': {e}", path.display());
+            process::exit(1);
+        }
+        eprintln!(
+            "wrote {} proof-path records ({} nontrivial, {} steps) to {}",
+            stats.terms,
+            stats.nontrivial_proofs,
+            stats.steps,
+            path.display()
+        );
+    }
     eprintln!("ok — {} nodes", interp.eg.len());
     if opts.count_match_steps {
         eprintln!(
@@ -318,5 +355,35 @@ fn run<Cfg, L, M, const PROOFS: bool>(
         if taken > 0 {
             eprintln!("sampled estimates: {taken}, guard fallbacks: {rejected}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dump_proofs_requires_proof_recording() {
+        assert!(
+            Cli::try_parse_from([
+                "semi-persistent",
+                "program.egg",
+                "--dump-proofs",
+                "proofs.txt"
+            ])
+            .is_err()
+        );
+        let cli = Cli::try_parse_from([
+            "semi-persistent",
+            "program.egg",
+            "--proofs",
+            "--dump-proofs",
+            "proofs.txt",
+        ])
+        .expect("proof dump with --proofs");
+        assert_eq!(
+            cli.dump_proofs.as_deref(),
+            Some(std::path::Path::new("proofs.txt"))
+        );
     }
 }

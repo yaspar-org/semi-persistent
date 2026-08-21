@@ -23,10 +23,11 @@ Four contributions:
    branches O(d^k), exponential in pattern arity but independent of the
    numerical multiplicities.
 
-3. **Proof logging with compile-time opt-out**: a dual-parent-pointer
-   union-find with copy-on-first-recanonization preserves original node
-   structure for proof reconstruction. Const-gated proof recording and history
-   work are absent when `PROOFS=false`.
+3. **Proof logging with batch export**: a dual-parent-pointer union-find with
+   copy-on-first-recanonization preserves original node structure. The
+   `--proofs --dump-proofs FILE` mode builds one Euler-tour LCA index in O(n),
+   performs O(1) LCA queries, and writes one deterministic proof-path record per
+   e-node. These records are not yet independently replay-checked certificates.
 
 4. **Anti-unification over the shared e-graph**: exact branch-and-bound and
    Monte-Carlo graph search operate over everything saturation has proved

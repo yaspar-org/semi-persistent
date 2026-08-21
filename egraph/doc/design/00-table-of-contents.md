@@ -147,10 +147,11 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 15. **[Proof Logging](15-proof-logging.md)**
     Copy-on-first-re-canonization via history bit. `Justification`
-    enum: `Rewrite`, `Congruence`, `Axiom`. Dual parent pointers
+    includes rewrite, congruence, user axiom, five AC-specific inference kinds,
+    and a non-proof filler. Dual parent pointers
     (`parent` + `parent_proof`). Two LCA algorithms: naive
-    walk-up for single queries, Euler-tour BFC for batch extraction.
-    `ProofBuf` for path extraction. `PROOFS` const generic.
+    walk-up for single queries, Euler-tour BFC for batch extraction and
+    `--dump-proofs`. `ProofBuf` for path extraction. `PROOFS` const generic.
 
 16. **[Term Extraction](16-extraction.md)**
     Additive owned-tree cost model. `extract_best` by repeated relaxation over
