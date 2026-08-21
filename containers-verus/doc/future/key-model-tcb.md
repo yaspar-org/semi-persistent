@@ -1,225 +1,153 @@
-# Shrinking the key-model TCB after the migration
+# Eliminating the Hash-Key Model Assumption
 
-*Status: future work, still open after the consumer swap. Owner: whoever
-migrates `LitValStore`.
-Context: trust ledger group D
-([02-trust-boundary.md](../design/02-trust-boundary.md) §3.5); the
-Phase 9 review that withdrew the BigRational/OrderedFloat axioms as false.*
+## Goal
 
-## The problem, precisely
+Remove `obeys_key_model::<K>()` from the trusted basis of verified maps.
+Property tests remain useful, but they cannot prove this universal foreign-code
+contract.
 
-`SpMap<K, V>` sits on `std::HashMap`, whose vstd model is conditioned on
-`obeys_key_model::<K>()` — an **`uninterp` spec fn with no introduction
-rule other than axioms**. Its prose meaning (vstd `std_specs/hash.rs`):
+The trust inventory is maintained in
+[the trust-boundary chapter](../design/02-trust-boundary.md).
 
-1. `Hash` is deterministic;
-2. two keys are **identical iff** the executable `==` considers them equal;
-3. `clone()` produces a result identical to its input.
+## 1. Why the Assumption Exists
 
-Requirement (2) is the sharp one: `==` equivalence classes must be
-singletons up to value identity. Determinism is NOT sufficient. This is
-why two of the migration's original literal-type axioms were withdrawn
-(and replaced by canonical wrappers whose axioms hold by construction):
+`SpMap<K, V>` uses `std::HashMap`. vstd models that type only under
+`obeys_key_model::<K>()`, an uninterpreted predicate whose intended laws are:
 
-| type | verdict | reason |
-|---|---|---|
-| `BigInt` / `BigUint` | axiom kept (credible) | exec `eq` is structural (sign + digit vector) over the crate's normalization invariant |
-| `OrderedFloat<f64>` | **axiom withdrawn — false** | all NaN payloads (and ±0.0) share one `==` class across distinct bit patterns |
-| `BigRational` | **axiom withdrawn — false** | `Ratio::new_raw` makes non-reduced values reachable; `eq` is mathematical (`2/4 == 1/2` across distinct representations) |
-| `CanonicalF64` (crate-local) | axiom holds by construction | only constructor canonicalizes (one NaN encoding, +0.0); `==` is derived bit identity |
-| `CanonicalRational` (crate-local) | axiom holds by construction | reduced positive-denominator pair via `Ratio::new` only; derived structural eq over normalized `BigInt`s |
+1. executable hashing is deterministic;
+2. executable equality identifies exactly one representation identity; and
+3. cloning preserves that identity.
 
-The violations are pinned by regression tests
-(`tests/compat_map.rs::key_model_violations`): if a crate upgrade changes
-the semantics, those tests fail and the exclusion gets re-reviewed.
+The second law is stronger than ordinary `Eq`. An equality class containing two
+different representations does not satisfy it.
 
-Beyond group D, the default crate's assumed-fact inventory is four
-one-line contracts: `ContainerId::eq`'s equality reflection, the two
-shrink helpers' data preservation, and `clone_key_exact`'s clone identity.
-This document is about driving the *key-model* part to zero and keeping
-the rest honest.
+| Key type | Key-model status |
+|---|---|
+| `BigInt`, `BigUint` | Assumed; normalized structural representations make the assumption credible but still trusted |
+| `OrderedFloat<f64>` | Does not satisfy the identity law: NaN payloads and signed zeros can compare equal |
+| `BigRational` | Does not satisfy the identity law: raw non-reduced ratios can compare equal |
+| `CanonicalF64` | Canonical bit representation; equality is representation identity |
+| `BitsF64` | Raw-bit identity |
+| `CanonicalRational` | Reduced numerator/positive-denominator representation |
 
-## Why we cannot just verify the contracts
+The canonical wrappers make their own equality classes singleton by
+construction. They do not remove vstd's uninterpreted `HashMap` premise; an
+axiom is still needed to connect the executable implementations to that
+predicate.
 
-- `obeys_key_model` is `uninterp`: nothing can *prove* it, by
-  construction. vstd's own axioms for `u8`…`i128` are `admit()`-backed,
-  and even `StringHashMap` *assumes* it for `String`. vstd's doc comment
-  says a proof path is planned but does not exist.
-- The requirements are about the executable bodies of foreign `Hash`/
-  `Eq`/`Clone` impls. Foreign crates are never compiled under Verus, so
-  the verifier has no model of that code. Any interaction bottoms out in
-  at least one trusted statement about foreign exec behavior.
-- Defining the key type locally does not escape either: derived `Hash`
-  goes through std's `Hasher` machinery, which vstd models with its own
-  assumed specs (`builds_valid_hashers` is also `uninterp`).
+## 2. Current Containment
 
-## The endgame: eliminate the assumption (Option A)
+Key-model assumptions are centralized in `external_specs.rs`.
+`declare_key_model_assumption!` requires:
 
-Make the verified property independent of foreign code:
+- an `axiom_key_model_` name;
+- a written justification;
+- a value generator; and
+- a representation observable used by generated property tests.
 
-1. **Canonical key types at the boundary.** Crate-local types whose
-   `Eq`/`Hash` we write and verify ourselves, with conversion at the
-   client boundary:
-   - floats → `CanonicalF64(u64)`: the NaN-canonicalized, ±0.0-normalized
-     bit pattern (what `OrderedFloat::hash` already computes — we make it
-     the *identity*, not just the hash);
-   - rationals → `CanonicalRational { numer: BigInt, denom: BigInt }`,
-     reduced, denom > 0 as a CONSTRUCTOR invariant (not a type invariant —
-     both fields are `BigInt`; `Ratio::new` normalizes the sign onto the
-     numerator) — compare/hash structurally;
-   - big integers → keep keying by `BigInt` short-term (credible axiom),
-     or a limb-vector newtype long-term.
+CI rejects assumptions outside the designated module or outside that naming
+discipline.
 
-   The foreign→canonical conversion is unverified, but it exits the TCB:
-   a buggy conversion mis-keys that client's value (garbage-in,
-   garbage-out at their boundary) — it can no longer make the *container's*
-   theorems false. That soundness/correctness separation is the point.
+Runtime tests cover every falsifiable part:
 
-2. **A verified index for `SpMap`.** Even with canonical keys,
-   `std::HashMap` still demands `obeys_key_model::<CanonicalKey>()` —
-   vstd's whole HashMap model is conditioned on it. Two exits:
-   - hand-verified hash table over canonical keys (the crate's fully
-     verified `BPlusTreeSet` shows the proof machinery is in-house); or
-   - a verified ordered index over the canonical encoding (the B+tree
-     itself, if the interning workload tolerates O(log n) — measure
-     against the rebuild-vs-incremental data before assuming it doesn't).
+- repeated and cloned values hash identically;
+- alternate construction paths that compare equal have the same observable
+  representation;
+- clones preserve representation;
+- known `OrderedFloat` and raw-rational counterexamples remain excluded; and
+- canonical wrappers agree with their documented identity.
 
-   With both steps, `obeys_key_model` axioms, `clone_key_exact`, and
-   `values_equal` all become deletable: the trusted surface drops to
-   ContainerId + capacity introspection + the panic primitive.
+This is finite evidence only. It cannot establish the universal key-model law.
 
-Cost: a verified-map project plus per-intern conversion. Decide once a
-`LitValStore` migration measures real literal-interning traffic; the consumer
-swap did not include it.
+## 3. Required Architecture
 
-## Until then: fuzz the contracts (Option B — done)
+Eliminating the assumption requires both parts below.
 
-Every assumed contract gets a **property-based test of the assumed fact
-itself** — not an end-to-end oracle. The distinction matters: an
-SpMap-vs-HashMap oracle uses the same `Eq`/`Hash` on both sides, so it
-can never detect an identity/`==` mismatch. What CAN be falsified at
-runtime, per contract:
+### Canonical Keys at the Boundary
 
-| assumed contract | falsifiable observable | test (exists today?) |
-|---|---|---|
-| `obeys_key_model` req (1): hash determinism | same value hashes equal across calls/clones | ✅ `literal_keys::bigint_key_model_hash_determinism` |
-| req (2): `==` ⟹ identity | values built via different construction paths that compare `==` must agree on every representation observable (byte encoding, sign, Debug, hash) | ✅ `literal_keys::bigint_key_model_eq_is_identity` (arithmetic detours, shift round-trips, decimal round-trips) |
-| req (3): clone identity | clone agrees on every representation observable | ✅ `literal_keys::bigint_key_model_clone_identity` |
-| withdrawn-type violations stay real | the known violating pairs still compare `==` | ✅ `key_model_violations::*` |
-| `clone_key_exact` ensures | same as req (3), for every K a consumer uses | ✅ per-type via the generated tests + `canonical_key_model` proptest |
-| `shrink_vec_capacity` / `shrink_aov_capacity` ensures | element sequence unchanged across a shrink at random lengths/capacities/policies | ✅ `shrink_preserves_vec_contents` / `shrink_preserves_aov_contents` |
-| `ContainerId::eq` reflection + `new` distinctness | already fuzzed | ✅ `external_body_contract_fuzz.rs` |
+Every verified-map key must have a local canonical encoding:
 
-Status update (all landed with the verified crate, ahead of schedule):
+- exact floats use `BitsF64`;
+- compatibility float identity may use `CanonicalF64`;
+- rationals use `CanonicalRational`;
+- dense ids use their integer newtype representation;
+- composite keys use canonical components and structural encoding.
 
-1. ✅ **Canonical key wrappers** (`src/canonical_keys.rs`): `CanonicalF64`
-   (canonical-NaN/zero-normalized bits; `==` is bit identity with no
-   foreign-code dependence) and `CanonicalRational` (reduced,
-   positive-denominator `BigInt` pair) — the Option A step 1 boundary
-   types. Proptest requirement fuzz + SpMap oracle in
-   `tests/compat_map.rs::canonical_key_model`; axioms in
-   `external_specs.rs` with per-type credibility arguments.
-2. ✅ **Requirement-level fuzz for the foreign axioms**
-   (`literal_keys::*_key_model_*`) and proptest coverage for the
-   canonical types.
-3. ✅ **Shrink-helper contract fuzz**
-   (`shrink_preserves_vec_contents` / `shrink_preserves_aov_contents`):
-   the last contract-carrying `ensures` without a runtime test.
-4. ✅ **`declare_key_model_assumption!` macro** (`external_specs.rs`):
-   compile-time-checked `axiom_key_model_` prefix, mandatory
-   justification, generated requirement fuzz (determinism, clone
-   identity, `==`-iff-representation-identity over caller-supplied
-   generator + observable). Demonstrated end-to-end in
-   `tests/key_model_macro.rs`. CI grep convention: every
-   `axiom_key_model_*` in the workspace must come from this macro.
+Conversion from a foreign value can be unverified without invalidating the map
+theorem: a faulty conversion can choose the wrong canonical key, but it cannot
+make two distinct canonical values violate the map's internal equality model.
 
-5. ✅ **CI enforcement** (`.github/workflows/verus.yml`): the
-   literal-types verify sweep, the compat-all+literal-types test matrix,
-   and the axiom-discipline gate — any `obeys_key_model` axiom outside
-   the audited `external_specs.rs` without the `axiom_key_model_` prefix
-   fails CI.
+### A Verified Index Independent of `std::HashMap`
 
-Remaining work item (NOT done by the consumer swap):
+`SpMap` must stop relying on vstd's conditional `HashMap` model. Candidate
+backends are:
 
-1. **Consumer conversion**: `NiraLitVal::Rat` interning keys by
-   `CanonicalRational` (convert at the LitValStore boundary), model f64
-   literals by `CanonicalF64`.
+1. a verified hash table whose executable equality, hashing, and probing refine
+   a local canonical-key specification; or
+2. a verified ordered index over canonical encodings, such as a map variant of
+   the B+ tree.
 
-## Honest limits of Option B
+The ordered option has simpler trust accounting but O(log n) lookup. The hash
+option preserves expected O(1) lookup but requires substantially more proof.
+Choose using representative Criterion workloads after both designs have
+executable prototypes.
 
-- Fuzzing samples; it cannot establish req (2) universally (it
-  quantifies over all values), and a hasher-state-dependent violation
-  could hide from any fixed test. Option B is a tripwire, not a proof.
-- For *unverified* cargo callers, `requires` erases; nothing forces
-  anything. At best `SpMap::new` could run a sampled smoke check in
-  debug builds.
-- The endgame that actually removes the assumption is Option A. Option B
-  keeps us honest until the traffic data says whether Option A's verified
-  index is worth building.
+## 4. Float Semantics Are Separate
 
+`CanonicalF64` folds all NaNs and folds `-0.0` onto `+0.0` to match the
+e-graph's current `OrderedFloat` identity. That compatibility is not a semantic
+endorsement.
 
-## Float term identity: the fold is parity, not the endgame (review 2026-07-26)
+Using one term identity for signed zero is hazardous when constant folding
+distinguishes `1.0 / +0.0` from `1.0 / -0.0`. NaN equality and min/max semantics
+also require an explicit theory decision.
 
-Requirement (2) and hash-consing are two different questions that
-canonicalization answers at once — which is why `CanonicalF64`'s fold is
-seductive and why it must not be mistaken for a semantic decision. For the
-key model alone, **bit-exact keying is strictly easier to justify**:
-`BitsF64(u64)` (now in `canonical_keys.rs`) is injective by construction,
-no fold, no dependence on float semantics. The fold in `CanonicalF64`
-exists for exactly one reason: it reproduces production's `OrderedFloat`
-intern behavior, pinned pair-for-pair by
-`float_key_semantics::canonical_f64_matches_ordered_float`.
+The semantic target is:
 
-**The fold inherits a live model-layer hazard** (pre-existing in
-production, NOT introduced by the migration): with ±0.0 interned as one
-term, congruence + constant folding over `model.rs`'s `f64::/` merges
-`+inf ≡ -inf` (`1.0/0.0` vs `1.0/-0.0` from two representatives of the
-same class), and `f64::neg(0.0) ≡ 0.0`. Adjacent issues in the same
-operator table: `f64::==` on two NaNs folds to `true` (IEEE: false), and
-`f64::min`/`max` follow the total order rather than IEEE minNum/maxNum.
+1. key literals by `BitsF64`;
+2. express any desired equivalence as operator-scoped rewrites; and
+3. test division, negation, equality, min, max, signed zero, infinities, and NaN
+   payloads as one model change.
 
-Sequencing (deliberate, so behavioral diffs have one candidate cause):
+This change must not be bundled with the map-backend replacement. The backend
+can preserve current identity first; float semantics can then change with an
+isolated behavioral test surface.
 
-1. **Container switch (done): keep the fold.** Key by `CanonicalF64`;
-   behavior identical to production; the fold is pinned by
-   `canonical_f64_fold_is_pinned` so it cannot drift silently.
-2. **Separate change (model semantics): switch to `BitsF64`** and express
-   any identification actually wanted (e.g. `-0.0 → 0.0` where the theory
-   says so) as rewrite rules scoped to specific operators — visible,
-   reviewable, per-operator. Fix `f64::==`/`min`/`max` IEEE semantics in
-   the same change, with its own tests.
+## 5. Composite Key Coverage
 
-## Axiom inventory for the consumer conversion: nine key types, not one (review 2026-07-26)
+The e-graph uses more than literal keys. A complete verified index must support:
 
-Group D as landed covers the literal types only. Counting `Map<K, V>`
-instantiations across the e-graph, the consumer switch needs
-`obeys_key_model` for roughly nine distinct key shapes (vstd axiomatizes
-only primitives and `Box`es):
+| Key shape | Representative use |
+|---|---|
+| `String` | sort, operator, rule, and axiom registries |
+| dense-id newtypes | class, operator, context, OR-state, and term maps |
+| literal enum | literal interning |
+| `Vec<Id>` | AU structural indexes |
+| tuples of ids | AU actions and pair indexes |
+| `(TermOp, Vec<TermId>)` | term structural interning |
 
-| key type | site | credibility |
-|---|---|---|
-| `String` | registry sorts/ops/rules/axioms (4 maps) | byte-exact eq — solid; any Unicode normalization is a parse-time decision, never in the key |
-| `Cfg::O`, `A::Class`, `A::Or`, `A::Context`, `A::Term` | unit_node, inverse_op, AU maps | `define_id*!` newtypes over u32/u64 — solid |
-| the literal enum | LitValStore | only as good as its payloads (hence the canonical wrappers) |
-| `Vec<A::Class>` | au/space.rs index | structural over a solid element |
-| `(A::Class, A::Class)`, 4-tuples | au/actions.rs, au/space.rs | structural over solid components |
-| `(TermOp<O,V>, Vec<A::Term>)` | au/terms.rs by_structure | structural over a consumer enum |
+Canonical container encodings should compose:
 
-Consequence 1 — **the literal enum is the key**, so canonicalization lives
-in the variant payloads (`Rat(CanonicalRational)`, `F64(CanonicalF64)` then
-`F64(BitsF64)`), not at the LitValStore boundary as earlier drafts said.
+- ids from their integer representation;
+- tuples from canonical components;
+- vectors from length plus canonical elements; and
+- strings from exact bytes.
 
-Consequence 2 — **`define_id7/15/31/63!` should generate the axiom for the
-id type it defines.** The argument is airtight (newtype over a primitive,
-derived structural Eq/Hash, and the macro's impls are already verified);
-generating it makes five of the nine rows uniform and free instead of
-hand-written.
+This avoids adding a new ad hoc trust statement for every map instantiation.
 
-Consequence 3 — **composite keys want compositional axioms**, mirroring
-vstd's own `Box<K>` form (`obeys_key_model::<K>() ==>
-obeys_key_model::<Box<K>>()`): one conditional axiom for `Vec<K>`, one per
-tuple arity over its components, one for `String`. A handful of trusted
-statements instead of an axiom count that grows with every new map — the
-difference between a bounded TCB and one that scales with the consumer.
-These land in `external_specs.rs` when the consumer conversion happens, budgeted, not
-discovered mid-switch.
+## 6. Acceptance Criteria
+
+The key-model trust item is removed only when:
+
+1. verified maps no longer require `obeys_key_model`;
+2. all map keys cross through documented canonical encodings;
+3. the replacement index proves lookup, insertion, overwrite, and
+   semi-persistent restore against its abstract map;
+4. literal identity tests cover the float/rational edge cases above;
+5. differential and property tests cover all composite key shapes;
+6. representative lookup, insertion, and restore workloads have Criterion
+   estimates and confidence intervals; and
+7. the corresponding axioms and allowlist entries are deleted.
+
+Until then, the centralized assumptions and property tests are an explicit
+trust boundary, not verified theorems.

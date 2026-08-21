@@ -289,7 +289,7 @@ impl ExecAnum {
     pub fn add(&self, t: &ExecAnum) -> (r: ExecAnum)
         ensures r.wf()
     {
-        // Overflow guards mirroring the verified twin (domains.rs ExecAnum::add,
+        // Overflow guards mirroring the verified counterpart (domains.rs ExecAnum::add,
         // which proves it needs them): without these, {base: MAX, span: 0} +
         // {base: 0, span: 3} concretized to {MAX} alone while the true sums
         // are {MAX, 0, 1, 2}.
@@ -335,7 +335,7 @@ impl ExecAnum {
         let min_q = sv / d;
         let max_v = sv.wrapping_add(sm);
         let max_q = max_v / d;
-        // Both disjuncts, as in the verified twin (domains.rs): testing only
+        // Both disjuncts, as in the verified counterpart (domains.rs): testing only
         // max_q < min_q lets a wrapped max_v yield a plausible quotient window
         // ({base: 5, span: MAX} / 4 answered the singleton {1}).
         if max_q < min_q || max_v < sv {

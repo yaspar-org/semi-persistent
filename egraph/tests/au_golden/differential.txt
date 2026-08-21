@@ -1,0 +1,633 @@
+meta-000 seed=0xc9b2a96113764935 exact :: size=39 vmass=2
+meta-000 seed=0xc9b2a96113764935 mcgs p16 :: size=39 vmass=2 certified=yes
+meta-000 seed=0xc9b2a96113764935 mcgs p256 :: size=39 vmass=2 certified=yes
+meta-001 seed=0x0a3f7471646aeb74 exact :: size=13 vmass=11
+meta-001 seed=0x0a3f7471646aeb74 mcgs p16 :: size=13 vmass=11 certified=yes
+meta-001 seed=0x0a3f7471646aeb74 mcgs p256 :: size=13 vmass=11 certified=yes
+meta-002 seed=0x8928ebd009731a4f exact :: size=6 vmass=4
+meta-002 seed=0x8928ebd009731a4f mcgs p16 :: size=6 vmass=4 certified=yes
+meta-002 seed=0x8928ebd009731a4f mcgs p256 :: size=6 vmass=4 certified=yes
+meta-003 seed=0x1af0ebf3d7ff2f80 exact :: size=37 vmass=9
+meta-003 seed=0x1af0ebf3d7ff2f80 mcgs p16 :: size=37 vmass=9 certified=yes
+meta-003 seed=0x1af0ebf3d7ff2f80 mcgs p256 :: size=37 vmass=9 certified=yes
+meta-004 seed=0xb7b3278018f5fd4c exact :: size=11 vmass=2
+meta-004 seed=0xb7b3278018f5fd4c mcgs p16 :: size=11 vmass=2 certified=yes
+meta-004 seed=0xb7b3278018f5fd4c mcgs p256 :: size=11 vmass=2 certified=yes
+meta-005 seed=0xc8e06fa9d2e649b1 exact :: size=5 vmass=3
+meta-005 seed=0xc8e06fa9d2e649b1 mcgs p16 :: size=5 vmass=3 certified=yes
+meta-005 seed=0xc8e06fa9d2e649b1 mcgs p256 :: size=5 vmass=3 certified=yes
+meta-006 seed=0x82ebbdcaf26da020 exact :: size=28 vmass=11
+meta-006 seed=0x82ebbdcaf26da020 mcgs p16 :: size=28 vmass=11 certified=yes
+meta-006 seed=0x82ebbdcaf26da020 mcgs p256 :: size=28 vmass=11 certified=yes
+meta-007 seed=0x47e66f35c353074e exact :: size=3 vmass=2
+meta-007 seed=0x47e66f35c353074e mcgs p16 :: size=3 vmass=2 certified=yes
+meta-007 seed=0x47e66f35c353074e mcgs p256 :: size=3 vmass=2 certified=yes
+meta-008 seed=0x6fd453472632de6e exact :: size=42 vmass=12
+meta-008 seed=0x6fd453472632de6e mcgs p16 :: size=42 vmass=12 certified=yes
+meta-008 seed=0x6fd453472632de6e mcgs p256 :: size=42 vmass=12 certified=yes
+meta-009 seed=0x3a2405694ad44f92 exact :: size=47 vmass=2
+meta-009 seed=0x3a2405694ad44f92 mcgs p16 :: size=47 vmass=2 certified=no
+meta-009 seed=0x3a2405694ad44f92 mcgs p256 :: size=47 vmass=2 certified=yes
+meta-010 seed=0x232f865b30afd38c exact :: size=14 vmass=4
+meta-010 seed=0x232f865b30afd38c mcgs p16 :: size=14 vmass=4 certified=yes
+meta-010 seed=0x232f865b30afd38c mcgs p256 :: size=14 vmass=4 certified=yes
+meta-011 seed=0xbfd76104947d2bf7 exact :: size=33 vmass=8
+meta-011 seed=0xbfd76104947d2bf7 mcgs p16 :: size=33 vmass=8 certified=no
+meta-011 seed=0xbfd76104947d2bf7 mcgs p256 :: size=33 vmass=8 certified=yes
+meta-012 seed=0xb1e9cd1b0bcb3db5 exact :: size=63 vmass=13
+meta-012 seed=0xb1e9cd1b0bcb3db5 mcgs p16 :: size=63 vmass=13 certified=yes
+meta-012 seed=0xb1e9cd1b0bcb3db5 mcgs p256 :: size=63 vmass=13 certified=yes
+meta-013 seed=0x02b8123c5d7bca50 exact :: size=73 vmass=19
+meta-013 seed=0x02b8123c5d7bca50 mcgs p16 :: size=73 vmass=19 certified=yes
+meta-013 seed=0x02b8123c5d7bca50 mcgs p256 :: size=73 vmass=19 certified=yes
+meta-014 seed=0xc1f1540778c1b3b7 exact :: size=45 vmass=33
+meta-014 seed=0xc1f1540778c1b3b7 mcgs p16 :: size=45 vmass=33 certified=yes
+meta-014 seed=0xc1f1540778c1b3b7 mcgs p256 :: size=45 vmass=33 certified=yes
+meta-015 seed=0xfc15f60d2584fbd9 exact :: size=7 vmass=5
+meta-015 seed=0xfc15f60d2584fbd9 mcgs p16 :: size=7 vmass=5 certified=yes
+meta-015 seed=0xfc15f60d2584fbd9 mcgs p256 :: size=7 vmass=5 certified=yes
+meta-016 seed=0xab88b2b3e2212d94 exact :: size=15 vmass=10
+meta-016 seed=0xab88b2b3e2212d94 mcgs p16 :: size=15 vmass=10 certified=yes
+meta-016 seed=0xab88b2b3e2212d94 mcgs p256 :: size=15 vmass=10 certified=yes
+meta-017 seed=0x3f2f6beca8113d34 exact :: size=14 vmass=9
+meta-017 seed=0x3f2f6beca8113d34 mcgs p16 :: size=14 vmass=9 certified=yes
+meta-017 seed=0x3f2f6beca8113d34 mcgs p256 :: size=14 vmass=9 certified=yes
+meta-018 seed=0x303d5459ac74b7ae exact :: size=35 vmass=13
+meta-018 seed=0x303d5459ac74b7ae mcgs p16 :: size=35 vmass=13 certified=yes
+meta-018 seed=0x303d5459ac74b7ae mcgs p256 :: size=35 vmass=13 certified=yes
+meta-019 seed=0x9ff871fb0486cbc3 exact :: size=26 vmass=17
+meta-019 seed=0x9ff871fb0486cbc3 mcgs p16 :: size=26 vmass=17 certified=yes
+meta-019 seed=0x9ff871fb0486cbc3 mcgs p256 :: size=26 vmass=17 certified=yes
+meta-020 seed=0x39a8091502443203 exact :: size=34 vmass=4
+meta-020 seed=0x39a8091502443203 mcgs p16 :: size=34 vmass=4 certified=yes
+meta-020 seed=0x39a8091502443203 mcgs p256 :: size=34 vmass=4 certified=yes
+meta-021 seed=0x3af35ad80e66d4cf exact :: size=34 vmass=2
+meta-021 seed=0x3af35ad80e66d4cf mcgs p16 :: size=34 vmass=2 certified=yes
+meta-021 seed=0x3af35ad80e66d4cf mcgs p256 :: size=34 vmass=2 certified=yes
+meta-022 seed=0xa5b448ff5eeb3cd4 exact :: size=57 vmass=4
+meta-022 seed=0xa5b448ff5eeb3cd4 mcgs p16 :: size=57 vmass=4 certified=no
+meta-022 seed=0xa5b448ff5eeb3cd4 mcgs p256 :: size=57 vmass=4 certified=yes
+meta-023 seed=0xb8ed4c40818517f5 exact :: size=15 vmass=8
+meta-023 seed=0xb8ed4c40818517f5 mcgs p16 :: size=15 vmass=8 certified=yes
+meta-023 seed=0xb8ed4c40818517f5 mcgs p256 :: size=15 vmass=8 certified=yes
+meta-024 seed=0x0d42375a648e8cb0 exact :: size=30 vmass=12
+meta-024 seed=0x0d42375a648e8cb0 mcgs p16 :: size=30 vmass=12 certified=yes
+meta-024 seed=0x0d42375a648e8cb0 mcgs p256 :: size=30 vmass=12 certified=yes
+meta-025 seed=0x69b8ed995f94586b exact :: size=34 vmass=12
+meta-025 seed=0x69b8ed995f94586b mcgs p16 :: size=34 vmass=12 certified=no
+meta-025 seed=0x69b8ed995f94586b mcgs p256 :: size=34 vmass=12 certified=yes
+meta-026 seed=0x28b9c06ee9527875 exact :: size=33 vmass=8
+meta-026 seed=0x28b9c06ee9527875 mcgs p16 :: size=33 vmass=8 certified=yes
+meta-026 seed=0x28b9c06ee9527875 mcgs p256 :: size=33 vmass=8 certified=yes
+meta-027 seed=0x3dfa3c02fa7d48ac exact :: size=34 vmass=8
+meta-027 seed=0x3dfa3c02fa7d48ac mcgs p16 :: size=34 vmass=8 certified=yes
+meta-027 seed=0x3dfa3c02fa7d48ac mcgs p256 :: size=34 vmass=8 certified=yes
+meta-028 seed=0x94becfb96431df48 exact :: size=12 vmass=5
+meta-028 seed=0x94becfb96431df48 mcgs p16 :: size=12 vmass=5 certified=yes
+meta-028 seed=0x94becfb96431df48 mcgs p256 :: size=12 vmass=5 certified=yes
+meta-029 seed=0xb65a096b28081ef7 exact :: size=3 vmass=2
+meta-029 seed=0xb65a096b28081ef7 mcgs p16 :: size=3 vmass=2 certified=yes
+meta-029 seed=0xb65a096b28081ef7 mcgs p256 :: size=3 vmass=2 certified=yes
+meta-030 seed=0x79cc290a5ff712ed exact :: size=26 vmass=16
+meta-030 seed=0x79cc290a5ff712ed mcgs p16 :: size=26 vmass=16 certified=yes
+meta-030 seed=0x79cc290a5ff712ed mcgs p256 :: size=26 vmass=16 certified=yes
+meta-031 seed=0x4343570a4e8480cf exact :: size=39 vmass=9
+meta-031 seed=0x4343570a4e8480cf mcgs p16 :: size=39 vmass=9 certified=no
+meta-031 seed=0x4343570a4e8480cf mcgs p256 :: size=39 vmass=9 certified=yes
+meta-032 seed=0x0e1d9cbcadf1d3db exact :: size=5 vmass=4
+meta-032 seed=0x0e1d9cbcadf1d3db mcgs p16 :: size=5 vmass=4 certified=yes
+meta-032 seed=0x0e1d9cbcadf1d3db mcgs p256 :: size=5 vmass=4 certified=yes
+meta-033 seed=0x7e0f565dbf3ec3f7 exact :: size=5 vmass=4
+meta-033 seed=0x7e0f565dbf3ec3f7 mcgs p16 :: size=5 vmass=4 certified=yes
+meta-033 seed=0x7e0f565dbf3ec3f7 mcgs p256 :: size=5 vmass=4 certified=yes
+meta-034 seed=0xae4881c095e00f6c exact :: size=15 vmass=2
+meta-034 seed=0xae4881c095e00f6c mcgs p16 :: size=15 vmass=2 certified=yes
+meta-034 seed=0xae4881c095e00f6c mcgs p256 :: size=15 vmass=2 certified=yes
+meta-035 seed=0x22e32d21b491c9b5 exact :: size=28 vmass=4
+meta-035 seed=0x22e32d21b491c9b5 mcgs p16 :: size=28 vmass=4 certified=yes
+meta-035 seed=0x22e32d21b491c9b5 mcgs p256 :: size=28 vmass=4 certified=yes
+meta-036 seed=0xc4d38b8b78669100 exact :: size=24 vmass=8
+meta-036 seed=0xc4d38b8b78669100 mcgs p16 :: size=24 vmass=8 certified=yes
+meta-036 seed=0xc4d38b8b78669100 mcgs p256 :: size=24 vmass=8 certified=yes
+meta-037 seed=0xee60996151beedb3 exact :: size=35 vmass=2
+meta-037 seed=0xee60996151beedb3 mcgs p16 :: size=35 vmass=2 certified=yes
+meta-037 seed=0xee60996151beedb3 mcgs p256 :: size=35 vmass=2 certified=yes
+meta-038 seed=0x13eec907ed7162d1 exact :: size=3 vmass=2
+meta-038 seed=0x13eec907ed7162d1 mcgs p16 :: size=3 vmass=2 certified=yes
+meta-038 seed=0x13eec907ed7162d1 mcgs p256 :: size=3 vmass=2 certified=yes
+meta-039 seed=0x18634f11c8b00d25 exact :: size=56 vmass=8
+meta-039 seed=0x18634f11c8b00d25 mcgs p16 :: size=56 vmass=8 certified=no
+meta-039 seed=0x18634f11c8b00d25 mcgs p256 :: size=56 vmass=8 certified=yes
+meta-040 seed=0x89d3c0240ba966aa exact :: size=52 vmass=6
+meta-040 seed=0x89d3c0240ba966aa mcgs p16 :: size=52 vmass=6 certified=yes
+meta-040 seed=0x89d3c0240ba966aa mcgs p256 :: size=52 vmass=6 certified=yes
+meta-041 seed=0xe9f4cfd2f68be2a8 exact :: size=19 vmass=12
+meta-041 seed=0xe9f4cfd2f68be2a8 mcgs p16 :: size=19 vmass=12 certified=yes
+meta-041 seed=0xe9f4cfd2f68be2a8 mcgs p256 :: size=19 vmass=12 certified=yes
+meta-042 seed=0x5a2dedfff39d6e57 exact :: size=33 vmass=6
+meta-042 seed=0x5a2dedfff39d6e57 mcgs p16 :: size=33 vmass=6 certified=yes
+meta-042 seed=0x5a2dedfff39d6e57 mcgs p256 :: size=33 vmass=6 certified=yes
+meta-043 seed=0x483c7d5b9c423f3c exact :: size=14 vmass=6
+meta-043 seed=0x483c7d5b9c423f3c mcgs p16 :: size=14 vmass=6 certified=yes
+meta-043 seed=0x483c7d5b9c423f3c mcgs p256 :: size=14 vmass=6 certified=yes
+meta-044 seed=0xcce54b6c8c7e0416 exact :: size=10 vmass=6
+meta-044 seed=0xcce54b6c8c7e0416 mcgs p16 :: size=10 vmass=6 certified=yes
+meta-044 seed=0xcce54b6c8c7e0416 mcgs p256 :: size=10 vmass=6 certified=yes
+meta-045 seed=0x58659401c30b9ba4 exact :: size=23 vmass=2
+meta-045 seed=0x58659401c30b9ba4 mcgs p16 :: size=23 vmass=2 certified=yes
+meta-045 seed=0x58659401c30b9ba4 mcgs p256 :: size=23 vmass=2 certified=yes
+meta-046 seed=0xc9b5278e85461517 exact :: size=9 vmass=8
+meta-046 seed=0xc9b5278e85461517 mcgs p16 :: size=9 vmass=8 certified=yes
+meta-046 seed=0xc9b5278e85461517 mcgs p256 :: size=9 vmass=8 certified=yes
+meta-047 seed=0x1e6a8b5fc363220c exact :: size=7 vmass=5
+meta-047 seed=0x1e6a8b5fc363220c mcgs p16 :: size=7 vmass=5 certified=yes
+meta-047 seed=0x1e6a8b5fc363220c mcgs p256 :: size=7 vmass=5 certified=yes
+meta-048 seed=0x0df13a9eb0f6f48d exact :: size=13 vmass=11
+meta-048 seed=0x0df13a9eb0f6f48d mcgs p16 :: size=13 vmass=11 certified=yes
+meta-048 seed=0x0df13a9eb0f6f48d mcgs p256 :: size=13 vmass=11 certified=yes
+meta-049 seed=0x3258c5be6ebd225f exact :: size=17 vmass=7
+meta-049 seed=0x3258c5be6ebd225f mcgs p16 :: size=17 vmass=7 certified=yes
+meta-049 seed=0x3258c5be6ebd225f mcgs p256 :: size=17 vmass=7 certified=yes
+meta-050 seed=0x543d3195a5f19b2e exact :: size=46 vmass=18
+meta-050 seed=0x543d3195a5f19b2e mcgs p16 :: size=46 vmass=18 certified=yes
+meta-050 seed=0x543d3195a5f19b2e mcgs p256 :: size=46 vmass=18 certified=yes
+meta-051 seed=0xe1e9830379626e21 exact :: size=3 vmass=2
+meta-051 seed=0xe1e9830379626e21 mcgs p16 :: size=3 vmass=2 certified=yes
+meta-051 seed=0xe1e9830379626e21 mcgs p256 :: size=3 vmass=2 certified=yes
+meta-052 seed=0x0f950b1f97c8f6a8 exact :: size=60 vmass=27
+meta-052 seed=0x0f950b1f97c8f6a8 mcgs p16 :: size=60 vmass=27 certified=no
+meta-052 seed=0x0f950b1f97c8f6a8 mcgs p256 :: size=60 vmass=27 certified=yes
+meta-053 seed=0x19abd461a552aa52 exact :: size=13 vmass=4
+meta-053 seed=0x19abd461a552aa52 mcgs p16 :: size=13 vmass=4 certified=yes
+meta-053 seed=0x19abd461a552aa52 mcgs p256 :: size=13 vmass=4 certified=yes
+meta-054 seed=0xd1ef53288988896e exact :: size=31 vmass=2
+meta-054 seed=0xd1ef53288988896e mcgs p16 :: size=31 vmass=2 certified=yes
+meta-054 seed=0xd1ef53288988896e mcgs p256 :: size=31 vmass=2 certified=yes
+meta-055 seed=0x262f94470f60a1df exact :: size=43 vmass=12
+meta-055 seed=0x262f94470f60a1df mcgs p16 :: size=43 vmass=12 certified=no
+meta-055 seed=0x262f94470f60a1df mcgs p256 :: size=43 vmass=12 certified=yes
+meta-056 seed=0xcb96d0fd9272e64f exact :: size=17 vmass=5
+meta-056 seed=0xcb96d0fd9272e64f mcgs p16 :: size=17 vmass=5 certified=yes
+meta-056 seed=0xcb96d0fd9272e64f mcgs p256 :: size=17 vmass=5 certified=yes
+meta-057 seed=0x10980531dab5fde0 exact :: size=28 vmass=8
+meta-057 seed=0x10980531dab5fde0 mcgs p16 :: size=28 vmass=8 certified=yes
+meta-057 seed=0x10980531dab5fde0 mcgs p256 :: size=28 vmass=8 certified=yes
+meta-058 seed=0x1a7dee41917ceea7 exact :: size=74 vmass=4
+meta-058 seed=0x1a7dee41917ceea7 mcgs p16 :: size=74 vmass=4 certified=yes
+meta-058 seed=0x1a7dee41917ceea7 mcgs p256 :: size=74 vmass=4 certified=yes
+meta-059 seed=0x6a77c45c9ac3bb76 exact :: size=36 vmass=11
+meta-059 seed=0x6a77c45c9ac3bb76 mcgs p16 :: size=36 vmass=11 certified=yes
+meta-059 seed=0x6a77c45c9ac3bb76 mcgs p256 :: size=36 vmass=11 certified=yes
+meta-060 seed=0xf67c80e326c7af88 exact :: size=45 vmass=6
+meta-060 seed=0xf67c80e326c7af88 mcgs p16 :: size=45 vmass=6 certified=yes
+meta-060 seed=0xf67c80e326c7af88 mcgs p256 :: size=45 vmass=6 certified=yes
+meta-061 seed=0x53bdb7bc825a0659 exact :: size=14 vmass=2
+meta-061 seed=0x53bdb7bc825a0659 mcgs p16 :: size=14 vmass=2 certified=yes
+meta-061 seed=0x53bdb7bc825a0659 mcgs p256 :: size=14 vmass=2 certified=yes
+meta-062 seed=0x46f46b01efb9b7de exact :: size=33 vmass=2
+meta-062 seed=0x46f46b01efb9b7de mcgs p16 :: size=33 vmass=2 certified=yes
+meta-062 seed=0x46f46b01efb9b7de mcgs p256 :: size=33 vmass=2 certified=yes
+meta-063 seed=0x059c600e6de35c91 exact :: size=23 vmass=8
+meta-063 seed=0x059c600e6de35c91 mcgs p16 :: size=23 vmass=8 certified=yes
+meta-063 seed=0x059c600e6de35c91 mcgs p256 :: size=23 vmass=8 certified=yes
+meta-064 seed=0x54074d6a14008729 exact :: size=23 vmass=8
+meta-064 seed=0x54074d6a14008729 mcgs p16 :: size=23 vmass=8 certified=yes
+meta-064 seed=0x54074d6a14008729 mcgs p256 :: size=23 vmass=8 certified=yes
+meta-065 seed=0x5067e1bb138cece5 exact :: size=21 vmass=6
+meta-065 seed=0x5067e1bb138cece5 mcgs p16 :: size=21 vmass=6 certified=yes
+meta-065 seed=0x5067e1bb138cece5 mcgs p256 :: size=21 vmass=6 certified=yes
+meta-066 seed=0x8cd830e208f1a24b exact :: size=9 vmass=5
+meta-066 seed=0x8cd830e208f1a24b mcgs p16 :: size=9 vmass=5 certified=yes
+meta-066 seed=0x8cd830e208f1a24b mcgs p256 :: size=9 vmass=5 certified=yes
+meta-067 seed=0x7bdf30f3e5131a07 exact :: size=10 vmass=7
+meta-067 seed=0x7bdf30f3e5131a07 mcgs p16 :: size=10 vmass=7 certified=yes
+meta-067 seed=0x7bdf30f3e5131a07 mcgs p256 :: size=10 vmass=7 certified=yes
+meta-068 seed=0xac9a4747b68266fe exact :: size=19 vmass=18
+meta-068 seed=0xac9a4747b68266fe mcgs p16 :: size=19 vmass=18 certified=yes
+meta-068 seed=0xac9a4747b68266fe mcgs p256 :: size=19 vmass=18 certified=yes
+meta-069 seed=0x6ef61275e44f9268 exact :: size=35 vmass=12
+meta-069 seed=0x6ef61275e44f9268 mcgs p16 :: size=35 vmass=12 certified=no
+meta-069 seed=0x6ef61275e44f9268 mcgs p256 :: size=35 vmass=12 certified=yes
+meta-070 seed=0x79ffd6ff63f40a19 exact :: size=12 vmass=6
+meta-070 seed=0x79ffd6ff63f40a19 mcgs p16 :: size=12 vmass=6 certified=yes
+meta-070 seed=0x79ffd6ff63f40a19 mcgs p256 :: size=12 vmass=6 certified=yes
+meta-071 seed=0xd4f748016fd6e12e exact :: size=30 vmass=4
+meta-071 seed=0xd4f748016fd6e12e mcgs p16 :: size=30 vmass=4 certified=yes
+meta-071 seed=0xd4f748016fd6e12e mcgs p256 :: size=30 vmass=4 certified=yes
+meta-072 seed=0x8e9b0703743dd421 exact :: size=23 vmass=6
+meta-072 seed=0x8e9b0703743dd421 mcgs p16 :: size=23 vmass=6 certified=yes
+meta-072 seed=0x8e9b0703743dd421 mcgs p256 :: size=23 vmass=6 certified=yes
+meta-073 seed=0x23ecf586b61a5527 exact :: size=25 vmass=8
+meta-073 seed=0x23ecf586b61a5527 mcgs p16 :: size=25 vmass=8 certified=yes
+meta-073 seed=0x23ecf586b61a5527 mcgs p256 :: size=25 vmass=8 certified=yes
+meta-074 seed=0x0f0183a8cab8f34d exact :: size=46 vmass=7
+meta-074 seed=0x0f0183a8cab8f34d mcgs p16 :: size=46 vmass=7 certified=yes
+meta-074 seed=0x0f0183a8cab8f34d mcgs p256 :: size=46 vmass=7 certified=yes
+meta-075 seed=0x73383510a1612909 exact :: size=20 vmass=9
+meta-075 seed=0x73383510a1612909 mcgs p16 :: size=20 vmass=9 certified=yes
+meta-075 seed=0x73383510a1612909 mcgs p256 :: size=20 vmass=9 certified=yes
+meta-076 seed=0x536a8442be225414 exact :: size=53 vmass=6
+meta-076 seed=0x536a8442be225414 mcgs p16 :: size=53 vmass=6 certified=no
+meta-076 seed=0x536a8442be225414 mcgs p256 :: size=53 vmass=6 certified=yes
+meta-077 seed=0x30ee0a66d0f8e760 exact :: size=58 vmass=11
+meta-077 seed=0x30ee0a66d0f8e760 mcgs p16 :: size=58 vmass=11 certified=yes
+meta-077 seed=0x30ee0a66d0f8e760 mcgs p256 :: size=58 vmass=11 certified=yes
+meta-078 seed=0xa0d2ac3e545db3fd exact :: size=22 vmass=8
+meta-078 seed=0xa0d2ac3e545db3fd mcgs p16 :: size=22 vmass=8 certified=yes
+meta-078 seed=0xa0d2ac3e545db3fd mcgs p256 :: size=22 vmass=8 certified=yes
+meta-079 seed=0xcde49989f77885df exact :: size=37 vmass=4
+meta-079 seed=0xcde49989f77885df mcgs p16 :: size=37 vmass=4 certified=no
+meta-079 seed=0xcde49989f77885df mcgs p256 :: size=37 vmass=4 certified=yes
+meta-080 seed=0x55465028b048560d exact :: size=16 vmass=10
+meta-080 seed=0x55465028b048560d mcgs p16 :: size=16 vmass=10 certified=yes
+meta-080 seed=0x55465028b048560d mcgs p256 :: size=16 vmass=10 certified=yes
+meta-081 seed=0x342ac88c4009e946 exact :: size=33 vmass=8
+meta-081 seed=0x342ac88c4009e946 mcgs p16 :: size=33 vmass=8 certified=yes
+meta-081 seed=0x342ac88c4009e946 mcgs p256 :: size=33 vmass=8 certified=yes
+meta-082 seed=0xabd9eb9ca3fed7af exact :: size=34 vmass=5
+meta-082 seed=0xabd9eb9ca3fed7af mcgs p16 :: size=34 vmass=5 certified=yes
+meta-082 seed=0xabd9eb9ca3fed7af mcgs p256 :: size=34 vmass=5 certified=yes
+meta-083 seed=0xb954241dfe45391d exact :: size=33 vmass=19
+meta-083 seed=0xb954241dfe45391d mcgs p16 :: size=33 vmass=19 certified=yes
+meta-083 seed=0xb954241dfe45391d mcgs p256 :: size=33 vmass=19 certified=yes
+meta-084 seed=0xcb72ca6b7060cf3c exact :: size=40 vmass=11
+meta-084 seed=0xcb72ca6b7060cf3c mcgs p16 :: size=40 vmass=11 certified=yes
+meta-084 seed=0xcb72ca6b7060cf3c mcgs p256 :: size=40 vmass=11 certified=yes
+meta-085 seed=0xfd161986b386c17e exact :: size=37 vmass=4
+meta-085 seed=0xfd161986b386c17e mcgs p16 :: size=37 vmass=4 certified=yes
+meta-085 seed=0xfd161986b386c17e mcgs p256 :: size=37 vmass=4 certified=yes
+meta-086 seed=0x85fc1c2a60db960d exact :: size=13 vmass=5
+meta-086 seed=0x85fc1c2a60db960d mcgs p16 :: size=13 vmass=5 certified=yes
+meta-086 seed=0x85fc1c2a60db960d mcgs p256 :: size=13 vmass=5 certified=yes
+meta-087 seed=0xf927a2fc6e86f371 exact :: size=13 vmass=7
+meta-087 seed=0xf927a2fc6e86f371 mcgs p16 :: size=13 vmass=7 certified=yes
+meta-087 seed=0xf927a2fc6e86f371 mcgs p256 :: size=13 vmass=7 certified=yes
+meta-088 seed=0xb4e27f4635eb73ce exact :: size=26 vmass=2
+meta-088 seed=0xb4e27f4635eb73ce mcgs p16 :: size=26 vmass=2 certified=yes
+meta-088 seed=0xb4e27f4635eb73ce mcgs p256 :: size=26 vmass=2 certified=yes
+meta-089 seed=0xc4ce4c015c41897b exact :: size=5 vmass=3
+meta-089 seed=0xc4ce4c015c41897b mcgs p16 :: size=5 vmass=3 certified=yes
+meta-089 seed=0xc4ce4c015c41897b mcgs p256 :: size=5 vmass=3 certified=yes
+meta-090 seed=0x56925bb4ba074d6b exact :: size=42 vmass=4
+meta-090 seed=0x56925bb4ba074d6b mcgs p16 :: size=42 vmass=4 certified=yes
+meta-090 seed=0x56925bb4ba074d6b mcgs p256 :: size=42 vmass=4 certified=yes
+meta-091 seed=0xad0bca3e530d835c exact :: size=19 vmass=6
+meta-091 seed=0xad0bca3e530d835c mcgs p16 :: size=19 vmass=6 certified=yes
+meta-091 seed=0xad0bca3e530d835c mcgs p256 :: size=19 vmass=6 certified=yes
+meta-092 seed=0xe613bd5ba54d0dbf exact :: size=15 vmass=3
+meta-092 seed=0xe613bd5ba54d0dbf mcgs p16 :: size=15 vmass=3 certified=yes
+meta-092 seed=0xe613bd5ba54d0dbf mcgs p256 :: size=15 vmass=3 certified=yes
+meta-093 seed=0x9324047c4a37f17b exact :: size=36 vmass=7
+meta-093 seed=0x9324047c4a37f17b mcgs p16 :: size=36 vmass=7 certified=no
+meta-093 seed=0x9324047c4a37f17b mcgs p256 :: size=36 vmass=7 certified=yes
+meta-094 seed=0xdc6ceca1c75f833f exact :: size=37 vmass=10
+meta-094 seed=0xdc6ceca1c75f833f mcgs p16 :: size=37 vmass=10 certified=no
+meta-094 seed=0xdc6ceca1c75f833f mcgs p256 :: size=37 vmass=10 certified=yes
+meta-095 seed=0x88d11a656b4d79b4 exact :: size=59 vmass=5
+meta-095 seed=0x88d11a656b4d79b4 mcgs p16 :: size=59 vmass=5 certified=yes
+meta-095 seed=0x88d11a656b4d79b4 mcgs p256 :: size=59 vmass=5 certified=yes
+meta-096 seed=0x61ae35935ee5d950 exact :: size=31 vmass=4
+meta-096 seed=0x61ae35935ee5d950 mcgs p16 :: size=31 vmass=4 certified=yes
+meta-096 seed=0x61ae35935ee5d950 mcgs p256 :: size=31 vmass=4 certified=yes
+meta-097 seed=0x016cc4c1d857ff7a exact :: size=29 vmass=2
+meta-097 seed=0x016cc4c1d857ff7a mcgs p16 :: size=29 vmass=2 certified=yes
+meta-097 seed=0x016cc4c1d857ff7a mcgs p256 :: size=29 vmass=2 certified=yes
+meta-098 seed=0xf53c98c7ebec8c9a exact :: size=4 vmass=2
+meta-098 seed=0xf53c98c7ebec8c9a mcgs p16 :: size=4 vmass=2 certified=yes
+meta-098 seed=0xf53c98c7ebec8c9a mcgs p256 :: size=4 vmass=2 certified=yes
+meta-099 seed=0xd242598ba920d1b2 exact :: size=28 vmass=6
+meta-099 seed=0xd242598ba920d1b2 mcgs p16 :: size=28 vmass=6 certified=yes
+meta-099 seed=0xd242598ba920d1b2 mcgs p256 :: size=28 vmass=6 certified=yes
+meta-100 seed=0x93476d9c459bef02 exact :: size=17 vmass=11
+meta-100 seed=0x93476d9c459bef02 mcgs p16 :: size=17 vmass=11 certified=yes
+meta-100 seed=0x93476d9c459bef02 mcgs p256 :: size=17 vmass=11 certified=yes
+meta-101 seed=0xdc7a31f5303399f3 exact :: size=10 vmass=7
+meta-101 seed=0xdc7a31f5303399f3 mcgs p16 :: size=10 vmass=7 certified=yes
+meta-101 seed=0xdc7a31f5303399f3 mcgs p256 :: size=10 vmass=7 certified=yes
+meta-102 seed=0xdfc903b506595167 exact :: size=50 vmass=4
+meta-102 seed=0xdfc903b506595167 mcgs p16 :: size=50 vmass=4 certified=no
+meta-102 seed=0xdfc903b506595167 mcgs p256 :: size=50 vmass=4 certified=yes
+meta-103 seed=0xc293b912626ee99a exact :: size=36 vmass=10
+meta-103 seed=0xc293b912626ee99a mcgs p16 :: size=36 vmass=10 certified=no
+meta-103 seed=0xc293b912626ee99a mcgs p256 :: size=36 vmass=10 certified=yes
+meta-104 seed=0x3d8cc814564a053f exact :: size=13 vmass=2
+meta-104 seed=0x3d8cc814564a053f mcgs p16 :: size=13 vmass=2 certified=yes
+meta-104 seed=0x3d8cc814564a053f mcgs p256 :: size=13 vmass=2 certified=yes
+meta-105 seed=0xaec3c8b69c4ae754 exact :: size=20 vmass=4
+meta-105 seed=0xaec3c8b69c4ae754 mcgs p16 :: size=20 vmass=4 certified=yes
+meta-105 seed=0xaec3c8b69c4ae754 mcgs p256 :: size=20 vmass=4 certified=yes
+meta-106 seed=0x71c816089b82a5b4 exact :: size=22 vmass=7
+meta-106 seed=0x71c816089b82a5b4 mcgs p16 :: size=22 vmass=7 certified=yes
+meta-106 seed=0x71c816089b82a5b4 mcgs p256 :: size=22 vmass=7 certified=yes
+meta-107 seed=0xf2311c63ef9a473e exact :: size=14 vmass=7
+meta-107 seed=0xf2311c63ef9a473e mcgs p16 :: size=14 vmass=7 certified=yes
+meta-107 seed=0xf2311c63ef9a473e mcgs p256 :: size=14 vmass=7 certified=yes
+meta-108 seed=0x6ee32c39df0c97be exact :: size=44 vmass=4
+meta-108 seed=0x6ee32c39df0c97be mcgs p16 :: size=44 vmass=4 certified=yes
+meta-108 seed=0x6ee32c39df0c97be mcgs p256 :: size=44 vmass=4 certified=yes
+meta-109 seed=0xbaccc73b8aac3b70 exact :: size=37 vmass=2
+meta-109 seed=0xbaccc73b8aac3b70 mcgs p16 :: size=37 vmass=2 certified=yes
+meta-109 seed=0xbaccc73b8aac3b70 mcgs p256 :: size=37 vmass=2 certified=yes
+meta-110 seed=0xb161bebbf76e6551 exact :: size=3 vmass=2
+meta-110 seed=0xb161bebbf76e6551 mcgs p16 :: size=3 vmass=2 certified=yes
+meta-110 seed=0xb161bebbf76e6551 mcgs p256 :: size=3 vmass=2 certified=yes
+meta-111 seed=0x38e51f92335a4328 exact :: size=24 vmass=9
+meta-111 seed=0x38e51f92335a4328 mcgs p16 :: size=24 vmass=9 certified=yes
+meta-111 seed=0x38e51f92335a4328 mcgs p256 :: size=24 vmass=9 certified=yes
+meta-112 seed=0x5e745bd28dc06f17 exact :: size=10 vmass=2
+meta-112 seed=0x5e745bd28dc06f17 mcgs p16 :: size=10 vmass=2 certified=yes
+meta-112 seed=0x5e745bd28dc06f17 mcgs p256 :: size=10 vmass=2 certified=yes
+meta-113 seed=0xf1b38fd5e2e73b64 exact :: size=58 vmass=4
+meta-113 seed=0xf1b38fd5e2e73b64 mcgs p16 :: size=58 vmass=4 certified=yes
+meta-113 seed=0xf1b38fd5e2e73b64 mcgs p256 :: size=58 vmass=4 certified=yes
+meta-114 seed=0x6ebd1eacadc7a2eb exact :: size=3 vmass=2
+meta-114 seed=0x6ebd1eacadc7a2eb mcgs p16 :: size=3 vmass=2 certified=yes
+meta-114 seed=0x6ebd1eacadc7a2eb mcgs p256 :: size=3 vmass=2 certified=yes
+meta-115 seed=0x14854bc56f100894 exact :: size=35 vmass=15
+meta-115 seed=0x14854bc56f100894 mcgs p16 :: size=35 vmass=15 certified=yes
+meta-115 seed=0x14854bc56f100894 mcgs p256 :: size=35 vmass=15 certified=yes
+meta-116 seed=0x015713797bae7f20 exact :: size=8 vmass=6
+meta-116 seed=0x015713797bae7f20 mcgs p16 :: size=8 vmass=6 certified=yes
+meta-116 seed=0x015713797bae7f20 mcgs p256 :: size=8 vmass=6 certified=yes
+meta-117 seed=0x4676bfb33d2fd884 exact :: size=25 vmass=6
+meta-117 seed=0x4676bfb33d2fd884 mcgs p16 :: size=25 vmass=6 certified=yes
+meta-117 seed=0x4676bfb33d2fd884 mcgs p256 :: size=25 vmass=6 certified=yes
+meta-118 seed=0x756170dbe19d257c exact :: size=34 vmass=2
+meta-118 seed=0x756170dbe19d257c mcgs p16 :: size=34 vmass=2 certified=yes
+meta-118 seed=0x756170dbe19d257c mcgs p256 :: size=34 vmass=2 certified=yes
+meta-119 seed=0xe8c0d0faf0e0e535 exact :: size=12 vmass=11
+meta-119 seed=0xe8c0d0faf0e0e535 mcgs p16 :: size=12 vmass=11 certified=yes
+meta-119 seed=0xe8c0d0faf0e0e535 mcgs p256 :: size=12 vmass=11 certified=yes
+meta-120 seed=0x60410f1073814eed exact :: size=14 vmass=6
+meta-120 seed=0x60410f1073814eed mcgs p16 :: size=14 vmass=6 certified=yes
+meta-120 seed=0x60410f1073814eed mcgs p256 :: size=14 vmass=6 certified=yes
+meta-121 seed=0x107a77652919b228 exact :: size=24 vmass=11
+meta-121 seed=0x107a77652919b228 mcgs p16 :: size=24 vmass=11 certified=yes
+meta-121 seed=0x107a77652919b228 mcgs p256 :: size=24 vmass=11 certified=yes
+meta-122 seed=0x171e8f2f1bfe787b exact :: size=38 vmass=11
+meta-122 seed=0x171e8f2f1bfe787b mcgs p16 :: size=38 vmass=11 certified=no
+meta-122 seed=0x171e8f2f1bfe787b mcgs p256 :: size=38 vmass=11 certified=yes
+meta-123 seed=0x4b6def5a60028c9b exact :: size=3 vmass=2
+meta-123 seed=0x4b6def5a60028c9b mcgs p16 :: size=3 vmass=2 certified=yes
+meta-123 seed=0x4b6def5a60028c9b mcgs p256 :: size=3 vmass=2 certified=yes
+meta-124 seed=0x0d5172be8411f952 exact :: size=11 vmass=8
+meta-124 seed=0x0d5172be8411f952 mcgs p16 :: size=11 vmass=8 certified=yes
+meta-124 seed=0x0d5172be8411f952 mcgs p256 :: size=11 vmass=8 certified=yes
+meta-125 seed=0x31462e7f7eae5731 exact :: size=16 vmass=8
+meta-125 seed=0x31462e7f7eae5731 mcgs p16 :: size=16 vmass=8 certified=yes
+meta-125 seed=0x31462e7f7eae5731 mcgs p256 :: size=16 vmass=8 certified=yes
+meta-126 seed=0x76d4a9a83cd9ca76 exact :: size=26 vmass=4
+meta-126 seed=0x76d4a9a83cd9ca76 mcgs p16 :: size=26 vmass=4 certified=yes
+meta-126 seed=0x76d4a9a83cd9ca76 mcgs p256 :: size=26 vmass=4 certified=yes
+meta-127 seed=0x2d4d06738d43dab0 exact :: size=54 vmass=28
+meta-127 seed=0x2d4d06738d43dab0 mcgs p16 :: size=54 vmass=28 certified=yes
+meta-127 seed=0x2d4d06738d43dab0 mcgs p256 :: size=54 vmass=28 certified=yes
+meta-128 seed=0x91d777ff6de85ed3 exact :: size=26 vmass=10
+meta-128 seed=0x91d777ff6de85ed3 mcgs p16 :: size=26 vmass=10 certified=yes
+meta-128 seed=0x91d777ff6de85ed3 mcgs p256 :: size=26 vmass=10 certified=yes
+meta-129 seed=0x269c0a2c22c47994 exact :: size=30 vmass=12
+meta-129 seed=0x269c0a2c22c47994 mcgs p16 :: size=30 vmass=12 certified=yes
+meta-129 seed=0x269c0a2c22c47994 mcgs p256 :: size=30 vmass=12 certified=yes
+meta-130 seed=0xaec2ea82bc90adf5 exact :: size=19 vmass=8
+meta-130 seed=0xaec2ea82bc90adf5 mcgs p16 :: size=19 vmass=8 certified=yes
+meta-130 seed=0xaec2ea82bc90adf5 mcgs p256 :: size=19 vmass=8 certified=yes
+meta-131 seed=0x0c80b2c4636b8b3c exact :: size=15 vmass=7
+meta-131 seed=0x0c80b2c4636b8b3c mcgs p16 :: size=15 vmass=7 certified=yes
+meta-131 seed=0x0c80b2c4636b8b3c mcgs p256 :: size=15 vmass=7 certified=yes
+meta-132 seed=0xd8eeb27b043a6ae4 exact :: size=25 vmass=2
+meta-132 seed=0xd8eeb27b043a6ae4 mcgs p16 :: size=25 vmass=2 certified=yes
+meta-132 seed=0xd8eeb27b043a6ae4 mcgs p256 :: size=25 vmass=2 certified=yes
+meta-133 seed=0x0859960185c5f60a exact :: size=15 vmass=6
+meta-133 seed=0x0859960185c5f60a mcgs p16 :: size=15 vmass=6 certified=yes
+meta-133 seed=0x0859960185c5f60a mcgs p256 :: size=15 vmass=6 certified=yes
+meta-134 seed=0xc182aa1d31431b15 exact :: size=33 vmass=10
+meta-134 seed=0xc182aa1d31431b15 mcgs p16 :: size=33 vmass=10 certified=yes
+meta-134 seed=0xc182aa1d31431b15 mcgs p256 :: size=33 vmass=10 certified=yes
+meta-135 seed=0x89e4b6b54f5f9b47 exact :: size=10 vmass=2
+meta-135 seed=0x89e4b6b54f5f9b47 mcgs p16 :: size=10 vmass=2 certified=yes
+meta-135 seed=0x89e4b6b54f5f9b47 mcgs p256 :: size=10 vmass=2 certified=yes
+meta-136 seed=0xe3cc547bf48772f8 exact :: size=7 vmass=2
+meta-136 seed=0xe3cc547bf48772f8 mcgs p16 :: size=7 vmass=2 certified=yes
+meta-136 seed=0xe3cc547bf48772f8 mcgs p256 :: size=7 vmass=2 certified=yes
+meta-137 seed=0x5717a0869b312af4 exact :: size=40 vmass=2
+meta-137 seed=0x5717a0869b312af4 mcgs p16 :: size=40 vmass=2 certified=no
+meta-137 seed=0x5717a0869b312af4 mcgs p256 :: size=40 vmass=2 certified=yes
+meta-138 seed=0x75f77ed7a65b548f exact :: size=10 vmass=6
+meta-138 seed=0x75f77ed7a65b548f mcgs p16 :: size=10 vmass=6 certified=yes
+meta-138 seed=0x75f77ed7a65b548f mcgs p256 :: size=10 vmass=6 certified=yes
+meta-139 seed=0x2d9cc3ff85bd0d31 exact :: size=8 vmass=2
+meta-139 seed=0x2d9cc3ff85bd0d31 mcgs p16 :: size=8 vmass=2 certified=yes
+meta-139 seed=0x2d9cc3ff85bd0d31 mcgs p256 :: size=8 vmass=2 certified=yes
+meta-140 seed=0x123a648a43d0d0ca exact :: size=29 vmass=28
+meta-140 seed=0x123a648a43d0d0ca mcgs p16 :: size=29 vmass=28 certified=yes
+meta-140 seed=0x123a648a43d0d0ca mcgs p256 :: size=29 vmass=28 certified=yes
+meta-141 seed=0x7788e70a6fa45200 exact :: size=5 vmass=4
+meta-141 seed=0x7788e70a6fa45200 mcgs p16 :: size=5 vmass=4 certified=yes
+meta-141 seed=0x7788e70a6fa45200 mcgs p256 :: size=5 vmass=4 certified=yes
+meta-142 seed=0x786ff8762c7add0a exact :: size=33 vmass=9
+meta-142 seed=0x786ff8762c7add0a mcgs p16 :: size=33 vmass=9 certified=yes
+meta-142 seed=0x786ff8762c7add0a mcgs p256 :: size=33 vmass=9 certified=yes
+meta-143 seed=0x95e037dbb23105a9 exact :: size=8 vmass=5
+meta-143 seed=0x95e037dbb23105a9 mcgs p16 :: size=8 vmass=5 certified=yes
+meta-143 seed=0x95e037dbb23105a9 mcgs p256 :: size=8 vmass=5 certified=yes
+meta-144 seed=0xef53c80bf53f4905 exact :: size=22 vmass=4
+meta-144 seed=0xef53c80bf53f4905 mcgs p16 :: size=22 vmass=4 certified=yes
+meta-144 seed=0xef53c80bf53f4905 mcgs p256 :: size=22 vmass=4 certified=yes
+meta-145 seed=0xb466722d1b3599e1 exact :: size=71 vmass=9
+meta-145 seed=0xb466722d1b3599e1 mcgs p16 :: size=71 vmass=9 certified=no
+meta-145 seed=0xb466722d1b3599e1 mcgs p256 :: size=71 vmass=9 certified=yes
+meta-146 seed=0x665c1f1cf312b85a exact :: size=3 vmass=2
+meta-146 seed=0x665c1f1cf312b85a mcgs p16 :: size=3 vmass=2 certified=yes
+meta-146 seed=0x665c1f1cf312b85a mcgs p256 :: size=3 vmass=2 certified=yes
+meta-147 seed=0xd55052c34c30057b exact :: size=47 vmass=12
+meta-147 seed=0xd55052c34c30057b mcgs p16 :: size=47 vmass=12 certified=no
+meta-147 seed=0xd55052c34c30057b mcgs p256 :: size=47 vmass=12 certified=yes
+meta-148 seed=0xe28df06e01ca4f8d exact :: size=14 vmass=2
+meta-148 seed=0xe28df06e01ca4f8d mcgs p16 :: size=14 vmass=2 certified=yes
+meta-148 seed=0xe28df06e01ca4f8d mcgs p256 :: size=14 vmass=2 certified=yes
+meta-149 seed=0x5658d16b456e37c6 exact :: size=11 vmass=7
+meta-149 seed=0x5658d16b456e37c6 mcgs p16 :: size=11 vmass=7 certified=yes
+meta-149 seed=0x5658d16b456e37c6 mcgs p256 :: size=11 vmass=7 certified=yes
+meta-150 seed=0xef053bbb7ad2e46b exact :: size=26 vmass=6
+meta-150 seed=0xef053bbb7ad2e46b mcgs p16 :: size=26 vmass=6 certified=yes
+meta-150 seed=0xef053bbb7ad2e46b mcgs p256 :: size=26 vmass=6 certified=yes
+meta-151 seed=0x8a20b2891fc972a7 exact :: size=48 vmass=12
+meta-151 seed=0x8a20b2891fc972a7 mcgs p16 :: size=48 vmass=12 certified=no
+meta-151 seed=0x8a20b2891fc972a7 mcgs p256 :: size=48 vmass=12 certified=yes
+meta-152 seed=0x273e3825848f1f84 exact :: size=32 vmass=24
+meta-152 seed=0x273e3825848f1f84 mcgs p16 :: size=32 vmass=24 certified=yes
+meta-152 seed=0x273e3825848f1f84 mcgs p256 :: size=32 vmass=24 certified=yes
+meta-153 seed=0x9782583dfbcbd052 exact :: size=16 vmass=9
+meta-153 seed=0x9782583dfbcbd052 mcgs p16 :: size=16 vmass=9 certified=yes
+meta-153 seed=0x9782583dfbcbd052 mcgs p256 :: size=16 vmass=9 certified=yes
+meta-154 seed=0x90e8dffa20eaa275 exact :: size=18 vmass=8
+meta-154 seed=0x90e8dffa20eaa275 mcgs p16 :: size=18 vmass=8 certified=yes
+meta-154 seed=0x90e8dffa20eaa275 mcgs p256 :: size=18 vmass=8 certified=yes
+meta-155 seed=0x3a06129e1b847814 exact :: size=60 vmass=13
+meta-155 seed=0x3a06129e1b847814 mcgs p16 :: size=60 vmass=13 certified=no
+meta-155 seed=0x3a06129e1b847814 mcgs p256 :: size=60 vmass=13 certified=yes
+meta-156 seed=0xe399066c67ddf24b exact :: size=16 vmass=6
+meta-156 seed=0xe399066c67ddf24b mcgs p16 :: size=16 vmass=6 certified=yes
+meta-156 seed=0xe399066c67ddf24b mcgs p256 :: size=16 vmass=6 certified=yes
+meta-157 seed=0xf8bc0a42c4f9d85a exact :: size=26 vmass=12
+meta-157 seed=0xf8bc0a42c4f9d85a mcgs p16 :: size=26 vmass=12 certified=yes
+meta-157 seed=0xf8bc0a42c4f9d85a mcgs p256 :: size=26 vmass=12 certified=yes
+meta-158 seed=0x6b2e0640da2d2d1a exact :: size=37 vmass=2
+meta-158 seed=0x6b2e0640da2d2d1a mcgs p16 :: size=37 vmass=2 certified=yes
+meta-158 seed=0x6b2e0640da2d2d1a mcgs p256 :: size=37 vmass=2 certified=yes
+meta-159 seed=0x84ad8cc9562b3c09 exact :: size=19 vmass=2
+meta-159 seed=0x84ad8cc9562b3c09 mcgs p16 :: size=19 vmass=2 certified=yes
+meta-159 seed=0x84ad8cc9562b3c09 mcgs p256 :: size=19 vmass=2 certified=yes
+meta-160 seed=0xf7512c6649264c83 exact :: size=38 vmass=11
+meta-160 seed=0xf7512c6649264c83 mcgs p16 :: size=38 vmass=11 certified=yes
+meta-160 seed=0xf7512c6649264c83 mcgs p256 :: size=38 vmass=11 certified=yes
+meta-161 seed=0x0f3c182b233f84ab exact :: size=3 vmass=2
+meta-161 seed=0x0f3c182b233f84ab mcgs p16 :: size=3 vmass=2 certified=yes
+meta-161 seed=0x0f3c182b233f84ab mcgs p256 :: size=3 vmass=2 certified=yes
+meta-162 seed=0xfcccbd0557b820c5 exact :: size=35 vmass=7
+meta-162 seed=0xfcccbd0557b820c5 mcgs p16 :: size=35 vmass=7 certified=yes
+meta-162 seed=0xfcccbd0557b820c5 mcgs p256 :: size=35 vmass=7 certified=yes
+meta-163 seed=0x73aeca959dd3f934 exact :: size=20 vmass=8
+meta-163 seed=0x73aeca959dd3f934 mcgs p16 :: size=20 vmass=8 certified=yes
+meta-163 seed=0x73aeca959dd3f934 mcgs p256 :: size=20 vmass=8 certified=yes
+meta-164 seed=0xb055fba0f912a3bb exact :: size=8 vmass=6
+meta-164 seed=0xb055fba0f912a3bb mcgs p16 :: size=8 vmass=6 certified=yes
+meta-164 seed=0xb055fba0f912a3bb mcgs p256 :: size=8 vmass=6 certified=yes
+meta-165 seed=0x6682b56b8ba38235 exact :: size=13 vmass=6
+meta-165 seed=0x6682b56b8ba38235 mcgs p16 :: size=13 vmass=6 certified=yes
+meta-165 seed=0x6682b56b8ba38235 mcgs p256 :: size=13 vmass=6 certified=yes
+meta-166 seed=0x17e8c94a5a86e15e exact :: size=28 vmass=10
+meta-166 seed=0x17e8c94a5a86e15e mcgs p16 :: size=28 vmass=10 certified=yes
+meta-166 seed=0x17e8c94a5a86e15e mcgs p256 :: size=28 vmass=10 certified=yes
+meta-167 seed=0xd4326c2bae8e9a8e exact :: size=14 vmass=12
+meta-167 seed=0xd4326c2bae8e9a8e mcgs p16 :: size=14 vmass=12 certified=yes
+meta-167 seed=0xd4326c2bae8e9a8e mcgs p256 :: size=14 vmass=12 certified=yes
+meta-168 seed=0xf8abcf737ec51f8e exact :: size=8 vmass=4
+meta-168 seed=0xf8abcf737ec51f8e mcgs p16 :: size=8 vmass=4 certified=yes
+meta-168 seed=0xf8abcf737ec51f8e mcgs p256 :: size=8 vmass=4 certified=yes
+meta-169 seed=0x3c5740fbc15965a2 exact :: size=31 vmass=6
+meta-169 seed=0x3c5740fbc15965a2 mcgs p16 :: size=31 vmass=6 certified=yes
+meta-169 seed=0x3c5740fbc15965a2 mcgs p256 :: size=31 vmass=6 certified=yes
+meta-170 seed=0xe99b5e0b09333dd7 exact :: size=4 vmass=3
+meta-170 seed=0xe99b5e0b09333dd7 mcgs p16 :: size=4 vmass=3 certified=yes
+meta-170 seed=0xe99b5e0b09333dd7 mcgs p256 :: size=4 vmass=3 certified=yes
+meta-171 seed=0x47b60edfc79397c3 exact :: size=19 vmass=2
+meta-171 seed=0x47b60edfc79397c3 mcgs p16 :: size=19 vmass=2 certified=yes
+meta-171 seed=0x47b60edfc79397c3 mcgs p256 :: size=19 vmass=2 certified=yes
+meta-172 seed=0x6dd6617dd4a18069 exact :: size=44 vmass=6
+meta-172 seed=0x6dd6617dd4a18069 mcgs p16 :: size=44 vmass=6 certified=yes
+meta-172 seed=0x6dd6617dd4a18069 mcgs p256 :: size=44 vmass=6 certified=yes
+meta-173 seed=0xfd0e81d563f451b5 exact :: size=43 vmass=2
+meta-173 seed=0xfd0e81d563f451b5 mcgs p16 :: size=43 vmass=2 certified=yes
+meta-173 seed=0xfd0e81d563f451b5 mcgs p256 :: size=43 vmass=2 certified=yes
+meta-174 seed=0x3016f3686f1b4de4 exact :: size=51 vmass=5
+meta-174 seed=0x3016f3686f1b4de4 mcgs p16 :: size=51 vmass=5 certified=yes
+meta-174 seed=0x3016f3686f1b4de4 mcgs p256 :: size=51 vmass=5 certified=yes
+meta-175 seed=0x5568700835ed9d1d exact :: size=27 vmass=13
+meta-175 seed=0x5568700835ed9d1d mcgs p16 :: size=27 vmass=13 certified=yes
+meta-175 seed=0x5568700835ed9d1d mcgs p256 :: size=27 vmass=13 certified=yes
+meta-176 seed=0x3f12ae4d47ce710e exact :: size=25 vmass=13
+meta-176 seed=0x3f12ae4d47ce710e mcgs p16 :: size=25 vmass=13 certified=yes
+meta-176 seed=0x3f12ae4d47ce710e mcgs p256 :: size=25 vmass=13 certified=yes
+meta-177 seed=0x0a7621b43a61938b exact :: size=8 vmass=4
+meta-177 seed=0x0a7621b43a61938b mcgs p16 :: size=8 vmass=4 certified=yes
+meta-177 seed=0x0a7621b43a61938b mcgs p256 :: size=8 vmass=4 certified=yes
+meta-178 seed=0x2080c24e06b98a0d exact :: size=28 vmass=20
+meta-178 seed=0x2080c24e06b98a0d mcgs p16 :: size=28 vmass=20 certified=yes
+meta-178 seed=0x2080c24e06b98a0d mcgs p256 :: size=28 vmass=20 certified=yes
+meta-179 seed=0xb2271340e49e4283 exact :: size=24 vmass=6
+meta-179 seed=0xb2271340e49e4283 mcgs p16 :: size=24 vmass=6 certified=yes
+meta-179 seed=0xb2271340e49e4283 mcgs p256 :: size=24 vmass=6 certified=yes
+meta-180 seed=0xb5e1545cc9c1296f exact :: size=20 vmass=4
+meta-180 seed=0xb5e1545cc9c1296f mcgs p16 :: size=20 vmass=4 certified=yes
+meta-180 seed=0xb5e1545cc9c1296f mcgs p256 :: size=20 vmass=4 certified=yes
+meta-181 seed=0x0157e23794d968e7 exact :: size=35 vmass=4
+meta-181 seed=0x0157e23794d968e7 mcgs p16 :: size=35 vmass=4 certified=yes
+meta-181 seed=0x0157e23794d968e7 mcgs p256 :: size=35 vmass=4 certified=yes
+meta-182 seed=0x4a5a50d8b8154452 exact :: size=30 vmass=29
+meta-182 seed=0x4a5a50d8b8154452 mcgs p16 :: size=30 vmass=29 certified=yes
+meta-182 seed=0x4a5a50d8b8154452 mcgs p256 :: size=30 vmass=29 certified=yes
+meta-183 seed=0xaa8a844384054ee8 exact :: size=3 vmass=2
+meta-183 seed=0xaa8a844384054ee8 mcgs p16 :: size=3 vmass=2 certified=yes
+meta-183 seed=0xaa8a844384054ee8 mcgs p256 :: size=3 vmass=2 certified=yes
+meta-184 seed=0x5b73baf5cf0247fe exact :: size=16 vmass=3
+meta-184 seed=0x5b73baf5cf0247fe mcgs p16 :: size=16 vmass=3 certified=yes
+meta-184 seed=0x5b73baf5cf0247fe mcgs p256 :: size=16 vmass=3 certified=yes
+meta-185 seed=0x7674ee713d7fb277 exact :: size=23 vmass=8
+meta-185 seed=0x7674ee713d7fb277 mcgs p16 :: size=23 vmass=8 certified=yes
+meta-185 seed=0x7674ee713d7fb277 mcgs p256 :: size=23 vmass=8 certified=yes
+meta-186 seed=0x32b5753fe760406a exact :: size=21 vmass=10
+meta-186 seed=0x32b5753fe760406a mcgs p16 :: size=21 vmass=10 certified=yes
+meta-186 seed=0x32b5753fe760406a mcgs p256 :: size=21 vmass=10 certified=yes
+meta-187 seed=0x1e735cfa750f990c exact :: size=25 vmass=9
+meta-187 seed=0x1e735cfa750f990c mcgs p16 :: size=25 vmass=9 certified=yes
+meta-187 seed=0x1e735cfa750f990c mcgs p256 :: size=25 vmass=9 certified=yes
+meta-188 seed=0xc89fed88042faf6b exact :: size=10 vmass=8
+meta-188 seed=0xc89fed88042faf6b mcgs p16 :: size=10 vmass=8 certified=yes
+meta-188 seed=0xc89fed88042faf6b mcgs p256 :: size=10 vmass=8 certified=yes
+meta-189 seed=0x0b1fbfbf47ba196a exact :: size=31 vmass=19
+meta-189 seed=0x0b1fbfbf47ba196a mcgs p16 :: size=31 vmass=19 certified=yes
+meta-189 seed=0x0b1fbfbf47ba196a mcgs p256 :: size=31 vmass=19 certified=yes
+meta-190 seed=0x51ed76be08c3da93 exact :: size=7 vmass=6
+meta-190 seed=0x51ed76be08c3da93 mcgs p16 :: size=7 vmass=6 certified=yes
+meta-190 seed=0x51ed76be08c3da93 mcgs p256 :: size=7 vmass=6 certified=yes
+meta-191 seed=0xcf67338958c6af30 exact :: size=20 vmass=13
+meta-191 seed=0xcf67338958c6af30 mcgs p16 :: size=20 vmass=13 certified=yes
+meta-191 seed=0xcf67338958c6af30 mcgs p256 :: size=20 vmass=13 certified=yes
+meta-192 seed=0x6d7341e276473d44 exact :: size=16 vmass=13
+meta-192 seed=0x6d7341e276473d44 mcgs p16 :: size=16 vmass=13 certified=yes
+meta-192 seed=0x6d7341e276473d44 mcgs p256 :: size=16 vmass=13 certified=yes
+meta-193 seed=0x8ae7adb8b4aa5fa1 exact :: size=5 vmass=3
+meta-193 seed=0x8ae7adb8b4aa5fa1 mcgs p16 :: size=5 vmass=3 certified=yes
+meta-193 seed=0x8ae7adb8b4aa5fa1 mcgs p256 :: size=5 vmass=3 certified=yes
+meta-194 seed=0x022abcc66d9d34b2 exact :: size=24 vmass=20
+meta-194 seed=0x022abcc66d9d34b2 mcgs p16 :: size=24 vmass=20 certified=yes
+meta-194 seed=0x022abcc66d9d34b2 mcgs p256 :: size=24 vmass=20 certified=yes
+meta-195 seed=0xfc0026b3ed8022d3 exact :: size=20 vmass=8
+meta-195 seed=0xfc0026b3ed8022d3 mcgs p16 :: size=20 vmass=8 certified=yes
+meta-195 seed=0xfc0026b3ed8022d3 mcgs p256 :: size=20 vmass=8 certified=yes
+meta-196 seed=0xb349879a178b18d4 exact :: size=37 vmass=11
+meta-196 seed=0xb349879a178b18d4 mcgs p16 :: size=37 vmass=11 certified=no
+meta-196 seed=0xb349879a178b18d4 mcgs p256 :: size=37 vmass=11 certified=yes
+meta-197 seed=0xa9a95543bf4dbc4b exact :: size=24 vmass=6
+meta-197 seed=0xa9a95543bf4dbc4b mcgs p16 :: size=24 vmass=6 certified=yes
+meta-197 seed=0xa9a95543bf4dbc4b mcgs p256 :: size=24 vmass=6 certified=yes
+meta-198 seed=0x8c8955d0c428bad7 exact :: size=46 vmass=27
+meta-198 seed=0x8c8955d0c428bad7 mcgs p16 :: size=46 vmass=27 certified=yes
+meta-198 seed=0x8c8955d0c428bad7 mcgs p256 :: size=46 vmass=27 certified=yes
+meta-199 seed=0x343c075e5e9c1c1d exact :: size=63 vmass=14
+meta-199 seed=0x343c075e5e9c1c1d mcgs p16 :: size=63 vmass=14 certified=yes
+meta-199 seed=0x343c075e5e9c1c1d mcgs p256 :: size=63 vmass=14 certified=yes
+xover c2 d4 w1 exact :: size=39 vmass=16
+xover c2 d4 w1 mcgs p16 :: size=39 vmass=16 certified=yes
+xover c2 d4 w1 mcgs p256 :: size=39 vmass=16 certified=yes
+xover c3 d4 w2 exact :: size=39 vmass=16
+xover c3 d4 w2 mcgs p16 :: size=39 vmass=16 certified=no
+xover c3 d4 w2 mcgs p256 :: size=39 vmass=16 certified=yes
+xover c4 d4 w3 exact :: size=39 vmass=16
+xover c4 d4 w3 mcgs p16 :: size=39 vmass=16 certified=no
+xover c4 d4 w3 mcgs p256 :: size=39 vmass=16 certified=no
+xover c5 d4 w4 exact :: size=39 vmass=16
+xover c5 d4 w4 mcgs p16 :: size=39 vmass=16 certified=no
+xover c5 d4 w4 mcgs p256 :: size=39 vmass=16 certified=no
+xover c6 d4 w5 exact :: size=39 vmass=16
+xover c6 d4 w5 mcgs p16 :: size=39 vmass=16 certified=no
+xover c6 d4 w5 mcgs p256 :: size=39 vmass=16 certified=no
+width d4 w4 exact :: size=10 vmass=2
+width d4 w4 mcgs p16 :: size=10 vmass=2 certified=no
+width d4 w4 mcgs p256 :: size=10 vmass=2 certified=yes
+width d4 w16 exact :: size=10 vmass=2
+width d4 w16 mcgs p16 :: size=10 vmass=2 certified=no
+width d4 w16 mcgs p256 :: size=10 vmass=2 certified=no
+width d4 w64 exact :: size=10 vmass=2
+width d4 w64 mcgs p16 :: size=10 vmass=2 certified=no
+width d4 w64 mcgs p256 :: size=10 vmass=2 certified=no
+ac m8 c4 exact :: size=7 vmass=2
+ac m8 c4 mcgs p16 :: size=7 vmass=2 certified=no
+ac m8 c4 mcgs p256 :: size=7 vmass=2 certified=yes
+ac m16 c8 exact :: size=11 vmass=2
+ac m16 c8 mcgs p16 :: size=11 vmass=2 certified=no
+ac m16 c8 mcgs p256 :: size=11 vmass=2 certified=yes
+ac m32 c8 exact :: size=11 vmass=2
+ac m32 c8 mcgs p16 :: size=11 vmass=2 certified=no
+ac m32 c8 mcgs p256 :: size=11 vmass=2 certified=no

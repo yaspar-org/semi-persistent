@@ -1,4 +1,4 @@
-// Layout parity assertions (fix 1 acceptance): the packed verus list types
+// Layout parity assertions: the packed Verus list types
 // must match production's sizes exactly at equal id widths.
 use semi_persistent_containers as prod;
 use semi_persistent_containers_verus as verus;
@@ -39,7 +39,7 @@ fn node_size_matches_production() {
 ///
 /// Both are asserted, because a single-width check is exactly what would let a future
 /// `u32` count slip back in unnoticed: it is free at 31 bits and only wrong at 63.
-/// Production's own in-crate twin is `head_is_two_words_plus_a_same_width_count`
+/// Production's own in-crate counterpart is `head_is_two_words_plus_a_same_width_count`
 /// (`containers/src/list.rs`), which can see the private type directly.
 #[test]
 fn head_size_matches_production() {
@@ -82,17 +82,14 @@ fn head_size_matches_production() {
     );
 }
 
-/// The e-class ring cell (the consumer swap, `egraph/src/classes.rs`).
+/// The e-class ring cell used by `egraph/src/classes.rs`.
 ///
-/// This is the memory-parity claim for the swap: `classes.rs` no longer stores
-/// its own `EClassEntry { next: T, repr_stored: <u32 as Tagged>::Repr }`, it
-/// stores a `CircularList<Opt<T::Index>, T, TRACK>` cell. Both are 12 bytes and
-/// compose the same way — a `BoolTagged<u32>` payload word pair (presence bit +
-/// key) plus one niche-tagged id word (successor + capture bit in its spare MSB)
-/// — so the ring costs the same per e-class after the swap as before it. The
+/// The verified `CircularList<Opt<T::Index>, T, TRACK>` cell and the independent
+/// `EClassEntry` reference cell compose the same way: a `BoolTagged` payload
+/// word pair plus one niche-tagged successor word. The
 /// cell is what multiplies by class count, and it is also what the diff log
-/// records per captured write, so this equality is what keeps BOTH the live
-/// footprint and the retained-history footprint at parity.
+/// records per captured write, so equality covers both live and retained-history
+/// footprint.
 ///
 /// Asserted rather than argued because the composition is exactly the kind of
 /// thing a later `Opt`/`Tagged` change could silently widen to 16.
@@ -112,7 +109,7 @@ fn head_size_matches_production() {
 /// documented budget; the 63-bit rows compare against production's cell instead.
 #[test]
 fn class_ring_cell_size_matches_production() {
-    // Production's pre-swap cell, from the shared baseline module.
+    // Independent cell from the shared reference module.
     use containers_conformance::prod_class_ring::EClassEntry;
 
     // The verified cell at each id family, payload word derived from the id.
@@ -133,12 +130,12 @@ fn class_ring_cell_size_matches_production() {
     assert_eq!(
         core::mem::size_of::<EClassEntry<PN31>>(),
         12,
-        "harness check: production's pre-swap ring cell is 12 bytes at 31-bit ids"
+        "reference ring cell is 12 bytes at 31-bit ids"
     );
     assert_eq!(
         core::mem::size_of::<Cell31>(),
         core::mem::size_of::<EClassEntry<PN31>>(),
-        "verus ring cell must match the hand-rolled cell the swap replaced"
+        "verified ring cell must match the reference cell"
     );
     // The *stored* form is what occupies the store's backing vector; the logical
     // node above is only ever a temporary. Both must be 12 for the claim to hold.
@@ -149,8 +146,8 @@ fn class_ring_cell_size_matches_production() {
     );
 
     // 63-bit family: the same composition one word wider. The absolute size is
-    // asserted against production's cell rather than a literal, so this stays a
-    // parity claim (what the swap must not regress) and not a layout spec.
+    // asserted against the reference cell rather than a literal, so this remains
+    // a cross-implementation equality rather than a second layout specification.
     assert_eq!(
         core::mem::size_of::<Cell63>(),
         core::mem::size_of::<EClassEntry<PN63>>(),

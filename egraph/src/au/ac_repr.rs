@@ -121,6 +121,15 @@ pub fn total<C: DenseId>(m: &Monomial<C>) -> u64 {
         .expect(MONO_OVERFLOW)
 }
 
+/// A padded representation pair. `pad_identity` records the identity class
+/// when padding injected it into either side, `None` when the totals were
+/// already equal. Consumers deriving cycle contexts need the provenance: the
+/// injected identity class is not a structural child of any member, so
+/// reachability-based context derivation records nothing for it, and only
+/// this annotation lets the exact solver keep its rank invariant (the OR key
+/// of a padding-created cell must differ from its ancestors').
+pub type PaddedPair<C> = (Monomial<C>, Monomial<C>, Option<C>);
+
 /// Pad the smaller of two monomials with identity copies so totals are equal.
 /// Returns `None` when totals differ and the operator has no identity.
 pub fn pad_pair<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
@@ -128,14 +137,14 @@ pub fn pad_pair<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     op: Cfg::O,
     left: &Monomial<ClassOf<Cfg>>,
     right: &Monomial<ClassOf<Cfg>>,
-) -> Option<(Monomial<ClassOf<Cfg>>, Monomial<ClassOf<Cfg>>)>
+) -> Option<PaddedPair<ClassOf<Cfg>>>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     let lt = total(left);
     let rt = total(right);
     if lt == rt {
-        return Some((left.clone(), right.clone()));
+        return Some((left.clone(), right.clone(), None));
     }
     let id_class = snap.op_identity_class(op)?;
     let mut l = left.clone();
@@ -145,7 +154,7 @@ where
     } else {
         add_identity(&mut r, id_class, lt - rt);
     }
-    Some((canonize(l), canonize(r)))
+    Some((canonize(l), canonize(r), Some(id_class)))
 }
 
 fn add_identity<C: DenseId>(m: &mut Monomial<C>, id_class: C, deficit: u64) {
@@ -158,13 +167,16 @@ fn add_identity<C: DenseId>(m: &mut Monomial<C>, id_class: C, deficit: u64) {
 
 /// All padded representation pairs of classes `l` and `r` under `op`, ready for
 /// matrix enumeration or transport solving. Pairs with unequal totals and no
-/// identity are skipped. Deduplicated.
+/// identity are skipped. Deduplicated on the full triple: the same monomial
+/// pair reached both with and without padding stays as two entries, because
+/// the padding annotation changes how consumers derive cycle contexts and the
+/// unpadded entry must keep its unrestricted subtree.
 pub fn representation_pairs<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l: ClassOf<Cfg>,
     r: ClassOf<Cfg>,
     op: Cfg::O,
-) -> Vec<(Monomial<ClassOf<Cfg>>, Monomial<ClassOf<Cfg>>)>
+) -> Vec<PaddedPair<ClassOf<Cfg>>>
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
@@ -178,7 +190,7 @@ where
         m.len() == 1 && m[0].0 == class && m[0].1 == 1
     };
 
-    let mut out: Vec<(Monomial<ClassOf<Cfg>>, Monomial<ClassOf<Cfg>>)> = Vec::new();
+    let mut out: Vec<PaddedPair<ClassOf<Cfg>>> = Vec::new();
     for lm in &l_reprs {
         for rm in &r_reprs {
             if is_virtual(lm, l) && is_virtual(rm, r) {

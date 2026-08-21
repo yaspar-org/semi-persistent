@@ -41,10 +41,11 @@
 //! ```
 //!
 //! The `max` is not slack in the proof, it is the algorithm: production's `seek`
-//! returns immediately when the cursor already satisfies the target (24.7% and
-//! 30.6% of seeks on the `ac6`/`plain7` semi-naive rows never move at all,
-//! because the `Difference` combinator seeks both sides to the same key), so a
-//! cursor positioned past the target stays put. Forward-only is
+//! returns immediately when the cursor already satisfies the target. This is
+//! common when the `Difference` combinator seeks both sides to the same key, but
+//! its workload frequency is a Criterion/instrumentation result, not a fixed
+//! property of the cursor. A cursor positioned past the target stays put.
+//! Forward-only is
 //! exactly what leapfrog requires, and it is what makes
 //! [`theorem_seek_is_monotone`] hold unconditionally.
 //!
@@ -53,10 +54,10 @@
 //! A plain `partition_point` over the whole remainder is `O(log rem)`. The
 //! gallop doubles an offset from the cursor until it lands on or past the
 //! target, then bisects the bounded window it just proved brackets the answer,
-//! making the cost `O(log d)` in the distance *advanced*. That trade is why the
-//! e-graph uses it (`doc/perf-results/E7-galloping-seek.md`: 4-6% end-to-end,
-//! 70-97% on the seek itself), and the correctness of it rests on one loop
-//! invariant: **`model[lo] < t`**. That is what makes the window `lo+1 .. hi`
+//! making the cost `O(log d)` in the distance *advanced*. Current constant-factor
+//! and end-to-end effects belong in the Criterion cursor and saturation
+//! benchmarks. Correctness rests on one loop invariant:
+//! **`model[lo] < t`**. That is what makes the window `lo+1 .. hi`
 //! sound rather than `lo .. hi` — index `lo` is already known to be below the
 //! target, so excluding it cannot skip the answer. (Both spellings return the
 //! same index *because* of that invariant, which is why mutating the production
@@ -154,14 +155,25 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
         &&& self.idx() <= self.model().len()
     }
 
-    /// Position at the start of `data`.
+    /// Structural well-formedness alone: the position is in bounds, exhausted
+    /// end included. `new` establishes it and every method preserves it, with
+    /// no assumption on the data; `cursor_wf` is exactly `pos_wf` plus the
+    /// sortedness hypothesis.
+    pub open(crate) spec fn pos_wf(&self) -> bool {
+        self.idx() <= self.model().len()
+    }
+
+    /// Position at the start of `data`. Requires-free: any slice is accepted,
+    /// and the cursor's method contracts state their characterizations under
+    /// the hypothesis that the data's model is strictly sorted (`cursor_wf`).
+    /// A caller that proves sortedness gets the full contracts; every caller
+    /// gets the in-bounds guarantees.
     pub fn new(data: &'a [K]) -> (r: Self)
-        requires
-            crate::bplus_tree::strictly_sorted(nat_model(data@)),
         ensures
-            r.cursor_wf(),
+            r.pos_wf(),
             r.idx() == 0,
             r.model() == nat_model(data@),
+            crate::bplus_tree::strictly_sorted(nat_model(data@)) ==> r.cursor_wf(),
     {
         SortedVecCursor { data, pos: 0 }
     }
@@ -189,15 +201,18 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
         self.pos < self.data.len()
     }
 
-    /// The key at the cursor.
+    /// The key at the cursor. Requires-free: exhaustion is refused at runtime,
+    /// and the ensures needs no sortedness — it only ties the returned key to
+    /// the model at the current position.
     #[inline]
     pub fn key(&self) -> (r: K)
-        requires
-            self.cursor_wf(),
-            self.idx() < self.model().len(),
         ensures
-            r.id_nat() == self.model()[self.idx()],
+            self.idx() < self.model().len() ==> r.id_nat() == self.model()[self.idx()],
     {
+        // Total-with-documented-panic: exhaustion is the branch.
+        if !(self.pos < self.data.len()) {
+            crate::guard::refuse("SortedVecCursor::key: cursor exhausted");
+        }
         proof {
             lemma_nat_model_index(self.data@, self.idx());
         }
@@ -239,8 +254,8 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
     /// Advance to the first key `>= target`, or exhaust. Forward-only: a cursor
     /// already at or past the target does not move.
     ///
-    /// Galloping (`doc/perf-results/E7-galloping-seek.md`): double an offset from
-    /// the cursor until it lands on or past the target, then bisect the window
+    /// Galloping doubles an offset from the cursor until it lands on or past the
+    /// target, then bisects the window
     /// that offset just proved brackets the answer. `O(log d)` in the distance
     /// advanced rather than `O(log rem)` in the remainder.
     ///
@@ -250,34 +265,44 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
     /// the target, the same spec function `BPlusCursor::seek` lands on — except
     /// where the cursor was already beyond it, in which case it stays.
     ///
-    /// `#[inline]` because this is the join layer's hot path — called once per
-    /// leapfrog step through a generic cursor, where a missed inline also costs
-    /// the devirtualization. Not cosmetic: the parity audit found a single
-    /// missing inline hint costing 12% (Chapter 11).
+    /// `#[inline]` because this is the join layer's hot path -- called once per
+    /// leapfrog step through a generic cursor, where inlining also permits
+    /// devirtualization. Its machine effect is covered by the Criterion cursor
+    /// and saturation benchmarks.
     ///
     /// The bisection below is written as an explicit loop rather than
     /// `data[lo+1..hi].partition_point(..)` (which is what `egraph` called before
     /// it adopted this cursor) because there is no way to state a loop invariant
-    /// through std's `partition_point`. That constraint turned out to be free and
-    /// then some: the hand-written loop is the larger half of a 2-3x seek
-    /// speedup, measured in Chapter 12 §7a. Identical probe counts either way —
-    /// the difference is codegen, so don't "simplify" it back.
+    /// through std's `partition_point`. The explicit loop also gives the compiler
+    /// the code shape used by the maintained implementation; changing it requires
+    /// a Criterion comparison as well as the contract tests.
+    /// Requires-free: the sortedness hypothesis lives in the ensures as an
+    /// implication. On any input the gallop and the bisection stay in bounds
+    /// and terminate; the position never decreases and never leaves
+    /// `[0, len]` once inside it. Under `cursor_wf` the full forward-only
+    /// split-point characterization holds.
     #[inline]
     pub fn seek(&mut self, target: K)
-        requires
-            old(self).cursor_wf(),
         ensures
-            final(self).cursor_wf(),
             final(self).model() == old(self).model(),
-            ({
+            old(self).idx() <= final(self).idx(),
+            old(self).pos_wf() ==> final(self).pos_wf(),
+            old(self).cursor_wf() ==> ({
                 let ti = crate::bplus::seek_target_idx(old(self).model(), target.id_nat());
-                final(self).idx() == if old(self).idx() >= ti { old(self).idx() } else { ti }
+                &&& final(self).cursor_wf()
+                &&& final(self).idx() == if old(self).idx() >= ti { old(self).idx() } else { ti }
             }),
     {
         let ghost model = self.model();
         let ghost t = target.id_nat();
+        // The sortedness hypothesis, captured at entry. Every sortedness-
+        // dependent proof step below is guarded on it; the index arithmetic
+        // and the loop bounds are proven without it.
+        let ghost srt = self.cursor_wf();
         proof {
-            crate::bplus::lemma_seek_target_idx_split(model, t);
+            if srt {
+                crate::bplus::lemma_seek_target_idx_split(model, t);
+            }
             // Establishes `target.as_nat() == t`, which both loops carry as an
             // invariant (see the note there).
             K::lemma_as_nat_is_id_nat(target);
@@ -303,13 +328,18 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
         if !below {
             // model[pos] >= t, and sortedness carries that to every later index,
             // so the split point is at or before pos: the cursor is already
-            // satisfied and must not move (forward-only).
+            // satisfied and must not move (forward-only). Only the split-point
+            // claim needs the sortedness hypothesis.
             assert(t <= model[self.pos as int]);
-            assert(crate::bplus::seek_target_idx(model, t) <= self.pos as int) by {
-                let ti = crate::bplus::seek_target_idx(model, t);
-                if (self.pos as int) < ti {
-                    // ti's left arm: every index below ti is < t — including pos.
-                    assert(model[self.pos as int] < t);
+            proof {
+                if srt {
+                    assert(crate::bplus::seek_target_idx(model, t) <= self.pos as int) by {
+                        let ti = crate::bplus::seek_target_idx(model, t);
+                        if (self.pos as int) < ti {
+                            // ti's left arm: every index below ti is < t — including pos.
+                            assert(model[self.pos as int] < t);
+                        }
+                    }
                 }
             }
             return;
@@ -328,7 +358,7 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
                 n == self.data.len(),
                 model == nat_model(self.data@),
                 model.len() == n,
-                crate::bplus_tree::strictly_sorted(model),
+                srt ==> crate::bplus_tree::strictly_sorted(model),
                 // The exec comparisons' `ensures` speak `lt_spec` (hence `as_nat`)
                 // while the model speaks `id_nat`. A loop body assumes only the
                 // invariants, so the bridge law's conclusion must be one.
@@ -386,7 +416,7 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
                 n == self.data.len(),
                 model == nat_model(self.data@),
                 model.len() == n,
-                crate::bplus_tree::strictly_sorted(model),
+                srt ==> crate::bplus_tree::strictly_sorted(model),
                 // The exec comparisons' `ensures` speak `lt_spec` (hence `as_nat`)
                 // while the model speaks `id_nat`. A loop body assumes only the
                 // invariants, so the bridge law's conclusion must be one.
@@ -395,8 +425,8 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
                 lo + 1 <= a <= b <= hi <= n,
                 model[lo as int] < t,
                 hi < n ==> t <= model[hi as int],
-                forall|i: int| lo < i < a ==> #[trigger] model[i] < t,
-                forall|i: int| b <= i < hi ==> t <= #[trigger] model[i],
+                srt ==> forall|i: int| lo < i < a ==> #[trigger] model[i] < t,
+                srt ==> forall|i: int| b <= i < hi ==> t <= #[trigger] model[i],
             decreases b - a,
         {
             let mid = a + (b - a) / 2;
@@ -412,17 +442,25 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
             assert(is_lt == (model[mid as int] < t));
             if is_lt {
                 // sorted: model[mid] < t carries down to every i <= mid.
-                assert forall|i: int| lo < i <= mid implies #[trigger] model[i] < t by {
-                    if i < mid {
-                        assert(model[i] < model[mid as int]);
+                proof {
+                    if srt {
+                        assert forall|i: int| lo < i <= mid implies #[trigger] model[i] < t by {
+                            if i < mid {
+                                assert(model[i] < model[mid as int]);
+                            }
+                        }
                     }
                 }
                 a = mid + 1;
             } else {
                 // sorted: t <= model[mid] carries up to every i >= mid.
-                assert forall|i: int| mid <= i < hi implies t <= #[trigger] model[i] by {
-                    if mid < i {
-                        assert(model[mid as int] < model[i]);
+                proof {
+                    if srt {
+                        assert forall|i: int| mid <= i < hi implies t <= #[trigger] model[i] by {
+                            if mid < i {
+                                assert(model[mid as int] < model[i]);
+                            }
+                        }
                     }
                 }
                 b = mid;
@@ -436,21 +474,33 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
         //     or past `hi` by sortedness under `t <= model[hi]` — vacuous when
         //     `hi == n`.
         // Uniqueness of split points then equates it to `seek_target_idx`,
-        // which is what the postcondition asks for.
-        assert forall|i: int| 0 <= i < a implies #[trigger] model[i] < t by {
-            if i < (lo as int) {
-                assert(model[i] < model[lo as int]);
-            }
-        }
-        assert forall|i: int| a <= i < model.len() implies t <= #[trigger] model[i] by {
-            if (hi as int) <= i && hi < n {
-                if (hi as int) < i {
-                    assert(model[hi as int] < model[i]);
+        // which is what the postcondition asks for. The whole argument sits
+        // under the sortedness hypothesis; without it the postcondition asks
+        // only for bounds and monotonicity, both structural (`pos < lo + 1 <=
+        // a <= n`).
+        proof {
+            if srt {
+                assert forall|i: int| 0 <= i < a implies #[trigger] model[i] < t by {
+                    if i < (lo as int) {
+                        assert(model[i] < model[lo as int]);
+                    }
+                }
+                assert forall|i: int| a <= i < model.len() implies t <= #[trigger] model[i] by {
+                    if (hi as int) <= i && hi < n {
+                        if (hi as int) < i {
+                            assert(model[hi as int] < model[i]);
+                        }
+                    }
+                }
+                crate::bplus::lemma_seek_target_idx_unique(model, t, a as int);
+                // The entry key was strictly below the target, so the split
+                // point is strictly past the entry position: the `max` in the
+                // postcondition resolves to `seek_target_idx`.
+                let ti = crate::bplus::seek_target_idx(model, t);
+                if ti <= self.pos as int {
+                    assert(t <= model[self.pos as int]);
                 }
             }
-        }
-        proof {
-            crate::bplus::lemma_seek_target_idx_unique(model, t, a as int);
         }
         self.pos = a;
     }

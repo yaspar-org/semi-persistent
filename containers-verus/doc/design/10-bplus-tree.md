@@ -1,741 +1,242 @@
-# The B+Tree Set: Design and Proof
+# The B+ Tree Set: Design and Proof
 
-*`BPlusTreeSet` is the largest container in the crate and the only recursive,
-height-balanced one. This chapter is the design record and the proof-status
-reference: §1–4 describe the structure, invariant, and how the proofs are
-organized; §5 is the current accounting of what is verified. Companion to the
-arena/dynamic-frames method in [Chapter 9](09-arena-aliasing-dynamic-frames.md)
-and the trust boundary in [Chapter 2](02-trust-boundary.md).*
+[Table of Contents](00-table-of-contents.md)
 
-[Design Table of Contents](00-table-of-contents.md)
+`BPlusTreeSet` is the verified, packed, insert-only B+ tree used by the
+container crate. It is parameterized over key type, node layout, in-node search,
+and tracking:
 
-Every other verified container is a *flat* arena structure: one level of indices,
-and a well-formedness invariant that is a property of a partition or a
-permutation. A B+tree is recursive and balanced. Its invariant pins down,
-simultaneously, sortedness *across* a tree of nodes, that all leaves sit at the
-same depth, that the leaf-level linked list agrees with the tree, and
-fixed-capacity packing, and its one interesting mutation, `insert`, can split a
-node and propagate the split up the root-to-leaf path, touching a whole path's
-worth of nodes in one call. That makes it a larger proof than SparseSet or
-ListArena, comparable to the original `Vec` reconstruction.
-
-One fact makes it tractable: production's `BPlusTreeSet` is insert-only, there is
-no `remove`. So the hard rebalancing direction (merge/borrow on deletion) is out
-of scope; the obligation is insert-with-split plus the read/iteration side,
-roughly half the classical B+tree verification burden.
-
-## 1. The data structure
-
-All nodes, leaf and internal, share one packed, cache-aligned struct in a
-single arena `Vec<L::Node>` indexed by `L::ArenaIdx` (`u32` or `usize`); the
-header (`root`, `nkeys`) lives in exec fields alongside it. `NodeLayout` is a
-compile-time trait fixing the geometry (`LEAF_CAP`, `INTERNAL_KEY_CAP`,
-`CHILD_CAP = KEY_CAP + 1`) for each `(size, word)` pairing; six layouts are
-stamped out by the `gen_layout_u32!` / `gen_layout_u64!` macros (sizes 64–512
-bytes, `Word ∈ {u32, u64}`). Two readings of the packed `data: [Word; DATA_LEN]`:
-
-- **Leaf**: `data[0..count]` are the sorted keys; `link` is the arena index of
-  the next leaf in key order (`NIL = ArenaIdx::MAX` at the last leaf).
-- **Internal**: `data[0..count]` are `count` separator keys; the `count+1`
-  children pack into the same node: the first `KEY_CAP` in the upper half of
-  `data`, and the **last child reuses the `link` field**. The overload is
-  unambiguous because the node kind is known from a `flags` bit: `link` is a leaf
-  sibling pointer iff the node is a leaf, the last-child slot iff internal. Child
-  `i` holds keys `< data[i]`; child `count` holds keys `≥ data[count-1]`.
-
-Each `Node` is `Tagged` (the capture bit is a `flags` bit), so the whole tree is
-a `Vec<Node>` over the verified semi-persistent backend; `mark`/`restore`
-compose, exactly as for the other arena containers (§4).
-
-A deliberate width pairing: 31-bit keys (`DenseId31`) use a `u32` arena index,
-63-bit keys (`DenseId63`) a `usize` (= `u64` on 64-bit, feature-gated). The
-in-`data` child slots and the keys are the same `Word` width, so they overlay in
-one array with no size mismatch; the child slots need no cast (u32) or a
-value-preserving 64-bit cast (u64). `ArenaIdx::MAX` is reserved as NIL, so no
-real index collides with the sentinel. This pairing is also what makes the arena
-provably never overflow (§2.3).
-
-## 2. The abstract model and well-formedness
-
-### 2.1 Abstract model
-
-A `BPlusTreeSet` represents a **finite sorted set of keys**. The ghost model is a
-`Seq<nat>` (`tree_keys`) that is strictly increasing. Two read operations anchor
-the spec:
-
-- `contains(k)  ⟺  k ∈ model`
-- the cursor's in-order walk yields exactly `model`, ascending (§3c).
-
-`insert(k)` refines `model.to_set() := model.to_set() ∪ {k}` and returns
-`k ∉ old model`.
-
-### 2.2 The `wf` invariant (the heart of it)
-
-`wf` is a predicate over a **ghost tree** (`Tree`, in `bplus_tree.rs`: a leaf
-carries its key sequence; an internal node carries separators and child subtrees)
-tied to the arena by a flat `binds` bridge. Its clauses:
-
-1. **arena in-range**: every `root` / child / `link` index is NIL or a real
-   allocated node. This is the *only* per-index constraint: there is **no**
-   "points at a smaller index" ordering; the tree shape comes from the ghost
-   model. (The hard-won lesson from the ListArena rebuild, [Ch. 9 §4](09-arena-aliasing-dynamic-frames.md).)
-2. **shape / disjointness**: the ghost `Tree`'s nodes are *distinct* arena
-   indices (`tree_disjoint`: no node appears twice, the dynamic-frames
-   separation clause), with `root` its root.
-3. **balanced**: all leaves at the same depth (`tree_wf` carries a `height`;
-   every root-to-leaf path has length `height`).
-4. **node-local sortedness**: within every node, `data[0..count]` strictly
-   increasing.
-5. **cross-node ordering (the B+tree key invariant)**: for an internal node with
-   separators `s` and children `c`, every key under `c[i]` is `< s[i]`, every key
-   under `c[count]` is `≥ s[count-1]`, recursively. This is what makes
-   search-and-descend land in the right leaf.
-6. **capacity / occupancy**: `count ≤ LEAF_CAP` / `≤ KEY_CAP`, and (the balance
-   lower bound for non-root nodes) `count ≥ ⌈cap/2⌉`. With insert-only this lower
-   bound is only ever *established* by splits, never threatened by deletes.
-7. **leaf-link consistency**: following `link` from the leftmost leaf visits
-   every leaf once in ascending key order ending at NIL; the concatenation of the
-   leaves' keys is the abstract `model`. A second, independent "ghost sequence
-   over arena ids" view (cf. ListArena), and clause 7 states it agrees with the
-   tree view of clauses 4–5.
-
-Clauses 4+5+7 together are the **soundness of search**: `contains` and `insert`
-descend by separator comparisons and reach the unique leaf that would hold `k`.
-
-Two further standing facts, used pervasively:
-
-- `model_bounded`: every model key is `< K::id_bound()`. The `K → K::Index`
-  storage coercion widens to the word type, which is wider than the id's valid
-  range; this clause re-asserts the range that production enforces with a runtime
-  assert, and is what lets the cursor's `key()` rebuild the exact `K`.
-- `arena.len() == node_count(tree@)`: no dead arena slots. Insert-only with
-  in-place `set` + one `push` per split means every allocated slot is live, the
-  link that turns the node-count bound (§2.3) into a bound on `arena.len()`.
-
-### 2.3 Arena-capacity sufficiency: the arena provably never overflows
-
-With only a `Word`-width arena index, can the arena run out of indices before the
-key space is exhausted? **No**, and unlike production (which argues this at the
-meta level) it is *proved*, so `insert` carries **no caller capacity
-precondition**: it is total on any `wf` tree.
-
-The argument flips the usual direction. Assume the arena were full (`M ≈ 2^N`
-nodes) and ask the *minimum* number of distinct keys such a tree must hold. Keys
-live only in leaves, so fewest-keys = fewest-leaves = most-internal-heavy =
-minimum branching, i.e. the tree sitting at the occupancy floor (clause 6). With
-`m_L = ⌈LEAF_CAP/2⌉ ≥ 7` keys per non-root leaf and every non-root internal node
-having `≥ 2` children:
-
-```
-L_min · node_count(t)  ≤  2 · |tree_keys(t)| + L_min          (the structural bound)
+```rust
+pub struct BPlusTreeSet<
+    K: DenseId,
+    L: NodeLayout<Word = K::Index> = Layout64U32,
+    S: SearchKind = BinarySearch,
+    const TRACK: bool = true,
+> { /* ... */ }
 ```
 
-Chain with two facts the invariant already gives: the model is a strictly-sorted
-set bounded by `id_bound`, so `|tree_keys| ≤ id_bound`; and the width pairing
-makes `id_bound = ½ · max_nat(ArenaIdx)` exactly (31-bit keys ↔ u32 index: 2³¹ =
-2³²/2; 63-bit ↔ usize: 2⁶³ = 2⁶⁴/2). So
+The executable tree is an arena of fixed-size nodes plus a small header. The
+specification is a recursive ghost tree whose in-order key sequence is the
+public model. The proof connects the packed arena, child pointers, and linked
+leaves to that model.
 
-```
-node_count ≤ max_nat / 7  ≪  max_nat,
-```
+## 1. Representation
 
-with `arena.len() == node_count` (§2.2) and `height ≤ node_count`, giving
-`arena.len() + height + 3 < max_nat`, exactly the headroom one more insert
-needs. The proof is `lemma_arena_never_overflows`, composing a structural
-node-count induction (`lemma_node_count_bound`) with the per-layout numeric facts
-(`lemma_capacity_headroom`, `lemma_word_arena_same_width`) and the bit-stealing id
-relation (`lemma_id_bound_word_relation`). The one-bit headroom, index space
-exactly twice the key space, is the whole reason it closes with room to spare;
-the occupancy floor (≥ 7 keys/leaf, not the trivial ≥ 1) supplies the slack to
-also cover the `+ height + 3`.
+Each `NodeLayout` supplies a fixed-size node, a word type, an arena-index type,
+and capacities.
 
-### 2.4 Two design decisions, and why they hold up
+- A leaf stores sorted keys in `data[0..count]`; `link` names the next leaf.
+- An internal node stores sorted separators and child indices; its final child
+  occupies `link`.
+- `ArenaIdx::MAX` is the null link and is never a real node index.
+- The node header also carries the capture bit used when `TRACK = true`.
 
-**One arena-associated ghost `Tree`, not ghost subtree state on each node.** A
-tempting alternative gives each node value a ghost field describing its own
-subtree. We deliberately do not, for three reasons:
+The six supported layouts pair 31-bit keys with `u32` words and 63-bit keys
+with `u64` words. The default is `Layout64U32`. Layout geometry is part of the
+type, so capacities and index-width relationships are available to Verus as
+associated constants.
 
-1. *It is the ListArena trap.* Node-local subtree state references children's
-   ghost state in *other* arena slots, so reading one node's invariant
-   transitively reads others, and a mutation's frame becomes "every node whose
-   ghost field mentions a touched id", unbounded and pointer-chasing, exactly the
-   shape that killed the first ListArena `wf` ([Ch. 9](09-arena-aliasing-dynamic-frames.md)).
-2. *Semi-persistence makes it actively wrong.* The arena is semi-persistent;
-   `restore` rewinds `view()`. The whole invariant is stated over `view()`, so a
-   restore brings back a structurally valid prior tree for free (the `Vec` theorem
-   does the work, because `wf` reads only `view()`). Node-local ghost state would
-   have to be snapshotted and restored in lockstep and re-proven after every
-   rewind. The single ghost `Tree` sidesteps this.
-3. *The locality benefit is obtained without the coupling.* `subtree_wf(arena, t,
-   …)` is a predicate about *one* ghost subtree, and `lemma_subtree_wf_frame` says
-   a mutation outside `t`'s `tree_ids` preserves it, so the recursive insert
-   reasons locally and frames the siblings, the upside of node-local state, while
-   the ghost `Tree` stays one clean object off the arena.
+The arena is append-only during normal operation. Insertion mutates existing
+nodes and appends split nodes; it never deletes or reuses an arena slot.
+Restoring an earlier mark may truncate slots allocated after that mark.
 
-The price is the framing machinery (`tree_disjoint`, `lemma_binds_frame`,
-`lemma_subtree_wf_frame`, …): a *one-time fixed* cost (paid and verified) against
-node-local state's *recurring* cost on every semi-persistence operation.
+## 2. Abstract Model
 
-**The `link`-overloaded last child.** Overloading `link` as the last child of an
-internal node forces a branch `if i < KEY_CAP { data[KEY_CAP+i] } else { link }`.
-Storing all children in `data` instead would need `2·KEY_CAP + 1 ≤ DATA_LEN`,
-forcing `KEY_CAP` down by one, a different branching factor and different split
-points, i.e. observably a *different* data structure from production's, breaking
-the parity this project requires. The overload's proof cost is fully contained: it
-appears in exactly three layout-layer places (the `child_view` spec, the `child`
-accessor, `set_internal_child`); everything above that line reasons through the
-`child_view` abstraction and never sees the branch. Kept.
-
-## 3. Insert, contains, and the cursor
-
-### 3a. The bi-abductive insert
-
-`insert` maps onto the [frame / anti-frame](09-arena-aliasing-dynamic-frames.md)
-split in three layers:
-
-- **Descend.** Walk root→leaf, picking the child with `find_gt` at each internal
-  node. The anti-frame the descent relies on is cross-node ordering (clause 5):
-  it guarantees the walk reaches the *unique* leaf whose key range contains `k`.
-- **Leaf insert, no split** (the common case). If the target leaf has
-  `count < LEAF_CAP`, shift and insert. The footprint is one node; the frame is
-  the entire rest of the tree: every other node's bytes are untouched, so its
-  `wf` sub-facts carry verbatim, and the only obligations are local (the leaf
-  stays sorted, its key set gained `k`).
-- **Split and propagate** (the hard case). A full leaf splits into two
-  (`mid = ⌈cap/2⌉`), the right leaf is spliced into the leaf-link, and a
-  separator + child pointer are pushed to the parent; if the parent is full it
-  splits too, up to a possible new root. The crate verifies this as a
-  **recursion** whose measure is the tree height (not production's explicit path
-  stack): each level is a frame step (only the current parent and the new sibling
-  are in the footprint) plus a local re-establishment of clauses 4–6 for the two
-  halves, and clause 7 if a leaf was involved. The split's key redistribution is
-  bounded array-index arithmetic; the *structural* facts come from the ghost tree.
-
-`insert` carries its full model transition (`model'.to_set() == model.to_set() ∪
-{k}`, `added == !contains`): for an insert-only set, full functional correctness.
-A new-root split increases `height` by one. The recursion's split/absorb
-reconstruction (`reconstruct_*`, the `forest_binds`/`forest_links` machinery) is
-proven with **zero `external_body`** (`bplus.rs` has none; the four in
-`bplus_layout` are the unchecked accessors, the `cmov` select, and the
-length-dispatched shift, §5).
-
-### 3b. contains
-
-A root-to-leaf descent reusing the same search-soundness lemmas: `contains(k) ⟺ k
-∈ model`, from clauses 4–5.
-
-### 3c. The cursor: sound in-order traversal and seek
-
-`BPlusCursor` walks the leaf-link chain with a ghost model index, tied together by
-`cursor_wf`. Two named, verified soundness theorems:
-
-- **`theorem_traversal_in_order`**: `seek_first` then `key(); step()`* enumerates
-  the strictly-sorted model: every key, ascending, no gaps and no duplicates.
-- **`theorem_seek_never_skips`**: if `k` is in the set, `seek(k)` lands exactly on
-  it (never steps past a present key); otherwise on the least key `> k`.
-
-The descent and binary searches (`find_child`, `leaf_find_ge`) use overflow-safe
-midpoints (`lo + (hi - lo)/2`), Verus-checked; the only value cast on the seek
-path is `key()`'s `K::from_usize`, which round-trips exactly via `model_bounded`.
-Cost is not *proved* logarithmic, but is validated empirically (a per-seek
-node-visit ≈ `log_B(n)` test).
-
-`seek_target_idx` and its two split lemmas turned out not to be B+tree-specific:
-they are about strictly-sorted sequences, and
-[Chapter 12](12-sorted-vec-cursor.md) reuses them verbatim to verify the
-e-graph's galloping slice cursor. Both cursors therefore prove seek against the
-*same* spec function, which is what makes them substitutable at the
-`SortedCursor` boundary.
-
-## 4. Semi-persistence: mark / restore
-
-`mark` snapshots the tree (delegating to the arena `Vec`'s `mark`, recording the
-exec header fields); `restore(token, Ghost(snap_tree))` rolls the arena back to
-its frame snapshot and **re-establishes the full tree `wf`**: the structural half
-factored as `tree_state_wf(arena, root, tree, nkeys)` so `restore`'s precondition
-can state "the snapshot arena + the ghost tree live at the mark form a valid
-B+tree." `restore` ensures `model == tree_keys(snap_tree)`. Both are total on a
-`wf` tree. This is the same compose-from-the-inner-`Vec` pattern as ListArena /
-SparseSet, plus the tree-level rollback theorem.
-
-## 5. Proof status
-
-**Fully verified, zero `admit`/`assume`.** Per-module verified-fact counts (run
-`cargo verus verify`):
-
-| Module | Facts | Content |
-|---|---|---|
-| `bplus` | 185 | the tree: `wf`, `new`/`contains`/`len`, insert (+ the append fast path + arena-overflow proof), the bottom-up `bulk_load` behind `from_sorted`, cursor + seek + the two soundness theorems, mark/restore |
-| `bplus_tree` | 150 | the ghost `Tree` model and its structural lemmas, incl. the forest/level layer the loader builds on |
-| `bplus_layout` | 305 | the `NodeLayout` trait + six packed layouts + verified mutators |
-| `bplus_search` | 9 | the `SearchKind` trait: binary search + `Branchless` |
-
-What is guaranteed:
-
-- **Every operation is total and proven**: `new`, `contains`, `len`, `is_empty`,
-  `insert`/`insert_general`, `mark`, and the cursor all carry their full contracts
-  with no caller-side capacity obligation (§2.3). For an insert-only set, `insert`
-  is full functional correctness.
-- **Sound in-order traversal and seek** (§3c): the cursor enumerates the sorted
-  set with no gaps/dups, and seek never skips a present key.
-- **The arena never overflows** (§2.3), proved from `wf` plus the static
-  bit-stealing fact, not assumed.
-- **First-class semi-persistence** (§4): verified `mark`/`restore` with a tree-level
-  rollback theorem.
-
-Runtime property tests (`cargo test`; Verus contracts erased) back the executable
-code against a plain-`std` sorted-set oracle: `bplus_proptest` (insert / contains /
-seek / step / key / tree mark-restore, plus the empirical log-cost check) and
-`bplus_contract_fuzz` (the `NodeLayout` primitive postconditions against a hand
-oracle).
-
-**Trust boundary:** four `external_body` functions in `bplus_layout`, all
-introduced to make a *proved* fact reach the machine code rather than to assume a
-new one — `arr_get`/`arr_set` (the bounds check is dead: `i < N` is a verified
-precondition at every call site), `sel_usize` (the `cmov` lowering, §5.1.1;
-`unsafe`-free), and `arr_shift_up` (one `memmove` where Verus's invariant rules
-force an element loop; also `unsafe`-free). `bplus`, `bplus_tree`, and
-`bplus_search` have zero. All four
-contracts are also checked at runtime by
-`tests/external_body_contract_fuzz.rs`. They and the crate-wide trusted items
-(`ContainerId`, byte-accounting diagnostics) are enumerated in
-[Chapter 2](02-trust-boundary.md).
-
-**Scope:** insert-only, matching production (no `remove`).
-
-### 5.1 The in-node search: a decorative type parameter (fixed)
-
-The tree is generic over `S: SearchKind` exactly as production is, and
-`bplus_search` verifies both impls (`BinarySearch`, `Branchless`) against
-production's contracts. It then **never called `S`**: `grep -c 'S::'` over
-`bplus.rs` returned **0**, against six call sites in production
-(`containers/src/bplus.rs:653,661,796,800,850,858`). Five hand-written **linear**
-scans stood in its place — the child pick in `insert_rec`, the leaf position in
-`insert_rec_leaf` and `insert_root_leaf`, and both scans in `contains`.
-
-Worse, `bplus.rs` *already contained* two verified binary searches whose `ensures`
-clauses are verbatim the postconditions those linear loops hand-proved:
-`leaf_find_ge` and `find_child`. Only `seek_leaf` called them.
-
-Each linear scan existed because its loop invariant sits inside the surrounding
-proof context — it threads `binds`, the ghost key sequence, and the arena frame,
-all of which a call to a separate function must re-derive (via
-`lemma_tree_wf_sorted_seps_view` plus `lemma_inner_facts` /
-`lemma_binds_leaf_facts`). Locally that is the cheaper proof. Globally it is
-O(cap) per node visited, on a 256-key layout.
-
-All five now dispatch to the verified binary searches. The proofs got *smaller* —
-each ~35-line scan-plus-invariant became a call plus a ~6-line postcondition lift,
-and the whole-crate count fell from 1383 to 1378 (exactly one retired loop each).
-
-**Why the type parameter is still not `S`.** `SearchKind::find_ge` takes `&[W]`,
-and `NodeLayout` exposes keys only one at a time through `L::key(n, i)` — there is
-no slice to hand it, since a packed node's keys and child pointers share one
-`data` array. `leaf_find_ge`/`find_child` are the same algorithm against the
-`L::key` accessor. Making `S` genuinely pluggable needs a slice accessor on
-`NodeLayout` first; until then the tree is hardwired to binary search, which is
-production's default.
-
-#### 5.1.1 Matching the search's *lowering*, not just its algorithm
-
-Hardwiring to binary search was necessary and not sufficient. Production does not
-write a bisection — it calls `slice::partition_point`, and inheriting that
-function's **machine code**, not merely its asymptotics, turned out to be worth
-~20% of every descent.
-
-Two properties have to match, and only the first is about the algorithm:
-
-1. **Trip count.** `partition_point` shrinks its window by `half`
-   *unconditionally*, so it always runs exactly `log2(n)` iterations. The textbook
-   `while lo < hi` assigns `hi = mid` on one side only, making the trip count
-   data-dependent. Our loops were already in this shape.
-2. **Lowering of the base update.** `partition_point` routes
-   `base = if lt { mid } else { base }` through `core::hint::select_unpredictable`,
-   which forces `cmovbe`. Written as a plain `if`, the same expression *reads*
-   branchless but LLVM's if-conversion heuristic judges the compare predictable and
-   emits `ja`/`jmp` — and an arithmetic mask (`(a & !m) | (b & m)`) gets folded
-   straight back to that same branch. On shuffled keys the compare is a coin flip,
-   so it mispredicts at about half the levels of every descent.
-
-Property 2 is the entire effect. Shape alone, with the `if` form, measured under
-1%; adding the `cmov` took the verified descent from **+15…+21% slower** than
-production to about **19-21% faster** (100k/400k keys, Layout256, both build
-orders). All four bisections — `bplus.rs`'s `leaf_find_ge` and `find_child`, and
-`bplus_search.rs`'s `BinarySearch::find_ge`/`find_gt` — now go through
-`bplus_layout::sel_usize`, an `external_body` wrapper over the intrinsic
-(chapter 2 accounts for the marker; it contains no `unsafe`, and
-`select_unpredictable` is a codegen hint whose documented semantics are exactly
-`if c { b } else { a }`).
-
-The bisection **tail** step deliberately keeps a plain `if`: it lowers to `adc` on
-the compare's own flag, which is cheaper than a forced `cmov` and is what
-`partition_point`'s tail compiles to. Routing it through `sel_usize` was measured
-and reverted.
-
-`Branchless` needs no change — its compare-accumulate is branch-free by
-construction.
-
-**Honest cost.** `cmov` is a small pessimization where the branch genuinely *is*
-predictable: ascending insert moved -0.9% → +1.7%, and `from_sorted` +843% →
-+965%. Trading ~2 points on ascending workloads for ~14 on shuffled ones is the
-right call, but it is a trade.
-
-The process lesson — *a source-level optimization that measures as no-change has
-two readings, and only disassembly tells them apart* — is recorded in
-chapter 11, because an earlier pass wrote off branch prediction on exactly that
-false negative.
-
-### 5.2 The two body-level performance gaps: root cause and fixes
-
-(Both are now fixed. §5.2.1 records how the cause was pinned down, §5.2.2 the append
-fast path, §5.2.3 the batched bulk append — which also corrects §5.2.1's account —
-and §5.2.4 the bottom-up loader that closed the last of it.)
-
-The constructor *exists* and is verified, but its body began as `Self::new()` plus a
-loop of `insert` calls. Production bulk-loads: it chunks the sorted keys into filled
-leaves (`words.chunks(LEAF_CAP)` + `copy_from_slice`) and builds the levels above
-them, which is O(n) with no split propagation and no per-key descent. §5.2.3 closed
-most of that gap and — importantly — corrects the account of its cause given in
-§5.2.1 below, which the append fast path invalidated. §5.2.4 replaced the insert
-loop outright and reached parity.
-
-Measured in one binary (`containers-conformance/examples/bulkload.rs`), before and
-after the §5.1 fix:
-
-| n | prod `from_sorted` | verus `from_sorted` | ratio | prod insert asc | verus insert asc | ratio | prod insert rand | verus insert rand | ratio |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 000 | 1.8 µs | 165.3 µs | 92x | 35.0 µs | 167.3 µs | 4.8x | 88.2 µs | 123.6 µs | 1.4x |
-| 10 000 | 13.2 µs | 2 089 µs | 158x | 352 µs | 2 106 µs | 6.0x | 1 068 µs | 1 516 µs | 1.4x |
-| 100 000 | 152.0 µs | 26 678 µs | 176x | 3 607 µs | 26 877 µs | 7.5x | 13 380 µs | 19 637 µs | 1.5x |
-
-After routing all five scans through the verified binary searches:
-
-| n | prod `from_sorted` | verus `from_sorted` | ratio | prod insert asc | verus insert asc | ratio | prod insert rand | verus insert rand | ratio |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 000 | 1.6 µs | 49.3 µs | 30x | 34.7 µs | 49.7 µs | 1.4x | 89.3 µs | 82.1 µs | **0.9x** |
-| 10 000 | 9.9 µs | 642 µs | 65x | 349 µs | 644 µs | 1.8x | 1 073 µs | 1 002 µs | **0.9x** |
-| 100 000 | 113.5 µs | 8 223 µs | 72x | 3 577 µs | 8 257 µs | 2.3x | 13 359 µs | 12 817 µs | **1.0x** |
-
-**Random-order insertion is now at parity** (marginally ahead — same effect as
-[Chapter 12](12-sorted-vec-cursor.md)'s cursor, where the explicit verified
-bisection beat `partition_point`). Two gaps remained, and the parity of that third
-column is what let them be told apart.
-
-#### 5.2.1 Root cause: it is which path runs, not how fast it runs
-
-Ratios do not identify a cause. What does: **price each production feature against
-production's own baseline.** Production is the only implementation with *both* the
-bulk loader and the append fast path, so it can measure each one in isolation with
-no cross-crate confound at all — same binary, same heap, same codegen.
-
-Three production columns — **A** `from_sorted` (bulk load), **B** ascending
-`insert` (fast path + descent available), **C** shuffled `insert` (descent only) —
-plus verus against them, in nanoseconds *per key*:
-
-| n | A bulk | B fast+desc | C descent | B/A | C/B | V sorted | V ins rand | V/A | Vrand/C |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 000 | 4.75 | 40.25 | 84.22 | 8.5x | 2.1x | 50.40 | 67.27 | 10.6x | **0.80x** |
-| 10 000 | 3.02 | 34.70 | 106.49 | 11.5x | 3.1x | 69.50 | 102.32 | 23.0x | **0.96x** |
-| 100 000 | 0.74 | 35.45 | 129.79 | 48.0x | 3.7x | 84.18 | 128.45 | 114.0x | **0.99x** |
-| 1 000 000 | 0.93 | 36.89 | 162.50 | 39.8x | 4.4x | 100.71 | 167.32 | 108.6x | **1.03x** |
-
-**What is *not* the cause.** `Vrand/C` is 0.80-1.03: when neither side can take a
-fast path, verus's descent costs the *same* as production's. So recursion-vs-
-iteration (verus recurses, production walks an explicit `path[24]` array), bounds
-checks, and proof machinery cost nothing measurable. The entire gap is *which code
-path runs*.
-
-**Where the two features show up in the shape of the numbers, not just the size.**
-
-- Column B is **flat**: 34.70 ns/key at n=10k, 36.89 at n=1M. A hundredfold more
-  data and a deeper tree with no change in per-key cost is only possible if the
-  tree is **not being descended**. That flat line *is* the fast path.
-- Column A **falls** with n (4.75 → 0.74 ns/key), where B is flat and 40x above it.
-  This was read at the time as a complexity-class difference. **It is not** — see
-  §5.2.3, which prices the actual mechanism (a per-key whole-node copy) and notes
-  the tell this reading missed: B and A are *both* O(n) in node visits once the fast
-  path is available, so no complexity argument can separate them by 40x.
-
-**The factorization closes the account.** V/A should be the product of the three
-independently-measured factors:
-
-```
-n=1M    :  0.62 (Vrand/C)  x  4.4 (C/B)  x  39.8 (B/A)  = 108.6   measured 108.6
-n=100k  :  0.65            x  3.7        x  48.0        = 115     measured 114.0
-```
-
-Three significant figures at two different `n`. Nothing is left over — which makes
-the factorization *arithmetically* sound, and is exactly why it was trusted too far.
-A correct decomposition tells you which **column** the cost lives in; it does not
-tell you **what that column is paying for**. `B/A = 40x` was measured accurately and
-then explained wrongly. §5.2.3 keeps the decomposition and replaces the explanation.
-
-#### 5.2.2 The append fast path — FIXED (ascending insert now 1.0-1.1x)
-
-`insert` now begins with `fast_append` (production `bplus.rs:625`): read the cached
-`last_leaf`, and if the leaf is non-empty, has room, and `key` exceeds its last
-key, write one slot and return. No descent, no separator comparisons.
-
-| n | prod insert asc | verus insert asc | ratio |
-|---|---|---|---|
-| 1 000 | 35.3 µs | 37.0 µs | **1.0x** |
-| 10 000 | 355 µs | 376 µs | **1.1x** |
-| 100 000 | 3 602 µs | 3 858 µs | **1.1x** |
-
-The proof rests on three pieces:
-
-1. **`last_leaf_ok`, a `wf` clause** (`last_leaf.as_nat() == last_leaf_id(tree@)`).
-   Making the cache's honesty part of `wf` is what lets the fast path *trust* the
-   field with no runtime check — the whole point of caching it.
-2. **`lemma_append_last_wf`**: `tree_append_last` preserves `tree_wf` at the same
-   height. The ordering obligation is where the fast path earns its keep — the
-   updated child sits at index `kids.len() - 1 == seps.len()`, and `tree_wf`'s
-   upper-bound clause `keys_all_lt(kids[i], seps[i])` only ranges over
-   `i < seps.len()`. **The rightmost child has no separator above it**, so growing
-   it upward cannot violate cross-node ordering. Its lower bound is met because
-   `key` exceeds every existing key, separators included.
-3. **`lemma_binds_append_last`**: writing the grown leaf into the single arena slot
-   `last_leaf_id(t)` re-establishes `binds` *and* the leaf-link chain, by recursion
-   down the rightmost spine only. `leaf_insert_at` preserves `link_view`, so the
-   one slot that differs holds the same link and the chain transfers verbatim.
-
-`key > the rightmost leaf's last key` implies `key > every key in the tree` because
-the model is `tree_keys`, which *ends* with the rightmost leaf's keys
-(`lemma_last_leaf_binds`) and is strictly sorted. That is exactly (2)'s hypothesis.
-
-**One deliberate divergence.** Production maintains `last_leaf` *incrementally* —
-its split does `if old_link == nil { set_last_leaf(new_right) }`
-(`containers/src/bplus.rs:706`). The verified tree instead **recomputes** it with an
-O(depth) rightmost-spine walk (`rightmost_leaf_of`) on the slow path. The reason:
-`insert_rec`'s contract preserves a subtree's *leftmost* leaf (a split always
-splices the fresh node to the **right**), not its rightmost, and strengthening it to
-track the last leaf would thread a new clause through ~1500 lines of split/absorb
-proof. Recomputing costs one extra descent on a path that already performed one —
-and only on the slow path, since the fast path returns before reaching it. The
-measured result is parity, so the incremental version buys nothing here.
-
-`restore` rolls the cache back through a third element in `header_archive`
-(`(root, nkeys, last_leaf)`), with `tree_archive_agrees` carrying
-`headers[k].2 as nat == last_leaf_id(trees[k])` — so `restore` re-establishes
-`last_leaf_ok` from the archive alone.
-
-**Runtime backing:** `differential_bplus_ascending_fast_path` drives ascending runs
-against the production tree while deliberately mixing in the cases where the path
-must *decline* (re-inserting the current maximum; a key below it) and
-`mark`/`restore` across ascending runs, where a `last_leaf` not rolled back with the
-arena would surface as a lost or duplicated key.
-
-#### 5.2.3 The batched append — an intermediate step (`from_sorted` 72x → 6.3x)
-
-This step is **superseded** by §5.2.4, which deleted the insert loop entirely; it is
-kept because its measurements are what identified the per-key node copy, and because
-its residual is what motivated the loader. At this stage `from_sorted` called a
-`fast_append_run` helper, which filled the **entire** rightmost leaf with one arena
-read and one arena write, and fell through to `insert` only at the leaf-full boundary
-(once per `leaf_cap` keys):
-
-| n | prod `from_sorted` | verus `from_sorted` | ratio |
-|---|---|---|---|
-| 1 000 | 1.6 µs | 6.0 µs | **3.7x** |
-| 10 000 | 9.4 µs | 62.2 µs | **6.6x** |
-| 100 000 | 111.3 µs | 705.3 µs | **6.3x** |
-
-**Correcting the root cause recorded above.** §5.2.1 attributed this column to a
-complexity-class difference — "sequential memcpy versus per-key work". After the
-fast path landed that framing stopped holding, and the tell was in production's own
-numbers: with `fast_append` available, both sides do O(n) node visits, yet
-production's own append loop (column B) is still 20-48x slower than production's own
-bulk load (column A). Two O(n) loops cannot differ by 40x for a complexity reason.
-
-The real mechanism is the **per-key whole-node copy**. `get_index`/`set_index` move
-a whole `L::Node` — 64 to 512 bytes — in and out of the arena *per key*. Priced in
-isolation (a plain array of node-sized structs, no tree logic, no splits, varying
-only by-value versus `&mut` and nothing else):
-
-| node | keys/node | by-value ns/key | in-place ns/key | ratio |
-|---|---|---|---|---|
-| 64 B | 14 | 22.84 | 0.974 | 23.5x |
-| 128 B | 30 | 24.73 | 1.166 | 21.2x |
-| 256 B | 62 | 19.50 | 0.760 | 25.7x |
-
-The absolute numbers match the real trees (19.5-24.7 against 31-41 ns/key measured
-append; 0.76-1.17 against 0.75-1.63 bulk), so this accounts for essentially the
-whole gap. It is flat in node size because a 64 B and a 256 B memcpy both cost a
-handful of cycles — what is paid is *fixed overhead per copy*, not bytes moved.
-
-That mechanism dictates the fix directly: not "do fewer descents" but **amortize the
-copy across every key bound for the same leaf**. `fast_append_run` read the leaf
-once, wrote the whole run of ascending keys that fit into the local copy, and stored
-it back once.
-
-**A methodological correction worth recording.** The first probe of this hypothesis
-swept node size across layouts, found append cost flat (41/31/36 ns/key), and read
-that as falsifying the copy. It is not a valid falsifier: bigger nodes copy more
-bytes per key but split proportionally *less* often, so the two effects cancel and
-manufacture flatness. To test a per-item cost, hold everything fixed and vary only
-that cost — never a geometry parameter other costs also depend on. This is the same
-failure mode as Chapter 11's positional confound, in a different disguise.
-
-**What the residual 6.3x is.** Splits, entirely. Sweeping `leaf_cap` moves split
-count ~4x while leaving the per-key slot write untouched; the excess over production
-divided by split count is constant, which is the discriminator:
-
-| layout | leaf_cap | splits (n=1M) | prod ns/key | verus ns/key | excess ÷ splits |
-|---|---|---|---|---|---|
-| Layout64 | 14 | 125 000 | 7.020 | 32.882 | **207 ns** |
-| Layout128 | 30 | 62 500 | 1.481 | 12.656 | **179 ns** |
-| Layout256 | 62 | 31 250 | 1.189 | 8.289 | **227 ns** |
-
-Constant within 27% across a 4x span in *both* split count and node size. Each
-boundary key pays a full root-to-leaf descent plus a split plus (per §5.2.2's
-divergence) a rightmost-spine recompute, where production's loader pays none of the
-three. Closing it means building the levels above the leaves directly — a tree that
-satisfies `wf()` *by construction* rather than inductively, which needs a fresh
-invariant for the leaf-fill loop and another for the level-build loop. That is
-§5.2.4, and this prediction is what it confirmed: with the split cycle gone, so is
-the whole 6.3x.
-
-**How the shuffled column earned its keep.** It was introduced to isolate the fast
-path — in random order the path cannot fire, so the residual is everything *else*.
-Reading it as "flat across decades ⟹ constant-factor codegen artifact" was
-correct about the shape and wrong about the cause: the constant factor was a
-linear scan inside a fixed-capacity node, which is O(256) — bounded, therefore
-flat, therefore easy to mistake for codegen. **A flat ratio bounds where the
-problem is, not whether one exists.** Chapter 11's discriminator separates
-structural from constant; it does not license dismissing the constant. Having been
-driven to parity, that same column became the *baseline* §5.2.1's factorization is
-built on — it is what proves the descent itself is not the problem.
-
-#### 5.2.4 The bottom-up loader — FIXED (`from_sorted` 6.3x → **0.85x**)
-
-`from_sorted` is now a thin wrapper over `bulk_load`: one pass per level into a fresh
-arena, no per-key `insert`, therefore no split cycle.
-
-Measured on `onesite_bplus.rs` (Layout256, n = 100k, one call site, both orders,
-best-of-5 after 20 warmups), **not** `bulkload.rs` — see the methodology note below,
-because the two harnesses disagreed by 40 points and only one of them was right:
-
-| row | before the loader | after |
-|---|---|---|
-| `from_sorted` | +29.1% (93.1 µs vs 72.2) | **−14.6%** (62.2 µs vs 72.9) |
-
-Reproducible across runs at −14.0/−14.2/−15.1%. The verified loader is not merely at
-parity, it is **~15% faster than production**, and that is not noise or a better
-algorithm: it is three places where the loader does *strictly less work*, each a
-consequence of how the proof is structured rather than an optimization bolted on.
-
-1. **No index vector per level.** A fresh push-only arena makes every level's ids
-   contiguous, so a level is addressed by one base offset `lo` and a count. Production
-   keeps a `Vec<ArenaIdx>` per level, allocated and walked.
-2. **No separate link pass.** Each leaf's successor id is known *before* the leaf is
-   filled (ids are handed out in order), so `bulk_fill_leaf` writes the chain pointer
-   inline. Production fills the leaves, then re-reads and rewrites every one of them
-   to thread the chain.
-3. **No `first_key_word` descent.** Each level hands the level above one word per
-   node — its smallest key — so a separator is a single array read. Production
-   recovers each separator by walking child-0 pointers down to a leftmost leaf,
-   O(height) node reads per separator.
-
-**The balanced partition is mandatory, not an optimization.** Production's
-`chunks(cap)` leaves an underfull remainder (for n = 63 on Layout256, a one-key
-leaf), and `tree_wf` requires non-root nodes to hold `>= (cap+1)/2`; the same recurs
-at every internal level. Production gets away with it because its search never relies
-on occupancy — ours does, and five lemmas downstream depend on the floor. So the
-loader partitions into `k = ceil(m/c)` groups of `floor(m/k)` or `ceil(m/k)`
-(`lemma_balanced_group_min`), and the bound is provably tight: the smallest group
-`floor(m/ceil(m/c))` exactly equals the required minimum, zero slack, for all six
-layouts at both the leaf level (`c = leaf_cap`) and the internal level
-(`c = key_cap+1`). The verified tree is *strictly better-formed* than production's.
-
-**The proof structure that made it tractable**, since a bottom-up build inverts the
-direction every existing lemma runs in:
-
-- **One flat chain fact, not a recursive one.** Every level of a tree has the same
-  in-order leaf sequence, and the links live in leaf slots that internal levels never
-  touch — so `chain_links_to` is proved once at the leaf level and reused verbatim by
-  every level above. Threading a recursive `forest_links_to` up level by level would
-  need each level's successor-of-the-last-group *before that group exists*.
-- **The root form is strictly weaker, and cannot be re-derived.** At the top of the
-  build `bulk_build_level` proves `tree_wf(..., is_root = true)`, which exempts
-  min-occupancy, so `lemma_forest_wf_from_pointwise` (non-root) does not apply there.
-  The driver's loop invariant therefore splits on the level width: `c >= 2 ==>
-  forest_wf(...)` and `c == 1 ==> tree_wf(level[0], h, cap, key_cap, true)`.
-- **`m == 1` is the root case.** `bulk_build_leaves` requires `m >= 2`; `bulk_load`
-  builds the single-leaf tree directly.
-- **`last_leaf` needs no descent.** Leaf ids are `0..m` in order, so the rightmost
-  leaf is `m - 1` (`lemma_last_leaf_id`), where the insert path pays an O(depth) walk.
-- **Two currencies for the arena budget.** `push` needs `< max_nat`; the exec `lo + c`
-  additions need `<= usize::MAX`. For a `usize` arena `max_nat == usize::MAX + 1` —
-  one too many to serve both — so the driver carries `lo + 2*c <= 2*m`,
-  `2*m <= n`, and `n < usize::MAX` instead of trying to spend one bound twice.
-
-**Two per-key costs the first loader still paid, both found by `objdump`.** The
-loader landed at +29.1% and the structure above does not explain that — one pass per
-level cannot be a third slower than one pass per level. Disassembling
-`bulk_fill_leaf` showed its innermost loop, and the answer was two instructions
-production does not execute, once per key:
+The ghost shape is:
 
 ```text
-  f319:  lea  (%rcx,%rbx,1),%rdi
-  f31d:  cmp  %r12,%rdi
-  f320:  jae  f435            <-- slice bounds check + panic edge, per key
-  f326:  movzbl %bl,%edi
-  f329:  lea  (%r15,%rdi,1),%rdx
-  f332:  cmp  $0x12,%rdx
-  f336:  jb   f300            <-- arr_shift_up's length dispatch, per key
+Tree::Leaf  { id, keys }
+Tree::Inner { id, seps, kids }
 ```
 
-1. **A bounds check on `keys[at + j]`** — dead code: `at + take <= keys.len()` and
-   `j < take` are both loop invariants. `slice_get` (the slice analogue of the
-   existing `arr_get`) removes it, same trust and same shape.
-2. **`arr_shift_up`'s length dispatch** — also dead: this loop always appends
-   (`pos == count`), so the shift window is empty and the scalar arm always wins.
-   LLVM cannot fold it, because `pos` and `count` arrive as separate runtime values
-   through a trait method. `leaf_push` puts `pos == count` in the *signature*, which
-   removes the branch by construction. Its postcondition is `leaf_insert_at`'s
-   specialized to `Seq::push`.
+`tree_keys(tree)` concatenates leaf keys in order and is the set's public
+sequence model. `tree_ids(tree)` and `tree_leaf_ids(tree)` describe the arena
+footprint and leaf order.
 
-Together: **+29.1% → −14.6%**, i.e. ~0.3 ns/key, which for a loop whose useful work
-is one 4-byte store is most of the loop. Production pays neither because it fills a
-whole leaf with one `copy_from_slice`.
+The main well-formedness relation establishes:
 
-**A methodological correction, and it is the important part of this section.**
-`bulkload.rs` read this same code at **1.0x** — parity — while `onesite_bplus.rs` read
-it at +29.1%. `bulkload` was wrong, and it was wrong in the flattering direction: it
-builds prod then verus in a fixed order inside one iteration, which
-[Chapter 11](11-layout-parity.md) documents as worth ~18% to whichever arm runs second
-(glibc heap reuse) plus ~18% from hot-loop alignment. Its production column swung
-0.72 → 4.5 ns/key across sweeps of the *same* build while verus stayed at 0.9 — the
-tell that the harness, not the code, was moving. A fine-grained `n` sweep also
-produced a 2.4x spike at exactly n = 10 000 that *moved to n = 8 000* when the sweep
-list changed: positional, not algorithmic. The rule this chapter and Chapter 11 share
-is now load-bearing twice over: **a cross-arm ratio in the 10-30% band is not evidence
-until it is measured through one call site in both orders**, and a "we reached parity"
-reading is exactly as suspect as a "we regressed" one.
+1. every tree id is in range and bound to the corresponding arena node;
+2. each arena id occurs at most once in the tree;
+3. all leaves have one depth;
+4. non-root occupancy bounds hold;
+5. keys and separators are sorted;
+6. each separator bounds the adjacent child ranges;
+7. the leaf-link chain follows `tree_leaf_ids` and ends at `NIL`;
+8. the executable key count equals `tree_keys(tree).len()`;
+9. every model key fits the selected key representation.
 
-**One Verus trap worth recording, because it cost four verify cycles.** A
-`let ghost mx = <L::ArenaIdx as IndexLike>::max_nat()` is **havoc'd by the loop**
-unless the invariant re-pins it (`mx == <L::ArenaIdx as IndexLike>::max_nat()`).
-Without that line the budget invariant `2*m + 3 < mx` constrains an *arbitrary* nat,
-and a callee precondition fails at the call site even though an `assert` of the same
-inequality succeeds one line earlier. The technique that isolated it: enumerate every
-callee precondition as an explicit `assert` immediately before the call.
+Separators are bounds, not copies of the right child's minimum. Split proofs
+therefore carry cross-child ordering directly. They do not assume that a
+promoted separator remains in either output half.
 
-**Not currently a shipping cost either way:** `egraph` never calls `from_sorted` and
-never instantiates `BPlusTreeSet` outside benchmarks and conformance tests — its
-indexes are `SortedVec`. The gap was latent; it is now closed regardless.
+`binds(arena, tree)` connects the packed node representation to the ghost tree.
+`tree_disjoint(tree)` supplies the dynamic frame needed to mutate one subtree
+while preserving its siblings.
 
-## 6. Reused machinery
+## 3. Capacity
 
-Nothing started from zero. Semi-persistence composes from the verified `Vec` over
-`ParallelStore` (as for ListArena / SparseSet). The arena/dynamic-frames discipline
-([Chapter 9](09-arena-aliasing-dynamic-frames.md)) applies directly: a ghost
-description (here a tree plus the leaf-link sequence), in-range-only index
-constraints, disjointness as a `wf` clause, and frame/anti-frame operation proofs.
-Bounded-int / array-index reasoning (developed for `CaptureBits` and the
-`SparseSet` permutation lemmas) carries to the split's key redistribution; `Tagged`
-nodes work exactly as `DenseId31`'s stolen MSB. The one genuinely new ingredient
-was the recursive, height-balanced ghost tree and its induction.
+Insertion has no caller-visible arena-capacity precondition. The proof derives
+enough index headroom from:
+
+- the insert-only set cardinality;
+- the minimum occupancy of non-root nodes;
+- the selected key and arena-index widths; and
+- the reserved null index.
+
+Before an insertion, at most one new node can be required per tree level plus
+a new root. The node-count and height lemmas show that this amount fits whenever
+another distinct key fits the key domain.
+
+## 4. Search
+
+`SearchKind` is active in the verified implementation:
+
+- leaf lookup dispatches to `S::find_ge`;
+- internal descent dispatches to `S::find_gt`.
+
+`NodeLayout::keys` exposes only the live key prefix, and the search contracts
+return an in-bounds split point unconditionally. When the prefix is sorted, the
+conditional postcondition gives the full lower-bound or upper-bound
+characterization consumed by the tree proof.
+
+`BinarySearch` is the default. `Branchless` is available for target/layout
+combinations where its linear comparison loop performs better. That choice is
+machine dependent; use the Criterion B+ benchmarks and their confidence
+intervals rather than a static timing claim.
+
+## 5. Insert
+
+`insert(key)` returns `true` exactly when the model did not already contain the
+key and ensures:
+
+```text
+model_after == sorted_unique(model_before ++ [key])
+```
+
+The implementation first tries the right-edge append path. Otherwise
+`insert_rec` descends recursively by tree height:
+
+1. search the target node;
+2. update a non-full node in place; or
+3. split a full node and return the promoted separator and right node;
+4. absorb the child split or split the parent in turn;
+5. create a new root if the old root split.
+
+The recursive result uses a footprint contract rather than exact footprint
+equality:
+
+- every old subtree id remains reachable;
+- every newly reachable id is a fresh arena-tail id;
+- split halves are disjoint; and
+- the left output keeps the old subtree's first leaf.
+
+A result that does not split the current root can still contain fresh nodes: a
+deeper split may have been absorbed below it. Exact footprint equality would
+therefore be too strong. `footprint_contract_holds` exercises this case in the
+runtime property suite.
+
+First-leaf preservation is the boundary fact required to recompose the linked
+leaf chain. A split inserts its new leaf to the right, so it does not move the
+subtree's leftmost leaf.
+
+## 6. Bulk Construction
+
+`from_sorted(keys)` builds a fresh tree bottom-up. Its input must be strictly
+ascending and duplicate-free.
+
+The loader:
+
+1. partitions keys into balanced leaves;
+2. writes leaf links while constructing the leaves;
+3. carries each node's first key to the next level;
+4. partitions each internal level into balanced groups; and
+5. repeats until one root remains.
+
+Balanced partitioning is required by the non-root occupancy invariant. A final
+undersized `chunks(cap)` group would not satisfy `tree_wf`.
+
+The proof establishes the same model and well-formedness relation as repeated
+insertion. Performance comparisons for construction live in Criterion
+benchmarks; they are not part of the proof contract.
+
+## 7. Cursor
+
+`BPlusCursor` carries an executable leaf/index pair and a ghost index into the
+tree model.
+
+- `seek_first()` positions at the least key.
+- `seek(target)` positions at the least key greater than or equal to `target`,
+  or at exhaustion.
+- `key()` returns the current key when positioned.
+- `step()` advances one key and follows the leaf link at a boundary.
+
+The cursor proves:
+
+- repeated `step()` enumerates `tree_keys(tree)` in order without gaps or
+  duplicates; and
+- `seek(target)` never skips a present key at or above the target.
+
+The lower-bound specification is shared with the sorted-vector cursor through
+`seek_target_idx`, so both implementations refine the same `SortedCursor`
+contract.
+
+## 8. Semi-Persistence
+
+`mark` delegates to the arena's semi-persistent vector and archives the header
+and ghost tree. `restore` rewinds all three in lockstep and re-establishes the
+full tree well-formedness relation.
+
+The observable theorem is:
+
+```text
+model_after_restore == model_at_mark
+```
+
+Marks are not claimed to be O(1). The inline store clears capture bits
+associated with the prior frame, with work proportional to the relevant
+captured cells. Restore replays the child-vector diff and rebuilds the parent
+frame's capture state.
+
+With `TRACK = false`, capture checks, logging, and restore execution branches
+are removed by constant specialization. Tracking-related fields still exist in
+the generic layout but remain empty or at their initial values; this is an
+execution-overhead claim, not a zero-memory-overhead claim.
+
+## 9. Verification Boundary
+
+The B+ implementation verifies without `admit` or `assume`. Run:
+
+```text
+cargo verus verify
+```
+
+for the current fact count and solver result. The verified surface includes:
+
+- layout access and mutation contracts;
+- construction, membership, insertion, and length;
+- bulk construction;
+- cursor traversal and seek;
+- arena-capacity sufficiency; and
+- mark/restore refinement.
+
+Property tests compare executable behavior with standard sorted-set and
+layout-level oracles. These tests complement but do not replace the Verus
+proofs.
+
+Low-level array operations and machine-code helpers classified as
+`external_body` are listed in [the trust boundary](02-trust-boundary.md) and
+covered by runtime contract tests. Public layout operations mirror verified
+preconditions with release-mode refusal checks, so safe Rust misuse cannot
+reach unchecked indexing.
+
+## 10. Scope
+
+- Insert-only set; deletion and merge/borrow rebalancing are absent.
+- Duplicate insertion is a no-op.
+- Layout and search choices are explicit type parameters.
+- Performance evidence must come from Criterion on the target architecture.
+- The executable reference design is documented in
+  [`containers/doc/design/07-bplus-tree.md`](../../../containers/doc/design/07-bplus-tree.md).
 
 ---
-[← Table of Contents](00-table-of-contents.md)
+[Table of Contents](00-table-of-contents.md)

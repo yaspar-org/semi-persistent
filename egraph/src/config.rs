@@ -74,8 +74,8 @@ pub trait EGraphConfig: 'static {
 /// The five `mset_child_*` bodies for a config whose `C` is
 /// [`MSetChild<G, M>`](crate::node_store::MSetChild) — i.e. any config that stores AC
 /// children as an id/multiplicity pair. Emitted rather than hand-written per config so the
-/// checked increment in `mset_child_merge` cannot drift between configs, which is precisely
-/// where an unchecked `+ 1` previously lived in duplicate.
+/// checked increment in `mset_child_merge` cannot drift between configs: a duplicated
+/// hand-written impl is where an unchecked `+ 1` can hide.
 #[macro_export]
 macro_rules! impl_mset_child_pair {
     () => {

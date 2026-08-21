@@ -69,12 +69,22 @@ pub enum CCommand<O, S, L> {
         rhs: crate::resolve::RRhsTerm<O, S, L>,
         root_vid: crate::ast::VarId,
         subsume: bool,
+        ruleset: Option<crate::apply::RulesetId>,
     },
     Rule {
         query: ResolvedQuery<O, S, L>,
         actions: Vec<crate::resolve::ResolvedAction<O, S, L>>,
+        ruleset: Option<crate::apply::RulesetId>,
     },
-    Run(u64),
+    Run {
+        ruleset: Option<crate::apply::RulesetId>,
+        limit: u64,
+        until: Option<CGoal<O, S, L>>,
+    },
+    /// `(print-size [Op])` — `None` is every op plus the total.
+    PrintSize(Option<O>),
+    /// `(print-stats [:file path])`.
+    PrintStats(Option<String>),
     AntiUnify {
         left: CTerm<O, S, L>,
         right: CTerm<O, S, L>,
@@ -90,6 +100,58 @@ pub enum CCommand<O, S, L> {
     },
     Push(bool), // true = shrink on mark
     Pop,
+}
+
+/// A sort-checked `:until` goal: the two ground terms, and whether the run stops when their
+/// classes are equal or when they are distinct.
+#[derive(Clone, Debug)]
+pub struct CGoal<O, S, L> {
+    pub left: CTerm<O, S, L>,
+    pub right: CTerm<O, S, L>,
+    pub equal: bool,
+}
+
+/// Ruleset names in declaration order; a name's index is its
+/// [`RulesetId`](crate::apply::RulesetId). Local to one `sortcheck_program` call, which is
+/// how a whole program is checked — rulesets are static, so they are neither scoped by
+/// `(push)`/`(pop)` nor carried between calls.
+#[derive(Debug, Default)]
+struct RulesetTable {
+    names: Vec<String>,
+}
+
+impl RulesetTable {
+    /// Declare a ruleset, or return the existing id if the name was already declared.
+    fn declare(&mut self, name: &str) -> crate::apply::RulesetId {
+        match self.id_of(name) {
+            Some(id) => id,
+            None => {
+                self.names.push(name.to_owned());
+                (self.names.len() - 1) as crate::apply::RulesetId
+            }
+        }
+    }
+
+    fn id_of(&self, name: &str) -> Option<crate::apply::RulesetId> {
+        self.names
+            .iter()
+            .position(|n| n == name)
+            .map(|i| i as crate::apply::RulesetId)
+    }
+
+    /// Resolve a declared ruleset name, naming the undeclared ones rather than silently
+    /// running an empty rule set.
+    fn resolve(&self, name: &Option<String>) -> Result<Option<crate::apply::RulesetId>, SortError> {
+        match name {
+            None => Ok(None),
+            Some(n) => self.id_of(n).map(Some).ok_or_else(|| {
+                serr(
+                    format!("unknown ruleset '{n}' (declare it with `(ruleset {n})`)"),
+                    Span::Dummy,
+                )
+            }),
+        }
+    }
 }
 
 // ── Sort-check a Term ──
@@ -266,8 +328,14 @@ fn cterm_sort<O, S: Copy, L>(ct: &CTerm<O, S, L>) -> S {
 
 // ── Flatten SurfacePattern directly to Atom (skip Pattern) ──
 
-use crate::compile::{Atom, FlatMult, FlatQuery};
+use crate::compile::{Atom, FlatMult, FlatQuery, PredExpr};
 use crate::surface_ast::{SurfaceCommand, SurfacePatChild, SurfacePattern};
+
+/// The operator name reserved for the root-binding pattern form `(= p q)`.
+///
+/// Reserved rather than looked up: a declaration named `=` would otherwise shadow the
+/// form and silently change what every existing `(= …)` in a rule body means.
+pub const EQ_FORM: &str = "=";
 
 /// Flatten surface patterns directly to `FlatQuery`, skipping `Pattern`.
 pub fn flatten_surface<O, S, const TRACK: bool>(
@@ -310,26 +378,32 @@ where
         format!("?{hint}{id}")
     }
 
+    /// Flatten a top-level conjunct of a rule body or `:when` list.
+    ///
+    /// Two forms are only legal here, at the top of a conjunct: the root-binding
+    /// `(= v pat)` (legal nested too, but idiomatic here) and a primitive predicate
+    /// guard, which is a constraint rather than a subterm and so has no meaningful
+    /// nested reading.
     fn flatten_root(&mut self, pat: &SurfacePattern) -> Result<String, String> {
-        match pat {
-            SurfacePattern::Var(v, _) => Ok(v.clone()),
-            SurfacePattern::Lit(text, span) => {
-                let v = self.fresh("lit");
-                self.atoms.push(Atom::Lit {
-                    node: v.clone(),
-                    text: text.clone(),
-                    span: *span,
-                });
-                Ok(v)
-            }
-            SurfacePattern::App { .. } => {
-                let node = self.fresh("n");
-                self.flatten_app(pat, &node)?;
-                Ok(node)
-            }
+        if let SurfacePattern::App { op, .. } = pat
+            && op != EQ_FORM
+            && let Some(op_id) = self.ops.id_by_name(op)
+            && self.ops.is_prim_op(op_id)
+        {
+            let expr = self.pred_expr(pat)?;
+            self.atoms.push(Atom::Pred {
+                expr,
+                span: pat.span(),
+            });
+            // A guard binds nothing, so it has no root e-class to name. The fresh
+            // name is never interned; a caller that needs the root (a rewrite's
+            // left-hand side) fails to find it and reports that.
+            return Ok(self.fresh("guard"));
         }
+        self.flatten_child(pat)
     }
 
+    /// Flatten a pattern to the name of the variable holding its root e-class.
     fn flatten_child(&mut self, pat: &SurfacePattern) -> Result<String, String> {
         match pat {
             SurfacePattern::Var(v, _) => Ok(v.clone()),
@@ -342,10 +416,101 @@ where
                 });
                 Ok(v)
             }
+            SurfacePattern::App { op, .. } if op == EQ_FORM => self.flatten_eq(pat),
             SurfacePattern::App { .. } => {
                 let v = self.fresh("n");
                 self.flatten_app(pat, &v)?;
                 Ok(v)
+            }
+        }
+    }
+
+    /// Flatten the root-binding form `(= p q)`: both subpatterns match, and their root
+    /// e-classes are constrained equal.
+    ///
+    /// Each side flattens exactly as it would on its own, so the form adds no atom kind
+    /// of its own: one `Atom::Eq` between the two roots is the whole of it, and resolve,
+    /// scheduling and matching already handle that. The common case `(= v pat)` costs
+    /// nothing beyond `pat`, because the left side is a bare variable and the `Eq` lowers
+    /// to a `CopyBinding` the moment `pat`'s root is bound.
+    fn flatten_eq(&mut self, pat: &SurfacePattern) -> Result<String, String> {
+        let SurfacePattern::App {
+            op,
+            prefix,
+            children,
+            suffix,
+            ..
+        } = pat
+        else {
+            unreachable!()
+        };
+        if prefix.is_some() || suffix.is_some() {
+            return Err(format!("'{op}' takes no rest variables"));
+        }
+        if children.len() != 2 {
+            return Err(format!(
+                "'{op}' takes exactly 2 subpatterns, got {}",
+                children.len()
+            ));
+        }
+        let mut sides = Vec::with_capacity(2);
+        for c in children {
+            match c {
+                SurfacePatChild::Elem(p) => sides.push(self.flatten_child(p)?),
+                SurfacePatChild::ElemMult(..) => {
+                    return Err(format!("'{op}' takes no multiplicities"));
+                }
+            }
+        }
+        let b = sides.pop().unwrap();
+        let a = sides.pop().unwrap();
+        if a != b {
+            self.atoms.push(Atom::Eq(a.clone(), b));
+        }
+        Ok(a)
+    }
+
+    /// Build a guard expression: primitive applications over literal constants and the
+    /// variables other atoms bind to literal payloads.
+    fn pred_expr(&self, pat: &SurfacePattern) -> Result<PredExpr, String> {
+        match pat {
+            SurfacePattern::Var(v, span) => Ok(PredExpr::Var(v.clone(), *span)),
+            SurfacePattern::Lit(text, span) => Ok(PredExpr::Lit(text.clone(), *span)),
+            SurfacePattern::App {
+                op,
+                prefix,
+                children,
+                suffix,
+                span,
+            } => {
+                if prefix.is_some() || suffix.is_some() {
+                    return Err(format!("guard operator '{op}' takes no rest variables"));
+                }
+                let op_id = self
+                    .ops
+                    .id_by_name(op)
+                    .ok_or_else(|| format!("unknown operator '{op}'"))?;
+                if !self.ops.is_prim_op(op_id) {
+                    return Err(format!(
+                        "'{op}' is not a primitive operator; every operator inside a guard \
+                         must be one, because a guard is evaluated over bound literal values \
+                         rather than matched against the e-graph"
+                    ));
+                }
+                let mut args = Vec::with_capacity(children.len());
+                for c in children {
+                    match c {
+                        SurfacePatChild::Elem(p) => args.push(self.pred_expr(p)?),
+                        SurfacePatChild::ElemMult(..) => {
+                            return Err(format!("guard operator '{op}' takes no multiplicities"));
+                        }
+                    }
+                }
+                Ok(PredExpr::App {
+                    op: op.clone(),
+                    args,
+                    span: *span,
+                })
             }
         }
     }
@@ -619,8 +784,9 @@ where
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     let mut out = Vec::with_capacity(cmds.len());
+    let mut rulesets = RulesetTable::default();
     for cmd in cmds {
-        out.push(sortcheck_one(cmd, eg, model, globals)?);
+        out.push(sortcheck_one(cmd, eg, model, globals, &mut rulesets)?);
     }
     Ok(out)
 }
@@ -630,6 +796,7 @@ fn sortcheck_one<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     model: &M,
     globals: &mut GlobalCtx<Cfg::S>,
+    rulesets: &mut RulesetTable,
 ) -> Result<CCommand<Cfg::O, Cfg::S, L>, SortError>
 where
     Cfg: crate::config::EGraphConfig,
@@ -639,20 +806,29 @@ where
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
     match cmd {
-        SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals),
+        SurfaceCommand::Pass(c) => sortcheck_pass(c, eg, model, globals, rulesets),
         SurfaceCommand::Rewrite {
             lhs,
             rhs,
             when,
             subsume,
+            ruleset,
         } => {
+            let ruleset = rulesets.resolve(&ruleset)?;
+            let lhs_span = lhs.span();
             let mut pats = vec![lhs];
             pats.extend(when);
             let fq = flatten_surface(&pats, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let root_name = fq.root_vars[0].clone();
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
-            let root_vid = rq.shape.find_var(&root_name).expect("root var");
+            let root_vid = rq.shape.find_var(&root_name).ok_or_else(|| {
+                serr(
+                    "a rewrite's left-hand side must name an e-class to rewrite; a \
+                     primitive predicate guard names none (it belongs in `:when`)",
+                    lhs_span,
+                )
+            })?;
             let mut vs = rq.var_sorts.clone();
             let mut shape = rq.shape.clone();
             let root_sort = vs[root_vid.idx()];
@@ -672,9 +848,15 @@ where
                 rhs: resolved_rhs,
                 root_vid,
                 subsume,
+                ruleset,
             })
         }
-        SurfaceCommand::Rule { body, head } => {
+        SurfaceCommand::Rule {
+            body,
+            head,
+            ruleset,
+        } => {
+            let ruleset = rulesets.resolve(&ruleset)?;
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
@@ -687,7 +869,11 @@ where
                         .map_err(|e| serr(e.to_string(), Span::Dummy))?;
                 actions.push(ra);
             }
-            Ok(CCommand::Rule { query: rq, actions })
+            Ok(CCommand::Rule {
+                query: rq,
+                actions,
+                ruleset,
+            })
         }
     }
 }
@@ -697,6 +883,7 @@ fn sortcheck_pass<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     model: &M,
     globals: &mut GlobalCtx<Cfg::S>,
+    rulesets: &mut RulesetTable,
 ) -> Result<CCommand<Cfg::O, Cfg::S, L>, SortError>
 where
     Cfg: crate::config::EGraphConfig,
@@ -749,7 +936,43 @@ where
             let ct = check_term(&t, None, eg.ops(), eg.sorts(), model, globals)?;
             Ok(CCommand::Extract(ct))
         }
-        Command::Run(n) => Ok(CCommand::Run(n)),
+        Command::Ruleset(name) => {
+            rulesets.declare(&name);
+            Ok(CCommand::Decl(Command::Ruleset(name)))
+        }
+        Command::Run {
+            ruleset,
+            limit,
+            until,
+        } => {
+            let rid = rulesets.resolve(&ruleset)?;
+            // The goal's terms are sort-checked here and built once at run time; they are
+            // ground, so nothing about them changes between iterations.
+            let cgoal = match until {
+                None => None,
+                Some(g) => Some(CGoal {
+                    left: check_term(&g.left, None, eg.ops(), eg.sorts(), model, globals)?,
+                    right: check_term(&g.right, None, eg.ops(), eg.sorts(), model, globals)?,
+                    equal: g.equal,
+                }),
+            };
+            Ok(CCommand::Run {
+                ruleset: rid,
+                limit,
+                until: cgoal,
+            })
+        }
+        Command::PrintSize(op) => match op {
+            None => Ok(CCommand::PrintSize(None)),
+            Some(name) => {
+                let id = eg
+                    .ops()
+                    .id_by_name(&name)
+                    .ok_or_else(|| serr(format!("unknown operator '{name}'"), Span::Dummy))?;
+                Ok(CCommand::PrintSize(Some(id)))
+            }
+        },
+        Command::PrintStats(file) => Ok(CCommand::PrintStats(file)),
         Command::AntiUnify {
             left,
             right,
@@ -812,6 +1035,7 @@ where
             arg_sorts,
             ret_sort,
             tags,
+            meta,
         } => {
             let ret = eg
                 .sorts()
@@ -825,13 +1049,14 @@ where
                         .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                 })
                 .collect::<Result<_, _>>()?;
-            register_op(eg, name, &args, ret, tags, model, globals)?;
+            register_op(eg, name, &args, ret, tags, *meta, model, globals)?;
         }
         Command::Datatype { name, variants } => {
             eg.intern_sort(name);
             let sid = eg.sorts().id_by_name(name).unwrap();
-            for (ctor, arg_names, tags) in variants {
-                let arg_ids: Vec<Cfg::S> = arg_names
+            for v in variants {
+                let arg_ids: Vec<Cfg::S> = v
+                    .arg_sorts
                     .iter()
                     .map(|s| {
                         eg.sorts()
@@ -839,8 +1064,7 @@ where
                             .ok_or_else(|| serr(format!("unknown sort '{s}'"), Span::Dummy))
                     })
                     .collect::<Result<_, _>>()?;
-                let oid = register_op(eg, ctor, &arg_ids, sid, tags, model, globals)?;
-                eg.ops_mut().set_constructor(oid);
+                register_op(eg, &v.name, &arg_ids, sid, &v.tags, v.meta, model, globals)?;
             }
         }
         _ => {}
@@ -848,18 +1072,19 @@ where
     Ok(())
 }
 
-/// Resolve a composable algebra-tag set into a concrete op registration (multi-AC/ACI plan,
-/// Facet A). Validates the combination and builds the `OpKind` descriptor. A declared
+/// Resolve a composable algebra-tag set into a concrete op registration.
+/// Validates the combination and builds the `OpKind` descriptor. A declared
 /// `:identity e` is resolved to a real node here (sortcheck has the model) and stored in the
-/// egraph's per-op unit map; `:inverse` is validated but its resolved op is not stored yet
-/// (deferred to the group facet). Plain `:assoc :comm` reproduces AC, `+ :idempotent` reproduces
-/// ACI; the unit only affects completion once it is consumed (identity drop in the round).
+/// egraph's per-op unit map; `:inverse` is resolved to an op id and stored in its per-op map.
+/// Plain `:assoc :comm` reproduces AC and `+ :idempotent` reproduces ACI. Canonization consumes
+/// the unit and clamp even when completion is disabled.
 fn register_op<Cfg, L, M, const TRACK: bool, const PROOFS: bool>(
     eg: &mut crate::egraph::EGraph<Cfg, L, TRACK, PROOFS>,
     name: &str,
     args: &[Cfg::S],
     ret: Cfg::S,
     tags: &[AlgTag],
+    meta: crate::registry::OpMeta,
     model: &M,
     globals: &GlobalCtx<Cfg::S>,
 ) -> Result<Cfg::O, SortError>
@@ -872,9 +1097,17 @@ where
 {
     use crate::registry::{AssocDir, Clamp, OpKind, UnitRef};
 
-    // No tags → plain op.
+    // No algebra tags → plain op. (`meta` still applies: `:cost` / `:unextractable` /
+    // constructor-ness are orthogonal to the algebraic kind.)
     if tags.is_empty() {
-        return Ok(eg.register_opn(name, args, ret));
+        return Ok(eg.register_kind_meta(
+            name,
+            ret,
+            OpKind::Normal {
+                arg_sorts: args.to_vec(),
+            },
+            meta,
+        ));
     }
 
     // Collect the tag set into flags. Duplicate/conflicting basic tags are folded; direction
@@ -958,7 +1191,7 @@ where
             Span::Dummy,
         ));
     }
-    // Facet status (2026-07-10): `:cancellative` drives the Kapur §5 cancel-closure
+    // `:cancellative` drives the Kapur §5 cancel-closure
     // inferences (C1 rule cancel-close + C2 cancelative disjoint superposition, minus the
     // §5.2(iii)(b) no-identity per-constant case), and `:inverse` drives inverse-PAIR
     // cancellation (x ∘ inv(x) = e) — gate-level group support, not §5.4's full
@@ -985,8 +1218,8 @@ where
             }
             // Partition is derived from the clamp (design "storage partition and clamp are
             // independent"): idempotent → Set (dedup is the sound build canonize); plain AC and
-            // nilpotent → MSet (nilpotent keeps true multiplicities for the completion-time mod-n
-            // reduction — the Set dedup canonize would destroy them at build).
+            // nilpotent → MSet (nilpotent needs true multiplicities for the build/recanonize
+            // mod-n reduction — the Set dedup canonize would destroy them).
             let kind = if idempotent {
                 OpKind::Set {
                     arg_sort: args[0],
@@ -1005,7 +1238,7 @@ where
                     cancellative,
                 }
             };
-            let op = eg.register_kind(name, ret, kind);
+            let op = eg.register_kind_meta(name, ret, kind, meta);
             // Resolve `:identity e` to a real node NOW (sortcheck has the model to parse the
             // term; the node id is stored in the egraph's per-op unit map — `OpKind<S>` cannot
             // carry a `Cfg::G`). The unit must sort-check to the op's return sort and be a
@@ -1062,7 +1295,15 @@ where
             if args.len() != 1 {
                 return Err(serr(":assoc requires 1 argument sort", Span::Dummy));
             }
-            Ok(eg.register_a(name, args[0], ret, dir.unwrap_or(AssocDir::Left)))
+            Ok(eg.register_kind_meta(
+                name,
+                ret,
+                OpKind::A {
+                    arg_sort: args[0],
+                    dir: dir.unwrap_or(AssocDir::Left),
+                },
+                meta,
+            ))
         }
         // Commutative-only (C): binary.
         (false, true) => {
@@ -1075,7 +1316,14 @@ where
             if args.len() != 2 {
                 return Err(serr(":comm requires 2 argument sorts", Span::Dummy));
             }
-            Ok(eg.register_c(name, [args[0], args[1]], ret))
+            Ok(eg.register_kind_meta(
+                name,
+                ret,
+                OpKind::Commutative {
+                    arg_sorts: [args[0], args[1]],
+                },
+                meta,
+            ))
         }
         // No structural tag but property tags present → error (idempotent-only etc. is meaningless).
         (false, false) => Err(serr(

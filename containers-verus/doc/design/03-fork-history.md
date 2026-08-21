@@ -10,19 +10,25 @@ rebuilds the contents.
 
 ## 1. The data structure
 
-A token carries four fields:
+A verified token carries four fields:
 
 ```
-VecToken { branch_id: u32, depth: u32, frame_index: u32, container_id: ContainerId }
+VecToken { frame_idx: usize, branch_id: u32, depth: u32, container_id: ContainerId }
 ```
 
 `mark` stamps `branch_id == forks.current_branch()`, and
-`depth == frame_index == frames.len()`. `depth` and `frame_index` are numerically
+`depth as usize == frame_idx == frames.len()`. `depth` and `frame_idx` are numerically
 equal at creation but feed two different parts of the contract (§5).
+The unverified reference implementation instead stores the corresponding
+reconstruction coordinate as `frame_index: u32`; this is an API-layout
+difference, not a semantic one.
 
-`ContainerId(u32)` is an unforgeable per-instance identity drawn from a
-process-global atomic counter; `restore` asserts `token.container_id == self.id`
-so a token from one container cannot be replayed into another.
+`ContainerId` carries a hidden `u64` runtime payload drawn from a process-global
+atomic counter; `restore` asserts `token.container_id == self.id` so ordinary
+cross-container token misuse is rejected. The verified model proves equality
+reflection, not global freshness. In default release builds the counter can
+wrap after 2^64 allocations; `strict-id-exhaustion` makes that boundary fatal
+and debug builds assert it.
 
 Fork history itself is a forest stored as an append-only origin list:
 
@@ -125,11 +131,12 @@ Proved in `fork_history.rs`:
 3. **`fh_wf` maintenance.** `new` establishes it; `fork` maintains it.
 
 Wiring into `Vec`: `forks: ForkHistory` and `id: ContainerId` fields;
-`VecToken` carries the four fields; `mark` stamps them; `restore` asserts
-`is_valid_token` and calls `forks.fork(token, frames.len())` at the end; `wf`
-carries `fh_wf`. Because `fork` mutates only the `ForkHistory` field, the
-reconstruction proof of Chapter 1 is untouched. The exec
-`is_valid_token(t) -> bool` is the container-identity check AND `forks.is_valid(...)`.
+`VecToken` carries the four fields; `mark` stamps them; `restore` validates the
+full restorable predicate and calls `forks.fork(token, frames.len())` at the
+end; `wf` carries `fh_wf`. Because `fork` mutates only the `ForkHistory` field,
+the reconstruction proof of Chapter 1 is untouched. Public
+`is_valid_token(t)` checks tracking, container identity, frame liveness,
+counter headroom, and `forks.is_valid(...)`.
 
 ## 5. Design decisions
 
@@ -143,20 +150,21 @@ ghosted away, mirroring the `saved_len` treatment elsewhere.
 
 `origins` grows by one entry per `restore` and is never reclaimed, so
 `origins.len()` is the *lifetime* restore count and this `u32` ceiling is the
-binding mark/restore limit (~4.29e9, versus `depth`/`frame_index`, which fall
-back on restore and so only cap concurrent nesting). A verified caller proves
+binding mark/restore limit (~4.29e9, versus `depth`, which falls back on
+restore and so only caps concurrent nesting). The verified `frame_idx` is a
+`usize`; the reference implementation's `frame_index` is `u32`. A verified caller proves
 the bound; for an unverified one, `restore` carries a runtime guard
 (`check_precondition`, [Ch. 2 §2.5](02-trust-boundary.md)) that traps rather
 than letting the `as u32` cast silently wrap. The headroom is queryable at
 runtime: `restores_remaining()` returns `u32::MAX - origins.len()` (saturating),
 so a caller can check before it runs out.
 
-**`depth` and `frame_index` stay separate, with no equating wf clause.** They
+**`depth` and `frame_idx` stay separate, with no equating wf clause.** They
 are numerically equal at `mark` time but feed different axes of the contract:
-`frame_index` is the frame-stack slot the reconstruction mechanism rolls back
+`frame_idx` is the frame-stack slot the reconstruction mechanism rolls back
 to; `depth` is what `is_valid` compares against `current_depth`/`fork_depth`.
 Merging them would couple the reconstruction-index requirement to the validity
-predicate. Keeping `frame_index < frames.len()` (a structural precondition) and
+predicate. Keeping `frame_idx < frames.len()` (a structural precondition) and
 validity (a separate precondition) independent is what keeps the reconstruction
 theorem orthogonal to fork history.
 

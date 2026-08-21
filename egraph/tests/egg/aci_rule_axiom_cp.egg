@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; Idempotent per-rule AXIOM critical pairs (Kapur Lemma 4.1(ii); Kapur-conformance fix W3 (spec §3 table)):
+;; Idempotent per-rule axiom critical pairs (Kapur Lemma 4.1(ii)):
 ;; superposing a rule f(M)→f(N) with x∘x = x gives, per a ∈ M, the pair (f(M), f(N∪{a})).
 ;; or(a,b) = c  ⟹  or(a,c) = c and or(b,c) = c  (a∨c = a∨a∨b = a∨b = c). The derived
 ;; rule {a,c}→{c} must itself superpose with ordinary rules: with or(c,d) = f,

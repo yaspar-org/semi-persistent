@@ -14,9 +14,10 @@ dense/sparse cross-index, a linked-list arena, a circular class-list) connect
 their nodes with **integer identifiers into a flat arena**, not Rust references.
 [Chapter 1 §10](01-verification-design.md) establishes the stakes: this
 deliberately bypasses Rust's ownership to allow internally **aliased** and
-**cyclic** structures the borrow checker would reject, and in doing so forfeits
-all compiler help for the discipline that keeps them well-formed, leaving Verus
-as the only guarantee. This chapter is the methodology behind that guarantee. It
+**cyclic** structures the borrow checker would reject. Rust still enforces
+ordinary type and bounds safety, but it does not establish the graph-shape
+discipline. Verus supplies the formal invariant-preservation guarantee within
+the documented trust boundary. This chapter is the methodology behind that guarantee. It
 names the proof style (a **ghost field describing the structure as unique arena
 ids**, with aliasing and separation written as explicit predicates over those
 ids) as a concrete instance of **dynamic frames**, and shows how the resulting
@@ -77,11 +78,11 @@ clause stating that the ghost id-sets do not overlap:
 
 That single predicate is what the borrow checker would have guaranteed by
 forbidding aliasing, except now it is a *formal property we can name, assume,
-and prove*, rather than an implicit consequence of `&mut`. Its companion, a
-*coverage* clause ("every allocated node belongs to some list"), pins down the
-other direction; together, disjoint + coverage say the ghost description is a
-genuine **partition** of the arena's live ids, and the executable pointers
-realize it.
+and prove*, rather than an implicit consequence of `&mut`. Coverage is
+container-specific. `SparseSet` covers its fixed id range with live and free
+ids, and `CircularList` covers its node arena with rings. `ListArena`
+deliberately permits allocated nodes outside every current list, so its lists
+form disjoint subsets, not a partition, of the node arena.
 
 ## 3. This is explicit dynamic frames
 
@@ -94,8 +95,8 @@ read, write, and grow that region; separation between two structures is the
 *disjointness of their regions*, stated explicitly rather than baked into a
 connective. Our ghost id-sets are exactly such regions, with the arena standing
 in for the heap and an integer id for a heap location. The disjointness clause
-in `wf` is the dynamic-frames separation assertion; the coverage clause bounds
-the region; and an operation's contract describes how it moves ids between
+in `wf` is the dynamic-frames separation assertion; where present, a coverage
+clause bounds the region; and an operation's contract describes how it moves ids between
 regions (a node leaves one list's sequence and joins another's). Where
 separation logic hides the footprint inside the `∗` connective and the frame
 rule, dynamic frames, and our encoding, make the footprint a first-class
@@ -111,10 +112,8 @@ the disjointness clause put to work: because the operation's footprint is
 disjoint from every untouched list's id-set, those lists' well-formedness is
 preserved *for free*: their ids did not move, so their representation facts
 carry across unchanged. (In `splice`, every "other ring" case of the proof is
-nothing but this frame step.) The remaining work (the **anti-frame**, the
-precondition the operation needs to be *correct* and not merely safe) is
-likewise discovered the way bi-abduction discovers it: by trying to prove the
-postcondition and reading off what is missing. For `splice`, that missing
+nothing but this frame step.) The **anti-frame** is the precondition the
+operation needs to be *correct* and not merely safe. For `splice`, that
 precondition is `the two rings are distinct` (`cs ≠ ca`); without it the merge
 would split a ring instead of joining two, and the proof of the cyclic clause
 fails. The disjointness invariant supplies the frame; the abduced side condition
@@ -136,16 +135,17 @@ across the row tells you what to write for the next arena container:
 Two things are worth highlighting because they are easy to get wrong. First, the
 **shape** clause is stated *over the ghost model*, never as a pointer-only
 property: `list_seq(l)` is the payloads read off the finite ghost sequence
-`model[l]`, with no recursion that follows `next`. This is deliberate: an earlier
-ListArena attempt made shape a pointer-chasing predicate and needed a "`next`
-points at a smaller index" ordering to make the recursion terminate, a *false*
-invariant that could express `prepend` but not `append` (which links an old node
-*forward* to a freshly-allocated larger index) or `splice`. Defining content off
-the ghost sequence removes the termination problem entirely and lets the only
-per-index constraint be in-range. Second, **disjoint + coverage together are the
-partition**, and that is exactly the dynamic-frames separation between the
-structure's sub-regions; it is what makes "merge two lists / two rings" even
-*meaningful*, since concatenating overlapping id-sets would not be a set.
+`model[l]`, with no recursion that follows `next`. A pointer-chasing shape
+predicate would need a "`next` points at a smaller index" ordering to terminate,
+but that invariant is false for `append` (which links an old node *forward* to a
+freshly allocated larger index) and `splice`. Defining content from the ghost
+sequence removes the termination problem and leaves only an in-range per-index
+constraint. Second, where a container has coverage, **disjoint + coverage
+together are the partition**. `ListArena` needs only in-range disjoint
+sub-regions; its model does not claim that every allocated node is owned by a
+current list. In either case, disjointness is what makes "merge two lists / two
+rings" meaningful, since concatenating overlapping id-sets would duplicate
+ownership.
 
 ## 5. What we get
 
@@ -153,9 +153,9 @@ The payoff is that, for structures the Rust compiler cannot vouch for at all, we
 end up with *more* than the compiler would have given us, and all of it as
 machine-checked formal properties:
 
-- **Well-formedness**, maintained across every operation: indices stay in
-  bounds, chains are exactly the ghost sequences, rings close. The structure can
-  never silently corrupt.
+- **Well-formedness**, maintained by every verified operation under its
+  preconditions: indices stay in bounds, chains are exactly the ghost
+  sequences, and rings close.
 
 - **Non-aliasing / separation**, stated explicitly and proved: distinct lists
   share no node, the live ids of a sparse set are distinct, the class rings
@@ -175,8 +175,8 @@ structural guarantees in exchange for expressiveness, and the ghost-id-set /
 dynamic-frames proof style buys those guarantees back, in stronger and more
 explicit form, with Verus as the enforcing authority. For these containers that
 is the whole point: the proof is not decoration on top of a structure the
-compiler already blessed; it *is* the structure's only well-formedness
-guarantee.
+compiler already blessed; it is the formal well-formedness guarantee, subject
+to the crate's explicit trust boundary.
 
 ---
 [Table of Contents](00-table-of-contents.md)

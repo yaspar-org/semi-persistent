@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Ported production compatibility test: `containers/tests/vec_proptest.rs`.
 //!
-//! Gated on `compat-core` + `compat-ids` (migration plan Phase 1.1): the test
-//! target builds once Phase 4 (core API parity: `VecI`/`VecP` aliases, root
-//! re-exports, `get`/`set` via `impl Into<I>`) and Phase 6 (`define_id31!`,
-//! `IdFactory`) have landed. Assertions are unchanged from production.
+//! Gated on `compat-core` + `compat-ids`. Covers `VecI`/`VecP` aliases, root
+//! re-exports, `get`/`set` via `impl Into<I>`, `define_id31!`, and `IdFactory`.
+//! Assertions are unchanged from production.
 use proptest::prelude::*;
 use semi_persistent_containers_verus::{DenseId, IdFactory};
 use semi_persistent_containers_verus::{ShrinkPolicy, VecToken};
@@ -42,7 +41,7 @@ fn run_ops(ops: Vec<Op>, mut v: semi_persistent_containers_verus::VecI<u32, u32,
     for op in ops {
         match op {
             Op::Push(val) => {
-                v.push(val);
+                v.try_push(val).expect("compat: within capacity");
                 oracle.push(val);
             }
             Op::Set(idx, val) => {
@@ -69,7 +68,9 @@ fn run_ops(ops: Vec<Op>, mut v: semi_persistent_containers_verus::VecI<u32, u32,
                 if snapshots.len() >= 20 {
                     continue;
                 }
-                let token = v.mark(ShrinkPolicy::Never);
+                let token = v
+                    .try_mark(ShrinkPolicy::Never)
+                    .expect("compat: depth in bounds");
                 snapshots.push((token, oracle.clone()));
             }
             Op::Restore(idx) => {
@@ -78,7 +79,7 @@ fn run_ops(ops: Vec<Op>, mut v: semi_persistent_containers_verus::VecI<u32, u32,
                 }
                 let idx = idx % snapshots.len();
                 let (token, snap) = snapshots[idx].clone();
-                v.restore(token);
+                v.try_restore(token).expect("compat: own live token");
                 oracle = snap;
                 snapshots.truncate(idx);
             }
@@ -115,7 +116,7 @@ proptest! {
         for op in ops {
             match op {
                 Op::Push(val) => {
-                    v.push(val);
+                    v.try_push(val).expect("compat: within capacity");
                     oracle.push(val);
                 }
                 Op::Set(idx, val) => {
@@ -134,14 +135,14 @@ proptest! {
                 }
                 Op::Mark => {
                     if snapshots.len() >= 20 { continue; }
-                    let token = v.mark(ShrinkPolicy::Never);
+                    let token = v.try_mark(ShrinkPolicy::Never).expect("compat: depth in bounds");
                     snapshots.push((token, oracle.clone()));
                 }
                 Op::Restore(idx) => {
                     if snapshots.is_empty() { continue; }
                     let idx = idx % snapshots.len();
                     let (token, snap) = snapshots[idx].clone();
-                    v.restore(token);
+                    v.try_restore(token).expect("compat: own live token");
                     oracle = snap;
                     snapshots.truncate(idx);
                 }
@@ -171,7 +172,7 @@ proptest! {
             match op {
                 Op::Push(_) => {
                     if let Some(id) = factory.try_alloc() {
-                        v.push(id);
+                        v.try_push(id).expect("compat: within capacity");
                         oracle.push(id);
                     }
                 }
@@ -192,14 +193,14 @@ proptest! {
                 }
                 Op::Mark => {
                     if snapshots.len() >= 20 { continue; }
-                    let token = v.mark(ShrinkPolicy::Never);
+                    let token = v.try_mark(ShrinkPolicy::Never).expect("compat: depth in bounds");
                     snapshots.push((token, oracle.clone()));
                 }
                 Op::Restore(idx) => {
                     if snapshots.is_empty() { continue; }
                     let idx = idx % snapshots.len();
                     let (token, snap) = snapshots[idx].clone();
-                    v.restore(token);
+                    v.try_restore(token).expect("compat: own live token");
                     oracle = snap;
                     snapshots.truncate(idx);
                 }

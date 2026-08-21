@@ -46,7 +46,13 @@ pub enum ShrinkPolicy {
 /// mark time, `depth` the token's position along it. `container_id` rejects
 /// cross-container use. `frame_idx` and `depth` are numerically equal at mark
 /// but are DIFFERENT quantities (reconstruction index vs. validity depth) —
-/// see 02-fork-history.md §0.5.
+/// see `doc/design/03-fork-history.md`.
+///
+/// `branch_id` and `depth` are u32 by design, independent of the element
+/// index width: they count forks and open marks, not elements. The cap is
+/// 2^32 - 1 live branches / mark depth, enforced by the headroom
+/// preconditions on `fork` and the headroom clauses of `is_valid_token`,
+/// not by wrapping.
 #[derive(Copy, Clone)]
 pub struct VecToken {
     pub(crate) frame_idx: usize,
@@ -136,7 +142,7 @@ pub open(crate) spec fn frame_inv<T, I: IndexLike>(
 }
 
 // ---------------------------------------------------------------------------
-// `overlay` — the spec model of the restore loop (M4)
+// `overlay` -- the spec model of the restore loop
 // ---------------------------------------------------------------------------
 //
 // The restore loop walks the diff log from `n` down to `lo`, applying each
@@ -629,7 +635,8 @@ pub(crate) proof fn lemma_overlay_eq_snap<T, I: IndexLike>(
 }
 
 /// Semi-persistent vector parameterized by storage backend `S` and index
-/// type `I`. `TRACK` compiles out all tracking when false.
+/// type `I`. `TRACK=false` compiles out const-gated tracking execution; the
+/// generic layout still contains empty diff/frame/fork fields.
 pub struct Vec<T, I, S, const TRACK: bool = true>
 where
     T: Sized + Copy,
@@ -642,7 +649,7 @@ where
     /// The saved_len of the topmost (active) frame, cached for the hot path.
     /// `I::min()` when the stack is empty. Mirrors production.
     pub(crate) active_saved_len: I,
-    /// Branching genealogy for token-validity / branch-cut safety (M5).
+    /// Branching genealogy for token-validity and branch-cut safety.
     pub(crate) forks: ForkHistory,
     /// Per-container identity; rejects cross-container token use.
     pub(crate) id: ContainerId,
@@ -668,14 +675,14 @@ where
         self.snapshots@
     }
 
-    /// Frame-stack depth (spec twin of `depth()`). Public contracts phrase
+    /// Frame-stack depth (spec counterpart of `depth()`). Public contracts phrase
     /// frame counts through this — the `frames` field is `pub(crate)`
     /// (privacy closeout).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.frames@.len()
     }
 
-    /// Diff-log length (spec twin of `diff_log_len()`).
+    /// Diff-log length (spec counterpart of `diff_log_len()`).
     pub open(crate) spec fn diff_log_len_spec(&self) -> nat {
         self.diff_log@.len()
     }
@@ -687,7 +694,7 @@ where
     }
 
     /// Token validity (design doc §0.6): same container AND on the live branch
-    /// path at a depth within that branch's bound. This is the M5 precondition
+    /// path at a depth within that branch's bound. This is the genealogy precondition
     /// of `restore` — separate from the structural `frame_idx < frames.len()`
     /// reconstruction precondition (design §0.5). `current_depth` is the live
     /// depth `frames.len()`.
@@ -701,7 +708,7 @@ where
                 token.depth as nat)
     }
 
-    /// "Restorable now" (migration plan 2.2): the FULL runtime-checkable
+    /// "Restorable now": the full runtime-checkable
     /// precondition of `restore`. This is what the public `is_valid_token`
     /// answers — one public notion of validity: "would `restore(token)`
     /// succeed right now?". Strictly stronger than `is_token_valid_spec`
@@ -716,15 +723,6 @@ where
         &&& self.forks.origins@.len() + 1 <= u32::MAX
     }
 
-    /// Well-formedness. M3b invariants:
-    ///   - snapshots.len() == frames.len()           (parallel stacks)
-    ///   - frames.len() <= 1                          (single frame for now)
-    ///   - frames.len() == 0 ==> diff_log is empty   (no orphan diff entries)
-    ///   - if frames.len() == 1:
-    ///       diff_start == 0
-    ///       every diff entry idx < saved_len       (in-bounds diffs only)
-    ///       first-write-wins (unique indices)
-    ///       frame_inv(view, diff_log, snapshots[0], saved_len)
     /// The "layer above" frame `k`: snapshots[k+1] for inner frames, or the
     /// current view for the topmost frame.
     pub open(crate) spec fn layer_above_at(&self, k: int) -> Seq<T> {
@@ -744,22 +742,23 @@ where
         }
     }
 
-    /// Well-formedness, generalized to arbitrary stack depth (M4).
+    /// Well-formedness at arbitrary stack depth.
     ///
     /// Structural:
     ///   - snapshots.len() == frames.len()
     ///   - frames.len() == 0 ==> diff_log empty
     ///   - frames[0].diff_start == 0
     ///   - diff_starts monotone, last <= diff_log.len()
-    ///   - saved_lens monotone, last <= view.len()
+    ///   - saved lengths equal their snapshot lengths; they need not be
+    ///     monotone and may exceed the current view length after pop
     ///   - snapshots[k].len() == frames[k].saved_len
     ///
     /// Per-frame (over each frame's stratum `[diff_start_k, stratum_end_k)`):
     ///   frame_inv_range(layer_above(k), diff_log, lo_k, hi_k,
     ///                   snapshots[k], saved_len_k)
     /// The snapshot-reconstruction core of `wf`: store well-formedness,
-    /// parallel stack lengths, frame bookkeeping (diff_start/saved_len
-    /// monotone, snapshot lengths), and the per-frame `frame_inv_range`.
+    /// parallel stack lengths, frame bookkeeping (monotone diff_start and
+    /// snapshot lengths), and the per-frame `frame_inv_range`.
     ///
     /// Crucially this does NOT include the capture-flag bridge or the
     /// `store.captured().len() == view.len()` tie. `resize_default` (used by
@@ -899,7 +898,7 @@ where
     // arm (uncaptured j ==> j < layer_above.len()), which is exactly the bound
     // those lemmas used to supply and which holds unconditionally.
 
-    /// The central M4 lemma: overlaying all strata from frame `k` up to the
+    /// The central reconstruction lemma: overlaying all strata from frame `k` up to the
     /// top, onto the current view, reconstructs `snapshots[k]` (on its
     /// `[0, saved_len_k)` domain).
     ///
@@ -1021,17 +1020,16 @@ where
 
     /// "Untracked" state: no marks are live. Production compiles out tracking
     /// when `TRACK == false`; the verus model instead proves that whenever the
-    /// frame stack is empty there is ZERO tracking storage and operations are
-    /// pure `std::Vec` operations on the view. (`mark` is the only way to make
-    /// the stack non-empty, so a vector that is never marked stays untracked.)
+    /// frame stack is empty there are no live diff entries and operations have
+    /// the plain sequence transitions on the view. The empty diff/frame/fork
+    /// fields and runtime guards remain in the executable struct.
     pub open(crate) spec fn untracked(&self) -> bool {
         self.frames@.len() == 0
     }
 
-    /// No tracking overhead while untracked: `wf` already forces an empty diff
-    /// log when the frame stack is empty, so an unmarked vector carries no
-    /// diff entries. This is the TRACK=false guarantee at the model level.
-    pub(crate) proof fn lemma_untracked_no_overhead(&self)
+    /// `wf` forces an empty diff log when the frame stack is empty.
+    /// This is a logical-state fact, not a layout or code-generation theorem.
+    pub(crate) proof fn lemma_untracked_diff_log_empty(&self)
         requires self.wf(), self.untracked(),
         ensures self.diff_log@.len() == 0,
     {
@@ -1045,42 +1043,72 @@ where
     /// in push/set/pop's own contracts, which hold for ALL states.
     pub fn push_untracked(&mut self, value: T)
         requires
-            old(self).wf(), old(self).untracked(),
-            old(self).view().len() + 1 < I::max_nat(),
+            old(self).wf(),
         ensures
-            final(self).wf(), final(self).untracked(),
-            final(self).view() == old(self).view().push(value),   // std::Vec::push
-            final(self).diff_log_len_spec() == 0,                   // no overhead
+            final(self).wf(),
+            (old(self).untracked() && old(self).view().len() + 1 < I::max_nat()) ==> {
+                &&& final(self).untracked()
+                &&& final(self).view() == old(self).view().push(value)
+                &&& final(self).diff_log_len_spec() == 0
+            },
     {
+        if !(self.frames.len() == 0) {
+            crate::guard::refuse("Vec::push_untracked: vector has live frames");
+        }
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+        }
+        if !(self.store.raw_len() < cap) {
+            crate::guard::refuse("Vec::push_untracked: index word exhausted");
+        }
         self.push(value);
-        proof { self.lemma_untracked_no_overhead(); }
+        proof { self.lemma_untracked_diff_log_empty(); }
     }
 
     pub fn pop_untracked(&mut self) -> (r: Option<T>)
-        requires old(self).wf(), old(self).untracked(),
+        requires old(self).wf(),
         ensures
-            final(self).wf(), final(self).untracked(),
-            old(self).view().len() == 0 ==> r is None && final(self).view() == old(self).view(),
-            old(self).view().len() > 0 ==> r == Some(old(self).view().last())
-                && final(self).view() == old(self).view().drop_last(),   // std::Vec::pop
-            final(self).diff_log_len_spec() == 0,                         // no overhead
+            final(self).wf(),
+            old(self).untracked() ==> {
+                &&& final(self).untracked()
+                &&& (old(self).view().len() == 0
+                    ==> r is None && final(self).view() == old(self).view())
+                &&& (old(self).view().len() > 0
+                    ==> r == Some(old(self).view().last())
+                        && final(self).view() == old(self).view().drop_last())
+                &&& final(self).diff_log_len_spec() == 0
+            },
     {
+        if !(self.frames.len() == 0) {
+            crate::guard::refuse("Vec::pop_untracked: vector has live frames");
+        }
         let r = self.pop();
-        proof { self.lemma_untracked_no_overhead(); }
+        proof { self.lemma_untracked_diff_log_empty(); }
         r
     }
 
     pub fn set_untracked(&mut self, i: I, value: T)
         requires
-            old(self).wf(), old(self).untracked(),
-            i.as_nat() < old(self).view().len(),
+            old(self).wf(),
         ensures
-            final(self).wf(), final(self).untracked(),
-            final(self).view() == old(self).view().update(i.as_nat() as int, value),  // std update
-            final(self).diff_log_len_spec() == 0,                                      // no overhead
+            final(self).wf(),
+            (old(self).untracked() && i.as_nat() < old(self).view().len()) ==> {
+                &&& final(self).untracked()
+                &&& final(self).view() == old(self).view().update(i.as_nat() as int, value)
+                &&& final(self).diff_log_len_spec() == 0
+            },
     {
+        if !(self.frames.len() == 0) {
+            crate::guard::refuse("Vec::set_untracked: vector has live frames");
+        }
+        if !(i.as_usize() < self.store.raw_len()) {
+            crate::guard::refuse("Vec::set_untracked: index out of bounds");
+        }
         self.set_index(i, value);
-        proof { self.lemma_untracked_no_overhead(); }
+        proof { self.lemma_untracked_diff_log_empty(); }
     }
 
     #[inline(always)]
@@ -1103,9 +1131,16 @@ where
     pub fn get_index(&self, i: I) -> (v: T)
         requires
             self.wf(),
-            i.as_nat() < self.view().len(),
-        ensures v == self.view()[i.as_nat() as int],
+        ensures
+            i.as_nat() < self.view().len() ==> v == self.view()[i.as_nat() as int],
     {
+        // Total with documented panic: the bound
+        // is an explicit branch, not an erased requires — an out-of-range
+        // index from an unverified caller refuses instead of whatever the
+        // store does. The check is the one std indexing performed anyway.
+        if !(i.as_usize() < self.store.raw_len()) {
+            crate::guard::refuse("Vec::get_index: index out of bounds");
+        }
         self.store.get(i)
     }
 
@@ -1113,7 +1148,7 @@ where
     /// production's `with_store`. The store must be well-formed and empty
     /// (no data, no capture flags) — the concrete `new()` of each backend
     /// supplies that.
-    pub fn with_store(store: S) -> (v: Self)
+    pub(crate) fn with_store(store: S) -> (v: Self)
         requires
             store.wf(),
             store.data().len() == 0,
@@ -1274,7 +1309,183 @@ where
         core::mem::size_of::<Self>() + self.store.heap_bytes() + self.tracking_bytes()
     }
 
-    /// THE public token-validity check: "restorable now" (migration plan 2.2).
+    // ------------------------------------------------------------------
+    // Total-operation shell: no `requires` beyond wf; every
+    // precondition of the partial core is evaluated by a verified exec counterpart
+    // and the branch discharges the core's contract as a proof obligation,
+    // so the check and the contract cannot drift.
+    // ------------------------------------------------------------------
+
+    /// Exec counterpart of `push`'s capacity precondition.
+    pub fn can_push(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (self.view().len() + 1 < I::max_nat()),
+    {
+        let n = self.store.raw_len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(n as nat == self.view().len());
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        n < cap
+    }
+
+    /// Total push: refuses at the index word's capacity instead of the
+    /// partial core's deferred trap-at-next-`len()` protocol.
+    pub fn try_push(&mut self, value: T) -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view() == old(self).view().push(value)
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.can_push() {
+            self.push(value);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total batch push: ONE capacity check licenses the whole slice, the
+    /// loop invariant carries the bound to each core `push` — the amortized
+    /// form of `try_push` for hot loops (one branch per batch, none per
+    /// element).
+    pub fn try_extend(&mut self, values: &[T]) -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view() == old(self).view() + values@,
+            r is Err ==> final(self).view() == old(self).view(),
+            final(self).snapshots_view() == old(self).snapshots_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        let n = self.store.raw_len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(n as nat == self.view().len());
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        // `n <= cap` first so `cap - n` cannot underflow; then the batch must
+        // fit strictly under the word (`< max_nat` after every push).
+        if n > cap || values.len() > cap - n {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        let ghost old_view = self.view();
+        let mut i: usize = 0;
+        while i < values.len()
+            invariant
+                self.wf(),
+                i <= values@.len(),
+                self.view() == old_view + values@.subrange(0, i as int),
+                self.snapshots_view() == old(self).snapshots_view(),
+                old_view.len() + values@.len() < I::max_nat(),
+            decreases values@.len() - i,
+        {
+            proof {
+                assert(self.view().len() + 1 < I::max_nat());
+            }
+            self.push(values[i]);
+            proof {
+                assert(self.view() =~= old_view + values@.subrange(0, i as int + 1));
+            }
+            i += 1;
+        }
+        proof {
+            assert(values@.subrange(0, values@.len() as int) =~= values@);
+        }
+        Ok(())
+    }
+
+    /// Exec counterpart of `mark`'s preconditions (TRACK, depth headroom, length
+    /// representable in the token's saved_len).
+    pub fn can_mark(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (TRACK && self.depth_spec() < u32::MAX
+            && self.view().len() < I::max_nat()),
+    {
+        let n = self.store.raw_len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(n as nat == self.view().len());
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        TRACK && self.frames.len() < (u32::MAX as usize) && n <= cap
+    }
+
+    /// Total mark: the error names which precondition failed.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<VecToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).view() == old(self).view()
+                &&& token.frame_idx_spec() == old(self).depth_spec()
+                &&& final(self).depth_spec() == old(self).depth_spec() + 1
+                &&& final(self).snapshots_view()
+                    == old(self).snapshots_view().push(old(self).view())
+            },
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).depth_spec() == old(self).depth_spec()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+        }
+        if !(self.store.raw_len() <= <I as crate::index_like::IndexLike>::max().as_usize()) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: `is_valid_token` already answers exactly "would
+    /// `restore` succeed right now" (`is_restorable_spec` is the FULL
+    /// runtime-checkable precondition), so the wrapper is the check.
+    pub fn try_restore(&mut self, token: VecToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        where T: core::default::Default
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view()
+                == old(self).snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).depth_spec() == token.frame_idx_spec()
+                && final(self).snapshots_view()
+                    == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).depth_spec() == old(self).depth_spec()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
+    /// The public token-validity check: "restorable now".
     /// Returns exactly `is_restorable_spec(token)` — true iff `restore(token)`
     /// would succeed at this moment: TRACK on, same container, frame still
     /// live (rejects consumed tokens), on the live branch path within its
@@ -1330,7 +1541,7 @@ where
     }
 
     #[inline(always)]
-    pub fn push(&mut self, value: T)
+    pub(crate) fn push(&mut self, value: T)
         requires
             old(self).wf(),
             old(self).view().len() + 1 < I::max_nat(),
@@ -1342,7 +1553,7 @@ where
         let ghost old_view = self.view();
         let ghost old_self = *self;
         let old_len = self.store.len();
-        // Overflow protocol (production parity, fix-2 follow-up): push itself
+        // Production-compatible overflow protocol: push itself
         // carries NO runtime check — the verified `requires` still obliges
         // every verified caller to prove `view().len() + 1 < I::max_nat()`,
         // and an UNVERIFIED caller who pushes past the index capacity is
@@ -1913,12 +2124,17 @@ where
     pub fn set_index(&mut self, i: I, value: T)
         requires
             old(self).wf(),
-            i.as_nat() < old(self).view().len(),
         ensures
             final(self).wf(),
-            final(self).view() == old(self).view().update(i.as_nat() as int, value),
-            final(self).snapshots_view() == old(self).snapshots_view(),
+            i.as_nat() < old(self).view().len() ==> {
+                &&& final(self).view() == old(self).view().update(i.as_nat() as int, value)
+                &&& final(self).snapshots_view() == old(self).snapshots_view()
+            },
     {
+        // Total-with-documented-panic (hot family): explicit bound branch.
+        if !(i.as_usize() < self.store.raw_len()) {
+            crate::guard::refuse("Vec::set_index: index out of bounds");
+        }
         let ghost old_view = self.view();
         let ghost old_diffs = self.diff_log@;
         let ghost old_frames = self.frames@;
@@ -2232,8 +2448,6 @@ where
     /// Mark a snapshot point. Returns a token that can be passed to
     /// `restore` to roll back to the current state.
     ///
-    /// M3b: only one live mark at a time. The precondition rejects nested
-    /// marks; M4 will lift that.
     /// Mark a snapshot point, possibly nested. The new frame's stratum
     /// starts empty (diff_start == current diff_log.len()), so its
     /// frame_inv_range holds with the view as both layer and snapshot.
@@ -2243,11 +2457,11 @@ where
     /// equals the view — so its frame_inv_range transfers.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
             old(self).wf(),
-            // TRACK gate (production parity, plan 2.4): mark is uncallable on
-            // an untracked vec — production panics, and so do we (guard in
+            // Mark is unavailable on an untracked vec. Production panics, and
+            // so do we (guard in
             // body). The TRACK=false observational-equivalence theorem
             // (untracked ⇒ plain std::Vec) is about push/pop/set/get only.
             TRACK,
@@ -2262,8 +2476,8 @@ where
             final(self).depth_spec() == old(self).depth_spec() + 1,
             final(self).snapshots_view() == old(self).snapshots_view().push(old(self).view()),
     {
-        // Runtime guards (plan 2.3/2.4), BEFORE maybe_shrink so a rejected
-        // mark does not change capacity: TRACK parity, and the u32 depth cast.
+        // Run guards before maybe_shrink so a rejected mark does not change
+        // capacity: TRACK parity and the u32 depth cast.
         crate::guard::check_precondition(TRACK, "mark() called on untracked vec");
         crate::guard::check_precondition(
             self.frames.len() < u32::MAX as usize,
@@ -2475,7 +2689,7 @@ where
 
     /// Restore the vector to the state captured by `token`.
     ///
-    /// M4 restore — to any frame_idx in range, across nested strata.
+    /// Restores to any in-range frame across nested strata.
     ///
     /// The loop walks the diff log from `n` down to `frames[target].diff_start`,
     /// replaying each entry. By the `overlay` model, the result on the
@@ -2484,14 +2698,14 @@ where
     /// lemma `lemma_snap_eq_overlay` equals `snapshots[target]`.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(200)]
-    pub fn restore(&mut self, token: VecToken)
+    pub(crate) fn restore(&mut self, token: VecToken)
         where T: core::default::Default
         requires
             old(self).wf(),
-            // TRACK gate (production parity, plan 2.4): restore is uncallable
+            // TRACK gate: restore is uncallable
             // on an untracked vec.
             TRACK,
-            // M5 validity precondition (the formal form of production's
+            // Genealogy validity precondition (the formal form of production's
             // is_valid + container asserts). Rejects stale/cross-container
             // tokens. Parallel to — not a substitute for — the structural
             // frame_idx-in-range precondition (design §0.5).
@@ -2508,8 +2722,8 @@ where
             final(self).depth_spec() == token.frame_idx_spec(),
             final(self).snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
-        // Runtime guards (plan 2.3): a verified caller has proven every
-        // `requires` clause, so these are provably-true no-ops for them. An
+        // A verified caller has proven every `requires` clause, so these
+        // runtime guards are provably true no-ops for that caller. An
         // unverified caller's build erases `requires`; production asserts the
         // same conditions at runtime, and so do we — the FULL restorable
         // predicate, BEFORE reading frames[token.frame_idx] or mutating
@@ -3066,7 +3280,7 @@ where
         self.vec.view()
     }
 
-    /// The underlying vec (spec twin; the field is `pub(crate)` — privacy
+    /// The underlying vec (spec counterpart; the field is `pub(crate)` — privacy
     /// closeout).
     pub open(crate) spec fn vec_ref(&self) -> &Vec<T, I, S, TRACK> {
         self.vec
@@ -3087,9 +3301,10 @@ where
     }
 
     pub fn get(&self, i: I) -> (v: T)
-        requires self.vec_ref().wf(), i.as_nat() < self.seq().len(),
-        ensures v == self.seq()[i.as_nat() as int],
+        requires self.vec_ref().wf(),
+        ensures i.as_nat() < self.seq().len() ==> v == self.seq()[i.as_nat() as int],
     {
+        // get_index is total: an out-of-range index refuses there by name.
         self.vec.get_index(i)
     }
 
@@ -3119,12 +3334,12 @@ where
     I: IndexLike,
     S: DiffStore<T, I, TRACK>,
 {
-    /// The underlying vec (spec twin; the field is `pub(crate)`).
+    /// The underlying vec (spec counterpart; the field is `pub(crate)`).
     pub open(crate) spec fn vec_ref(&self) -> &Vec<T, I, S, TRACK> {
         self.vec
     }
 
-    /// The cursor position (spec twin; the field is `pub(crate)`).
+    /// The cursor position (spec counterpart; the field is `pub(crate)`).
     pub open(crate) spec fn pos_spec(&self) -> nat {
         self.pos as nat
     }
@@ -3137,19 +3352,34 @@ where
     pub fn next(&mut self) -> (r: Option<T>)
         requires
             old(self).vec_ref().wf(),
-            old(self).pos_spec() <= old(self).vec_ref().view().len(),
-            old(self).vec_ref().view().len() < I::max_nat(),
         ensures
-            final(self).vec_ref() == old(self).vec_ref(),
-            old(self).pos_spec() < old(self).vec_ref().view().len() ==> {
-                &&& r == Some(old(self).vec_ref().view()[old(self).pos_spec() as int])
-                &&& final(self).pos_spec() == old(self).pos_spec() + 1
-            },
-            old(self).pos_spec() >= old(self).vec_ref().view().len() ==> {
-                &&& r is None
-                &&& final(self).pos_spec() == old(self).pos_spec()
-            },
+            (old(self).pos_spec() <= old(self).vec_ref().view().len()
+                && old(self).vec_ref().view().len() < I::max_nat()) ==> ({
+                &&& final(self).vec_ref() == old(self).vec_ref()
+                &&& (old(self).pos_spec() < old(self).vec_ref().view().len() ==> {
+                    &&& r == Some(old(self).vec_ref().view()[old(self).pos_spec() as int])
+                    &&& final(self).pos_spec() == old(self).pos_spec() + 1
+                })
+                &&& (old(self).pos_spec() >= old(self).vec_ref().view().len() ==> {
+                    &&& r is None
+                    &&& final(self).pos_spec() == old(self).pos_spec()
+                })
+            }),
     {
+        // Total-with-documented-panic: the erased iterator-state requires
+        // become branches (pos past the view, or a view too long for I).
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+        }
+        if !(self.vec.store.raw_len() <= cap) {
+            crate::guard::refuse("VecViewIter::next: view exceeds the index word");
+        }
+        if !(self.pos <= self.vec.store.raw_len()) {
+            crate::guard::refuse("VecViewIter::next: cursor past the view");
+        }
         let len = self.vec.len();
         if self.pos >= len.as_usize() {
             return None;
@@ -3212,7 +3442,7 @@ impl core::fmt::Debug for VecToken {
 }
 
 // ---------------------------------------------------------------------------
-// Production-shaped trusted glue (migration plan Phase 4, trust group E).
+// Production-shaped trusted glue (trust group E).
 //
 // A generic `impl Into<I>` bound carries no Verus-visible relation between
 // the input and the converted index, so the conversion cannot live inside a
@@ -3263,15 +3493,20 @@ where
         // explicitly to avoid trait-method recursion).
         VecViewIter::next(self)
     }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.vec.len().as_usize().saturating_sub(self.pos);
+        (n, Some(n))
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Forged-state unit tests (migration plan 2.5, in-module half). These
+// Forged-state unit tests (in-module half). These
 // construct token states unreachable through the public API — possible here
 // because the module sees the token fields — and check the runtime guards
 // reject them BEFORE mutation. They complement tests/misuse.rs (public-API
-// misuse) and stay valid after the Phase 5 privacy closeout (in-module code
-// keeps field access).
+// misuse); in-module code keeps the field access these tests require.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -3418,5 +3653,67 @@ mod mixed_component_token_tests {
         assert!(!s.contains(id3));
         assert_eq!(s.get(id1), 10);
         assert_eq!(s.get(id2), 20);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Production-surface parity impls (plain Rust, outside verus!): the derive
+// set production ships. Default mirrors the two concrete `new()` impls;
+// token equality compares all four fields.
+// ---------------------------------------------------------------------------
+
+impl core::fmt::Debug for ShrinkPolicy {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ShrinkPolicy::Never => f.write_str("Never"),
+            ShrinkPolicy::IfOverallocated { factor, headroom } => f
+                .debug_struct("IfOverallocated")
+                .field("factor", factor)
+                .field("headroom", headroom)
+                .finish(),
+        }
+    }
+}
+
+impl<T, I, const TRACK: bool> Default
+    for Vec<T, I, crate::parallel_store::ParallelStore<T, I>, TRACK>
+where
+    T: Sized + Copy,
+    I: crate::index_like::IndexLike,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T, I, const TRACK: bool> Default for Vec<T, I, crate::inline_store::InlineStore<T, I>, TRACK>
+where
+    T: crate::tagged::Tagged,
+    I: crate::index_like::IndexLike,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for VecToken {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.frame_idx == other.frame_idx
+            && self.branch_id == other.branch_id
+            && self.depth == other.depth
+            && self.container_id == other.container_id
+    }
+}
+impl Eq for VecToken {}
+
+impl<'a, T, I, S, const TRACK: bool> ExactSizeIterator for VecViewIter<'a, T, I, S, TRACK>
+where
+    T: Sized + Copy,
+    I: crate::index_like::IndexLike,
+    S: crate::diff_store::DiffStore<T, I, TRACK>,
+{
+    fn len(&self) -> usize {
+        self.vec.len().as_usize().saturating_sub(self.pos)
     }
 }

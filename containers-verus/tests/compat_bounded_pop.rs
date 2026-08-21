@@ -5,7 +5,7 @@
 //! The bounded-pop contract (diff log holds at most one entry per index per
 //! frame, `<= saved_len` total) is the verus crate's NATIVE design — production
 //! back-ported it from here. These tests pin the observable contract via
-//! `diff_log_len()` (exposed in Phase 4) and the restore round-trip through
+//! `diff_log_len()` and the restore round-trip through
 //! `resize_default` regrow.
 //!
 //! Gated on `compat-core`.
@@ -18,10 +18,12 @@ fn pop_push_loop_keeps_diff_log_bounded() {
     let mut v: VecI<u32, u32, true> = VecI::new();
     const SAVED_LEN: usize = 8;
     for i in 0..SAVED_LEN as u32 {
-        v.push(i);
+        v.try_push(i).expect("compat: within capacity");
     }
 
-    let _token = v.mark(ShrinkPolicy::Never);
+    let _token = v
+        .try_mark(ShrinkPolicy::Never)
+        .expect("compat: depth in bounds");
     assert_eq!(v.diff_log_len(), 0, "fresh frame starts with an empty log");
 
     // The exploit loop: pop the top slot (which sits below saved_len) and push
@@ -30,7 +32,7 @@ fn pop_push_loop_keeps_diff_log_bounded() {
     const ITERS: usize = 100_000;
     for _ in 0..ITERS {
         let popped = v.pop().expect("non-empty");
-        v.push(popped);
+        v.try_push(popped).expect("compat: within capacity");
     }
 
     // Bounded: at most one entry per index in [0, saved_len). The loop only ever
@@ -54,10 +56,12 @@ fn restore_roundtrips_after_popping_marked_region() {
     let mut v: VecI<u32, u32, true> = VecI::new();
     let snapshot: Vec<u32> = (10..20).collect();
     for &x in &snapshot {
-        v.push(x);
+        v.try_push(x).expect("compat: within capacity");
     }
 
-    let token = v.mark(ShrinkPolicy::Never);
+    let token = v
+        .try_mark(ShrinkPolicy::Never)
+        .expect("compat: depth in bounds");
 
     // Pop the entire marked region (and then some growth past it), exercising
     // the conditional-capture-on-pop path for every cell below saved_len.
@@ -67,10 +71,10 @@ fn restore_roundtrips_after_popping_marked_region() {
     // Re-grow above the old length with fresh values to make sure restore
     // truncates the surplus too.
     for x in 100..130u32 {
-        v.push(x);
+        v.try_push(x).expect("compat: within capacity");
     }
 
-    v.restore(token);
+    v.try_restore(token).expect("compat: own live token");
 
     // The popped region must be regrown by resize_default and then fully
     // overwritten by the captured diffs: view() equals the pre-mark snapshot.
@@ -92,13 +96,15 @@ fn restore_roundtrips_after_popping_marked_region() {
 fn set_after_reentry_does_not_double_capture() {
     let mut v: VecI<u32, u32, true> = VecI::new();
     for i in 0..4u32 {
-        v.push(i);
+        v.try_push(i).expect("compat: within capacity");
     }
-    let token = v.mark(ShrinkPolicy::Never);
+    let token = v
+        .try_mark(ShrinkPolicy::Never)
+        .expect("compat: depth in bounds");
 
     // Pop slot 3 (captures it once), then push a new value back into slot 3.
     let _ = v.pop();
-    v.push(999);
+    v.try_push(999).expect("compat: within capacity");
     let after_reentry = v.diff_log_len();
 
     // A later `set` on the re-entered slot must NOT add another entry: push's
@@ -111,7 +117,7 @@ fn set_after_reentry_does_not_double_capture() {
     );
 
     // And restore still round-trips to the pre-mark state.
-    v.restore(token);
+    v.try_restore(token).expect("compat: own live token");
     let view = v.view_handle();
     assert_eq!(view.len(), 4);
     for i in 0..4u32 {

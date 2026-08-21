@@ -1,0 +1,14 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The variable-ordering shape: a guard comparing two labels bound by the same pattern,
+;; which is what makes an if-then-else tree a decision diagram rather than an arbitrary
+;; one. Both orderings are asked for, and exactly one fires per pair.
+(datatype Expr (Num i64) (P Expr Expr) (Lo Expr) (Hi Expr))
+
+(rule ((P (Num a) (Num b)) (i64::< a b)) ((union (Lo (Num a)) (Hi (Num b)))))
+
+(P (Num 1) (Num 4))
+(P (Num 9) (Num 2))
+(run 3)
+(check (= (Lo (Num 1)) (Hi (Num 4))))
+(check (!= (Lo (Num 9)) (Hi (Num 2))))

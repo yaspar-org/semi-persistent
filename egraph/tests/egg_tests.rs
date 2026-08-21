@@ -3,20 +3,22 @@
 //! File-based integration tests for the interpreter.
 //!
 //! Each `.egg` file in `tests/egg/` is run through the interpreter. The first six lines may
-//! carry directive comments. The three feature directives mirror the CLI verbs (use / derive
-//! / check), so a test file is self-contained, no env var needed:
+//! carry directive comments. The feature directives mirror the CLI flags, so a test file is
+//! self-contained, no env var needed:
 //!   ;; EXPECT: ok|check-failed|parse-error|sort-error|error|panic   outcome (default: ok)
 //!   ;; TYPES: machine                                     type group (default: bignum)
 //!   ;; EVAL: naive|semi|both                              eval algorithm (default: both)
-//!   ;; DERIVE_AC_EQS: on                                  derive all AC consequences (default off)
+//!   ;; DERIVE_AC_EQS: on                                  eager AC completion (default off)
+//!   ;; LAZY_AC_EQS: on                                    lazy AC completion at checks (default off)
+//!   ;; UNION_BY: rank|size|uses|sum                       merge survivor policy (default rank)
 //!   ;; CHECK_AC_BASIS: on                                 enable + assert the reduced-basis
 //!                                                         invariants post-run (default off)
 //!
-//! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome
-//! (the historical default cross-check). DERIVE_AC_EQS renames the old AC_COMPLETE directive.
+//! EVAL `both` runs the file under naive AND semi-naive, asserting the same EXPECT outcome.
 //! CHECK_AC_BASIS turns on `set_basis_checks` and, after a successful run, asserts the active
-//! AC rule set is fully reduced (`min_monomial` minimal, Kapur-reduced); it needs DERIVE_AC_EQS to
-//! have anything to check.
+//! checks: `min_monomial` minimality and the implemented Kapur-reduced left-side conditions.
+//! The report also diagnoses reducible right sides, but this harness does not reject them.
+//! It needs DERIVE_AC_EQS to have anything to check.
 
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::model::*;
@@ -29,7 +31,9 @@ struct Directives {
     /// The eval strategies to run under (one each for naive/semi, both for `both`).
     evals: Vec<SaturationStrategy>,
     derive_ac_eqs: bool,
+    lazy_ac_eqs: bool,
     check_ac_basis: bool,
+    union_by: semi_persistent_egraph::UnionBy,
 }
 
 fn parse_directives(src: &str) -> Directives {
@@ -38,7 +42,9 @@ fn parse_directives(src: &str) -> Directives {
         types: "bignum".to_string(),
         evals: vec![SaturationStrategy::Naive, SaturationStrategy::SemiNaive],
         derive_ac_eqs: false,
+        lazy_ac_eqs: false,
         check_ac_basis: false,
+        union_by: semi_persistent_egraph::UnionBy::Rank,
     };
     for line in src.lines().take(6) {
         let line = line.trim();
@@ -59,8 +65,21 @@ fn parse_directives(src: &str) -> Directives {
         if let Some(rest) = line.strip_prefix(";; DERIVE_AC_EQS:") {
             d.derive_ac_eqs = rest.trim() == "on";
         }
+        if let Some(rest) = line.strip_prefix(";; LAZY_AC_EQS:") {
+            d.lazy_ac_eqs = rest.trim() == "on";
+        }
         if let Some(rest) = line.strip_prefix(";; CHECK_AC_BASIS:") {
             d.check_ac_basis = rest.trim() == "on";
+        }
+        if let Some(rest) = line.strip_prefix(";; UNION_BY:") {
+            use semi_persistent_egraph::UnionBy;
+            d.union_by = match rest.trim() {
+                "rank" => UnionBy::Rank,
+                "size" => UnionBy::Size,
+                "uses" => UnionBy::Uses,
+                "sum" => UnionBy::Sum,
+                other => panic!("unknown UNION_BY directive: {other}"),
+            };
         }
     }
     d
@@ -104,6 +123,10 @@ fn run_with<
         Interpreter::<semi_persistent_egraph::nodes::DefaultConfig, L, M, true, false>::new(model);
     interp.set_strategy(strategy);
     interp.set_cc(d.derive_ac_eqs);
+    if d.lazy_ac_eqs {
+        interp.set_ac_mode(semi_persistent_egraph::interpret::AcMode::Lazy);
+    }
+    interp.set_union_by(d.union_by);
     interp.set_basis_checks(d.check_ac_basis);
     let mut globals = semi_persistent_egraph::resolve::GlobalCtx::new();
     let checked = match semi_persistent_egraph::sortcheck::sortcheck_program(
@@ -117,9 +140,11 @@ fn run_with<
     };
     match interp.run_checked(&checked) {
         Ok(()) => {
-            // CHECK_AC_BASIS: after a clean run, assert the active AC rule set is fully
-            // reduced (every used min_monomial is the true minimum; no rule LHS reducible by the
-            // others). This turns the diagnostic checkers into a real test assertion.
+            // CHECK_AC_BASIS: after a clean run, assert the selected finite-state properties:
+            // every used min_monomial is the true minimum, no rule LHS is reducible by the
+            // others, and semantic-axiom critical pairs join. The diagnostic also computes
+            // RHS reducibility, but this fixture gate deliberately does not assert it and
+            // therefore does not establish a fully Kapur-reduced rule set.
             if d.check_ac_basis {
                 let report = interp.eg.cc_basis_report();
                 let (nonmin, _) = interp.eg.cc_min_used_nonminimal();
@@ -154,33 +179,40 @@ fn run_with<
 fn check(path: &str) {
     let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
     let directives = parse_directives(&src);
-    for strategy in directives.evals.iter().copied() {
-        let (expect, results) = run_egg_file(path, strategy, &directives);
-        let output = results.join("\n");
-        match expect.as_str() {
-            "ok" => assert!(
-                output.starts_with("ok"),
-                "{path} [{strategy:?}]: expected ok, got: {output}"
-            ),
-            "check-failed" => assert!(
-                output.contains("check failed"),
-                "{path} [{strategy:?}]: expected check-failed, got: {output}"
-            ),
-            "parse-error" => assert!(
-                output.contains("parse-error"),
-                "{path} [{strategy:?}]: expected parse-error, got: {output}"
-            ),
-            "error" => assert!(
-                output.starts_with("error"),
-                "{path} [{strategy:?}]: expected error, got: {output}"
-            ),
-            "sort-error" => assert!(
-                output.starts_with("sort-error"),
-                "{path} [{strategy:?}]: expected sort-error, got: {output}"
-            ),
-            other => panic!("{path}: unknown EXPECT directive: {other}"),
+    // Every file runs under both atom-scheduling modes as well as under both
+    // evaluation strategies. The scheduling flag may not change what a program
+    // computes, only the order in which matches are found (design chapter 20),
+    // and a whole-program outcome over a hundred and seven files is the
+    // broadest statement of that available.
+    for runtime in [false, true] {
+        semi_persistent_egraph::ematch::set_runtime_scheduling(runtime);
+        for strategy in directives.evals.iter().copied() {
+            let (expect, results) = run_egg_file(path, strategy, &directives);
+            let output = results.join("\n");
+            let at = format!("{path} [{strategy:?}, runtime_scheduling={runtime}]");
+            match expect.as_str() {
+                "ok" => assert!(output.starts_with("ok"), "{at}: expected ok, got: {output}"),
+                "check-failed" => assert!(
+                    output.contains("check failed"),
+                    "{at}: expected check-failed, got: {output}"
+                ),
+                "parse-error" => assert!(
+                    output.contains("parse-error"),
+                    "{at}: expected parse-error, got: {output}"
+                ),
+                "error" => assert!(
+                    output.starts_with("error"),
+                    "{at}: expected error, got: {output}"
+                ),
+                "sort-error" => assert!(
+                    output.starts_with("sort-error"),
+                    "{at}: expected sort-error, got: {output}"
+                ),
+                other => panic!("{path}: unknown EXPECT directive: {other}"),
+            }
         }
     }
+    semi_persistent_egraph::ematch::set_runtime_scheduling(false);
 }
 
 fn check_panic(path: &str) {
@@ -232,7 +264,7 @@ macro_rules! egg_test {
             check_panic(concat!("tests/egg/", $file));
         }
     };
-    // Known-failing reproducer: runs only under `--ignored`. `$why` documents the open bug.
+    // Unsupported-behavior fixture: runs only under `--ignored`; `$why` states the limitation.
     ($name:ident, $file:expr, ignore = $why:expr) => {
         #[test]
         #[ignore = $why]
@@ -290,6 +322,23 @@ egg_test!(push_pop, "push_pop.egg");
 egg_test!(rewrite_commute, "rewrite_commute.egg");
 egg_test!(rewrite_constant_fold, "rewrite_constant_fold.egg");
 
+// ── Ground literals in patterns ──
+// A literal written inside a pattern resolves to an `RAtom::Lit`, which used to compile
+// to a `Step::Join` with no index lookup; that join yields nothing, so every rule holding
+// one was dead. The first seven files all failed before the fix and cover the positions a
+// literal can occupy; the eighth is the boundary, and passed before it too.
+egg_test!(lit_pattern_ground, "lit_pattern_ground.egg");
+egg_test!(lit_pattern_depth2, "lit_pattern_depth2.egg");
+egg_test!(lit_pattern_when_guard, "lit_pattern_when_guard.egg");
+egg_test!(lit_pattern_multi_body, "lit_pattern_multi_body.egg");
+egg_test!(lit_pattern_string, "lit_pattern_string.egg");
+egg_test!(lit_pattern_bignum, "lit_pattern_bignum.egg");
+egg_test!(lit_pattern_rhs, "lit_pattern_rhs.egg");
+egg_test!(
+    lit_pattern_term_paths_unaffected,
+    "lit_pattern_term_paths_unaffected.egg"
+);
+
 // ── Subsumption ──
 egg_test!(subsume, "subsume.egg");
 
@@ -300,18 +349,77 @@ egg_test!(globals_in_patterns, "globals_in_patterns.egg");
 egg_test!(extract_basic, "extract_basic.egg");
 egg_test!(extract_aci, "extract_aci.egg");
 
+// ── Constructors (`(constructor …)`, `:cost`, `:unextractable`) ──
+// A constructor is a function for congruence and matching; the difference is extraction.
+egg_test!(constructor_congruence, "constructor_congruence.egg");
+egg_test!(constructor_cost, "constructor_cost.egg");
+// A class whose every node is `:unextractable` is an extract error naming the class.
+egg_test!(constructor_unextractable, "constructor_unextractable.egg");
+egg_test!(
+    constructor_unextractable_alternative,
+    "constructor_unextractable_alternative.egg"
+);
+egg_test!(
+    datatype_variants_are_constructors,
+    "datatype_variants_are_constructors.egg"
+);
+
+// ── Rulesets, run goals, birewrite, stats ──
+egg_test!(ruleset_scoping, "ruleset_scoping.egg");
+egg_test!(birewrite_both_directions, "birewrite_both_directions.egg");
+egg_test!(run_until_goal, "run_until_goal.egg");
+egg_test!(print_size_and_stats, "print_size_and_stats.egg");
+
 // ── Deep multi-level constant folding ──
 egg_test!(deep_constant_fold, "deep_constant_fold.egg");
 
 // ── AC multiplicity semantics ──
 egg_test!(ac_mult_exact, "ac_mult_exact.egg");
+egg_test!(
+    ac_multiplicity_variant_gap,
+    "ac_multiplicity_variant_gap.egg"
+);
+egg_test!(ac_multiplicity_variant, "ac_multiplicity_variant.egg");
+egg_test!(ac_lazy_entailment, "ac_lazy_entailment.egg");
+egg_test!(ac_lazy_neq_derived, "ac_lazy_neq_derived.egg");
+egg_test!(ac_lazy_alternation, "ac_lazy_alternation.egg");
+egg_test!(semi_recanon_parent_delta, "semi_recanon_parent_delta.egg");
+egg_test!(
+    semi_merge_membership_delta,
+    "semi_merge_membership_delta.egg"
+);
+egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
+egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
+egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
+egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
+egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
+egg_test!(rbig_mult_lift, "rbig_mult_lift.egg");
+egg_test!(rbig_pow_conformance, "rbig_pow_conformance.egg");
 egg_test!(ac_mult_constraint, "ac_mult_constraint.egg");
 egg_test!(ac_mult_nonlinear, "ac_mult_nonlinear.egg");
 
 // ── AC build-side flattening (WF_flat) ──
 egg_test!(ac_flatten_build, "ac_flatten_build.egg");
-// Set (ACI) ops flatten at build too — the MSet-only gate was a bug (2026-07-10).
+// Set (ACI) ops flatten at build too.
 egg_test!(set_flatten_build, "set_flatten_build.egg");
+
+// ── A-only (Seq) build-side normal form ──
+// Associative-but-not-commutative ops flatten to a sequence (order preserved) and
+// collapse a one-element sequence to its element, per
+// `ac-algebraic-properties.md`'s A row and `04-canonization.md`. These two files
+// pin both behaviors; the AC/ACI counterparts above pin the multiset forms.
+egg_test!(a_flatten_build, "a_flatten_build.egg");
+egg_test!(a_singleton_collapse, "a_singleton_collapse.egg");
+
+// ── A-only matching: a fixed child an earlier atom already bound ──
+// A variadic expansion checks such a child against each window and leaves it bound.
+// A cleanup that clears every local child instead unbinds a variable an enclosing
+// step owns: the next window rebinds it (the rule fires on positions the constraint
+// excluded) and a later re-join reads it as unbound and panics.
+// `ematch.rs`'s `expand_a_checks_a_prebound_fixed_child` and its two decomposition
+// counterparts assert the match set directly.
+egg_test!(a_prebound_fixed_child, "a_prebound_fixed_child.egg");
+egg_test!(a_matrix_kron_fusion, "a_matrix_kron_fusion.egg");
 
 // ── AC congruence completeness (superposition + inter-reduction) ──
 egg_test!(ac_complete_containment, "ac_complete_containment.egg");
@@ -322,28 +430,28 @@ egg_test!(ac_complete_cancel, "ac_complete_cancel.egg");
 egg_test!(ac_two_same_op_atoms, "ac_two_same_op_atoms.egg");
 // Same scenario under AC completion (which surfaced the bug by creating more add nodes).
 egg_test!(ac_complete_nested_match, "ac_complete_nested_match.egg");
-// Composable property tags (multi-AC/ACI plan Facet A): `:assoc :comm` reproduces the
+// Composable property tags: `:assoc :comm` reproduces the
 // `:assoc-comm` alias behavior, and invalid tag combinations are rejected at registration.
 egg_test!(alg_tags_composable_ac, "alg_tags_composable_ac.egg");
-// Multiple AC (MSet) symbols complete independently (multi-AC/ACI plan, step 4).
+// Multiple AC (MSet) symbols complete independently.
 egg_test!(ac_complete_multi_mset, "ac_complete_multi_mset.egg");
-// ACI (Set) completion: the §4b superposition under an idempotent op (step 5).
+// ACI (Set) completion: the §4b superposition under an idempotent op.
 egg_test!(aci_complete_superposition, "aci_complete_superposition.egg");
 egg_test!(aci_complete_multi, "aci_complete_multi.egg");
-// Identity (unit drop) on MSet and ACI ops (multi-AC/ACI plan, property 1).
+// Identity (unit drop) on MSet and ACI ops.
 egg_test!(identity_mset, "identity_mset.egg");
 egg_test!(identity_aci, "identity_aci.egg");
 // Identity unit-drop on the RECANONIZE path: a summand class merging into the unit's
-// class after the node is built (Kapur Lemma 4.3; Kapur-conformance fix W2 (spec §3 table)). The first two are
+// class after the node is built (Kapur Lemma 4.3). The first two are
 // canonization facts (completion off); the third checks a unit-dropped rule still
 // superposes (completion on).
 egg_test!(identity_late_merge_mset, "identity_late_merge_mset.egg");
 egg_test!(identity_late_merge_aci, "identity_late_merge_aci.egg");
 egg_test!(identity_late_merge_cc, "identity_late_merge_cc.egg");
-// Adversarial coverage batch (adversarial analysis §B): behaviors that were correct but
-// unpinned. cross_op_unit_isolation is a SOUNDNESS guard (per-op unit-drop); the push/pop
-// pair pins semi-persistence of the unit merge; the direction twin pins the became-a-unit
-// sweep against rank-dependent survivor choice.
+// Boundary coverage: cross_op_unit_isolation is a soundness guard for per-op
+// unit dropping; the push/pop pair checks semi-persistence of the unit merge;
+// the direction counterpart checks the became-a-unit sweep against
+// rank-dependent survivor choice.
 egg_test!(cross_op_unit_isolation, "cross_op_unit_isolation.egg");
 egg_test!(
     identity_late_merge_direction,
@@ -381,20 +489,19 @@ egg_test!(
     alg_tags_reject_cancellative_plain,
     "alg_tags_reject_cancellative_plain.egg"
 );
-// Nilpotent (XOR) completion: mod-n cancellation, empty→unit, stored MSet (multi-AC/ACI plan,
-// property 2).
+// Nilpotent (XOR) completion: mod-n cancellation, empty-to-unit, stored MSet.
 egg_test!(nilpotent_xor, "nilpotent_xor.egg");
 egg_test!(
     nilpotent_xor_superposition,
     "nilpotent_xor_superposition.egg"
 );
-// Per-rule AXIOM critical pairs (Kapur §4 Lemmas 4.1(ii), 4.2(ii)/4.5; Kapur-conformance
-// fix W3, spec §3 table): superpositions of a rule with the op's own
+// Per-rule axiom critical pairs (Kapur §4 Lemmas 4.1(ii), 4.2(ii)/4.5):
+// superpositions of a rule with the op's own
 // idempotency/nilpotency axiom, which the count clamp alone cannot derive.
 egg_test!(aci_rule_axiom_cp, "aci_rule_axiom_cp.egg");
 egg_test!(nilpotent_rule_axiom_cp, "nilpotent_rule_axiom_cp.egg");
 egg_test!(nilpotent3_rule_axiom_cp, "nilpotent3_rule_axiom_cp.egg");
-// Adversarial axiom-pair edges: singleton LHS whose second reduct empties to the unit,
+// Axiom-pair boundary cases: singleton LHS whose second reduct empties to the unit,
 // and the general n−m arm with summand multiplicity m > 1.
 egg_test!(
     nilpotent3_singleton_lhs_axiom,
@@ -405,23 +512,23 @@ egg_test!(nilpotent3_mult2_axiom_cp, "nilpotent3_mult2_axiom_cp.egg");
 egg_test!(nilpotent_no_dedup, "nilpotent_no_dedup.egg");
 // Canonization establishes the clamp / identity-drop / degeneracy normal form with completion
 // OFF (build AND recanonize paths): xor(a,a)=e, and(a,a)=a, add(a,e)=a, etc. Guards the
-// architecture fix that moved these out of the completion pass and into canonization.
+// invariant that these operations belong to canonization rather than completion.
 egg_test!(canonize_clamp_no_cc, "canonize_clamp_no_cc.egg");
 
-// ── Former known-failing reproducers, now live (fixed by the Kapur-conformance series) ──
-// BUG 1 (identity unit-drop on recanonize) was fixed by Kapur-conformance fix W2 (spec §3 table) (`CanonMode`
-// carries the unit class; the became-a-unit sweep revisits the surviving side's parents).
+// Unit recanonization: `CanonMode` carries the unit class, and the
+// became-a-unit sweep revisits the surviving side's parents.
 egg_test!(identity_recanon_set, "identity_recanon_set.egg");
 egg_test!(identity_recanon_mset, "identity_recanon_mset.egg");
-// BUG 2 (Kapur §4 semantic-property axiom critical pairs, idempotent 4.1(ii) and nilpotent
-// 4.2(ii)) was fixed by Kapur-conformance fix W3 (spec §3 table); the general order-n arm covers the order-3 gate.
+// Kapur §4 semantic-property axiom critical pairs: idempotent 4.1(ii),
+// nilpotent 4.2(ii), and the general-order arm at order 3.
 egg_test!(idem_semantic_cp, "idem_semantic_cp.egg");
 egg_test!(nilpotent_semantic_cp, "nilpotent_semantic_cp.egg");
 egg_test!(nilpotent3_semantic_cp, "nilpotent3_semantic_cp.egg");
-// GATES flipped 2026-07-10: `:cancellative` drives the Kapur §5 cancel-closure
-// inferences (rule cancel-close + cancelative disjoint superposition; the no-identity
-// §5.2(iii)(b) per-constant case remains a documented gap), and `:inverse` drives
-// inverse-pair cancellation at build and in the completion round.
+// `:cancellative` drives the Kapur §5 cancel-closure inferences (rule cancel-close,
+// cancelative disjoint superposition, and the no-identity §5.2(iii)(b) per-constant
+// case). Focused coverage for constants introduced after an earlier completion
+// fixpoint remains future work. `:inverse` drives inverse-pair cancellation at build
+// and in the completion round.
 egg_test!(cancellative_cancel, "cancellative_cancel.egg");
 egg_test!(group_inverse_cancel, "group_inverse_cancel.egg");
 // The paper's own cancelative examples: SC2 (§5.2, needs the per-constant closure) and
@@ -460,3 +567,99 @@ egg_test!(
     zero_arity_with_identity_is_unit,
     "zero_arity_with_identity_is_unit.egg"
 );
+// Root-binding pattern form `(= v pat)`: `v` names the e-class `pat` matched. Repeating
+// the name across conjuncts joins them on that class, which is what a guard on an
+// equality between two derived terms needs; the negative counterpart in each file has the same
+// terms present in distinct classes and asserts the rule does not fire.
+egg_test!(root_binding_bind_and_use, "root_binding_bind_and_use.egg");
+egg_test!(root_binding_shared_root, "root_binding_shared_root.egg");
+egg_test!(root_binding_nonlinear, "root_binding_nonlinear.egg");
+egg_test!(root_binding_when_global, "root_binding_when_global.egg");
+egg_test!(root_binding_rewrite_lhs, "root_binding_rewrite_lhs.egg");
+egg_test!(root_binding_reject_arity, "root_binding_reject_arity.egg");
+// A shared root whose merge happens mid-run: the enabling event changes no node's tuple,
+// so the rule has to be matched against the whole graph every round. Runs under both
+// evaluation strategies, which is what makes it the regression test.
+egg_test!(
+    root_binding_merge_during_run,
+    "root_binding_merge_during_run.egg"
+);
+// Primitive predicates in `:when`: a guard is evaluated over the literal values the
+// patterns bound, not matched against the e-graph. Each positive file carries its
+// soundness counterpart, a term the guard is false for, and asserts the rule did not fire.
+egg_test!(when_prim_predicate, "when_prim_predicate.egg");
+egg_test!(
+    when_prim_predicate_two_vars,
+    "when_prim_predicate_two_vars.egg"
+);
+egg_test!(when_prim_predicate_nested, "when_prim_predicate_nested.egg");
+egg_test!(
+    when_prim_predicate_reject_non_bool,
+    "when_prim_predicate_reject_non_bool.egg"
+);
+egg_test!(
+    when_prim_predicate_reject_unbound,
+    "when_prim_predicate_reject_unbound.egg"
+);
+egg_test!(
+    when_prim_predicate_reject_in_lhs,
+    "when_prim_predicate_reject_in_lhs.egg"
+);
+
+egg_test!(eq_global_only_atom, "eq_global_only_atom.egg");
+
+// ── Cross-engine benchmark corpus (`tests/egg/bench/`) ──
+//
+// The same programs `scripts/egglog-compare/compare.py` times against egglog and
+// `benches/corpus.rs` times in process. Registered here because they carry
+// `(check ...)` commands: their correctness is a test, their timing is not.
+
+egg_test!(
+    bench_acgen_native,
+    "bench/acgen.native.egg",
+    ignore = "slow: 32 s under both strategies; run with --ignored"
+);
+egg_test!(
+    bench_acgen_rules,
+    "bench/acgen.rules.egg",
+    ignore = "slow: 32 s under both strategies; run with --ignored"
+);
+egg_test!(bench_array_rules, "bench/array.rules.egg");
+egg_test!(bench_bdd_native, "bench/bdd.native.egg");
+egg_test!(bench_bdd_rules, "bench/bdd.rules.egg");
+egg_test!(bench_calc_native, "bench/calc.native.egg");
+egg_test!(bench_calc_rules, "bench/calc.rules.egg");
+egg_test!(bench_combinators_rules, "bench/combinators.rules.egg");
+egg_test!(bench_eqsat_basic_native, "bench/eqsat-basic.native.egg");
+egg_test!(bench_eqsat_basic_rules, "bench/eqsat-basic.rules.egg");
+egg_test!(bench_eqsolve_native, "bench/eqsolve.native.egg");
+egg_test!(bench_eqsolve_rules, "bench/eqsolve.rules.egg");
+egg_test!(bench_herbie_native, "bench/herbie.native.egg");
+egg_test!(bench_herbie_rules, "bench/herbie.rules.egg");
+egg_test!(bench_integer_math_native, "bench/integer_math.native.egg");
+egg_test!(bench_integer_math_rules, "bench/integer_math.rules.egg");
+egg_test!(bench_intersection_rules, "bench/intersection.rules.egg");
+egg_test!(bench_knapsack_rules, "bench/knapsack.rules.egg");
+egg_test!(
+    bench_levenshtein_distance_rules,
+    "bench/levenshtein-distance.rules.egg"
+);
+egg_test!(bench_math_add_ac_native, "bench/math-add-ac.native.egg");
+egg_test!(bench_math_add_ac_rules, "bench/math-add-ac.rules.egg");
+egg_test!(
+    bench_math_microbenchmark_native,
+    "bench/math-microbenchmark.native.egg"
+);
+egg_test!(
+    bench_math_microbenchmark_rules,
+    "bench/math-microbenchmark.rules.egg"
+);
+egg_test!(bench_matrix_native_a, "bench/matrix.native-A.egg");
+egg_test!(bench_matrix_native, "bench/matrix.native.egg");
+egg_test!(bench_matrix_rules, "bench/matrix.rules.egg");
+egg_test!(bench_resolution_native, "bench/resolution.native.egg");
+egg_test!(bench_resolution_rules, "bench/resolution.rules.egg");
+egg_test!(bench_subsume_rules, "bench/subsume.rules.egg");
+egg_test!(bench_typecheck_rules, "bench/typecheck.rules.egg");
+egg_test!(bench_until_native, "bench/until.native.egg");
+egg_test!(bench_until_rules, "bench/until.rules.egg");

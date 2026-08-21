@@ -1,8 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! `define_id7!` / `define_id15!` / `define_id31!` / `define_id63!`:
-//! consumer-facing id-type generators with FULL proof obligations
-//! (migration plan Phase 6).
+//! consumer-facing id-type generators with full proof obligations.
 //!
 //! Each invocation stamps out a `#[repr(transparent)]` newtype over its
 //! backing integer with the MSB reserved as the stolen tag bit, implementing:
@@ -127,13 +126,12 @@ macro_rules! define_id_impl {
             /// exist).
             #[inline(always)]
             pub fn new(n: $Int) -> (r: $Name)
-                requires n < $CAP,
-                ensures r@ == n as nat,
+                ensures n < $CAP ==> r@ == n as nat,
             {
-                $crate::guard::check_precondition(
-                    n <= $MASK,
-                    concat!(stringify!($Name), " exceeds range"),
-                );
+                // Total-with-documented-panic: the range check is the branch.
+                if !(n <= $MASK) {
+                    $crate::guard::refuse(concat!(stringify!($Name), " exceeds range"));
+                }
                 $Name { raw: n }
             }
 
@@ -272,6 +270,8 @@ macro_rules! define_id_impl {
 
             open spec fn is_bit_stealing() -> bool { true }
 
+            fn bit_stealing() -> (b: bool) { true }
+
             proof fn lemma_id_bound_word_relation() {}
         }
 
@@ -362,6 +362,19 @@ macro_rules! define_id_impl {
         // keeps the MSB clear), prefix Debug/Display, integer conversions.
         // ------------------------------------------------------------------
 
+        impl $Name {
+            /// Largest storable raw payload (production surface).
+            pub const MAX_RAW: $Int = $MASK;
+
+            /// Test-only constructor bypassing the range check (production
+            /// surface; `cfg(test)` on both sides).
+            #[cfg(test)]
+            #[allow(dead_code)]
+            pub fn from_raw_unchecked(raw: $Int) -> Self {
+                $Name { raw }
+            }
+        }
+
         impl PartialEq for $Name {
             #[inline(always)]
             fn eq(&self, other: &Self) -> bool {
@@ -427,8 +440,8 @@ macro_rules! define_id_impl {
     };
 }
 
-/// Witness instantiations: one per width, verified in the regular sweep
-/// (plan 3.1). A consumer's `define_id31!(FooId, ...)` expands to code
+/// Witness instantiations: one per width, verified in the regular sweep.
+/// A consumer's `define_id31!(FooId, ...)` expands to code
 /// textually identical to `WitnessId31`'s modulo name/prefix, so these are
 /// the proof that every macro-generated id discharges its obligations.
 pub mod id_witnesses {

@@ -1,0 +1,22 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A literal inside a `:when` guard. The guard patterns are flattened into the same query
+;; as the head pattern, so a dead literal atom there killed the rule just as it did in the
+;; head; a live one constrains it.
+(datatype Math (Add Math Math) (Mul Math Math) (Const i64) (Var String))
+
+;; Rewrite a sum to a product only when `(Mul a (Const 1))` is already present.
+(rewrite (Add a a) (Mul a (Const 2)) :when ((Mul a (Const 1))))
+
+;; The guard is satisfiable for `p`: the rule fires.
+(let g (Mul (Var "p") (Const 1)))
+(let t (Add (Var "p") (Var "p")))
+(run 5)
+(check (= t (Mul (Var "p") (Const 2))))
+
+;; It is not satisfiable for `q` — the only `Mul` over `q` carries a different literal, so
+;; the guard's payload check rejects it and the rule does not fire.
+(let h (Mul (Var "q") (Const 7)))
+(let u (Add (Var "q") (Var "q")))
+(run 5)
+(check (!= u (Mul (Var "q") (Const 2))))

@@ -1,4 +1,4 @@
-# Chapter 4 — `Map`
+# Chapter 4: `Map`
 
 [← Ch 3: AppendOnlyVec](03-append-only-vec.md) · [Table of Contents](00-table-of-contents.md) · [Ch 5: ListArena →](05-list-arena.md)
 

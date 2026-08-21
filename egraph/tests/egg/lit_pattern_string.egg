@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The defect was not numeric: any concrete literal in a pattern position went through the
+;; same atom. A `String` literal is the non-arithmetic witness.
+(datatype Math (Add Math Math) (Var String) (Const i64))
+
+(rewrite (Add (Var "x") b) b)
+
+(let t (Add (Var "x") (Const 3)))
+(run 5)
+(check (= t (Const 3)))
+
+;; A different name in the same position does not match.
+(let u (Add (Var "y") (Const 4)))
+(run 5)
+(check (!= u (Const 4)))

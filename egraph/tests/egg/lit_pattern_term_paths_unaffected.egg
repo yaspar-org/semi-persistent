@@ -1,0 +1,23 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Boundary of the ground-literal defect. `check`, `check-eq`/`check-neq`, `extract`,
+;; `antiunify` and `checkau` take *terms*, not patterns: sortcheck routes them through
+;; `check_term` → `build_cterm`, which builds the literal node directly and never reaches
+;; the pattern compiler. So none of them was ever affected, and this file passes before and
+;; after the matcher fix. Kept as the negative half of the fix's scope.
+(datatype Math (Add Math Math) (Const i64) (Var String))
+
+(let a (Add (Const 1) (Const 2)))
+(let b (Add (Const 1) (Const 3)))
+
+;; Term-position literals: equal terms are equal, unequal ones are not.
+(check (= a (Add (Const 1) (Const 2))))
+(check (!= a b))
+(check (!= (Const 1) (Const 2)))
+
+;; Extraction over a term holding literals.
+(extract a)
+
+;; Anti-unification inputs holding literals: the generalization of the two sums exists.
+(antiunify a b :playouts 50)
+(checkau a b :playouts 50)

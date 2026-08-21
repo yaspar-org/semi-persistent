@@ -45,7 +45,7 @@ where
     T: Sized + Copy,
     I: IndexLike,
 {
-    /// Spec twins (privacy closeout): the open trait-impl spec fns delegate
+    /// Spec counterparts (privacy closeout): the open trait-impl spec fns delegate
     /// here so they contain no direct field access.
     pub open(crate) spec fn data_spec(&self) -> Seq<T> {
         self.data@
@@ -83,6 +83,10 @@ where
     #[inline(always)]
     fn is_empty(&self) -> bool {
         self.data.len() == 0
+    }
+
+    fn raw_len(&self) -> (n: usize) {
+        self.data.len()
     }
 
     #[inline(always)]
@@ -297,7 +301,7 @@ where
     // NOTE: already inlined into `Vec::restore`'s replay loop by LLVM (verified
     // in the disassembly — there is no call in the loop), so `inline(always)`
     // here measures as a no-op. The residual restore delta is register spilling
-    // in that loop, not this call; see `doc/design/11-layout-parity.md`.
+    // in that loop, not this call.
     fn restore_entry(&mut self, index: I, old_value: &T, target_saved_len: I) {
         let iu = index.as_usize();
         let tsl = target_saved_len.as_usize();
@@ -523,7 +527,7 @@ where
     // prod-parity: no `TRACK` const generic (un-inferable through
     // `Vec::with_store`; production's `new()` is bare). Empty ⟹ wf for both
     // `TRACK` values, so the ensures is stated for each.
-    pub fn new() -> (s: ParallelStore<T, I>)
+    pub(crate) fn new() -> (s: ParallelStore<T, I>)
         ensures
             DiffStore::<T, I, false>::wf(&s),
             DiffStore::<T, I, true>::wf(&s),

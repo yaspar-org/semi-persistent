@@ -1,0 +1,22 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Two patterns constrained to one e-class, which is what a guard on an equality between
+;; derived terms needs: `(ncols A)` and `(nrows C)` must be the same class, not merely two
+;; classes that both exist. Naming the same variable as both roots states that.
+(datatype Expr (Num i64) (Ncols Expr) (Nrows Expr) (Ok Expr Expr))
+
+(rule ((= d (Ncols a)) (= d (Nrows c))) ((union (Ok a c) (Num 1))))
+
+;; Unioned, so the two derived terms share a class: the rule fires.
+(let p (Ncols (Num 10)))
+(let q (Nrows (Num 20)))
+(union p q)
+(run 3)
+(check (= (Ok (Num 10) (Num 20)) (Num 1)))
+
+;; Not unioned: both terms exist, their classes differ, and the join finds nothing. Without
+;; the shared root the two patterns would be a cross product and this would fire.
+(let r (Ncols (Num 30)))
+(let s (Nrows (Num 40)))
+(run 3)
+(check (!= (Ok (Num 30) (Num 40)) (Num 1)))

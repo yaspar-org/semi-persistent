@@ -1,0 +1,36 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A one-element sequence IS its element: `add` returns the child's class instead of
+;; minting a node, the A-only counterpart of the MSet/Set degenerate-arity resolution. This
+;; is what lets an n-ary rewrite whose right-hand side shrinks to one element land on
+;; that element, so a program does not have to state `(rewrite (seq x) x)` itself.
+
+(sort E)
+(constructor seq (E) E :assoc)
+(constructor unit () E)
+(constructor a () E)
+(constructor b () E)
+
+;; The law itself, at every nesting depth. No rule and no run: this is canonization.
+(check (= (seq (a)) (a)))
+(check (= (seq (seq (a))) (a)))
+(check (= (seq (seq (a) (b))) (seq (a) (b))))
+
+;; A singleton in argument position collapses before the parent is built, so it
+;; leaves no trace in the parent's sequence.
+(check (= (seq (seq (a)) (b)) (seq (a) (b))))
+(check (= (seq (a) (seq (b))) (seq (a) (b))))
+
+;; A shrinking n-ary rewrite reaches its element through the collapse: deleting the
+;; marker from a two-element sequence leaves one element, which IS that element. The
+;; terms are stated before the run so the rule has them to match.
+(rewrite (seq ..p (unit) ..s) (seq ..p ..s))
+(let l (seq (unit) (a)))
+(let r (seq (a) (unit)))
+(let m (seq (a) (unit) (b)))
+(run 10)
+(check (= l (a)))
+(check (= r (a)))
+(check (= m (seq (a) (b))))
+;; ... and l = r, since both are (a).
+(check (= l r))

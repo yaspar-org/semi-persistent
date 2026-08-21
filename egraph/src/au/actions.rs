@@ -143,7 +143,9 @@ impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
         // class pair — a search that expands moves belonging to a different subproblem.
         let idx = crate::id::id_at::<A::Action>(self.values.len());
         self.values.push(actions);
-        self.index.insert((l, r), idx);
+        self.index
+            .try_insert((l, r), idx)
+            .expect("AU arena sized by its index word");
     }
 
     pub fn a_max(&self) -> usize {
@@ -152,7 +154,10 @@ impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
 
     pub fn mark(&mut self) -> ActionCacheToken {
         ActionCacheToken {
-            index: self.index.mark(ShrinkPolicy::Never),
+            index: self
+                .index
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
             values_len: self.values.len(),
         }
     }
@@ -163,7 +168,9 @@ impl<O: DenseId, A: AuIds, M: MultiplicityLike> ActionCache<O, A, M> {
     }
 
     pub fn restore(&mut self, token: ActionCacheToken) {
-        self.index.restore(token.index);
+        self.index
+            .try_restore(token.index)
+            .expect("restore: token minted by this container's own mark");
         self.values.truncate(token.values_len);
     }
 }
@@ -429,8 +436,8 @@ pub fn generate_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     dedup_and_insert(cache, l, r, actions);
 }
 
-/// Deduplicate actions by canonical (left, right, count) signature and insert
-/// into the cache. Rewrite-derived equivalent members can produce identical
+/// Deduplicate actions by operator plus canonical (left, right, count)
+/// signature and insert into the cache. Rewrite-derived equivalent members can produce identical
 /// actions from different (l_node, r_node) pairs; duplicates would surface as
 /// separate statistics edges and bias MCGS selection toward the duplicated
 /// action.
@@ -445,7 +452,11 @@ fn dedup_and_insert<O: DenseId, A: AuIds, M: MultiplicityLike>(
     // bytes in a set that is rebuilt for every class pair the search visits: at the 31-bit
     // family a `(usize, usize, u32)` entry is 24 bytes to this tuple's 12, because the two
     // widened words also raise the tuple's alignment and so its tail padding.
-    let mut seen: hashbrown::HashSet<Vec<(A::Class, A::Class, M)>> = hashbrown::HashSet::new();
+    // The operator is part of the signature: two operators can witness the same
+    // child pairing (distinct merged heads over shared children), and both
+    // actions must survive so either operator can head the reported
+    // generalization. The dedup collapses same-operator duplicates only.
+    let mut seen: hashbrown::HashSet<(O, Vec<(A::Class, A::Class, M)>)> = hashbrown::HashSet::new();
     actions.retain(|action| {
         let mut sig: Vec<(A::Class, A::Class, M)> = action
             .pairs
@@ -453,7 +464,7 @@ fn dedup_and_insert<O: DenseId, A: AuIds, M: MultiplicityLike>(
             .map(|p| (p.left, p.right, p.count))
             .collect();
         sig.sort_unstable();
-        seen.insert(sig)
+        seen.insert((action.op, sig))
     });
     cache.insert(l, r, actions);
 }
@@ -1335,5 +1346,52 @@ mod tests {
         generate_actions(&snap, &mut cache, lc, r2c);
         let acts = cache.get(lc, r2c).unwrap();
         assert_eq!(acts.len(), 0);
+    }
+
+    /// D3 regression: two operators witnessing the same child pairing must both
+    /// survive dedup. merge(f(a), g(a)) and merge(f(b), g(b)) put an f-node and
+    /// a g-node in each class; AU over the two classes must keep one action per
+    /// operator, not drop whichever operator enumerates second.
+    #[test]
+    fn cross_operator_actions_survive_dedup() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let a_op = eg.register_op0("a", int);
+        let b_op = eg.register_op0("b", int);
+        let f_op = eg.register_op1("f", int, int);
+        let g_op = eg.register_op1("g", int, int);
+
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        let fa = eg.add(f_op, &[a]);
+        let ga = eg.add(g_op, &[a]);
+        let fb = eg.add(f_op, &[b]);
+        let gb = eg.add(g_op, &[b]);
+        eg.merge(fa, ga);
+        eg.merge(fb, gb);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let l = snap.class_of(fa).unwrap();
+        let r = snap.class_of(fb).unwrap();
+
+        let mut cache = ActionCache::new(100);
+        generate_actions(&snap, &mut cache, l, r);
+
+        let acts = cache.get(l, r).unwrap();
+        assert_eq!(
+            acts.len(),
+            2,
+            "expected one action per operator, got {}",
+            acts.len()
+        );
+        assert_ne!(
+            acts[0].op, acts[1].op,
+            "the two actions must differ in operator"
+        );
+        for action in acts {
+            assert_eq!(action.pairs.len(), 1);
+            assert_eq!(action.pairs[0].count, Multiplicity::ONE);
+        }
     }
 }

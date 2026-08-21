@@ -12,17 +12,22 @@ choose any variable ordering (top-down, bottom-up, middle-out)
 based on runtime cardinalities.
 
 ```
-Parse       → Vec<SurfacePattern>     (recursive, string-named)
+Parse       → Vec<SurfacePattern>     (tree-shaped AST, string-named)
 Flatten     → Vec<Atom>               (flat constraints, synthetic vars)
 Resolve     → ResolvedQuery           (dense typed ids, sorts checked)
 Schedule    → QueryPlan               (ordered execution steps)
-Execute     → Iterator<Match>         (DFS backtracking, Chapter 9)
-Apply       → mutations               (union, insert, set — Chapter 12)
+Execute     → MatchPool               (push continuations, Chapter 9)
+Apply       → mutations               (union, insert, subsume; set is not implemented)
 ```
 
-Stages 1–3 are compile-time (once per rule). Scheduling runs once per
-saturation cycle (cardinalities change as the e-graph grows). Execution
-runs per-match, lazily.
+Stages 1–3 run once when a rule is parsed and installed. In the default static
+mode, scheduling builds a plan from each matching round's index statistics
+(and separately for each semi-naive flavor). The primary saturation path then
+executes flattened atoms through push-style continuations and stores the
+matches in a reusable `MatchPool` before applying actions. Rust control flow is
+depth-first, but matching is not a recursive top-down walk of the source
+pattern. A separate `MatchIterator` offers lazy pull execution of a static plan;
+runtime per-binding scheduling uses the push path.
 
 ## Atom Types (`RAtom`)
 
@@ -42,6 +47,18 @@ order to apply them.
 | `AExact / APrefix / ASuffix / ABoth` | A-node with optional rest vars |
 | `ACExact / ACSub` | AC-node exact or sub-multiset |
 | `ACIExact / ACISub` | ACI-node exact or subset |
+| `Pred { guard, deps }` | Primitive predicate over bound literal values |
+
+`Pred` is the one atom that matches nothing. It carries an expression over
+primitive operators, literal constants, and the variables other atoms bind to
+literal payloads, and it keeps the partial match when that expression evaluates
+to true. A primitive names a function on values rather than a relation the
+e-graph stores, so there is no bucket to scan for it; `deps` names the `LitBind`
+atoms that fill the value slots it reads, which is what tells the scheduler when
+it can run.
+
+The surface form `(= v pat)` produces no atom of its own: `pat` flattens exactly
+as it would alone, and one `Eq` ties `v` to its root.
 
 ## The Scheduling Algorithm
 
@@ -60,22 +77,56 @@ fan-out, only constrain):
 - `Eq(a, b)` with both bound → `CheckEq`
 - `Eq(a, b)` with one bound → `CopyBinding`
 - `EqGlobal` with local bound → `CheckEqGlobal`
-- `Plain/LitBind` with node already bound: re-join within e-class.
+- `Plain`/`Lit`/`LitBind` with node already bound: re-join within e-class.
+- `Pred` with every atom in `deps` already lowered → `CheckPred`.
+
+The guard's condition is on the *atoms* that have run, not on the variables that
+are bound, and it has to be: a `LitBind` atom's node variable is bound by the
+enclosing pattern's `ExtractChild`, one step before the `ExtractLitVal` that
+fills the value slot the guard reads. Firing the guard as soon as its dependency
+atoms have run puts the check immediately after the last of them, so a false
+guard cuts the search before the remaining atoms are joined.
+
+Guards are lowered in atom order within one pass of the eager fixpoint, so
+of two guards that become free at the same point, the one written first is
+checked first. A guard whose dependencies are a subset of another's is
+therefore never checked after it, which is what lets a partial primitive be
+protected: `(i64::!= x 0)` before `(i64::== (i64::% z x) 0)` rejects the
+match before the remainder is computed, because the first reads `x` alone.
 
 ### Phase B: Cost-Based Selection
 
-Pick the cheapest unprocessed atom:
+Pick the cheapest unprocessed atom. At a high level the base cost is the
+atom's active `by_op` cardinality, reduced by measured fan-outs for bound
+`by_repr`, `by_child_pos`, or `by_contains` probes:
 
 ```
-cost(Plain { op, children }) = card(op) >> bound_children_count
-cost(LitBind { op, .. })     = card(op)
-cost(A/AC/ACI variants)      = card(op)
-cost(Lit)                     = 1
-cost(Eq/EqGlobal)             = 0
+cost(atom)                    = card(active by_op slice) × estimated selectivities
+cost(Lit or LitBind)          = card(active literal-op slice)
+cost(Eq/EqGlobal/Pred)        = 0
 ```
+
+The actual estimator uses size-biased per-path measurements, per-atom
+semi-naive cardinalities, and optional sampling as described in Chapter 20;
+the formula above is schematic rather than executable pseudocode.
+
+`Eq`, `EqGlobal` and `Pred` are never selected here: they have no join to cost,
+and Phase A owns them.
 
 Emit the selected atom via `emit_atom` (Join + ExtractChild steps),
 then return to Phase A.
+
+### Where the loop runs
+
+By default both phases run once per query and produce the step array the
+matcher walks. Under `ematch::set_runtime_scheduling` they run at each depth
+instead, against the live environment: the same two phases over the same
+`try_eager_lower` and `emit_atom`, with Phase B's estimate replaced by the
+length of the shortest bucket the atom's join would open for the bindings in
+hand. Static/runtime differential tests compare their match sets (chapter 09,
+"Which Snapshot"); this is finite implementation evidence, not a
+machine-checked equivalence theorem. The flag is off by default and chapter 20
+documents the mode.
 
 ## E-Class–Aware Re-Join
 
@@ -108,21 +159,26 @@ extracting the literal value.
 
 | Step | Semantics |
 |------|-----------|
-| `Join { target, lookups, atom_id }` | Leapfrog intersection, bind target to each result. `atom_id` identifies which query atom this join scans — used by semi-naive evaluation to delta-restrict one atom at a time (Chapter 18); ignored by naive matching |
+| `Join { target, lookups, atom_id }` | Leapfrog intersection, bind target to each result. `atom_id` identifies which query atom this join scans: used by semi-naive evaluation to delta-restrict one atom at a time (Chapter 18); ignored by naive matching |
 | `ExtractChild { target, parent, pos }` | Read child at position from parent node |
 | `ExtractLitVal { node, val }` | Extract literal value id from node |
-| `CheckChildEq { parent, pos, expected }` | Verify child equals expected (by find) |
-| `CheckEq { a, b }` | Verify find(a) == find(b) |
-| `CheckEqGlobal { local, global }` | Verify find(local) == find(globals[global]) |
-| `CopyBinding { target, other }` | target = find(other) |
+| `CheckChildEq { parent, pos, expected }` | Verify child and expected have the same build-snapshot representative |
+| `CheckEq { a, b }` | Verify the two bindings have the same build-snapshot representative |
+| `CheckEqGlobal { local, global }` | Verify local and global have the same build-snapshot representative |
+| `BindGlobal { target, global }` | Bind an unbound local to a global's snapshot class |
+| `CopyBinding { target, other }` | Bind target to `other`'s build-snapshot class |
 | `ExpandA { node, children, pre, suf }` | Enumerate subsequence matches |
 | `DecomposeAC { node, elems, rest, idempotent }` | Enumerate sub-multiset matches |
 | `DecomposeACI { node, elems, rest }` | Enumerate subset matches |
+| `CheckLit { node, value }` | Verify node's literal payload equals `value` |
+| `CheckPred { guard }` | Evaluate the guard over bound literal values, keep the match when it is true |
 
 > **Note**: `CheckLitEq` and `EvalLit` do not exist as `Step` variants.
-> Literal equality checks are handled by `ExtractLitVal` + `CheckEq`.
-> Primitive op evaluation happens during RHS application (Chapter 12),
-> not during LHS matching.
+> Literal constants are handled by `CheckLit`; `ExtractLitVal` binds a literal
+> payload for later guards or RHS use.
+> Primitive op evaluation during matching happens only in `CheckPred`, which
+> computes a value and discards it after testing it; the primitives that build
+> terms run during RHS application (Chapter 12).
 
 ## Example Plan
 
@@ -145,6 +201,19 @@ Step 10: ExtractLitVal { node: n3, val: y }               // bind y
 The scheduler picks Mul first (cardinality 1) over @IBig (cardinality 4).
 Steps 3, 5, 7, 9 are the e-class re-joins; without them, the match
 would silently fail when the class rep has a different op.
+
+## Dumping a Plan
+
+Setting `EGRAPH_DUMP_PLAN` (to any value) prints every plan the scheduler
+produces to stderr in the form above, one line per step, with variables named by
+their resolved index (`v3` is variable 3 of the query's `MatchShape`). The
+variable is read once and cached, so leaving it unset costs one load per plan.
+
+The dump answers what is bound when a step runs, which is the question behind
+both classes of matcher defect: a re-join keyed on a variable no earlier step
+binds, and a variadic expansion whose fixed children were bound elsewhere. A
+`Join` on `v0` scheduled after an `ExpandA` that lists `v0` among its children
+is the shape to look for.
 
 ---
 [← Ch 7: Leapfrog Triejoin](07-leapfrog.md) · [Table of Contents](00-table-of-contents.md) · [Ch 9: Pattern Matching →](09-pattern-matching.md)

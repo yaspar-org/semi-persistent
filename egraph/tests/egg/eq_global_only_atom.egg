@@ -1,0 +1,10 @@
+;; TYPES: machine
+;; A rule whose only LHS atom is an equality against a global. The variable is
+;; unbound until that atom binds it, so the plan must emit a binding step; a
+;; plan that only CHECKS leaves the variable unset and materializing the match
+;; reads it. Regression for the panic at ematch.rs:622.
+(datatype E (TC) (D E))
+(let tt (TC))
+(rule ((= x tt)) ((D x)))
+(run 1)
+(check (= (D tt) (D (TC))))

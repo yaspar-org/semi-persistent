@@ -232,8 +232,6 @@ name = "containers-conformance"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "foldhash",
- "hashbrown",
  "proptest",
  "semi-persistent-containers",
  "semi-persistent-containers-verus",

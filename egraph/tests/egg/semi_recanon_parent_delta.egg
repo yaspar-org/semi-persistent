@@ -1,0 +1,22 @@
+;; TYPES: machine
+;; Regression: a merge produced by a RULE
+;; recanonizes a parent AC node — (Sub one one) collapses into zero's class, so
+;; t's multiset gains zero as an element — and the recanonized parent must be
+;; visible to the next semi-naive round's delta for the rule binding that
+;; element (here a let-bound global in the LHS, herbie's shape). Replacing the
+;; rule-derived merge by a literal union passes either way. EVAL both.
+(datatype E
+    (Add E :assoc-comm)
+    (Sub E E)
+    (Num i64)
+    (x))
+
+(let zero (Num 0))
+(let one (Num 1))
+
+(rewrite (Sub a a) zero)
+(rewrite (Add zero ..rest) (Add ..rest))
+
+(let t (Add (x) (Sub one one)))
+(run 2)
+(check (= t (x)))

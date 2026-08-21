@@ -167,7 +167,7 @@ pub struct CircularListToken {
 }
 
 impl CircularListToken {
-    /// Reconstruction coordinate (spec twin).
+    /// Reconstruction coordinate (spec counterpart).
     pub open(crate) spec fn frame_idx_spec(self) -> nat {
         self.entries.frame_idx as nat
     }
@@ -197,7 +197,7 @@ where T: Sized + Copy + core::default::Default {
     /// These are *logical* node positions (indices into `entries`), always
     /// `usize`, independent of the `N` chosen for physical storage.
     pub(crate) model: Ghost<Seq<Seq<usize>>>,
-    /// Ghost model-snapshot stack (plan Phase 7), parallel to the entries
+    /// Ghost model-snapshot stack, parallel to the entries
     /// vec's frame stack; lets `restore(token)` recover the marked ring
     /// partition internally.
     pub(crate) model_snapshots: Ghost<Seq<Seq<Seq<usize>>>>,
@@ -221,28 +221,28 @@ where T: Sized + Copy + core::default::Default {
         self.entries.view().len()
     }
 
-    /// Entries frame-stack depth (spec twin; fields are `pub(crate)` —
+    /// Entries frame-stack depth (spec counterpart; fields are `pub(crate)` —
     /// privacy closeout).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.entries.depth_spec()
     }
 
-    /// Entries lifetime restore count (spec twin).
+    /// Entries lifetime restore count (spec counterpart).
     pub open(crate) spec fn fork_count_spec(&self) -> nat {
         self.entries.fork_count_spec()
     }
 
-    /// Entries snapshot stack (spec twin).
+    /// Entries snapshot stack (spec counterpart).
     pub open(crate) spec fn entries_snapshots_view(&self) -> Seq<Seq<CircularListNode<T, N>>> {
         self.entries.snapshots_view()
     }
 
-    /// Ring-partition snapshot stack (spec twin, Phase 7 archive).
+    /// Ring-partition snapshot stack (spec counterpart of the archive).
     pub open(crate) spec fn model_snapshots_view(&self) -> Seq<Seq<Seq<usize>>> {
         self.model_snapshots@
     }
 
-    /// The entries sequence (spec twin; node payload+next pairs).
+    /// The entries sequence (spec counterpart; node payload+next pairs).
     pub open(crate) spec fn entries_view(&self) -> Seq<CircularListNode<T, N>> {
         self.entries.view()
     }
@@ -315,9 +315,9 @@ where T: Sized + Copy + core::default::Default {
         &&& self.model_disjoint()
         &&& self.model_covers()
         &&& self.model_cyclic()
-        // Model-snapshot agreement (Phase 7). Opaque: ring_snap_wf's nested
-        // quantifiers would join every wf-requiring proof's matching context
-        // (a z3 matching-loop hazard — see the proof-performance playbook);
+        // Model-snapshot agreement. Opaque: ring_snap_wf's nested quantifiers
+        // would join every wf-requiring proof's matching context and create a
+        // Z3 matching loop;
         // only mark/restore reveal it, everything else preserves it by
         // congruence (neither the archive nor the vec snapshots change).
         // Keyed on the SNAPSHOT stack (not frames): ops like set/push ensure
@@ -328,6 +328,8 @@ where T: Sized + Copy + core::default::Default {
 
     pub fn new() -> (c: Self)
         ensures c.wf(), c.n_spec() == 0, c.model_view().len() == 0,
+            c.entries_snapshots_view().len() == 0,
+            c.model_snapshots_view().len() == 0,
     {
         let c = CircularList {
             entries: SpVec::<
@@ -385,10 +387,15 @@ where T: Sized + Copy + core::default::Default {
     /// This is the stored word verbatim (no decode), so it is exactly
     /// `next_seq()[i]` under `id_nat`.
     pub fn next_of(&self, i: N) -> (r: N)
-        requires self.wf(), i.id_nat() < self.n_spec(),
-        ensures r.id_nat() == self.next_seq()[i.id_nat() as int],
+        requires self.wf(),
+        ensures i.id_nat() < self.n_spec()
+            ==> r.id_nat() == self.next_seq()[i.id_nat() as int],
     {
         proof { i.lemma_as_nat_is_id_nat(); }
+        // Total-with-documented-panic: explicit node-bound branch.
+        if !(i.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::next_of: node id out of range");
+        }
         let r = self.entries.get_index(i.to_index()).next;
         // `next_seq` projects the stored id through `id_nat() as usize`; that
         // cast is lossless because a DenseId's range fits in a usize.
@@ -401,10 +408,15 @@ where T: Sized + Copy + core::default::Default {
     /// sparse-set repr key there), so the consumer reads and writes it through
     /// this pair rather than owning a second parallel vector.
     pub fn payload_of(&self, i: N) -> (p: T)
-        requires self.wf(), i.id_nat() < self.n_spec(),
-        ensures p == self.payload_seq()[i.id_nat() as int],
+        requires self.wf(),
+        ensures i.id_nat() < self.n_spec()
+            ==> p == self.payload_seq()[i.id_nat() as int],
     {
         proof { i.lemma_as_nat_is_id_nat(); }
+        // Total-with-documented-panic: explicit node-bound branch.
+        if !(i.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::payload_of: node id out of range");
+        }
         self.entries.get_index(i.to_index()).payload
     }
 
@@ -413,7 +425,7 @@ where T: Sized + Copy + core::default::Default {
     /// with it every `wf` clause — is preserved by congruence; only
     /// `payload_seq` moves.
     pub fn set_payload(&mut self, i: N, payload: T)
-        requires old(self).wf(), i.id_nat() < old(self).n_spec(),
+        requires old(self).wf(),
         ensures
             final(self).wf(),
             final(self).n_spec() == old(self).n_spec(),
@@ -421,7 +433,12 @@ where T: Sized + Copy + core::default::Default {
             final(self).model_view() == old(self).model_view(),
             final(self).payload_seq() == old(self).payload_seq().update(i.id_nat() as int, payload),
             final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
+        // Total-with-documented-panic: explicit node-bound branch.
+        if !(i.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::set_payload: node id out of range");
+        }
         proof { i.lemma_as_nat_is_id_nat(); }
         let iw = i.to_index();
         let next = self.entries.get_index(iw).next;
@@ -442,7 +459,7 @@ where T: Sized + Copy + core::default::Default {
                         && old(self).model@[c][p] == k;
                 assert(self.model@[c][p] == k);
             }
-            // Phase 7: `set_index` preserves the snapshot stack and the archive
+            // `set_index` preserves the snapshot stack and the archive
             // was not touched, so the OPAQUE agreement transfers by congruence
             // (no reveal — keeps ring_snap_wf's quantifiers out of scope).
         }
@@ -455,17 +472,60 @@ where T: Sized + Copy + core::default::Default {
     /// index type `N` (`< N::id_bound()`) so the stored `next` self-loop
     /// round-trips (`from_usize(id).id_nat() == id`). The e-graph guarantees this
     /// the same way it bounds any dense id — id allocation is width-checked.
-    pub fn add_singleton(&mut self, payload: T) -> (nid: N)
+    /// Total node allocation: refuses at either of
+    /// `add_singleton`'s two ceilings — the index word, and `N`'s id range one
+    /// bit below it — where the partial core's runtime guard panics.
+    /// `splice_absorb` has no total form: checking its different-rings
+    /// precondition in O(1) requires a stored ring-id witness. The debug walk
+    /// monitors the precondition without changing release complexity.
+    pub fn try_add_singleton(&mut self, payload: T)
+        -> (r: Result<N, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(nid) ==> nid.id_nat() == old(self).n_spec()
+                && final(self).n_spec() == old(self).n_spec() + 1
+                && final(self).model_view()
+                    == old(self).model_view().push(seq![nid.id_nat() as usize])
+                && final(self).payload_seq() == old(self).payload_seq().push(payload),
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).payload_seq() == old(self).payload_seq(),
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.entries.can_push() {
+            let n = self.entries.store.data.len();
+            proof {
+                <N as DenseId>::Index::lemma_max_nat_fits_usize();
+                assert(n as nat == self.entries.view().len());
+            }
+            if N::try_new(n).is_some() && (N::bit_stealing() || N::try_new(n + 1).is_some()) {
+                return Ok(self.add_singleton(payload));
+            }
+        }
+        Err(crate::error::ContainerError::CapacityExhausted)
+    }
+
+    pub(crate) fn add_singleton(&mut self, payload: T) -> (nid: N)
         requires
             old(self).wf(),
             old(self).n_spec() + 1 < <N as DenseId>::Index::max_nat(),
-            old(self).n_spec() + 1 < N::id_bound(),
+            // Per id family (production parity: a bit-stealing ring holds its
+            // full id range); only the full-range family needs the successor
+            // representable, its word having no spare bit.
+            old(self).n_spec() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).n_spec() + 1 < N::id_bound(),
         ensures
             final(self).wf(),
             nid.id_nat() == old(self).n_spec(),
             final(self).n_spec() == old(self).n_spec() + 1,
             final(self).model_view() == old(self).model_view().push(seq![nid.id_nat() as usize]),
+            final(self).payload_seq() == old(self).payload_seq().push(payload),
             final(self).payload_seq()[nid.id_nat() as int] == payload,
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Runtime guard for UNVERIFIED callers on the id-range precondition:
         // the sibling word-headroom clause is already trapped by `Vec::len`'s
@@ -480,11 +540,13 @@ where T: Sized + Copy + core::default::Default {
             <N as DenseId>::Index::lemma_max_nat_fits_usize();
         }
         crate::guard::check_precondition(
-            N::try_new(self.entries.len().as_usize() + 1).is_some(),
+            N::try_new(self.entries.len().as_usize()).is_some()
+                && (N::bit_stealing()
+                    || N::try_new(self.entries.len().as_usize() + 1).is_some()),
             "CircularList::add_singleton: node-id range exhausted",
         );
         // The new node's dense index is the pre-push length. It is representable
-        // in `N` (precondition `n_spec + 1 < id_bound`), so `from_usize`
+        // in `N` (precondition `n_spec < id_bound`), so `from_usize`
         // round-trips and the self-loop `next_seq()[id] == id` holds.
         let idw = self.entries.len();
         let nid = N::from_usize(idw.as_usize());
@@ -561,7 +623,7 @@ where T: Sized + Copy + core::default::Default {
     /// The node-index sequence a ring walk starting at `start` visits, in
     /// order: the ring of `start` rotated so `start` is first. `class_seq[0] ==
     /// start`, its length is the ring size, and it is a permutation of the
-    /// ring's node set — the verified twin of production's `ClassIter` output.
+    /// ring's node set — the verified counterpart of production's `ClassIter` output.
     pub open(crate) spec fn class_seq(&self, start: int) -> Seq<usize> {
         rotate(self.model@[self.locate(start).0], self.locate(start).1)
     }
@@ -571,16 +633,21 @@ where T: Sized + Copy + core::default::Default {
     /// The cursor wraps once around and stops when it returns to `start` — so
     /// exactly the ring's nodes are visited, each once.
     pub fn iter_class(&self, start: N) -> (it: RingIter<'_, T, N, TRACK>)
-        requires self.wf(), start.id_nat() < self.n_spec(),
-        ensures
-            it.list_ref() == self,
-            it.start_spec() == start.id_nat(),
-            it.pos_spec() == 0,
-            !it.done_spec(),
-            it.cursor_ok(),
-            // The walk enumerates exactly `class_seq(start)` (public twin).
-            it.walk_seq() == self.class_seq(start.id_nat() as int),
+        requires self.wf(),
+        ensures start.id_nat() < self.n_spec() ==> ({
+            &&& it.list_ref() == self
+            &&& it.start_spec() == start.id_nat()
+            &&& it.pos_spec() == 0
+            &&& !it.done_spec()
+            &&& it.cursor_ok()
+            // The walk enumerates exactly `class_seq(start)` (public counterpart).
+            &&& it.walk_seq() == self.class_seq(start.id_nat() as int)
+        }),
     {
+        // Total-with-documented-panic: node-bound branch.
+        if !(start.to_usize() < self.entries.store.data.len()) {
+            crate::guard::refuse("CircularList::iter_class: node id out of range");
+        }
         proof {
             // covers ⟹ locate's choose is satisfiable; disjoint ⟹ unique.
             assert(self.in_some_ring(start.id_nat() as int));
@@ -595,8 +662,8 @@ where T: Sized + Copy + core::default::Default {
         RingIter { list: self, start, cur: start, pos: Ghost(0), done: false, c: Ghost(c), p0: Ghost(p0) }
     }
 
-    /// Debug-build runtime mirror of `splice`'s different-rings precondition
-    /// (plan 2.3). `external_body` diagnostic: walks the ring containing `s`
+    /// Debug-build runtime mirror of `splice`'s different-rings precondition.
+    /// This `external_body` diagnostic walks the ring containing `s`
     /// looking for `a` (bounded by the node count) and panics on a hit. A
     /// no-op in release builds — see the rationale at the `splice` call site.
     #[verifier::external_body]
@@ -675,9 +742,9 @@ where T: Sized + Copy + core::default::Default {
                         ==> #[trigger] final(self).model_view()[c] == old(self).model_view()[c])
             }),
     {
-        // Runtime guard (plan 2.3, debug builds only): the different-rings
-        // precondition is spec-level (the ghost model is erased at runtime),
-        // and a faithful runtime check walks a ring — O(class size) on a hot
+        // In debug builds, mirror the spec-level different-rings precondition
+        // whose ghost model is erased at runtime. A faithful runtime check
+        // walks a ring — O(class size) on a hot
         // O(1) operation, an unacceptable complexity change for release
         // builds. Debug builds pay the walk (external_body diagnostic below);
         // release relies on caller discipline — in the e-graph, union-find
@@ -739,7 +806,7 @@ where T: Sized + Copy + core::default::Default {
             // model length: two updates preserve len.
             assert(self.model@.len() == old_m.update(cs, merged@).update(ca, Seq::empty()).len());
             assert(self.model@.len() == old(self).model@.len());
-            // Phase 7: splice only set_index'd two entries — the archive,
+            // Splice only set_index'd two entries; the archive,
             // snapshot stack, and frame stack are untouched (set_index's
             // ensures), so the OPAQUE agreement predicate transfers by
             // congruence; no reveal needed, which keeps ring_snap_wf's nested
@@ -756,13 +823,11 @@ where T: Sized + Copy + core::default::Default {
     /// absorbed cell **twice**, and on a tracked ring every `set_index` runs the
     /// capture protocol (tag test, and on a first write a diff-log push). Where
     /// production's hand-rolled merge folded the presence-bit clear into the same
-    /// full-cell store as the `next` rewrite — 2 cell writes per merge — the
-    /// split form pays 3. Folding it back was previously tried and reverted as
-    /// "no faster", but that was measured **untracked**, where the third write is
-    /// a plain store and LLVM forwards the redundant load
-    /// (`containers-conformance/examples/splicesplit.rs`); the tracked path is
-    /// where the write count is load-bearing, and there it is worth ~15pp on
-    /// `class_merge_restore`.
+    /// full-cell store as the `next` rewrite -- 2 cell writes per merge -- the
+    /// split form pays 3. On the untracked path the third write is a plain store
+    /// and LLVM forwards the redundant load. On the tracked path the write runs
+    /// the capture protocol and folding it into the `next` rewrite is worth about
+    /// 15 percentage points on `class_merge_restore`.
     ///
     /// Payload-wise this is `set_payload(aid, a_payload)` composed with
     /// `splice(sid, aid)`; `splice` provably preserves payloads, so the order is
@@ -798,6 +863,8 @@ where T: Sized + Copy + core::default::Default {
                 &&& (forall|c: int| 0 <= c < final(self).model_view().len() && c != cs && c != ca
                         ==> #[trigger] final(self).model_view()[c] == old(self).model_view()[c])
             }),
+            final(self).entries_snapshots_view() == old(self).entries_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Body is `splice`'s verbatim except for the absorbed cell's payload;
         // see `splice` for the commentary on each step.
@@ -858,7 +925,7 @@ where T: Sized + Copy + core::default::Default {
 
     // ---- semi-persistence: delegate to the inner vector ----
 
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: CircularListToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: CircularListToken)
         requires
             old(self).wf(),
             TRACK,
@@ -870,11 +937,15 @@ where T: Sized + Copy + core::default::Default {
             final(self).next_seq() == old(self).next_seq(),
             final(self).n_spec() == old(self).n_spec(),
             final(self).model_view() == old(self).model_view(),
+            final(self).payload_seq() == old(self).payload_seq(),
             final(self).entries_snapshots_view()
                 == old(self).entries_snapshots_view().push(old(self).entries_view()),
+            final(self).model_snapshots_view()
+                == old(self).model_snapshots_view().push(old(self).model_view()),
+            token.frame_idx_spec() == final(self).entries_snapshots_view().len() - 1,
     {
         let entries = self.entries.mark(shrink);
-        // Archive the live ring partition alongside the vec snapshot (Phase 7).
+        // Archive the live ring partition alongside the vec snapshot.
         self.model_snapshots = Ghost(self.model_snapshots@.push(self.model@));
         proof {
             assert(self.entries.view() == old(self).entries.view());
@@ -928,7 +999,69 @@ where T: Sized + Copy + core::default::Default {
 
     /// Restore to the marked snapshot. The restored entries, together with the
     /// ghost model live at the mark, must form a valid ring partition.
-    /// "Restorable now" for the token (plan 2.2).
+    /// Whether the token is restorable now.
+    /// Total mark (Vec's pilot pattern; single component).
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<CircularListToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).next_seq() == old(self).next_seq()
+                &&& final(self).n_spec() == old(self).n_spec()
+                &&& final(self).model_view() == old(self).model_view()
+                &&& final(self).payload_seq() == old(self).payload_seq()
+                &&& final(self).entries_snapshots_view()
+                    == old(self).entries_snapshots_view().push(old(self).entries_view())
+                &&& final(self).model_snapshots_view()
+                    == old(self).model_snapshots_view().push(old(self).model_view())
+                &&& token.frame_idx_spec()
+                    == final(self).entries_snapshots_view().len() - 1
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).next_seq() == old(self).next_seq(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.entries.store.data.len() < usize::MAX) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        if !(self.entries.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: `is_valid_token` answers exactly "would restore
+    /// succeed now" (delegated to the entries component).
+    pub fn try_restore(&mut self, token: CircularListToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).entries_view()
+                == old(self).entries_snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).model_view()
+                    == old(self).model_snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).entries_snapshots_view()
+                    == old(self).entries_snapshots_view()
+                        .subrange(0, token.frame_idx_spec() as int)
+                && final(self).model_snapshots_view()
+                    == old(self).model_snapshots_view()
+                        .subrange(0, token.frame_idx_spec() as int),
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).next_seq() == old(self).next_seq(),
+            r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
     pub fn is_valid_token(&self, token: &CircularListToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -936,7 +1069,7 @@ where T: Sized + Copy + core::default::Default {
         self.entries.is_valid_token(&token.entries)
     }
 
-    pub fn restore(&mut self, token: CircularListToken)
+    pub(crate) fn restore(&mut self, token: CircularListToken)
         requires
             old(self).wf(),
             TRACK,
@@ -948,10 +1081,14 @@ where T: Sized + Copy + core::default::Default {
             final(self).wf(),
             final(self).entries_view()
                 == old(self).entries_snapshots_view()[token.frame_idx_spec() as int],
-            // Restored to the ring partition archived at that mark (Phase 7).
+            // Restored to the ring partition archived at that mark.
             final(self).model_view() == old(self).model_snapshots_view()[token.frame_idx_spec() as int],
+            final(self).entries_snapshots_view()
+                == old(self).entries_snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            final(self).model_snapshots_view()
+                == old(self).model_snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
-        // Runtime guard (plan 2.3): full restorable predicate before mutation.
+        // Check the full restorable predicate before mutation.
         crate::guard::check_precondition(
             self.is_valid_token(&token),
             "CircularList::restore: invalid, foreign, stale, consumed, or abandoned token",
@@ -1022,7 +1159,7 @@ pub(crate) proof fn lemma_splice_merge<T, N: DenseId, const TRACK: bool>(
         forall|c: int| 0 <= c < post.model@.len() && c != cs && c != ca
             ==> #[trigger] post.model@[c] == pre.model@[c],
         // splice does not mark/restore: the archive and the vec snapshot/frame
-        // stacks are untouched, so the (opaque) Phase 7 agreement transfers
+        // stacks are untouched, so the opaque archive agreement transfers
         // from pre by congruence.
         ring_archive_agrees(post.model_snapshots@, post.entries.snapshots_view()),
     ensures
@@ -1714,7 +1851,7 @@ pub(crate) proof fn lemma_locate_pinned<T, N: DenseId, const TRACK: bool>(
 
 impl<'a, T, N: DenseId, const TRACK: bool> RingIter<'a, T, N, TRACK>
 where T: Sized + Copy + core::default::Default {
-    /// The list this iterator walks (spec twin; fields are `pub(crate)`).
+    /// The list this iterator walks (spec counterpart; fields are `pub(crate)`).
     pub open(crate) spec fn list_ref(&self) -> &'a CircularList<T, N, TRACK> {
         self.list
     }
@@ -1722,9 +1859,9 @@ where T: Sized + Copy + core::default::Default {
     pub open(crate) spec fn start_spec(&self) -> nat { self.start.id_nat() }
     pub open(crate) spec fn pos_spec(&self) -> nat { self.pos@ }
     pub open(crate) spec fn done_spec(&self) -> bool { self.done }
-    /// Ghost located-ring index (spec twin; field is `pub(crate)`).
+    /// Ghost located-ring index (spec counterpart; field is `pub(crate)`).
     pub open(crate) spec fn c_spec(&self) -> int { self.c@ }
-    /// Ghost start-position-within-ring (spec twin).
+    /// Ghost start-position-within-ring (spec counterpart).
     pub open(crate) spec fn p0_spec(&self) -> int { self.p0@ }
 
     /// The located ring (`model[c]`).
@@ -1867,7 +2004,7 @@ where T: Sized + Copy + core::default::Default {
 
 /// `i` appears in some ring of `model` (the per-node `covers` predicate, with a
 /// clean trigger for the outer `forall|i|`).
-/// The Phase 7 archive agreement, opaque (see `wf`'s comment): the ghost
+/// The archive agreement, opaque (see `wf`'s comment): the ghost
 /// model-snapshot stack is parallel to the frame stack and each archived
 /// partition describes its archived entry snapshot.
 #[verifier::opaque]

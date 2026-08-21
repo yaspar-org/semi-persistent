@@ -1,4 +1,4 @@
-# Chapter 2 — Semi-Persistent Vectors
+# Chapter 2: Semi-Persistent Vectors
 
 [← Ch 1: Dense IDs and Tagged](01-dense-ids-and-tagged.md) · [Table of Contents](00-table-of-contents.md) · [Ch 3: AppendOnlyVec →](03-append-only-vec.md)
 
@@ -11,7 +11,7 @@ SAT solving, constraint propagation, and game-tree search all share
 this pattern. Backtracking requires snapshotting the entire mutable
 state and restoring it later.
 
-A naive clone-on-snapshot is O(n) in both time and memory per mark —
+A naive clone-on-snapshot is O(n) in both time and memory per mark,
 and with many nested snapshots the memory is what hurts. The
 semi-persistent vector takes a different approach: it records negative
 diffs into a stack. On `mark()`, the vector stores its current length
@@ -21,17 +21,24 @@ value into the negative diff stack. On `restore()`, it replays the log
 in reverse to restore captured values, then truncates back to the
 saved length.
 
-The decisive win is **memory**: a snapshot costs only the cells that
-subsequently change (the sparse diff), never a full copy, so deeply
-nested marks stay cheap. `restore()` is O(k), where k is the number of
-mutations since `mark()`. `mark()` is *not* unconditionally O(1) in
-time — it must reset the per-slot capture flags for the new frame — but
-it is always sublinear in that work, never a copy: `InlineStore` clears
-only the flags the parent frame actually captured (O(k)), and
-`ParallelStore` zeroes a packed `u64` capture bitfield (O(n/64)). Make
-the capture bitfield small relative to the data and `mark()` approaches
-O(1); regardless, the memory footprint is the real, design-defining
-advantage.
+The decisive win is **memory**: a mark stores O(1) frame metadata rather than a
+full copy, and subsequent first writes add sparse diff entries. The frame stack
+therefore costs O(m) for m open marks, the diff log costs O(d) for retained
+entries, and fork history grows by O(1) per restore. Let b be fork-history
+links walked while validating a token, k replayed diff entries, r regrown
+cells, q discarded live values whose destructors run, p entries in the
+surviving parent frame, and w materialized bitmap words.
+`InlineStore::restore()` is O(b+k+r+q+p);
+`ParallelStore::restore()` is O(b+k+r+q+p+w). With
+`ShrinkPolicy::Never`, `mark()` is *not* unconditionally O(1) in time (it must
+reset the per-slot capture flags for the new frame), but
+it never copies the values: `InlineStore` clears only the flags the parent
+frame actually captured (O(p)), and `ParallelStore` zeroes every materialized
+packed `u64` capture word (O(w)). In the verified implementation the bitmap is
+grow-only between explicit reclamation points, so `w` can reflect a previous
+high-water length even after the data shrinks. Packing reduces the constant
+factor but does not change the O(w) bound. `ShrinkPolicy::IfOverallocated` may
+additionally move O(n) live values while reclaiming capacity.
 
 The tricky part is the first-write-wins protocol: each slot of the Vec
 must be logged at most once per frame (logging the same slot twice wastes
@@ -48,18 +55,23 @@ past a mark and then mark again, you're on a new timeline, and old
 tokens from the abandoned future must be rejected. The engine detects
 this with two mechanisms:
 
-- `ContainerId` is a globally unique id per `Vec` instance (from an
-  atomic counter). Every token records which container it came from.
+- In this reference crate, `ContainerId` is an instance id assigned from a
+  wrapping `AtomicU32` counter. Every token records which container it came
+  from.
   `restore()` checks the token's container id matches, preventing
-  cross-container bugs (e.g., using one container's token on a different
-  container).
+  ordinary cross-container bugs (e.g., using one container's token on a
+  different container). The reference implementation does not claim
+  uniqueness after the process has allocated enough containers for that
+  counter to wrap. The verified production crate widens this payload to `u64`
+  (and offers a strict exhaustion feature), but likewise does not prove
+  process-global freshness.
 
 - `ForkHistory` is a field in each vector that tracks branch history
   defined by `mark()/restore()` invocations. Each token records a
   `branch_id` and `depth` within that branch. When you restore past
   a mark and re-mark, a new branch is created with a new `branch_id`,
   and the fork point is recorded. On `restore()`, the history is walked
-  to verify the token belongs to the current branch or a direct ancestor;
+  to verify the token belongs to the current branch or an ancestor;
   tokens from terminated sibling branches cause panics.
 
 ```rust
@@ -89,7 +101,7 @@ representation. When stored in a `ParallelStore`, `T` only needs
 `[0, N)` for some N determined by its bit width. Concretely,
 `IndexLike` requires `to_usize` and `from_usize` conversions, plus
 an associated `MAX` constant that bounds the addressable range. The
-diff log stores `(I, T)` pairs, so a narrow index type (e.g., `u16`)
+diff log stores `(T, I)` pairs, so a narrow index type (e.g., `u16`)
 keeps diff entries compact.
 
 `DiffStore<T, I, TRACK>` is the storage backend trait, parameterized
@@ -103,14 +115,14 @@ The key unification: `DenseId` implements both `Tagged` and
 MSB as the capture flag) and simultaneously used as the index type
 for a different vector. This is why a single
 `VecI<MyId, MyId::Index, TRACK>` can serve as a parent-pointer array:
-the elements are id values with zero-cost capture tracking, indexed
+the elements are id values with no separate per-cell capture allocation, indexed
 by the same id type.
 
 Two convenience aliases capture the common cases:
 
 ```rust
-type VecI<T: Tagged, I, TRACK> = Vec<T, I, InlineStore<T, I, TRACK>, TRACK>;
-type VecP<T: Clone, I, TRACK>  = Vec<T, I, ParallelStore<T, I, TRACK>, TRACK>;
+type VecI<T, I, const TRACK: bool> = Vec<T, I, InlineStore<T, I>, TRACK>;
+type VecP<T, I, const TRACK: bool> = Vec<T, I, ParallelStore<T, I>, TRACK>;
 ```
 
 ## API
@@ -119,11 +131,11 @@ type VecP<T: Clone, I, TRACK>  = Vec<T, I, ParallelStore<T, I, TRACK>, TRACK>;
 |-----------|------|-------------|
 | `push(val)` | O(1) amortized | Append element (marks re-entered captured slots) |
 | `pop()` | O(1) | Remove last element (captures it first-write-wins if below `saved_len`) |
-| `get(i)` | O(1) | Read element at index |
-| `view().set(i, val)` | O(1) | Write element (with capture) |
+| `get(i)` | O(1) indexing plus `T::clone()` | Return a cloned element |
+| `set(i, val)` | O(1) indexing plus any old-value drop cost | Write element through `Vec`, with capture |
 | `len()` | O(1) | Current length |
-| `mark()` → `VecToken` | sublinear; O(parent diff) inline / O(n/64) parallel | Snapshot — clears per-slot capture flags, never copies. Memory cost is only the diff. |
-| `restore(token)` | O(k + regrow) | Undo all mutations since mark (k = mutations). Requires `T: Default`. |
+| `mark()` → `VecToken` | O(parent-frame captures) inline / O(materialized capture words) parallel with `ShrinkPolicy::Never`; optional shrink may be O(n) | Clears capture flags and pushes O(1) frame metadata; never snapshots values. Later writes add sparse diffs. |
+| `restore(token)` | Inline O(b+k+r+q+p); parallel O(b+k+r+q+p+w) | Walk b branch links, replay k diffs, regrow r cells, drop q discarded live values, restore p surviving-parent flags, and for parallel storage clear w bitmap words. Requires `T: Default`. |
 
 ## The Diff-Log Protocol
 
@@ -131,17 +143,19 @@ type VecP<T: Clone, I, TRACK>  = Vec<T, I, ParallelStore<T, I, TRACK>, TRACK>;
 
 ```
 mark():
-    push Frame { saved_len: current len, diff_start: diff_log.len() }
-    store.prepare_mark(saved_len, &diff_log[prev_frame..])
+    saved_len = current len
+    store.prepare_mark(saved_len, &diff_log[parent_frame.diff_start..])
+    push Frame { saved_len, diff_start: diff_log.len() }
 ```
 
-On `InlineStore`, `prepare_mark` clears all tag bits in slots
-`[0..saved_len]` so that subsequent mutations can be detected.
+On `InlineStore`, `prepare_mark` follows the previous frame's diff suffix and
+clears the tag on each named slot, so subsequent mutations can be detected.
+On `ParallelStore`, it zeroes every materialized capture word.
 
 ### Mutate
 
 ```
-view().set(i, new_val):
+vec.set(i, new_val):
     store.capture(i, saved_len, &mut diff_log)
     store.set_raw(i, new_val)
 ```
@@ -153,14 +167,15 @@ slot is logged at most once per frame.
 
 `pop()` is a mutation too: if the popped slot sits below `saved_len`, it
 goes through the **same first-write-wins `capture`** before removing the
-element. It must *not* use an unconditional record — a `loop { pop(); push() }`
+element. It must *not* use an unconditional record: a `loop { pop(); push() }`
 on a marked index would otherwise log an entry per iteration and grow the
-diff log without bound (a memory-exhaustion DoS). With conditional capture
-the log holds at most one entry per index per frame, so it is bounded by
-`saved_len`.
+diff log without bound (a memory-exhaustion DoS). With conditional capture,
+each frame's stratum holds at most one entry per marked index and is bounded by
+that frame's `saved_len`; the whole nested log is bounded by the sum of
+retained frame lengths.
 
 `push(val)` appends to the store. New elements above `saved_len` need no
-capture — truncation on restore removes them. But when `push` *re-enters* a
+capture: truncation on restore removes them. But when `push` *re-enters* a
 slot below `saved_len` that was popped after already being captured this
 frame, it calls `store.mark_captured(i)` to keep that slot's capture bit set.
 Without this, a later `set` on the re-entered slot would log a second entry
@@ -174,12 +189,14 @@ restore(token):                       // requires T: Default
     store.resize_default(frame.saved_len)   // regrow popped region first
     for (old_val, idx) in diff_log[frame.diff_start..].rev():
         store.restore_entry(idx, &old_val, frame.saved_len)
-    store.finish_restore(&diff_log[frame.diff_start..], frame.saved_len)
     diff_log.truncate(frame.diff_start)
     frames.truncate(token.frame_idx)
+    if let Some(parent) = frames.last():
+        store.finish_restore(&diff_log[parent.diff_start..], store.len())
 ```
 
-`restore` first resizes the store back to exactly `saved_len`: it truncates
+After token validation walks the current fork ancestry, `restore` resizes the
+store back to exactly `saved_len`: it truncates
 any elements pushed above the mark *and* regrows any region that was popped
 below it, filling the grown slots with `T::default()`. It then replays the
 diff log in reverse, overwriting each modified slot with its marked value.
@@ -187,14 +204,14 @@ diff log in reverse, overwriting each modified slot with its marked value.
 Regrowing *before* the replay is what makes the replay a pure overwrite.
 Because `pop` now captures conditionally (first-write-wins) rather than
 logging every popped cell, the log no longer contains an entry for every
-slot in the popped region — so the old "regrow by pushing during replay"
+slot in the popped region, so the old "regrow by pushing during replay"
 scheme would leave gaps. `resize_default` restores contiguity up front; the
 replay then overwrites every regrown cell with its captured value.
 
 **Why the fillers are safe.** The `T::default()` fillers `resize_default`
 writes are provably never observed: every regrown cell is below `saved_len`
 and was captured this frame, so the backward replay overwrites it with its
-diff value. The filler therefore may be any in-domain value — which is why
+diff value. The filler therefore may be any in-domain value, which is why
 `restore` only requires `T: Default`, and why a degenerate default (an
 all-zero node, an empty list head) is fine. For bit-stealing `Tagged` types
 the filler is routed through `into_repr`, which re-clears the stolen niche
@@ -203,7 +220,7 @@ reason `restore` carries a `T: Default` bound; every other operation does
 not.
 
 **Where the bound lives.** `Default` is a property of the *stored value*, so it
-belongs on the value facet, `Tagged` (`trait Tagged: Copy + Default`) — the
+belongs on the value facet, `Tagged` (`trait Tagged: Copy + Default`), the
 trait every inline-storable value already implements. It is deliberately *not*
 on `IndexLike`, which is the orthogonal *indexing* facet (the `I` in
 `Vec<T, I, S>`); an index type that is also stored as a value (e.g. in
@@ -211,7 +228,7 @@ on `IndexLike`, which is the orthogonal *indexing* facet (the `I` in
 Consequently almost no container needs an explicit `Default` bound: the only
 ones that do are `DiffStore::resize_default` (which *produces* the filler) and
 the two `restore`s whose element is `Clone`-only and never goes through
-`Tagged` — `Vec::restore` itself and `SparseSet::restore`.
+`Tagged`: `Vec::restore` itself and `SparseSet::restore`.
 
 ## Nested Marks
 
@@ -227,16 +244,18 @@ mark()  → token_A (saved_len=10)
 restore(token_A)             // undo set(3,x), truncate to 10
 ```
 
-## `InlineStore` — Zero-Overhead Tracking
+## `InlineStore`: No Extra Per-Cell Capture Storage
 
 ```rust
-pub struct InlineStore<T: Tagged, I: IndexLike, const TRACK: bool> {
+pub struct InlineStore<T: Tagged, I: IndexLike> {
     data: std::vec::Vec<T::Repr>,
 }
 ```
 
 The tag bit lives inside each `T::Repr`. For `DenseId` types, this is
-the MSB of the `u32`, costing zero extra memory.
+the MSB of the `u32`, costing no extra memory per cell. This does not make
+`mark()` constant-time: it still clears the tags named by the parent frame's
+diff.
 
 | Operation | Tag behavior |
 |-----------|-------------|
@@ -244,15 +263,15 @@ the MSB of the `u32`, costing zero extra memory.
 | `set_raw(i, val)` | Overwrite repr at `i` |
 | `capture(i, ..)` | If `!tag(data[i])`: log old value, `set_tag(data[i])` |
 | `mark_captured(i)` | `set_tag(data[i])` (mark re-entered slot captured, no log) |
-| `prepare_mark(..)` | Clear all tags in `[0..saved_len]` |
+| `prepare_mark(..)` | Clear tags named by the prior frame's diff suffix |
 | `restore_entry(i, old)` | `data[i] = old.into_repr()` |
 | `resize_default(len)` | Truncate or regrow to `len`, filling with `T::default().into_repr()` |
 | `get(i)` | `T::from_repr(&data[i])` (strips tag) |
 
-## `ParallelStore` — For Non-Taggable Types
+## `ParallelStore`: For Non-Taggable Types
 
 ```rust
-pub struct ParallelStore<T: Clone, I: IndexLike, const TRACK: bool> {
+pub struct ParallelStore<T, I: IndexLike> {
     data: std::vec::Vec<T>,
     bits: BitSet,
 }
@@ -261,11 +280,11 @@ pub struct ParallelStore<T: Clone, I: IndexLike, const TRACK: bool> {
 Same protocol, but the capture flag is a separate bit in `BitSet`.
 Used for types like `(MyId, u32)` that don't implement `Tagged`.
 
-## `View` — Mutable Accessor
+## `View`: Immutable Accessor
 
-`View` wraps `&mut Vec` and provides `get`/`set` with automatic
-capture tracking, preventing accidental calls to `set_raw` without
-capture:
+`View` borrows the storage immutably and provides `len`, `get`, and `iter`.
+Mutation remains on `Vec::set`, which performs capture before calling the
+backend's raw write.
 
 ## Token Validation
 
@@ -276,7 +295,7 @@ See "Token Safety" above for the full design. In summary:
 - Both checks happen at the start of `restore()` and panic on
   violation; these are always programmer errors, never recoverable.
 
-## `ShrinkPolicy` — Capacity Reclamation
+## `ShrinkPolicy`: Capacity Reclamation
 
 Rust's `Vec::truncate` reduces `len` but preserves `capacity`. After
 restoring from a large exploratory branch, the store's internal
@@ -288,7 +307,7 @@ the frame push), not at restore time. The rationale is that never
 shrinking during restore avoids costly reallocations in tight
 exploratory loops; the vec naturally "learns" the right capacity.
 Shrinking is part of the maintenance phase inside `mark()`, alongside
-resize and compaction — semantics-preserving transformations
+resize and compaction: semantics-preserving transformations
 that are not captured in the diff frames.
 
 ```rust
@@ -307,7 +326,7 @@ With `IfOverallocated { factor, headroom }`, if
 where the previous branch was much larger than the next one will be.
 
 All `mark()` methods across the container hierarchy accept a
-`ShrinkPolicy`. All `restore()` methods take no policy — they just
+`ShrinkPolicy`. All `restore()` methods take no policy: they just
 undo. Applications typically store the policy as a configurable field
 and propagate it through their top-level `mark()` to all
 sub-containers.

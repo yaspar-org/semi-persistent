@@ -16,9 +16,9 @@
 //!   - `capture(i, saved_len, log)` — if `i < saved_len && !captured[i]`,
 //!       appends `(data[i], i)` to `log` and sets `captured[i] = true`;
 //!       otherwise no-op.
-//!   - `force_capture(i, saved_len, log)` — like `capture` but unconditional
-//!       (within `i < saved_len`); used by `pop` to handle the about-to-vanish
-//!       slot.
+//!   - `force_capture(i, saved_len, log)` — retained trait surface for
+//!       unconditional capture within `i < saved_len`; the vector does not
+//!       call it, because `pop` uses bounded first-write-wins `capture`.
 //!   - `restore_entry(i, old, target_saved_len)` rewinds `data[i] := old` for
 //!     `i < target_saved_len` (and `i <= data.len()` because of the pre-pad
 //!     pushed by previous `restore_entry` calls in the same loop).
@@ -72,6 +72,14 @@ where
         requires self.wf(),
         ensures n.as_nat() == self.data().len();
 
+    /// Untrapped element count for total-operation headroom queries: `len()`
+    /// deliberately traps past the index
+    /// word (the deferred overflow protocol), so a capacity check needs the
+    /// usize truth without a trap.
+    fn raw_len(&self) -> (n: usize)
+        requires self.wf(),
+        ensures n == self.data().len();
+
     fn get(&self, i: I) -> (v: T)
         requires
             self.wf(),
@@ -113,16 +121,15 @@ where
             final(self).wf(),
             final(self).data() == old(self).data().update(i.as_nat() as int, value),
             // TRACK-conditional for the same reason as `push`/`pop` above, and
-            // it is a PERFORMANCE contract, not just a modelling nicety.
+            // it is a performance contract, not just a modelling nicety.
             // Preserving an inline store's flag across a write costs a read and
             // a branch (read the old repr's tag, re-set it on the new one);
             // production spends that only when tracking is on
             // (`containers/src/diff_store.rs:263`, `let was_captured = TRACK &&
-            // T::tag(...)`). Stating the clause unconditionally forced verus's
-            // `InlineStore` to pay it always, which cost +23% on an untracked
-            // e-class ring splice (two full-cell writes per merge) —
-            // `containers-conformance/examples/splicesplit.rs`. Untracked flags
-            // are dead: nothing reads `captured()` when `!TRACK`.
+            // T::tag(...)`). Stating the clause unconditionally forces Verus's
+            // `InlineStore` to pay that work on untracked writes too. Untracked
+            // flags are dead: nothing reads `captured()` when `!TRACK`. The
+            // current machine effect is a Criterion question.
             TRACK ==> final(self).captured() == old(self).captured();
 
     fn truncate(&mut self, len: I)
@@ -225,8 +232,9 @@ where
                     &&& (TRACK ==> final(self).captured() == old(self).captured())
                 };
 
-    /// Unconditional capture (used by `pop` so the about-to-vanish slot is
-    /// always logged). Within-frame: log + set captured. Out-of-frame: no-op.
+    /// Retained unconditional-capture operation. Within-frame: log + set
+    /// captured. Out-of-frame: no-op. `Vec` has no call site; marked pops use
+    /// conditional `capture` to preserve the one-entry-per-index bound.
     fn force_capture(&mut self, i: I, saved_len: I, diff_log: &mut Vec<(T, I)>)
         requires
             old(self).wf(),

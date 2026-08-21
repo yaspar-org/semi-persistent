@@ -6,42 +6,29 @@ regrow the vector, and that push needs a value to place in the resurrected slot.
 This chapter is how the crate does it: the `Copy + Default` bound, the
 default-resize regrow, the relaxed `wf`, and the `pop`/`push` capture rules.
 
-## 1. How production regrows, and why this crate diverges
+## 1. Current production and verified mechanism
 
-Production saves a per-frame `saved_len = store.len()` at each `mark` (per-frame,
-so non-monotone across frames is possible). On `restore` it `truncate`s to the
-target's `saved_len` (a no-op if already shorter), then replays
-`[diff_start_target, n)`; `restore_entry(idx, old, saved_len_target)`:
+Both implementations save a per-frame `saved_len = store.len()` at each mark;
+lengths need not be monotone across nested frames. `pop` conditionally captures
+a marked cell with the same first-write-wins operation as `set`, so each index
+has at most one diff entry per frame. `restore` then resizes the store to exactly
+the target `saved_len` with `T::default()` before replaying
+`[diff_start_target, n)`:
 
 - `idx >= saved_len_target` → **drop**;
-- `idx >= data.len()` → **push** `old_value.clone()` (regrow), with a
-  contiguity `debug_assert_eq!(idx, data.len())`;
-- else → **overwrite**.
+- otherwise → **overwrite** the already present slot.
 
-So production regrows via the push branch in the replay, taking the value from
-the diff entry itself (`old_value.clone()`), which is why production needs only
-`T: Clone` and no `Default`. Contiguity of the regrow pushes holds because
-production's `pop` uses `force_capture`: it logs *every* popped marked cell, so
-the replay hits the regrow indices in increasing order with no gaps. That is
-exactly the property this crate's conditional (bounded) capture gives up, and the
-reason it reaches for `Default` instead (see
-[06-restore-regrow-alternatives](06-restore-regrow-alternatives.md) for the full
-trade, including why the unbounded `force_capture` is a latent DoS).
+The backend contract still permits a push when `idx == data.len()`, but the
+pre-replay resize makes that branch unreachable in the vector restore path.
+This is the bounded replacement for the retired force-record design described
+in [Chapter 6](06-restore-regrow-alternatives.md).
 
-This crate diverges on both bound and mechanism:
-
-- **Bound is `Copy + Default`.** `Copy` is stricter than production's `Clone`
-  (the crate models the `Copy` subset, fine for e-graph ids, and avoids vstd's
-  clone-spec plumbing). `+ Default` is an extra requirement that buys the
-  bounded log; `Tagged` is already `Copy`.
-- **Regrow is resize-with-default, not push-from-diff.** `restore` pads or chops
-  the view to *exactly* `saved_len` via `resize_default` *before* the replay, so
-  the base length is `saved_len` throughout and the replay is pure
-  overwrite-or-drop. Conditional capture breaks production's contiguity
-  guarantee, so push-from-diff would not work here; padding with default
-  sidesteps the ordering entirely. The default fillers are never observable
-  (the backward replay overwrites every regrown cell with its captured value;
-  see [07-default-impls](07-default-impls.md) §1).
+The verified crate models `T: Copy + Default`; production accepts `Clone` for
+ordinary storage operations and requires `Default` when restore can regrow.
+`Copy` is the verified crate's intentionally narrower value domain, used to
+avoid unmodeled clone plumbing. Both use resize-with-default, and both rely on
+the same argument that every filler is overwritten before restored state is
+observable (see [Chapter 7](07-default-impls.md) §1).
 
 A consequence is that the `overlay` spec stays **overwrite-only**: because the
 base is already `saved_len` long, every in-range entry (`idx < saved_len`) hits
@@ -75,10 +62,11 @@ used to derive the two dropped clauses).
 
 ```
 target = token.frame_idx;  saved_len = frames[target].saved_len
+snapshot the pre-resize self, which satisfies wf_for_snap
 resize_default(saved_len)                 // truncate-or-grow to EXACTLY target
                                           //   (NOT max — production drops idx>=saved_len)
-prove wf_for_snap holds on the resized state
-lemma_snap_eq_overlay(target)             // overlay(view,...) == snap_target
+lemma_snap_eq_overlay(target, resized_base)
+                                          // old invariant + shared-prefix base
 replay loop over [diff_start_target, n)   // imperative overlay; restore_entry gated by saved_len
 prove view == snap_target                 // from the lemma + loop invariant
 truncate frames/snapshots/diff_log to target
@@ -86,12 +74,12 @@ finish_restore(...) to rebuild the bridge for the new top frame
 re-establish full wf (bridge + active_saved_len)
 ```
 
-The delicate step is proving `wf_for_snap` of the resized state: the default
-fillers sit in the gap `[old_len, saved_len)`, and coverage says exactly those
-cells are captured, so the captured case of `frame_cell_inv` holds and the
-uncaptured case never reads a filler. The `wf_for_snap` split is what makes this
-expressible. `restore` carries `T: Default` (transitively wherever
-`resize_default` is reachable).
+The resized state need not satisfy the whole vector's `wf_for_snap`: default
+fillers can break the top frame's uncaptured arm. The proof therefore snapshots
+the pre-resize self, whose invariant is known, and applies the flat central
+lemma to a resized base that agrees with the old view on their shared prefix.
+Coverage handles the grown gap. `restore` carries `T: Default` (transitively
+wherever `resize_default` is reachable).
 
 ## 4. `pop` and `push`
 
@@ -102,9 +90,9 @@ expressible. `restore` carries `T: Default` (transitively wherever
   and the bridge is re-established in the two-step entry→mid→self form.
 - **`push`**, when the pushed index `old_len < active_saved_len` (re-entering a
   popped marked region), calls `store.mark_captured(old_len)`. This prevents the
-  pop→push→set sequence from re-capturing and duplicating entries, keeping the
-  diff log `<= saved_len` (the bound that makes the log, and hence `restore`,
-  linear in the modified cells).
+  pop→push→set sequence from re-capturing and duplicating entries, keeping each
+  frame's stratum at most its `saved_len` (and the whole log at most the sum of
+  retained frame lengths).
 
 ---
 [← Table of Contents](00-table-of-contents.md)

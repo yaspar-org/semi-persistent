@@ -25,12 +25,15 @@ view is longer, else extend with `T::default()` fillers. The fillers are
 immediately overwritten by the overwrite-only replay (every popped marked cell
 has a capture entry holding the marked value, by the coverage invariant).
 
-- **Cost:** restore stays **O(k)** (k = diff entries replayed). `resize_default`
-  is O(Δlen) where Δlen ≤ k, then one replay pass. Δlen redundant *writes* of
-  cheap default values.
-- **Bound:** diff log ≤ `saved_len`. `pop` uses conditional first-write-wins
-  `capture` (not force-record), and `push` calls `mark_captured` when
-  re-entering a popped marked index, so each index has ≤ 1 entry per frame.
+- **Cost on the Part-1 axis:** regrow plus replay stays **O(k)** (k = diff
+  entries replayed). `resize_default` is O(Δlen) where Δlen ≤ k, then one
+  replay pass. Part 2 adds the chosen backend's parent/bitmap capture-state
+  work. Δlen redundant *writes* of cheap default values.
+- **Bound:** each frame's diff stratum is ≤ that frame's `saved_len`.
+  `pop` uses conditional first-write-wins `capture` (not force-record), and
+  `push` calls `mark_captured` when re-entering a popped marked index, so each
+  index has ≤ 1 entry per frame. Across nested frames, the total log is bounded
+  by the sum of their saved lengths.
 - **Requires:** `T: Default`. Free for the e-graph domain (dense ids default
   to 0). Excludes non-defaultable `T`.
 
@@ -55,41 +58,44 @@ value are never conflated.
 
 ## B. No Default: scan/sort regrow by index
 
-Drop the `Default` bound. Because uniqueness + coverage guarantee every index
-in `[final_len, saved_len)` has exactly one entry holding `snap[j]`, restore
-can regrow by locating each target index's entry: either a second pass building
-an index→entry map, or sorting the regrow slice by index, then pushing in
-increasing-index order.
+Drop the `Default` bound. Coverage guarantees at least one replay-range entry
+for every index in `[final_len, saved_len)`, but an index can occur once in
+each of several nested strata. Because reverse replay makes the
+**lowest-position** entry in the replay range win, a scan-based regrow must
+select that entry for each index. It can build an index-to-lowest-position map
+and then push winners in increasing index order, or sort/group entries while
+preserving the same winner rule.
 
-- **Cost:** restore becomes **2×k** (extra pass) or **O(k log k)** (sort),
-  redundant *reads/searches* instead of writes. This is the main reason we
-  did not pick it: it roughly doubles restore time.
-- **Bound:** same as A (≤ saved_len), uses conditional capture.
-- **Requires:** only `T: Clone` (strictly weaker than `Default`: every `Copy`
-  is `Clone`, not every type is `Default`). Worth revisiting if `T` is ever
-  large/expensive-to-construct, where A's filler writes would dominate.
+- **Cost:** an additional O(k) scan plus O(k) temporary map space, or
+  O(k log k) sorting. The constant-factor effect has not been measured in this
+  repository; it needs Criterion evidence before making a runtime claim.
+- **Bound:** same per-frame bound as A, using conditional capture.
+- **Requires:** no `Default`, but still the copy/clone capability needed to
+  materialize selected log values. `Clone` and `Default` are independent trait
+  requirements; neither is generally weaker than the other.
 
-## C. Force-record pops (production today): UNBOUNDED, do not adopt
+## C. Force-record pops (retired predecessor): UNBOUNDED
 
-Production's `pop` calls `force_capture` unconditionally: it logs the popped
-cell every time, ignoring the capture bit. On restore the highest-position
-filler entry supplies the regrow push value (overwritten by the lower
-first-write-wins entry), so it is *correct*.
+An earlier implementation called `force_capture` unconditionally: it logged the
+popped cell every time, ignoring the capture bit. On restore the
+highest-position filler entry supplied the regrow push value (overwritten by the
+lower first-write-wins entry), so it was *correct*.
 
-- **Cost:** restore O(k), simplest code.
-- **Bound: NONE.** A `push`/`pop` loop on one index logs an entry every
+- **Cost on the Part-1 axis:** O(k), simplest regrow/replay code; Part 2 still
+  adds capture-state rebuilding.
+- **Additional diff bound: none in terms of `saved_len`.** A `push`/`pop` loop on one index logs an entry every
   iteration (push resets the capture bit; force_capture ignores it). An
-  adversary controlling push/pop exhausts memory. **This is a latent DoS in
-  production.** It is the reason we diverged: if the Default version verifies,
-  propagate the bounded design back to production.
+  adversary controlling push/pop can exhaust memory. This is why the design was
+  replaced in both production and the verified crate. `force_capture` remains
+  in the verified backend trait but has no vector call site.
 
 ## Summary
 
-| | restore time | diff bound | `T` bound |
+| | regrow + replay time | diff bound | `T` bound |
 |---|---|---|---|
-| A. Default + resize | O(k) | ≤ saved_len | `Default` |
-| B. scan/sort regrow | 2k or k·log k | ≤ saved_len | `Clone` |
-| C. force-record (prod) | O(k) | **unbounded (DoS)** | none |
+| A. Default + resize | O(k) | each frame ≤ its saved length | `Default` |
+| B. scan/sort regrow | O(k) extra scan or O(k log k) sort | each frame ≤ its saved length | existing copy/clone bound; no `Default` |
+| C. force-record (retired) | O(k) | no saved-length bound | existing copy/clone bound; no `Default` |
 
 The `frame_cell_inv` / coverage-invariant foundation in `vec.rs` is shared by
 A and B, only the regrow mechanism in `restore` and the `T` bound differ, so
@@ -111,26 +117,29 @@ fixes the cost of three operations:
 - `capture`/`set`/`pop` read and set it.
 
 Write `n` = vector length, `r` = entries in the restored strata (replayed),
-`p` = entries in the parent stratum. The replay itself is **O(r)** and
-irreducible (it is the work of undoing). The question is the *extra* cost of
-flag bookkeeping on top of that.
+`p` = entries in the parent stratum, and `w` = materialized packed-bitmap words.
+The replay itself is **O(r)** and irreducible (it is the work of undoing). The
+question is the *extra* cost of flag bookkeeping on top of that.
 
 ## D. One stolen bit + rescan (CHOSEN)
 
 The flag is a single bit: for `InlineStore`, the niche bit stolen from the
 value's repr (zero extra memory); for `ParallelStore`, one bit in a packed
 `u64` bitset. `mark` resets it: `InlineStore` clears only the parent stratum's
-captured slots (O(parent diff)); `ParallelStore` zeroes the packed bitset
-(O(n/64)). `restore`'s `finish_restore` rebuilds the parent flags by scanning
-the parent stratum and re-setting those bits, **O(p)**.
+captured slots (O(parent diff)); `ParallelStore` zeroes all `w` materialized
+words. The bitmap can retain a prior high-water allocation, so `w` is not
+necessarily the current `ceil(n/64)`. Restore clears current flags, replays,
+then scans the parent stratum to re-set its bits.
 
-- **Cost:** `restore` = O(r) replay **+ O(p) parent rescan**; `mark` sublinear,
-  never a copy. The `+p` is exactly the price of a boolean flag: after replay
-  clears tags, the only way to recover "captured in parent" is to re-derive it
-  from the parent's diff slice.
+- **Cost:** inline restore is O(r+p); parallel restore is O(r+p+w).
+  Inline mark is O(parent diff), and parallel mark is O(w); neither copies
+  values. The `+p` is the price of recovering "captured in parent" from the
+  parent's diff slice.
 - **Memory:** **1 bit/cell**, and for `InlineStore`, *zero* extra bytes (the
   bit is niched into the value). This is the design's headline property.
-- **Marks:** **unbounded**, no counter to overflow.
+- **Flag representation:** no capture-depth counter to overflow. The containing
+  vector still has independent `u32` limits on open frame depth and fork
+  history.
 
 The `+p` rescan is the accepted cost. It is not a hidden blow-up: `p` is the
 size of the frame you are returning into, so `restore` is O(work-unwound +
@@ -140,11 +149,11 @@ indices, so only cells in `p ∩ r` need re-setting, but testing membership in
 `p` in O(1) needs a per-cell "captured-in-which-frame" structure, i.e. it just
 relocates the cost to option E. Not worth it.)
 
-## E. Per-cell capture-depth (the predecessor `semper` design)
+## E. Per-cell capture-depth (alternative)
 
-This is not a hypothetical: the predecessor research vehicle, `semper`, shipped
-exactly this, so the comparison below is against a real implementation, not a
-sketch.
+No implementation or benchmark of this alternative is retained in this
+repository. The following is an algorithmic comparison, not evidence about a
+named predecessor or measured workload.
 
 Store a per-cell **capture-depth** `capture_depths[i]: C` (`C = u8`/`u16`) =
 "the frame *depth* that last captured cell `i`", in a **separate** array (not
@@ -155,7 +164,8 @@ inline). With a frame at depth `d`, a first write to cell `i` is
 replay** that restores values. Crucially:
 
 - **`mark` is O(1)**: bump the depth counter; no per-cell touch, no bitset
-  zero, no allocation. (Our chosen design's `mark` is O(parent)/O(n/64).)
+  zero, no allocation. (Our chosen design's `mark` is O(parent diffs) inline
+  or O(w) for `w` materialized parallel-bitmap words.)
 - **No parent rescan on backtrack.** Because each diff entry stores the
   `old_capture_depth`, the O(r) reverse replay that restores values *also*
   restores the capture-depths; there is no separate `finish_restore` scan, so
@@ -165,77 +175,40 @@ replay** that restores values. Crucially:
   marks: `u16` ⇒ 65 535 nested, `u8` ⇒ 255, far past any real search depth. The
   depth is rolled back with the diff, so it never accumulates over the run; the
   ceiling is on concurrent nesting, not on the total number of marks ever taken.
-- **Memory: `N × sizeof(C)` per vec, separate array.** `semper` argues this is
-  actually *cheaper* than per-frame bitsets (`5 × 1.25 MB × 50 frames ≈
-  312 MB` of bitsets vs `~100 MB` for `u16` depths at 10⁷ nodes), and keeps
-  the depth out of the value's cache line, which matters because the e-graph is
-  read-dominated (`find()` chases pointers): inline `(u32,u32)` halves cache
-  density on the hottest loop, so `semper` deliberately keeps depths separate.
+- **Memory: `N × sizeof(C)` per vector in a separate array**, unless depth is
+  stored inline with each value. The repository has no representative
+  end-to-end measurement establishing which layout is preferable.
 
-So E has a strictly *better backtracking profile* than our chosen D, O(1)
+So E has a strictly lower asymptotic flag-maintenance profile than our chosen D, O(1)
 mark, rescan-free O(r) backtrack, at the cost of `N × sizeof(C)` memory and a
 nesting-depth ceiling.
 
-### Why this crate chose D (the stolen bit): for cache density and access cost, NOT backtracking
+### Why this crate currently uses D
 
-The deciding factor is **raw cache density and per-access (read/write) cost on
-the hot loops, not backtracking performance**, where E is in fact faster. The
-e-graph is overwhelmingly read-dominated: `find()` and canonicalization chase
-id pointers, each step reading one word and nothing else. The capture flag has
-to live *somewhere*, and the only representation that doesn't degrade that
-read path is a bit stolen from the value's own word:
+For inline identifiers, D reuses a representation bit and therefore adds no
+separate resident capture array or wider cell. Reads still mask the
+representation bit. E can preserve value-read density by keeping depths in a
+separate array; in that layout ordinary reads need not touch the depth array,
+while captured writes do touch a second memory stream. Storing depth inline
+would widen cells instead. These are concrete layout differences, but claims
+about cache misses, hot-loop dominance, or end-to-end speed require Criterion
+measurements and are not established here.
 
-- **D keeps full read density and adds nothing to an access.** `InlineStore`
-  niches the flag into a spare bit of the value's repr (`DenseId` ids already
-  reserve the MSB), so a `Vec<u32>` of ids stays at **16 per cache line** and a
-  read is a single load + mask: no second array, no second stream, no extra
-  cache line touched. The capture state rides *for free* in bytes that already
-  exist.
-- **E perturbs every access, however it is laid out.** Inline `(value, depth)`
-  pairs double the footprint and **halve read density** (8 per line), fatal on
-  the hottest loop. A *separate* `capture_depths` array (what `semper` chose,
-  precisely to protect read density) avoids that but makes every captured
-  write touch a **second cache line / second memory stream**, and costs
-  `N × sizeof(C)` resident memory (10–100 MB across the e-graph's id vectors).
-  Either way the *steady-state read and write access cost* is worse than D's
-  ride-along bit.
-
-In short: D is chosen because the flag must not cost a cache line or an extra
-load on the read-dominated hot path; the stolen bit is the only zero-density-
-cost option. The O(p) restore rescan and the bridge-invariant proof burden are
-**accepted consequences** of that choice, not themselves reasons for it; on the
-backtracking axis alone, E (the `semper` capture-depth design) wins. The trade
-is genuinely two-sided, decided here by access-path performance and memory:
-
-- **D (stolen bit):** full read density, zero-cost accesses, zero tracking
-  memory, no depth cap, paying an O(p) rescan on restore and a niche/bridge
-  proof obligation.
-- **E (capture-depths):** O(1) mark, rescan-free O(r) backtrack, paying read
-  density / an extra access stream and `N·sizeof(C)` memory, with a
-  nesting-depth ceiling.
-
-A write-heavy, backtrack-bound, memory-rich workload that does *not* live or
-die by read density could rationally prefer E.
+D consequently trades the extra O(p) restore rescan and bridge-invariant proof
+for a one-bit inline flag with no separate capture array. E has O(1) flag reset
+at mark and restores depths during the O(r) replay, at the cost of
+`N * sizeof(C)` separate memory (or wider cells) and a nesting-depth ceiling.
 
 ## Summary (Part 2)
 
-The **deciding column is read density / access cost**; everything else is a
-consequence. D wins it; E wins the backtracking columns.
-
 | | read density & access cost | tracking memory | `mark` | backtrack flag | cap |
 |---|---|---|---|---|---|
-| D. stolen bit (chosen) | **full (16 u32/line), single load+mask** | **1 bit; 0 inline** | O(parent)/O(n/64) | +O(p) rescan | none |
-| E. capture-depths (`semper`) | extra stream (separate) / ½ density (inline) | `N · sizeof(C)`/vec | **O(1)** | **none (in O(r))** | **nesting depth** (`u16`=65k) |
+| D. one-bit flag (chosen) | inline ID cells stay one word; reads mask the tag | 1 bit; no separate inline allocation | O(parent diffs) inline / O(w) parallel | +O(p), plus O(w) parallel clear | no flag-specific depth cap |
+| E. capture-depths | separate layout leaves ordinary value reads unchanged but adds a stream on captures; inline layout widens cells | `N * sizeof(C)`/vec if separate | O(1) | restored during O(r) replay | nesting depth (`u16`: at most 65,535 nonzero depth values, depending on encoding) |
 
-Net: D is chosen for **raw cache density and read/write access cost on the
-hot, read-dominated loops**; the stolen bit is the only representation that
-costs neither a cache line nor an extra load per access, and zero resident
-tracking memory. It is explicitly **not** chosen for backtracking speed: there
-E (the predecessor `semper` capture-depth design) is faster (O(1) mark,
-rescan-free O(r) backtrack). The O(p) restore rescan and the bridge-invariant
-proof obligation are the *accepted price* of the access-path win, not reasons
-for it. Switching to E later is a backend-level change (the store's flag type,
-`mark`, backtrack, and the bridge invariant), not a `restore`-local one.
+Switching to E would be a backend-and-proof change: the store's flag type,
+`mark`, replay contracts, and bridge invariant all change. Choosing it on
+performance grounds requires a representative Criterion comparison.
 
 ---
 [← Table of Contents](00-table-of-contents.md)

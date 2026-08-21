@@ -94,7 +94,7 @@ pub enum ENodeKind {
     /// Associative-commutative sorted multiset (variadic, pool). Multiset child
     /// representation `(G, mult)`; the AC algebra in Kapur's AC-CC terms. Stores plain AC
     /// (`Clamp::None`) AND nilpotent (`Clamp::Nilpotent`) ops — nilpotent keeps true
-    /// multiplicities here for the completion-time mod-n reduction (a `Set` dedup would
+    /// multiplicities here for the build/recanonize mod-n reduction (a `Set` dedup would
     /// destroy them). The op's `Clamp` (on `OpKind`) says which.
     MSet = 7,
     /// Associative-commutative-idempotent sorted set (variadic, pool). Set child

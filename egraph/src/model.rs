@@ -238,6 +238,14 @@ macro_rules! signed_int_ops { ($E:ident, $V:ident, $s:expr) => { &[
     checked_binop!($E,$V,concat!($s,"::*"),$s,checked_mul),
     checked_binop!($E,$V,concat!($s,"::/"),$s,checked_div),
     checked_binop!($E,$V,concat!($s,"::%"),$s,checked_rem),
+    LitOpDesc { name: concat!($s,"::pow"), arg_sorts: &[$s,$s], ret_sort: $s,
+        eval: |a| match (a[0], a[1]) {
+            ($E::$V(x), $E::$V(e)) => {
+                let e = u32::try_from(*e).expect(concat!($s,"::pow exponent out of range"));
+                $E::$V(x.checked_pow(e).expect(concat!($s,"::pow overflow")))
+            }
+            _ => panic!(),
+        } },
     LitOpDesc { name: concat!($s,"::neg"), arg_sorts: &[$s], ret_sort: $s,
         eval: |a| match a[0] { $E::$V(x) => $E::$V(x.checked_neg().expect(concat!($s,"::neg overflow"))), _=>panic!() } },
     LitOpDesc { name: concat!($s,"::abs"), arg_sorts: &[$s], ret_sort: $s,
@@ -604,6 +612,44 @@ impl LitModel for AllModel {
             v.extend_from_slice(ibig_ops!(AllLit));
             v.extend_from_slice(ubig_ops!(AllLit));
             v.extend_from_slice(rbig_ops!(AllLit));
+            // Mixed-domain lifts, only expressible where both groups'
+            // variants exist: an integer count into an exact rational (total,
+            // no rounding — what lets a bound multiplicity feed rational
+            // arithmetic), and rational pow with a checked non-negative
+            // integer exponent. The herbie multiplicity variants consume both.
+            v.push(LitOpDesc {
+                name: "RBig::from_int",
+                arg_sorts: &["i64"],
+                ret_sort: "RBig",
+                eval: |a| match a[0] {
+                    AllLit::I64(x) => AllLit::RBig(BigRational::from_integer((*x).into())),
+                    _ => panic!(),
+                },
+            });
+            v.push(LitOpDesc {
+                name: "RBig::scale",
+                arg_sorts: &["RBig", "i64"],
+                ret_sort: "RBig",
+                eval: |a| match (a[0], a[1]) {
+                    (AllLit::RBig(x), AllLit::I64(k)) => {
+                        AllLit::RBig(x * BigRational::from_integer((*k).into()))
+                    }
+                    _ => panic!(),
+                },
+            });
+            v.push(LitOpDesc {
+                name: "RBig::pow",
+                arg_sorts: &["RBig", "i64"],
+                ret_sort: "RBig",
+                eval: |a| match (a[0], a[1]) {
+                    (AllLit::RBig(x), AllLit::I64(e)) => {
+                        let e = i32::try_from(*e).expect("RBig::pow exponent out of range");
+                        assert!(e >= 0, "RBig::pow negative exponent");
+                        AllLit::RBig(x.pow(e))
+                    }
+                    _ => panic!(),
+                },
+            });
             v
         });
         &OPS

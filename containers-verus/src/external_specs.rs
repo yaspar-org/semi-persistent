@@ -54,7 +54,7 @@
 //!
 //! Feature-gated behind `literal-types` so the default build carries no
 //! external-crate assumptions: `cargo verus verify` must pass both with and
-//! without the feature (migration plan, validation matrix).
+//! without the feature.
 //!
 //! Runtime validation: `tests/compat_map.rs::literal_keys` fuzzes the
 //! key-model requirements themselves for the covered types (eq ⟹
@@ -149,8 +149,8 @@ pub broadcast axiom fn axiom_canonical_rational_obeys_hash_table_key_model()
 /// (`struct { bits: u64 }`, constructor is `to_bits` verbatim, derived
 /// `Eq`/`Hash` over the field) — `==` classes are singletons trivially,
 /// with no fold and no float-semantics dependence. The long-term
-/// float-literal key (see canonical_keys.rs for the CanonicalF64-vs-
-/// BitsF64 migration sequencing).
+/// float-literal key (see canonical_keys.rs for the CanonicalF64-vs-BitsF64
+/// semantic comparison).
 pub broadcast axiom fn axiom_bits_f64_obeys_hash_table_key_model()
     ensures
         #[trigger] obeys_key_model::<crate::canonical_keys::BitsF64>(),

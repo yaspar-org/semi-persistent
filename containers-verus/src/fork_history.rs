@@ -7,7 +7,7 @@
 //! origins. Branch 0 is the root; branch `b ≥ 1` is `origins[b-1]`, forked off
 //! `parent_branch_id` at depth `fork_depth`.
 //!
-//! Two layers (mirrors the M3b spec/exec split):
+//! Two layers separate specification from execution:
 //!   - `fork_valid(...)` — a pure recursive spec defining token validity by
 //!     walking from the current branch up the parent chain. `decreases branch`
 //!     is sound because of the well-formedness invariant `fh_wf`:
@@ -15,7 +15,7 @@
 //!   - `ForkHistory::is_valid` — the production while-loop, proved to compute
 //!     exactly `fork_valid(...)`.
 //!
-//! See `doc/design/02-fork-history.md`.
+//! See `doc/design/03-fork-history.md`.
 
 use vstd::prelude::*;
 
@@ -350,10 +350,10 @@ impl ForkHistory {
 }
 
 // ===========================================================================
-// Branch-safety characterization. Pure lemmas over `fork_valid`/`fh_wf` (no
-// `Vec`). These are specific INSTANCES of the general branch-safety theorem
-// (design doc §0.6, §2.1); the general theorem over arbitrary current paths is
-// not yet proved.
+// Useful branch-safety corollaries. The general arbitrary-path
+// characterization is proved above by `lemma_fork_walk_characterization` and
+// `lemma_fork_valid_characterization`; these lemmas specialize it to common
+// current-branch and single-cut cases.
 // ===========================================================================
 
 /// Current-branch case: a token whose branch IS the current branch satisfies
@@ -385,10 +385,9 @@ pub(crate) proof fn lemma_fork_valid_current_branch(
 ///   - `token_depth >  cut_depth`  → invalid: a position on `cut_branch`
 ///     strictly deeper than the recorded bound.
 ///
-/// Scope: this covers ONLY a token on the just-cut branch in the
-/// single-origin-appended state. It does NOT establish the general theorem
-/// (strict-grandparent branches, off-path rejection, multi-cut states); see
-/// §2.1.
+/// Scope: this corollary covers only a token on the just-cut branch in the
+/// single-origin-appended state. The general theorem above also covers strict
+/// ancestors, off-path rejection, and multi-cut histories.
 pub(crate) proof fn lemma_branch_cut(
     origins: Seq<ForkOrigin>, cut_branch: nat, cut_depth: nat,
     new_current_depth: nat, token_depth: nat,
@@ -439,3 +438,31 @@ pub(crate) proof fn lemma_branch_cut(
 }
 
 } // verus!
+
+// Production-surface parity impls (production derives these).
+impl core::fmt::Debug for ForkOrigin {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ForkOrigin")
+            .field("parent_branch_id", &self.parent_branch_id)
+            .field("fork_depth", &self.fork_depth)
+            .finish()
+    }
+}
+
+impl Clone for ForkHistory {
+    fn clone(&self) -> Self {
+        ForkHistory {
+            current_branch_id: self.current_branch_id,
+            origins: self.origins.clone(),
+        }
+    }
+}
+
+impl core::fmt::Debug for ForkHistory {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ForkHistory")
+            .field("current_branch_id", &self.current_branch_id)
+            .field("origins", &self.origins)
+            .finish()
+    }
+}

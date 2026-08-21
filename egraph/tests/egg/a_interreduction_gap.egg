@@ -1,0 +1,12 @@
+;; EXPECT: check-failed
+;; TYPES: machine
+;; The A-only erased-reference gap (design doc section 13 companion): merging
+;; two pure Seq classes leaves the equation seq(A,B) = seq(C,X) invisible to
+;; parents that spliced one spelling's elements at build time. Plain
+;; congruence cannot join p and q; the completion modes can (companion
+;; fixtures). Pins that plain mode is untouched by the A-only pass.
+(datatype E
+    (A) (B) (C) (X)
+    (S E :assoc))
+(union (S (A) (B)) (S (C) (X)))
+(check (= (S (A) (B) (X)) (S (C) (X) (X))))

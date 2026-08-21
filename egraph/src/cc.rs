@@ -2,21 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! AC congruence completion: superposition + inter-reduction during rebuild.
 //!
-//! This restores AC congruence completeness, which canonization alone cannot
-//! provide: recanonicalizing an AC node substitutes equal *atoms* but never
-//! equal *sub-sums*, so equalities like `+(a,b)=c ∧ +(b,d)=e ⊨ +(c,d)=+(a,e)`
-//! are missed. See `doc/design/ac-congruence-completeness.md` for the theory and
+//! This implements the completion machinery intended to recover AC congruence
+//! consequences that canonization alone cannot provide: recanonicalizing an AC
+//! node substitutes equal *atoms* but never equal *sub-sums*, so equalities like
+//! `+(a,b)=c ∧ +(b,d)=e ⊨ +(c,d)=+(a,e)` are otherwise missed. The code-to-paper
+//! correspondence is tested on finite fixtures, but an end-to-end completeness
+//! theorem for this implementation remains open. See
+//! `doc/design/ac-congruence-completeness.md` for the theory and
 //! `doc/design/ac-completion-spec.md` for the engine-level spec.
 //!
-//! The completion is owned by `rebuild()` (plan §2, Option A): after the existing
-//! worklist closure drains, we build the [`CcSnapshot`] over the live AC
-//! nodes and run a per-AC-op critical-pair round against it, materializing new
-//! nodes and pushing merges back through the worklist, to a joint fixpoint.
-//!
-//! This file contains the per-round snapshot (T3). The completion round itself lives in
-//! `egraph.rs::cc_round` (it finds partners through the class use-lists); the snapshot is
-//! the frozen-index alternative retained for diagnostics and for the S3b worklist rewrite,
-//! and it must stay representation-agnostic (MSet AND Set) to agree with
+//! This file contains the representation-agnostic per-round snapshot used by
+//! completion diagnostics and conformance tests. The completion round itself
+//! lives in `egraph.rs::cc_round` and finds partners through class use-lists.
+//! The snapshot must cover both MSet and Set nodes to agree with
 //! `completion_node_ids` semantics.
 
 use crate::canon::{MSetCanon, VarCanon};
@@ -33,13 +31,14 @@ type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 ///
 /// This is the narrow slice of [`crate::index::IndexStore`] that the completion
 /// search needs: the spec's candidate set `⋃_{x ∈ distinct(M)} by_contains[x] ∩
-/// by_op[f]` (plan §5). We pre-intersect with `by_op[f]` by keying on
+/// by_op[f]`. We pre-intersect with `by_op[f]` by keying on
 /// `(op, child_repr)`, so a lookup directly yields the AC nodes of op `f` that
 /// contain child class `x` — no separate `by_op` intersection at use time.
 ///
-/// Unlike `IndexStore`, this is built *during* `rebuild()` (the matcher's
-/// `IndexStore` is built afterwards), it covers only AC ops, and it carries no
-/// `by_repr`/`by_child_pos`. Subsumed nodes are skipped, matching `IndexStore`.
+/// Unlike `IndexStore`, this diagnostic index covers only AC ops and carries no
+/// `by_repr`/`by_child_pos`. Production completion currently finds candidates
+/// through class use-lists instead. Subsumed nodes are skipped, matching
+/// `IndexStore`.
 ///
 /// Node ids in each bucket are sorted and deduplicated.
 pub struct CcSnapshot<Cfg: EGraphConfig> {
@@ -254,11 +253,7 @@ mod tests {
 
         // Baseline: pab is both a completion candidate and in the matcher index.
         assert_eq!(CcSnapshot::build(&eg).completion_nodes(), &[pab]);
-        assert!(
-            IndexStore::build(&eg).by_op[&plus]
-                .as_slice()
-                .contains(&pab)
-        );
+        assert!(IndexStore::build(&eg).nodes_by_op(plus).contains(&pab));
 
         // Collapse it (the completion-internal retirement).
         eg.set_cc_collapsed(pab);
@@ -270,9 +265,7 @@ mod tests {
         );
         // ...but still matchable: present in the index and still in its class.
         assert!(
-            IndexStore::build(&eg).by_op[&plus]
-                .as_slice()
-                .contains(&pab),
+            IndexStore::build(&eg).nodes_by_op(plus).contains(&pab),
             "AC-collapsed node must stay visible to the matcher (not subsumed)"
         );
         assert_eq!(eg.class_repr(pab), eg.class_repr(pab));
@@ -280,10 +273,7 @@ mod tests {
         // Contrast: user subsume DOES hide it from the matcher.
         eg.subsume(pab);
         assert!(
-            !IndexStore::build(&eg)
-                .by_op
-                .get(&plus)
-                .is_some_and(|v| v.as_slice().contains(&pab)),
+            !IndexStore::build(&eg).nodes_by_op(plus).contains(&pab),
             "subsumed node must be hidden from the matcher index"
         );
     }

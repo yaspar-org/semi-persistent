@@ -1,0 +1,72 @@
+;; TYPES: machine
+;; Translation of egglog tests/calc.egg (7b1adf2).
+;; Config: native A. `gmul` is declared variadic `:assoc` — the group operation is
+;; associative but NOT commutative, so this is A, not AC. The associativity birewrite
+;; is deleted and the remaining rules are restated n-ary. See calc.deviations.md.
+(sort G)
+(constructor IConst () G)
+(let gI (IConst))
+(constructor AConst () G)
+(let gA (AConst))
+(constructor BConst () G)
+(let gB (BConst))
+(constructor gmul (G) G :assoc)
+(constructor inv (G) G)
+
+;; The assoc birewrite of the rules encoding is deleted here: the declaration above
+;; gives gmul sequence semantics, so the nested terms below flatten to the sequence
+;; normal form on the way in and a singleton sequence is its element.
+
+;; idl and idr collapse into one n-ary rule: delete an identity element wherever it
+;; sits in the sequence. Strictly generalizes the two binary rules.
+(rewrite (gmul ..p gI ..s) (gmul ..p ..s))
+;; invl / invr, n-ary: an adjacent inverse pair anywhere in the sequence.
+(rewrite (gmul ..p (inv a) a ..s) (gmul ..p gI ..s))
+(rewrite (gmul ..p a (inv a) ..s) (gmul ..p gI ..s))
+
+; gA is cyclic of period 4
+(rewrite (gmul ..p gA gA gA gA ..s) (gmul ..p gI ..s))
+
+(let gA2 (gmul gA gA))
+(let gA4 (gmul gA2 gA2))
+(let gA8 (gmul gA4 gA4))
+
+;; --- block 1 ---
+;; (gmul gA4 gA4) and (gmul (gmul gA2 gA2) (gmul gA2 gA2)) are both the eight-element
+;; sequence, so the goal holds by canonization and the run does nothing.
+(push)
+(gmul gA4 gA4)
+(run 10000 :until (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+(check (= (gmul gA4 gA4) (gmul (gmul gA2 gA2) (gmul gA2 gA2))))
+(pop)
+
+;; --- block 2 ---
+(push)
+(gmul (gmul gA2 gA2) (gmul gA2 gA2))
+(run 10000 :until (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+                     (gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
+(check (= (gmul (gmul gA2 gA2) (gmul gA2 gA2))
+          (gmul gA2 (gmul gA2 (gmul gA2 gA2)))))
+(pop)
+
+
+(constructor aConst () G)
+(constructor bConst () G)
+(let ga (aConst))
+(let gb (bConst))
+
+;; --- block 3 ---
+(push)
+(gmul (gmul gb (gmul (inv ga) ga)) (inv gb))
+(run 100000 :until (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+(check (= (gmul (gmul gb (gmul (inv ga) ga)) (inv gb)) (gmul gb (inv gb))))
+(pop)
+
+;; --- block 4 ---
+(push)
+(gmul gb (inv gb))
+(run 100000 :until (= (gmul gb (inv gb)) gI))
+(check (= (gmul gb (inv gb)) gI))
+(pop)
+(print-size)
+(print-stats :file "calc.native.stats.json")

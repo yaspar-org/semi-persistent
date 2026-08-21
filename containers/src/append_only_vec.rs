@@ -56,6 +56,14 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// is on the *new* length, not on the returned index, so that every later
     /// `len()` is infallible by construction; checking only the index would admit a
     /// final push whose successor length traps on the next read.
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_push(&mut self, value: T) -> Result<I, &'static str> {
+        Ok(self.push(value))
+    }
+
     pub fn push(&mut self, val: T) -> I {
         let idx = I::try_from_usize(self.data.len()).expect(FULL);
         assert!(idx.checked_incr().is_some(), "{FULL}");
@@ -101,6 +109,14 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         self.data.iter()
     }
 
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_mark(&mut self, policy: super::ShrinkPolicy) -> Result<VecToken, &'static str> {
+        Ok(self.mark(policy))
+    }
+
     pub fn mark(&mut self, shrink: super::ShrinkPolicy) -> VecToken {
         assert!(TRACK, "mark() called on untracked AppendOnlyVec");
         if let super::ShrinkPolicy::IfOverallocated { factor, headroom } = shrink {
@@ -122,6 +138,15 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         let saved = self.len();
         self.frames.push(saved);
         token
+    }
+
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_restore(&mut self, token: VecToken) -> Result<(), &'static str> {
+        self.restore(token);
+        Ok(())
     }
 
     pub fn restore(&mut self, token: VecToken) {

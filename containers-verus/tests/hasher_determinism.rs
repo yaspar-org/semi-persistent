@@ -170,7 +170,8 @@ fn iteration_order_is_insertion_order() {
     let build = || {
         let mut m: SpMap<u64, u64, usize, true> = SpMap::new();
         for i in 0..64u64 {
-            m.insert(i * 7 % 13, i);
+            m.try_insert(i * 7 % 13, i)
+                .expect("insert: within index word");
         }
         m.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>()
     };
@@ -191,14 +192,18 @@ fn identical_op_sequences_produce_identical_state() {
     let run = || {
         let mut m: SpMap<String, u64, usize, true> = SpMap::new();
         for i in 0..50u64 {
-            m.insert(format!("key{}", i % 20), i);
+            m.try_insert(format!("key{}", i % 20), i)
+                .expect("insert: within index word");
         }
-        let tok = m.mark(ShrinkPolicy::Never);
+        let tok = m
+            .try_mark(ShrinkPolicy::Never)
+            .expect("mark: depth bounded by this harness");
         for i in 50..100u64 {
-            m.insert(format!("key{}", i % 30), i);
+            m.try_insert(format!("key{}", i % 30), i)
+                .expect("insert: within index word");
         }
         let after_writes: Vec<(String, u64)> = m.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        m.restore(tok);
+        m.try_restore(tok).expect("restore: own token");
         // Post-restore the index has been fully rebuilt.
         let after_restore: Vec<(String, u64)> = m.iter().map(|(k, v)| (k.clone(), *v)).collect();
         let probes: Vec<Option<u64>> = (0..30)
@@ -215,13 +220,15 @@ fn identical_op_sequences_produce_identical_state() {
 fn lookups_agree_with_log_after_restore() {
     let mut m: SpMap<u64, u64, usize, true> = SpMap::new();
     for i in 0..100u64 {
-        m.insert(i % 40, i);
+        m.try_insert(i % 40, i).expect("insert: within index word");
     }
-    let tok = m.mark(ShrinkPolicy::Never);
+    let tok = m
+        .try_mark(ShrinkPolicy::Never)
+        .expect("mark: depth bounded by this harness");
     for i in 100..200u64 {
-        m.insert(i % 60, i);
+        m.try_insert(i % 60, i).expect("insert: within index word");
     }
-    m.restore(tok);
+    m.try_restore(tok).expect("restore: own token");
 
     // Last-write-wins over the surviving log, computed independently.
     let mut expected = std::collections::BTreeMap::new();

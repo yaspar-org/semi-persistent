@@ -78,9 +78,13 @@ impl<T: Tagged> Opt<T> {
 
     /// Extract the value (panics on `None` in exec via the precondition).
     pub fn get(&self) -> (v: T)
-        requires self.wf(), self.get_spec() is Some,
-        ensures Some(v) == self.get_spec(),
+        requires self.wf(),
+        ensures self.get_spec() is Some ==> Some(v) == self.get_spec(),
     {
+        // Total-with-documented-panic: presence is the branch.
+        if !self.is_some() {
+            crate::guard::refuse("Opt::get: value is None");
+        }
         T::from_repr(&self.repr)
     }
 
@@ -107,7 +111,7 @@ impl<T: Tagged> Opt<T> {
     }
 
     /// The embedded value even when the option bit says `None` — the verified
-    /// twin of the e-graph's `EClassEntry::repr_id_unchecked`. A class that has
+    /// counterpart of the e-graph's `EClassEntry::repr_id_unchecked`. A class that has
     /// been absorbed keeps its (now-absent) repr key in place; the merge path
     /// reads it back to look up the absorbed class's data before the key is
     /// removed from the sparse set. `Tagged::from_repr` already strips the tag,
@@ -120,7 +124,7 @@ impl<T: Tagged> Opt<T> {
     }
 
     /// Set the option bit to `None` **in place, preserving the value** — the
-    /// verified twin of `EClassEntry::set_absent`. `Tagged::set_tag`'s contract
+    /// verified counterpart of `EClassEntry::set_absent`. `Tagged::set_tag`'s contract
     /// is exactly "flips the tag, keeps `value_of`", so the value stays readable
     /// through `get_unchecked` afterwards.
     pub fn set_none(&mut self)
@@ -133,7 +137,7 @@ impl<T: Tagged> Opt<T> {
         T::set_tag(&mut self.repr);
     }
 
-    /// The raw repr (spec twin; the field is `pub(crate)` — privacy closeout).
+    /// The raw repr (spec counterpart; the field is `pub(crate)` — privacy closeout).
     pub open(crate) spec fn repr_spec(self) -> T::Repr {
         self.repr
     }
@@ -288,7 +292,7 @@ pub trait DenseId:
     proof fn lemma_id_bound_fits_usize()
         ensures Self::id_bound() <= usize::MAX as nat + 1;
 
-    /// (M6) How the value count relates to the storage word's range. A
+    /// How the value count relates to the storage word's range. A
     /// bit-stealing id (Id31/Id63) keeps one bit for the tag, so it has exactly
     /// HALF the word's values: `id_bound * 2 == Index::max_nat()`. A full-range id
     /// (DenseUsize) uses the whole word: `id_bound == Index::max_nat()`. The
@@ -296,6 +300,13 @@ pub trait DenseId:
     /// (only ever keyed by a bit-stealing id) consumes the `* 2` arm to bound the
     /// arena. `is_bit_stealing()` selects the arm so generic tree code can branch.
     spec fn is_bit_stealing() -> bool;
+
+    /// Exec counterpart of `is_bit_stealing`: a static
+    /// type property, so every impl is a literal and the check const-folds;
+    /// it exists so the B+tree's total shell can refuse a non-bit-stealing
+    /// key at runtime instead of carrying a `requires`.
+    fn bit_stealing() -> (b: bool)
+        ensures b == Self::is_bit_stealing();
 
     proof fn lemma_id_bound_word_relation()
         ensures
@@ -315,7 +326,7 @@ pub struct DenseUsize {
 }
 
 impl DenseUsize {
-    /// The raw value (spec twin; the field is `pub(crate)` — privacy
+    /// The raw value (spec counterpart; the field is `pub(crate)` — privacy
     /// closeout). The open trait-impl spec fn delegates here.
     pub open(crate) spec fn raw_spec(self) -> nat {
         self.raw as nat
@@ -415,6 +426,8 @@ impl DenseId for DenseUsize {
 
     open spec fn is_bit_stealing() -> bool { false }   // full-range id
 
+    fn bit_stealing() -> (b: bool) { false }
+
     proof fn lemma_id_bound_word_relation() {
         // id_bound == usize::MAX + 1 == <usize as IndexLike>::max_nat() (the `== ` arm).
     }
@@ -481,5 +494,15 @@ impl From<DenseUsize> for usize {
 impl core::fmt::Debug for DenseUsize {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "DenseUsize({})", self.raw)
+    }
+}
+
+// Production-surface parity: production prints `Some(v)` / `None`.
+impl<T> core::fmt::Debug for Opt<T>
+where
+    T: crate::tagged::Tagged + Copy + core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.to_option(), f)
     }
 }

@@ -61,40 +61,6 @@ jobs:
       - run: cargo build --workspace --all-targets --all-features
       - run: cargo test --workspace --all-features
 
-  # Performance parity gate for the containers migration. This is the "memory
-  # and performance" half of the migration criterion (the functional half is
-  # `containers-conformance`'s differential + proptest suites, run in verus.yml).
-  #
-  # It is NOT a criterion bench: `perf_gate` interleaves the prod and verus arms
-  # per sample and reduces by min, because criterion's per-group layout measures
-  # heap position rather than implementation. Each row is pinned to its own
-  # recorded baseline from `containers-conformance/BASELINE.md`, so a row that is
-  # currently verus-*faster* has to stay that way; a blanket 10% ceiling would let
-  # a −17% row rot to +9% unnoticed.
-  #
-  # Runs in absolute mode (`PERF_GATE_ABSOLUTE`): every gated row is held to the
-  # plan's absolute +10%, not to its recorded per-row ceiling. The recorded
-  # ceilings are a contract for the machine BASELINE.md names; on shared runners
-  # the prod/verus ratio itself moves with the CPU — one run read
-  # `mark_set_restore` at +1.9% against −12…−17% recorded and, in the same run,
-  # `class_merge_restore` at −28.6% against −7.9…−8.2% recorded (0.3pp local
-  # spread) — so per-row enforcement here gates the runner SKU, not the code.
-  # The per-row ceilings stay enforced on the baseline machine, where any
-  # re-record must cite its measured spread.
-  perf-gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # Exits non-zero if any row is above the absolute ceiling; ~0.4s of timed
-      # work once built, so it is cheap enough to gate every PR.
-      - run: cargo bench --bench perf_gate -p containers-conformance
-        env:
-          PERF_GATE_ABSOLUTE: "1"
-
   deny:
     runs-on: ubuntu-latest
     steps:

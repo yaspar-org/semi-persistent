@@ -1,0 +1,14 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The root-binding form `(= v pat)` names the e-class `pat` matched, so an action can
+;; refer to that class without restating the pattern.
+(datatype Expr (Num i64) (Add Expr Expr) (Neg Expr) (Mark Expr))
+
+;; `z` is the class of the whole `(Add x y)`, used twice in the action.
+(rule ((= z (Add x y))) ((union (Mark z) z)))
+
+(let t (Add (Num 1) (Num 2)))
+(run 3)
+(check (= (Mark t) t))
+;; Nothing else was marked: the rule binds a root, it does not create classes.
+(check (!= (Mark (Num 1)) (Num 1)))

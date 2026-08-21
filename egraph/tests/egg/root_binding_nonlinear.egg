@@ -1,0 +1,24 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; The bound root is an ordinary pattern variable: repeating it across three conjuncts
+;; constrains all three roots to one class, and using it in a child position constrains
+;; that child too.
+(datatype Expr (Num i64) (F Expr) (G Expr) (H Expr) (Tag Expr Expr))
+
+(rule ((= v (F a)) (= v (G b)) (= v (H c))) ((union (Tag a b) c)))
+
+(let f (F (Num 1)))
+(let g (G (Num 2)))
+(let h (H (Num 3)))
+(union f g)
+(union g h)
+(run 3)
+(check (= (Tag (Num 1) (Num 2)) (Num 3)))
+
+;; Two of the three share a class, the third does not: no match.
+(let f2 (F (Num 4)))
+(let g2 (G (Num 5)))
+(let h2 (H (Num 6)))
+(union f2 g2)
+(run 3)
+(check (!= (Tag (Num 4) (Num 5)) (Num 6)))

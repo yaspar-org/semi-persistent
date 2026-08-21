@@ -1,0 +1,25 @@
+;; TYPES: machine
+;; RHS multiplicity expressions: checked u64 arithmetic over bound
+;; multiplicities, with multiplicity 0 omitting the element. This lets one
+;; k-general rule express distributivity over a repeated factor — the shape
+;; that has no fixed-multiplicity variant: Mul{A:k, rest} with A = (Add b ..s) distributes one copy
+;; and keeps k-1. At k = 1 the kept element vanishes, so the same rule is the
+;; ordinary distributivity as well.
+(datatype Math
+    (Add Math :assoc-comm)
+    (Mul Math :assoc-comm)
+    (Const i64)
+    (V String))
+
+(rewrite (Mul (Add b ..s):k ..rest)
+         (Add (Mul b (Add b ..s):(u64::- k 1) ..rest)
+              (Mul (Add ..s) (Add b ..s):(u64::- k 1) ..rest)))
+
+(let A (Add (V "x") (V "y")))
+;; repeated factor: (x+y)^2 * z
+(let t (Mul A A (V "z")))
+;; plain factor: (x+y) * w, the k = 1 omission case
+(let u (Mul A (V "w")))
+(run 4)
+(check (= t (Add (Mul (V "x") A (V "z")) (Mul (V "y") A (V "z")))))
+(check (= u (Add (Mul (V "x") (V "w")) (Mul (V "y") (V "w")))))

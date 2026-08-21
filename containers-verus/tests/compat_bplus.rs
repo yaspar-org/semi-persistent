@@ -3,8 +3,8 @@
 //! Ported production compatibility test: `containers/tests/bplus_proptest.rs`.
 //!
 //! Exercises the production-shaped surface: `cursor()`, total `insert` on any
-//! tree, token-only `restore` (Phase 7), 31-bit macro ids (Phase 6).
-//! Gated on `compat-bplus` + `compat-ids` (Phase 8).
+//! tree, token-only `restore`, and 31-bit macro ids.
+//! Gated on `compat-bplus` + `compat-ids`.
 use proptest::prelude::*;
 use semi_persistent_containers_verus::{
     BPlusToken, BPlusTreeSet, BinarySearch, Layout64U32, ShrinkPolicy,
@@ -127,7 +127,7 @@ proptest! {
     }
 }
 
-// Production `from_sorted` parity (Phase 8.3): bulk build equals insert loop.
+// Production `from_sorted` parity: bulk build equals insert loop.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
 

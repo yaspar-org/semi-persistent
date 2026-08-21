@@ -2,7 +2,7 @@
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
 ;; Multiple ACI (Set) symbols complete independently, coexisting with an MSet op — exercising
-;; per-op pool columns across representations (multi-AC/ACI plan, step 5).
+;; per-op pool columns across representations.
 (sort E)
 (function And (E) E :assoc-comm-idem)
 (function Or (E) E :assoc-comm-idem)

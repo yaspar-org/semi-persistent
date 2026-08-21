@@ -299,3 +299,23 @@ impl<A: core::fmt::Debug, B: core::fmt::Debug> core::fmt::Debug for Pair<A, B> {
         f.debug_tuple("Pair").field(&self.a).field(&self.b).finish()
     }
 }
+
+// Production-surface parity: production's BoolTagged derives Debug and has
+// a `new` constructor.
+impl<T: Copy> BoolTagged<T> {
+    pub fn new(value: T) -> Self {
+        BoolTagged {
+            tagged: false,
+            value,
+        }
+    }
+}
+
+impl<T: Copy + core::fmt::Debug> core::fmt::Debug for BoolTagged<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BoolTagged")
+            .field("tagged", &self.tagged)
+            .field("value", &self.value)
+            .finish()
+    }
+}

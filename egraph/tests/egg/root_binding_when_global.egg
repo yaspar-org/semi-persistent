@@ -1,0 +1,14 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; `:when ((= x g))` against a let-bound global: the guard resolves to the O(1) e-class
+;; equality check, so the rewrite fires only for the argument that is in the global's class.
+(datatype E (V i64) (Add E E) (Mul E E))
+(let zero (V 0))
+
+(rewrite (Add x y) (Mul x y) :when ((= x zero)))
+
+(let a (Add (V 0) (V 5)))
+(let b (Add (V 1) (V 5)))
+(run 3)
+(check (= a (Mul (V 0) (V 5))))
+(check (!= b (Mul (V 1) (V 5))))

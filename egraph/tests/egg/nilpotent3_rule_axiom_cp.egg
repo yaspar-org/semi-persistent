@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; General-order nilpotent axiom pairs (n = 3; Kapur-conformance fix W3 (spec §3 table)). From x3(a,b) = c, the
+;; General-order nilpotent axiom pairs (n = 3). From x3(a,b) = c, the
 ;; pair for a (m = 1, n−m = 2) is (f({c,a,a}), f({b})): x3(a,a,c) = b. Semantically
 ;; a³ = e and c = a∘b give a∘a∘c = a∘a∘a∘b = b.
 (sort E)

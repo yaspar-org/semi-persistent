@@ -1,0 +1,13 @@
+;; EXPECT: ok
+;; Tests :cost on a constructor. The class below holds both `(b)` (declared cost 5) and
+;; `(g (a))` (cost 1 + 1), so the cheapest term is the *bigger* one — the winner the
+;; unweighted node-count model would never pick. The extracted term itself is asserted in
+;; tests/extract_best.rs (`op_cost_changes_the_extracted_winner`); here the fixture pins
+;; that the surface tags parse, register, and extract without error.
+(sort E)
+(constructor a () E)
+(constructor g (E) E)
+(constructor b () E :cost 5)
+
+(union (b) (g (a)))
+(extract (b))

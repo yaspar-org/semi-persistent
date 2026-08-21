@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; Nilpotent (XOR) superposition (multi-AC/ACI plan, property 2). Two rules whose RHS is the unit
+;; Nilpotent (XOR) superposition. Two rules whose RHS is the unit
 ;; (`a ⊕ b = e`, i.e. a = b) superpose on a shared child:
 ;;   xor(a,b) = e,  xor(b,c) = e   ⟹   a = c
 ;; lcm on the shared b is {a,b,c}; reducing by xor(a,b)→{} gives {c}, by xor(b,c)→{} gives {a},

@@ -153,7 +153,7 @@ impl<G: DenseId, O: DenseId, const K: usize> Tagged for FixedArityNode<G, O, K> 
 /// and nothing at all bounds the per-node arity. Narrowing these two words to `G::Index`
 /// would therefore not track a width — it would install a fresh capacity cap at
 /// `G::Index::MAX` children *in total*, reachable at the 31-bit config with a few large AC
-/// terms, which is exactly the class of cap this store is being audited to remove. Pointer
+/// terms, reintroducing the capacity cap this representation avoids. Pointer
 /// width is the honest width for an offset into a pool whose population is `Σ arity`.
 ///
 /// The size is asserted below, so this choice is priced rather than assumed: two `usize`

@@ -1,0 +1,64 @@
+;; TYPES: machine
+;; EXPECT: check-failed
+;; BLOCKED: native AC dual postponed; needs --lazy-ac-eqs and a ~600 s budget
+;; REQUIRES: --lazy-ac-eqs (and a ~600 s budget)
+;; Native-AC dual of eqsolve. Add is :assoc-comm variadic, Mul :comm binary;
+;; the three A/C rules are deleted; Add rules are restated n-ary with their
+;; multiplicity variants. All ten checks pass under lazy AC completion
+;; (shared transaction plus goal-directed polling, design doc section 13) in
+;; one 484 s run; under plain canonization checks 3-10 fail on congruence
+;; completeness and under eager completion the run diverges. Excluded from the
+;; timed tables (run-full.py) and from default-flag sweeps; see
+;; eqsolve.deviations.md.
+(datatype Expr
+  (Add Expr :assoc-comm)
+  (Neg Expr)
+  (Num i64)
+  (Mul Expr Expr :comm)
+  (Var String))
+
+;; constant folding, n-ary + multiplicity variant
+(rewrite (Add (Num x) (Num y) ..rest) (Add (Num (i64::+ x y)) ..rest))
+(rewrite (Add (Num x):2 ..rest) (Add (Num (i64::+ x x)) ..rest))
+
+;; isolation: from y + rest = z derive rest = z + (-y)
+(rule ((= (Add y ..rest) z))
+      ((union (Add z (Neg y)) (Add ..rest))))
+
+(rewrite (Neg (Neg x)) x)
+(rewrite (Neg (Num n)) (Num (i64::neg n)))
+
+(rule ((= x (Var v))) ((union (Mul (Num 1) x) x)))
+(rule ((= x (Add ..rest))) ((union (Mul (Num 1) x) x)))
+
+;; factoring, n-ary + multiplicity variant
+(rewrite (Add (Mul y x) (Mul z x) ..rest) (Add (Mul (Add y z) x) ..rest))
+(rewrite (Add (Mul y x):2 ..rest) (Add (Mul (Add y y) x) ..rest))
+
+(rule ((= (Mul (Num x) y) (Num z))
+       (i64::!= x 0)
+       (i64::== (i64::% z x) 0))
+      ((union y (Num (i64::/ z x)))))
+
+; system 1: x + 2 = 7
+(union (Add (Var "x") (Num 2)) (Num 7))
+; system 2: z + y = 6, 2z = y
+(union (Add (Var "z") (Var "y")) (Num 6))
+(union (Add (Var "z") (Var "z")) (Var "y"))
+
+(run 6)
+(check (= (Var "z") (Add (Num 6) (Neg (Var "y")))))
+(check (= (Var "y") (Add (Add (Num 6) (Neg (Var "y"))) (Add (Num 6) (Neg (Var "y"))))))
+(check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))
+(check (= (Add (Var "y") (Var "y"))
+          (Add (Num 12) (Neg (Var "y")))))
+(check (= (Add (Add (Var "y") (Var "y")) (Var "y"))
+          (Num 12)))
+(check (= (Add (Mul (Num 2) (Var "y")) (Var "y"))
+          (Num 12)))
+(check (= (Mul (Num 3) (Var "y"))
+          (Num 12)))
+(check (= (Var "x") (Num 5)))
+(check (= (Var "y") (Num 4)))
+(check (= (Var "z") (Num 2)))
+(print-size)

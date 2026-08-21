@@ -1,0 +1,68 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/levenshtein-distance.egg (7b1adf2).
+;; Demand-driven edit distance over strings as Cons chains of one-character
+;; String literals. No associative or commutative operator, so no native
+;; column. Deviations: comparison/levenshtein-distance.deviations.md.
+(datatype expr
+    (Num i64)
+    (Add expr expr)
+    (Min2 expr expr)
+    (Min expr expr expr))
+(rewrite (Add (Num a) (Num b)) (Num (i64::+ a b)))
+; three-way min folds in two steps: a primitive application takes plain
+; variables, so the nested (min (min a b) c) of the source is staged through
+; the helper constructor Min2
+(rewrite (Min (Num a) (Num b) c) (Min2 (Num (i64::min a b)) c))
+(rewrite (Min2 (Num a) (Num b)) (Num (i64::min a b)))
+
+(datatype str
+    (Cons String str))
+(constructor EmptyConst () str)
+(let empty (EmptyConst))
+
+(constructor Length (str) expr)
+
+(rule ((= f (Length (EmptyConst))))
+      ((union (Length empty) (Num 0))))
+
+(rule ((= f (Length (Cons c cs))))
+      ((union (Length (Cons c cs)) (Add (Num 1) (Length cs)))))
+
+(constructor EditDist (str str) expr)
+
+(rule ((= f (EditDist (EmptyConst) s)))
+      ((union (EditDist empty s) (Length s))))
+
+(rule ((= f (EditDist s (EmptyConst))))
+      ((union (EditDist s empty) (Length s))))
+
+(rule ((= f (EditDist (Cons head rest1) (Cons head rest2))))
+      ((union (EditDist (Cons head rest1) (Cons head rest2))
+            (EditDist rest1 rest2))))
+
+(rule ((= f (EditDist (Cons head1 rest1) (Cons head2 rest2))) (String::!= head1 head2))
+      ((union (EditDist (Cons head1 rest1) (Cons head2 rest2))
+            (Add (Num 1)
+                 (Min (EditDist rest1 rest2)
+                      (EditDist (Cons head1 rest1) rest2)
+                      (EditDist rest1 (Cons head2 rest2)))))))
+
+(let horse (Cons "h" (Cons "o" (Cons "r" (Cons "s" (Cons "e" empty))))))
+(let ros (Cons "r" (Cons "o" (Cons "s" empty))))
+(let intention (Cons "i" (Cons "n" (Cons "t" (Cons "e" (Cons "n" (Cons "t" (Cons "i" (Cons "o" (Cons "n" empty))))))))))
+(let execution (Cons "e" (Cons "x" (Cons "e" (Cons "c" (Cons "u" (Cons "t" (Cons "i" (Cons "o" (Cons "n" empty))))))))))
+
+(let test1 (EditDist horse ros))
+(let test2 (EditDist intention execution))
+(let test3 (EditDist horse empty))
+
+(run 100)
+
+(extract test1)
+(check (= test1 (Num 3)))
+(extract test2)
+(check (= test2 (Num 5)))
+(extract test3)
+(check (= test3 (Num 5)))
+(print-size)
+(print-stats :file "levenshtein-distance.rules.stats.json")

@@ -50,7 +50,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         self.snapshots@
     }
 
-    /// Frame-stack depth (spec twin of `depth()`; fields are `pub(crate)` —
+    /// Frame-stack depth (spec counterpart of `depth()`; fields are `pub(crate)` —
     /// privacy closeout — so public contracts phrase frame counts through this).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.frames@.len()
@@ -99,8 +99,8 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
                 token.depth as nat)
     }
 
-    /// "Restorable now" (plan 2.2): the FULL runtime-checkable precondition of
-    /// `restore` — what the public `is_valid_token` answers.
+    /// The full runtime-checkable precondition of `restore`, which is what the
+    /// public `is_valid_token` answers.
     pub open(crate) spec fn is_restorable_spec(&self, token: VecToken) -> bool {
         &&& TRACK
         &&& self.is_token_valid_spec(token)
@@ -143,9 +143,12 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     }
 
     pub fn get(&self, idx: I) -> (v: &T)
-        requires idx.as_nat() < self.view().len(),
-        ensures *v == self.view()[idx.as_nat() as int],
+        ensures idx.as_nat() < self.view().len() ==> *v == self.view()[idx.as_nat() as int],
     {
+        // Total-with-documented-panic: explicit bound branch.
+        if !(idx.as_usize() < self.data.len()) {
+            crate::guard::refuse("AppendOnlyVec::get: index out of bounds");
+        }
         &self.data[idx.as_usize()]
     }
 
@@ -165,7 +168,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// returned index: `wf` has to hold on exit, and it is what makes `len` and
     /// `mark` infallible. Requiring only `view().len() < I::max_nat()` would admit
     /// a final push whose successor length falls outside `I`.
-    pub fn push(&mut self, val: T) -> (idx: I)
+    pub(crate) fn push(&mut self, val: T) -> (idx: I)
         requires
             old(self).wf(),
             old(self).view().len() + 1 < I::max_nat(),
@@ -222,10 +225,10 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// Mark: save the current length, returning a token. The new frame records
     /// `data.len()` (>= every prior frame, since data only grew), keeping
     /// `frames` monotone.
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: VecToken)
         requires
             old(self).wf(),
-            // TRACK gate (production parity, plan 2.4).
+            // Production permits marks only when tracking is enabled.
             TRACK,
             old(self).depth_spec() < u32::MAX,
         ensures
@@ -306,9 +309,97 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
         }
     }
 
-    /// THE public token-validity check: "restorable now" (plan 2.2). True iff
-    /// `restore(token)` would succeed at this moment. Borrows the token
-    /// (production parity).
+    // ------------------------------------------------------------------
+    // Total-operation shell, matching Vec's pattern.
+    // ------------------------------------------------------------------
+
+    /// Exec counterpart of `push`'s capacity precondition.
+    pub fn can_push(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (self.view().len() + 1 < I::max_nat()),
+    {
+        let n = self.data.len();
+        let cap = <I as crate::index_like::IndexLike>::max().as_usize();
+        proof {
+            <I as crate::index_like::IndexLike>::lemma_max_nat_positive();
+            <I as crate::index_like::IndexLike>::lemma_max_as_nat();
+            <I as crate::index_like::IndexLike>::lemma_max_nat_fits_usize();
+            assert(cap as nat == I::max_nat() - 1);
+        }
+        n < cap
+    }
+
+    /// Total push: refuses at the index word's capacity, returns the new
+    /// element's index on success.
+    pub fn try_push(&mut self, val: T) -> (r: Result<I, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(idx) ==> idx.as_nat() == old(self).view().len()
+                && final(self).view() == old(self).view().push(val),
+            r is Err ==> final(self).view() == old(self).view(),
+            final(self).snapshots_view() == old(self).snapshots_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.can_push() {
+            Ok(self.push(val))
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total mark: the error names which precondition failed.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<VecToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).view() == old(self).view()
+                &&& token.frame_idx_spec() == old(self).depth_spec()
+                &&& final(self).depth_spec() == old(self).depth_spec() + 1
+                &&& final(self).snapshots_view()
+                    == old(self).snapshots_view().push(old(self).view())
+            },
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).depth_spec() == old(self).depth_spec()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: `is_valid_token` answers exactly "would `restore`
+    /// succeed right now", so the wrapper is the check.
+    pub fn try_restore(&mut self, token: VecToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).view()
+                == old(self).snapshots_view()[token.frame_idx_spec() as int]
+                && final(self).depth_spec() == token.frame_idx_spec()
+                && final(self).snapshots_view()
+                    == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
+            r is Err ==> final(self).view() == old(self).view()
+                && final(self).depth_spec() == old(self).depth_spec()
+                && final(self).snapshots_view() == old(self).snapshots_view(),
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
+    /// The public token-validity check. True iff `restore(token)` would
+    /// succeed at this moment. Borrows the token, matching production.
     pub fn is_valid_token(&self, token: &VecToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -336,7 +427,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     /// Restore to the state the token names: truncate `data` to the saved
     /// length and the frame/snapshot stacks to the target, then record the
     /// branch cut. Reproduces `snapshots[token.frame_idx]` exactly.
-    pub fn restore(&mut self, token: VecToken)
+    pub(crate) fn restore(&mut self, token: VecToken)
         requires
             old(self).wf(),
             TRACK,
@@ -350,11 +441,11 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
             final(self).depth_spec() == token.frame_idx_spec(),
             final(self).snapshots_view() == old(self).snapshots_view().subrange(0, token.frame_idx_spec() as int),
     {
-        // Runtime guards (plan 2.3): the FULL restorable predicate, mirroring
-        // the proven requires for unverified callers, BEFORE reading
+        // Check the full restorable predicate, mirroring the proven requires
+        // for unverified callers, before reading
         // frames[token.frame_idx] or mutating anything. Production message
         // parity for the token cases.
-        crate::guard::check_precondition(TRACK, "restore() called on untracked vec");
+        crate::guard::check_precondition(TRACK, "restore() called on untracked AppendOnlyVec");
         crate::guard::check_precondition(
             token.container_id.eq(self.id),
             "token belongs to a different container",
@@ -376,7 +467,7 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
                 let cur_depth = self.frames.len() as u32;
                 self.forks.is_valid(token.branch_id, token.depth, cur_depth)
             },
-            "invalid restore token (abandoned future)",
+            "invalid token (abandoned future)",
         );
 
         let target = token.frame_idx;
@@ -495,5 +586,21 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     #[inline(always)]
     pub fn iter(&self) -> core::slice::Iter<'_, T> {
         self.as_slice().iter()
+    }
+}
+
+// Production-surface parity impls (production derives/ships these).
+impl<T, I: IndexLike, const TRACK: bool> core::fmt::Debug for AppendOnlyVec<T, I, TRACK> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AppendOnlyVec")
+            .field("len", &self.len().as_usize())
+            .field("depth", &self.depth())
+            .finish()
+    }
+}
+
+impl<T, I: IndexLike, const TRACK: bool> Default for AppendOnlyVec<T, I, TRACK> {
+    fn default() -> Self {
+        Self::new()
     }
 }

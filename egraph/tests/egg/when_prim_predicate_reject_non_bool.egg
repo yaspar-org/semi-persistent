@@ -1,0 +1,5 @@
+;; EXPECT: sort-error
+;; TYPES: machine
+;; A guard has to decide something: an i64-valued computation is not a guard.
+(datatype Expr (Num i64) (Mark Expr))
+(rewrite (Num a) (Mark (Num a)) :when ((i64::+ a 1)))

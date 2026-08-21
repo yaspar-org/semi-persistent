@@ -217,28 +217,12 @@ pub(crate) fn arr_set<T: Copy, const N: usize>(a: &mut [T; N], i: usize, v: T)
 /// Open a hole at `pos` by moving `a[pos..cnt]` up one slot, i.e.
 /// `a.copy_within(pos..cnt, pos + 1)`.
 ///
-/// This exists because the shift is where the verified leaf/internal insert last
-/// differed from production *in cost*, and the difference is not the one an
-/// earlier measurement suggested. Verus can only carry a loop invariant through
-/// an explicit element loop, so `leaf_insert_at` walked the tail down one `u32`
-/// at a time while production called `copy_within` (one `memmove`). Priced at a
-/// single short length the scalar loop is genuinely *faster* — which is what an
-/// earlier probe found and recorded as a reason not to change it. Priced across
-/// the length distribution a real insert produces, that conclusion inverts:
-///
-/// ```text
-///   shift length:      1      4     16     31     48     61   uniform(0..62)
-///   scalar:         0.99   2.35   8.65  17.57  26.77  35.02   21.39 ns
-///   memmove:        3.24   8.38   9.80   9.02  10.36  10.23    8.35 ns
-/// ```
-///
-/// The crossover is near 18 elements: below it the scalar loop wins (no call, no
-/// vector setup), above it `memmove` wins outright, and a shuffled insert into a
-/// 62-slot leaf averages a 30-element shift — so the scalar loop cost +156% on
-/// the distribution that actually occurs. That was the whole remaining mutation
-/// gap. Dispatching on the length gets *both* ends: the short-shift advantage the
-/// old measurement correctly identified, and `memmove`'s throughput on long ones,
-/// which is why this is faster than production rather than merely equal to it.
+/// Verus can carry the element-wise postcondition through the scalar arm, while
+/// `copy_within` supplies one `memmove` for longer tails. Short and long shifts
+/// have different machine costs, so the implementation uses a tuned crossover.
+/// The value 18 is a historical tuning choice, not a portable performance
+/// theorem; changes require the Criterion B+tree insertion distribution as well
+/// as the agreement tests around the boundary.
 ///
 /// Trusted (`external_body`) for the same reason as [`arr_get`]: the postcondition
 /// below is the whole contract, `copy_within`'s own documented behavior supplies
@@ -262,8 +246,7 @@ pub(crate) fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, 
     // Runtime monitor on the verified precondition: a violated bound here
     // corrupts the node silently rather than faulting.
     debug_assert!(pos <= cnt && cnt < N);
-    // The crossover measured on this layout (see the table above). Below it the
-    // element loop is cheaper than entering `memmove` at all.
+    // Historical crossover for this layout. Criterion owns any retuning.
     if cnt - pos < 18 {
         let mut j = cnt;
         while j > pos {
@@ -343,6 +326,14 @@ pub trait NodeLayout: Sized {
         requires Self::node_wf(*n), i < Self::count_spec(*n),
         ensures k == Self::keys_view(*n)[i as int];
 
+    /// The live key prefix `data[0..count]` as one borrowed slice, refining
+    /// `keys_view` (production's `&L::data(n)[..count]`). This is what the
+    /// tree hands to `SearchKind::find_ge`/`find_gt`, whose contracts speak
+    /// about a `&[Word]` slice rather than a node.
+    fn keys(n: &Self::Node) -> (s: &[Self::Word])
+        requires Self::node_wf(*n),
+        ensures s@ == Self::keys_view(*n);
+
     /// `child_view(i)`, read from the packed array (internal nodes only). `i`
     /// ranges over `0 ..= count` (one more child than separators); `i == count
     /// <= key_cap` may be the `link`-held last child.
@@ -368,7 +359,7 @@ pub trait NodeLayout: Sized {
             Self::node_wf(n),
             Self::link_view(n) == (<Self::ArenaIdx as IndexLike>::max_nat() - 1);
 
-    // -- mutation (M3+) --
+    // -- mutation --
 
     /// Insert `w` into a leaf at sorted position `pos`, shifting `[pos..count)`
     /// up by one. The leaf must have room (`count < leaf_cap`). Refines the
@@ -625,13 +616,13 @@ pub trait NodeLayout: Sized {
             1 <= Self::key_cap_spec(),
             Self::leaf_cap_spec() < <Self::ArenaIdx as IndexLike>::max_nat();
 
-    /// (M6) Capacity headroom relating this layout's arena-index width to the
+    /// Capacity headroom relating this layout's arena-index width to the
     /// id type's value count `id_bound`. For every production layout the arena
     /// index is exactly one bit wider than the value range (Id31 in a u32 arena:
     /// `2*2^31 == 2^32`; Id63 in a usize arena: `2*2^63 == 2^64`), and the leaf
     /// occupancy floor `(leaf_cap+1)/2` is `>= 7`. Together these bound the live
     /// node count (`<= max_nat/7 + 1`) strictly below the arena ceiling — so the
-    /// arena can never overflow (the closed type-level half of M6). `id_bound` is
+    /// arena can never overflow. `id_bound` is
     /// passed by the caller (`K::id_bound()`), since `K` is welded to this layout
     /// by `L: NodeLayout<Word = K::Index>`.
     proof fn lemma_capacity_headroom(id_bound: nat)
@@ -642,7 +633,7 @@ pub trait NodeLayout: Sized {
             Self::key_cap_spec() >= 2,
             <Self::ArenaIdx as IndexLike>::max_nat() >= 16;
 
-    /// (M6) the storage word and the arena index have the SAME range: for every
+    /// The storage word and the arena index have the same range: for every
     /// layout `Word` and `ArenaIdx` are equal-width (u32/u32, or u64/usize both
     /// 64-bit). With `Word == K::Index`, this chains the id's
     /// `id_bound == Index::max_nat/2` to `id_bound == ArenaIdx::max_nat/2` — the
@@ -680,8 +671,8 @@ pub trait NodeLayout: Sized {
 /// of a propagating split. Generic over `L`, built on `set_internal_child`
 /// (shift children `[cp+1..=count]` up, then place `child` at `cp+1`) and
 /// `internal_key_insert` (place `sep`; children untouched). A free function, not
-/// a trait method, to keep the trait's spec surface lean (heavy default bodies
-/// perturb crate-wide spec pruning — see the proof-attempts log).
+/// a trait method, because heavy default bodies perturb crate-wide spec
+/// pruning.
 pub fn internal_insert_at<L: NodeLayout>(n: &mut L::Node, cp: usize, sep: L::Word, child: L::ArenaIdx)
     requires
         !L::is_leaf_spec(*old(n)),
@@ -699,6 +690,10 @@ pub fn internal_insert_at<L: NodeLayout>(n: &mut L::Node, cp: usize, sep: L::Wor
             L::child_view(*final(n), j) == L::child_view(*old(n), (j - 1)),
 {
     let ghost old_n = *n;
+    crate::guard::check_precondition(
+        !L::is_leaf(n) && L::count(n) < L::key_cap() && cp <= L::count(n),
+        "bplus_layout::internal_insert_at: malformed node or child position past count",
+    );
     let cnt = L::count(n);
     let kc = L::key_cap();  // exec key_cap; cnt < kc, so m+1, cp+1 <= kc.
     // Phase A: shift children [cp+1..=cnt] up to [cp+2..=cnt+1], descending.
@@ -754,10 +749,11 @@ macro_rules! gen_layout_u32 {
             pub count: u8,
             /// Production's explicit `_pad: u16` (`containers/src/bplus.rs`'s
             /// `define_node!`). Not padding we could leave implicit: with the field
-            /// spelled out, LLVM moves the node as one aligned `align`-byte block;
-            /// without it, it splits every arena read/write into a scalar
-            /// `flags`/`count` pair plus a `data`+`link` memcpy, which measured
-            /// +27% on ascending insert. It is threaded through `value_of` /
+            /// spelled out, LLVM can move the node as one aligned `align`-byte block;
+            /// without it, it may split an arena read/write into a scalar
+            /// `flags`/`count` pair plus a `data`+`link` memcpy. The Criterion
+            /// ascending-insert benchmark owns the machine-level comparison.
+            /// It is threaded through `value_of` /
             /// `into_repr` / `from_repr` verbatim rather than pinned to 0, so the
             /// `Tagged` round-trip `value_of(into_repr(n)) == n` holds for any
             /// padding bits and no `wf` clause has to mention it.
@@ -887,9 +883,35 @@ macro_rules! gen_layout_u32 {
             // are the hottest reads in the crate (one per binary-search probe),
             // so they take the unchecked path — see `arr_get`.
             #[inline(always)]
-            fn key(n: &$node, i: usize) -> (k: u32) { arr_get(&n.data, i) }
+            fn key(n: &$node, i: usize) -> (k: u32) {
+                // Runtime guard for UNVERIFIED callers on the erased requires
+                // (provably dead for verified ones): the unchecked read below
+                // leaves the array exactly when this fails.
+                crate::guard::check_precondition(
+                    (if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap })
+                        && i < n.count as usize,
+                    "NodeLayout::key: malformed node or index past count",
+                );
+                arr_get(&n.data, i)
+            }
+            // `node_wf` bounds `count` by `leaf_cap`/`key_cap`, both `<= data_len`,
+            // so the subrange is in bounds.
+            #[inline(always)]
+            fn keys(n: &$node) -> (s: &[u32]) {
+                crate::guard::check_precondition(
+                    if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap },
+                    "NodeLayout::keys: malformed node",
+                );
+                let s = vstd::slice::slice_subrange(n.data.as_slice(), 0, n.count as usize);
+                proof { assert(s@ =~= Self::keys_view(*n)); }
+                s
+            }
             #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: u32) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= n.count as usize,
+                    "NodeLayout::child: malformed node or child index past count",
+                );
                 if i < $key_cap { arr_get(&n.data, $key_cap + i) } else { n.link }
             }
             #[inline(always)]
@@ -901,6 +923,10 @@ macro_rules! gen_layout_u32 {
 
             #[inline(always)]
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u32) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap && pos <= n.count as usize,
+                    "NodeLayout::leaf_insert_at: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // one call, length-dispatched: the scalar walk for short tails,
@@ -913,6 +939,10 @@ macro_rules! gen_layout_u32 {
 
             #[inline(always)]
             fn leaf_push(n: &mut $node, w: u32) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap,
+                    "NodeLayout::leaf_push: malformed or full node",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // No shift and no length dispatch: the hole is already at `cnt`.
@@ -927,6 +957,10 @@ macro_rules! gen_layout_u32 {
 
             #[inline(always)]
             fn leaf_split_at(n: &$node, pos: usize, w: u32) -> (res: ($node, $node)) {
+                crate::guard::check_precondition(
+                    n.is_leaf && n.count as usize == $leaf_cap && pos <= $leaf_cap,
+                    "NodeLayout::leaf_split_at: node is not a full leaf or position out of range",
+                );
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
                 let rc: usize = $leaf_cap + 1 - mid;
@@ -999,6 +1033,10 @@ macro_rules! gen_layout_u32 {
             }
             #[inline(always)]
             fn internal_key_insert(n: &mut $node, pos: usize, w: u32) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && (n.count as usize) < $key_cap && pos <= n.count as usize,
+                    "NodeLayout::internal_key_insert: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // see `arr_shift_up`: length-dispatched, and its postcondition
@@ -1013,6 +1051,10 @@ macro_rules! gen_layout_u32 {
             }
             #[inline(always)]
             fn set_internal_child(n: &mut $node, i: usize, v: u32) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= $key_cap,
+                    "NodeLayout::set_internal_child: malformed node or child index out of range",
+                );
                 let ghost old_n = *n;
                 if i < $key_cap {
                     // i < key_cap and 2*key_cap <= data_len ⟹ key_cap + i in bounds.
@@ -1039,6 +1081,10 @@ macro_rules! gen_layout_u32 {
             fn internal_split_at(n: &$node, cp: usize, new_sep: u32, new_child: u32)
                 -> (res: ($node, $node, u32))
             {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize == $key_cap && cp <= $key_cap,
+                    "NodeLayout::internal_split_at: node is not a full internal or position out of range",
+                );
                 let imid: usize = $key_cap / 2;
                 let kc: usize = $key_cap;
                 let ghost cseps = Self::keys_view(*n).insert(cp as int, new_sep);
@@ -1159,10 +1205,11 @@ macro_rules! gen_layout_u64 {
             pub count: u8,
             /// Production's explicit `_pad: u16` (`containers/src/bplus.rs`'s
             /// `define_node!`). Not padding we could leave implicit: with the field
-            /// spelled out, LLVM moves the node as one aligned `align`-byte block;
-            /// without it, it splits every arena read/write into a scalar
-            /// `flags`/`count` pair plus a `data`+`link` memcpy, which measured
-            /// +27% on ascending insert. It is threaded through `value_of` /
+            /// spelled out, LLVM can move the node as one aligned `align`-byte block;
+            /// without it, it may split an arena read/write into a scalar
+            /// `flags`/`count` pair plus a `data`+`link` memcpy. The Criterion
+            /// ascending-insert benchmark owns the machine-level comparison.
+            /// It is threaded through `value_of` /
             /// `into_repr` / `from_repr` verbatim rather than pinned to 0, so the
             /// `Tagged` round-trip `value_of(into_repr(n)) == n` holds for any
             /// padding bits and no `wf` clause has to mention it.
@@ -1288,7 +1335,28 @@ macro_rules! gen_layout_u64 {
             // See the u32 `key` above: `i < count <= data_len` is a proven
             // precondition, so the bounds check is dead. `arr_get`.
             #[inline(always)]
-            fn key(n: &$node, i: usize) -> (k: u64) { arr_get(&n.data, i) }
+            fn key(n: &$node, i: usize) -> (k: u64) {
+                // Runtime guard for UNVERIFIED callers on the erased requires
+                // (provably dead for verified ones): the unchecked read below
+                // leaves the array exactly when this fails.
+                crate::guard::check_precondition(
+                    (if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap })
+                        && i < n.count as usize,
+                    "NodeLayout::key: malformed node or index past count",
+                );
+                arr_get(&n.data, i)
+            }
+            // In-bounds for the same reason as the u32 `keys` above.
+            #[inline(always)]
+            fn keys(n: &$node) -> (s: &[u64]) {
+                crate::guard::check_precondition(
+                    if n.is_leaf { n.count as usize <= $leaf_cap } else { n.count as usize <= $key_cap },
+                    "NodeLayout::keys: malformed node",
+                );
+                let s = vstd::slice::slice_subrange(n.data.as_slice(), 0, n.count as usize);
+                proof { assert(s@ =~= Self::keys_view(*n)); }
+                s
+            }
 
             // u64 word -> usize arena index: the narrowing cast, lossless on a
             // 64-bit usize (the u64 layouts' declared target), proven via
@@ -1298,6 +1366,10 @@ macro_rules! gen_layout_u64 {
             // inherited.
             #[inline(always)]
             fn child(n: &$node, i: usize) -> (c: usize) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= n.count as usize,
+                    "NodeLayout::child: malformed node or child index past count",
+                );
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
                     let c = arr_get(&n.data, $key_cap + i) as usize;
@@ -1316,6 +1388,10 @@ macro_rules! gen_layout_u64 {
 
             #[inline(always)]
             fn leaf_insert_at(n: &mut $node, pos: usize, w: u64) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap && pos <= n.count as usize,
+                    "NodeLayout::leaf_insert_at: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // one call, length-dispatched: the scalar walk for short tails,
@@ -1328,6 +1404,10 @@ macro_rules! gen_layout_u64 {
 
             #[inline(always)]
             fn leaf_push(n: &mut $node, w: u64) {
+                crate::guard::check_precondition(
+                    n.is_leaf && (n.count as usize) < $leaf_cap,
+                    "NodeLayout::leaf_push: malformed or full node",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // No shift and no length dispatch: the hole is already at `cnt`.
@@ -1342,6 +1422,10 @@ macro_rules! gen_layout_u64 {
 
             #[inline(always)]
             fn leaf_split_at(n: &$node, pos: usize, w: u64) -> (res: ($node, $node)) {
+                crate::guard::check_precondition(
+                    n.is_leaf && n.count as usize == $leaf_cap && pos <= $leaf_cap,
+                    "NodeLayout::leaf_split_at: node is not a full leaf or position out of range",
+                );
                 let ghost old_n = *n;
                 let mid: usize = ($leaf_cap + 1) / 2;
                 let rc: usize = $leaf_cap + 1 - mid;
@@ -1434,6 +1518,10 @@ macro_rules! gen_layout_u64 {
             }
             #[inline(always)]
             fn internal_key_insert(n: &mut $node, pos: usize, w: u64) {
+                crate::guard::check_precondition(
+                    !n.is_leaf && (n.count as usize) < $key_cap && pos <= n.count as usize,
+                    "NodeLayout::internal_key_insert: malformed node or position past count",
+                );
                 let ghost old_n = *n;
                 let cnt = n.count as usize;
                 // see `arr_shift_up`: length-dispatched, and its postcondition
@@ -1462,6 +1550,10 @@ macro_rules! gen_layout_u64 {
                         Self::child_view(*final(n), j) == Self::child_view(*old(n), j),
             {
                 let ghost old_n = *n;
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize <= $key_cap && i <= $key_cap,
+                    "NodeLayout::set_internal_child: malformed node or child index out of range",
+                );
                 if i < $key_cap {
                     assert($key_cap + i < $data_len);  // 2*key_cap <= data_len
                     arr_set(&mut n.data, $key_cap + i, v as u64);
@@ -1485,6 +1577,10 @@ macro_rules! gen_layout_u64 {
             fn internal_split_at(n: &$node, cp: usize, new_sep: u64, new_child: usize)
                 -> (res: ($node, $node, u64))
             {
+                crate::guard::check_precondition(
+                    !n.is_leaf && n.count as usize == $key_cap && cp <= $key_cap,
+                    "NodeLayout::internal_split_at: node is not a full internal or position out of range",
+                );
                 let imid: usize = $key_cap / 2;
                 let kc: usize = $key_cap;
                 let ghost cseps = Self::keys_view(*n).insert(cp as int, new_sep);
@@ -1622,7 +1718,7 @@ gen_layout_u32!(Layout64U32, Node64U32, NodeRepr64U32, 64, 14, 14, 7);
 gen_layout_u32!(Layout128U32, Node128U32, NodeRepr128U32, 128, 30, 30, 14);
 gen_layout_u32!(Layout256U32, Node256U32, NodeRepr256U32, 256, 62, 62, 30);
 
-// Production back-compat aliases (Phase 8.3): the un-suffixed names default
+// Production compatibility aliases: the un-suffixed names default
 // to the u32 family, and the `BPlusNode*` value-struct names map to `Node*`.
 pub type Layout64 = Layout64U32;
 pub type Layout128 = Layout128U32;
@@ -1655,3 +1751,12 @@ pub fn first_key<L: NodeLayout>(n: &L::Node) -> (k: L::Word)
 }
 
 } // verus!
+
+// Compile-time node-size pins (production parity): repr(C, align(N)) makes
+// each node exactly one arena cell of its layout's size.
+const _: () = assert!(core::mem::size_of::<Node64U32>() == 64);
+const _: () = assert!(core::mem::size_of::<Node128U32>() == 128);
+const _: () = assert!(core::mem::size_of::<Node256U32>() == 256);
+const _: () = assert!(core::mem::size_of::<Node128U64>() == 128);
+const _: () = assert!(core::mem::size_of::<Node256U64>() == 256);
+const _: () = assert!(core::mem::size_of::<Node512U64>() == 512);

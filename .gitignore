@@ -19,10 +19,8 @@ target/
 session*.json
 session*.md
 
-# Claude Code: agent state, transcripts and per-tool config, at any depth.
-# The repo-root .claude/ was previously carved out as a committed sdd harness;
-# nothing was ever tracked there, the directory is empty, and the document that
-# described it is gone, so the exception went with it.
+# Claude Code: agent state, transcripts, per-tool config, and internal working
+# documents that must remain available locally but are excluded from releases.
 .claude/
 CLAUDE.md
 

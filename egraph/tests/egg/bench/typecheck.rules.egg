@@ -1,0 +1,78 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/typecheck.egg (7b1adf2).
+;; Demand-driven typechecking of the simply typed lambda calculus: typeof
+;; nodes are inserted as demand and solved by unification-style rules. No
+;; operator is associative or commutative, so no native column. Deviations:
+;; comparison/typecheck.deviations.md.
+(datatype Type
+  (TArr Type Type))
+(constructor TUnitConst () Type)
+(let tunit (TUnitConst))
+
+(datatype Expr
+  (Lam String Type Expr)
+  (App Expr Expr)
+  (Var String))
+(constructor MyUnitConst () Expr)
+(let myunit (MyUnitConst))
+
+(datatype Ctx
+  (Cons String Type Ctx))
+(constructor NilConst () Ctx)
+(let nil (NilConst))
+
+(constructor typeof (Ctx Expr) Type)
+
+; ctx |- () : unit
+(rewrite (typeof ctx (MyUnitConst)) tunit)
+
+; ctx; x: t |- x : t
+(rewrite (typeof (Cons x t ctx) (Var x)) t)
+
+; application: demand the parts, then unify through the arrow
+(rule ((= t2 (typeof ctx (App f e))))
+      ((typeof ctx f)
+       (typeof ctx e)))
+
+(rule ((= t1 (typeof ctx (App f e)))
+       (= (typeof ctx f) (TArr (typeof ctx e) t2)))
+      ((union t1 t2)))
+
+; weakening, for a variable other than the one bound
+(rewrite (typeof (Cons y ty ctx) (Var x))
+         (typeof ctx (Var x))
+    :when ((String::!= x y)))
+
+; abstraction: the right-hand side creates demand
+(rewrite (typeof ctx (Lam x t1 e))
+         (TArr t1 (typeof (Cons x t1 ctx) e)))
+
+; lam x : unit, f : unit -> unit . f x
+(let e
+  (Lam "x" tunit
+       (Lam "f" (TArr tunit tunit)
+            (App (Var "f") (Var "x")))))
+
+(let id (Lam "x" tunit (Var "x")))
+(let tid (typeof nil id))
+
+(let appunitid (App (App e myunit) id))
+(let tapp (typeof nil appunitid))
+
+(let free (Lam "x" tunit (Var "y")))
+(let tfreeill (typeof nil free))
+(let tfree1 (typeof (Cons "y" tunit nil) free))
+(let tfree2 (typeof (Cons "y" (TArr (TArr tunit tunit) tunit) nil) free))
+
+(run 15)
+
+(extract tid)
+(check (= tid (TArr tunit tunit)))
+(extract tapp)
+(check (= tapp tunit))
+(extract tfree1)
+(check (= tfree1 (TArr tunit tunit)))
+(extract tfree2)
+(check (= tfree2 (TArr tunit (TArr (TArr tunit tunit) tunit))))
+(print-size)
+(print-stats :file "typecheck.rules.stats.json")

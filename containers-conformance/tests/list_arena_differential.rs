@@ -34,7 +34,7 @@ fn list_arena_trace(seed: u64, steps: usize) {
         match rng.below(100) {
             0..=14 => {
                 let pl = p.new_list();
-                let vl = v.new_list();
+                let vl = v.try_new_list().expect("within id space");
                 assert_eq!(
                     pl.raw() as usize,
                     vl.raw() as usize,
@@ -50,10 +50,12 @@ fn list_arena_trace(seed: u64, steps: usize) {
                 let val = (rng.next() as u32) & 0x7FFF_FFFF;
                 if rng.below(2) == 0 {
                     p.append(PList::new(l), PElem::new(val));
-                    v.append(VList::new(l), VElem::new(val));
+                    v.try_append(VList::new(l), VElem::new(val))
+                        .expect("within id space");
                 } else {
                     p.prepend(PList::new(l), PElem::new(val));
-                    v.prepend(VList::new(l), VElem::new(val));
+                    v.try_prepend(VList::new(l), VElem::new(val))
+                        .expect("within id space");
                 }
                 nodes_pushed += 1;
             }
@@ -94,7 +96,9 @@ fn list_arena_trace(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::ShrinkPolicy::Never);
+                let tv = v
+                    .try_mark(verus::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 marks.push((tp, tv, lists));
             }
             _ => {
@@ -104,7 +108,7 @@ fn list_arena_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv, count_at_mark) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 lists = count_at_mark;
             }
@@ -131,10 +135,9 @@ fn list_arena_trace(seed: u64, steps: usize) {
     //
     // The single residual difference is a CONSTANT 8 bytes per inner vec — 16
     // per arena — because verus's `ContainerId` is a `u64` where production's is
-    // a `u32` (migration plan 2.6: widened so the id-exhaustion guard is
-    // unconditional; `container_id.rs`'s module doc records the two u32
-    // alternatives that were measured and rejected, one unsound and one 21.8%
-    // slower). It does not scale with nodes, lists, capacity, or mark depth.
+    // a `u32`. The wider counter adds uniqueness headroom; its fatal exhaustion
+    // guard is opt-in through `strict-id-exhaustion` (debug builds also assert).
+    // This layout delta does not scale with nodes, lists, capacity, or mark depth.
     //
     // So both halves of the footprint are asserted EXACTLY: tracking to the
     // byte, and the total to the byte plus that constant. This is a far sharper
@@ -173,4 +176,39 @@ fn differential_list_arena() {
     for seed in [11, 0x11A7, 3141, 0xACE5, 99] {
         list_arena_trace(seed, 2000);
     }
+}
+
+prod::define_id7! { pub struct PTinyNode / StoredPTinyNode, "y"; }
+verus::define_id7! { pub struct VTinyNode / StoredVTinyNode, "y"; }
+
+/// Capacity parity at the id-range ceiling: both arenas hold the FULL 7-bit
+/// node-id range (128 nodes; production's own `len_has_headroom_above_the_full_arena`
+/// pins this on its side), and the 129th append is one past the id space on
+/// both sides - refused by the total form, a panic in production. Pins the
+/// per-family guard at the exact id-space boundary.
+#[test]
+fn bits7_capacity_holds_the_full_id_range() {
+    let mut p: prod::ListArena<PElem, PList, PTinyNode, false> = prod::ListArena::new();
+    let mut v: verus::ListArena<VElem, VList, VTinyNode, false> = verus::ListArena::new();
+    let pl = p.new_list();
+    let vl = v.try_new_list().expect("first list id");
+    for i in 0..128u32 {
+        p.append(pl, PElem::new(i));
+        v.try_append(vl, VElem::new(i))
+            .expect("a 7-bit arena holds its full id range");
+    }
+    assert_eq!(usize::from(p.len(pl)), 128);
+    assert_eq!(usize::from(v.len(vl)), 128);
+    let pv: Vec<u32> = p.iter(pl).map(|e| e.raw()).collect();
+    let vv: Vec<u32> = v.iter(vl).map(|e| e.raw()).collect();
+    assert_eq!(pv, vv, "traversals agree over the full arena");
+    assert_eq!(
+        v.try_append(vl, VElem::new(128)),
+        Err(verus::error::ContainerError::CapacityExhausted),
+        "the 129th node is one past the 7-bit id space"
+    );
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        p.append(pl, PElem::new(128));
+    }));
+    assert!(r.is_err(), "production panics one past the id space");
 }

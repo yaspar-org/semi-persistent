@@ -1,0 +1,78 @@
+;; TYPES: machine
+;; Translation of egglog tests/integer_math.egg (7b1adf2), scoped.
+;; Config: A/C supplied as explicit rewrite rules, their encoding.
+;; See integer_math.deviations.md for what the scoping removes and what it costs.
+(datatype Math
+    (Diff Math Math)
+    (Integral Math Math)
+
+    (Add Math Math)
+    (Sub Math Math)
+    (Mul Math Math)
+    (Div Math Math)
+    (Pow Math Math)
+    (RShift Math Math)
+    (LShift Math Math)
+    (Mod Math Math)
+    (Not Math)
+
+    (Const i64)
+    (Var String))
+
+;; Evaluation
+(rewrite (Add (Const a) (Const b))
+         (Const (i64::+ a b)))
+(rewrite (Sub (Const a) (Const b))
+            (Const (i64::- a b)))
+(rewrite (Mul (Const a) (Const b)) (Const (i64::* a b)))
+
+;; No RShift/LShift/Not constant folds: our i64 primitive set has no bitwise
+;; operators. Zero matches on this program, so no measured consequence.
+
+;; Properties
+(rewrite (Add a b) (Add b a))
+(rewrite (Mul a b) (Mul b a))
+(rewrite (Add a (Add b c)) (Add (Add a b) c))
+(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))
+
+(rewrite (Sub a b) (Add a (Mul (Const -1) b)))
+
+(rewrite (Add a (Const 0)) a)
+(rewrite (Mul a (Const 0)) (Const 0))
+(rewrite (Mul a (Const 1)) a)
+
+(rewrite (Sub a a) (Const 0))
+
+(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))
+(rewrite (Add (Mul a b) (Mul a c)) (Mul a (Add b c)))
+
+(rewrite (Pow x (Const 1 )) x)
+(rewrite (Pow x (Const 2)) (Mul x x))
+
+(rewrite (Mul x (Pow (Const 2) y)) (LShift x y))
+(rewrite (Div x (Pow (Const 2) y)) (RShift x y))
+
+(rewrite (Not (Not x)) x)
+
+
+;; Tests
+(let startexpr (Div (
+                        Mul (Var "a") (Pow (Const 2) (Const 3))
+                    ) (
+                        Add (Var "c") (
+                            Sub (Mul (Var "b") (Const 2)) (Mul (Var "b") (Const 2))
+                        )
+                    )))
+
+(let equivexpr (Div (
+                    LShift (Var "a") (Const 3)
+                ) (
+                    Mul (Var "c") (Not (Not (Const 1)))
+                )
+                ))
+
+(run 4)
+
+(check (= startexpr equivexpr))
+(print-size)
+(print-stats :file "integer_math.rules.stats.json")

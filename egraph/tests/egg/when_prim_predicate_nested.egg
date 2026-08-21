@@ -1,0 +1,18 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A guard is an expression, not a single application: primitives compose, and a constant
+;; written in the guard is parsed at the argument position's sort. This is the divisibility
+;; test a linear-equation solver needs, together with the root-binding form that puts the
+;; product and the numeral in one e-class.
+(datatype Math (Num i64) (Mul Math Math) (Var String))
+
+(rule ((= r (Mul (Num x) y)) (= r (Num z)) (i64::== (i64::% z x) 0))
+      ((union y (Num (i64::/ z x)))))
+
+;; 3y = 12 divides: y = 4.
+(union (Mul (Num 3) (Var "y")) (Num 12))
+;; 5w = 12 does not: nothing is derived for w.
+(union (Mul (Num 5) (Var "w")) (Num 12))
+(run 3)
+(check (= (Var "y") (Num 4)))
+(check (!= (Var "w") (Num 2)))

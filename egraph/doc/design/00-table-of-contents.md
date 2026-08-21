@@ -8,7 +8,8 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 - **[Overview: Why A Semi-Persistent Egraph?](A0-overview.md)**
   Intellectual lineage (egg, egglog, semi-persistence, AC
-  canonization). Core capabilities: O(1) snapshots, native
+  canonization). Core capabilities: sparse snapshot memory with backend-specific
+  mark/restore costs, native
   A/C/AC/ACI, leapfrog triejoin, proof extraction. Variables and
   binders are future work. Architecture and key design decisions.
 
@@ -22,28 +23,37 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
   soundness guarantees.
 
 - **[Future Work](A3-future-work.md)**
-  Planned features as standalone designs: variables and binders; cost-based extraction
-  via partial weighted Max-SAT; stratified negation. Plus the remaining work on AC
-  completion (enable-by-default scoping, multiple AC symbols, verification); the
-  implemented algorithm itself is in the AC chapter and Ch 14.
+  Index of maintained future specifications: variables and binders,
+  lattice-valued functions, a verified query compiler, partial weighted
+  Max-SAT extraction, stratified negation, AU correctness/certificates, runtime
+  validation, and the remaining AC-completion limits. Implemented algorithms
+  stay in the numbered design chapters.
 
 - **[AC Congruence Completeness](ac-congruence-completeness.md)**
 - **[Algebraic Properties of AC Operators](ac-algebraic-properties.md)**
-  Part I explains why flattening AC nodes into canonical multisets erases the 
+  Part I explains why flattening AC nodes into canonical multisets erases the
   intermediate sub-sum subterms and breaks congruence completeness
-  (even though matching stays complete), and why `rest`-variable
-  matching doesn't restore completeness. Part II gives the fix — Kapur-style
-  inter-reduction and lcm-superposition critical pairs — and shows it can reuse
-  our existing `DecomposeAC`/`by_contains` machinery, with a correctness/termination
-  argument and a proof sketch. Status and verification plan live in Future Work.
+  while the implemented matcher targets a narrower, sound maximum-partition
+  e-matching relation; finite tests support matcher soundness, while a theorem
+  and matcher completeness remain open. Part II gives the implemented repair,
+  Kapur-style
+  inter-reduction and lcm-superposition critical pairs over the existing
+  `DecomposeAC`/`by_contains` machinery. Its soundness, termination, and
+  completeness claims are conditional on the obligations stated in that
+  chapter; they are not machine-checked theorems about the Rust code.
+  §13 specifies the three completion modes
+  (plain, eager, lazy: the goal-directed transaction at failing checks) and
+  §14 the A-only inter-reduction round with its undecidability boundary.
+  The verification plan lives in Future Work.
 
-- **[AC Completion: `min_monomial`, the matcher bug, and a code-compliance review](ac-completion-spec.md)**
-  A focused companion to the above (does not restate it). Defines `min_monomial`, the leximin AC
-  representative of a class, with its exact properties and how it yields the tightest
-  closure; traces the `(f (add x ..r1) (add x ..r2))` matcher bug over concrete nodes
-  (cause and fix); and checks the code clause-by-clause against the algorithm, explaining
-  the observed per-round growth as the genuine basis size on a dense, deeply-merged graph
-  (not a bug, and not an artifact of approximate `min_monomial`).
+- **[AC Completion: `min_monomial`, a matcher invariant, and implementation correspondence](ac-completion-spec.md)**
+  A focused companion to the above (does not restate it). Describes the
+  incrementally maintained `min_monomial` candidate, its read-time orientation
+  guard, and the diagnostic that can detect a nonminimal candidate; traces over
+  concrete nodes the binding-restore invariant the
+  `(f (add x ..r1) (add x ..r2))` matcher join must maintain; and checks the code clause-by-clause against the algorithm, explaining
+  the sources of per-round growth without treating an observed basis as
+  canonical or proving that every emitted node is necessary.
 
 ## Part I: E-Graph Core
 
@@ -56,6 +66,8 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
    `UnionFind` with path compression and union-by-rank.
    `EClasses`: circular use-lists for parent tracking, splice on merge.
    `MergeInfo` for worklist-driven rebuild. Proof-justified union.
+   Merge survivor policy (`--union-by`) on the verified class-size and
+   use-list counters.
 
 3. **[Hash-Consing Caches](03-hash-consing-caches.md)**
    `FixedArityCache` (arity 0–3, commutative), `VariableArityCache`
@@ -76,8 +88,9 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 6. **[Index Construction](06-index.md)**
    `IndexStore`: `by_op`, `by_repr`, `by_child_pos`, `by_contains`.
-   Built from scratch each saturation iteration. `SortedVec` with
-   leapfrog-compatible cursor.
+   Built from scratch each saturation iteration. Each family is a verified
+   `DenseSpanMap`: a flat value pool plus a dense-keyed span table, read
+   through a leapfrog-compatible cursor.
 
 7. **[Leapfrog Triejoin](07-leapfrog.md)**
    `LeapfrogJoin` over sorted iterators. Worst-case optimal multi-way
@@ -89,17 +102,18 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
    `LitBind` deferred to cost-based selection.
 
 9. **[Pattern Matching Execution](09-pattern-matching.md)**
-   DFS backtracking engine. `Step` variants: `Join`, `ExtractChild`,
-   `ExpandA`, `DecomposeAC`, `DecomposeACI`. Subsequence, subset, and
-   sub-multiset matching. Maximum partition semantics for AC.
-   Multiplicity constraints with interval intersection.
+   Flattened-atom execution with static plans or dynamic per-binding
+   middle-out scheduling. Push-style continuations use depth-first control
+   flow; a separate pull iterator executes static plans. Subsequence, subset,
+   and sub-multiset matching. Maximum partition semantics for AC and
+   multiplicity constraints with interval intersection.
 
 ## Part III: Language and Compilation
 
 10. **[Surface Language and Parser](10-surface-language.md)**
     Unified `(op children...)` syntax. `SurfacePattern` with
     prefix/suffix rest vars. `RhsTerm` with comprehensions.
-    No bracket dispatch — operator kind resolved later.
+    No bracket dispatch: operator kind resolved later.
 
 11. **[Sortchecking and Resolution](11-sortcheck-and-resolution.md)**
     Three-phase pipeline: parse → sortcheck → interpret.
@@ -117,27 +131,30 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 13. **[Extensible Literal Model](13-literal-model.md)**
     `LitModel` trait: `sorts`, `ops`, `parse`, `is_truthy`.
     `BignumModel`, `MachineModel`, `AllModel`. `LitValStore` with
-    `intern`/`try_lookup`. Deferred interning: sortcheck never mutates.
+    `intern`/`try_lookup`. Ordinary term/rule sortchecking does not intern;
+    declaration registration mutates registries and may build an AC identity.
     LHS matching is read-only. RHS application interns on demand.
 
 ## Part V: Soundness, Completeness, Proof Extraction, Term Extraction
 
-14. **[Soundness and Completeness](14-soundness.md)**
+14. **[Correctness Claims and Boundaries](14-soundness.md)**
     The two correctness properties over both sources of derived equalities,
     literal evaluation and congruence closure, and across operator kinds
     (plain, C, A, AC, ACI). Soundness: no false equality is asserted.
-    Completeness: every entailed equality between materialized terms is decided,
-    requiring the AC completion pass for AC/ACI. What is proved, argued, assumed.
+    Plain congruence closure is the default; opt-in AC/ACI completion attempts a
+    stronger fixpoint but may stop at a resource limit. What is machine-checked,
+    tested, argued conditionally, and still open.
 
 15. **[Proof Logging](15-proof-logging.md)**
     Copy-on-first-re-canonization via history bit. `Justification`
     enum: `Rewrite`, `Congruence`, `Axiom`. Dual parent pointers
-    (`parent_fast` + `parent_proof`). Two LCA algorithms: naive
+    (`parent` + `parent_proof`). Two LCA algorithms: naive
     walk-up for single queries, Euler-tour BFC for batch extraction.
     `ProofBuf` for path extraction. `PROOFS` const generic.
 
 16. **[Term Extraction](16-extraction.md)**
-    Bottom-up cost model. `extract_best` via BFS over e-classes.
+    Additive owned-tree cost model. `extract_best` by repeated relaxation over
+    all nodes to a fixed point.
     `reconstruct` for pretty-printing.
 
 ## Part VI: Interpreter and Saturation
@@ -151,12 +168,15 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
 
 18. **[Semi-Naive Evaluation](18-semi-naive-evaluation.md)**
     `saturate_semi`: match only what changed each round via the
-    k-variant delta decomposition. `touched` log on the e-graph +
-    `IndexStore::build_delta`; `VariantIndex` three-way mode
-    (delta / full∖delta / full) realized on `Step::Join` via the
-    `Difference` cursor combinator. Per-atom, per-flavor scheduling.
-    Selectable via `SaturationStrategy` / `--strategy semi-naive`;
-    default remains naive, with no automatic fallback.
+    k-variant delta decomposition. `touched` log on the e-graph
+    (created, recanonicalized, and absorbed-class members: the
+    class-growth delta) + `IndexStore::build_delta`; `VariantIndex`
+    three-way mode (delta / full∖delta / full) realized on `Step::Join`
+    via the `Difference` cursor combinator. Root-binding and
+    global-element rules use a full-index match each round. Per-atom,
+    per-flavor scheduling. Selectable via `--use-semi-naive`; default
+    remains naive. The driver never switches wholesale to naive, but
+    individual rules use full-index matching when delta coverage is unsafe.
 
 ## Part VIII: Anti-Unification
 
@@ -167,12 +187,46 @@ The foundational data structures (dense IDs, semi-persistent vectors, containers
     min-cost transportation, semi-persistent `SearchSession`
     mark/restore, `(antiunify)` / `(checkau)` commands.
 
+20. **[Index Selectivity and Delta Suffixes](20-index-selectivity-and-delta-suffixes.md)**
+    Size-biased per-path selectivity, per-binding operator restriction,
+    static/runtime/automatic atom scheduling, sampled cross-index selectivity,
+    semi-naive mode composition, and deferred watermark suffixes.
+
+---
+
+## Lexicon
+
+Canonical terms; other phrasings defer to these.
+
+- **multiplicity variant**: the variant of a rule covering a child at
+  multiplicity 2 or more. Pattern elements bind distinct children
+  (chapter 9), so the base rule cannot match a repeated child.
+- **class-growth delta**: the touched-log entries recording the absorbed
+  class's members on a merge, so class growth that recanonicalizes
+  nothing still reaches the next semi-naive round (chapter 18).
+- **survivor policy**: the `--union-by {rank,size,uses,sum}` choice of
+  which class survives a merge (chapter 2).
+- **eager completion** (`--derive-ac-eqs`) and **lazy completion**
+  (`--lazy-ac-eqs`): the two opt-in AC completion modes; plain is the
+  default (AC doc §13).
+- **campaign**: one timed measurement pass of the whole comparison set
+  at one commit; a **run** is a single timed invocation.
+- **native encoding / native column / native dual**: the program style
+  using native algebraic operators, its slot in a results table, and
+  the translated counterpart file of a rules-encoding benchmark.
+- **class key**: the repr-set key naming a class's `ClassData`; "live"
+  is its state adjective.
+- **spelling**: one of a class's `Seq` nodes, the A-only analogue of an
+  AC monomial (AC doc §14).
+- **W-invariants** (W1-W7): defined and proved in
+  `containers-verus/src/eclasses.rs`; every citation points there.
+
 ---
 
 ## See Also
 
-- `semi-persistent-containers` crate — dense IDs, semi-persistent vectors, and container types
-- `semi-persistent-traversals` crate — stack-safe tree traversal algorithms
+- `semi-persistent-containers` crate: dense IDs, semi-persistent vectors, and container types
+- `semi-persistent-traversals` crate: stack-safe tree traversal algorithms
 
 ---
 [Table of Contents](00-table-of-contents.md) · [Overview: Why Semi-Persistent →](A0-overview.md)

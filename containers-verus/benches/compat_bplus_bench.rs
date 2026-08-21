@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Ported production benchmark: `containers/benches/bplus_bench.rs`
 //! (imports adapted; workloads unchanged). Gated on `compat-bplus` +
-//! `compat-ids`; the recorded numbers are the Phase 9 performance baseline
-//! gate (within 10% of production unless a reviewed exception is recorded).
+//! `compat-ids`. This is a Criterion reference benchmark, not a fixed-ratio
+//! gate; report its confidence intervals with the host and revision.
 //!
 //! B+Tree parameterization microbenchmarks.
 //!

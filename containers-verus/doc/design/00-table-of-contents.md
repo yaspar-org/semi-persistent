@@ -1,6 +1,8 @@
 # Verified Semi-Persistent Containers: Design & Proof Notes
 
-A Verus port of [`semi-persistent-containers`](../../../containers).
+The verified semi-persistent containers: the container layer the e-graph
+engine runs on. The unverified reference implementation is
+[`containers/`](../../../containers).
 
 ## Semi-persistence
 
@@ -20,8 +22,13 @@ value in a diff log; subsequent writes to the same cell record nothing
 recorded old values in reverse, restoring each first-written cell to its
 mark-time value; untouched cells were never logged. No deep copy is ever
 materialized: a marked state is represented implicitly as the current contents
-minus the diffs recorded since. Memory is proportional to the number of modified
-cells, and `restore` runs in time proportional to the diff.
+plus O(1) frame metadata and the diffs recorded since. Runtime memory also
+includes the live value store, diff/frame capacities, container identity, and
+fork history, which grows by O(1) per restore. If `b` fork-history links are
+walked during token validation, `k` entries are replayed, `r` cells are
+regrown, `p` entries belong to the surviving parent frame, and `w`
+parallel-bitmap words are materialized, restore is O(b+k+r+p) for inline
+capture and O(b+k+r+p+w) for parallel capture.
 
 ## What is verified
 
@@ -29,8 +36,10 @@ The risk in the diff representation is a faulty replay (a dropped entry, a
 wrong replay order, a cell restored from the wrong mark) silently producing a
 state that differs from the deep-copy specification. The proof rules this out by
 carrying the specification explicitly. The container holds a **ghost field**
-`snapshots`: the stack of deep copies, defined in ghost code (erased before
-compilation, so the compiled container retains only the diff). The headline
+`snapshots`: the stack of deep copies, defined in ghost code and erased before
+compilation. The compiled container retains its ordinary value store, sparse
+diff log, frame metadata, fork history, identity, and capture-state fields, but
+not the ghost deep copies. The headline
 theorem is the equivalence between the diff engine and the deep-copy
 specification:
 
@@ -42,11 +51,13 @@ will accept: each `mark` opens a branch in a fork history, each `restore` cuts t
 branches it discards, and a token naming a discarded state is rejected. The
 development uses no `admit`s or `assume`s; run `cargo verus verify` for the
 per-module tally. (That does not mean nothing is trusted; the trust boundary is
-25 `external_body` items in the default build, enumerated in
-[Chapter 2](02-trust-boundary.md), of which only four carry load-bearing
-contracts.)
+27 `external_body` items in the default build, 32 with `literal-types`,
+enumerated in [Chapter 2](02-trust-boundary.md).)
 
-## Reference: what is in the crate (chapters 01–02, 09–10)
+## Reference: what is in the crate
+
+Filename numbers are stable ids, not the reading sequence; follow this
+listing's order.
 
 01. **[Master Verification Design](01-verification-design.md)**: the layout,
     the `wf` invariant, the `overlay` reconstruction model, and branch-cut safety.
@@ -59,12 +70,32 @@ contracts.)
 10. **[The B+Tree Set](10-bplus-tree.md)**: the one recursive container: node
     layout, the ghost-`Tree` invariant, arena-never-overflows, insert with split
     propagation, the cursor soundness theorems, `mark`/`restore`, proof status.
-11. **[Layout, Algorithm & Erasure Parity](11-layout-parity.md)**: the living
-    audit that the verified containers match production's layouts, algorithms and
-    `TRACK=false` erasure — and the measurement discipline that audit taught.
 12. **[The Sorted-Vec Cursor](12-sorted-vec-cursor.md)**: the galloping seek,
-    verified. The first proof here whose subject is a query-engine algorithm
+    verified. A proof whose subject is a query-engine algorithm
     rather than a container; reuses the B+tree's `seek_target_idx` unchanged.
+15. **[The Dense-Span Multimap](15-dense-span-map.md)**: the build-once index
+    behind the e-graph's per-round index families: a two-pass counting build
+    refined to the per-key filter of its input stream, plus the
+    generation-stamped arena-reuse build path.
+16. **[The Layered Span Map](16-layered-span-map.md)**: incremental maintenance
+    over chapter 15: a base generation, one delta generation, per-key
+    invalidation, and the cross-generation sortedness lemma with the caller
+    obligation it rests on. Verified; the engine does not enable it.
+
+## The class layer
+
+The verified aggregate `EClasses` (rings, union-find, class keys, use-lists,
+min-monomial pool) carries invariants W1..W7 as its `wf()`; the invariant
+table is the `eclasses.rs` module header. Three documents cover it (where
+a filename keeps a number, the number is a stable id, not a position in
+the reading sequence above):
+
+- **[E-Graph Class-Layer Integration](egraph-class-layer.md)**: the
+  engine's `EClasses`/`UnionFind` are type aliases of the verified kernel; the
+  legacy comparisons are explicitly historical.
+- **[Conformance baseline](../../../containers-conformance/BASELINE.md)**:
+  finite differential, layout, and Criterion evidence against the retained
+  reference implementation.
 
 ## Techniques: reusable lessons (chapters 03–08)
 
@@ -75,29 +106,23 @@ contracts.)
 05. **[The Flat Central Lemma](05-flat-central-lemma.md)**: the reconstruction
     lemma stated per-cell, so it needs no `saved_len` monotonicity.
 06. **[Regrow & Capture-Flag Alternatives](06-restore-regrow-alternatives.md)**:
-    the two representation choices, and why production's unbounded `force_capture`
-    is not adopted.
+    the two representation choices, and why the retired unbounded
+    `force_capture` design was replaced by conditional capture.
 07. **[Default Impls & `Tagged` Niche Safety](07-default-impls.md)**: why a
     fabricated `Default` filler is never observable, and the niche-bit recipe.
 08. **[Token Reuse & Restore Semantics](08-token-reuse-and-restore.md)**: what
     `restore` does to the frame stack and why a reused token is trapped.
 
-## Side notes: unnumbered
-
-Not part of the chapter sequence: a chronological log and a maintenance playbook.
-
-- **[Proof Attempts Log](proof-attempts-log.md)**: the dead-ends and the
-  recurring Verus lessons that came out of them.
-- **[Proof-Performance Playbook](proof-performance-playbook.md)**:
-  diagnosing slow/hanging/flaky proofs (maintenance reference).
-
 ## Future work
 
-- **[Feature-Parity Audit](../future/parity-audit-and-plan.md)**: method-by-method
-  coverage vs. production; what has no verus counterpart.
 - **[Byte-Accounting Diagnostics (Group B)](../future/verify-byte-accounting.md)**:
   the plan to verify `tracking_bytes`/`total_bytes`/`heap_bytes`, removing the last
   spec-free `external_body`.
+- **[Conformance and Release Work](../future/conformance-and-release.md)**:
+  consumer `Tagged` law tests, B+ header-history integration, package/reference
+  cutover, reduced Miri coverage, remaining Criterion rows, the supported
+  compatibility surface, proof-forest verification, and const-generic tracking
+  refinement.
 
 ## Relationship to the production docs
 

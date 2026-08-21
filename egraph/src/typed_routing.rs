@@ -130,7 +130,9 @@ impl<G: DenseId<Index = I::Index>, I: NodeIds, const TRACK: bool> TypedRouting<G
     pub fn finalize(&mut self, fresh_id: G, entry: NodeRef<I>) {
         assert!(self.reserved, "no reserved id to finalize");
         assert_eq!(fresh_id.to_index(), self.entries.len());
-        self.entries.push(entry);
+        self.entries
+            .try_push(entry)
+            .expect("routing entries exhausted the id index word (reserve checked the id bound)");
         self.reserved = false;
     }
 
@@ -153,12 +155,17 @@ impl<G: DenseId<Index = I::Index>, I: NodeIds, const TRACK: bool> TypedRouting<G
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> RoutingToken {
         RoutingToken {
-            entries: self.entries.mark(shrink),
+            entries: self
+                .entries
+                .try_mark(shrink)
+                .expect("routing mark: depth is bounded by the saturation driver"),
         }
     }
 
     pub fn restore(&mut self, token: RoutingToken) {
-        self.entries.restore(token.entries);
+        self.entries
+            .try_restore(token.entries)
+            .expect("routing restore: token minted by this container's own mark");
         self.reserved = false;
     }
 }

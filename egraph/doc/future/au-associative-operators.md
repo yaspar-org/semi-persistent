@@ -17,7 +17,7 @@ Action generation for a Seq member pair (§3.4.3) is the equal-length positional
 only: for members `seq(a₁…aₖ)` and `seq(b₁…bₖ)` of equal length, one action pairing
 `(aᵢ, bᵢ)` positionally; member pairs of unequal length contribute **no** structural
 action. The terminal generalize action (§A.3) covers those pairs, so results remain
-valid — they just cannot factor the `seq` constructor into the backbone. This behavior
+valid; they just cannot factor the `seq` constructor into the backbone. This behavior
 is pinned by `seq_equal_length_zips_positionally` and
 `seq_unequal_length_has_no_structural_action` in `egraph/src/au/actions.rs`.
 
@@ -45,7 +45,7 @@ An action is then a **monotone alignment**: a choice of `min(|L|, |R|)`-many mat
 index pairs `(i₁ < i₂ < …) ↔ (j₁ < j₂ < …)` with every unmatched position padded.
 This is exactly the sequence-alignment / edit-distance search space (match, insert,
 delete), and the optimal alignment over fixed per-cell child qualities is a
-classic O(|L|·|R|) dynamic program — the order-constrained analogue of the
+classic O(|L|·|R|) dynamic program, the order-constrained analogue of the
 transport solve: cells are solved once (they are ordinary `AU(aᵢ, bⱼ)` subproblems,
 matrix-independent by the same argument as §3.4.4), and the alignment DP selects the
 pairing over those fixed qualities.
@@ -81,8 +81,8 @@ Design points to resolve:
   deletions, and blocks combine into one weighted-alignment DP; the two extensions
   should share the DP skeleton rather than being separate action kinds.
 
-The AC analogue — completing unequal totals by nonempty submultiset *blocks* when the
-operator has no identity (§3.4.4) — falls out of the same design: it is the order-free
+The AC analogue, that completing unequal totals by nonempty submultiset *blocks* when the
+operator has no identity (§3.4.4), falls out of the same design: it is the order-free
 version, and its combiner is a transport instance whose "cells" are block pairs.
 
 ## 3. Interaction with cycle filtering and transport
@@ -99,7 +99,7 @@ version, and its combiner is a transport instance whose "cells" are block pairs.
   member pair, legal cells as bandit arms, the alignment recomputed from cell Q
   estimates at every backpropagation (a derived attribute, not a search choice), and
   a second alignment solve over lexicographic best-result qualities for witness
-  composition — exactly the two-solve pattern the transport path uses.
+  composition, exactly the two-solve pattern the transport path uses.
 - **The exact solver** solves each legal cell once and runs one alignment DP per
   member pair, mirroring its one-flow-per-representation-pair structure.
 - **Well-formedness** (§4.6) extends with the alignment payload in the AND record
@@ -131,7 +131,7 @@ Items specified but not implemented, kept here so they survive as designs:
 **Delivered**: the value-guided AND selectors `uct_and` and `lct_and`, formerly
 specified here, are now implemented (§3.3.5), selectable via `and_selector` alongside
 `round_robin`, with `lct_and` the default. One refinement was delivered beyond the
-original formulas: a **terminal-skip gate** — the value-guided selectors skip children
+original formulas: a **terminal-skip gate**: the value-guided selectors skip children
 whose OR node is terminal, because a terminal child's Q is exact and immutable and
 visiting it cannot change the completion certificate. The gate is necessary, not
 cosmetic: the bare formulas do not starve terminal children on near-ties (a converged

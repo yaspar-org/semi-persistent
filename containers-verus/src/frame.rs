@@ -10,7 +10,7 @@
 //! `diff_start: usize` indexes into the diff log (a `std::Vec`, sized by
 //! `usize`), so the natural fit there is `usize`, independent of `I`.
 //!
-//! The frame-replay invariant (used in M3/M4) says:
+//! The frame-replay invariant says:
 //!
 //!   forall k: snapshots[k] == replay_reverse(view, diff_log[frames[k].diff_start..])
 //!                              .subrange(0, frames[k].saved_len.as_nat())
@@ -41,3 +41,13 @@ impl<I: IndexLike> Clone for Frame<I> {
 }
 
 } // verus!
+
+// Production-surface parity (production derives Debug).
+impl<I: crate::index_like::IndexLike + core::fmt::Debug> core::fmt::Debug for Frame<I> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Frame")
+            .field("saved_len", &self.saved_len)
+            .field("diff_start", &self.diff_start)
+            .finish()
+    }
+}

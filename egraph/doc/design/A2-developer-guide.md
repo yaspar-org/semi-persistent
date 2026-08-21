@@ -123,30 +123,38 @@ pure descriptive step with no side effects on the e-graph.
 42 but 42 was never introduced, the probe returns `None` and the
 match fails without polluting the store.
 
-## Soundness Guarantees
+## Primitive-Model Contract
 
-The engine's primitive operations are sound by default. Every operation
-that can fail (overflow, division by zero, lossy conversion) panics
-rather than silently producing a wrong result. This prevents the
-engine from deriving false equalities.
+Primitive soundness is an obligation on the `LitModel`, not a theorem enforced
+by the trait. The engine treats each deterministic `eval` result as defining
+the primitive's ground equation. A custom implementation can therefore make
+the model inconsistent with the semantics its author intended even though it
+satisfies the Rust type signature.
+
+The provided integer machine operations use checked arithmetic for the
+unqualified names and panic on overflow or invalid integer division. This is
+not a blanket failure policy: `f64` operations use Rust/IEEE floating-point
+semantics, and string indexing operations return an empty string for invalid
+UTF-8 byte ranges.
 
 Wrapping and saturating variants use Rust's standard method names
 (`wrapping_add`, `saturating_mul`, etc.) and require explicit opt-in.
-Arbitrary-precision types (IBig, RBig) cannot overflow. Operations
-that would produce unrepresentable results (e.g., `sqrt` on
-rationals) are not provided.
+Arbitrary-precision types (IBig, UBig, RBig) do not overflow their numeric
+range, although partial operations such as division by zero can still panic.
+Operations that would produce unrepresentable exact results (for example,
+rational square root) are not provided.
 
-When implementing a new `eval` function, the same principle applies:
-if the operation can produce an incorrect result for some inputs, it
-should panic rather than return a wrong value. The engine's
-correctness depends on every derived equality being sound.
+When implementing a new `eval` function, specify its intended semantics and
+make it deterministic and total over the values on which the engine will call
+it, or deliberately reject unsupported inputs. The e-graph's soundness is
+relative to that external contract; no proof checks an arbitrary callback.
 
 ## Provided Models
 
 | Model | Sorts | Use case |
 |-------|-------|----------|
-| `BignumModel` | bool, IBig, UBig, RBig | Arbitrary precision, sound by construction |
-| `MachineModel` | bool, i64, u64, f64, usize, String | Fixed-width with checked overflow; strings backed by Rust `String` |
+| `BignumModel` | bool, IBig, UBig, RBig | Arbitrary-precision operations relative to their documented callback semantics; no overflow, but partial operations can panic |
+| `MachineModel` | bool, i64, u64, f64, usize, String | Integer arithmetic checked by default; `f64` follows Rust/IEEE semantics; strings use Rust `String` |
 | `AllModel` | All of the above | Testing |
 
 ## Example: Adding a Custom Sort

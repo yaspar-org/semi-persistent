@@ -1,10 +1,13 @@
-# Chapter 6 — `SparseSet` — O(1) Membership with Stable IDs
+# Chapter 6: `SparseSet`, O(1) Membership with Live-Stable IDs
 
 [← Ch 5: ListArena](05-list-arena.md) · [Table of Contents](00-table-of-contents.md) · [Ch 7: BPlusTreeSet →](07-bplus-tree.md)
 
-A sparse set provides O(1) add, remove, contains, and O(N) iteration,
-while returning stable ids that survive removals. It uses three
-parallel vectors:
+A sparse set provides amortized O(1) add, O(1) remove and contains, and O(N)
+iteration (apart from the cost of cloning or comparing `T` where an operation
+requires it).
+An ID remains attached to its value while that entry is live; after removal,
+the stale ID is rejected by `contains` and may be recycled for a later value.
+It uses three parallel vectors:
 
 ```rust
 pub struct SparseSet<T, Idx, S, const TRACK: bool> {

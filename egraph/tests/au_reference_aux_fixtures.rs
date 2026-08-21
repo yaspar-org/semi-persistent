@@ -79,12 +79,12 @@ fn extraction_and_clustering_fixtures_preserve_assertions() {
 #[test]
 fn reference_configuration_defaults_are_pinned() {
     let (rollouts, report_step, saturation_iterations) = (1000_u32, 1000_u32, 4_u32);
-    let (llm_k, llm_n, alpha) = (10_u32, 5_u32, 0.01_f64);
+    let (sample_k, sample_n, alpha) = (10_u32, 5_u32, 0.01_f64);
     assert_eq!(
         (rollouts, report_step, saturation_iterations),
         (1000, 1000, 4)
     );
-    assert_eq!((llm_k, llm_n), (10, 5));
+    assert_eq!((sample_k, sample_n), (10, 5));
     assert_eq!(alpha, ALPHA);
 }
 

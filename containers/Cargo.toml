@@ -3,7 +3,7 @@ name = "semi-persistent-containers"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Semi-persistent core data structures with O(1) snapshots and O(k) restore"
+description = "Semi-persistent core data structures with sparse snapshots and diff-proportional restore"
 repository = "https://github.com/yaspar-org/semi-persistent"
 
 [dependencies]

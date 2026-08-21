@@ -12,6 +12,54 @@ use crate::index::IndexStore;
 use crate::lit_model::LitModel;
 use crate::literal::LitVal;
 
+/// The goal of a `(run … :until …)`: two already-built class ids and the relation that has
+/// to hold between them for the run to stop. The terms are ground, so they are built once
+/// before the run and only their classes move.
+#[derive(Clone, Copy, Debug)]
+pub struct RunGoal<G> {
+    pub left: G,
+    pub right: G,
+    /// `true` for `:until (= a b)`, `false` for `:until (!= a b)`.
+    pub equal: bool,
+}
+
+impl<G: DenseId> RunGoal<G> {
+    /// Does the goal hold right now? Reads the union-find directly, so it is valid at any
+    /// point — a pending rebuild changes which nodes exist, not which classes are merged.
+    fn holds<Cfg, L, const T: bool, const P: bool>(&self, eg: &EGraph<Cfg, L, T, P>) -> bool
+    where
+        Cfg: EGraphConfig<G = G>,
+        L: LitVal,
+        MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+    {
+        (eg.find_const(self.left) == eg.find_const(self.right)) == self.equal
+    }
+}
+
+/// What a `(run …)` asks for beyond the iteration budget: which ruleset to run, and an
+/// optional goal that stops it early.
+#[derive(Clone, Copy, Debug)]
+pub struct RunSpec<G> {
+    /// Iteration budget.
+    pub limit: usize,
+    /// Run only the rules in this ruleset. `None` is the default ruleset — the one untagged
+    /// rules join — so a program that declares no ruleset behaves exactly as before.
+    pub ruleset: Option<crate::apply::RulesetId>,
+    /// Checked before every iteration, including the first; the run stops as soon as it holds.
+    pub until: Option<RunGoal<G>>,
+}
+
+impl<G> RunSpec<G> {
+    /// A plain `(run N)`: default ruleset, no goal.
+    pub fn budget(limit: usize) -> Self {
+        Self {
+            limit,
+            ruleset: None,
+            until: None,
+        }
+    }
+}
+
 /// Result of a saturation run.
 #[derive(Clone, Debug)]
 pub struct SatResult {
@@ -19,10 +67,13 @@ pub struct SatResult {
     pub iterations: usize,
     /// Whether a fixpoint was reached (no new merges/insertions).
     pub saturated: bool,
-    /// Total e-matching steps (partial-match extensions) across all rounds and
-    /// rules — see [`crate::ematch::match_steps`]. This is the direct measure
-    /// of match work; comparing it between [`saturate`] and [`saturate_semi`]
-    /// quantifies how much rediscovery semi-naive avoids.
+    /// Whether the run stopped because its `:until` goal held. Distinct from `saturated`:
+    /// the goal can be met with rules still firing.
+    pub goal_met: bool,
+    /// Total executed lowered matching steps plus emitted matches across all
+    /// rounds and rules — see [`crate::ematch::match_steps`]. This
+    /// implementation-level work proxy is not a semantic match count or a
+    /// machine-independent runtime measure.
     pub match_steps: u64,
 }
 
@@ -32,12 +83,13 @@ pub enum SaturationStrategy {
     /// Rediscover every match each round (`saturate`).
     #[default]
     Naive,
-    /// Match only what changed each round via the k-variant decomposition
-    /// (`saturate_semi`). No automatic fallback to naive.
+    /// Use delta variants via the k-variant decomposition (`saturate_semi`).
+    /// The driver does not switch wholesale to naive; rules without safe delta
+    /// coverage use a full-index match.
     SemiNaive,
 }
 
-/// Run equality saturation for up to `limit` iterations.
+/// Run equality saturation for up to `limit` iterations, over every rule given.
 pub fn saturate<Cfg, L, M, S, const T: bool, const P: bool>(
     rules: &[PreparedRule<Cfg::O, S, L>],
     eg: &mut EGraph<Cfg, L, T, P>,
@@ -52,28 +104,119 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    saturate_spec(rules, eg, model, &RunSpec::budget(limit), globals)
+}
+
+/// Run equality saturation under a full [`RunSpec`]: the iteration budget, the ruleset to
+/// run, and an optional `:until` goal checked before each iteration.
+pub fn saturate_spec<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    saturate_spec_in(
+        rules,
+        eg,
+        model,
+        spec,
+        globals,
+        &mut crate::index::IndexScratch::new(),
+    )
+}
+
+/// [`saturate_spec`] over a caller-owned scratch, so the stream buffers and the
+/// span arenas outlive the call.
+///
+/// A run of one round — which is what `(run 1)` is, and what the E6 incremental
+/// cycle repeats — gets no reuse from a scratch that the saturation call
+/// allocates and drops. Threading it in from the interpreter is what lets the
+/// span arena carry its allocation and its generation stamp from one `(run)` to
+/// the next. Reuse across calls needs no invalidation from the caller: a build
+/// bumps the stamp, so whatever an earlier call left in the table reads as
+/// empty.
+pub fn saturate_spec_in<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
-    for i in 0..limit {
-        eg.rebuild();
-        let index = IndexStore::build(eg);
-        let stats = crate::schedule::IndexStats::from_index(&index);
-        let mut changes = 0;
-        for rule in rules {
-            changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
+    for i in 0..spec.limit {
+        if goal_met(spec, eg) {
+            return sat_result(i, false, true, steps_base);
         }
-        if changes == 0 {
-            return SatResult {
-                iterations: i + 1,
-                saturated: true,
-                match_steps: crate::ematch::match_steps() - steps_base,
+        {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
+            eg.rebuild();
+        }
+        let index = {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
+            IndexStore::build_with(eg, scratch)
+        };
+        let mut changes = 0;
+        {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
+            let stats = {
+                let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                crate::schedule::IndexStats::from_index(&index)
             };
+            for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
+                changes += apply_rule_pooled(rule, eg, &index, &stats, model, globals, &mut pool);
+            }
+        }
+        // Before any exit from the loop body: the arenas go back so the next
+        // round, and the next `(run)`, build into the same span tables.
+        index.recycle_into(scratch, true);
+        crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
+        crate::phase_timing::round_line("naive");
+        if changes == 0 {
+            return sat_result(i + 1, true, false, steps_base);
         }
     }
+    // The budget is spent, but a goal met by the last iteration's work should still be
+    // reported as met — the caller's question is whether the goal holds, not when it started.
+    let met = goal_met(spec, eg);
+    sat_result(spec.limit, false, met, steps_base)
+}
+
+/// Does the run's `:until` goal hold? Always false when there is no goal.
+fn goal_met<Cfg, L, const T: bool, const P: bool>(
+    spec: &RunSpec<Cfg::G>,
+    eg: &EGraph<Cfg, L, T, P>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    spec.until.is_some_and(|g| g.holds(eg))
+}
+
+fn sat_result(iterations: usize, saturated: bool, goal_met: bool, steps_base: u64) -> SatResult {
     SatResult {
-        iterations: limit,
-        saturated: false,
+        iterations,
+        saturated,
+        goal_met,
         match_steps: crate::ematch::match_steps() - steps_base,
     }
 }
@@ -88,11 +231,14 @@ use crate::schedule::IndexStats;
 use std::hash::Hash;
 
 /// The op a join atom scans, or `None` for atoms that don't scan an index
-/// (`Lit`, `Eq`, `EqGlobal`). Atoms with an op are the ones that participate
+/// (`Eq`, `EqGlobal`). Atoms with an op are the ones that participate
 /// in the semi-naive variant decomposition — see the design doc, "Which Atoms
 /// Count as Positions": only relation-scanning atoms generate candidate nodes;
-/// built-in constraints have no delta.
-fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
+/// built-in constraints have no delta. `Lit` scans `@sort` like `LitBind` does
+/// (it is that scan filtered to one payload), so it is a position too: a match
+/// whose only new tuple is a freshly interned literal node needs a variant that
+/// reads the literal atom's delta.
+pub(crate) fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
     match atom {
         RAtom::Plain { op, .. }
         | RAtom::AExact { op, .. }
@@ -103,13 +249,14 @@ fn atom_op<O: Copy, S, V>(atom: &RAtom<O, S, V>) -> Option<O> {
         | RAtom::ACSub { op, .. }
         | RAtom::ACIExact { op, .. }
         | RAtom::ACISub { op, .. }
+        | RAtom::Lit { op, .. }
         | RAtom::LitBind { op, .. } => Some(*op),
-        RAtom::Lit { .. } | RAtom::Eq(..) | RAtom::EqGlobal(..) => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
     }
 }
 
 /// Indices (stable `atom_id`s) of the join atoms in a rule — the atoms the
-/// semi-naive variant loop ranges over. Excludes `Lit`/`Eq`/`EqGlobal`.
+/// semi-naive variant loop ranges over. Excludes `Eq`/`EqGlobal`.
 fn join_atom_indices<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> Vec<usize> {
     rq.atoms
         .iter()
@@ -119,10 +266,9 @@ fn join_atom_indices<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> Vec<usize> {
         .collect()
 }
 
-/// The node variable an atom binds, or `None` for the binary constraint atoms
-/// (`Eq`, `EqGlobal`).
-#[cfg(test)]
-fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
+/// The node variable an atom binds, or `None` for the atoms that bind none (`Eq`,
+/// `EqGlobal`, `Pred`).
+pub(crate) fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
     match atom {
         RAtom::Plain { node, .. }
         | RAtom::Lit { node, .. }
@@ -135,7 +281,93 @@ fn atom_node<O, S, V>(atom: &RAtom<O, S, V>) -> Option<crate::ast::VarId> {
         | RAtom::ACIExact { node, .. }
         | RAtom::ACISub { node, .. }
         | RAtom::LitBind { node, .. } => Some(*node),
-        RAtom::Eq(..) | RAtom::EqGlobal(..) => None,
+        RAtom::Eq(..) | RAtom::EqGlobal(..) | RAtom::Pred { .. } => None,
+    }
+}
+
+/// Whether a rule has to be matched against the whole graph every round instead of
+/// being delta-restricted.
+///
+/// The variant decomposition assumes that every way a match can become available shows
+/// up as a new or re-canonicalized tuple in some atom's relation. A constraint between
+/// two atoms' *node* variables breaks that assumption: when those two classes merge,
+/// neither node's tuple changes, so no variant's delta holds the event and the match is
+/// never found. Measured on the `matrix` translation, whose conditional Kron/MMul rewrite
+/// guards on `(= p (ncols a)) (= p (nrows c))`: under delta restriction the rule never
+/// fires, at any budget.
+///
+/// The root-binding pattern form `(= v pat)` is what produces such constraints; a rule
+/// that does not use it is unaffected, so this costs the existing corpus nothing.
+fn needs_naive_match<O: Copy, S, V>(rq: &ResolvedQuery<O, S, V>) -> bool {
+    // A global reference in a child or element position is a fixed-class
+    // constraint with no scanning atom behind it: the match set grows when the
+    // global's class absorbs another class, and if the surviving
+    // representative is the id the parents already store, nothing
+    // recanonicalizes and no relation gains a tuple — the merge-membership
+    // delta (`merge_in_classes`) cannot help a class no atom scans. Such a
+    // rule matches the whole graph every round, like the Eq-constrained rules
+    // below. `semi_recanon_parent_delta.egg` is the regression test.
+    if rq.atoms.iter().any(pattern_refs_global) {
+        return true;
+    }
+    let has_eq = rq
+        .atoms
+        .iter()
+        .any(|a| matches!(a, RAtom::Eq(..) | RAtom::EqGlobal(..)));
+    if !has_eq {
+        return false;
+    }
+    let node_vars: Vec<crate::ast::VarId> = rq.atoms.iter().filter_map(atom_node).collect();
+    rq.atoms.iter().any(|a| match a {
+        RAtom::Eq(x, y) => node_vars.contains(x) || node_vars.contains(y),
+        RAtom::EqGlobal(x, _) => node_vars.contains(x),
+        _ => false,
+    })
+}
+
+/// The worst access-path skew any of the rule's scan atoms can meet this
+/// round: the max over the atoms' operators of the measured
+/// size-biased-over-plain bucket-size ratios (`FanOuts` skew maps). Only the
+/// op-keyed paths participate — `by_repr` is graph-global and would flip every
+/// rule together.
+fn rule_skew<O: DenseId + std::hash::Hash, S, V>(
+    rule: &PreparedRule<O, S, V>,
+    stats: &IndexStats<O>,
+) -> f64 {
+    let mut worst: f64 = 1.0;
+    for atom in &rule.query.atoms {
+        let Some(op) = atom_op(atom) else { continue };
+        for (&(o, _), &sk) in &stats.fanouts.by_child_pos_skew {
+            if o == op {
+                worst = worst.max(sk);
+            }
+        }
+        if let Some(&sk) = stats.fanouts.by_contains_skew.get(&op) {
+            worst = worst.max(sk);
+        }
+    }
+    worst
+}
+
+/// Whether an atom's pattern references a let-bound global in a child or
+/// element position (see the fixed-class case in [`needs_naive_match`]).
+fn pattern_refs_global<O, S, V>(a: &RAtom<O, S, V>) -> bool {
+    use crate::resolve::PatVar;
+    let g = |v: &PatVar| matches!(v, PatVar::Global(_));
+    match a {
+        RAtom::Plain { children, .. } | RAtom::AExact { children, .. } => children.iter().any(g),
+        RAtom::APrefix { fixed, .. }
+        | RAtom::ASuffix { fixed, .. }
+        | RAtom::ABoth { fixed, .. } => fixed.iter().any(g),
+        RAtom::ACExact { elems, .. } | RAtom::ACSub { elems, .. } => {
+            elems.iter().any(|(v, _)| g(v))
+        }
+        RAtom::ACIExact { elems, .. } | RAtom::ACISub { elems, .. } => elems.iter().any(g),
+        RAtom::Lit { .. }
+        | RAtom::LitBind { .. }
+        | RAtom::Eq(..)
+        | RAtom::EqGlobal(..)
+        | RAtom::Pred { .. } => false,
     }
 }
 
@@ -169,8 +401,8 @@ where
     let mut stats = IndexStats::from_index(full);
     for (j, atom) in rq.atoms.iter().enumerate() {
         let Some(op) = atom_op(atom) else { continue };
-        let full_card = full.by_op.get(&op).map(|sv| sv.len()).unwrap_or(0);
-        let delta_card = delta.by_op.get(&op).map(|sv| sv.len()).unwrap_or(0);
+        let full_card = full.nodes_by_op(op).len();
+        let delta_card = delta.nodes_by_op(op).len();
         let card = match j.cmp(&delta_atom) {
             std::cmp::Ordering::Equal => delta_card,            // delta
             std::cmp::Ordering::Less => full_card - delta_card, // full ∖ delta
@@ -201,12 +433,24 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
-    crate::ematch::run_query_into(&plan, eg, vindex, globals, pool);
+    // Per-rule scheduling-mode auto-selection: under `Auto`,
+    // a rule whose join touches a skewed access path (a hub bucket) runs with
+    // per-binding atom ordering, and a rule over flat paths keeps the static
+    // plan and skips the per-binding overhead. The threshold separates nearly
+    // flat paths from distributions dominated by hub buckets. The match set is
+    // the same either way (design chapter 20).
+    if crate::ematch::scheduling_mode() == crate::ematch::SchedulingMode::Auto {
+        const SKEW_THRESHOLD: f64 = 8.0;
+        crate::ematch::set_runtime_scheduling(rule_skew(rule, stats) > SKEW_THRESHOLD);
+    }
+    let sampler = crate::index::IndexSampler::new(eg, *vindex);
+    let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
+    crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);
     let mut changes = 0;
-    for m in pool.matches_mut() {
+    for j in 0..pool.len() {
+        let mut row = pool.row_mut(j);
         for action in &rule.actions {
-            changes += crate::apply::apply_action(action, m, eg, model, globals);
+            changes += crate::apply::apply_action(action, &mut row, eg, model, globals);
         }
     }
     changes
@@ -234,41 +478,116 @@ where
     M: LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    saturate_semi_spec(rules, eg, model, &RunSpec::budget(limit), globals)
+}
+
+/// Semi-naive saturation under a full [`RunSpec`] — the delta-driven counterpart of
+/// [`saturate_spec`].
+pub fn saturate_semi_spec<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    saturate_semi_spec_in(
+        rules,
+        eg,
+        model,
+        spec,
+        globals,
+        &mut crate::index::IndexScratch::new(),
+    )
+}
+
+/// [`saturate_semi_spec`] over a caller-owned scratch. See
+/// [`saturate_spec_in`] for why the scratch is threaded in rather than
+/// allocated per call.
+///
+/// The full and delta indices are alive at the same time, so they draw from two
+/// separate sets of arenas; [`IndexStore::recycle_into`]'s `full` flag is which
+/// set a store's arenas go back to.
+pub fn saturate_semi_spec_in<Cfg, L, M, S, const T: bool, const P: bool>(
+    rules: &[PreparedRule<Cfg::O, S, L>],
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    spec: &RunSpec<Cfg::G>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    scratch: &mut crate::index::IndexScratch<Cfg>,
+) -> SatResult
+where
+    Cfg: EGraphConfig,
+    S: DenseId,
+    L: LitVal,
+    M: LitModel<Value = L>,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let limit = spec.limit;
     let steps_base = crate::ematch::match_steps();
     // Outside the round loop, and shared by every variant of every rule: a
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
     for i in 0..limit {
-        eg.rebuild();
-        let full = IndexStore::build(eg);
+        if goal_met(spec, eg) {
+            return sat_result(i, false, true, steps_base);
+        }
+        {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
+            eg.rebuild();
+        }
+        let full = {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
+            IndexStore::build_with(eg, scratch)
+        };
         // delta = everything touched since the previous round's index build
         // (fresh nodes from the last round's apply + this round's recanon).
         let delta = if i == 0 {
             None
         } else {
-            Some(IndexStore::build_delta(eg, eg.touched()))
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::DELTA);
+            crate::phase_timing::count(crate::phase_timing::C_ROUNDS_DELTA, 1);
+            Some(IndexStore::build_delta_with(eg, eg.touched(), scratch))
         };
+        if std::env::var_os("EGRAPH_TRACE_DELTA").is_some() {
+            eprintln!("[semi round {i}] touched={:?}", eg.touched());
+        }
         eg.clear_touched();
 
+        let match_timer = crate::phase_timing::Timer::start(crate::phase_timing::MATCH);
         let mut changes = 0;
         match &delta {
             // Round 0: naive — the whole graph is new.
             None => {
-                let stats = IndexStats::from_index(&full);
+                let stats = {
+                    let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                    IndexStats::from_index(&full)
+                };
                 let vindex = VariantIndex::naive(&full);
-                for rule in rules {
+                for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     changes +=
                         run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
                 }
             }
             // Rounds ≥ 1: one variant per join atom.
             Some(delta) => {
-                let full_stats = IndexStats::from_index(&full);
-                for rule in rules {
+                let full_stats = {
+                    let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                    IndexStats::from_index(&full)
+                };
+                for rule in rules.iter().filter(|r| r.ruleset == spec.ruleset) {
                     let jatoms = join_atom_indices(&rule.query);
-                    if jatoms.is_empty() {
-                        // No scanning atoms (e.g. a bare-literal rule): run it
-                        // naive so its matches are never missed.
+                    if jatoms.is_empty() || needs_naive_match(&rule.query) {
+                        // No scanning atoms (e.g. a bare-literal rule), or a
+                        // constraint between two atoms' node variables, whose
+                        // enabling merge no delta records: run it naive so its
+                        // matches are never missed.
                         let vindex = VariantIndex::naive(&full);
                         changes += run_rule_variant(
                             rule,
@@ -282,7 +601,11 @@ where
                         continue;
                     }
                     for &di in &jatoms {
-                        let stats = variant_stats(&rule.query, di, &full, delta);
+                        let stats = {
+                            let _s = crate::phase_timing::Timer::start(crate::phase_timing::STATS);
+                            crate::phase_timing::count(crate::phase_timing::C_VARIANTS, 1);
+                            variant_stats(&rule.query, di, &full, delta)
+                        };
                         let vindex = VariantIndex::variant(&full, delta, di);
                         changes +=
                             run_rule_variant(rule, eg, &vindex, &stats, model, globals, &mut pool);
@@ -290,20 +613,23 @@ where
                 }
             }
         }
+        match_timer.stop();
+        let had_delta = delta.is_some();
+        // Both stores' arenas go back before any exit from the loop body, each
+        // to the set it was drawn from.
+        if let Some(delta) = delta {
+            delta.recycle_into(scratch, false);
+        }
+        full.recycle_into(scratch, true);
+        crate::phase_timing::count(crate::phase_timing::C_ROUNDS, 1);
+        crate::phase_timing::round_line(if had_delta { "semi" } else { "semi-r0" });
 
         if changes == 0 {
-            return SatResult {
-                iterations: i + 1,
-                saturated: true,
-                match_steps: crate::ematch::match_steps() - steps_base,
-            };
+            return sat_result(i + 1, true, false, steps_base);
         }
     }
-    SatResult {
-        iterations: limit,
-        saturated: false,
-        match_steps: crate::ematch::match_steps() - steps_base,
-    }
+    let met = goal_met(spec, eg);
+    sat_result(limit, false, met, steps_base)
 }
 
 /// Like `saturate`, but prints each match and union when `labels` is provided.
@@ -369,19 +695,11 @@ where
         }
         if changes == 0 {
             eprintln!("-- fixpoint after {total_iter} iterations --");
-            return SatResult {
-                iterations: total_iter,
-                saturated: true,
-                match_steps: crate::ematch::match_steps() - steps_base,
-            };
+            return sat_result(total_iter, true, false, steps_base);
         }
         eprintln!("-- iteration {total_iter}: {changes} changes --");
     }
-    SatResult {
-        iterations: total_iter,
-        saturated: false,
-        match_steps: crate::ematch::match_steps() - steps_base,
-    }
+    sat_result(total_iter, false, false, steps_base)
 }
 
 #[cfg(test)]
@@ -605,10 +923,10 @@ mod tests {
     // -- ByContains optimization: variadic atom with a bound element --
     //
     // A variadic side-condition atom whose ELEMENT is bound but whose NODE is
-    // not (`(g x)` then `(add x ..rest)`) used to be compiled to drive from the
-    // full `by_op[add]` bucket and filter in DecomposeAC — so match-steps
-    // scaled with the TOTAL number of `add` nodes even though only one contains
-    // `x`. `emit_variadic_join` now intersects `by_op[add]` with
+    // not (`(g x)` then `(add x ..rest)`) must not drive from the full
+    // `by_op[add]` bucket and filter in DecomposeAC: match-steps would scale
+    // with the TOTAL number of `add` nodes even though only one contains
+    // `x`. `emit_variadic_join` intersects `by_op[add]` with
     // `by_contains[x]` (the variadic analogue of `Plain`'s `ByChildPos`), so
     // the driver is the few parents containing `x` and the work is independent
     // of the distractor count.
@@ -627,8 +945,8 @@ mod tests {
         // 210 vs 10 distractors adds 200 more non-matching `add` nodes. With
         // ByContains the driver is `by_contains[x]` (one entry), so the extra
         // 200 nodes cost nothing; match-steps stay within a small constant.
-        // (Pre-fix this delta was ~200.) Allow generous slack for incidental
-        // per-round bookkeeping while still catching any return to linear scan.
+        // Allow generous slack for incidental per-round bookkeeping while still
+        // rejecting work proportional to the 200 additional distractors.
         assert!(
             large <= small + 10,
             "ByContains should make variadic match work independent of the \
@@ -970,8 +1288,21 @@ mod tests {
     // union is exactly the naive matches involving >= 1 new (delta) node.
     #[test]
     fn variants_disjoint_and_complete() {
+        for runtime in [false, true] {
+            variants_disjoint_and_complete_under(runtime);
+        }
+    }
+
+    /// The variant decomposition holds under both scheduling modes.
+    ///
+    /// The delta restriction is per atom and independent of where the atom sits
+    /// in the order (`VariantIndex::mode` reads the compile-time numbering), so
+    /// re-choosing the order per binding must not move a match from one variant
+    /// to another, nor lose one: this asserts both halves against the flag.
+    fn variants_disjoint_and_complete_under(runtime: bool) {
         use std::collections::HashSet;
 
+        crate::ematch::set_runtime_scheduling(runtime);
         let mut eg = make_eg();
         let mut rr = crate::registry::RuleRegistry::<false>::new();
         // 2 join atoms: the outer f and the inner g.
@@ -1022,7 +1353,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1043,7 +1375,13 @@ mod tests {
         let naive_plan =
             crate::schedule::schedule_with_stats(&rule.query, &IndexStats::from_index(&full));
         let naive_vindex = VariantIndex::naive(&full);
-        let naive_matches = crate::ematch::run_query(&naive_plan, &eg, &naive_vindex, &globals);
+        let naive_matches = crate::ematch::run_query_scheduled(
+            &rule.query,
+            &naive_plan,
+            &eg,
+            &naive_vindex,
+            &globals,
+        );
         let naive_new: HashSet<Vec<usize>> = naive_matches
             .iter()
             .filter(|m| {
@@ -1062,6 +1400,7 @@ mod tests {
         );
         // sanity: the scenario actually produced new matches
         assert!(!union.is_empty(), "expected at least one new match");
+        crate::ematch::set_runtime_scheduling(false);
     }
 
     // -- per-atom cardinality: same op, different mode → different card --
@@ -1101,8 +1440,8 @@ mod tests {
         let full = IndexStore::build(&eg);
         let delta = IndexStore::build_delta(&eg, &touched);
 
-        let full_f = full.by_op.get(&of).map(|s| s.len()).unwrap();
-        let delta_f = delta.by_op.get(&of).map(|s| s.len()).unwrap();
+        let full_f = full.nodes_by_op(of).len();
+        let delta_f = delta.nodes_by_op(of).len();
         assert!(delta_f >= 1 && delta_f < full_f, "need a partial delta");
 
         let jatoms = join_atom_indices(&rule.query);
@@ -1204,7 +1543,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1224,7 +1564,13 @@ mod tests {
         let naive_plan =
             crate::schedule::schedule_with_stats(&rule.query, &IndexStats::from_index(&full));
         let naive_vindex = VariantIndex::naive(&full);
-        let naive_matches = crate::ematch::run_query(&naive_plan, &eg, &naive_vindex, &globals);
+        let naive_matches = crate::ematch::run_query_scheduled(
+            &rule.query,
+            &naive_plan,
+            &eg,
+            &naive_vindex,
+            &globals,
+        );
         let naive_new: HashSet<Vec<usize>> = naive_matches
             .iter()
             .filter(|m| {
@@ -1316,7 +1662,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1429,18 +1776,18 @@ mod tests {
     // variant's per-atom mode is realized ONLY through `Step::Join.atom_id`
     // (see ematch::run_join — mode is read off the join step). The implicit
     // precondition is therefore: *every join atom emits a `Step::Join` in
-    // every variant's plan.* For variadic atoms (A/AC/ACI) this used to be
-    // VIOLATED — `emit_variadic_join` emitted NO `Step::Join` when the atom's
-    // node var was already bound, so when a variant drove from an enclosing
-    // atom (binding the variadic child via `ExtractChild`) the atom's
-    // `FullMinusDelta` exclusion silently never ran. The fix mirrors the
-    // fixed-arity `Plain` bound-node path: emit a `ByRepr ∩ ByOp` re-join
-    // carrying `atom_id` so the mode is applied.
+    // every variant's plan.* For variadic atoms (A/AC/ACI) the trap is
+    // emitting NO `Step::Join` when the atom's node var is already bound:
+    // a variant driving from an enclosing atom (binding the variadic child
+    // via `ExtractChild`) would leave the atom's `FullMinusDelta` exclusion
+    // silently unexecuted. The bound-node path therefore mirrors the
+    // fixed-arity `Plain` one: emit a `ByRepr ∩ ByOp` re-join carrying
+    // `atom_id` so the mode is applied.
     //
-    // Defect impact had been: redundant re-emission only (the union still
-    // equalled the naive new-match set, and application is idempotent, so
-    // final state was always correct — which is why diff_ac / diff_aci / the
-    // whole .egg corpus stayed green). The fix recovers disjointness, i.e. the
+    // Without the re-join the failure is redundant re-emission only (the
+    // union still equals the naive new-match set, and application is
+    // idempotent, so the final state is correct; diff_ac / diff_aci and the
+    // whole .egg corpus cannot see it). The re-join recovers disjointness, i.e. the
     // lost semi-naive work savings on parent-driven variadic atoms.
     //
     // Asserts BOTH: pairwise-disjoint variant sets AND completeness against
@@ -1512,7 +1859,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 
@@ -1654,7 +2002,8 @@ mod tests {
             let stats = variant_stats(&rule.query, di, &full, &delta);
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let vindex = VariantIndex::variant(&full, &delta, di);
-            let matches = crate::ematch::run_query(&plan, &eg, &vindex, &globals);
+            let matches =
+                crate::ematch::run_query_scheduled(&rule.query, &plan, &eg, &vindex, &globals);
             per_variant.push(matches.iter().map(&key).collect());
         }
 

@@ -1,0 +1,7 @@
+;; EXPECT: error
+;; Tests :unextractable. The only node in the class is unextractable, so `(extract …)`
+;; fails with an error naming the class rather than panicking or printing a term.
+(sort E)
+(constructor hidden () E :unextractable)
+(let x (hidden))
+(extract x)

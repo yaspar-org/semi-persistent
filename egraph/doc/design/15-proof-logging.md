@@ -67,7 +67,7 @@ The union-find stores a `Justification` edge for each union operation
 in the `justification` vector (only allocated when `PROOFS = true`).
 
 The proof forest uses the uncompressed `parent_proof` vector
-(see Chapter 2), not the path-compressed `parent_fast`. This
+(see Chapter 2), not the path-compressed `parent`. This
 preserves the original merge tree so the proof system can walk from
 any node to the root, collecting justifications along the way.
 
@@ -135,7 +135,7 @@ Depth D:     0  1  0  1  2  1  2  3  2   1   0
 ```
 
 Between the first occurrences of any two nodes, the Euler tour must
-visit their LCA — the shallowest node in that range. This reduces
+visit their LCA: the shallowest node in that range. This reduces
 LCA to range minimum query (RMQ) on the depth array.
 
 ```

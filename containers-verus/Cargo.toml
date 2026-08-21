@@ -3,14 +3,15 @@ name = "semi-persistent-containers-verus"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Formally verified (Verus) semi-persistent core data structures with O(1) snapshots and O(k) restore"
+description = "Verus-verified semi-persistent core data structures with sparse snapshots and diff-proportional restore"
 repository = "https://github.com/yaspar-org/semi-persistent"
 autobins = false
 
 [dependencies]
 vstd = "=0.0.0-2026-08-02-0125"
-# SpMap's transient key index uses production's exact hasher (hashbrown 0.17's
-# default = foldhash) via std::HashMap<K, usize, foldhash::fast::RandomState>.
+# SpMap's transient key index uses the same foldhash `fast` algorithm as
+# production through std::HashMap<K, usize, hasher_spec::IndexHasher>.
+# IndexHasher stores one explicit seed and builds foldhash::fast::FixedState.
 # std's HashMap is what vstd models (generic over any S: BuildHasher, gated on
 # builds_valid_hashers::<S>()), so this is a fully VERIFIED fast map — not a
 # conformance-only shim — at the cost of one axiom mirroring vstd's own shipped
@@ -46,25 +47,24 @@ ordered-float = { workspace = true }
 hasher-random-seed = []
 
 # Trap, rather than wrap, if the process-global `ContainerId` counter is ever
-# exhausted (2^64 containers). OFF by default: the check costs +21.8% on
-# constant-count push loops because branching on the freshly minted id to a
-# diverging arm splits the basic block in `Vec::with_store`. See the bisection
-# in src/container_id.rs. Off, the allocator is production's algorithm at 4
-# billion times production's range; on, exhaustion is unconditionally fatal
-# rather than wrapping. Debug builds assert regardless.
+# exhausted (2^64 containers). OFF by default because the extra branch is on
+# every container construction; evaluate its cost with the maintained Criterion
+# benchmark rather than a fixed host-sensitive percentage. Off, the allocator is
+# production's algorithm at 4 billion times production's range; on, exhaustion
+# is unconditionally fatal rather than wrapping. Debug builds assert regardless.
 strict-id-exhaustion = []
 
-# Compat-test gates (migration plan Phase 1.1). Each feature unlocks the ported
-# production tests for a parity phase; it is flipped on in the same commit that
-# makes those tests pass. `compat-all` enables all of them (what CI runs).
-compat-core = []       # Phase 4: Vec/AppendOnlyVec/token/ShrinkPolicy parity
-compat-composites = [] # Phase 5.1-5.3: SpMap/SparseSet parity
-compat-list = []       # Phase 5.4: typed ListArena parity
-compat-ids = []        # Phase 6: define_id macros + IdFactory
-compat-bplus = []      # Phase 8: B+tree parity (cursor, insert, from_sorted)
+# Compatibility-test groups. `compat-all` enables the full CI surface.
+compat-core = []       # Vec/AppendOnlyVec/token/ShrinkPolicy parity
+compat-composites = [] # SpMap/SparseSet parity
+compat-list = []       # typed ListArena parity
+compat-ids = []        # define_id macros + IdFactory
+compat-bplus = []      # B+tree parity (cursor, insert, from_sorted)
 # Group D (trust ledger): assumed key-model axioms for external literal types
-# (BigInt/BigUint/BigRational/OrderedFloat<f64>) so SpMap can be keyed by the
-# egraph's interned literals. `cargo verus verify` must pass with AND without.
+# (BigInt, BigUint, CanonicalF64, CanonicalRational, and BitsF64) so SpMap can
+# be keyed by canonical literal representations. Raw BigRational and
+# OrderedFloat deliberately receive no axiom. `cargo verus verify` must pass
+# with AND without.
 literal-types = ["dep:num-bigint", "dep:num-rational"]
 compat-all = ["compat-core", "compat-composites", "compat-list", "compat-ids", "compat-bplus"]
 

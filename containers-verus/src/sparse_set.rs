@@ -48,6 +48,20 @@ pub struct SparseSetToken {
     pub(crate) indices: VecToken,
 }
 
+impl SparseSetToken {
+    pub open(crate) spec fn dense_frame_idx_spec(self) -> nat {
+        self.dense.frame_idx as nat
+    }
+
+    pub open(crate) spec fn sparse_frame_idx_spec(self) -> nat {
+        self.sparse.frame_idx as nat
+    }
+
+    pub open(crate) spec fn indices_frame_idx_spec(self) -> nat {
+        self.indices.frame_idx as nat
+    }
+}
+
 /// Semi-persistent sparse set with stable IDs.
 pub struct SparseSet<T, Idx, S, const TRACK: bool = true>
 where
@@ -75,12 +89,28 @@ where
         self.sparse.view().len()
     }
 
-    /// Sparse column (spec twin; fields are `pub(crate)` — privacy closeout).
+    /// Sparse column (spec counterpart; fields are `pub(crate)` — privacy closeout).
+    pub open(crate) spec fn indices_view(&self) -> Seq<Idx> {
+        self.indices.view()
+    }
+
+    pub open(crate) spec fn sparse_snapshots_view(&self) -> Seq<Seq<Idx>> {
+        self.sparse.snapshots_view()
+    }
+
+    pub open(crate) spec fn indices_snapshots_view(&self) -> Seq<Seq<Idx>> {
+        self.indices.snapshots_view()
+    }
+
+    pub open(crate) spec fn dense_depth_spec(&self) -> nat {
+        self.dense.depth_spec()
+    }
+
     pub open(crate) spec fn sparse_view(&self) -> Seq<Idx> {
         self.sparse.view()
     }
 
-    /// Dense-column reference (spec twin, for `data()`'s ensures).
+    /// Dense-column reference (spec counterpart, for `data()`'s ensures).
     pub open(crate) spec fn dense_ref(&self) -> &SpVec<T, Idx, S, TRACK> {
         &self.dense
     }
@@ -108,33 +138,33 @@ where
     /// the snapshot-wf clause, which quantifies over the actual snapshots).
     pub open(crate) spec fn restore_pre_spec(&self, token: SparseSetToken) -> bool {
         &&& self.dense.is_token_valid_spec(token.dense)
-        &&& token.dense.frame_idx_spec() < self.dense.depth_spec()
+        &&& token.dense_frame_idx_spec() < self.dense.depth_spec()
         &&& self.dense.depth_spec() < u32::MAX
         &&& self.dense.fork_count_spec() + 1 <= u32::MAX
         &&& self.sparse.is_token_valid_spec(token.sparse)
-        &&& token.sparse.frame_idx_spec() < self.sparse.depth_spec()
+        &&& token.sparse_frame_idx_spec() < self.sparse.depth_spec()
         &&& self.sparse.depth_spec() < u32::MAX
         &&& self.sparse.fork_count_spec() + 1 <= u32::MAX
         &&& self.indices.is_token_valid_spec(token.indices)
-        &&& token.indices.frame_idx_spec() < self.indices.depth_spec()
+        &&& token.indices_frame_idx_spec() < self.indices.depth_spec()
         &&& self.indices.depth_spec() < u32::MAX
         &&& self.indices.fork_count_spec() + 1 <= u32::MAX
     }
 
-    /// The three column snapshots a token names (spec twin for restore's
+    /// The three column snapshots a token names (spec counterpart for restore's
     /// contract).
     pub open(crate) spec fn snap_at(&self, token: SparseSetToken) -> (Seq<T>, Seq<Idx>, Seq<Idx>) {
-        (self.dense.snapshots_view()[token.dense.frame_idx_spec() as int],
-         self.sparse.snapshots_view()[token.sparse.frame_idx_spec() as int],
-         self.indices.snapshots_view()[token.indices.frame_idx_spec() as int])
+        (self.dense.snapshots_view()[token.dense_frame_idx_spec() as int],
+         self.sparse.snapshots_view()[token.sparse_frame_idx_spec() as int],
+         self.indices.snapshots_view()[token.indices_frame_idx_spec() as int])
     }
 
-    /// Dense snapshot stack (spec twin).
+    /// Dense snapshot stack (spec counterpart).
     pub open(crate) spec fn dense_snapshots_view(&self) -> Seq<Seq<T>> {
         self.dense.snapshots_view()
     }
 
-    /// Add-capacity headroom (spec twin for `add`'s requires).
+    /// Add-capacity headroom (spec counterpart for `add`'s requires).
     pub open(crate) spec fn can_add_spec(&self) -> bool {
         &&& self.dense.view().len() + 1 < Idx::max_nat()
         &&& self.sparse.view().len() + 1 < Idx::max_nat()
@@ -311,21 +341,88 @@ where
 
     /// Value of a live id (through the stable indirection).
     pub fn get(&self, id: Idx) -> (v: T)
-        requires self.wf(), self.contains_spec(id),
-        ensures v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
+        requires self.wf(),
+        ensures self.contains_spec(id)
+            ==> v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
+    {
+        // Total-with-documented-panic: liveness is an explicit branch. A dead
+        // id previously read a stale dense slot silently (production asserts;
+        // the verified core relied on the erased requires).
+        if !self.contains(id) {
+            crate::guard::refuse("SparseSet::get: id not present");
+        }
+        let pos = self.sparse.get_index(id);
+        self.dense.get_index(pos)
+    }
+
+    /// Value of a live id whose liveness the caller has already established
+    /// (pub(crate): the aggregate checks once, or holds it as a proof fact,
+    /// and reads without the public form's re-check).
+    pub(crate) fn get_live(&self, id: Idx) -> (v: T)
+        requires
+            self.wf(),
+            self.contains_spec(id),
+        ensures
+            v == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
     {
         let pos = self.sparse.get_index(id);
         self.dense.get_index(pos)
     }
 
-    /// Overwrite a live id's value in place (position and id unchanged).
-    pub fn set(&mut self, id: Idx, value: T)
-        requires old(self).wf(), old(self).contains_spec(id),
+    /// Overwrite a live id's value, liveness already established (the
+    /// pub(crate) counterpart of `set`, same effects without the re-check).
+    pub(crate) fn set_live(&mut self, id: Idx, value: T)
+        requires
+            old(self).wf(),
+            old(self).contains_spec(id),
         ensures
             final(self).wf(),
             final(self).cap_spec() == old(self).cap_spec(),
             final(self).n_spec() == old(self).n_spec(),
+            final(self).sparse_view() == old(self).sparse_view(),
+            final(self).indices_view() == old(self).indices_view(),
+            final(self).dense_view() == old(self).dense_view().update(
+                old(self).sparse_view()[id.as_nat() as int].as_nat() as int, value),
+            final(self).id_set() == old(self).id_set(),
+            final(self).free_pool() == old(self).free_pool(),
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
+        let pos = self.sparse.get_index(id);
+        self.dense.set_index(pos, value);
+        proof {
+            assert(self.sparse.view() == old(self).sparse.view());
+            assert(self.indices.view() == old(self).indices.view());
+            assert(self.dense.view().len() == old(self).dense.view().len());
+        }
+    }
+
+    /// Overwrite a live id's value in place (position and id unchanged).
+    pub fn set(&mut self, id: Idx, value: T)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            old(self).contains_spec(id) ==> {
+                &&& final(self).cap_spec() == old(self).cap_spec()
+                &&& final(self).n_spec() == old(self).n_spec()
+                &&& final(self).sparse_view() == old(self).sparse_view()
+                &&& final(self).indices_view() == old(self).indices_view()
+                &&& final(self).dense_view() == old(self).dense_view().update(
+                        old(self).sparse_view()[id.as_nat() as int].as_nat() as int, value)
+                &&& final(self).id_set() == old(self).id_set()
+                &&& final(self).free_pool() == old(self).free_pool()
+            },
+            // snapshot-stack framing (eclasses: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
+    {
+        // Total-with-documented-panic: see `get`.
+        if !self.contains(id) {
+            crate::guard::refuse("SparseSet::set: id not present");
+        }
         let pos = self.sparse.get_index(id);
         self.dense.set_index(pos, value);
         proof {
@@ -340,7 +437,7 @@ where
     /// Add a value, returning a stable id. If a free slot exists (`n < cap`),
     /// recycle the id parked at `indices[n]`; otherwise allocate a fresh id
     /// `== n`. The new element occupies dense position `n`.
-    pub fn add(&mut self, value: T) -> (id: Idx)
+    pub(crate) fn add(&mut self, value: T) -> (id: Idx)
         requires
             old(self).wf(),
             old(self).can_add_spec(),
@@ -362,6 +459,29 @@ where
                  && final(self).free_pool() =~= old(self).free_pool().drop_first()),
             old(self).free_pool().len() == 0 ==>
                 (id.as_nat() == old(self).cap_spec() && final(self).free_pool().len() == 0),
+            // capacity: recycling keeps it, a fresh id grows it by one, and
+            // either way the minted id is within the old capacity.
+            id.as_nat() <= old(self).cap_spec(),
+            final(self).cap_spec() == if old(self).free_pool().len() == 0 {
+                old(self).cap_spec() + 1
+            } else {
+                old(self).cap_spec()
+            },
+            // the stored value is readable back at the new id.
+            final(self).dense_view()[
+                final(self).sparse_view()[id.as_nat() as int].as_nat() as int] == value,
+            // survivors: every previously live id stays live with its value.
+            forall|k: Idx| #[trigger] old(self).contains_spec(k)
+                ==> final(self).contains_spec(k)
+                    && final(self).dense_view()[
+                            final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
+                        == old(self).dense_view()[
+                            old(self).sparse_view()[k.as_nat() as int].as_nat() as int],
+            // snapshot-stack framing (eclasses: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
@@ -533,18 +653,39 @@ where
     /// parks the freed id at the new boundary `indices[n-1]` (the first free
     /// slot), preserving the permutation by a transposition.
     pub fn remove(&mut self, id: Idx)
-        requires old(self).wf(), old(self).contains_spec(id),
+        requires old(self).wf(),
         ensures
             final(self).wf(),
-            final(self).n_spec() == old(self).n_spec() - 1,
-            final(self).cap_spec() == old(self).cap_spec(),
-            // ABSTRACT EFFECT: the live set loses exactly `id`.
-            final(self).id_set() =~= old(self).id_set().remove(id.as_nat()),
-            // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
-            // (so the next `add` recycles it — LIFO), the rest of the pool
-            // shifts back by one.
-            final(self).free_pool() =~= old(self).free_pool().insert(0, id.as_nat()),
+            // Every clause is conditional on liveness at entry; a dead id
+            // refuses at the branch and reaches none of this.
+            old(self).contains_spec(id) ==> {
+                &&& final(self).n_spec() == old(self).n_spec() - 1
+                &&& final(self).cap_spec() == old(self).cap_spec()
+                // ABSTRACT EFFECT: the live set loses exactly `id`.
+                &&& final(self).id_set() =~= old(self).id_set().remove(id.as_nat())
+                // INDEX-POOL PARKING: the freed id is pushed to the pool FRONT
+                // (so the next `add` recycles it — LIFO), the rest shifts back.
+                &&& final(self).free_pool() =~= old(self).free_pool().insert(0, id.as_nat())
+                // survivors: every other live id stays live with its value
+                // (the swap-remove moves the last dense slot, not its id map).
+                &&& (forall|k: Idx| #[trigger] old(self).contains_spec(k)
+                        && k.as_nat() != id.as_nat()
+                        ==> final(self).contains_spec(k)
+                            && final(self).dense_view()[
+                                    final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
+                                == old(self).dense_view()[
+                                    old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
+            },
+            // snapshot-stack framing (eclasses: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
     {
+        // Total-with-documented-panic: see `get`.
+        if !self.contains(id) {
+            crate::guard::refuse("SparseSet::remove: id not present");
+        }
         let ghost old_n = self.dense.view().len();
         let ghost old_cap = self.sparse.view().len();
         let ghost old_sparse = self.sparse.view();
@@ -809,7 +950,7 @@ where
 
     // ---- semi-persistence: delegate to the three inner vectors ----
 
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: SparseSetToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: SparseSetToken)
         requires
             old(self).wf(),
             TRACK,
@@ -817,8 +958,18 @@ where
         ensures
             final(self).wf(),
             final(self).dense_view() == old(self).dense_view(),
+            final(self).sparse_view() == old(self).sparse_view(),
+            final(self).indices_view() == old(self).indices_view(),
             final(self).dense_snapshots_view()
                 == old(self).dense_snapshots_view().push(old(self).dense_view()),
+            final(self).sparse_snapshots_view()
+                == old(self).sparse_snapshots_view().push(old(self).sparse_view()),
+            final(self).indices_snapshots_view()
+                == old(self).indices_snapshots_view().push(old(self).indices_view()),
+            token.dense_frame_idx_spec() == old(self).dense_depth_spec(),
+            token.sparse_frame_idx_spec() == old(self).sparse.depth_spec(),
+            token.indices_frame_idx_spec() == old(self).indices.depth_spec(),
+            final(self).dense_depth_spec() == old(self).dense_depth_spec() + 1,
     {
         let dense = self.dense.mark(shrink);
         let sparse = self.sparse.mark(shrink);
@@ -826,9 +977,115 @@ where
         SparseSetToken { dense, sparse, indices }
     }
 
-    /// "Restorable now" for the composite token (plan 2.2/2.3): every
-    /// constituent must be restorable — the aggregate-atomicity invariant's
-    /// validation half.
+    // ------------------------------------------------------------------
+    // Total-operation shell. `try_restore` is deliberately
+    // absent: `restore` carries a snapshot-wellformedness precondition that
+    // `is_valid_token` does not answer (it quantifies over archived snapshot
+    // contents). The structural fix is archiving snapshot-wf in `wf` the way
+    // `ListArena` archives `arena_model_wf`; without that archive a total
+    // restore would need an O(cap) runtime permutation check.
+    // ------------------------------------------------------------------
+
+    /// Exec counterpart of `add`'s three-column capacity precondition.
+    pub fn can_add(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == self.can_add_spec(),
+    {
+        self.dense.can_push() && self.sparse.can_push() && self.indices.can_push()
+    }
+
+    /// Total add.
+    pub fn try_add(&mut self, value: T) -> (r: Result<Idx, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted
+                && final(self).id_set() == old(self).id_set(),
+            r matches Ok(id) ==> {
+                &&& final(self).n_spec() == old(self).n_spec() + 1
+                &&& final(self).contains_spec(id)
+                &&& !old(self).id_set().contains(id.as_nat())
+                &&& final(self).id_set() =~= old(self).id_set().insert(id.as_nat())
+                &&& id.as_nat() <= old(self).cap_spec()
+                &&& final(self).cap_spec() == if old(self).free_pool().len() == 0 {
+                        old(self).cap_spec() + 1
+                    } else {
+                        old(self).cap_spec()
+                    }
+                &&& final(self).dense_view()[
+                        final(self).sparse_view()[id.as_nat() as int].as_nat() as int] == value
+                &&& (forall|k: Idx| #[trigger] old(self).contains_spec(k)
+                        ==> final(self).contains_spec(k)
+                            && final(self).dense_view()[
+                                    final(self).sparse_view()[k.as_nat() as int].as_nat() as int]
+                                == old(self).dense_view()[
+                                    old(self).sparse_view()[k.as_nat() as int].as_nat() as int])
+            },
+            // snapshot-stack framing (eclasses: the aggregate's archive is
+            // keyed on the component stacks).
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view(),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view(),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view(),
+    {
+        if self.can_add() {
+            Ok(self.add(value))
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total get: `Err(IndexOutOfBounds)` for an id that is not live.
+    pub fn try_get(&self, id: Idx) -> (r: Result<T, crate::error::ContainerError>)
+        requires self.wf(),
+        ensures
+            r is Ok <==> self.contains_spec(id),
+            r matches Ok(v) ==> v
+                == self.dense_view()[self.sparse_view()[id.as_nat() as int].as_nat() as int],
+    {
+        if self.contains(id) {
+            Ok(self.get(id))
+        } else {
+            Err(crate::error::ContainerError::IndexOutOfBounds)
+        }
+    }
+
+    /// Total mark: TRACK first, then the six column headrooms as one answer.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<SparseSetToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Err ==> final(self).id_set() == old(self).id_set(),
+            r matches Ok(token) ==> {
+                &&& final(self).dense_view() == old(self).dense_view()
+                &&& final(self).sparse_view() == old(self).sparse_view()
+                &&& final(self).indices_view() == old(self).indices_view()
+                &&& final(self).dense_snapshots_view()
+                    == old(self).dense_snapshots_view().push(old(self).dense_view())
+                &&& final(self).sparse_snapshots_view()
+                    == old(self).sparse_snapshots_view().push(old(self).sparse_view())
+                &&& final(self).indices_snapshots_view()
+                    == old(self).indices_snapshots_view().push(old(self).indices_view())
+                &&& token.dense_frame_idx_spec()
+                    == final(self).dense_snapshots_view().len() - 1
+                &&& token.sparse_frame_idx_spec()
+                    == final(self).sparse_snapshots_view().len() - 1
+                &&& token.indices_frame_idx_spec()
+                    == final(self).indices_snapshots_view().len() - 1
+            },
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if self.dense.can_mark() && self.sparse.can_mark() && self.indices.can_mark() {
+            Ok(self.mark(shrink))
+        } else {
+            Err(crate::error::ContainerError::DepthLimit)
+        }
+    }
+
+    /// Whether the composite token is restorable now. Every constituent must
+    /// be restorable, which is the validation half of aggregate atomicity.
     pub fn is_valid_token(&self, token: &SparseSetToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -852,9 +1109,17 @@ where
         ensures
             final(self).wf(),
             final(self).dense_view() == old(self).snap_at(token).0,
+            final(self).sparse_view() == old(self).snap_at(token).1,
+            final(self).indices_view() == old(self).snap_at(token).2,
+            final(self).dense_snapshots_view() == old(self).dense_snapshots_view()
+                .subrange(0, token.dense_frame_idx_spec() as int),
+            final(self).sparse_snapshots_view() == old(self).sparse_snapshots_view()
+                .subrange(0, token.sparse_frame_idx_spec() as int),
+            final(self).indices_snapshots_view() == old(self).indices_snapshots_view()
+                .subrange(0, token.indices_frame_idx_spec() as int),
     {
-        // Atomic compound restore (plan 2.3): prevalidate ALL constituent
-        // tokens before restoring ANY — a partially-restored sparse set
+        // Prevalidate all constituent tokens before restoring any of them:
+        // a partially restored sparse set
         // (dense rolled back, sparse/indices not) violates the permutation
         // invariant unrecoverably. Provably-true no-op for verified callers.
         crate::guard::check_precondition(
@@ -1026,7 +1291,7 @@ fn values_equal<T: PartialEq>(a: &T, b: &T) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Constructors (migration plan 5.3, production parity). Generic `with_store`
+// Production-compatible constructors. Generic `with_store`
 // plus the two concrete instantiations production exposes; all establish the
 // empty `wf` (the permutation invariant is vacuous at cap == n == 0).
 // ---------------------------------------------------------------------------
@@ -1039,7 +1304,7 @@ where
 {
     /// Empty sparse set over a caller-supplied (empty, well-formed) dense
     /// store. Production `with_store` parity.
-    pub fn with_store(store: S) -> (s: Self)
+    pub(crate) fn with_store(store: S) -> (s: Self)
         requires
             store.wf(),
             store.data().len() == 0,
@@ -1047,6 +1312,9 @@ where
             s.wf(),
             s.n_spec() == 0,
             s.cap_spec() == 0,
+            s.dense_snapshots_view().len() == 0,
+            s.sparse_snapshots_view().len() == 0,
+            s.indices_snapshots_view().len() == 0,
     {
         let s = SparseSet {
             dense: SpVec::with_store(store),
@@ -1085,6 +1353,9 @@ where
     /// `SparseSet::new_inline` parity).
     pub fn new_inline() -> (s: Self)
         ensures s.wf(), s.n_spec() == 0, s.cap_spec() == 0,
+            s.dense_snapshots_view().len() == 0,
+            s.sparse_snapshots_view().len() == 0,
+            s.indices_snapshots_view().len() == 0,
     {
         Self::with_store(crate::inline_store::InlineStore::new())
     }
@@ -1101,5 +1372,17 @@ impl core::fmt::Debug for SparseSetToken {
             .field("sparse", &self.sparse)
             .field("indices", &self.indices)
             .finish()
+    }
+}
+
+// Production-surface parity (production ships Default on this variant).
+impl<T, Idx, const TRACK: bool> Default
+    for SparseSet<T, Idx, crate::parallel_store::ParallelStore<T, Idx>, TRACK>
+where
+    T: Sized + Copy,
+    Idx: IndexLike + Tagged,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }

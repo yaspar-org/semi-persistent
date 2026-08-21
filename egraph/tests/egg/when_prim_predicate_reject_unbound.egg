@@ -1,0 +1,6 @@
+;; EXPECT: sort-error
+;; TYPES: machine
+;; A guard reads literal values that other patterns bind. `b` is bound to an e-class, not
+;; to a value, so there is nothing for the primitive to compute over.
+(datatype Expr (Num i64) (P Expr Expr) (Mark Expr))
+(rewrite (P (Num a) b) (Mark b) :when ((i64::< a b)))

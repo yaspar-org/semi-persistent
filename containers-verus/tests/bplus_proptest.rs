@@ -362,11 +362,11 @@ fn first_leaf_id(t: &Tree, idx: u32) -> u32 {
 ///
 /// - retention: `ids_before ⊆ ids_after` (no live node ever drops out);
 /// - freshness: every id in `ids_after \ ids_before` is `>= arena_len_before`
-///   (growth only ever appends fresh tail slots — the F1 clause).
+///   (growth only ever appends fresh tail slots).
 ///
-/// Returns the observation so a test can confirm the EXACT-equality form
-/// (`ids_after == ids_before`) is genuinely violated by real inserts — i.e. the
-/// spec bug is real, not hypothetical.
+/// Returns the observation so a test can confirm that exact footprint equality
+/// (`ids_after == ids_before`) is too strong for inserts that split below the
+/// root without changing tree height.
 fn insert_checked(t: &mut Tree, k: u32) -> InsertObservation {
     let ids_before = reachable_ids(t, t.white_box_root());
     let leaf_ids_before = reachable_leaf_ids(t, t.white_box_root());
@@ -482,7 +482,7 @@ fn footprint_contract_holds() {
     assert!(
         grow_without_height_change > 0,
         "expected at least one deep-absorb insert that grows tree_ids without changing height; \
-         got none — the test is not exercising the path the spec bug lives on"
+         got none — the test is not exercising the deep-absorb growth path"
     );
 }
 
@@ -491,11 +491,8 @@ fn footprint_contract_holds() {
 // ---------------------------------------------------------------------------
 
 /// Insert 0..N in random order; after each insert, the wf invariants hold and
-/// the leaf chain yields the inserted keys in order without gaps. N capped at
-/// LEAF_CAP so the root stays a LEAF for every `insert` call — the current
-/// public `insert`'s contract (`requires is_leaf(root)`). The per-step re-insert
-/// no-op check also relies on the root staying a leaf. (One-split behaviour is
-/// covered separately by `the_one_split`; multi-level insert is M4c, pending.)
+/// the leaf chain yields the inserted keys in order without gaps. The sizes
+/// cover leaf-root, one-split, and multi-level trees.
 #[test]
 fn insert_random_then_cursor_in_order() {
     for &n in &[1u32, 2, 7, 14, 15, 50, 200, 1000] {
@@ -1018,7 +1015,7 @@ fn seek_descent_visits(t: &Tree, target: DenseId31) -> usize {
 // mark() snapshots the tree; we then insert past the mark and restore() back,
 // confirming the restored tree enumerates exactly the marked snapshot (via the
 // cursor, ascending) — the verified rollback theorem exercised at runtime. The
-// restore is token-only (Phase 7): the ghost tree is archived internally.
+// Restore is token-only: the ghost tree is archived internally.
 // ---------------------------------------------------------------------------
 
 fn sorted_keys_tracked(t: &TrackedTree) -> Vec<u32> {
@@ -1055,7 +1052,7 @@ fn tree_mark_restore_rollback() {
         }
 
         // restore: the ghost tree arg is erased, so assume_new().
-        t.restore(token); // token-only signature (Phase 7)
+        t.restore(token); // token-only signature
 
         // the restored tree enumerates exactly the marked snapshot, in order.
         let got = sorted_keys_tracked(&t);

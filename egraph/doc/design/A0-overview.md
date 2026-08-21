@@ -26,26 +26,35 @@ The engine synthesizes ideas from several lines of work into a single
 coherent execution engine:
 
 - Semi-persistent data structures (Conchon and Filliâtre, 2008)
-  provide memory-cheap snapshots (a sparse diff, not a copy) and O(k)
-  restore, enabling backtracking and stratification through the same
-  generational mechanism.
+  provide memory-cheap snapshots (a sparse diff, not a copy). For `b`
+  fork-history links, `k` replayed entries, `r` regrown cells, `p`
+  surviving-parent entries, and `w` materialized bitmap words, vector restore
+  is O(b+k+r+p) with inline capture and O(b+k+r+p+w) with parallel capture.
+  This vector bound excludes higher-level transient cache repair. The protocol
+  enables backtracking and supplies change boundaries for semi-naive
+  evaluation. Future stratified negation also needs a queryable frozen
+  relation/equality view; the rollback token is not such a view.
 - Matching modulo AC via canonization, inspired by the AC(X)
   decision procedure in Alt-Ergo (Conchon, Iguernlala, and Mebsout;
   Iguernlala, 2013), handles associative, commutative, and
   idempotent properties structurally rather than through rewrite
   rules.
-- Relational e-matching via leapfrog triejoin, as introduced by
-  egglog, provides worst-case-optimal pattern matching.
+- Relational e-matching uses leapfrog triejoin, as introduced by
+  egglog, for worst-case-optimal multiway intersection. AC decomposition
+  remains a separate branching stage and does not inherit that whole-algorithm
+  bound.
 - Variables and binders are future work (no binder support today). The
   planned approach parameterizes the e-graph over an edge-label algebra,
   with several candidate representations under consideration; see
   [Future Work](A3-future-work.md).
 
-The contribution of The project is making all these mechanisms coexist in
-a single engine. Semi-persistence is the unifying mechanism: the
-e-graph's hash-cons is a functional database, pattern matching is a
-relational join, and generations serve as both undo checkpoints and
-stratum boundaries.
+The contribution is making the implemented mechanisms coexist in a single
+engine. Semi-persistence provides rollback frames; pattern matching treats the
+e-graph's round snapshot as indexed relations; and a separate round-local
+`touched` log defines the conservative delta used by semi-naive evaluation.
+Rollback generations and semi-naive rounds are therefore related mechanisms,
+not the same boundary. Datalog relation declarations and frozen stratum views
+remain future work.
 
 ## Core Capabilities
 
@@ -55,20 +64,22 @@ The entire e-graph state (nodes, e-classes, union-find, hash-cons
 caches, literal store, registries) can be snapshotted with `(push)`
 and restored with `(pop)`. A snapshot is a single frame push across all
 containers; its *memory* cost is only the cells subsequently modified
-(a sparse diff), never a copy of the e-graph — that is the decisive
-saving. (The push also resets each container's per-cell capture flags,
-which is sublinear, not a copy; see the containers design docs.) Restore
-is O(k), where k is the number of cells modified since the snapshot, not
-the total size of the e-graph.
+(a sparse diff), never a copy of the e-graph: that is the decisive
+saving. The push also resets capture state: inline storage clears the slots
+named by the prior frame's diff, and parallel storage clears every
+materialized bitmap word. Restore replays diffs, regrows popped cells, and
+reconstructs the surviving parent frame's capture state; its exact complexity
+is the backend-specific bound above, not O(1) and not solely O(k).
 Each semi-persistent vector achieves this by recording only the first
 write to each cell per generation (a diff-log protocol).
 
-### O(1) algorithms where possible
+### Constant-work structural operations
 
-Circular intrusive linked lists for e-class use-lists give O(1)
-splice on merge, with no allocation and no traversal. Sparse sets
-with swap-and-pop give O(1) membership test, insert, and delete for
-the set of canonical representatives. The compressed union-find uses
+Cached-head/tail singly linked lists for e-class use-lists make splice a
+constant number of pointer/header updates; tracked first-write capture can
+still grow a diff-log backing vector. Sparse sets with swap-and-pop give O(1)
+membership and removal and amortized O(1) insertion for the set of canonical
+representatives. The compressed union-find uses
 path compression on the fast path while maintaining an uncompressed
 proof path in a parallel array, so proof extraction does not sacrifice
 find performance.
@@ -82,9 +93,9 @@ variants (`wrapping_add`, `saturating_mul`, etc.) require explicit
 opt-in, so constant-folding rules are sound to execute by default and
 the engine never derives false equalities from silent wraparound.
 Arbitrary-precision types are also available: IBig (integers), UBig
-(unsigned), and RBig (rationals) cannot overflow, though they consume
-more memory; values that exceed their inline 128-bit representation
-spill to a heap-allocated box. The `LitModel` trait makes the set of
+(unsigned), and RBig (rationals) cannot overflow their numeric range, though
+their `num-bigint`/`num-rational` representations can allocate as magnitude
+grows. The `LitModel` trait makes the set of
 concrete sorts and operations pluggable; users can define new builtin
 types by implementing a single trait. Beyond numeric and string
 types, the LitModel is also the extension point for abstract domains
@@ -97,41 +108,58 @@ Associative, commutative, and idempotent properties are handled
 structurally through canonical representations rather than rewrite
 rules. AC nodes store sorted multisets; ACI nodes store sorted sets
 with deduplication; A nodes store sequences. Handling these properties
-structurally prevents the combinatorial e-graph bloat that occurs when
-they are encoded as rewrite rules. Pattern matching dispatches
+structurally avoids the combinatorial e-graph growth caused by the corresponding
+rewrite encodings. Pattern matching dispatches
 automatically based on the operator's registered kind.
 
 **Caveat (AC congruence completeness):** the structural canonization
-gives correct matching and prevents the exponential blowup, but on its
-own it does *not* provide full AC congruence closure: recanonicalizing
+gives maximum-partition matching that is supported as sound by the
+implementation argument and finite regression tests, not by a verified
+matcher theorem. It avoids rewrite-encoding growth, but on its own it does
+*not* provide full AC congruence closure: recanonicalizing
 an AC node substitutes equal *atoms*, never equal *sub-sums*, so given
 `+(a,b) = c` and `+(b,d) = e`, the entailed equality `+(c,d) = +(a,e)`
 (via the shared `b`) is not discovered by canonization alone. The
-missing steps — Kapur-style superposition and rule inter-reduction
+missing steps, Kapur-style superposition and rule inter-reduction
 (FSCD 2021 / LMCS 2023, including the semantic-property facets:
-identity, idempotent, nilpotent, cancelative, inverse-pair) — are
-implemented in the completion pass that `rebuild` runs when opted in
-(`EGraph::set_cc(true)` / `--derive-ac-eqs`). Completion stays **off by
-default** for divergence *scoping* (rare pathological inputs have a
-genuinely large canonical basis), not because the algorithm is absent. See
-[AC Congruence Completeness](ac-congruence-completeness.md) for the full
-problem/fix analysis and [Future Work](A3-future-work.md) for status.
+identity, idempotent, nilpotent, cancelative, inverse-pair), are
+implemented in the completion pass, which runs in one of three modes:
+**plain** (the default: canonization and congruence only, because rare
+inputs can make completion extremely expensive and the implementation has no
+general end-to-end termination theorem), **eager**
+(`--derive-ac-eqs`: every rebuild attempts completion; only a `Converged`
+outcome reports that one full implementation round made no change), and **lazy**
+(`--lazy-ac-eqs`: a failing equality check runs goal-directed
+completion inside a semi-persistent transaction and the restore
+discards everything it minted). `--union-by` selects the merge
+survivor policy on the verified per-class counters. See
+[AC Congruence Completeness](ac-congruence-completeness.md) §13 for
+the modes and [Future Work](A3-future-work.md) for the verification
+plan.
 
 ### Relational pattern matching via leapfrog triejoin
 
-Patterns compile to flat relational atoms joined by a
+Patterns compile to flat relational atoms. Their relational intersections use
 worst-case-optimal leapfrog triejoin over four sorted index families
 (`by_op`, `by_child_pos`, `by_repr`, `by_contains`). A cost-based
-scheduler orders variables by estimated selectivity each iteration.
-The execution engine is a lazy DFS stack machine with static dispatch.
+scheduler orders atoms from estimated selectivity in the default `Static`
+mode. Optional `Runtime` scheduling chooses the next schedulable atom from live
+bucket lengths for each partial binding, so it can execute middle-out and choose
+different orders for sibling bindings. The production push matcher explores
+the resulting lowered steps with depth-first continuation execution; that
+control flow is not top-down pattern traversal.
 
 ### Maximal partition matching for AC/ACI
 
-Multiset matching avoids the exponential blowup of multiplicity
-sub-count enumeration. Each concrete element's total count is bound
-in O(1) and removed from the residual pool. Combinatorial branching
-is restricted to the distribution of unique residual elements among
-unbound variables.
+Multiset matching avoids multiplicity sub-count and residual-submultiset
+enumeration: a selected element consumes its whole available multiplicity.
+A bound scalar variable is found by a linear scan of the `d` distinct residual
+entries, while an unbound scalar branches over those entries. With `k`
+unbound scalar variables, the candidate assignment tree is at most `d^k`
+before constraint and distinctness pruning; work per branch still includes
+residual scans. The exponent is therefore pattern arity rather than numerical
+multiplicity. This describes the shipped maximum-partition relation, which is
+narrower than classical AC matching.
 
 ### Proof extraction
 
@@ -146,8 +174,9 @@ preserved for proof reconstruction.
 ### Datalog-style rules
 
 Rules with multiple LHS patterns and multiple RHS actions express
-Datalog-style reasoning. The saturation loop (rebuild, index, schedule,
-match, apply) runs rules to fixpoint.
+Datalog-style reasoning. The saturation loop repeats rebuild, index, schedule,
+match, and apply. It reports saturation when a full round produces no change;
+an iteration limit or goal can stop a run earlier.
 
 ### Variables and binders (planned)
 
@@ -181,7 +210,8 @@ The project is organized in layers, each building on the one below:
 The foundation layer provides 31-bit dense identifiers with a stolen
 tag bit for inline capture tracking, enabling semi-persistent
 containers with zero auxiliary storage per cell. The container layer
-builds semi-persistent vectors (sparse-diff snapshots, O(k) restore), maps,
+builds semi-persistent vectors (sparse-diff snapshots with backend-specific
+capture-state rebuild costs), maps,
 append-only vectors, sparse sets, and intrusive linked-list arenas.
 The e-graph layer composes these containers into node storage,
 e-classes with circular use-lists, a dual-array union-find, and
@@ -197,10 +227,11 @@ drives the saturation loop and manages push/pop scoping.
 ### Bulk-rebuilt sorted indexes
 
 Indexes are rebuilt from scratch each saturation iteration rather
-than maintained incrementally. Benchmarks at 10M elements show
-sorted-Vec iteration is 13× faster than arena-backed B+Trees. Since
-the join phase iterates the full index repeatedly for every rule,
-iteration speed dominates.
+than maintained incrementally. The current implementation uses sorted vectors,
+whose contiguous layout is a good fit for full-index iteration and binary
+search. Any current performance comparison with an arena-backed B+ tree must
+come from the maintained Criterion benchmarks at the revision being evaluated;
+this design chapter does not preserve a fixed ratio from an older run.
 
 ### Shrink at mark, not restore
 
@@ -217,24 +248,36 @@ indexes). Source-of-truth containers participate in the diff-log
 protocol. Derived containers are rebuilt from source-of-truth after
 restore.
 
-### Compile-time elision
+### Compile-time elision and retained state
 
-The `TRACK` and `PROOFS` const generics eliminate semi-persistence
-and proof-logging overhead at compile time when not needed. A
-non-backtracking, non-proof-logging configuration pays zero cost for
-these features.
+The `TRACK` and `PROOFS` const generics eliminate work guarded by those
+constants: disabled tracking performs no diff capture, and disabled proof
+logging allocates no proof/history vectors or records proof edges. The generic
+types still contain empty diff/frame/fork fields, proof/history `Option` fields
+set to `None`, and general runtime guards. The claim is therefore that
+feature-specific execution is erased while empty-state fields remain, not that
+the complete type has zero or minimum layout or no general check overhead.
 
 ## Detailed Design
 
 The chapters that follow describe each layer in detail:
 
-- **Foundations** (dense ids, semi-persistent vectors and containers) — documented in the `semi-persistent-containers` crate
+- **Foundations** (dense ids, semi-persistent vectors and containers): documented in the `semi-persistent-containers` crate
 - Chapters 1–5: E-graph core (nodes, classes, union-find, caches, canonization, rebuild)
 - Chapters 6-9: Matching engine (indexes, leapfrog join, scheduling, pattern execution)
 - Chapters 10-12: Language and compilation (surface syntax, sortcheck, rule application)
 - Chapters 13-14: Literal model and soundness
 - Chapters 15-16: Proofs and extraction
 - Chapter 17: Interpreter and saturation loop
+- Chapter 18: Semi-naive evaluation (`saturate_semi`: match only what changed each round, via the `touched` log, delta indexes, and the k-variant delta decomposition)
+- Chapter 19: Anti-unification (exact memoized solver and Monte-Carlo graph search over the AND/OR graph of e-class-pair subproblems)
+- Chapter 20: Index selectivity and adaptive matching (size-biased fan-outs,
+  per-binding operator restriction and atom scheduling, sampled selectivity,
+  and deferred watermark delta suffixes)
+- [ac-algebraic-properties.md](ac-algebraic-properties.md) and [ac-congruence-completeness.md](ac-congruence-completeness.md): why multiset canonization breaks congruence completeness, and the Kapur-style completion that repairs it
+- [ac-completion-spec.md](ac-completion-spec.md): the maintained
+  `min_monomial` candidate, diagnostics, and a clause-by-clause implementation
+  correspondence
 
 ## References
 

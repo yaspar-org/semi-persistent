@@ -1,6 +1,6 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
-;; Group inverse pair cancellation (gate flipped 2026-07-10): :inverse with :identity
+;; Group inverse pair cancellation: :inverse with :identity
 ;; drives x ∘ inv(x) = e at build and in completion, so add(a, neg(a)) reduces to zero.
 (sort E)
 (function zero () E)
