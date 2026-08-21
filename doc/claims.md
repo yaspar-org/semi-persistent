@@ -32,7 +32,7 @@ Evidence labels:
 | `InlineStore::restore` is O(b + k + r + p) | code-derived | b fork-history links, k replayed diff entries, r cells regrown after pops, and p surviving-parent diff entries whose inline flags are restored; Verus proves functional refinement, not a machine-cost theorem |
 | `ParallelStore::restore` is O(b + k + r + p + w) | code-derived | the same work plus clearing w materialized capture words; payload destruction and higher-level cache repair are outside this vector bound |
 | Const-gated `TRACK` work is absent when `TRACK=false` | compiler-enforced + **measured** | tracking writes and branches whose condition is the const generic are eliminated; empty diff/frame/fork fields and general runtime guards remain |
-| The `containers-verus` sources contain no executable `admit()` or `assume()` calls | **proved by gate** | the source scan and ordinary Verus verification are separate |
+| The project-local verified sources contain no executable `admit()` or `assume()` calls | **proved by gate** | all three verified crates are scanned in CI; source scanning and ordinary Verus verification are separate |
 | The container trust boundary is 27 `external_body` items by default and 32 with `literal-types` | **proved by gate** | every item is enumerated in the trust ledger |
 | 33 public partial functions remain and all are allowlisted | **proved by gate** | `check_partial_api.py` |
 | The verified and legacy reference containers agree on the tested shared traces and selected layouts | **measured** | `containers-conformance`; scope and known differences are documented in `containers-conformance/BASELINE.md` and `containers-verus/doc/design/egraph-class-layer.md` |
@@ -72,7 +72,16 @@ not a release-performance result for the current branch. A current comparison
 must rerun both engines from one source state under Criterion and retain its
 bootstrap confidence intervals.
 
-## 3. Anti-unification
+## 3. Abstract domains
+
+| claim | evidence | scope |
+| --- | --- | --- |
+| The enabled `u8`, `u16`, `u32`, and `u64` abstract-domain instances satisfy their stated Verus obligations | **proved** | ordinary verification reports 994 verified conditions and 0 errors; `u128` is disabled |
+| The source contains no `admit()` or `assume()` | **proved by gate** | includes the formerly admitted `ExecUnum::{add,mul,from_interval}` obligations |
+| The separate Rust mirror fuzz suite passes 32 tests | **measured** | randomized and exhaustive finite evidence; it mirrors rather than executes the Verus definitions |
+| `ReducedProduct::add` no longer depends on an admitted `ExecUnum::add` contract | **proved** | the dependency is now discharged transitively |
+
+## 4. Anti-unification
 
 ### Supported claims
 
@@ -124,7 +133,7 @@ universal proved claim.
 The maintained theorem, refinement, and validation acceptance criteria are in
 [`egraph/doc/future/au-correctness-and-validation.md`](../egraph/doc/future/au-correctness-and-validation.md).
 
-## 4. Open and retracted claims
+## 5. Open and retracted claims
 
 - Matcher completeness is open; soundness is the supported claim.
 - AC/ACI completion completeness is argued only for a converged completion on
@@ -145,7 +154,7 @@ The maintained theorem, refinement, and validation acceptance criteria are in
   revival requires the evidence in
   [the runtime validation specification](../egraph/doc/future/performance-validation.md#6-evidence-triggered-work).
 
-## 5. Historical documents
+## 6. Historical documents
 
 `doc/paper/egraphs2026.tex` is the immutable source of the already-published
 short paper. Its O(1)-snapshot, zero-overhead, LCA-integration, size, and other
@@ -156,6 +165,9 @@ Campaign records under `doc/benchmarks/records/campaigns/` are historical
 evidence. Their numbers remain valid for the source snapshots and binaries they
 name. No retained cross-engine campaign currently measures the branch tip.
 
-The `containers-verus` source gate does not remove dependency axioms from the
-trusted base. Ordinary verification remains subject to the documented
-Verus/`vstd` trust boundary.
+The project-local no-admit gate does not remove dependency axioms from the
+trusted base. With pinned `vstd` `0.0.0-2026-08-02-0125`, global
+`--no-cheating` stops in `vstd` before checking these crates because that
+dependency contains admitted specifications. The supported statement is
+therefore ordinary Verus verification plus a project-source scan, subject to
+the documented Verus/`vstd` trust boundary.

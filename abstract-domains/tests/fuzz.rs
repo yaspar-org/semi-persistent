@@ -124,13 +124,24 @@ impl ExecTnum {
 
 impl ExecAnum {
     fn contains(&self, x: u64) -> bool {
-        x.wrapping_sub(self.base) & !self.span == 0
+        x >= self.base && (x - self.base) & !self.span == 0
     }
     fn add(&self, t: &ExecAnum) -> ExecAnum {
-        ExecAnum {
-            base: self.base.wrapping_add(t.base),
-            span: self.span.wrapping_add(t.span) | self.span | t.span,
+        let v = self.base.wrapping_add(t.base);
+        let sm = self.span.wrapping_add(t.span) | self.span | t.span;
+        let max1 = self.base.wrapping_add(self.span);
+        let max2 = t.base.wrapping_add(t.span);
+        let max_sum = max1.wrapping_add(max2);
+        if max1 < self.base
+            || max2 < t.base
+            || max_sum < max1
+            || max_sum < max2
+            || v < self.base
+            || sm < self.span
+        {
+            return ExecAnum { base: 0, span: !0 };
         }
+        ExecAnum { base: v, span: sm }
     }
     fn div_const(&self, d: u64) -> ExecAnum {
         let min_q = self.base / d;
@@ -198,7 +209,9 @@ fn sample_etn(tn: &ExecTnum, rng: &mut impl Rng) -> u64 {
     tn.val | (rng.random::<u64>() & tn.mask)
 }
 fn sample_ean(an: &ExecAnum, rng: &mut impl Rng) -> u64 {
-    an.base.wrapping_add(rng.random::<u64>() & an.span)
+    an.base
+        .checked_add(rng.random::<u64>() & an.span)
+        .unwrap_or(an.base)
 }
 fn sample_interval(iv: &Interval, rng: &mut impl Rng) -> u64 {
     if iv.lo == iv.hi {
@@ -463,7 +476,7 @@ impl ExecUnum {
     fn top() -> Self {
         ExecUnum {
             base: 0,
-            walls: 1,
+            walls: 0,
             extent: !0,
         }
     }
@@ -471,7 +484,18 @@ impl ExecUnum {
     fn add(&self, t: &ExecUnum) -> ExecUnum {
         let v = self.base.wrapping_add(t.base);
         let x12 = self.extent.wrapping_add(t.extent);
-        if x12 < self.extent || x12 < t.extent {
+        let max1 = self.base.wrapping_add(self.extent);
+        let max2 = t.base.wrapping_add(t.extent);
+        let max_sum = max1.wrapping_add(max2);
+        if v < self.base
+            || v < t.base
+            || x12 < self.extent
+            || x12 < t.extent
+            || max1 < self.base
+            || max2 < t.base
+            || max_sum < max1
+            || max_sum < max2
+        {
             return ExecUnum::top();
         }
         let cout = (self.extent & t.extent) | ((self.extent | t.extent) & !x12);
@@ -485,6 +509,9 @@ impl ExecUnum {
     }
 
     fn neg(&self) -> ExecUnum {
+        if self.base.checked_add(self.extent).is_none() {
+            return ExecUnum::top();
+        }
         let new_v = 0u64.wrapping_sub(self.base).wrapping_sub(self.extent);
         ExecUnum {
             base: new_v,
@@ -502,40 +529,52 @@ impl ExecUnum {
         let x1 = self.extent;
         let v2 = t.base;
         let x2 = t.extent;
-        let (base, base_of) = v1.overflowing_mul(v2);
-        let (v1x2, of1) = v1.overflowing_mul(x2);
-        let (v2x1, of2) = v2.overflowing_mul(x1);
-        let (x1x2, of3) = x1.overflowing_mul(x2);
-        if base_of || of1 || of2 || of3 {
+        let Some(max1) = v1.checked_add(x1) else {
+            return ExecUnum::top();
+        };
+        let Some(max2) = v2.checked_add(x2) else {
+            return ExecUnum::top();
+        };
+        if max1.checked_mul(max2).is_none() {
             return ExecUnum::top();
         }
-        let (unc1, of4) = v1x2.overflowing_add(v2x1);
-        let (unc, of5) = unc1.overflowing_add(x1x2);
-        if of4 || of5 {
+        let Some(base) = v1.checked_mul(v2) else {
+            return ExecUnum::top();
+        };
+        let Some(v1x2) = v1.checked_mul(x2) else {
+            return ExecUnum::top();
+        };
+        let Some(v2x1) = v2.checked_mul(x1) else {
+            return ExecUnum::top();
+        };
+        let Some(x1x2) = x1.checked_mul(x2) else {
+            return ExecUnum::top();
+        };
+        let Some(unc1) = v1x2.checked_add(v2x1) else {
+            return ExecUnum::top();
+        };
+        let Some(unc) = unc1.checked_add(x1x2) else {
+            return ExecUnum::top();
+        };
+        if base.checked_add(unc).is_none() {
             return ExecUnum::top();
         }
         ExecUnum {
             base,
-            walls: 1,
+            walls: 0,
             extent: unc,
         }
     }
 
     fn to_ean(self) -> ExecAnum {
-        // Widen each field's max to ones_mask (smallest 2^k-1 >= max)
-        let mut m: u64 = 0;
-        for_each_field(self.walls, |start, end| {
-            let fm = field_mask(start, end);
-            let x_field = (self.extent & fm) >> start;
-            let mut mask = if x_field == 0 { 0u64 } else { 1u64 };
-            while mask < x_field {
-                mask = mask.wrapping_mul(2).wrapping_add(1);
-                if mask == !0 {
-                    break;
-                }
+        // Match the executable implementation: widen the whole register.
+        let mut m = if self.extent == 0 { 0u64 } else { 1u64 };
+        while m < self.extent {
+            m = m.wrapping_mul(2).wrapping_add(1);
+            if m == !0 {
+                break;
             }
-            m |= mask << start;
-        });
+        }
         ExecAnum {
             base: self.base,
             span: m,
@@ -573,23 +612,27 @@ impl ExecUnum {
         }
         ExecUnum {
             base: lo,
-            walls: 1,
+            walls: 0,
             extent: hi - lo,
         }
     }
 
     fn contains(&self, y: u64) -> bool {
-        let d = y.wrapping_sub(self.base);
-        let mut ok = true;
-        for_each_field(self.walls, |start, end| {
-            let m = field_mask(start, end);
-            let d_field = (d & m) >> start;
-            let x_field = (self.extent & m) >> start;
-            if d_field > x_field {
-                ok = false;
+        if y < self.base {
+            return false;
+        }
+        let d = y - self.base;
+        let mut borrow = false;
+        for bit in 0..64 {
+            let leader = (self.walls >> bit) & 1 == 1;
+            if bit > 0 && leader && borrow {
+                return false;
             }
-        });
-        ok
+            let x_bit = (self.extent >> bit) & 1;
+            let d_bit = (d >> bit) & 1;
+            borrow = x_bit < d_bit + u64::from(borrow);
+        }
+        !borrow
     }
 
     fn min_val(&self) -> u64 {
@@ -642,7 +685,7 @@ fn sample_eun(un: &ExecUnum, rng: &mut impl Rng) -> u64 {
         };
         d |= val << start;
     });
-    un.base.wrapping_add(d)
+    un.base.checked_add(d).unwrap_or(un.base)
 }
 
 // ----------------------------------------------------------------
@@ -696,8 +739,46 @@ fn fuzz_eun_min_max() {
     for _ in 0..N {
         let un = rand_eun(&mut rng);
         assert!(un.contains(un.min_val()), "doesn't contain min: {:?}", un);
-        assert!(un.contains(un.max_val()), "doesn't contain max: {:?}", un);
+        if un.base.checked_add(un.extent).is_some() {
+            assert!(un.contains(un.max_val()), "doesn't contain max: {:?}", un);
+        }
     }
+}
+
+#[test]
+fn eun_add_returns_top_when_the_represented_range_wraps() {
+    let a = ExecUnum {
+        base: u64::MAX - 10,
+        walls: 0,
+        extent: 5,
+    };
+    let b = ExecUnum {
+        base: 0,
+        walls: 0,
+        extent: 20,
+    };
+    let result = a.add(&b);
+    assert!(result.contains((u64::MAX - 10).wrapping_add(20)));
+    assert_eq!(result.base, 0);
+    assert_eq!(result.extent, u64::MAX);
+}
+
+#[test]
+fn eun_mul_returns_top_when_base_plus_uncertainty_wraps() {
+    let a = ExecUnum {
+        base: u64::MAX / 2,
+        walls: 0,
+        extent: 1,
+    };
+    let b = ExecUnum {
+        base: 2,
+        walls: 0,
+        extent: 0,
+    };
+    let result = a.mul(&b);
+    assert!(result.contains(u64::MAX - 1));
+    assert_eq!(result.base, 0);
+    assert_eq!(result.extent, u64::MAX);
 }
 
 // ----------------------------------------------------------------

@@ -26,20 +26,30 @@ The egglog comparison needs egglog at the revision `egraph/benches/corpus.toml`
 pins; the script clones and builds it, or `--keep-egglog <path>` reuses a
 checkout and refuses to record a run if it is at the wrong revision.
 
-## Everything CI checks
+## Core build and proof commands
 
 ```
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo build --workspace
+cargo test --workspace
 cargo build --workspace --all-targets --all-features
 cargo test --workspace --all-features
 cargo deny check
-(cd abstract-domains && cargo verus verify)
-(cd containers-verus && cargo verus verify)             # 1719 verified, 0 errors
-(cd au-verus && cargo verus verify)                     # 29 verified, 0 errors
+(cd abstract-domains && cargo verus verify)                     # 994 verified, 0 errors
+(cd containers-verus && cargo verus verify)                    # 1719 verified, 0 errors
+(cd containers-verus && cargo verus verify --features literal-types) # 1719 verified, 0 errors
+(cd au-verus && cargo verus verify)                             # 29 verified, 0 errors
 ```
 
-`RUSTFLAGS="-D warnings"` is set for every job in CI; set it locally to match.
+The main CI workflow sets `RUSTFLAGS="-D warnings"` for its build and test
+jobs; set it locally to match.
+CI separately scans `abstract-domains/src`, `containers-verus/src`, and
+`au-verus/src` for project-local `admit()`/`assume()` calls. Do not add
+`--no-cheating` to the abstract-domain command while the pinned `vstd`
+dependency contains admitted specifications: that command fails in `vstd`
+before project verification. This dependency is part of the stated trust
+boundary.
 
 The legacy-container performance comparison is a Criterion report, not a CI
 gate:
@@ -150,5 +160,5 @@ intervals.
 The formalizer pilot's renderings were written by one system. Rerunning the
 command reproduces the scoring, not the renderings, and an independent
 formalizer's output would be a different measurement.
-[`claims.md` section 4](claims.md#4-open-and-retracted-claims) states the
+[`claims.md` section 5](claims.md#5-open-and-retracted-claims) states the
 limitation.

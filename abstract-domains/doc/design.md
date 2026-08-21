@@ -1,7 +1,10 @@
 # Semi-Persistent Abstract Domains
 
-A proved abstract domains library for bitvector arithmetic. 880 verified obligations,
-13 admits remaining (all in Layer 4 soundness contracts), 30 soundness fuzz tests.
+A proved abstract domains library for bitvector arithmetic. The ordinary Verus
+run has 994 verified conditions and 0 errors, and a CI source gate rejects
+project-local `admit()`/`assume()` calls. The pinned `vstd` dependency remains
+inside the trust boundary. A separate 32-test Rust mirror suite supplies finite
+randomized/exhaustive evidence.
 
 ## Background
 
@@ -11,13 +14,10 @@ verifier uses Tnums to prove safety properties (bounds checks, alignment,
 absence of undefined behavior) before loading BPF programs into the kernel.
 The original C implementation did not come with formal proofs of correctness.
 
-We first implemented Tnums in Rust back in 2024 and, using Kani, proved soundness
-of all abstract bitwise operations and all abstract arithmetic operations except
-multiplication and division. This gave us confidence in the algorithms, but the
-proofs were not compositional; each operation was verified independently by exhaustive
-bitblasting, with no shared proof infrastructure or inductive reasoning.
-Critically, we did not have a proof for the mul and div algorithm, and
-neither did the original authors.
+Finite-width bitblasting can establish individual operation instances, but it
+does not provide compositional proofs or a shared inductive model. In particular,
+multiplication and division require reasoning that scales independently of the
+chosen machine width.
 
 Ernie Cohen then developed a layered formalization approach that avoids
 bitblasting entirely. The approach models bitvectors as infinite sequences
@@ -29,26 +29,20 @@ sequences, and soundness is established through four refinement layers:
    as infinite bitstrings via mod-2/div-2.
 2. **Layer 2**: Abstract domain types (Tnum, Anum) defined as recursive
    functions over these bitstrings, with soundness proofs for every operation.
-3. **Layer 3**: Bounded-width simulation, proving that chopping the infinite
-   bitstring to *w* bits preserves soundness.
-4. **Layer 4**: Machine-word implementations on native integer types, proved
-   to compute the same results as the chopped versions.
+3. **Layer 3**: Bounded-width simulation. Explicit containment theorems connect
+   selected operations to their chopped results; other definitions currently
+   have only invariant/width preservation or no Layer-3 theorem.
+4. **Layer 4**: Machine-word implementations on native integer types. Every
+   method verifies its written contract; selected operations have universal
+   containment refinements to the chopped theory, while others currently prove
+   only well-formedness.
 
-We implemented this layered model in Verus (verified Rust) and used a combination
-of LLMs (Claude Opus 4.6 1m, Claude Sonnet 4.6 1m, DeepSeek v3.2) together with
-brute-force Python simulation to discover the missing inductive invariant needed
-to complete the Layer 2 proofs: the *carry compensation property*. We then
-continued through Layers 3 and 4, added novel Anum division with exact base
-quotients, fleshed out the _Unum abstract domain_ that Ernie imagined, an extension
-of Anums that can track hard boundaries between slices of a bitvector, and prevents
-uncertainty from propagating beyond boundaries. We built a reduced product of the
-domains with a soundness proof of the reduction.
-
-In parallel, we developed the same types and algorithms in Lean 4. Both the
-Verus and Lean formalizations got stuck at different points, and progress in
-each path unlocked the other. Lemma statements and inductive invariants
-discovered in one prover were transferred to the other, and both reached
-completion.
+The Verus formalization implements all four layers. Its central inductive fact is
+the *carry compensation property*, which connects recursive bit-level addition
+to the closed-form Tnum operation. The library also covers Anum division with
+exact base quotients, Unum field boundaries that stop uncertainty propagating
+across slices, and a reduced product with a proof that reduction preserves every
+represented concrete value.
 
 ## How Soundness Is Formalized
 
@@ -61,15 +55,15 @@ soundness means:
 ```
 
 Each domain defines `has` differently, so the soundness statement takes a
-different form for each. The four domains form a progression, each improving
-on the previous:
+different form for each. The domains are complementary rather than a total
+precision ordering:
 
 | Domain | Strength | Weakness |
 |--------|----------|----------|
-| Tnum | Precise for bitwise ops | Carry destroys info on add |
+| Tnum | Bitwise-aware transfer functions | Carry destroys info on add |
 | Anum | Exact base on add | Still loses carry info in offset |
-| Unum | Precise for add (no carry loss) | No bitwise precision |
-| Interval | Precise for add, div | No bit-level info |
+| Unum | Field-sensitive arithmetic bounds | No native bitwise transfer |
+| Interval | Exact non-wrapping add and positive constant division | No bit-level info |
 
 The reduced product combines all four, using each where it excels.
 
@@ -132,9 +126,9 @@ affects the offset. But the offset still suffers from carry expansion.
 
 A Unum `{base, walls, extent}` partitions the bits into fields. Within each
 field, the offset from `base` ranges over a contiguous interval `[0, max]`.
-Since each field is a contiguous range, addition within a field is precise
-(like interval addition). Since the fields are at different bit positions,
-they don't interfere (horizontal compositionality).
+Fields at different bit positions can retain independent bounds. The
+executable representation has no canonical-form invariant, however, so these
+facts do not imply that every abstract addition is exact.
 
 The `walls` register marks field boundaries (1 = start of new field).
 The `extent` register stores each field's maximum in the corresponding bits.
@@ -164,16 +158,21 @@ Multiplication uses bilinear expansion:
 result = {base: base₁*base₂, walls: 0, extent: base₁*extent₂ + base₂*extent₁ + extent₁*extent₂}
 ```
 
-**Improvement over Anum**: precise addition with no carry loss at all. The
-offset is a contiguous range, not a bit-pattern set.
+**Difference from Anum**: each Unum field denotes a contiguous offset range,
+whereas an Anum span denotes independently selectable offset bits. The
+verified theorem for Unum addition is containment, not exactness. Exactness is
+false for some encodings accepted or produced by the executable API; see
+`unum-design.md`.
 
-See `unum-design.md` for the full Unum specification, algorithm details,
-worked examples, and the invariant discovery process.
+See `unum-design.md` for the full Unum specification, algorithm details, worked
+examples, and proof invariant.
 
 ### Interval: simple lo/hi bounds
 
-An Interval `{lo, hi}` satisfies `has(x) ⟺ lo ≤ x ≤ hi`. Precise for
-addition (when no overflow) and division. No bit-level information.
+An Interval `{lo, hi}` satisfies `has(x) ⟺ lo ≤ x ≤ hi`. Its executable
+addition is exact when endpoint arithmetic does not overflow and otherwise
+widens to top. Positive constant division is exact for unsigned,
+non-wrapping intervals. No interval-by-interval division is implemented.
 
 ### ReducedProduct: combining all four
 
@@ -182,70 +181,51 @@ The reduced product combines all four domains:
 ReducedProduct.has(x) ⟺ tnum.has(x) ∧ anum.has(x) ∧ interval.has(x) ∧ unum.has(x)
 ```
 
-Each operation uses the best domain for that operation. After each operation,
-`reduce()` cross-propagates information:
+Each operation constructs the available component results. After each
+operation, `reduce()` cross-propagates information:
 
 1. Tighten interval from Tnum/Anum/Unum min/max bounds.
 2. Clear impossible high bits in Tnum/Anum using interval upper bound.
 3. Rebuild Unum from tightened interval.
 
-Soundness of `reduce`: narrowing never removes a value present in all
-components. Soundness of operations: compose the four component soundness
-proofs, then apply reduce soundness.
+`reduce` has a universal containment theorem: narrowing never removes a value
+present in all components. `ReducedProduct::add` composes all four component
+containment proofs and then applies reduce containment. The other executable
+ReducedProduct methods currently guarantee well-formed results but do not yet
+carry universal containment postconditions; their intended composition is not
+a proved Layer 4 theorem until those contracts are added.
+
+The exact contracts implemented by the interval component are listed in
+[`interval-soundness.md`](interval-soundness.md). General division and alarms,
+abstract comparisons and narrowing, wrapped intervals, and strided intervals
+are maintained as future designs in
+[`future/interval-extensions.md`](future/interval-extensions.md).
 
 
-## How We Found the Missing Invariant
+## Carry Compensation Invariant
 
 The missing piece was `add_bitwise_eq`: proving that the non-recursive Tnum
 addition formula (5 nat-level operations, used by the Linux kernel) produces
 the same result as the recursive formula (bit-by-bit via `TBit::add_carry`).
 This lemma is also the foundation of the multiplication proof, since the
 shift-add multiplication loop calls the non-recursive formula at each step.
-Without it, neither addition nor multiplication could be proved sound. The
-This proof was unexpectedly difficult to establish from first principles.
+Without it, neither addition nor multiplication has a compositional soundness
+proof.
 
-We had to simulate both the Layer 1 abstractions (nat-level operations) and
-Layer 2 abstractions (recursive Tnum operations) in lockstep, comparing every
-intermediate value at every recursion level, to discover the relational
-invariant connecting the two formulations. The Python scripts used in this
-process are preserved in `scripts/`.
-
-**Phase 1: Brute-force simulation.** We wrote Python scripts that
-exhaustively enumerated all 3-4 bit Tnum additions and compared the
-non-recursive formula against the recursive one at every bit position. The
-simulation confirmed they always agree, but didn't tell us *why*.
-
-**Phase 2: Searching for per-bit invariants.** A tracing script dumped every
-intermediate value at each recursion level. We then tested candidate
-invariants across all cases. This found three necessary conditions:
+Three per-bit relations connect the recursive and non-recursive forms:
 
 - `carry_u <= cm` (the ub carry is bounded by the m-carry)
 - `cm == 0 ==> carry_u == 0` (when m-carry is known, ub carry is zero)
 - `cm == 1 ==> mask_i == 1` (uncertain carry means mask absorbs it)
 
-These were necessary but not sufficient.
+`tn_ext` reduces structural equality of invariant Tnums to equality of their
+`has` sets. The inductive tail step then has one exceptional case: when
+`c1.m == T`, the two formulas route a carry differently. Carry compensation
+states that exactly one of `cm1` and `ub_carry` is set, so the non-recursive
+formula places the extra one in the upper-bound carry while the recursive
+formula places it in the lower-bound-mask carry. The totals remain equal.
 
-**Phase 3: The failed direct approach.** We tried proving structural equality
-directly. The SMT solver couldn't close the gap because `TBit::add_carry` has
-~15 nested `let` bindings and Z3 can't evaluate it structurally.
-
-**Phase 4: Extensionality pivot.** We proved `tn_ext` (Tnum extensionality):
-two inv Tnums with the same `has` set are structurally equal. This reduced
-structural equality to `has`-equivalence.
-
-**Phase 5: The tail decomposition wall.** To prove `has`-equivalence
-inductively, we needed the tail of the non-recursive formula to equal the
-non-recursive formula applied to tails. When the carry bit `c1.m == T`, the
-two formulas use *different* carries, yet simulation shows the results match.
-
-**Phase 6: Finding the compensation.** Another Python script checked: when
-`c1.m == T`, what are `cm1` and `ub_carry`? The output showed they're never
-both 0 and never both 1. Exactly one is always 1. So the non-recursive
-formula puts the extra 1 in the ub carry, the recursive formula puts it in
-the lbm carry, and the totals are identical.
-
-**Phase 7: The algebraic proof.** Why does `cm1 XOR ub_carry == T` when
-`c1.m == T`? Tracing through the `TBit::add_carry` formula:
+Algebraically, `cm1 XOR ub_carry == T` follows from `c1.m == T`:
 
 - `c1.m = maskc = ubc XOR cv1`
 - When `c1.m == T` and `cv1 == T`: from the inv constraints, `cv1 == T`
@@ -254,12 +234,13 @@ the lbm carry, and the totals are identical.
 - Therefore `cv1 == F` when `c1.m == T`.
 - So `c1.m = ubc = cm1 XOR ub_carry`. Since `c1.m == T`: `cm1 XOR ub_carry == T`. QED.
 
-We added this as one line to `add_carry_decomp`:
+The corresponding clause in `TBit::add_carry_carry_decomp` is:
 ```
 &&& (c1.m.b() ==> (cm1.b() != (rv0.b() && rm0.b())))
 ```
 
-The solver proved it instantly. Everything else followed mechanically.
+Together with the three relations above, this clause discharges the recursive
+tail step and lifts the addition result into the multiplication proof.
 
 
 ## Architecture
@@ -269,7 +250,7 @@ Layer 1: bools.rs + nats.rs        — Natural number algorithms on infinite bit
 Layer 2: tbit.rs + tnum.rs         — Recursive abstract domain operations + soundness
          anum.rs + unum.rs + div.rs
 Layer 3: chopped.rs                — Bounded (w-bit) simulation via chop
-Layer 4: exec_tnum.rs + domains.rs — Machine-word execution on u8/u16/u32/u64/u128
+Layer 4: exec_tnum.rs + domains.rs — Machine-word execution on u8/u16/u32/u64
 ```
 
 ### Layer 1: Natural numbers as infinite bitstrings (`bools.rs`, `nats.rs`)
@@ -288,58 +269,62 @@ Key lemmas:
 - `chop_is_mod`: chopping equals modular arithmetic
 - `chop_nat_add`, `chop_nat_mul`: chopping distributes over add/mul
 
-**50 proof fns, 1018 lines. All proved.**
+These lemmas are machine-checked with no admits.
 
 ### Layer 2: Abstract domains with soundness proofs
 
-This layer defines the abstract domain types and proves soundness of every
-operation over infinite bitstrings.
+This layer defines the abstract domain types and proves the operation
+contracts inventoried below over infinite bitstrings.
 
 **TBit** (`tbit.rs`): The single-bit abstract domain. All operations proved
 sound with empty proof bodies; Z3 handles the boolean case analysis directly.
-The critical `add_carry_decomp` establishes the carry compensation property.
-*14 proof fns, 273 lines.*
+The critical `add_carry_carry_decomp` establishes the carry compensation
+property.
 
 **Tnum** (`tnum.rs`): Tristate numbers on unbounded naturals. Membership
 defined recursively and proved equivalent to the bitwise form via `has_equiv`.
-The hardest theorem, `add_bitwise_eq`, is proved through the chain
-`add_carry_decomp` → `add_bitwise_inv` → `add_bitwise_eq` → `tn_ext`.
-*32 proof fns, 1142 lines.*
+The hardest theorem, `add_bitwise_eq`, uses
+`add_carry_carry_decomp` in the tail-decomposition argument, together with
+`add_bitwise_inv`, `add_bitwise_eq`, and `tn_ext`.
 
 **Anum** (`anum.rs`): Additive tristate numbers. Addition is exact on the
-base value. Novel `div_const` gives exact base quotient for division by
+base value. `div_const` gives an exact base quotient for division by
 constant. Tnum multiplication uses Anum as internal accumulator (`tnum_mul`).
-*19 proof fns, 561 lines.*
 
 **Unum** (`unum.rs`): Horizontally composable additive tristate numbers.
-Precise addition via bitfield partitioning. Bilinear multiplication.
-Membership via borrow-tracking subtraction. Core invariant `cd + br ≤ cx + b1 + b2`
-discovered through exhaustive state-machine enumeration.
-*26 proof fns, 789 lines.*
+The unbounded addition formula and multiplication's bilinear bound have
+containment proofs. No exactness or associativity theorem is present.
+Membership uses borrow-tracking subtraction, and the core addition proof
+maintains `cd + br ≤ cx + b1 + b2`.
 
 **Div** (`div.rs`): Tnum division and subtraction. Long division by iterated
 subtraction; both constant-divisor and general Tnum÷Tnum proved sound.
-*12 proof fns, 660 lines.*
 
-**All proved. No admits.**
+All contracts described in this Layer-2 inventory verify without admits.
 
 ### Layer 3: Bounded register simulation (`chopped.rs`)
 
 `ChoppedTnum{tnum, w}`, `ChoppedAnum{anum, w}`, `ChoppedUnum{unum, w}` wrap
-L2 types with a bit-width. This layer proves that bounded operations simulate
-unbounded operations via `chop(_, w)`. All bounded operations are proved
-sound.
+L2 types with a bit-width. The current explicit bounded containment contracts
+are:
 
-- ChoppedTnum: add, mul, bitwise (or, and, xor), shift (lsh, rsh), join, meet
-- ChoppedAnum: add, div_const
-- ChoppedUnum: add, mul
+- ChoppedTnum: add, mul, shifts (lsh, rsh), join, meet
+- ChoppedAnum: add and div_const, under their stated fit/divisor preconditions
+- ChoppedUnum: add and mul, under their stated no-overflow/fit preconditions
 
-**16 proof fns, 330 lines. All proved. No admits.**
+ChoppedTnum bitwise `or_inv`, `and_inv`, and `xor_inv` expose
+invariant/width-preservation postconditions and call the Layer-2 soundness
+lemmas internally, but they do not state a Layer-3 containment postcondition.
+The `div` and `neg` spec functions currently have no corresponding Layer-3
+soundness theorem. All contracts that are stated in this layer verify without
+project-local admits.
 
 ### Layer 4: Executable machine-word domains (`domains.rs`, `exec_tnum.rs`)
 
-Native Rust implementations on u8, u16, u32, u64, u128 via macro generation.
-Five domain types: ExecTnum, ExecAnum, ExecUnum, Interval, ReducedProduct.
+Native Rust implementations on u8, u16, u32, and u64 via macro generation.
+The u128 instantiation is disabled because its bitvector obligations exceed
+current solver capacity. Five domain types are enabled at each active width:
+ExecTnum, ExecAnum, ExecUnum, Interval, and ReducedProduct.
 
 The **value bridge** connects native wrapping arithmetic to spec chopping:
 - `bridge_add(a, b)`: `wrapping_add(a,b) as nat == chop(nat_add(a,b), W)`
@@ -351,48 +336,42 @@ The **bitwise bridge** connects native bitwise ops to spec bitwise ops:
 - `native_or(a, b)`: `(a | b) as nat == bw_or(a as nat, b as nat)`
 - `native_and(a, b)`: `(a & b) as nat == bw_and(a as nat, b as nat)`
 
-Interval is fully proved (add, meet, join, div_const). All other domain
-operations have soundness `ensures` clauses with `admit()` placeholders,
-to be eliminated one at a time using the bridge lemmas + L3 soundness.
+Every L4 method verifies its stated contract. Universal containment is
+currently proved for:
 
-**10 proof fns in domains.rs (×5 widths), 3 in exec_tnum.rs. 13 admits remaining.**
+- `ExecTnum::{bw_or,bw_and,bw_xor,add,join,meet}`;
+- `ExecAnum::{add,div_const}`;
+- `ExecUnum::{top,add,from_interval,mul}`;
+- `Interval::{add,meet,join,div_const}`; and
+- `ReducedProduct::{reduce,add}`.
+
+Other executable operations currently prove well-formedness only. L2/L3
+soundness and finite mirror tests do not by themselves establish the missing
+L4 refinement theorem.
 
 See `proof-status.md` for the detailed scoreboard.
 
 
 ## Verification Status
 
-880 Verus verified obligations, 1 error (exp_128 rlimit), 13 admits.
-30 fuzz tests passing. 5 bit-widths: u8, u16, u32, u64, u128.
-
-| File | Lines | Proof fns | Status |
-|------|-------|-----------|--------|
-| bools.rs | 48 | 1 | ✅ all proved |
-| tbit.rs | 273 | 14 | ✅ all proved |
-| nats.rs | 1018 | 50 | ✅ all proved (exp_128 rlimit) |
-| tnum.rs | 1142 | 32 | ✅ all proved |
-| anum.rs | 561 | 19 | ✅ all proved |
-| unum.rs | 789 | 26 | ✅ all proved |
-| div.rs | 660 | 12 | ✅ all proved |
-| chopped.rs | 330 | 16 | ✅ all proved |
-| domains.rs | 726 | 10 ×5 | 13 admits |
-| exec_tnum.rs | 749 | 3 | ✅ all proved |
-| fuzz.rs | 936 | — | 30 tests pass |
+The current verification and test counts are recorded in
+[`proof-status.md`](proof-status.md), together with the commands used to
+regenerate them. The source contains no executable `admit()` or `assume()`.
 
 
 ## Summary
 
 | Component | Status |
 |---|---|
-| Layer 1 (nats) | Complete |
-| Layer 2 (tnum) | 0 axioms, fully proved |
-| Layer 2 (anum) | Complete + novel div_const |
-| Layer 2 (unum) | Complete (add + mul) |
-| Layer 3 (chopped) | 0 axioms, fully proved |
-| Layer 4 (exec) | 13 admits (WIP) |
-| Division | Proved (constant + general) |
-| Anum division | Proved (novel exact-base quotient) |
-| Unum domain | Proved (precise add + bilinear mul) |
+| Layer 1 (nats) | Stated contracts verified |
+| Layer 2 (tnum) | Stated contracts verified without admits |
+| Layer 2 (anum) | Stated contracts verified, including `div_const` |
+| Layer 2 (unum) | Add/mul containment and supporting contracts verified |
+| Layer 3 (chopped) | Stated bounded-simulation contracts verified |
+| Layer 4 (exec) | All stated contracts proved at u8/u16/u32/u64; universal containment only for the explicit inventory above |
+| Division | Tnum constant and general containment proved |
+| Anum division | Positive constant-divisor containment proved |
+| Unum domain | Sound unbounded/bounded add and mul; no general exactness theorem |
 | Reduced product | 4-domain (Tnum×Anum×Interval×Unum) |
-| Multi-width | u8, u16, u32, u64, u128 |
-| Fuzz tests | 30 tests |
+| Multi-width | u8, u16, u32, u64 (`u128` disabled) |
+| Rust mirror tests | See `proof-status.md` for the regenerated count |
