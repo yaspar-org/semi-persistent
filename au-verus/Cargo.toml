@@ -1,0 +1,20 @@
+[package]
+name = "semi-persistent-au-verus"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "semi_persistent_au_verus"
+path = "src/lib.rs"
+
+[dependencies]
+vstd = "=0.0.0-2026-08-02-0125"
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_only)',
+] }

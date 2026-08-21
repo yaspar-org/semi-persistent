@@ -882,6 +882,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "semi-persistent-au-verus"
+version = "0.1.0"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
 name = "semi-persistent-containers"
 version = "0.1.0"
 dependencies = [
