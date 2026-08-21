@@ -212,7 +212,7 @@ fn rhs_mixed() {
 fn rule_with_actions() {
     let cmds = parse_ok("(rule ((f x) (g y)) ((union x y) (h x y)))");
     match &cmds[0] {
-        SurfaceCommand::Rule { body, head } => {
+        SurfaceCommand::Rule { body, head, .. } => {
             assert_eq!(body.len(), 2);
             assert_eq!(head.len(), 2);
             assert!(matches!(&head[0], Action::Union(..)));

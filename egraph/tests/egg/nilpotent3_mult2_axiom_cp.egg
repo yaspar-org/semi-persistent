@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; The general n−m axiom-pair arm with m > 1 (adversarial analysis B.3): from
+;; The general n−m axiom-pair arm with m > 1: from
 ;; x3(a,a,b) = c, the pair for a (m=2, n−m=1) is (f({c,a}), f({b})): x3(a,c) = b.
 ;; Semantically a²b = c ⟹ a·c = a³·b = b. (nilpotent3_rule_axiom_cp only tests m = 1.)
 (sort E)

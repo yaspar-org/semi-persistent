@@ -1,33 +1,15 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The e-class ring **as it was before the consumer swap** — the baseline
-//! every class-ring parity claim is measured against.
+//! Reference e-class ring for layout and byte-accounting differentials.
 //!
-//! `egraph/src/classes.rs` no longer hand-rolls its class ring; it uses the
-//! verified `CircularList`. So the production arm for the ring's perf and memory
-//! rows cannot be "some other production container": it has to be the exact
-//! implementation the swap deleted. This module reproduces it verbatim from
-//! `git show origin/main:egraph/src/classes.rs` (`EClassEntry`, its `Tagged` impl,
-//! `splice_classes`'s ring surgery, and `ClassIter`'s walk) on production's
-//! `VecI`.
+//! The model uses the reference crate's inline-capture `VecI` and the same
+//! two-cell splice semantics as `CircularList`. Keeping it in one module lets
+//! layout and dynamic byte-accounting tests share one oracle.
 //!
-//! It lives in the shared lib rather than in each harness because there are now
-//! four consumers of it (`benches/perf_gate.rs`, `tests/layout_parity.rs`,
-//! `tests/differential.rs`, `examples/splicesplit.rs`) and the whole value of a
-//! "verbatim" baseline is that all of them measure the *same* baseline. Four
-//! copy-pasted reproductions would drift, and a drifting baseline silently
-//! rewrites the comparison it exists to anchor.
-//!
-//! ## Generic over the node id, as the original was
-//!
-//! `origin/main`'s entry was `EClassEntry<T: DenseId>` with
-//! `repr_stored: <T::Index as Tagged>::Repr`, and today's `ClassRing<T, TRACK> =
-//! CircularList<Opt<T::Index>, T, TRACK>` is parameterized the same way. So this
-//! reproduction is too: the storage word is `T::Index`, never a hard-coded `u32`.
-//! Monomorphizing it here would pin every harness to the 31-bit id family and
-//! quietly narrow the "verbatim" claim to one instantiation — and the index type
-//! is exactly what the memory rows are about (a captured write logs
-//! `(cell, T::Index)`, 16 bytes at `u32`, not `(cell, usize)` at 24).
+//! The model is generic over the node id: its storage word is `T::Index`, never
+//! a hard-coded `u32`. The index type is part of the memory contract because a
+//! captured write logs `(cell, T::Index)`, 16 bytes at `u32`, rather than the
+//! 24-byte `(cell, usize)` form.
 //! [`Ring31`]/[`Node31`] name the 31-bit instantiation the harnesses use.
 use prod::Tagged as _;
 use prod::{DenseId, IndexLike};
@@ -35,12 +17,10 @@ use semi_persistent_containers as prod;
 
 prod::define_id31! { pub struct PNodeId / StoredPNodeId, "n"; }
 
-/// The 31-bit node id the harnesses instantiate the ring at — the family
-/// `egraph`'s `NodeId` belongs to, so `T::Index` is `u32` and a captured write
-/// logs 16 bytes.
+/// The 31-bit node id used by the default reference-ring tests.
 pub type Node31 = PNodeId;
 
-/// The pre-swap ring cell: the `next` pointer around the class ring (capture bit
+/// Reference ring cell: the `next` pointer around the class ring (capture bit
 /// stolen from its spare MSB) plus the class's sparse-set key with its own
 /// presence bit. 12 bytes at 31-bit ids — the size the verified
 /// `CircularNodeRepr<Opt<T::Index>, T>` has to match (`tests/layout_parity.rs`).
@@ -97,7 +77,7 @@ impl<T: DenseId> prod::Tagged for EClassEntry<T> {
     }
 }
 
-/// The pre-swap ring: production's inline-capture vector, indexed by the id's
+/// Reference ring over the inline-capture vector, indexed by the id's
 /// own storage word (so a captured write logs `(cell, T::Index)` = 16 bytes at
 /// 31-bit ids, not `(cell, usize)` = 24 — the same width the verified ring
 /// keeps).
@@ -125,7 +105,7 @@ pub fn build_of<T: DenseId, const TRACK: bool>(n: usize) -> ProdRingOf<T, TRACK>
     ring
 }
 
-/// The pre-swap `splice_classes` ring surgery: two full-cell writes, the second
+/// Ring splice: two full-cell writes, the second
 /// with the absorbed class's key marked absent. (The sparse-set `remove` that
 /// followed it in the consumer is not part of the ring, so it is excluded here
 /// and from the verus arm alike.)
@@ -145,18 +125,7 @@ pub fn splice<T: DenseId, const TRACK: bool>(
     ring.set(absorbed.into(), absorbed_entry);
 }
 
-/// The pre-swap `ClassIter`, reproduced verbatim from
-/// `git show origin/main:egraph/src/classes.rs` — an `Iterator` with a `done`
-/// flag, *not* a plain counting loop.
-///
-/// The distinction is not cosmetic. A hand-rolled `loop` lets LLVM hoist the
-/// vector's data pointer and length into a single paired load (`ldp`) and keep
-/// the whole walk in one basic block; the `Iterator` shape reloads through
-/// `&mut self` per `next` call and carries the `done` flag. On a two-node ring
-/// — the shape `class_walk` measures — that preamble difference is most of the
-/// timed work, so comparing a plain loop against the verified `RingIter` scores
-/// the *walk style* rather than the container. The baseline has to be the
-/// implementation the swap deleted, and that implementation was this one.
+/// Iterator-shaped ring walk used by the differential oracle.
 pub struct ClassIter<'a, T: DenseId, const TRACK: bool> {
     entries: &'a ProdRingOf<T, TRACK>,
     start_idx: T,
@@ -180,7 +149,7 @@ impl<T: DenseId, const TRACK: bool> Iterator for ClassIter<'_, T, TRACK> {
     }
 }
 
-/// The pre-swap `iter_class`: walk `start`'s ring, yielding each node once.
+/// Walk `start`'s ring, yielding each node once.
 pub fn iter_class<T: DenseId, const TRACK: bool>(
     ring: &ProdRingOf<T, TRACK>,
     start: T,
@@ -193,8 +162,7 @@ pub fn iter_class<T: DenseId, const TRACK: bool>(
     }
 }
 
-/// Class size via the pre-swap `ClassIter` — the counting form the perf row
-/// uses, kept as a thin wrapper so the walk itself stays the shipped shape.
+/// Class size via [`ClassIter`].
 pub fn walk<T: DenseId, const TRACK: bool>(ring: &ProdRingOf<T, TRACK>, start: T) -> usize {
     iter_class(ring, start).count()
 }

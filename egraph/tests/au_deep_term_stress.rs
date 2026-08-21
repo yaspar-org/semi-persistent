@@ -12,16 +12,18 @@
 //! certification paths, `build_best_term`, `TermPool::project`/`has_variants`,
 //! and the test-side projection helpers below all use explicit heap-allocated
 //! stacks, so a depth-n chain needs O(n) heap, not O(n) call-stack frames.
-//! One regression deliberately requests a 64 KiB native thread stack to pin
-//! that property; the remaining tests run directly on the default harness
-//! thread. Depth is runtime-bounded (the O(n²) cost below), not stack-bounded.
+//! One regression deliberately requests a 256 KiB native thread stack to pin
+//! that property while leaving room for platform and coverage-instrumentation
+//! overhead; the remaining tests run directly on the default harness thread.
+//! Depth is runtime-bounded (the cost note below), not stack-bounded.
 //!
 //! Cost note: at chain depth n the exact solver evaluates the generalize
-//! incumbent at every level, and building the best representative of a
-//! depth-k suffix walks k nodes, so total work is O(n²). That quadratic walk
-//! is the practical limit documented by
-//! `runtime_bounded_practical_limit` (measured: ~6 ms at n=100, ~0.43 s at
-//! n=1000, ~15.5 s at n=6000, ~42 s at n=10000; debug build, Apple Silicon).
+//! incumbent at every level, and the pool memoizes the extracted term per
+//! class (best-term memoization), so each evaluation after the deepest one hits the
+//! cache and total work is O(n): measured ~2 ms at n=100, ~22 ms at n=1000,
+//! ~0.16 s at n=6000 (debug build, Apple Silicon). Before memoization each evaluation
+//! re-walked its depth-k suffix, so total work was O(n²): ~6 ms at n=100,
+//! ~0.43 s at n=1000, ~15.5 s at n=6000, ~42 s at n=10000, same host.
 //!
 //! UCT certification note: with the default `lct_and` AND selector (§3.3.5),
 //! playout flux is routed to the least-certain child and terminal children
@@ -244,14 +246,16 @@ fn chain_fixture(n: usize) -> (Eg, ENodeId, ENodeId) {
 // ═══════════════════════ Linear unary chains ══════════════════════════
 
 /// Every production path that follows term/search depth must run on the heap,
-/// not the native call stack. A depth-2000 chain would overflow a requested
-/// 64 KiB stack under the recursive predecessor; the iterative implementation
-/// must solve, project, compare, render, roll out, and certify it there.
+/// not the native call stack. At this depth the historical recursive Exact
+/// solver overflows the 256 KiB budget. That budget also leaves enough fixed
+/// stack for Linux and coverage-instrumented builds, so the iterative
+/// implementation must solve, project, compare, render, roll out, and certify
+/// the same input there.
 #[test]
 #[cfg_attr(miri, ignore)]
-fn iterative_deep_paths_fit_in_64_kib_stack() {
+fn iterative_deep_paths_fit_in_small_native_stack() {
     const DEPTH: usize = 2_000;
-    const STACK_BYTES: usize = 64 * 1024;
+    const STACK_BYTES: usize = 256 * 1024;
 
     std::thread::Builder::new()
         .name("au-small-stack".to_owned())
@@ -306,9 +310,9 @@ fn iterative_deep_paths_fit_in_64_kib_stack() {
             assert_eq!(uct.pool.quality(uct.term_id), (DEPTH as u32 + 2, 2));
             assert_eq!(uct.completion, Completion::Exact);
         })
-        .expect("64 KiB AU stress thread must start")
+        .expect("256 KiB AU stress thread must start")
         .join()
-        .expect("iterative AU paths must not overflow a 64 KiB native stack");
+        .expect("iterative AU paths must not overflow a 256 KiB native stack");
 }
 
 /// f^100(a) vs f^100(b): the chain factors to full depth with one Variants
@@ -387,9 +391,9 @@ fn unary_chain_depth_1000() {
 }
 
 /// f^6000(a) vs f^6000(b): (6002, 2), exact only, on the default harness
-/// stack. Measured (debug build, Apple Silicon): ~15.5 s — the O(n²)
-/// generalize walk is the practical bound at this scale (depth is
-/// runtime-bounded, not stack-bounded).
+/// stack. Measured (debug build, Apple Silicon): ~0.16 s with the per-class
+/// term cache; ~15.5 s before it, when every generalize evaluation
+/// re-walked its suffix (depth is runtime-bounded, not stack-bounded).
 #[test]
 #[cfg_attr(miri, ignore)]
 fn unary_chain_depth_6000() {
@@ -419,15 +423,14 @@ fn unary_chain_depth_6000() {
     }
 }
 
-/// Runtime-bounded case documenting the practical limit. The exact solver
-/// evaluates the generalize incumbent at every chain level, and building the
-/// best representative of a depth-k suffix walks k nodes, so total work is
-/// O(n²): measured (debug build, Apple Silicon) ~6 ms at n=100, ~0.43 s at
-/// n=1000, ~15.5 s at n=6000, ~42 s at n=10000. This test pins the quadratic
-/// regime at sizes that stay fast (n=2000 ≈ 1.7 s, n=4000 ≈ 7 s debug) and
-/// bounds each run generously for slow CI hosts; five-digit depths remain
-/// possible but cost minutes, which is the documented practical ceiling —
-/// a runtime limit, not a stack limit, now that every deep path is iterative.
+/// Runtime-bounded case documenting the practical limit. With the per-class
+/// term cache, the exact solver's generalize evaluations are amortized
+/// O(1) each and chain cost is O(n): measured (debug build, Apple Silicon)
+/// ~43 ms at n=2000, ~96 ms at n=4000 (before memoization, when every evaluation
+/// re-walked its suffix: ~1.7 s and ~7 s, and ~42 s at n=10000). This test
+/// pins that regime and bounds each run generously for slow CI hosts; the
+/// ceiling is a runtime limit, not a stack limit, now that every deep path
+/// is iterative.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn runtime_bounded_practical_limit() {

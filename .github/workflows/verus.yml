@@ -36,12 +36,13 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          # Both verified crates must pin the same Verus toolchain so one
-          # download verifies both. Fail fast if the pins ever drift.
+          # Every verified crate must pin the same Verus toolchain so one
+          # download verifies them all. Fail fast if the pins ever drift.
           ad="$(cat abstract-domains/.verus-version)"
           cv="$(cat containers-verus/.verus-version)"
-          if [ "$ad" != "$cv" ]; then
-            echo "::error::Verus version pins differ: abstract-domains=$ad containers-verus=$cv"
+          au="$(cat au-verus/.verus-version)"
+          if [ "$ad" != "$cv" ] || [ "$ad" != "$au" ]; then
+            echo "::error::Verus version pins differ: abstract-domains=$ad containers-verus=$cv au-verus=$au"
             exit 1
           fi
           echo "verus=$ad" >> "$GITHUB_OUTPUT"
@@ -99,6 +100,7 @@ jobs:
           workspaces: |
             abstract-domains
             containers-verus
+            au-verus
 
       - name: Verify abstract-domains
         working-directory: abstract-domains
@@ -110,9 +112,18 @@ jobs:
         working-directory: containers-verus
         run: cargo verus verify -- --trace
 
-      # The literal-types feature adds the group-D key-model axioms; the
-      # migration validation matrix requires the sweep green with AND
-      # without it (doc/migration/README.md; trust ledger §3.5).
+      # The anti-unification objective: the decomposition lemma the dynamic
+      # program rests on, and the induction step of chapter 19 §9.6's optimality
+      # theorem. The solver itself is in `egraph`, outside the Verus toolchain,
+      # so this checks the algorithm and `egraph/tests/au_oracle.rs` checks that
+      # the implementation matches it.
+      - name: Verify au-verus
+        working-directory: au-verus
+        run: cargo verus verify -- --trace
+
+      # The literal-types feature adds the group-D key-model axioms. The trust
+      # boundary requires the sweep green with and without it
+      # (containers-verus/doc/design/02-trust-boundary.md §3.5).
       - name: Verify containers-verus (literal-types)
         working-directory: containers-verus
         run: cargo verus verify --features literal-types -- --trace
@@ -131,7 +142,7 @@ jobs:
       - name: Trust-surface size (external_body markers)
         run: |
           set -euo pipefail
-          EXPECTED_DEFAULT=26
+          EXPECTED_DEFAULT=27
           EXPECTED_GATED=5   # literal-types only, all in external_specs.rs
           gated=$(grep -c '#\[verifier::external_body\]' \
             containers-verus/src/external_specs.rs || true)
@@ -149,6 +160,17 @@ jobs:
             fail=1
           fi
           exit $fail
+
+      # Partial-API gate (total-API plan phase 0): every PUBLIC exec fn with
+      # a `requires` clause must be in the drain allowlist, and no public fn
+      # body may contain unsafe/get_unchecked. Verus erases `requires` at
+      # runtime, so a public partial function hands an unverified caller
+      # whatever the body does on violated preconditions. The allowlist may
+      # only shrink; see containers-verus/doc/future/total-api-plan.md.
+      - name: Partial-API surface (public fns with requires)
+        run: |
+          python3 containers-verus/tools/check_partial_api.py \
+            containers-verus/src containers-verus/partial-api-allowlist.txt
 
       # No `admit()`/`assume()` in the verified modules. The ledger's central
       # claim is that the ONLY trusted code is external_body signatures plus the

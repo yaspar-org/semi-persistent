@@ -1,0 +1,33 @@
+; Extracted from egglog tests/web-demo/math.egg (7b1adf2), the `add-ac` ruleset block
+; at lines 138-160, as a standalone program. See math-add-ac.deviations.md for the
+; three extraction adjustments.
+
+(datatype Math
+    (Add Math Math)
+    (Const f64))
+
+; math_associate_adds
+(ruleset add-ac)
+(rewrite (Add a b) (Add b a) :ruleset add-ac)
+(rewrite (Add a (Add b c)) (Add (Add a b) c) :ruleset add-ac)
+; Add one through seven
+(let $res
+  (Add (Const 1.0)
+       (Add (Const 2.0)
+            (Add (Const 3.0)
+                 (Add (Const 4.0)
+                      (Add (Const 5.0)
+                           (Add (Const 6.0)
+                                (Const 7.0))))))))
+(run add-ac 7)
+(check (= $res
+  (Add (Const 7.0)
+       (Add (Const 6.0)
+            (Add (Const 5.0)
+                 (Add (Const 4.0)
+                      (Add (Const 3.0)
+                           (Add (Const 2.0)
+                                (Const 1.0)))))))))
+(print-size)
+(print-stats)
+(print-stats :file "math-add-ac.egglog.stats.json")

@@ -7,15 +7,15 @@ use crate::config::EGraphConfig;
 use crate::containers::{DenseId, IndexLike};
 use crate::egraph::EGraph;
 use crate::literal::LitVal;
+use semi_persistent_containers::{DenseSpanMap, SpanArena};
 use std::collections::HashMap;
 
-/// Hasher for the index maps.
+/// Hasher for the statistics maps.
 ///
-/// Their keys are dense ids — node ids, op ids, `(id, position)` pairs — and the
-/// maps are rebuilt every round and probed on every join step. std's default
-/// SipHash is DoS-resistant, which is not a property any of these keys needs
-/// (they are internal, never attacker-chosen) and costs several times a
-/// multiply-shift on a `u32`.
+/// The index families themselves are no longer hashed: they are keyed by a
+/// dense integer and read by array index (see [`IndexStore`]). What is left
+/// hashed is per-operator bookkeeping, whose keys are dense op ids, and there
+/// std's default SipHash still buys DoS resistance no internal key needs.
 ///
 /// foldhash rather than `rustc-hash` or a bespoke passthrough because it is
 /// already the workspace's hasher: hashbrown 0.17's default, hence what
@@ -24,7 +24,7 @@ use std::collections::HashMap;
 /// worth more than a marginal per-probe difference between the fast options.
 pub type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 
-/// Cursor into a `SortedVec<G>`: the **verified** galloping cursor from
+/// Cursor into a bucket slice: the **verified** galloping cursor from
 /// `containers-verus`, re-exported so this module's public surface is unchanged.
 ///
 /// The seek is proven, not just tested: it lands on the first key `>= target`
@@ -38,65 +38,316 @@ pub type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 /// the erased build compiles the same doubling ladder and bounded bisection.
 pub use semi_persistent_containers::SortedVecCursor;
 
-/// Sorted index over node ids, backed by a contiguous `Vec<G>`.
-/// Supports O(log n) seek and O(1) step for leapfrog join.
+/// Mean fan-out of each access path, measured on the nodes this index holds.
 ///
-/// The field is private on purpose: `SortedVecCursor::new`'s `requires` is
-/// strict sortedness, and Verus erases it at runtime — an unsorted vector
-/// here would not panic, it would silently drop join matches. Construction
-/// goes through the two constructors below, so the invariant is carried by
-/// the type instead of by the discipline of one call site.
+/// The scheduler charges a join by how many candidate nodes one probe yields.
+/// The three probe kinds can have very different distributions, so each is
+/// measured independently; chapter 20 states the model they feed.
+///
+/// Each number is the **size-biased** mean bucket size, `sum(b^2) / sum(b)`
+/// over the path's buckets, not the plain mean `sum(b) / count(b)`. A probe key
+/// is a variable the join bound from the data, so it lands in a bucket with
+/// probability proportional to that bucket's size: a class that is the child of
+/// a thousand nodes is probed a thousand times and a class that is the child of
+/// one is probed once. The plain mean answers "how big is a bucket picked at
+/// random", which no probe does, and on a distribution with one hub bucket of
+/// size H among K singletons it reports about 1 where the size-biased mean
+/// reports about H. This remains one number per path, so it prices the
+/// *expected* probe and not the individual one. Runtime atom scheduling reads
+/// concrete bucket lengths at execution; sampled cross-index selectivity
+/// replaces the expectation at plan time with the mean bucket selected by the
+/// emitter atom's own keys. See [`IndexSampler`].
 #[derive(Clone, Debug)]
-pub struct SortedVec<G> {
-    data: Vec<G>,
+pub struct FanOuts<O> {
+    /// Nodes in the class a `ByRepr` probe lands in.
+    pub by_repr: f64,
+    /// Skew of each access path: size-biased mean over plain mean bucket size.
+    /// 1 on a flat distribution, about H*K/N on one hub bucket of size H among
+    /// K near-empty buckets. Drives per-rule scheduling-mode auto-selection
+    /// (`saturate::rule_skew`): a skewed path is where a per-round static atom
+    /// order is wrong for the bindings that hit the hub.
+    pub by_child_pos_skew: FastMap<(O, usize), f64>,
+    /// Skew counterpart of [`by_contains`](Self::by_contains).
+    pub by_contains_skew: FastMap<O, f64>,
+    /// `(op, position)` -> `op`-nodes in the bucket a `ByChildPos` probe lands
+    /// in, after its intersection with `by_op[op]`. Keyed per op because the
+    /// whole defect is that the two ops of one query differ here by three
+    /// orders of magnitude, and per position because an operator's arguments
+    /// are not drawn from the same classes.
+    pub by_child_pos: FastMap<(O, usize), f64>,
+    /// `op` -> variadic `op`-nodes in the bucket a `ByContains` probe lands in.
+    pub by_contains: FastMap<O, f64>,
+    /// Nodes the index holds, the denominator [`by_repr`](Self::by_repr) is a
+    /// fraction of.
+    pub nodes: usize,
 }
 
-impl<G: DenseId> SortedVec<G> {
-    /// Wrap a vector the caller has already sorted and deduplicated.
-    /// Debug builds re-check; release trusts the caller within this module's
-    /// review boundary.
-    pub fn from_sorted_dedup(v: Vec<G>) -> Self {
-        debug_assert!(
-            v.windows(2).all(|w| w[0] < w[1]),
-            "SortedVec: input not strictly sorted"
-        );
-        SortedVec { data: v }
-    }
-    /// Sort + dedup, then wrap. For callers with unordered input.
-    pub fn from_unsorted(mut v: Vec<G>) -> Self {
-        v.sort_unstable();
-        v.dedup();
-        SortedVec { data: v }
-    }
-    pub fn as_slice(&self) -> &[G] {
-        &self.data
-    }
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-    pub fn iter(&self) -> SortedVecCursor<'_, G> {
-        SortedVecCursor::new(&self.data)
+impl<O> Default for FanOuts<O> {
+    fn default() -> Self {
+        Self {
+            by_repr: 1.0,
+            by_child_pos_skew: FastMap::default(),
+            by_contains_skew: FastMap::default(),
+            by_child_pos: FastMap::default(),
+            by_contains: FastMap::default(),
+            nodes: 0,
+        }
     }
 }
 
-/// All sorted indices for leapfrog join, bulk-rebuilt after each e-graph rebuild.
+/// The `(key, value)` streams the four families are built from, kept alive
+/// across rounds.
+///
+/// A round builds a full index and, under semi-naive evaluation, a delta index;
+/// both are dropped at the end of the round. The streams are proportional to the
+/// node count and to the total arity, so allocating them per build would mean
+/// faulting in tens of megabytes eleven times over a saturation of
+/// `math-microbenchmark`. One scratch threaded through the round loop keeps the
+/// pages resident and the capacity at the high-water mark.
+///
+/// The stream buffers hold no state between builds: [`IndexStore::build_with`]
+/// clears them on entry, and the built [`DenseSpanMap`]s own copies of what they
+/// held. The **span arenas** are the opposite: they are kept precisely so their
+/// allocation and their generation stamp survive, and their leftover content is
+/// what the stamp invalidates.
+///
+/// Two index stores are alive at once under semi-naive evaluation (the full
+/// index and the round's delta), so the arenas are kept in two sets of four
+/// rather than one: a family's key space is stable across rounds, so pairing
+/// each family with its own arena keeps the table at the size that family needs
+/// instead of thrashing it between a 2 M-key and a 100-key build.
+///
+/// An arena is handed out by [`IndexStore::build_from`] and comes back through
+/// [`IndexStore::recycle_into`]. A caller that forgets to recycle loses only the
+/// reuse: the next build allocates a fresh arena and is correct, just slower.
+pub struct IndexScratch<Cfg: EGraphConfig> {
+    by_op: Vec<(usize, Cfg::G)>,
+    by_repr: Vec<(usize, Cfg::G)>,
+    by_child_pos: Vec<(usize, Cfg::G)>,
+    by_contains: Vec<(usize, Cfg::G)>,
+    /// Child classes already filed for the node being visited, so a variadic
+    /// node contributes each distinct child to `by_contains` once.
+    seen: Vec<Cfg::G>,
+    /// Span arenas for the full index's four families, indexed by
+    /// [`FAM_OP`]..[`FAM_CONTAINS`].
+    arenas_full: [Option<SpanArena>; 4],
+    /// Span arenas for the delta index's four families.
+    arenas_delta: [Option<SpanArena>; 4],
+}
+
+/// Family slots in [`IndexScratch`]'s arena arrays, in the order the build
+/// visits them.
+pub(crate) const FAM_OP: usize = 0;
+pub(crate) const FAM_REPR: usize = 1;
+pub(crate) const FAM_CHILD_POS: usize = 2;
+pub(crate) const FAM_CONTAINS: usize = 3;
+
+impl<Cfg: EGraphConfig> Default for IndexScratch<Cfg> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Cfg: EGraphConfig> IndexScratch<Cfg> {
+    pub fn new() -> Self {
+        Self {
+            by_op: Vec::new(),
+            by_repr: Vec::new(),
+            by_child_pos: Vec::new(),
+            by_contains: Vec::new(),
+            seen: Vec::new(),
+            arenas_full: [None, None, None, None],
+            arenas_delta: [None, None, None, None],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.by_op.clear();
+        self.by_repr.clear();
+        self.by_child_pos.clear();
+        self.by_contains.clear();
+        self.seen.clear();
+    }
+
+    /// The arena for one family, or a fresh one the first time round.
+    fn take_arena(&mut self, full: bool, fam: usize) -> SpanArena {
+        let slot = if full {
+            &mut self.arenas_full[fam]
+        } else {
+            &mut self.arenas_delta[fam]
+        };
+        slot.take().unwrap_or_default()
+    }
+
+    /// Put a family's arena back for the next round to reuse.
+    fn put_arena(&mut self, full: bool, fam: usize, arena: SpanArena) {
+        let slot = if full {
+            &mut self.arenas_full[fam]
+        } else {
+            &mut self.arenas_delta[fam]
+        };
+        *slot = Some(arena);
+    }
+
+    /// Total span-table capacity held across all eight arenas, in entries.
+    ///
+    /// Read by `phase_timing` so the memory the reuse keeps resident is
+    /// reported rather than assumed; a recycled table is held for the whole run
+    /// where a per-build table was freed each round.
+    pub fn arena_capacity(&self) -> usize {
+        self.arenas_full
+            .iter()
+            .chain(self.arenas_delta.iter())
+            .filter_map(|a| a.as_ref())
+            .map(|a| a.capacity())
+            .sum()
+    }
+}
+
+/// All indices for leapfrog join, bulk-rebuilt after each e-graph rebuild.
+///
+/// Each family is a [`DenseSpanMap`]: one flat pool of node ids per family, plus
+/// a span table saying where each key's run starts and how long it is. Every key
+/// is a dense integer (an op id, a class id, or a `(position, class)` pair
+/// flattened into one), so a probe is an array index and a slice, not a hash and
+/// a pointer chase into a per-key `Vec`. The container's `refines()` pins each
+/// key's slice to the order-preserving filter of the build stream down to that
+/// key, which is what makes the two-pass counting build substitutable for the
+/// per-key push it replaces.
 pub struct IndexStore<Cfg: EGraphConfig> {
-    /// by_op[op] → sorted vec of node ids with that operator
-    pub by_op: FastMap<Cfg::O, SortedVec<Cfg::G>>,
-    /// by_repr[repr] → sorted vec of node ids in that e-class
-    pub by_repr: FastMap<Cfg::G, SortedVec<Cfg::G>>,
-    /// by_child_pos[(child_repr, position)] → sorted vec of parent node ids.
+    /// `by_op[op]` -> node ids with that operator, keyed by the op's dense id.
+    pub by_op: DenseSpanMap<Cfg::G>,
+    /// `by_repr[repr]` -> node ids in that e-class, keyed by the class
+    /// representative's id (see [`repr`](Self::repr) for which
+    /// canonicalization).
+    pub by_repr: DenseSpanMap<Cfg::G>,
+    /// `by_child_pos[pos * stride + child_repr]` -> parent node ids with
+    /// `child_repr` at `pos`.
+    ///
+    /// The two-dimensional key is flattened by `DenseSpanMap::composite_key`,
+    /// whose injectivity for a second component below the stride is
+    /// `lemma_composite_key_injective`. Position-major rather than class-major
+    /// so that one pattern position's keys are one contiguous run of the span
+    /// table, and so that the key is computable during the build's single walk:
+    /// the stride is the node bound, known before the walk, whereas the number
+    /// of distinct positions is only known after it.
+    ///
     /// The position is [`Cfg::Index`](crate::config::EGraphConfig::Index)-wide: it is an
     /// offset into one node's children, and a variadic node's children are a span in the
     /// child pool, which that word already sizes. See [`IndexLookup::ByChildPos`].
     ///
     /// [`IndexLookup::ByChildPos`]: crate::schedule::IndexLookup::ByChildPos
-    pub by_child_pos: FastMap<(Cfg::G, Cfg::Index), SortedVec<Cfg::G>>,
-    /// by_contains[child_repr] → sorted vec of variadic parent node ids (A/AC/ACI/PlainN)
-    pub by_contains: FastMap<Cfg::G, SortedVec<Cfg::G>>,
+    pub by_child_pos: DenseSpanMap<Cfg::G>,
+    /// `by_contains[child_repr]` -> variadic parent node ids (A/AC/ACI/PlainN).
+    pub by_contains: DenseSpanMap<Cfg::G>,
+    /// Stride of the [`by_child_pos`](Self::by_child_pos) composite key: the
+    /// node bound this index was built at. A probe class at or above it belongs
+    /// to no bucket of this build and resolves to the empty slice, which is what
+    /// an absent key resolved to when the family was a hash map.
+    pub child_pos_stride: usize,
+    /// `repr[id]` — the class representative of every node id as of this build.
+    ///
+    /// The three keyed families above are keyed by *this* canonicalization, and
+    /// it stops being the e-graph's the moment the round's first rule merges a
+    /// class. A matcher that canonicalizes a lookup key with the live
+    /// union-find and then probes a bucket keyed at build time reads a bucket
+    /// that belongs to some other class, so the answer depends on which access
+    /// path the join order happened to use. Keeping the build's mapping makes
+    /// every access path agree; see [`round_repr`](Self::round_repr) and
+    /// chapter 09's snapshot contract.
+    ///
+    /// Filled by [`build`](Self::build) only. [`build_delta`](Self::build_delta)
+    /// leaves it empty: a delta is built in the same instant as its full index
+    /// and shares that index's canonicalization, so the mapping is stored once.
+    pub repr: Vec<Cfg::G>,
+    /// `op[id]` — the operator of every node id as of this build.
+    ///
+    /// A join that demotes its `ByOp` lookup to a per-candidate operator test
+    /// (`ematch::run_join`) reads this instead of [`EGraph::node_op`], which
+    /// resolves the routing table and then the arity-specific arena: two
+    /// dependent random loads over 10 MB and 20 MB against one over `4 ·
+    /// node_count` bytes. The build pays for it with a sequential pass, where
+    /// the same two loads stream.
+    ///
+    /// Filled by [`build`](Self::build) only, like [`repr`](Self::repr): the
+    /// delta's ids are a subset of the full index's, so one table serves both.
+    pub op: Vec<Cfg::O>,
+    /// Measured selectivity of each access path, read by the scheduler through
+    /// [`IndexStats::from_index`](crate::schedule::IndexStats::from_index).
+    ///
+    /// Filled by [`build`](Self::build) only, for the same reason as
+    /// [`repr`](Self::repr): a variant prices its delta atom by the delta's
+    /// cardinality against the full index's fan-outs, so measuring the delta's
+    /// own would buy nothing and cost a pass per round.
+    pub fanouts: FanOuts<Cfg::O>,
+}
+
+/// Build one family from its stream into a caller-owned span arena.
+///
+/// `num_keys` is the largest key the stream carries plus one, accumulated as the
+/// stream is written, so `try_build_in`'s range check cannot fail and the span
+/// table is no longer than the keys in use.
+///
+/// The arena is the recycled span table: it outlives the map built into it, and
+/// a build bumps its generation stamp and writes only the keys its stream
+/// carries, so a key an earlier build left behind carries an older stamp and
+/// reads as empty. With a sufficiently large retained table, ordinary work is
+/// proportional to the stream and occupied keys; growth writes missing key
+/// slots, and stamp exhaustion exceptionally clears the retained table. The
+/// container states stale-reads-empty in `build_in`'s ensures, so this caller
+/// performs no separate clear.
+fn build_family<G: DenseId>(
+    arena: SpanArena,
+    stream: &[(usize, G)],
+    num_keys: usize,
+) -> DenseSpanMap<G> {
+    DenseSpanMap::try_build_in(arena, stream, num_keys).unwrap_or_else(|_| {
+        panic!("num_keys is the stream's own key bound, accumulated as it was written")
+    })
+}
+
+/// Visit every key with at least one value.
+///
+/// Iterates the map's occupancy list rather than scanning `0..len()`, so the
+/// pass costs the occupied keys and not the key space — the last place the
+/// stamped build's `O(stream + occupied)` shape was not carried through to the
+/// consumer. `occupied_keys` ensures the list holds exactly the occupied keys
+/// and that every one of them is in range, and `lemma_occ_injective` that it
+/// holds each of them once, so this visits what the scan visited.
+///
+/// The order is first occurrence in the build stream rather than ascending key.
+/// Every caller here is a count or a sum over the buckets, so the order does not
+/// reach the result; a caller that needed ascending keys would have to sort.
+#[inline]
+fn for_each_occupied<G: DenseId>(m: &DenseSpanMap<G>, mut f: impl FnMut(usize, &[G])) {
+    for &k in m.occupied_keys() {
+        f(k, m.get(k));
+    }
+}
+
+/// Debug-only check that every bucket is ascending in node id.
+///
+/// The join relies on it: `SortedVecCursor::seek` is specified against a sorted
+/// slice, and `Difference`'s delta cursor and chapter 20's delta-suffix logic
+/// both assume a bucket is a monotone run. It holds by construction, because the
+/// build stream is written in ascending node id and `lemma_view_sorted` carries
+/// any ordering of the stream into every per-key slice: the slice *is* the
+/// stream's order-preserving filter. So this asserts the hypothesis of that
+/// lemma's conclusion rather than re-deriving it. Strictness additionally
+/// records that no node is filed under one key twice, which is what makes the
+/// per-bucket `dedup` this build no longer performs unnecessary.
+#[inline]
+fn debug_assert_id_sorted<G: DenseId>(m: &DenseSpanMap<G>, family: &str) {
+    #[cfg(debug_assertions)]
+    for_each_occupied(m, |k, b| {
+        debug_assert!(
+            b.windows(2).all(|w| w[0] < w[1]),
+            "{family}: bucket {k} is not strictly ascending in node id \
+             (lemma_view_sorted's hypothesis, the ascending build stream, was violated)"
+        );
+    });
+    #[cfg(not(debug_assertions))]
+    let _ = (m, family);
 }
 
 impl<Cfg: EGraphConfig> IndexStore<Cfg>
@@ -105,18 +356,29 @@ where
 {
     /// Bulk-rebuild all indices from the current e-graph state.
     /// Call after `eg.rebuild()`.
+    ///
+    /// Allocates its own scratch; a caller that builds an index per round should
+    /// use [`build_with`](Self::build_with) and keep one.
     pub fn build<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    ) -> Self {
+        Self::build_with(eg, &mut IndexScratch::new())
+    }
+
+    /// [`build`](Self::build), reusing `scratch`'s stream buffers.
+    pub fn build_with<L: LitVal, const TRACK: bool, const PROOFS: bool>(
+        eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+        scratch: &mut IndexScratch<Cfg>,
     ) -> Self {
         // `node_ids`, not a bare `from_usize` scan: the bound argument (every
         // routing entry was minted through `TypedRouting::reserve`'s checked
         // path) lives with `node_ids`; an inline scan here would restate the
         // unchecked spelling without the justification.
-        Self::build_from(eg, eg.node_ids())
+        Self::build_from(eg, eg.node_ids(), true, scratch)
     }
 
     /// Build the per-round **delta** index from the touched-node log: the
-    /// same four crosscutting maps as [`build`](Self::build), but restricted
+    /// same four crosscutting families as [`build`](Self::build), but restricted
     /// to the nodes that were created or recanonicalized this round.
     ///
     /// `touched` may contain duplicates (a node added then recanonicalized);
@@ -127,47 +389,140 @@ where
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
         touched: &[Cfg::G],
     ) -> Self {
-        let mut ids: Vec<Cfg::G> = touched.to_vec();
-        ids.sort_unstable();
-        ids.dedup();
-        Self::build_from(eg, ids.into_iter())
+        Self::build_delta_with(eg, touched, &mut IndexScratch::new())
+    }
+
+    /// [`build_delta`](Self::build_delta), reusing `scratch`'s stream buffers.
+    pub fn build_delta_with<L: LitVal, const TRACK: bool, const PROOFS: bool>(
+        eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+        touched: &[Cfg::G],
+        scratch: &mut IndexScratch<Cfg>,
+    ) -> Self {
+        let ids: Vec<Cfg::G> = {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::DELTA_DEDUP);
+            let mut ids: Vec<Cfg::G> = touched.to_vec();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
+        Self::build_from(eg, ids.into_iter(), false, scratch)
+    }
+
+    /// Hand this store's four span arenas back to `scratch` for the next round.
+    ///
+    /// `full` says which set of slots they came from, which the caller knows
+    /// because it chose which build produced this store. Consuming `self` is
+    /// what makes the hand-back safe: the maps' pools and the arenas' span
+    /// tables are separate allocations, and only the arenas survive.
+    ///
+    /// Not calling this is a performance bug and not a correctness one — the
+    /// next build allocates a fresh arena — so it is deliberately an ordinary
+    /// method rather than a `Drop` impl, which could not name the scratch.
+    pub fn recycle_into(self, scratch: &mut IndexScratch<Cfg>, full: bool) {
+        scratch.put_arena(full, FAM_OP, self.by_op.recycle());
+        scratch.put_arena(full, FAM_REPR, self.by_repr.recycle());
+        scratch.put_arena(full, FAM_CHILD_POS, self.by_child_pos.recycle());
+        scratch.put_arena(full, FAM_CONTAINS, self.by_contains.recycle());
     }
 
     /// Shared bucketing core for [`build`](Self::build) and
-    /// [`build_delta`](Self::build_delta): index the given node ids into the
-    /// four crosscutting maps. Skips subsumed nodes.
+    /// [`build_delta`](Self::build_delta): stream the given node ids into the
+    /// four families' `(key, value)` buffers, then hand each buffer to the
+    /// container's two-pass counting build.
+    ///
+    /// Skips subsumed nodes. `full` additionally records the per-id
+    /// [`repr`](Self::repr) and [`op`](Self::op) tables and accumulates
+    /// [`FanOuts`], which only the full index needs; it is sound only for the
+    /// whole-graph id stream, whose ids arrive in ascending order with no gaps.
+    ///
+    /// Ids are visited in ascending order in both callers, because `node_ids()`
+    /// is ascending and `build_delta` sorts, so every family's stream is
+    /// ascending in its value and the container's filter refinement hands that
+    /// ordering to each bucket unchanged (see [`debug_assert_id_sorted`]).
     fn build_from<L: LitVal, const TRACK: bool, const PROOFS: bool>(
         eg: &EGraph<Cfg, L, TRACK, PROOFS>,
         ids: impl Iterator<Item = Cfg::G>,
+        full: bool,
+        scratch: &mut IndexScratch<Cfg>,
     ) -> Self {
-        let mut by_op: FastMap<Cfg::O, Vec<Cfg::G>> = FastMap::default();
-        let mut by_repr: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
-        let mut by_child_pos: FastMap<(Cfg::G, Cfg::Index), Vec<Cfg::G>> = FastMap::default();
-        let mut by_contains: FastMap<Cfg::G, Vec<Cfg::G>> = FastMap::default();
+        scratch.clear();
+        // Stride of the `by_child_pos` composite key. Read before the walk,
+        // because the key must be computable as each child is visited.
+        let stride = eg.node_count();
+        let mut indexed = 0usize;
+
+        // Largest key each family's stream carries, plus one. Accumulated
+        // rather than assumed so the span tables are no longer than the keys in
+        // use: an op registry of 113 entries gets 113 spans, not one per node.
+        let (mut op_keys, mut repr_keys, mut cp_keys, mut ct_keys) = (0usize, 0, 0, 0);
+
+        // Per-id tables, filled only for the whole-graph stream. Both reads are
+        // made anyway for the bucketing below, so recording them here costs a
+        // push; a separate pass would repeat 1.2 M routing-table walks a round.
+        // A subsumed node is skipped for bucketing but still needs its slot, so
+        // the tables stay indexable by node id.
+        let mut repr_tab: Vec<Cfg::G> = Vec::new();
+        let mut op_tab: Vec<Cfg::O> = Vec::new();
+        if full {
+            repr_tab.reserve(eg.node_count());
+            op_tab.reserve(eg.node_count());
+        }
+
+        let (walk_slot, span_base) = if full {
+            (
+                crate::phase_timing::FULL_WALK,
+                crate::phase_timing::FULL_SPAN_OP,
+            )
+        } else {
+            (
+                crate::phase_timing::DELTA_WALK,
+                crate::phase_timing::DELTA_SPAN_OP,
+            )
+        };
+        let walk_timer = crate::phase_timing::Timer::start(walk_slot);
 
         for gid in ids {
+            let op = eg.node_op(gid);
+            let repr = eg.class_repr(gid);
+            if full {
+                debug_assert_eq!(repr_tab.len(), gid.to_usize());
+                repr_tab.push(repr);
+                op_tab.push(op);
+            }
             if eg.node_flags(gid) & crate::node_types::FLAG_SUBSUMED != 0 {
                 continue;
             }
-            let op = eg.node_op(gid);
-            let repr = eg.class_repr(gid);
 
-            by_op.entry(op).or_default().push(gid);
-            by_repr.entry(repr).or_default().push(gid);
+            let ok = op.to_usize();
+            op_keys = op_keys.max(ok + 1);
+            scratch.by_op.push((ok, gid));
+            let rk = repr.to_usize();
+            repr_keys = repr_keys.max(rk + 1);
+            scratch.by_repr.push((rk, gid));
+            indexed += 1;
 
-            // The counter is `Cfg::Index`-wide and checked. A variadic node's arity is
-            // a span in the child pool, so it is bounded by this word and by nothing
-            // narrower; as a `u32` this wrapped, and the child at position 2^32 was filed
-            // in bucket 0 — where a pattern written for the first argument would match it.
-            let mut pos = <Cfg::Index as IndexLike>::min();
-            let is_variadic = eg.for_each_child(gid, |child, _mult| {
-                let child_repr = eg.class_repr(child);
-                by_child_pos.entry((child_repr, pos)).or_default().push(gid);
-                pos = crate::containers::index_like::checked_incr(pos)
-                    .expect("node arity exceeds EGraphConfig::Index; configure a wider index word");
-            });
-            // For variadic nodes (arity > 0 from PlainN/A/AC/ACI), also populate by_contains
-            if is_variadic > 3
+            // The position counter is `Cfg::Index`-wide and checked. A variadic node's
+            // arity is a span in the child pool, so it is bounded by this word and by
+            // nothing narrower; as a `u32` this wrapped, and the child at position 2^32
+            // was filed in bucket 0, where a pattern written for the first argument
+            // would match it.
+            let arity = {
+                let cp = &mut scratch.by_child_pos;
+                let mut pos = <Cfg::Index as IndexLike>::min();
+                eg.for_each_child(gid, |child, _mult| {
+                    let child_repr = eg.class_repr(child).to_usize();
+                    let key =
+                        DenseSpanMap::<Cfg::G>::composite_key(pos.as_usize(), child_repr, stride)
+                            .expect("child class is below the node bound and the product fits");
+                    cp_keys = cp_keys.max(key + 1);
+                    cp.push((key, gid));
+                    pos = crate::containers::index_like::checked_incr(pos).expect(
+                        "node arity exceeds EGraphConfig::Index; configure a wider index word",
+                    );
+                })
+            };
+            // For variadic nodes (arity > 3 from PlainN/A/AC/ACI), also populate by_contains
+            if arity > 3
                 || matches!(
                     eg.node_ref(gid),
                     crate::typed_routing::NodeRef::Seq(_)
@@ -176,51 +531,287 @@ where
                         | crate::typed_routing::NodeRef::PlainN(_)
                 )
             {
-                let mut seen = Vec::new(); // dedup within one node
+                let seen = &mut scratch.seen;
+                let ct = &mut scratch.by_contains;
+                seen.clear(); // dedup within one node
                 eg.for_each_child(gid, |child, _mult| {
                     let cr = eg.class_repr(child);
                     if !seen.contains(&cr) {
                         seen.push(cr);
-                        by_contains.entry(cr).or_default().push(gid);
+                        let k = cr.to_usize();
+                        ct_keys = ct_keys.max(k + 1);
+                        ct.push((k, gid));
                     }
                 });
             }
         }
 
-        fn finalize<K: Eq + std::hash::Hash, G: DenseId>(
-            map: FastMap<K, Vec<G>>,
-        ) -> FastMap<K, SortedVec<G>> {
-            map.into_iter()
-                .map(|(k, mut v)| {
-                    v.sort_unstable();
-                    v.dedup();
-                    (k, SortedVec::from_sorted_dedup(v))
-                })
-                .collect()
-        }
+        walk_timer.stop();
+
+        // Take all four arenas before the builds: each build borrows its stream
+        // out of the same scratch, so the mutable borrows have to be finished
+        // first.
+        let (a_op, a_repr, a_cp, a_ct) = (
+            scratch.take_arena(full, FAM_OP),
+            scratch.take_arena(full, FAM_REPR),
+            scratch.take_arena(full, FAM_CHILD_POS),
+            scratch.take_arena(full, FAM_CONTAINS),
+        );
+        let by_op = {
+            let _t = crate::phase_timing::Timer::start(span_base);
+            build_family(a_op, &scratch.by_op, op_keys)
+        };
+        let by_repr = {
+            let _t = crate::phase_timing::Timer::start(span_base + 1);
+            build_family(a_repr, &scratch.by_repr, repr_keys)
+        };
+        let by_child_pos = {
+            let _t = crate::phase_timing::Timer::start(span_base + 2);
+            build_family(a_cp, &scratch.by_child_pos, cp_keys)
+        };
+        let by_contains = {
+            let _t = crate::phase_timing::Timer::start(span_base + 3);
+            build_family(a_ct, &scratch.by_contains, ct_keys)
+        };
+        Self::record_shape(full, indexed, &by_child_pos);
+        debug_assert_id_sorted(&by_op, "by_op");
+        debug_assert_id_sorted(&by_repr, "by_repr");
+        debug_assert_id_sorted(&by_child_pos, "by_child_pos");
+        debug_assert_id_sorted(&by_contains, "by_contains");
+
+        let fanouts = if full {
+            let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL_FANOUTS);
+            Self::measure_fanouts(
+                &op_tab,
+                &by_repr,
+                &by_child_pos,
+                &by_contains,
+                stride,
+                indexed,
+            )
+        } else {
+            FanOuts::default()
+        };
 
         Self {
-            by_op: finalize(by_op),
-            by_repr: finalize(by_repr),
-            by_child_pos: finalize(by_child_pos),
-            by_contains: finalize(by_contains),
+            by_op,
+            by_repr,
+            by_child_pos,
+            by_contains,
+            child_pos_stride: stride,
+            repr: repr_tab,
+            op: op_tab,
+            fanouts,
         }
+    }
+
+    /// Record the `by_child_pos` key-space shape for `phase_timing`.
+    ///
+    /// The span table is dense over the composite key space, so its length is
+    /// what a build pays whether or not the keys occur, and the ratio of that
+    /// length to the values it addresses is the sparsity this measures. The
+    /// occupied-key count is a pass over the map's occupancy list, so the whole
+    /// helper is still skipped unless the accounting is switched on.
+    #[inline]
+    fn record_shape(full: bool, indexed: usize, by_child_pos: &DenseSpanMap<Cfg::G>) {
+        use crate::phase_timing as pt;
+        if !pt::enabled() {
+            return;
+        }
+        let (nodes, keys, values, nonempty) = if full {
+            (
+                pt::C_FULL_NODES,
+                pt::C_FULL_CP_KEYS,
+                pt::C_FULL_CP_VALUES,
+                pt::C_FULL_CP_NONEMPTY,
+            )
+        } else {
+            (
+                pt::C_DELTA_IDS,
+                pt::C_DELTA_CP_KEYS,
+                pt::C_DELTA_CP_VALUES,
+                pt::C_DELTA_CP_NONEMPTY,
+            )
+        };
+        pt::count(nodes, indexed as u64);
+        pt::count(keys, by_child_pos.len() as u64);
+        pt::count(values, by_child_pos.total() as u64);
+        let mut occupied = 0u64;
+        for_each_occupied(by_child_pos, |_, _| occupied += 1);
+        pt::count(nonempty, occupied);
+    }
+
+    /// Measure each access path's size-biased mean bucket size from the
+    /// finished families.
+    ///
+    /// One pass over the occupied keys of `by_child_pos` and `by_contains`,
+    /// tallying each bucket's parents by operator, because those two families
+    /// are keyed by child class
+    /// alone (`by_contains`) or by child class and position (`by_child_pos`)
+    /// while the join always intersects them with `by_op[op]`: the quantity the
+    /// scheduler needs is the bucket restricted to one operator, and on
+    /// `math-microbenchmark` the two operators of one query differ in it by
+    /// three orders of magnitude. The tally is an array indexed by the
+    /// operator's dense id, so a bucket costs one increment per parent and no
+    /// hashing.
+    ///
+    /// `by_repr`'s number reads no bucket entry: a size-biased mean over bucket
+    /// sizes is a sum of span lengths over the occupied keys.
+    ///
+    /// The operator of each bucket entry comes from `op_tab` — the [`op`](Self::op)
+    /// table this build just filled — rather than from `EGraph::node_op`: the
+    /// pass visits every bucket entry, which is several times the node count.
+    fn measure_fanouts(
+        op_tab: &[Cfg::O],
+        by_repr: &DenseSpanMap<Cfg::G>,
+        by_child_pos: &DenseSpanMap<Cfg::G>,
+        by_contains: &DenseSpanMap<Cfg::G>,
+        stride: usize,
+        indexed: usize,
+    ) -> FanOuts<Cfg::O> {
+        // (sum of bucket sizes, sum of their squares, bucket count) per key set.
+        let mut cp: FastMap<(Cfg::O, usize), (u128, u128, u128)> = FastMap::default();
+        let mut ct: FastMap<Cfg::O, (u128, u128, u128)> = FastMap::default();
+        // Indexed by the operator's dense id, grown on demand rather than sized
+        // from the registry: the registry exposes no count, and the ids that
+        // occur here are exactly the ones the buckets hold.
+        // u64, not u32: a bucket's per-op count is bounded by the node count,
+        // which the 63-bit configuration allows past 2^32.
+        let mut tally: Vec<u64> = Vec::new();
+        let mut touched: Vec<usize> = Vec::new();
+
+        let tally_bucket = |bucket: &[Cfg::G], tally: &mut Vec<u64>, touched: &mut Vec<usize>| {
+            touched.clear();
+            for &gid in bucket {
+                let o = op_tab[gid.to_usize()].to_usize();
+                if o >= tally.len() {
+                    tally.resize(o + 1, 0);
+                }
+                if tally[o] == 0 {
+                    touched.push(o);
+                }
+                tally[o] += 1;
+            }
+        };
+
+        for_each_occupied(by_child_pos, |k, bucket| {
+            // Position-major key: the position is the quotient, and `stride` is
+            // nonzero because a non-empty bucket means the graph has a node.
+            let pos = k / stride;
+            tally_bucket(bucket, &mut tally, &mut touched);
+            for &o in touched.iter() {
+                let c = u128::from(tally[o]);
+                let e = cp.entry((Cfg::O::from_usize(o), pos)).or_insert((0, 0, 0));
+                e.0 += c;
+                e.1 += c * c;
+                e.2 += 1;
+                tally[o] = 0;
+            }
+        });
+        for_each_occupied(by_contains, |_, bucket| {
+            tally_bucket(bucket, &mut tally, &mut touched);
+            for &o in touched.iter() {
+                let c = u128::from(tally[o]);
+                let e = ct.entry(Cfg::O::from_usize(o)).or_insert((0, 0, 0));
+                e.0 += c;
+                e.1 += c * c;
+                e.2 += 1;
+                tally[o] = 0;
+            }
+        });
+
+        let biased = |(sum, sq, _): &(u128, u128, u128)| -> f64 {
+            if *sum == 0 {
+                1.0
+            } else {
+                *sq as f64 / *sum as f64
+            }
+        };
+        // Skew = size-biased mean / plain mean = sq * count / sum^2.
+        let skew = |(sum, sq, count): &(u128, u128, u128)| -> f64 {
+            if *sum == 0 {
+                1.0
+            } else {
+                (*sq as f64 * *count as f64) / (*sum as f64 * *sum as f64)
+            }
+        };
+        let (mut class_sum, mut class_sq) = (0u128, 0u128);
+        for_each_occupied(by_repr, |_, b| {
+            let c = b.len() as u128;
+            class_sum += c;
+            class_sq += c * c;
+        });
+
+        FanOuts {
+            by_repr: biased(&(class_sum, class_sq, 0)),
+            by_child_pos_skew: cp.iter().map(|(&k, v)| (k, skew(v))).collect(),
+            by_contains_skew: ct.iter().map(|(&k, v)| (k, skew(v))).collect(),
+            by_child_pos: cp.iter().map(|(&k, v)| (k, biased(v))).collect(),
+            by_contains: ct.iter().map(|(&k, v)| (k, biased(v))).collect(),
+            nodes: indexed,
+        }
+    }
+
+    /// This build's class representative for `id`, or `None` for an id minted
+    /// after the build (and so present in no bucket) or on a delta store, which
+    /// defers the mapping to its full index.
+    #[inline]
+    pub fn round_repr(&self, id: Cfg::G) -> Option<Cfg::G> {
+        self.repr.get(id.to_usize()).copied()
+    }
+
+    /// The operator of `id` as of this build, or `None` when the table is not
+    /// filled (a delta store) or `id` postdates the build. See [`op`](Self::op).
+    #[inline]
+    pub fn round_op(&self, id: Cfg::G) -> Option<Cfg::O> {
+        self.op.get(id.to_usize()).copied()
+    }
+
+    /// Nodes with the given operator; empty when the operator files no node.
+    #[inline]
+    pub fn nodes_by_op(&self, op: Cfg::O) -> &[Cfg::G] {
+        self.by_op.try_get(op.to_usize()).unwrap_or(&[])
+    }
+
+    /// Nodes in the given e-class, as this build canonicalized it.
+    #[inline]
+    pub fn nodes_by_repr(&self, repr: Cfg::G) -> &[Cfg::G] {
+        self.by_repr.try_get(repr.to_usize()).unwrap_or(&[])
+    }
+
+    /// Parent nodes that have `child_repr` at position `pos`.
+    ///
+    /// A class at or above the stride, or a position past the deepest one this
+    /// build saw, names no key of the span table and yields the empty slice: the
+    /// same answer the hash-map family gave for a key it had never inserted.
+    #[inline]
+    pub fn nodes_by_child_pos(&self, child_repr: Cfg::G, pos: Cfg::Index) -> &[Cfg::G] {
+        match DenseSpanMap::<Cfg::G>::composite_key(
+            pos.as_usize(),
+            child_repr.to_usize(),
+            self.child_pos_stride,
+        ) {
+            Some(k) => self.by_child_pos.try_get(k).unwrap_or(&[]),
+            None => &[],
+        }
+    }
+
+    /// Variadic nodes containing `child_repr`.
+    #[inline]
+    pub fn nodes_by_contains(&self, child_repr: Cfg::G) -> &[Cfg::G] {
+        self.by_contains
+            .try_get(child_repr.to_usize())
+            .unwrap_or(&[])
     }
 
     /// Get an iterator over nodes with the given operator.
     pub fn iter_by_op(&self, op: Cfg::O) -> SortedVecCursor<'_, Cfg::G> {
-        match self.by_op.get(&op) {
-            Some(sv) => SortedVecCursor::new(&sv.data),
-            None => SortedVecCursor::new(&[]),
-        }
+        SortedVecCursor::new(self.nodes_by_op(op))
     }
 
     /// Get an iterator over nodes in the given e-class.
     pub fn iter_by_repr(&self, repr: Cfg::G) -> SortedVecCursor<'_, Cfg::G> {
-        match self.by_repr.get(&repr) {
-            Some(sv) => SortedVecCursor::new(&sv.data),
-            None => SortedVecCursor::new(&[]),
-        }
+        SortedVecCursor::new(self.nodes_by_repr(repr))
     }
 
     /// Get an iterator over parent nodes that have `child_repr` at position `pos`.
@@ -229,18 +820,25 @@ where
         child_repr: Cfg::G,
         pos: Cfg::Index,
     ) -> SortedVecCursor<'_, Cfg::G> {
-        match self.by_child_pos.get(&(child_repr, pos)) {
-            Some(sv) => SortedVecCursor::new(&sv.data),
-            None => SortedVecCursor::new(&[]),
-        }
+        SortedVecCursor::new(self.nodes_by_child_pos(child_repr, pos))
     }
 
     /// Get an iterator over variadic nodes containing `child_repr`.
     pub fn iter_by_contains(&self, child_repr: Cfg::G) -> SortedVecCursor<'_, Cfg::G> {
-        match self.by_contains.get(&child_repr) {
-            Some(sv) => SortedVecCursor::new(&sv.data),
-            None => SortedVecCursor::new(&[]),
-        }
+        SortedVecCursor::new(self.nodes_by_contains(child_repr))
+    }
+
+    /// Per-operator driver-scan cardinalities, for
+    /// [`IndexStats`](crate::schedule::IndexStats).
+    ///
+    /// Only operators that file at least one node are listed, so an absent
+    /// operator stays absent rather than arriving with a zero, which is the
+    /// distinction the cost model's `or_else` chain reads.
+    pub fn op_cardinalities(&self) -> impl Iterator<Item = (Cfg::O, usize)> + '_ {
+        (0..self.by_op.len()).filter_map(|k| {
+            let n = self.by_op.key_len(k);
+            (n > 0).then(|| (Cfg::O::from_usize(k), n))
+        })
     }
 }
 
@@ -265,12 +863,20 @@ pub enum IndexMode {
 /// Not a new abstraction — just the bundle the matcher needs in place of a
 /// bare `&IndexStore`. A `delta_atom` of `None` is the **naive** view: every
 /// atom reads `full` (and `delta` is never consulted).
-#[derive(Clone, Copy)]
 pub struct VariantIndex<'a, Cfg: EGraphConfig> {
     pub full: &'a IndexStore<Cfg>,
     pub delta: &'a IndexStore<Cfg>,
     pub delta_atom: Option<usize>,
 }
+
+// Hand-written rather than derived: a derive would bound `Cfg: Clone`, and the
+// view is three references whatever `Cfg` is.
+impl<Cfg: EGraphConfig> Clone for VariantIndex<'_, Cfg> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<Cfg: EGraphConfig> Copy for VariantIndex<'_, Cfg> {}
 
 impl<'a, Cfg: EGraphConfig> VariantIndex<'a, Cfg> {
     /// Naive view: every atom reads `full`. `delta` is aliased to `full` and
@@ -310,6 +916,141 @@ impl<'a, Cfg: EGraphConfig> VariantIndex<'a, Cfg> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Plan-time sampling
+// ---------------------------------------------------------------------------
+
+/// Entries of a bucket read to estimate its operator-restricted length.
+///
+/// `by_child_pos` and `by_contains` are keyed by child class while every
+/// join intersects them with `by_op[op]`, so the length the scheduler needs is
+/// the bucket restricted to one operator — the same quantity
+/// [`IndexStore::measure_fanouts`] tallies, and for the same reason: the two
+/// operators of one query differ in it by three orders of magnitude. Counting
+/// it exactly is a pass over the bucket, which on a hub class is hundreds of
+/// thousands of loads for one sampled key. Past this many entries the count is
+/// taken over an evenly-strided subsample of the bucket and scaled back up,
+/// which is the estimator the emitter draw already is, applied once more.
+const PROBE_SCAN_CAP: usize = 256;
+
+/// [`CrossSampler`] over one round's indices: the implementation the scheduler
+/// gets its samples from.
+///
+/// Emitter draws come from the slice the atom's semi-naive mode reads, which is
+/// the relation it will actually enumerate. Probe buckets come from the full
+/// index in every mode, matching [`FanOuts`], which the full build measures and
+/// every variant prices against: a variant's delta shows up in the atom's base
+/// cardinality, and applying it again to the probe would charge it twice.
+///
+/// [`CrossSampler`]: crate::schedule::CrossSampler
+pub struct IndexSampler<'a, Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool> {
+    eg: &'a EGraph<Cfg, L, TRACK, PROOFS>,
+    index: VariantIndex<'a, Cfg>,
+}
+
+impl<'a, Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
+    IndexSampler<'a, Cfg, L, TRACK, PROOFS>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    pub fn new(eg: &'a EGraph<Cfg, L, TRACK, PROOFS>, index: VariantIndex<'a, Cfg>) -> Self {
+        Self { eg, index }
+    }
+
+    /// The class of `id` as the round's buckets are keyed, mirroring
+    /// `ematch::canon`: the build's mapping where it has one, the live
+    /// union-find for an id minted after the build.
+    #[inline]
+    fn canon(&self, id: Cfg::G) -> Cfg::G {
+        match self.index.full.round_repr(id) {
+            Some(r) => r,
+            None => self.eg.find_const(id),
+        }
+    }
+
+    /// Nodes of `op` in `bucket`, exactly when the bucket is short enough and
+    /// by a strided subsample scaled to the bucket's length when it is not.
+    fn op_restricted(&self, s: &[Cfg::G], op: Cfg::O) -> usize {
+        let n = s.len();
+        let op_tab = &self.index.full.op;
+        let hits = |g: &Cfg::G| op_tab.get(g.to_usize()).is_some_and(|&o| o == op);
+        if n <= PROBE_SCAN_CAP {
+            return s.iter().filter(|g| hits(g)).count();
+        }
+        let seen = (0..PROBE_SCAN_CAP)
+            .filter(|j| hits(&s[j * n / PROBE_SCAN_CAP]))
+            .count();
+        seen * n / PROBE_SCAN_CAP
+    }
+}
+
+impl<Cfg: EGraphConfig, L: LitVal, const TRACK: bool, const PROOFS: bool>
+    crate::schedule::CrossSampler<Cfg::O> for IndexSampler<'_, Cfg, L, TRACK, PROOFS>
+where
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    fn driver_sample(&self, atom_id: usize, op: Cfg::O, k: usize, out: &mut Vec<usize>) {
+        out.clear();
+        // `FullMinusDelta` draws from the full side, an upper bound on
+        // `full ∖ delta`, for the reason `ematch::cursor_len` gives: a tighter
+        // draw would cost the overlap, which is the work being priced.
+        let store = match self.index.mode(atom_id) {
+            IndexMode::Delta => self.index.delta,
+            IndexMode::Full | IndexMode::FullMinusDelta => self.index.full,
+        };
+        let s = store.nodes_by_op(op);
+        let n = s.len();
+        if n == 0 || k == 0 {
+            return;
+        }
+        let take = k.min(n);
+        out.extend((0..take).map(|j| s[j * n / take].to_usize()));
+    }
+
+    fn key_classes(&self, node: usize, site: crate::schedule::KeySite, out: &mut Vec<usize>) {
+        use crate::schedule::KeySite;
+        let g = Cfg::G::from_usize(node);
+        match site {
+            KeySite::Node => out.push(self.canon(g).to_usize()),
+            // Read through `for_each_child` with a position counter, the same
+            // walk `IndexStore::build_from` keys `by_child_pos` with, rather
+            // than `EGraph::child_at`, which panics on a multiset node.
+            KeySite::Child(pos) => {
+                let mut i = 0usize;
+                self.eg.for_each_child(g, |c, _| {
+                    if i == pos {
+                        out.push(self.canon(c).to_usize());
+                    }
+                    i += 1;
+                });
+            }
+            KeySite::Element => {
+                self.eg.for_each_child(g, |c, _| {
+                    let cr = self.canon(c).to_usize();
+                    if !out.contains(&cr) {
+                        out.push(cr);
+                    }
+                });
+            }
+        }
+    }
+
+    fn probe_len(&self, class: usize, path: crate::schedule::ProbePath, op: Cfg::O) -> usize {
+        use crate::schedule::ProbePath;
+        let c = Cfg::G::from_usize(class);
+        let bucket = match path {
+            ProbePath::ChildPos(pos) => {
+                let Some(p) = <Cfg::Index as IndexLike>::try_from_usize(pos) else {
+                    return 0;
+                };
+                self.index.full.nodes_by_child_pos(c, p)
+            }
+            ProbePath::Contains => self.index.full.nodes_by_contains(c),
+        };
+        self.op_restricted(bucket, op)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,17 +1076,17 @@ mod tests {
         let idx = IndexStore::build(&eg);
 
         // Two f-nodes: fx, ffx
-        let f_nodes = &idx.by_op[&f];
+        let f_nodes = idx.nodes_by_op(f);
         assert_eq!(f_nodes.len(), 2);
-        assert!(f_nodes.data.contains(&fx));
-        assert!(f_nodes.data.contains(&ffx));
+        assert!(f_nodes.contains(&fx));
+        assert!(f_nodes.contains(&ffx));
 
         // One g-node
-        assert_eq!(idx.by_op[&g].len(), 1);
-        assert!(idx.by_op[&g].data.contains(&gx));
+        assert_eq!(idx.nodes_by_op(g).len(), 1);
+        assert!(idx.nodes_by_op(g).contains(&gx));
 
         // One x-node
-        assert_eq!(idx.by_op[&x_op].len(), 1);
+        assert_eq!(idx.nodes_by_op(x_op).len(), 1);
     }
 
     #[test]
@@ -362,7 +1103,7 @@ mod tests {
 
         let idx = IndexStore::build(&eg);
         let repr = eg.class_repr(x);
-        let class_nodes = &idx.by_repr[&repr];
+        let class_nodes = idx.nodes_by_repr(repr);
         assert_eq!(class_nodes.len(), 2);
     }
 
@@ -383,15 +1124,15 @@ mod tests {
         let idx = IndexStore::build(&eg);
 
         // x is child at pos 0 of both fx and gxy
-        let parents_x_0 = &idx.by_child_pos[&(x, 0)];
+        let parents_x_0 = idx.nodes_by_child_pos(x, 0);
         assert_eq!(parents_x_0.len(), 2);
-        assert!(parents_x_0.data.contains(&fx));
-        assert!(parents_x_0.data.contains(&gxy));
+        assert!(parents_x_0.contains(&fx));
+        assert!(parents_x_0.contains(&gxy));
 
         // y is child at pos 1 of gxy only
-        let parents_y_1 = &idx.by_child_pos[&(y, 1)];
+        let parents_y_1 = idx.nodes_by_child_pos(y, 1);
         assert_eq!(parents_y_1.len(), 1);
-        assert!(parents_y_1.data.contains(&gxy));
+        assert!(parents_y_1.contains(&gxy));
     }
 
     #[test]
@@ -441,9 +1182,10 @@ mod tests {
         use crate::containers::DenseId;
         use proptest::prelude::*;
 
-        /// A sorted, duplicate-free key vector — the representation invariant of
-        /// `SortedVec`, which `IndexStore::build_from` establishes by sorting and
-        /// deduping each bucket.
+        /// A sorted, duplicate-free key vector: the shape of every bucket the
+        /// build produces, `IndexStore::build_from` streams ids in ascending order
+        /// and files each id under a key at most once, and the container's filter
+        /// refinement hands that order to the bucket.
         fn sorted_unique() -> impl Strategy<Value = Vec<usize>> {
             proptest::collection::vec(0usize..200, 0..64).prop_map(|mut v| {
                 v.sort_unstable();
@@ -648,6 +1390,46 @@ mod tests {
         }
     }
 
+    /// The `by_child_pos` key is `position * stride + class`, flattened by
+    /// `DenseSpanMap::composite_key`; `lemma_composite_key_injective` is why a
+    /// parent filed at one position never surfaces in another position's
+    /// bucket. A wide node stretches the key space past the binary ops beside
+    /// it, which is where a stride mistake would show, and the two negative
+    /// cases are the ones an absent hash-map key used to cover: a position
+    /// deeper than any node has, and a class at or above the build's node bound.
+    #[test]
+    fn child_pos_key_separates_positions_and_absent_keys() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let int = eg.intern_sort("Int");
+        let wide = eg.register_opn("w", &[int; 6], int);
+        let g = eg.register_op2("g", int, int, int);
+        let leaves: Vec<_> = ["a", "b", "c", "d", "e", "f"]
+            .iter()
+            .map(|n| {
+                let o = eg.register_op0(n, int);
+                eg.add(o, &[])
+            })
+            .collect();
+        let w = eg.add(wide, &leaves);
+        let gg = eg.add(g, &[leaves[0], leaves[5]]);
+
+        let idx = IndexStore::build(&eg);
+        // `a` is child 0 of both parents; buckets are ascending in node id.
+        assert_eq!(idx.nodes_by_child_pos(leaves[0], 0), &[w, gg]);
+        // Position 1 of the wide node is `b`, of `gg` is `f`: neither leaks.
+        assert_eq!(idx.nodes_by_child_pos(leaves[1], 1), &[w]);
+        assert_eq!(idx.nodes_by_child_pos(leaves[5], 1), &[gg]);
+        // The deepest position in use, and the same class one position off it.
+        assert_eq!(idx.nodes_by_child_pos(leaves[5], 5), &[w]);
+        assert!(idx.nodes_by_child_pos(leaves[0], 5).is_empty());
+        // Past the deepest position, and past the node bound.
+        assert!(idx.nodes_by_child_pos(leaves[0], 6).is_empty());
+        assert!(
+            idx.nodes_by_child_pos(crate::id::ENodeId::from_usize(eg.node_count()), 0)
+                .is_empty()
+        );
+    }
+
     #[test]
     fn by_child_pos_after_merge() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
@@ -667,9 +1449,9 @@ mod tests {
         let repr = eg.class_repr(x);
 
         // Both fx and fy should appear under the canonical repr at pos 0
-        let parents = &idx.by_child_pos[&(repr, 0)];
+        let parents = idx.nodes_by_child_pos(repr, 0);
         // After merge, fx and fy are congruent — same node. So 1 entry.
-        assert!(parents.data.contains(&eg.find_const(fx)));
+        assert!(parents.contains(&eg.find_const(fx)));
     }
 
     #[test]
@@ -690,13 +1472,13 @@ mod tests {
         let idx = IndexStore::build(&eg);
 
         // x is contained in both pxy and pxz
-        let contains_x = &idx.by_contains[&x];
+        let contains_x = idx.nodes_by_contains(x);
         assert_eq!(contains_x.len(), 2);
-        assert!(contains_x.data.contains(&pxy));
-        assert!(contains_x.data.contains(&pxz));
+        assert!(contains_x.contains(&pxy));
+        assert!(contains_x.contains(&pxz));
 
         // y is contained only in pxy
-        let contains_y = &idx.by_contains[&y];
+        let contains_y = idx.nodes_by_contains(y);
         assert_eq!(contains_y.len(), 1);
     }
 }

@@ -1,56 +1,87 @@
-#  Stratified Negation
+# Stratified Negation
+
+**Status**: design for future work; nothing in this document is
+implemented. It depends on Datalog relations (`datalog-integration.md`),
+which the engine does not have.
 
 ## 1. Stratification as Generation Boundaries
 
-The key insight is that a stratum boundary is a generation boundary.
-The engine's generational structure provides exactly the right
-semantics for stratified negation at no additional cost.
+A stratum boundary can coincide with a generation boundary, but the existing
+semi-persistent `mark()` is only a rollback token. It records how to restore
+the mutable state; it does not expose the marked state for concurrent queries
+after later writes. Therefore stratum `k+1` cannot query a token as if it were
+an immutable `G_k`.
 
-Stratum k runs the fixpoint loop until convergence, producing generation G_k. Stratum k+1 treats G_k as its negative database: the state captured at G_k's `mark()` is a fully rebuilt, congruence-closed snapshot. Stratum k+1 writes new facts into G_{k+1}. Negative lookups in stratum k+1 query G_k's state, which is immutable — backtracking to G_k would undo all of stratum k+1's work, so the absence of a fact in G_k is stable for the entire duration of stratum k+1.
+The implementation needs a frozen or versioned lower-stratum view containing:
 
-This is sound: a negative literal `¬R(a, b)` in stratum k+1 means "R(a, b) was not derived by stratum k." Since stratum k is fully saturated and its state is frozen, this is a stable truth for all of stratum k+1's reasoning.
+- relation indexes at the completed stratum;
+- the equality/canonicalization mapping under which those indexes were keyed;
+- ownership and lifetime rules that keep the view queryable while the live
+  graph advances; and
+- a policy for memory reclamation after dependent strata finish.
+
+Stratum `k` runs to a genuine fixpoint and publishes that view. Stratum `k+1`
+uses it for every negative lookup. The intended soundness statement is that
+`not R(a, b)` means the canonical tuple was absent from the completed,
+immutable lower-stratum relation. That statement becomes valid only after the
+fixpoint and snapshot-refinement obligations are proved.
 
 ## 2. Static Stratification Check
 
-Before execution, the engine builds a dependency graph over relations:
+Before execution, build a dependency graph over relations:
 
-- A positive edge `A ->+ B` if some rule with B in its head has A in its body positively
-- A negative edge `A ->- B` if some rule with B in its head has A in its body negatively
+- a positive edge `A ->+ B` if a rule with `B` in its head has `A` in its body
+  positively;
+- a negative edge `A ->- B` if a rule with `B` in its head has `A` in its body
+  negatively.
 
-A valid stratification exists iff the dependency graph has no cycle passing through a negative edge. This is checked by topological sort: assign each relation a stratum number such that for every positive edge `A ->+ B`, stratum(B) ≥ stratum(A), and for every negative edge `A ->- B`, stratum(B) > stratum(A). If no such assignment exists, the program is not stratifiable and The engine rejects it with an error identifying the offending cycle.
+A valid stratification exists iff no strongly connected component contains a
+negative dependency. Compute SCCs of the graph while retaining edge polarity,
+reject a negative edge whose endpoints lie in one SCC, then topologically
+order the condensation DAG. Assign strata so positive edges are nondecreasing
+and negative edges are strictly increasing. A plain topological sort of the
+original graph is insufficient because positive recursion within one stratum
+is valid.
 
 ## 3. Negative Literals in the Join Engine
 
-Negative literals are post-filters applied after the positive
-leapfrog join completes. They do not contribute iterators.
+Negative literals are post-filters applied after the positive leapfrog join
+completes. They do not contribute iterators.
 
-### Variable safety
+Every variable appearing in a negative literal must already be bound by a
+positive literal in the same rule body. Check this statically so a negative
+literal only verifies absence for an already-bound tuple.
 
-Every variable appearing in a negative literal must already be bound
-by some positive literal in the same rule body. This is checked
-statically. It ensures that negative literals never need to enumerate
-candidates: they only verify absence for already-bound values.
-
-### Implementation
-
-After the positive leapfrog produces a candidate binding
-`{?X = e1, ?Y = e2, ...}`, each negative literal `¬R(t1, ..., tk)`
-is checked by canonicalizing `(t1[σ], ..., tk[σ])` under the current
-substitution `σ` and performing a point lookup in G_k's frozen
-hashcons for R. If the lookup succeeds, the candidate is discarded.
-O(log n) per negative literal per candidate.
+After the positive join produces a candidate binding, canonicalize each
+negative tuple under the frozen lower-stratum equality view and perform a point
+lookup in that view's relation index. A hit discards the candidate. Lookup
+complexity is backend-dependent: expected O(1) for a hash index, O(log n) for
+an ordered tree, or another documented bound for a dense/sorted
+representation.
 
 ## 4. Interaction with E-Class Merging
 
-A subtle case: stratum k+1 may fire union actions that merge e-classes. If a merged e-class appeared as an argument to a negated relation in G_k, the negation check was against a specific canonical id that may now be non-canonical. This would make the negative lookup stale.
+Stratum `k+1` may merge live e-classes that appeared as arguments in `G_k`.
+Looking up with the live representative against an index keyed by the old
+representative is stale; re-keying the old index would also destroy the frozen
+semantics.
 
-The safety condition enforced by the stratification check: a
-relation R used negatively in stratum k+1 must not appear as an
-action target in stratum k+1 or later, and no stratum k+1 rule may
-union e-classes that appear as arguments to negated R-literals. In
-practice, this means:
+The robust rule is that negative canonicalization and lookup both use the same
+frozen equality view. Base-value arguments satisfy this naturally when their
+equality is immutable. For sort-typed arguments, either retain the lower
+stratum's representative mapping or restrict the language so later strata
+cannot change equality relevant to a negated relation. A syntactic check that
+only forbids writing relation `R` is not enough: union actions can change its
+argument equivalence indirectly.
 
-- Pure Datalog relations (over base types) are safe: base-type equality is stable and does not interact with the union-find.
-- Relations over sort-typed arguments require the more careful condition above.
-- The common case — negating over a fully ground Datalog relation whose arguments are base types — always satisfies the condition trivially.
+## 5. Validation Obligations
 
+- Generated finite programs agree with a simple stratified Datalog reference
+  evaluator for relation facts.
+- Positive recursive SCCs are accepted; every negative cycle is rejected with
+  an actionable dependency path.
+- Later e-class merges cannot change a lookup in a frozen lower-stratum view.
+- Mark/restore and stratum-view reclamation do not expose a partially rebuilt
+  or differently canonicalized relation.
+- Complexity claims name the selected index backend and include the cost of
+  retaining/versioning the frozen view.

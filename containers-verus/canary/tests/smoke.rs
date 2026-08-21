@@ -8,9 +8,7 @@ fn canary_smoke() {
 }
 
 /// The Tagged-laws fuzzer template with randomized inputs (trust group E
-/// mitigation pattern). The egraph's own `Tagged` impls are meant to stamp this
-/// out per type and do not yet; this is currently the only place the laws are
-/// executed at all.
+/// mitigation). This is the consumer-shaped executable check of those laws.
 #[test]
 fn tagged_laws_fuzz() {
     use containers_verus_canary::tagged_fuzzer_template::{JustificationShaped, check_tagged_laws};

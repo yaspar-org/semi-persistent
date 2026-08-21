@@ -17,19 +17,23 @@ pops back to the marked level, discarding the entries above it. The
 implementation does not store those copies; it keeps a **sparse negative diff**:
 the first write to a cell after a mark logs that cell's old value, and later
 writes to the same cell do not create diff entries. `restore` truncates the log
-to the mark and replays the recorded values in reverse. Memory is proportional 
-to the number of modified cells since the mark, and `restore` runs in time
-proportional to the diff. No deep copy is materialized: a marked state is the
-current contents minus the diffs recorded since. 
-(`mark` is not unconditionally O(1), it resets per-cell capture state, sublinear
-with the packed bitset and O(diff-size) for the inline backend, but never a deep
-copy; the design objective is the memory bound.)
+to the mark, regrows cells popped below the marked length, and replays the
+recorded values in reverse. A mark adds O(1) frame metadata and first writes add
+sparse diff entries; fork history also grows by O(1) per restore. For `b`
+fork-history links walked during token validation, `k` replayed entries, `r`
+regrown cells, `p` surviving-parent entries, and `w` materialized
+parallel-bitmap words, restore is O(b+k+r+p) inline and O(b+k+r+p+w) parallel.
+No deep copy is materialized.
+(`mark` is not unconditionally O(1): inline capture clears the current frame's
+named diff slots, while parallel capture zeroes all materialized bitmap words.
+The design objective is the sparse memory bound.)
 
 The diff representation can diverge from the deep-copy specification through a
 faulty replay (a dropped entry, a wrong replay order, a cell restored from the
 wrong mark), so the central theorem is their equivalence. The vector carries a
-**ghost field** `snapshots`: the stack of deep copies, defined in ghost code
-(erased before compilation, so the compiled vector retains only the sparse diff).
+**ghost field** `snapshots`: the stack of deep copies, defined in ghost code and
+erased before compilation. The compiled vector still retains the value store,
+diff log, frames, fork history, identity, and capture-state representation.
 It is the specification of what each mark must preserve, and the theorem states that
 the diff engine reproduces it:
 
@@ -48,9 +52,10 @@ to a ghost set plus an index pool), an intrusive linked-list arena
 (`prepend`/`append`/`splice`), a circular class-list (O(1) ring merge by pointer
 swap), and a B+tree set. These are all the core data structures needed to build
 a semi-persistent e-graph data structure. Several are internally **aliased** and
-**cyclic**: they connect nodes by integer index rather than Rust reference, which
-bypasses ownership and borrow checking, leaving Verus verification as the sole
-correctness guarantee. They are verified in an explicit **dynamic-frames** style:
+**cyclic**: they connect nodes by integer index rather than Rust reference, so
+Rust's borrow checker does not establish their graph-shape invariants. Verus
+contracts provide the formal guarantee for those invariants, supplemented by
+runtime tests. They are verified in an explicit **dynamic-frames** style:
 a ghost field names each structure as sets of unique arena ids, and aliasing,
 separation, and shape are proved as predicates over those ids
 ([§10](#10-why-these-proofs-arenas-integers-as-pointers-and-explicit-aliasing),
@@ -58,7 +63,8 @@ separation, and shape are proved as predicates over those ids
 
 The whole development carries no `admit`s or `assume`s; run `cargo verus verify` for
 the per-module tally. ("No `admit`s/`assume`s" does not mean nothing is trusted:
-the trust boundary is 21 `external_body` items, enumerated and justified in
+the trust boundary is 27 default-build `external_body` items, or 32 with
+`literal-types`, enumerated and justified in
 [Chapter 2](02-trust-boundary.md). Read it to know exactly what is guaranteed.)
 
 The rest of this document is the machinery: the layered architecture (§2), the
@@ -142,10 +148,12 @@ sound, exactly the ones a wrong mask would break:
   and the tag together pin down the whole word, so the stolen bit wastes no state
   space and `from_repr` inverts `into_repr`.
 
-A type with no spare bit uses the fallback `BoolTagged<T>`, which stores the tag
-in a separate `bool` field; it steals nothing, so `repr_wf` is `true` everywhere
-and the niche axiom is vacuous. The impl that makes the obligations *bite* is
-`DenseId31`, below.
+A type with no spare bit can implement `Tagged` with the `BoolTagged<T>`
+representation, which stores the tag in a separate `bool` field. The crate uses
+that representation in explicit primitive and wrapper implementations; it is
+not an automatic blanket implementation for every `T`. It steals nothing, so
+`repr_wf` is `true` everywhere and the niche axiom is vacuous. The impl that
+makes the obligations *bite* is `DenseId31`, below.
 
 ### `DiffStore`: the protocol that consults the bit
 
@@ -159,12 +167,14 @@ the reconstruction theorem.
 
 ### `IndexLike` and `DenseId31`: the bit packed inline
 
-`InlineStore<T: Tagged>` is the zero-overhead backend: a single `Vec<T::Repr>`
-where each cell *is* a tagged word, its capture bit in the stolen niche. `data()`
+`InlineStore<T: Tagged>` adds no per-cell capture storage: it is a single
+`Vec<T::Repr>` where each cell *is* a tagged word, its capture bit in the stolen niche. `data()`
 is `value_of` across the reprs, `captured()` is `tag_of` across them, both read
 from the same physical vector, and `wf()` asks every stored repr be `repr_wf`.
 The capture protocol becomes pure bit manipulation, leaving `value_of` (hence
-`data()`) untouched by the tag-edit obligation.
+`data()`) untouched by the tag-edit obligation. A mark still clears the tags
+named by the parent frame's diff, so the representation claim does not imply
+constant-time marks.
 
 `DenseId31` (in `dense_id.rs`) ties the two trait layers together: it is *both*
 `Tagged` (stored with the flag packed inline) and `IndexLike` (indexes a vector),
@@ -216,8 +226,9 @@ Ghost views: `data(): Seq<T>`, `captured(): Seq<bool>`, `wf(): bool`. Methods:
   `i < saved_len && !captured[i]`, append `(data[i], i)` and set `captured[i]`;
   else no-op (the postcondition spells this out so an impl can't satisfy it
   vacuously).
-- `force_capture(i, saved_len, diff_log)`: *unconditional* capture (production
-  uses it for pop). Bounded-log designs avoid it (§8).
+- `force_capture(i, saved_len, diff_log)`: retained unconditional-capture trait
+  surface. Both backends implement its contract, but the vector does not call
+  it; `pop` uses bounded first-write-wins `capture` (§8).
 - `restore_entry(idx, old, target_saved_len)`: the replay step. Drops
   `idx >= target_saved_len`; pushes if `idx == data.len()` (regrow); else
   overwrites. **Everything gated by the TARGET's saved_len.**
@@ -236,6 +247,9 @@ struct Vec<T, I, S, const TRACK: bool> {
     diff_log: std::vec::Vec<(T,I)>,  // (old_value, index) entries, all frames
     frames:   std::vec::Vec<Frame<I>>,
     active_saved_len: I,             // cached saved_len of the top frame
+    forks: ForkHistory,              // branch-cut token validity
+    id: ContainerId,                 // cross-container token check
+    phantom: PhantomData<(T,I)>,
     snapshots: Ghost<Seq<Seq<T>>>,   // GHOST: deep copy per frame
 }
 Frame<I> { saved_len: I, diff_start: usize }
@@ -285,20 +299,18 @@ next-deeper snapshot (or the view, for the top frame):
 2. `snapshots.len() == frames.len()` (parallel stacks).
 3. `frames.len()==0 ⟹ diff_log empty`.
 4. `frames[0].diff_start == 0`; `frames[top].diff_start <= diff_log.len()`.
-5. `frames[top].saved_len <= view.len()`: "view is full". **(This and the
-   saved_len-monotone clause are the two that pop into the marked region relaxes,
-   §8.)**
-6. `diff_start` monotone; `saved_len` monotone; `snapshots[k].len() ==
-   frames[k].saved_len`.
-7. **Per frame `k`** (the heart): `frame_inv_range(layer_above(k), diff_log,
+5. `diff_start` is monotone; `snapshots[k].len() ==
+   frames[k].saved_len`. Neither saved lengths nor the top saved length versus
+   the live view are required to be monotone (§8).
+6. **Per frame `k`** (the heart): `frame_inv_range(layer_above(k), diff_log,
    lo_k, hi_k, snapshots[k], saved_len_k)`, where `layer_above(k)` is
    `snapshots[k+1]` (inner) or `view()` (top).
 
 ### `wf()` adds the capture-flag bridge
 
-8. `active_saved_len` caches `frames[top].saved_len`.
-9. `store.captured().len() == view.len()`.
-10. **Bridge**: for `j < min(active_saved_len, view.len())`,
+7. `active_saved_len` caches `frames[top].saved_len`.
+8. `store.captured().len() == view.len()`.
+9. **Bridge**: for `j < min(active_saved_len, view.len())`,
     `store.captured()[j] ⟺ j ∈ top stratum`. Ties the runtime per-slot flag to
     the ghost diff log so `set`/`pop` can reason about `capture`'s
     first-write-wins branch. Restricted to *present* cells; popped cells'
@@ -386,10 +398,10 @@ frame's layer is the view: its `frame_cell_inv` transfers per-cell because the
   captured, the existing entry still holds `snap[i]`. The **bridge** tells the
   proof which (`store.captured()[i]`), matching first-write-wins.
 
-**`pop()`** (transient-only, current default): `store.pop()`. Precondition
-`active_saved_len < view.len()`: only pop a cell *above* every frame's marked
-region, so no frame_inv cell is affected. (Pop into the marked region lifts this,
-§8.)
+**`pop()`**: if the final cell lies inside the active marked region, call
+first-write-wins `capture` before `store.pop()`; otherwise pop directly.
+Capturing first preserves the marked value even though the live view becomes
+shorter than `saved_len`. Section 8 gives the coverage argument.
 
 **`mark()`**: `prepare_mark`, push `snapshots.push(view)` and
 `Frame { saved_len: view.len(), diff_start: diff_log.len() }`, set
@@ -397,13 +409,15 @@ region, so no frame_inv cell is affected. (Pop into the marked region lifts this
 all-uncaptured (`view[j] == snap[j]` is `view[j] == view[j]`). The previously-top
 frame's layer flips from `view` to `snapshots[top]` (the view at mark time).
 
-**`restore(token)`**: truncate to `saved_len_target`, then replay
+**`restore(token)`**: validate the token, resize (truncate or regrow) to
+`saved_len_target`, then replay
 `diff_log[diff_start_target .. n]` in reverse via `restore_entry`. The `overlay`
 spec models the loop: lower-index entries applied outermost, so the
 **lowest-position entry per cell wins**. The central lemma proves
 `overlay(view, diffs, diff_start_target, n) == snapshots[target]` on
-`[0, saved_len_target)` by downward induction over frames. Then truncate +
-`finish_restore` rebuild the bridge; snapshots/frames truncated to `target`.
+`[0, saved_len_target)` by downward induction over frames. Then truncate the
+log/snapshot/frame stacks and call `finish_restore` with the surviving parent
+stratum to rebuild the bridge.
 
 ---
 
@@ -414,10 +428,11 @@ Production allows **popping a cell with `index < saved_len`**. On restore that p
 **Default + resize** (option A of [Chapter 6](06-restore-regrow-alternatives.md)):
 pop uses *conditional* capture (keeping the log bounded), and restore
 `resize_default`s the view back up with `T::default()` fillers that the replay
-overwrites. This needs `T: Default` and keeps restore O(k). The two rejected
-alternatives are production's *force-record* (pop logs unconditionally; correct
-but a `push/pop` loop grows the log without bound, a latent DoS) and a Clone-scan
-regrow (no Default, but a log-factor slower restore).
+overwrites. This needs `T: Default` and keeps the regrow-plus-replay component
+O(k); total restore also includes the capture-state work in Chapter 6 Part 2.
+The two rejected alternatives are the historical *force-record* design (pop
+logs unconditionally; correct, but a `push/pop` loop grows the log without
+bound) and a Clone-scan regrow (no `Default`, but an extra pass or sort).
 
 **Why the fillers are sound: they are never observable.** Every filler sits in a
 popped cell, which coverage guarantees is captured, so the replay overwrites it.
@@ -519,17 +534,19 @@ position must be rejected. Two mechanisms close this, both verified and wired in
 ### 9.1 Container identity
 
 ```
-ContainerId(u32)                    // from a global atomic counter
+ContainerId { hidden u64 payload }  // from a global atomic counter
 VecToken { …, container_id }        // every token records its origin Vec
 ```
 
 `restore` asserts `token.container_id == self.id`, rejecting one vec's token on a
-different vec. Modeled with a ghost unique id per Vec.
+different vec while allocated identities remain distinct. The model has an
+opaque abstract id and trusted equality reflection; it does not prove global
+freshness of allocations (Chapter 2 §1).
 
 ### 9.2 Fork history: the branch-cut theorem
 
 ```
-VecToken { branch_id: u32, depth: u32, frame_index: u32, container_id }
+VecToken { frame_idx: usize, branch_id: u32, depth: u32, container_id }
 ForkHistory {
     current_branch_id: u32,
     origins: Vec<ForkOrigin { parent_branch_id: u32, fork_depth: u32 }>,
@@ -539,7 +556,7 @@ ForkHistory {
 - **`mark()`** stamps `branch_id = forks.current_branch()` and
   `depth = frames.len()` (the depth before the push: a token's `depth` equals its
   own frame index).
-- **`restore(token)`** rolls back to `token.frame_index`, then `forks.fork(...)`
+- **`restore(token)`** rolls back to `token.frame_idx`, then `forks.fork(...)`
   starts a new branch: pushes
   `ForkOrigin { parent_branch_id = token.branch_id, fork_depth = token.depth }`
   and sets `current_branch_id = origins.len()` (a fresh, never-reused id).
@@ -573,7 +590,7 @@ snapshot from the discarded future) is rejected; branch-0 tokens at depth ≤ 1
 `lemma_fork_valid_characterization` proves `is_valid(token)` equals exactly "its
 branch is the current branch or an ancestor, and its depth is within that
 branch's live prefix." This is what connects validity back to reconstruction: a
-*valid* token's `frame_index` still denotes the same logical snapshot it did at
+*valid* token's `frame_idx` still denotes the same logical snapshot it did at
 mark time, so `view() == snapshots[token.frame_idx]` composes with validity to
 give "restore with a valid token reproduces the snapshot it was minted for," even
 across intervening restores and re-marks. The walk terminates because it descends
@@ -597,9 +614,9 @@ has a sharp consequence: **integers-as-pointers bypasses Rust's ownership and
 borrow checking entirely.** Two fields may hold the same index, the structures
 are freely *aliased*, and an index may point back into a structure that points
 at it, so the arenas hold genuinely **cyclic** object graphs, which `&mut` forbids.
-Going through indices sidesteps that, and gives up all compiler help for the
-discipline that keeps the structure well-formed. **Verus is the only guarantee
-left.**
+Going through indices sidesteps that, so the compiler does not establish the
+discipline that keeps the graph shape well-formed. The Verus invariant is the
+formal guarantee for that discipline, within the trust boundary in Chapter 2.
 
 The proof style is **explicit dynamic frames**, transposed from heap references to
 arena indices. Each structure carries a **ghost field** describing its footprint
@@ -618,10 +635,12 @@ prove every id outside that frame is untouched.
 
 The payoff is the guarantees the borrow checker can no longer give, as theorems:
 the list arena's `prepend`/`append`/`splice` each refine the obvious sequence
-operation while preserving disjointness of all other lists; the circular class
-list's O(1) `splice`-by-pointer-swap merges two rings into one whose node set is
-their union, unconditionally; the sparse set is a genuine bijection between its
-dense and sparse halves. [Chapter 9](09-arena-aliasing-dynamic-frames.md)
+operation while preserving disjointness of all other lists; given nodes in
+distinct rings, the circular class list's pointer-swap `splice` merges them
+into one ring whose node set is their union. The release pointer work is
+constant (and allocation-free); debug builds first validate distinctness by
+walking one ring, O(ring size). The sparse set is a genuine bijection between
+its dense and sparse halves. [Chapter 9](09-arena-aliasing-dynamic-frames.md)
 develops the dynamic-frames connection and the frame/anti-frame mechanics in full;
 the B+tree, the one recursive case, is [Chapter 10](10-bplus-tree.md).
 
@@ -629,7 +648,8 @@ the B+tree, the one recursive case, is [Chapter 10](10-bplus-tree.md).
 
 Everything below is proved with no `admit`s or `assume`s, at arbitrary
 mark-nesting depth. Run `cargo verus verify -- --time-expanded` for the live per-module count. For the
-dual, what is taken on trust (the 21 `external_body` items), see
+dual, what is taken on trust (27 default-build `external_body` items, 32 with
+`literal-types`), see
 [Chapter 2](02-trust-boundary.md).
 
 **The vector.** Reconstruction, diff-log faithfulness (coverage + uniqueness), the
@@ -638,10 +658,13 @@ full API: `push`, `set`, `get`, `mark`, `restore`, and `pop` into a marked regio
 Both backends (`InlineStore`, `ParallelStore`) satisfy the `DiffStore` contract;
 the bit-stealing layer is exercised by `DenseId31` (both `IndexLike` and `Tagged`
 on one `u32`, niche-injectivity discharged by the bit-vector solver), and
-`ParallelStore`'s flags use the packed `CaptureBits`. The `TRACK=false` guarantee
-(an unmarked vector is observably a plain `std::Vec`) and full production API
-parity hold. The verification also **found and fixed a real production bug**: a
-silent `u32` truncation in `Frame.saved_len`.
+`ParallelStore`'s flags use the packed `CaptureBits`. For the unmarked
+push/pop/set/get surface, `TRACK=false` has the same observable sequence
+behavior as a plain `std::Vec`; the generic type still retains empty tracking
+fields and general runtime checks, and mark/restore are unavailable. Finite
+conformance tests cover the shared production surface, but no universal
+full-API parity theorem is claimed. The verification also **found and fixed a
+real production bug**: a silent `u32` truncation in `Frame.saved_len`.
 
 **The container family.** All verified: `AppendOnlyVec`, `Map`, `SparseSet`
 (refined to a ghost set + index pool), `ListArena` (chain semantics + acyclicity,
@@ -650,9 +673,11 @@ incl. `append`/`splice`), `CircularList` (O(1) ring merge), and `BPlusTreeSet`
 arena provably never overflows; `mark`/`restore`; insert-only,
 [Chapter 10](10-bplus-tree.md)).
 
-**Deliberate divergences** (documented, not gaps): `T: Copy + Default` instead of
-`T: Clone` (`Copy ⊂ Clone` suffices for the e-graph domain; `Default` enables the
-DoS-free bounded-capture pop, [Chapter 6](06-restore-regrow-alternatives.md));
-`as_slice` omitted (a backend-specific fast path outside the persistence
-contract). The full method-by-method coverage vs. production is the
-[parity audit](../future/parity-audit-and-plan.md).
+**Deliberate divergence** (documented, not a gap): `T: Copy + Default` instead
+of `T: Clone` (`Copy ⊂ Clone` suffices for the e-graph domain; `Default` enables
+the DoS-free bounded-capture pop,
+[Chapter 6](06-restore-regrow-alternatives.md)). The backend-specific
+`as_slice` surface is present in both crates. Finite behavior and layout
+correspondence with the retained reference is checked by
+`containers-conformance`; class-layer differences are summarized in
+[`egraph-class-layer.md`](egraph-class-layer.md).

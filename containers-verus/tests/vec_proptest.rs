@@ -57,7 +57,7 @@ fn vec_ops_match_oracle() {
             match rng.below(10) {
                 0..=5 => {
                     let val = rng.next() as u32;
-                    v.push(val);
+                    v.try_push(val).expect("push: within index word");
                     oracle.push(val);
                 }
                 6..=7 => {
@@ -94,20 +94,23 @@ fn vec_ops_match_oracle() {
 // Semi-persistence: a stack of marks; mutate freely; restore in LIFO order and
 // confirm each restore reproduces the oracle snapshot captured at that mark.
 // This is the property the whole crate exists for, run on the untracked and
-// the tracked backend (the observational guarantee is identical — task #41).
+// the tracked backend; the observational guarantee is identical.
 // --------------------------------------------------------------------------
 
-/// TRACK=false production parity (migration plan 2.4): `mark` is a caller
+/// `TRACK=false` production parity: `mark` is a caller
 /// error on an untracked vec and panics via the runtime guard — production's
 /// `assert!(TRACK, "mark() called on untracked vec")` behavior. (This test
 /// previously asserted the old semantics, where untracked mark/restore
 /// silently worked through the snapshot model.)
 #[test]
-#[should_panic(expected = "mark() called on untracked vec")]
-fn vec_mark_untracked_panics() {
+fn vec_mark_untracked_refuses_as_err() {
     let mut v = SpVec::<u32, u32, ParallelStore<u32, u32>, false>::new();
-    v.push(1);
-    let _ = v.mark(ShrinkPolicy::Never);
+    v.try_push(1).expect("push: within index word");
+    assert_eq!(
+        v.try_mark(ShrinkPolicy::Never).unwrap_err(),
+        semi_persistent_containers_verus::error::ContainerError::Untracked,
+        "was: panic(mark() called on untracked vec)"
+    );
 }
 
 #[test]
@@ -129,11 +132,13 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
         // Grow a bit.
         for _ in 0..rng.below(8) {
             let val = rng.next() as u32;
-            v.push(val);
+            v.try_push(val).expect("push: within index word");
             oracle.push(val);
         }
         // Mark: snapshot the oracle alongside the token.
-        let token = v.mark(ShrinkPolicy::Never);
+        let token = v
+            .try_mark(ShrinkPolicy::Never)
+            .expect("mark: depth bounded by this harness");
         frames.push((token, oracle.clone()));
 
         // Mutate past the mark (push/pop/set), so restore has real work to undo.
@@ -141,7 +146,7 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
             match rng.below(3) {
                 0 => {
                     let val = rng.next() as u32;
-                    v.push(val);
+                    v.try_push(val).expect("push: within index word");
                     oracle.push(val);
                 }
                 1 => {
@@ -162,7 +167,7 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
         // Occasionally unwind some frames and verify each rollback.
         if rng.below(2) == 0 {
             while let Some((tok, snap)) = frames.pop() {
-                v.restore(tok);
+                v.try_restore(tok).expect("restore: own token");
                 oracle = snap.clone();
                 let got: Vec<u32> = (0..v.len() as usize).map(|i| v.get(i as u32)).collect();
                 assert_eq!(
@@ -178,7 +183,7 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
 
     // Final full unwind.
     while let Some((tok, snap)) = frames.pop() {
-        v.restore(tok);
+        v.try_restore(tok).expect("restore: own token");
         let got: Vec<u32> = (0..v.len() as usize).map(|i| v.get(i as u32)).collect();
         assert_eq!(got, snap, "TRACK={TRACK}: final unwind mismatch");
     }
@@ -193,7 +198,7 @@ fn rollback_stress<const TRACK: bool>(seed: u64) {
 #[test]
 fn append_only_vec_ops_and_rollback() {
     for seed in 0..12u64 {
-        let mut a = AppendOnlyVec::<u64, usize, true>::new(); // mark/restore requires TRACK (plan 2.4)
+        let mut a = AppendOnlyVec::<u64, usize, true>::new(); // mark/restore requires TRACK
         let mut oracle: Vec<u64> = Vec::new();
         let mut rng = Lcg::new(seed ^ 0x5151);
         let mut frames: Vec<(_, Vec<u64>)> = Vec::new();
@@ -201,17 +206,19 @@ fn append_only_vec_ops_and_rollback() {
         for _ in 0..300 {
             match rng.below(10) {
                 0 => {
-                    let token = a.mark(ShrinkPolicy::Never);
+                    let token = a
+                        .try_mark(ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness");
                     frames.push((token, oracle.clone()));
                 }
                 1 if !frames.is_empty() => {
                     let (tok, snap) = frames.pop().unwrap();
-                    a.restore(tok);
+                    a.try_restore(tok).expect("restore: own token");
                     oracle = snap;
                 }
                 _ => {
                     let val = rng.next();
-                    let idx = a.push(val);
+                    let idx = a.try_push(val).expect("push: within index word");
                     assert_eq!(idx, oracle.len(), "seed={seed}: push index mismatch");
                     oracle.push(val);
                 }

@@ -77,6 +77,14 @@ impl<T: Clone, Idx: IndexLike + Tagged, S: DiffStore<T, Idx, TRACK>, const TRACK
         self.dense.is_empty()
     }
 
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_add(&mut self, value: T) -> Result<Idx, &'static str> {
+        Ok(self.add(value))
+    }
+
     pub fn add(&mut self, value: T) -> Idx {
         let pos = self.dense.len();
         self.dense.push(value);
@@ -153,12 +161,33 @@ impl<T: Clone, Idx: IndexLike + Tagged, S: DiffStore<T, Idx, TRACK>, const TRACK
         &self.dense
     }
 
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_mark(&mut self, policy: ShrinkPolicy) -> Result<SparseSetToken, &'static str> {
+        Ok(self.mark(policy))
+    }
+
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> SparseSetToken {
         SparseSetToken {
             dense: self.dense.mark(shrink),
             sparse: self.sparse.mark(shrink),
             indices: self.indices.mark(shrink),
         }
+    }
+
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_restore(&mut self, token: SparseSetToken) -> Result<(), &'static str>
+    where
+        T: Default,
+        Idx: Default,
+    {
+        self.restore(token);
+        Ok(())
     }
 
     pub fn restore(&mut self, token: SparseSetToken)

@@ -1,25 +1,24 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Differential trace harness (migration plan Phase 1.2).
+//! Differential trace harness for the shared container surface.
 //!
 //! Runs identical randomized operation traces against the production
 //! `semi-persistent-containers` crate and this crate, asserting identical
-//! observable results at every step. Parity is defined over the RETAINED
-//! COMMON BEHAVIORAL SURFACE (plan Phase 0): operations intentionally removed
+//! observable results at every step. Conformance is scoped to the shared
+//! behavioral surface: operations intentionally absent
 //! (`get_mut`), bounds intentionally narrowed (Clone vectors), and 32-bit
 //! targets are out of scope.
 //!
-//! Coverage grows with the parity phases:
-//! - NOW (pre-parity API subset): Vec both stores (push/pop/set/get/len/
+//! Coverage includes:
+//! - Vec with both stores (push/pop/set/get/len/
 //!   mark/restore), AppendOnlyVec, SpMap vs Map (Copy keys, insert/id_of/
 //!   contains_key/log_len/mark/restore), BPlusTreeSet (insert_general vs
 //!   insert, cursor seek/step/key, mark/restore).
-//! - Phase 5.3: SparseSet (needs the verus `new()` constructor; construction
-//!   via struct literal would break at Phase 2.1 field privacy).
-//! - Phase 5.4: ListArena (needs typed ids in verus).
-//! - Phase 4/7: token-validity verdicts (`is_valid_token` — the verus meaning
-//!   strengthens to "restorable now" in Phase 2.2, at which point the verdict
-//!   comparison is scoped to tokens production also considers restorable).
+//! - SparseSet, including the public `new()` constructor.
+//! - ListArena with typed ids.
+//! - Token-validity verdicts (`is_valid_token`; the verified meaning is
+//!   "restorable now", so comparison is scoped to tokens production also
+//!   considers restorable).
 //!
 //! Determinism: a seeded xorshift generator; no proptest shrinking needed —
 //! a failing trace replays exactly from its seed.
@@ -48,7 +47,7 @@ fn vec_trace_inline(seed: u64, steps: usize) {
             0..=39 => {
                 let val = rng.next() as u32;
                 p.push(val);
-                v.push(val);
+                v.try_push(val).expect("push: within index word");
                 len += 1;
             }
             40..=64 => {
@@ -78,7 +77,9 @@ fn vec_trace_inline(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tv = v
+                    .try_mark(verus::vec::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 marks.push((tp, tv));
             }
             _ => {
@@ -88,7 +89,7 @@ fn vec_trace_inline(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 len = p.len() as usize;
             }
@@ -131,7 +132,7 @@ fn vec_trace_parallel(seed: u64, steps: usize) {
             0..=39 => {
                 let val = rng.next() as u32;
                 p.push(val);
-                v.push(val);
+                v.try_push(val).expect("push: within index word");
                 len += 1;
             }
             40..=64 => {
@@ -160,7 +161,8 @@ fn vec_trace_parallel(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -170,7 +172,7 @@ fn vec_trace_parallel(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 len = p.len() as usize;
             }
@@ -206,7 +208,7 @@ fn aov_trace(seed: u64, steps: usize) {
             0..=49 => {
                 let val = rng.next() as u32;
                 let ip = p.push(val);
-                let iv = v.push(val);
+                let iv = v.try_push(val).expect("push: within index word");
                 assert_eq!(ip, iv, "step {step}: push index diverged");
             }
             50..=79 => {
@@ -222,7 +224,8 @@ fn aov_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -232,7 +235,7 @@ fn aov_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
             }
         }
@@ -252,8 +255,8 @@ fn differential_append_only_vec() {
 }
 
 // ---------------------------------------------------------------------------
-// Map differential: production Map<u32, u32> vs verus SpMap<u32, u32> (Copy
-// keys — the pre-Phase-5.1 common surface). insert / id_of / contains_key /
+// Map differential: production Map<u32, u32> vs Verus SpMap<u32, u32> (the
+// common Copy-key surface). insert / id_of / contains_key /
 // log_len / mark / restore.
 // ---------------------------------------------------------------------------
 
@@ -271,7 +274,7 @@ fn map_trace(seed: u64, steps: usize) {
                 let key = rng.below(50) as u32;
                 let val = rng.next() as u32;
                 let ip = p.insert(key, val);
-                let iv = v.insert(key, val);
+                let iv = v.try_insert(key, val).expect("insert: within index word");
                 assert_eq!(ip, iv, "step {step}: insert log-index diverged");
             }
             45..=74 => {
@@ -299,7 +302,8 @@ fn map_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -309,7 +313,7 @@ fn map_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
             }
         }
@@ -619,7 +623,7 @@ fn differential_bplus_from_sorted_batched() {
 }
 
 // ---------------------------------------------------------------------------
-// String-keyed map differential (Phase 5.1: Clone keys). Exercises the
+// String-keyed map differential for Clone keys. Exercises the
 // registry shape: String keys, overwrite shadows, get_by_key/len/mark/restore.
 // ---------------------------------------------------------------------------
 
@@ -636,7 +640,7 @@ fn map_string_trace(seed: u64, steps: usize) {
                 let key = format!("k{}", rng.below(40));
                 let val = rng.next() as u32;
                 let ip = p.insert(key.clone(), val);
-                let iv = v.insert(key, val);
+                let iv = v.try_insert(key, val).expect("insert: within index word");
                 assert_eq!(ip, iv, "step {step}: insert log-index diverged");
             }
             45..=74 => {
@@ -655,7 +659,8 @@ fn map_string_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                 ));
             }
             _ => {
@@ -665,7 +670,7 @@ fn map_string_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
             }
         }
@@ -686,7 +691,7 @@ fn differential_map_string_keys() {
 }
 
 // ---------------------------------------------------------------------------
-// SparseSet differential (Phase 5.3: constructors). add/remove/get/contains/
+// SparseSet differential: add/remove/get/contains/
 // len + mark/restore, ids pinned by the oracle-free direct comparison.
 // ---------------------------------------------------------------------------
 
@@ -714,7 +719,7 @@ fn sparse_set_trace(seed: u64, steps: usize) {
             0..=39 => {
                 let val = rng.next() as u32;
                 let ip = p.add(val);
-                let iv = v.add(val);
+                let iv = v.try_add(val).expect("add: within id space");
                 assert_eq!(ip, iv, "step {step}: add returned different ids");
                 live_ids.push(ip);
             }
@@ -746,7 +751,8 @@ fn sparse_set_trace(seed: u64, steps: usize) {
                 }
                 marks.push((
                     p.mark(prod::ShrinkPolicy::Never),
-                    v.mark(verus::vec::ShrinkPolicy::Never),
+                    v.try_mark(verus::vec::ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness"),
                     live_ids.clone(),
                 ));
             }
@@ -792,7 +798,7 @@ fn differential_sparse_set() {
 }
 
 // ---------------------------------------------------------------------------
-// Byte-accounting differential (Phase 9.2): capacity-based reporting matching
+// Byte-accounting differential: capacity-based reporting matching
 // production's formulas. `tracking_bytes` must agree EXACTLY: both sides push
 // identical element sequences into std::Vecs of identically-sized elements
 // ((T, I) diff entries, {saved_len: I, diff_start: usize} frames, (u32, u32)
@@ -818,7 +824,7 @@ fn bytes_trace(seed: u64, steps: usize) {
             0..=44 => {
                 let val = rng.next();
                 p.push(val);
-                v.push(val);
+                v.try_push(val).expect("push: within index word");
                 len += 1;
             }
             45..=69 => {
@@ -840,7 +846,9 @@ fn bytes_trace(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tv = v
+                    .try_mark(verus::vec::ShrinkPolicy::Never)
+                    .expect("mark: depth bounded by this harness");
                 marks.push((tp, tv));
             }
             _ => {
@@ -850,7 +858,7 @@ fn bytes_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore: own token");
                 marks.truncate(idx);
                 len = p.len() as usize;
             }
@@ -892,12 +900,12 @@ fn differential_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// Class-ring byte-accounting differential (the consumer swap).
+// Class-ring byte-accounting differential.
 //
 // `tests/layout_parity.rs` asserts the two ring cells are the same 12 bytes;
 // that is the *static* half of the memory claim. This is the dynamic half: over
 // a randomized merge/mark/restore trace, the verified ring's retained history
-// must cost exactly what the hand-rolled ring's did. Both log `(cell, u32)` per
+// must cost exactly what the reference ring costs. Both log `(cell, u32)` per
 // captured write — 16 bytes at 31-bit ids, not the 24 a `usize`-indexed store
 // would spend — so `tracking_bytes()` has to agree EXACTLY, not approximately.
 //
@@ -914,15 +922,16 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
 
     const N: usize = 4_000;
     let mut p = pring::build::<true>(N);
-    // Payload type derived from the id (`Opt<VNodeId::Index>`), as the consumer's
-    // `ClassRing<T, TRACK>` is — not a spelled-out `Opt<u32>`.
+    // Payload type derived from the id (`Opt<VNodeId::Index>`), matching
+    // `ClassRing<T, TRACK>` rather than spelling out `Opt<u32>`.
     let mut v: verus::CircularList<
         verus::Opt<<VNodeId as verus::opt::DenseId>::Index>,
         VNodeId,
         true,
     > = verus::CircularList::new();
     for i in 0..N {
-        v.add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()));
+        v.try_add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()))
+            .expect("within id space");
     }
 
     // Both sides start with identically-grown backing vectors, so tracking
@@ -961,8 +970,8 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
                 // equal write *counts*, not just equal bytes. With the payload
                 // clear as a separate `set_payload` the verus side wrote the
                 // absorbed cell three times; first-write-wins dedup hid that in the
-                // byte total, which is exactly why the write count needs its own
-                // baseline (`benches/perf_gate.rs`, `class_merge_restore`).
+                // byte total, which is exactly why the write count has its own
+                // assertion in this differential trace.
                 let mut payload = v.payload_of(vb);
                 payload.set_none();
                 v.splice_absorb(vs, vb, payload);
@@ -972,7 +981,7 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
                     continue;
                 }
                 let tp = p.mark(prod::ShrinkPolicy::Never);
-                let tv = v.mark(verus::vec::ShrinkPolicy::Never);
+                let tv = v.try_mark(verus::vec::ShrinkPolicy::Never).expect("mark");
                 marks.push((tp, tv));
             }
             _ => {
@@ -982,7 +991,7 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
                 let idx = rng.below(marks.len() as u64) as usize;
                 let (tp, tv) = marks[idx];
                 p.restore(tp);
-                v.restore(tv);
+                v.try_restore(tv).expect("restore");
                 marks.truncate(idx);
             }
         }

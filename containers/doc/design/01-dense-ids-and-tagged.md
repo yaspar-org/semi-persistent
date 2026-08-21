@@ -1,12 +1,12 @@
-# Chapter 1 — Dense Identifiers and the `Tagged` Trait
+# Chapter 1: Dense Identifiers and the `Tagged` Trait
 
 [← Table of Contents](00-table-of-contents.md) · [Ch 2: Semi-Persistent Vectors →](02-semi-persistent-vectors.md)
 
 
 ## Motivation
 
-Many high-performance systems — e-graph engines, SAT solvers, constraint
-propagators, game-tree searchers — allocate objects in dense pools indexed
+Many high-performance systems (e-graph engines, SAT solvers, constraint
+propagators, game-tree searchers) allocate objects in dense pools indexed
 by small integers. These ids are used as array indices into flat vectors,
 with no pointer chasing and no hash lookups on the hot path.
 
@@ -14,9 +14,9 @@ Applications that use pool-allocated data structures need three things
 from their id-indexed storage:
 
 1. Optional values. Many slots are nullable: a parent pointer may be
-   absent, a list head may be empty. The standard `Option<T>` costs
-   4 extra bytes per slot (discriminant + padding) for a 4-byte id.
-   At millions of slots, that doubles memory.
+   absent, a list head may be empty. `Option` around these ordinary 4-byte
+   id newtypes has no invalid-value niche and therefore occupies 8 bytes on
+   the supported layouts. A tagged representation keeps it at 4 bytes.
 
 2. Lookup structures. Ids serve as keys into hash maps and sorted
    indices. They must implement `Eq`, `Ord`, and `Hash` cheaply.
@@ -28,38 +28,38 @@ from their id-indexed storage:
    reverse. The critical cost is *detecting first writes*; each slot
    must track whether it has already been captured since the last
    mark. A naive approach adds a `bool` per slot (1 byte + padding),
-   or a parallel `BitSet` (1 bit per slot, but a separate allocation
-   and cache line).
+   or a parallel `BitSet` (1 bit per slot in a separate allocation).
 
 All three problems share a solution: bit-packing into the id
-itself. A 32-bit id only needs 31 bits to address 2 billion
-entries. The remaining MSB becomes a free tag bit that different
+itself. This design deliberately limits a 32-bit id to 31 payload bits,
+still addressing about 2.1 billion entries. The reserved MSB becomes a tag bit that different
 consumers can repurpose:
 
 | Consumer | Tag meaning |
 |----------|-------------|
-| `InlineStore` | "captured since last mark": zero-overhead semi-persistence |
-| `Opt<T>` | "none": zero-overhead nullable ids |
+| `InlineStore` | "captured since last mark": no extra per-cell capture storage |
+| `Opt<T>` | "none": no extra discriminant storage |
 | `ListHead` | "empty list" |
 
-The `Tagged` trait abstracts over this: any type that can store and
-retrieve a tag bit in its representation. For dense ids, the tag is
-the MSB. For types that can't spare a bit, a fallback `BoolTagged`
-wrapper stores the tag as a separate `bool`.
+The `Tagged` trait abstracts over this: any value type that defines a stored
+representation with a readable and writable tag. For dense ids, the tag is
+the MSB. Primitive integer implementations use an out-of-band `(bool, T)`
+representation; `BoolTagged<T>` is the named representation helper used for
+the same purpose by explicit implementations.
 
 ## The `DenseId` Type
 
-All ids are called *dense* because they are allocated sequentially
-starting from 0: the first object gets id 0, the second gets id 1,
-and so on. At any point, all live ids form a contiguous range `[0, n)`.
-This has a key consequence: a `Vec<T>` indexed by the id type is a
-perfect map from ids to values: O(1) lookup, no hashing, no holes,
-no wasted capacity. Every slot in the vector corresponds to exactly
-one live id.
+The ID types are called *dense* because their integer payload can be used
+directly as a vector index. The type itself does not allocate IDs or guarantee
+contiguity. When an arena or `IdFactory` allocates sequentially from zero
+without deletion or recycling, its allocated IDs form `[0, n)`, and a `Vec<T>`
+indexed by that ID type is a perfect map: O(1) lookup, no hashing, and no holes.
+Recycling structures such as `SparseSet` use the same ID types but need not have
+a contiguous set of currently live IDs.
 
-The dense allocation invariant is why pool-based systems store
-per-object metadata in flat `Vec`s rather than `HashMap`s: the vector
-index *is* the id.
+Where the owning allocator establishes the dense-allocation invariant,
+pool-based systems can store per-object metadata in flat `Vec`s rather than
+`HashMap`s: the vector index *is* the ID.
 
 ## `define_id31!`
 
@@ -71,15 +71,15 @@ around `u32` with bit 31 reserved, producing two types:
 | `NodeId` | `u32` | Clean user-facing id. MSB always 0. |
 | `StoredNodeId` | `u32` | Internal repr. MSB = capture flag. |
 
-Derived trait impls on `NodeId` all mask out the MSB: `PartialEq`
+Trait impls on the clean `NodeId` all mask out the MSB: `PartialEq`
 compares `(self.0 & 0x7FFF_FFFF)`, and `Ord` and `Hash` apply the
 same mask. `Debug` prints `e42` (prefix + raw value).
 
-Because of this masking, two stored values that differ only in the
-tag bit compare as equal, hash identically, and sort the same way.
-The tag is invisible to all user-facing operations. Variants exist
-for other widths: `define_id7!` (7-bit), `define_id15!` (15-bit),
-`define_id63!` (63-bit for large pools).
+The separate `StoredNodeId` representation intentionally does not implement
+`Eq`, `Hash`, or `Ord`; it is interpreted through `Tagged::from_repr`, which
+masks the tag before producing a clean ID. The tag is therefore invisible to
+user-facing ID operations. Variants exist for other widths: `define_id7!`
+(7-bit), `define_id15!` (15-bit), and `define_id63!` (63-bit for large pools).
 
 ## The `Tagged` Trait
 
@@ -87,8 +87,8 @@ This trait is the abstraction for values that carry a tag bit
 that can we queried, set and reset.
 
 ```rust
-pub trait Tagged: Clone {
-    type Repr: Clone;
+pub trait Tagged: Copy + Default {
+    type Repr: Copy;
     fn into_repr(self) -> Self::Repr;
     fn from_repr(r: &Self::Repr) -> Self;
     fn tag(r: &Self::Repr) -> bool;
@@ -104,7 +104,7 @@ For `DenseId` types, `Tagged` is implemented by the `define_id!` macro:
 Different consumers interpret the tag differently: Semi-persistent vectors
 require `Tagged<T>` so they can use that control bit to track marked versions
 and capture old values on first mutation. `Opt<T>` requires `Tagged<T>`
-and uses the tag bit to encode `Some/None, etc.
+and uses the tag bit to encode `Some`/`None`.
 
 | Consumer | Tag semantics |
 |----------|--------------|
@@ -112,7 +112,7 @@ and uses the tag bit to encode `Some/None, etc.
 | `Opt<T>` | "none": slot is absent |
 | `ListHead` | "empty list" flag |
 
-## `Opt<T>` — Tagged Nullable
+## `Opt<T>`: Tagged Nullable
 
 `Opt<T>` reuses `T`'s tag bit to encode `None`, wrapping a single
 `T::Repr`:
@@ -126,28 +126,32 @@ same bit for capture tracking that `Opt` uses for None, corrupting
 both. Instead, `Opt<T>` appears only as a field inside a struct that
 implements `Tagged` via a *different* field.
 
-## `BoolTagged<T>` — Out-of-Band Tag
+## Out-of-Band Tags
 
-For types that cannot offer a spare bit, `BoolTagged<T>` stores the tag as
-a separate `bool`. In that case we pay the padding overhead but can still
-benefit from semi-persistence.
+Primitive integers implement `Tagged` with `Repr = (bool, T)`. In that case
+the representation pays padding overhead but still supports inline
+semi-persistence. `BoolTagged<T>` is a named representation helper with the
+same shape; it does not itself provide a blanket `Tagged` implementation for
+arbitrary `T`.
 
 ```rust
-pub struct BoolTagged<T>(bool, T);
+pub struct BoolTagged<T> {
+    pub tagged: bool,
+    pub value: T,
+}
 ```
 
-`Tagged` impl: `tag` reads the bool, `set_tag`/`clear_tag` flip it.
-This costs 1 extra byte per slot (plus padding), but works for any
-`T`. These two strategies correspond to the two `DiffStore` backends
-for the semi-persistent vector:
+For a `(bool, T)` or `BoolTagged<T>` representation, `tag` reads the bool and
+`set_tag`/`clear_tag` flip it. These representation strategies are distinct
+from the two `DiffStore` backends for the semi-persistent vector:
 
 | | `InlineStore<T: Tagged>` | `ParallelStore<T>` |
 |---|---|---|
 | Storage | `Vec<T::Repr>` | `Vec<T>` + `BitSet` |
 | Tag location | Inline in each slot | Separate bit vector |
-| Memory overhead | 0 bytes per slot | 1 bit per slot |
+| Capture-storage overhead | No separate allocation; depends on `T::Repr` | 1 bit per materialized slot |
 | Requires `Tagged` | Yes | No |
-| Best for | DenseId types (free tag) | Arbitrary types |
+| Best for | Types whose representation already has a free bit | Arbitrary types |
 
 Both implement the same `DiffStore` trait. The semi-persistent vector
 is generic over the backend.
@@ -158,8 +162,11 @@ Every semi-persistent container is parameterized by `const TRACK: bool`.
 When `TRACK = false`, `InlineStore::capture()` is a no-op,
 `prepare_mark()` skips clearing tags, `restore_entry()` is a no-op,
 and the diff log is never written. The compiler eliminates all
-tracking code entirely, which is useful for read-only configurations or
-benchmarks where push/pop is not needed.
+const-gated tracking work, which is useful for read-only configurations or
+benchmarks where push/pop is not needed. The generic vector still retains its
+empty diff, frame, and fork-history fields, plus general runtime guards; this
+is execution elision with retained empty-state fields, not a zero-layout or
+minimum-layout claim.
 
 ## Defining Your Own ID Types
 
@@ -177,9 +184,10 @@ This produces `NodeId` (clean, MSB always 0) and `StoredNodeId`
 `define_id7!` (7-bit), `define_id15!` (15-bit), `define_id63!`
 (63-bit for large pools).
 
-All generated types implement `DenseId`, `Tagged`, `IndexLike`,
-`Eq`, `Ord`, `Hash`, and `Debug`, with the MSB masked out in all
-comparisons.
+The generated clean ID implements `DenseId`, `Tagged`, `IndexLike`, `Eq`,
+`Ord`, `Hash`, and `Debug`, with the MSB masked out in comparisons. Its
+generated stored representation is a private-format `Copy` word used through
+the `Tagged` methods and does not directly implement those comparison traits.
 
 ---
 [← Table of Contents](00-table-of-contents.md) · [Ch 2: Semi-Persistent Vectors →](02-semi-persistent-vectors.md)

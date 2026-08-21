@@ -50,11 +50,12 @@
 //! - Net effect, asserted exactly in
 //!   `containers-conformance/tests/list_arena_differential.rs`: `tracking_bytes`
 //!   is byte-identical to production's and `total_bytes` differs by a constant
-//!   16 (the `u64` vs `u32` `ContainerId`, migration plan 2.6), at any size.
+//!   16 (the `u64` vs `u32` `ContainerId`) at any size.
 //! - `Copy + Default` throughout (the crate convention; `Vec::restore` regrow).
 
 use vstd::prelude::*;
 
+use crate::diff_store::DiffStore;
 use crate::index_like::IndexLike;
 use crate::inline_store::InlineStore;
 use crate::opt::DenseId;
@@ -525,7 +526,7 @@ pub struct ListArenaToken {
 }
 
 impl ListArenaToken {
-    /// Reconstruction coordinates of the two components (spec twins).
+    /// Reconstruction coordinates of the two components (spec counterparts).
     pub open(crate) spec fn heads_frame_idx_spec(self) -> nat {
         self.heads.frame_idx as nat
     }
@@ -554,7 +555,7 @@ where
     pub(crate) _n: core::marker::PhantomData<N>,
     /// Ghost model: `model@[l]` is the in-order node indices of list `l`.
     pub(crate) model: Ghost<Seq<Seq<usize>>>,
-    /// Ghost model-snapshot stack (plan Phase 7): `model_snapshots@[k]` is the
+    /// Ghost model-snapshot stack: `model_snapshots@[k]` is the
     /// model live at frame `k`'s mark, parallel to the inner vecs' snapshot
     /// stacks (`wf`'s agreement clauses). Lets `restore(token)` recover the
     /// marked model internally — no caller-supplied `Ghost` parameter.
@@ -707,26 +708,31 @@ where
         self.nodes.len().as_usize()
     }
 
-    /// Push headroom: an arena with room for one more id-representable node
-    /// also has room in the storage WORD. This is what lets the `push` sites
-    /// state ONE headroom precondition — the id-range one, which is the
-    /// meaningful bound (it limits what a `next` pointer can name) — rather than
-    /// a second, separate one about the storage word `N::Index`.
+    /// Push headroom, per id family: an arena with room for one more
+    /// id-representable node also has room in the storage WORD. This is what
+    /// lets the `push` sites state the id-range precondition — the meaningful
+    /// bound (it limits what a `next` pointer can name) — rather than a
+    /// second, separate one about the storage word `N::Index`.
     ///
-    /// Both arms of `lemma_id_bound_word_relation` give it:
+    /// The two arms of `lemma_id_bound_word_relation`:
     ///   - bit-stealing (Id31/Id63): `Index::max_nat() == 2 * id_bound`, and
-    ///     `len < id_bound` gives `len + 1 <= id_bound < 2 * id_bound`.
+    ///     `len < id_bound` gives `len + 1 <= id_bound < 2 * id_bound`. The
+    ///     arena therefore holds its FULL id range, `id_bound` nodes —
+    ///     production parity (production's own test fills all 128 slots of a
+    ///     7-bit arena).
     ///   - full-range (`DenseUsize`): `Index::max_nat() == id_bound ==
-    ///     usize::MAX + 1`, so the caller's `len + 1 < usize::MAX` already
-    ///     lands strictly below it.
+    ///     usize::MAX + 1`, no spare bit, so this family alone also needs the
+    ///     successor representable (the second hypothesis; same split as
+    ///     `UnionFind::try_make_set`).
     pub(crate) proof fn lemma_node_push_fits(len: nat)
-        requires len + 1 < N::id_bound(),
+        requires
+            len < N::id_bound(),
+            !N::is_bit_stealing() ==> len + 1 < N::id_bound(),
         ensures len + 1 < <N::Index as IndexLike>::max_nat(),
     {
         N::lemma_id_bound_word_relation();
         if N::is_bit_stealing() {
-            // max_nat == 2 * id_bound, and id_bound >= 1 (it exceeds len + 1),
-            // so id_bound < 2 * id_bound and the hypothesis carries through.
+            // max_nat == 2 * id_bound >= id_bound + 1 >= len + 2 > len + 1.
             assert(N::id_bound() >= 1);
             assert(N::id_bound() * 2 >= N::id_bound() + 1) by (nonlinear_arith)
                 requires N::id_bound() >= 1;
@@ -734,9 +740,11 @@ where
         // full-range arm: max_nat == id_bound, so the hypothesis IS the goal.
     }
 
-    /// The `heads` twin of `lemma_node_push_fits`, over `L`.
+    /// The `heads` counterpart of `lemma_node_push_fits`, over `L`.
     pub(crate) proof fn lemma_head_push_fits(len: nat)
-        requires len + 1 < L::id_bound(),
+        requires
+            len < L::id_bound(),
+            !L::is_bit_stealing() ==> len + 1 < L::id_bound(),
         ensures len + 1 < <L::Index as IndexLike>::max_nat(),
     {
         L::lemma_id_bound_word_relation();
@@ -791,7 +799,7 @@ where
     pub open(crate) spec fn heads_view(&self) -> Seq<ListHead<N>> {
         self.heads.view()
     }
-    /// Heads/nodes frame-stack depths and snapshot stacks (spec twins;
+    /// Heads/nodes frame-stack depths and snapshot stacks (spec counterparts;
     /// fields are `pub(crate)` — privacy closeout).
     pub open(crate) spec fn heads_depth_spec(&self) -> nat {
         self.heads.depth_spec()
@@ -817,7 +825,7 @@ where
         self.nodes.fork_count_spec()
     }
 
-    /// Model-snapshot stack (spec twin, Phase 7 archive).
+    /// Model-snapshot stack (spec counterpart of the archive).
     pub open(crate) spec fn model_snapshots_view(&self) -> Seq<Seq<Seq<usize>>> {
         self.model_snapshots@
     }
@@ -932,7 +940,7 @@ where
         &&& self.model_disjoint()
         &&& self.cache_ok()
         &&& self.cache_len()
-        // Model-snapshot agreement (Phase 7): the ghost model stack is
+        // Model-snapshot agreement: the ghost model stack is
         // parallel to the inner vecs' snapshot stacks (mark/restore keep them
         // in lockstep — one mark pushes both, one restore truncates both),
         // and each archived model describes the archived vec snapshots.
@@ -1056,6 +1064,9 @@ where
     pub fn new() -> (a: Self)
         ensures a.wf(), a.heads_view().len() == 0, a.nodes_view().len() == 0,
             a.model_view().len() == 0,
+            a.heads_snapshots_view().len() == 0,
+            a.nodes_snapshots_view().len() == 0,
+            a.model_snapshots_view().len() == 0,
     {
         let a = ListArena {
             heads:
@@ -1076,11 +1087,13 @@ where
         requires
             old(self).wf(),
             old(self).heads_view().len() + 1 < usize::MAX,
-            // Row headroom in `L`'s id range. The heads column is indexed by
-            // `L::Index` (production parity), so growing it needs the WORD to
-            // have room; `lemma_head_push_fits` derives that from the id bound,
-            // which is the bound the typed `new_list` already demands.
-            old(self).heads_view().len() + 1 < L::id_bound(),
+            // Row headroom in `L`'s id range, per family. The heads column is
+            // indexed by `L::Index` (production parity), so growing it needs
+            // the WORD to have room; `lemma_head_push_fits` derives that from
+            // the id bound. A bit-stealing `L` holds its full id range; only
+            // the full-range family needs the successor representable too.
+            old(self).heads_view().len() < L::id_bound(),
+            !L::is_bit_stealing() ==> old(self).heads_view().len() + 1 < L::id_bound(),
         ensures
             final(self).wf(),
             l == old(self).heads_view().len(),
@@ -1090,6 +1103,9 @@ where
             // existing lists unchanged.
             forall|m: int| 0 <= m < old(self).model_view().len()
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         let l = self.heads_len();
         proof { Self::lemma_head_push_fits(self.heads_view().len()); }
@@ -1121,10 +1137,13 @@ where
             old(self).wf(),
             (l as int) < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
-            // Packing headroom: the new slot's id must be representable, AND
-            // the node column's `N::Index` word must have room for one more row
-            // (`lemma_node_push_fits` derives the word bound from this one).
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // Packing headroom, per id family: the fresh slot's id must be
+            // representable, and `lemma_node_push_fits` derives the `N::Index`
+            // word bound from that. A bit-stealing `N` holds its full id range
+            // (production parity); only the full-range family also needs the
+            // successor representable, because its word has no spare bit.
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition. The count is `N::Index`-wide (the node
             // arena's own index type), so `len + 1` being representable follows from
             // `wf` — see the proof block below — rather than from anything the caller
@@ -1135,6 +1154,20 @@ where
             final(self).list_seq(l as int) == seq![payload] + old(self).list_seq(l as int),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects, for aggregate invariants stated over the model
+            // (eclasses W5): the model gains exactly the fresh node at the
+            // list's front, and no stored payload changes.
+            final(self).model_view() == old(self).model_view().update(l as int,
+                seq![old(self).nodes_view().len() as usize]
+                    + old(self).model_view()[l as int]),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Bound the old list length BEFORE mutating: a list is no longer than the arena
         // (`lemma_len_bounded`, from disjointness + in-range by pigeonhole). Combined with
@@ -1297,6 +1330,13 @@ where
                     assert(model[l2] == old_model[l2]);
                 }
             }
+
+            // --- raw effects: the model in one `update`, and the node prefix's
+            // payloads untouched. Both are restatements of the two facts
+            // established at the top of this block; the extensional equality is
+            // what a caller reasoning over the whole model needs.
+            assert(model =~= old_model.update(l as int, seq![slot] + old_model[l as int]));
+            assert(nodes[slot as int].payload == payload);
         }
     }
 
@@ -1305,20 +1345,18 @@ where
     /// relinks the OLD TAIL node's `next` *forward* to the new (larger-index)
     /// node. This forward link is exactly what the old index-ordering crutch
     /// could not represent; the ghost model makes it routine.
-    /// Measured ~11.7M rlimit (2.4s) once the disjointness quantifier is
-    /// delegated to `lemma_insert_fresh_disjoint`, i.e. ~1.17x the default
-    /// budget of 10, so this still does not pass bare. 30 is ~2.5x measured
-    /// need. It was 50.
-    #[verifier::rlimit(30)]
+    /// The disjointness quantifier is isolated in
+    /// `lemma_insert_fresh_disjoint`; the enclosing proof still exceeds the
+    /// default solver budget, so this function carries an explicit margin.
+    #[verifier::rlimit(60)]
     pub(crate) fn append_raw(&mut self, l: usize, payload: T)
         requires
             old(self).wf(),
             (l as int) < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
-            // Packing headroom: the new slot's id must be representable, AND
-            // the node column's `N::Index` word must have room for one more row
-            // (`lemma_node_push_fits` derives the word bound from this one).
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // Packing headroom, per id family; see `prepend_raw`.
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition; see `prepend_raw`. The count shares the node
             // index's width, so `wf` already bounds it.
         ensures
@@ -1327,6 +1365,19 @@ where
             final(self).list_seq(l as int) == old(self).list_seq(l as int).push(payload),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects, for aggregate invariants stated over the model
+            // (eclasses W5): the model gains exactly the fresh node at the
+            // list's end, and no stored payload changes.
+            final(self).model_view() == old(self).model_view().update(l as int,
+                old(self).model_view()[l as int].push(old(self).nodes_view().len() as usize)),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Bound the old list length before mutating; paired with the arena bound taken
         // after the push, this is what makes `len + 1` representable (see `prepend_raw`).
@@ -1579,6 +1630,18 @@ where
             forall|m: int| 0 <= m < final(self).model_view().len()
                 && m != dst as int && m != src as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects (eclasses W5): concatenated model, no payload moves.
+            final(self).model_view() == old(self).model_view()
+                .update(dst as int,
+                    old(self).model_view()[dst as int] + old(self).model_view()[src as int])
+                .update(src as int, Seq::<usize>::empty()),
+            final(self).nodes_view().len() == old(self).nodes_view().len(),
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         // Bound dst.len + src.len before mutating: the two lists are disjoint, so their
         // combined length fits the arena, and the arena fits `N::Index`. No node is
@@ -1774,7 +1837,7 @@ where
 
     // ---- semi-persistence: delegate to the two inner vectors ----
 
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: ListArenaToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: ListArenaToken)
         requires
             old(self).wf(),
             TRACK,
@@ -1789,10 +1852,18 @@ where
             final(self).model_view() == old(self).model_view(),
             token.heads_frame_idx_spec() == old(self).heads_depth_spec(),
             token.nodes_frame_idx_spec() == old(self).nodes_depth_spec(),
+            final(self).heads_snapshots_view()
+                == old(self).heads_snapshots_view().push(old(self).heads_view()),
+            final(self).nodes_snapshots_view()
+                == old(self).nodes_snapshots_view().push(old(self).nodes_view()),
+            final(self).model_snapshots_view()
+                == old(self).model_snapshots_view().push(old(self).model_view()),
+            token.heads_frame_idx_spec() == final(self).heads_snapshots_view().len() - 1,
+            token.nodes_frame_idx_spec() == final(self).nodes_snapshots_view().len() - 1,
     {
         let heads = self.heads.mark(shrink);
         let nodes = self.nodes.mark(shrink);
-        // Archive the live model alongside the vec snapshots (Phase 7): the
+        // Archive the live model alongside the vec snapshots: the
         // new frame's arena_model_wf obligation is exactly the live wf
         // clauses over the just-pushed snapshot (== the live views).
         self.model_snapshots = Ghost(self.model_snapshots@.push(self.model@));
@@ -1826,11 +1897,179 @@ where
         ListArenaToken { heads, nodes }
     }
 
-    /// Restore both arenas to the marked snapshot. The restored snapshots must
-    /// jointly form a valid arena *for the current ghost model* — i.e. the
-    /// model still describes them (`arena_model_wf`). Semi-persistence composes
-    /// from the two inner `Vec`s.
-    /// "Restorable now" for the composite token (plan 2.2/2.3).
+    // ------------------------------------------------------------------
+    // Total-operation shell.
+    // ------------------------------------------------------------------
+
+    /// Total list allocation: refuses at `L`'s id range.
+    pub fn try_new_list(&mut self) -> (r: Result<L, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(l) ==> l.id_nat() == old(self).heads_view().len()
+                && final(self).nodes_view() == old(self).nodes_view()
+                && final(self).model_view() == old(self).model_view().push(Seq::empty()),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+    {
+        let n = self.heads.store.data.len();
+        if n < usize::MAX - 1
+            && L::try_new(n).is_some()
+            && (L::bit_stealing() || L::try_new(n + 1).is_some())
+        {
+            Ok(self.new_list())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total append: refuses a bad list handle as `IndexOutOfBounds` and node
+    /// exhaustion as `CapacityExhausted`, where the guarded core panics.
+    pub fn try_append(&mut self, l: L, payload: T)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).list_seq(l.id_nat() as int)
+                == old(self).list_seq(l.id_nat() as int).push(payload),
+            r is Ok ==> {
+                &&& final(self).model_view() == old(self).model_view().update(
+                        l.id_nat() as int, old(self).model_view()[l.id_nat() as int].push(
+                            old(self).nodes_view().len() as usize))
+                &&& final(self).nodes_view().len() == old(self).nodes_view().len() + 1
+                &&& (forall|k: int| 0 <= k < old(self).nodes_view().len()
+                        ==> (#[trigger] final(self).nodes_view()[k]).payload
+                            == old(self).nodes_view()[k].payload)
+                &&& final(self).nodes_view()[old(self).nodes_view().len() as int].payload
+                    == payload
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).nodes_view() == old(self).nodes_view(),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+    {
+        if !(l.to_usize() < self.heads.store.data.len()) {
+            return Err(crate::error::ContainerError::IndexOutOfBounds);
+        }
+        let n = self.nodes.store.data.len();
+        if n < usize::MAX - 1
+            && N::try_new(n).is_some()
+            && (N::bit_stealing() || N::try_new(n + 1).is_some())
+        {
+            self.append(l, payload);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total prepend: refuses a bad list handle as `IndexOutOfBounds` and node
+    /// exhaustion as `CapacityExhausted`, where the guarded core panics.
+    pub fn try_prepend(&mut self, l: L, payload: T)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).list_seq(l.id_nat() as int)
+                == seq![payload] + old(self).list_seq(l.id_nat() as int),
+            r is Ok ==> {
+                &&& final(self).model_view() == old(self).model_view().update(
+                        l.id_nat() as int, seq![old(self).nodes_view().len() as usize]
+                            + old(self).model_view()[l.id_nat() as int])
+                &&& final(self).nodes_view().len() == old(self).nodes_view().len() + 1
+                &&& (forall|k: int| 0 <= k < old(self).nodes_view().len()
+                        ==> (#[trigger] final(self).nodes_view()[k]).payload
+                            == old(self).nodes_view()[k].payload)
+                &&& final(self).nodes_view()[old(self).nodes_view().len() as int].payload
+                    == payload
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view()
+                && final(self).nodes_view() == old(self).nodes_view(),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+    {
+        if !(l.to_usize() < self.heads.store.data.len()) {
+            return Err(crate::error::ContainerError::IndexOutOfBounds);
+        }
+        let n = self.nodes.store.data.len();
+        if n < usize::MAX - 1
+            && N::try_new(n).is_some()
+            && (N::bit_stealing() || N::try_new(n + 1).is_some())
+        {
+            self.prepend(l, payload);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total mark.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<ListArenaToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).model_view() == old(self).model_view()
+                &&& final(self).heads_view() == old(self).heads_view()
+                &&& final(self).nodes_view() == old(self).nodes_view()
+                &&& token.heads_frame_idx_spec() == old(self).heads_depth_spec()
+                &&& token.nodes_frame_idx_spec() == old(self).nodes_depth_spec()
+                &&& final(self).heads_snapshots_view()
+                    == old(self).heads_snapshots_view().push(old(self).heads_view())
+                &&& final(self).nodes_snapshots_view()
+                    == old(self).nodes_snapshots_view().push(old(self).nodes_view())
+                &&& final(self).model_snapshots_view()
+                    == old(self).model_snapshots_view().push(old(self).model_view())
+                &&& token.heads_frame_idx_spec()
+                    == final(self).heads_snapshots_view().len() - 1
+                &&& token.nodes_frame_idx_spec()
+                    == final(self).nodes_snapshots_view().len() - 1
+            },
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        let hn = self.heads.store.data.len();
+        let nn = self.nodes.store.data.len();
+        if !(hn < usize::MAX && nn < usize::MAX) {
+            return Err(crate::error::ContainerError::CapacityExhausted);
+        }
+        if !(self.heads.frames.len() < u32::MAX as usize
+            && self.nodes.frames.len() < u32::MAX as usize)
+        {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore: component restorability plus the same-mark frame
+    /// agreement (a mixed token from two different marks refuses).
+    pub fn try_restore(&mut self, token: ListArenaToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Err ==> final(self).model_view() == old(self).model_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
+    {
+        if self.is_valid_token(&token)
+            && token.heads.frame_idx == token.nodes.frame_idx
+        {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
+    /// Whether the composite token is restorable now.
     pub fn is_valid_token(&self, token: &ListArenaToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -1838,7 +2077,11 @@ where
         self.heads.is_valid_token(&token.heads) && self.nodes.is_valid_token(&token.nodes)
     }
 
-    pub fn restore(&mut self, token: ListArenaToken)
+    /// Restore both arenas to the marked snapshot. The restored snapshots must
+    /// jointly form a valid arena *for the current ghost model* — i.e. the
+    /// model still describes them (`arena_model_wf`). Semi-persistence composes
+    /// from the two inner `Vec`s.
+    pub(crate) fn restore(&mut self, token: ListArenaToken)
         requires
             old(self).wf(),
             TRACK,
@@ -1854,12 +2097,18 @@ where
                 == old(self).heads_snapshots_view()[token.heads_frame_idx_spec() as int],
             final(self).nodes_view()
                 == old(self).nodes_snapshots_view()[token.nodes_frame_idx_spec() as int],
-            // The restored model is the one archived at that mark (Phase 7:
-            // recovered internally, no caller-supplied ghost).
+            // The restored model is the one archived at that mark and recovered
+            // internally, with no caller-supplied ghost.
             final(self).model_view() == old(self).model_snapshots_view()[token.heads_frame_idx_spec() as int],
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view()
+                .subrange(0, token.heads_frame_idx_spec() as int),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view()
+                .subrange(0, token.nodes_frame_idx_spec() as int),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view()
+                .subrange(0, token.heads_frame_idx_spec() as int),
     {
-        // Atomic compound restore (plan 2.3): prevalidate BOTH constituent
-        // tokens before restoring either — heads rolled back without nodes
+        // Prevalidate both constituent tokens before restoring either. Heads
+        // rolled back without nodes
         // breaks the model invariants unrecoverably. Also pin the same-mark
         // frame agreement at runtime (frankentoken defense; free for genuine
         // tokens).
@@ -1912,7 +2161,7 @@ where
     }
 
     // =======================================================================
-    // Typed-id API (production surface, plan 5.4). Each method converts the
+    // Typed-id API for the production surface. Each method converts the
     // typed handle to the verified usize core through the DenseId axioms:
     // `l.as_usize()` ensures `r as nat == l.id_nat()`, so the core's
     // contracts restate over `id_nat`. The typed handle returned by
@@ -1921,11 +2170,12 @@ where
 
     /// Create a new empty list, returning its typed handle (production
     /// `new_list() -> L` parity). Requires headroom in `L`'s id range.
-    pub fn new_list(&mut self) -> (l: L)
+    pub(crate) fn new_list(&mut self) -> (l: L)
         requires
             old(self).wf(),
             old(self).heads_view().len() + 1 < usize::MAX,
-            old(self).heads_view().len() + 1 < L::id_bound(),
+            old(self).heads_view().len() < L::id_bound(),
+            !L::is_bit_stealing() ==> old(self).heads_view().len() + 1 < L::id_bound(),
         ensures
             final(self).wf(),
             l.id_nat() == old(self).heads_view().len(),
@@ -1934,9 +2184,12 @@ where
             final(self).list_seq(l.id_nat() as int) == Seq::<T>::empty(),
             forall|m: int| 0 <= m < old(self).model_view().len()
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
-        // Mint the typed handle for the WOULD-BE fresh row BEFORE any
-        // mutation (plan 2.3: reject-before-mutate) — id-range exhaustion
+        // Mint the typed handle for the would-be fresh row before any
+        // mutation. Id-range exhaustion
         // must not leave a headless grown arena behind.
         let next_row = self.heads_len();
         let l = match L::try_new(next_row) {
@@ -1966,14 +2219,16 @@ where
 
     /// O(1) prepend through the typed handle.
     #[inline(always)]
-    pub fn prepend(&mut self, l: L, payload: T)
+    pub(crate) fn prepend(&mut self, l: L, payload: T)
         requires
             old(self).wf(),
             l.id_nat() < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
             // node allocation stays within N's id range (production's
-            // VecI<_, N::Index> capacity semantics).
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // VecI<_, N::Index> capacity semantics: the full range for a
+            // bit-stealing family).
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition. The cached count is `N::Index`-wide, so its
             // bound follows from `wf` at every id width — including 63-bit, where the old
             // `u32` cache was a real 4-billion ceiling the caller had to promise to stay
@@ -1985,15 +2240,28 @@ where
                 == seq![payload] + old(self).list_seq(l.id_nat() as int),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects (eclasses W5), inherited from `prepend_raw`.
+            final(self).model_view() == old(self).model_view().update(l.id_nat() as int,
+                seq![old(self).nodes_view().len() as usize]
+                    + old(self).model_view()[l.id_nat() as int]),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
         // Runtime guard: node-id headroom before allocating (N::try_new on
-        // the would-be node row; reject-before-mutate).
+        // the fresh node row; reject-before-mutate).
         crate::guard::check_precondition(
-            // Guards the row AFTER the new one: the precondition is
-            // `len + 1 < id_bound` (the node column is indexed by `N::Index`,
-            // so the push needs word headroom too — `lemma_node_push_fits`),
-            // and `try_new(n).is_some() <==> n < id_bound`.
-            N::try_new(self.nodes_len() + 1).is_some(),
+            // The fresh slot's id must be representable
+            // (`try_new(n).is_some() <==> n < id_bound`); the full-range
+            // family alone also needs the successor representable
+            // (`lemma_node_push_fits` derives the word bound).
+            N::try_new(self.nodes_len()).is_some()
+                && (N::bit_stealing() || N::try_new(self.nodes_len() + 1).is_some()),
             "ListArena::prepend: node-id range exhausted",
         );
         let lu = l.as_usize();
@@ -2008,13 +2276,14 @@ where
 
     /// O(1) append through the typed handle (cached tail).
     #[inline(always)]
-    pub fn append(&mut self, l: L, payload: T)
+    pub(crate) fn append(&mut self, l: L, payload: T)
         requires
             old(self).wf(),
             l.id_nat() < old(self).model_view().len(),
             old(self).nodes_view().len() + 1 < usize::MAX,
-            // node allocation stays within N's id range.
-            old(self).nodes_view().len() + 1 < N::id_bound(),
+            // node allocation stays within N's id range; see `prepend`.
+            old(self).nodes_view().len() < N::id_bound(),
+            !N::is_bit_stealing() ==> old(self).nodes_view().len() + 1 < N::id_bound(),
             // No length-cache precondition; see `prepend`.
         ensures
             final(self).wf(),
@@ -2023,14 +2292,23 @@ where
                 == old(self).list_seq(l.id_nat() as int).push(payload),
             forall|m: int| 0 <= m < final(self).model_view().len() && m != l.id_nat() as int
                 ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            // raw effects (eclasses W5), inherited from `append_raw`.
+            final(self).model_view() == old(self).model_view().update(l.id_nat() as int,
+                old(self).model_view()[l.id_nat() as int].push(
+                    old(self).nodes_view().len() as usize)),
+            final(self).nodes_view().len() == old(self).nodes_view().len() + 1,
+            forall|k: int| 0 <= k < old(self).nodes_view().len()
+                ==> (#[trigger] final(self).nodes_view()[k]).payload
+                    == old(self).nodes_view()[k].payload,
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
+            final(self).nodes_view()[old(self).nodes_view().len() as int].payload == payload,
     {
-        // Runtime guard: node-id headroom before allocating.
+        // Runtime guard: node-id headroom before allocating; see `prepend`.
         crate::guard::check_precondition(
-            // Guards the row AFTER the new one: the precondition is
-            // `len + 1 < id_bound` (the node column is indexed by `N::Index`,
-            // so the push needs word headroom too — `lemma_node_push_fits`),
-            // and `try_new(n).is_some() <==> n < id_bound`.
-            N::try_new(self.nodes_len() + 1).is_some(),
+            N::try_new(self.nodes_len()).is_some()
+                && (N::bit_stealing() || N::try_new(self.nodes_len() + 1).is_some()),
             "ListArena::append: node-id range exhausted",
         );
         proof { l.lemma_as_nat_is_id_nat(); }  // as_usize -> id_nat bridge. prod-parity
@@ -2047,18 +2325,26 @@ where
     /// that it fits.
     #[inline(always)]
     pub fn len(&self, l: L) -> (n: N::Index)
-        requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures n.as_nat() == self.list_seq(l.id_nat() as int).len(),
+        requires self.wf(),
+        ensures l.id_nat() < self.model_view().len() ==> n.as_nat() == self.list_seq(l.id_nat() as int).len(),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
+        // Total-with-documented-panic: explicit handle-bound branch.
+        if !(l.as_usize() < self.heads.store.data.len()) {
+            crate::guard::refuse("ListArena::len: list handle out of range");
+        }
         self.len_raw(l.as_usize())
     }
 
     pub fn is_empty(&self, l: L) -> (b: bool)
-        requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures b == (self.list_seq(l.id_nat() as int) == Seq::<T>::empty()),
+        requires self.wf(),
+        ensures l.id_nat() < self.model_view().len() ==> b == (self.list_seq(l.id_nat() as int) == Seq::<T>::empty()),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
+        // Total-with-documented-panic: explicit handle-bound branch.
+        if !(l.as_usize() < self.heads.store.data.len()) {
+            crate::guard::refuse("ListArena::is_empty: list handle out of range");
+        }
         self.is_empty_raw(l.as_usize())
     }
 
@@ -2082,7 +2368,7 @@ where
     /// (`containers-conformance/tests/list_arena_differential.rs`). Both sides
     /// use `InlineStore` over `L::Index`/`N::Index` columns, so elements, capture
     /// flags and diff-log entries are all the same width; the only residual delta
-    /// is a constant 16 bytes from the `u64` `ContainerId` (migration plan 2.6).
+    /// is a constant 16 bytes from the `u64` `ContainerId`.
     /// `external_body`: unmodeled capacity diagnostic (see `tracking_bytes`).
     #[verifier::external_body]
     pub fn total_bytes(&self) -> usize {
@@ -2095,45 +2381,75 @@ where
     pub fn splice(&mut self, dst: L, src: L)
         requires
             old(self).wf(),
-            dst.id_nat() < old(self).model_view().len(),
-            src.id_nat() < old(self).model_view().len(),
-            dst.id_nat() != src.id_nat(),
             // No length-cache precondition for the merged list; see `prepend`. The two
             // lists are disjoint, so `splice_raw` derives the bound from `wf`.
         ensures
             final(self).wf(),
-            final(self).model_view().len() == old(self).model_view().len(),
-            final(self).list_seq(dst.id_nat() as int)
-                == old(self).list_seq(dst.id_nat() as int)
-                    + old(self).list_seq(src.id_nat() as int),
-            final(self).list_seq(src.id_nat() as int) == Seq::<T>::empty(),
-            forall|m: int| 0 <= m < final(self).model_view().len()
-                && m != dst.id_nat() as int && m != src.id_nat() as int
-                ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m),
+            (dst.id_nat() < old(self).model_view().len()
+                && src.id_nat() < old(self).model_view().len()
+                && dst.id_nat() != src.id_nat()) ==> {
+                &&& final(self).model_view().len() == old(self).model_view().len()
+                &&& final(self).list_seq(dst.id_nat() as int)
+                    == old(self).list_seq(dst.id_nat() as int)
+                        + old(self).list_seq(src.id_nat() as int)
+                &&& final(self).list_seq(src.id_nat() as int) == Seq::<T>::empty()
+                &&& forall|m: int| 0 <= m < final(self).model_view().len()
+                    && m != dst.id_nat() as int && m != src.id_nat() as int
+                    ==> #[trigger] final(self).list_seq(m) == old(self).list_seq(m)
+                // raw effects (eclasses W5), inherited from `splice_raw`.
+                &&& final(self).model_view() == old(self).model_view()
+                    .update(dst.id_nat() as int, old(self).model_view()[dst.id_nat() as int]
+                        + old(self).model_view()[src.id_nat() as int])
+                    .update(src.id_nat() as int, Seq::<usize>::empty())
+                &&& final(self).nodes_view().len() == old(self).nodes_view().len()
+                &&& (forall|k: int| 0 <= k < old(self).nodes_view().len()
+                        ==> (#[trigger] final(self).nodes_view()[k]).payload
+                            == old(self).nodes_view()[k].payload)
+            },
+            // out-of-range or equal handles refuse before any mutation, so
+            // every returning path outside the guarded case is a no-op
+            // (vacuously provable: those paths diverge).
+            !(dst.id_nat() < old(self).model_view().len()
+                && src.id_nat() < old(self).model_view().len()
+                && dst.id_nat() != src.id_nat())
+                ==> final(self).model_view() == old(self).model_view()
+                    && final(self).nodes_view() == old(self).nodes_view(),
+            final(self).heads_snapshots_view() == old(self).heads_snapshots_view(),
+            final(self).nodes_snapshots_view() == old(self).nodes_snapshots_view(),
+            final(self).model_snapshots_view() == old(self).model_snapshots_view(),
     {
         proof { dst.lemma_as_nat_is_id_nat(); src.lemma_as_nat_is_id_nat(); }  // prod-parity
         let du = dst.as_usize();
         let su = src.as_usize();
-        // Runtime guard (plan 2.3): same-handle splice would corrupt the
-        // list; erased spec precondition mirrored before any mutation.
-        crate::guard::check_precondition(
-            du != su,
-            "ListArena::splice: dst and src are the same list",
-        );
+        // Total-with-documented-panic: handle bounds and the same-handle case
+        // are explicit branches (the same-handle splice would corrupt the
+        // list; formerly a check_precondition on an erased requires).
+        let hn = self.heads.store.data.len();
+        if !(du < hn && su < hn) {
+            crate::guard::refuse("ListArena::splice: list handle out of range");
+        }
+        if du == su {
+            crate::guard::refuse("ListArena::splice: dst and src are the same list");
+        }
         self.splice_raw(du, su)
     }
 
     /// Iterate list `l` in order, yielding payloads by value (production
     /// `ListIter` parity).
     pub fn iter(&self, l: L) -> (it: ListIter<'_, T, L, N, TRACK>)
-        requires self.wf(), l.id_nat() < self.model_view().len(),
-        ensures
-            it.arena_ref() == self,
-            it.list_spec() == l.id_nat(),
-            it.pos_spec() == 0,
-            it.cursor_ok(),
+        requires self.wf(),
+        ensures l.id_nat() < self.model_view().len() ==> ({
+            &&& it.arena_ref() == self
+            &&& it.list_spec() == l.id_nat()
+            &&& it.pos_spec() == 0
+            &&& it.cursor_ok()
+        }),
     {
         proof { l.lemma_as_nat_is_id_nat(); }  // prod-parity
+        // Total-with-documented-panic: handle-bound branch.
+        if !(l.as_usize() < self.heads.store.data.len()) {
+            crate::guard::refuse("ListArena::iter: list handle out of range");
+        }
         let lu = l.as_usize();
         let head = self.heads.get_index(self.head_ix(lu)).head();
         proof {
@@ -2177,18 +2493,18 @@ where
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
 {
-    /// The arena this iterator walks (spec twin; fields are `pub(crate)` —
+    /// The arena this iterator walks (spec counterpart; fields are `pub(crate)` —
     /// privacy closeout).
     pub open(crate) spec fn arena_ref(&self) -> &'a ListArena<T, L, N, TRACK> {
         self.arena
     }
 
-    /// The (raw) list row (spec twin).
+    /// The (raw) list row (spec counterpart).
     pub open(crate) spec fn list_spec(&self) -> nat {
         self.list as nat
     }
 
-    /// The cursor position (spec twin).
+    /// The cursor position (spec counterpart).
     pub open(crate) spec fn pos_spec(&self) -> nat {
         self.pos as nat
     }
@@ -2208,31 +2524,32 @@ where
 
     /// Yield `list_seq(list)[pos]` and advance the cursor — O(1) per call.
     ///
-    /// No `rlimit` and no `spinoff_prover`: this verifies at the default budget. Worth
-    /// recording, because widening the cached count first presented here as an rlimit
-    /// exhaustion, which reads like a solver-budget problem and is not one — raising the
-    /// budget only let the solver get far enough to report the real goal, the `pos + 1`
-    /// overflow check below. The fix was the missing fact (`IndexLike::
-    /// lemma_max_nat_fits_usize`), not more budget; with it, the cost is back where it was.
+    /// This verifies at the default budget. `IndexLike::lemma_max_nat_fits_usize`
+    /// discharges the `pos + 1` overflow obligation created by the cached count.
     #[inline(always)]
     pub fn next(&mut self) -> (r: Option<T>)
         requires
             old(self).arena_ref().wf(),
-            (old(self).list_spec() as int) < old(self).arena_ref().model_view().len(),
             old(self).cursor_ok(),
         ensures
-            final(self).arena_ref() == old(self).arena_ref(),
-            final(self).list_spec() == old(self).list_spec(),
-            final(self).cursor_ok(),
-            old(self).pos_spec() < old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
-                &&& r == Some(old(self).arena_ref().list_seq(old(self).list_spec() as int)[old(self).pos_spec() as int])
-                &&& final(self).pos_spec() == old(self).pos_spec() + 1
-            },
-            old(self).pos_spec() >= old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
-                &&& r is None
-                &&& final(self).pos_spec() == old(self).pos_spec()
-            },
+            (old(self).list_spec() as int) < old(self).arena_ref().model_view().len() ==> ({
+                &&& final(self).arena_ref() == old(self).arena_ref()
+                &&& final(self).list_spec() == old(self).list_spec()
+                &&& final(self).cursor_ok()
+                &&& (old(self).pos_spec() < old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
+                    &&& r == Some(old(self).arena_ref().list_seq(old(self).list_spec() as int)[old(self).pos_spec() as int])
+                    &&& final(self).pos_spec() == old(self).pos_spec() + 1
+                })
+                &&& (old(self).pos_spec() >= old(self).arena_ref().list_seq(old(self).list_spec() as int).len() ==> {
+                    &&& r is None
+                    &&& final(self).pos_spec() == old(self).pos_spec()
+                })
+            }),
     {
+        // Total-with-documented-panic: stale-handle branch.
+        if !(self.list < self.arena.heads.store.data.len()) {
+            crate::guard::refuse("ListIter::next: list handle out of range");
+        }
         let ghost m = self.arena.model_view()[self.list as int];
         if self.cur.is_null_exec() {
             proof {
@@ -2278,7 +2595,7 @@ where
 /// Structural arena validity over raw snapshot sequences *plus* the ghost model
 /// that was live at the mark (for `restore`): the restored heads/nodes, with
 /// `model`, must satisfy the same in-range + disjoint + cache clauses as `wf`.
-/// The Phase 7 archive agreement for ListArena, opaque (see `wf`'s comment).
+/// The archive agreement for ListArena, opaque (see `wf`'s comment).
 #[verifier::opaque]
 pub open(crate) spec fn arena_archive_agrees<T, N: DenseId + Tagged>(
     archive: Seq<Seq<Seq<usize>>>,
@@ -2632,5 +2949,17 @@ where
     #[inline(always)]
     fn next(&mut self) -> Option<T> {
         ListIter::next(self)
+    }
+}
+
+// Production-surface parity (production ships Default).
+impl<T, L, N, const TRACK: bool> Default for ListArena<T, L, N, TRACK>
+where
+    T: Sized + Copy + core::default::Default + Tagged,
+    L: DenseId,
+    N: DenseId + Tagged + core::default::Default,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -47,6 +47,14 @@ impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRAC
     /// # Panics
     ///
     /// If the log has no room left in `I`; see [`AppendOnlyVec::push`].
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_insert(&mut self, key: K, val: V) -> Result<I, &'static str> {
+        Ok(self.insert(key, val))
+    }
+
     pub fn insert(&mut self, key: K, val: V) -> I {
         let id = self.log.push((key.clone(), val));
         self.index.insert(key, id);
@@ -86,7 +94,7 @@ impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRAC
     ///
     /// `usize`, not `I`: this is the hash index's own cardinality, not a log
     /// position. It is in fact bounded by the log — each live key holds one
-    /// position — but that bound is an injection argument the verified twin cannot
+    /// position — but that bound is an injection argument the verified counterpart cannot
     /// discharge cheaply, and the count is never stored, so narrowing it would buy
     /// nothing. [`log_len`](Self::log_len) is the one that counts positions.
     pub fn len(&self) -> usize {
@@ -106,12 +114,29 @@ impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRAC
         self.index.contains_key(key)
     }
 
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_mark(&mut self, policy: super::ShrinkPolicy) -> Result<MapToken, &'static str> {
+        Ok(self.mark(policy))
+    }
+
     pub fn mark(&mut self, shrink: super::ShrinkPolicy) -> MapToken {
         MapToken(self.log.mark(shrink))
     }
 
     /// Restore to the given token. Truncates the log and rebuilds the
     /// HashMap from surviving entries.
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_restore(&mut self, token: MapToken) -> Result<(), &'static str> {
+        self.restore(token);
+        Ok(())
+    }
+
     pub fn restore(&mut self, token: MapToken) {
         self.log.restore(token.0);
         self.rebuild_index();

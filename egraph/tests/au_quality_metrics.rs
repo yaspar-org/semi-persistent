@@ -7,7 +7,7 @@
 //! * raw anti-unifier size;
 //! * the linear compression ratio;
 //! * the current Python proof-of-concept reward (`mcts.py`, `AUNode::ucb1_value`);
-//! * the original e-class NCR intent; and
+//! * an alternative e-class NCR definition; and
 //! * Rust's approved `(size, variant_mass)` tie-break.
 //!
 //! They also expose why normalization constants must be shared by all actions of
@@ -61,7 +61,7 @@ fn python_ncr(au_size: f64, left_best: f64, right_best: f64) -> f64 {
     unbounded_exp_normalize(cr, 1.0, X_TARGET)
 }
 
-/// Original e-class NCR intent supplied with this review:
+/// Alternative e-class NCR definition:
 /// adjusted = size - min_repr; scale = max_repr - min_repr.
 fn intended_eclass_ncr(au_size: f64, left_best: f64, right_best: f64) -> f64 {
     let min_repr = left_best.min(right_best);

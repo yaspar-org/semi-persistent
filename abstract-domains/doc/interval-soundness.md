@@ -18,7 +18,7 @@ The `Interval` type in `domains.rs` currently has two gaps:
 
 2. **Missing operations.** The TAI reduced product hardcodes `Interval::top()`
    for bitwise ops, sub, mul, neg, shifts. These are sound (⊤ contains
-   everything) but the soundness obligation is implicit — there is no
+   everything) but the soundness obligation is implicit: there is no
    `Interval::bw_or` method with an ensures clause that a caller or future
    maintainer can rely on.
 
@@ -65,7 +65,7 @@ New methods on `Interval`, all returning `top()` with soundness ensures:
 | `sub`      | `top()`   | trivial                                      |
 | `mul`      | `top()`   | trivial                                      |
 | `neg`      | `top()`   | trivial                                      |
-| `rsh`      | precise   | `[lo>>1, hi>>1]` — monotone, easy proof      |
+| `rsh`      | precise   | `[lo>>1, hi>>1]`, monotone, easy proof       |
 | `lsh`      | precise   | overflow check like `plus`                   |
 | `div`      | split+alarm | see §4 below                               |
 
@@ -90,7 +90,7 @@ Lattice order: `None ⊑ Maybe ⊑ Definite`.
 - `join(Maybe, Maybe) = Maybe`
 
 This is the Astrée-style error flag (Cousot, Cousot, Feret, Mauborgne, Miné,
-Rival — ENS). It cleanly separates "what value do we get" from "could this
+Rival, at ENS). It cleanly separates "what value do we get" from "could this
 crash", and composes with any numeric domain.
 
 #### 4.2 Interval division: `[a,b] ÷ [c,d]`
@@ -129,12 +129,12 @@ All other TAI operations set `alarm: Alarm::None`.
 The fuzz test file (`abstract-domains/tests/fuzz.rs`) currently tests ETn (all ops),
 EAn (plus, div_const), and Interval (plus only). We add:
 
-- `Interval::contains` — used by all interval fuzz tests
-- `fuzz_iv_sub`, `fuzz_iv_mul` — verify `top()` contains results (trivial but confirms wiring)
-- `fuzz_iv_rsh`, `fuzz_iv_lsh` — verify precise results
-- `fuzz_iv_div_const` — verify existing div_const soundness
-- `fuzz_iv_div` — verify interval÷interval soundness (skip div-by-zero samples, verify alarm flag)
-- `fuzz_iv_bw_or`, `fuzz_iv_bw_and`, `fuzz_iv_bw_xor` — verify top() containment
+- `Interval::contains`: used by all interval fuzz tests
+- `fuzz_iv_sub`, `fuzz_iv_mul`: verify `top()` contains results (trivial but confirms wiring)
+- `fuzz_iv_rsh`, `fuzz_iv_lsh`: verify precise results
+- `fuzz_iv_div_const`: verify existing div_const soundness
+- `fuzz_iv_div`: verify interval÷interval soundness (skip div-by-zero samples, verify alarm flag)
+- `fuzz_iv_bw_or`, `fuzz_iv_bw_and`, `fuzz_iv_bw_xor`: verify top() containment
 
 ### 7. Alternative interval representations (future work)
 
@@ -156,7 +156,7 @@ increasing implementation and proof complexity.
 
 Balakrishnan & Reps (CC 2004, PhD thesis 2007). Triples `(stride, lo, hi)`
 representing `{i : lo ≤ i ≤ hi ∧ i ≡ lo (mod stride)}`. Captures alignment
-and regular spacing — e.g., `4[0, 252]` means `{0, 4, 8, ..., 252}`. Meet
+and regular spacing, e.g., `4[0, 252]` means `{0, 4, 8, ..., 252}`. Meet
 requires solving modular congruence systems (CRT). Formally verified in Coq
 as part of the Verasco/CompCert project (IRISA).
 
@@ -259,10 +259,10 @@ boolean `b`.
 
 - [x] 1.1 Add `Interval::contains` spec
 - [x] 1.2 Add soundness ensures to `Interval::constant`, `top`, `plus`, `meet`, `join`, `div_const`
-- [x] 1.3 Add `Interval::bw_or`, `bw_and`, `bw_xor`, `bw_not` — return `top()`, soundness ensures
-- [x] 1.4 Add `Interval::sub`, `mul`, `neg` — return `top()`, soundness ensures
-- [x] 1.5 Add `Interval::rsh` — precise `[lo>>1, hi>>1]`, soundness ensures
-- [x] 1.6 Add `Interval::lsh` — with overflow to `top()`, soundness ensures
+- [x] 1.3 Add `Interval::bw_or`, `bw_and`, `bw_xor`, `bw_not`: return `top()`, soundness ensures
+- [x] 1.4 Add `Interval::sub`, `mul`, `neg`: return `top()`, soundness ensures
+- [x] 1.5 Add `Interval::rsh`: precise `[lo>>1, hi>>1]`, soundness ensures
+- [x] 1.6 Add `Interval::lsh`: with overflow to `top()`, soundness ensures
 - [x] 1.7 Update TAI methods to call Interval methods instead of inlining `Interval::top()`
 
 ### Phase 2: Alarm lattice and division

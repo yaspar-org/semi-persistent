@@ -11,12 +11,22 @@ pub enum ShrinkPolicy {
     IfOverallocated { factor: usize, headroom: usize },
 }
 
-/// Semi-persistent vector: O(1) snapshots, O(k) restoration.
+/// Semi-persistent vector with sparse snapshot memory.
+///
+/// With `ShrinkPolicy::Never`, `mark()` is O(previous-frame captures) for
+/// `InlineStore` and O(materialized capture words) for `ParallelStore`; it is
+/// not unconditionally O(1). Requested capacity reclamation may additionally
+/// move O(n) live values. For `b` fork-history links walked, replayed entries
+/// `k`, regrown cells `r`, discarded live values with destructors `q`,
+/// surviving-parent entries `p`, and materialized capture words `w`, restore
+/// is O(b + k + r + q + p) for `InlineStore` and
+/// O(b + k + r + q + p + w) for `ParallelStore`.
 ///
 /// - `T` — value type (only `Clone` required, to keep the container general)
 /// - `I` — index type (controls capacity and diff entry size)
 /// - `S` — storage backend (`InlineStore` or `ParallelStore`)
-/// - `TRACK` — compile out all tracking when false
+/// - `TRACK` — compile out const-gated tracking execution when false; empty
+///   diff/frame/fork fields remain in the generic layout
 ///
 /// The `Clone` bound allows this container to work with any value type,
 /// including heap-owning types like `String` or `Vec`. For performance-
@@ -51,12 +61,21 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.store.len() == I::MIN
     }
 
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_push(&mut self, value: T) -> Result<(), &'static str> {
+        self.push(value);
+        Ok(())
+    }
+
     pub fn push(&mut self, value: T) {
         let old_len = self.store.len();
         self.store.push(value);
         // Re-entering a popped-but-already-captured marked slot: mark it
         // captured so a later `set` does not log a second diff entry for it
-        // (preserves first-write-wins / the ≤ saved_len bound).
+        // (preserves the per-frame first-write-wins / ≤ saved_len bound).
         let reentered = TRACK
             && !self.frames.is_empty()
             && old_len.as_usize() < self.active_saved_len.as_usize();
@@ -72,7 +91,7 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         let i = I::try_from_usize(self.store.len().as_usize() - 1).expect("underflow");
         let value = self.store.get(i);
         // Conditional (first-write-wins) capture: at most one diff entry per
-        // index per frame, so the log stays bounded by saved_len.
+        // index per frame, so this frame's stratum stays bounded by saved_len.
         if TRACK && !self.frames.is_empty() {
             self.store
                 .capture(i, self.active_saved_len, &mut self.diff_log);
@@ -110,6 +129,14 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         self.store.as_slice()
     }
 
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_mark(&mut self, policy: ShrinkPolicy) -> Result<VecToken, &'static str> {
+        Ok(self.mark(policy))
+    }
+
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> VecToken {
         assert!(TRACK, "mark() called on untracked vec");
         self.maybe_shrink(shrink);
@@ -133,6 +160,18 @@ impl<T: Clone, I: IndexLike, S: DiffStore<T, I, TRACK>, const TRACK: bool> Vec<T
         });
         self.active_saved_len = saved_len;
         token
+    }
+
+    /// Total-API counterpart (parity with the verified crate's shell): production's
+    /// core panics on misuse, so the counterpart always returns Ok and the panic
+    /// stays the documented behavior. Exists so shared prod/verus harness
+    /// bodies can use one calling convention.
+    pub fn try_restore(&mut self, token: VecToken) -> Result<(), &'static str>
+    where
+        T: Default,
+    {
+        self.restore(token);
+        Ok(())
     }
 
     pub fn restore(&mut self, token: VecToken)

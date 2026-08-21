@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `ContainerId`: opaque per-container identity.
 //!
-//! Production code uses a process-global atomic counter so each `Vec`
-//! instance gets a unique id; `restore` rejects a token whose `container_id`
-//! doesn't match. Verus models this with an `external_body` wrapper around the
+//! Production code uses a process-global atomic counter to assign each `Vec`
+//! instance an incrementing payload (until the finite counter wraps);
+//! `restore` rejects a token whose `container_id` doesn't match. Verus models
+//! this with an `external_body` wrapper around the
 //! runtime `u64` plus a ghost `id: nat` projection. The exec equality test
 //! `eq` is specified to reflect ghost-id equality exactly, which is all the
 //! `restore` cross-container guard needs:
@@ -14,11 +15,12 @@
 //! The container check only rejects *cross-container misuse* (a caller error),
 //! so it is NOT on the correctness-critical path — restore's reconstruction
 //! theorem stands without it. We therefore keep this encoding minimal: the
-//! verified guarantee is the faithful reflection above (a matching id provably
-//! means the exec check passed, so a token minted by another container is
-//! provably rejected — the soundness-relevant direction).
+//! verified guarantee is only the faithful reflection above: a matching ghost
+//! id means the executable equality check passed. The model does not prove
+//! that two calls to `new` return distinct ids, so foreign-token rejection is
+//! conditional on the runtime allocator not reusing a live payload.
 //!
-//! ## Uniqueness (migration plan 2.6): width, not a runtime check
+//! ## Uniqueness: width, not a runtime check
 //!
 //! Foreign-token rejection is only as strong as id uniqueness, and a wrapping
 //! counter would eventually hand two live containers the same id. Production's
@@ -29,50 +31,20 @@
 //! opt-in via the `strict-id-exhaustion` feature, which makes exhaustion fatal
 //! instead of wrapping. Debug builds assert unconditionally.
 //!
-//! ### Why the guard cannot be free (measured)
+//! ### Performance evidence
 //!
-//! An unconditional guard costs **+21.8%** on `micro/push_only_untracked`.
-//! Bisected by instruction-shape probes on the exact loop the bench compiles
-//! (write-up in `doc/design/11-layout-parity.md`), counting instructions in the
-//! push loop and two markers: `lea` = length recomputed as `base + i`,
-//! `shr $0x20` = per-iteration `u32`-fit test.
-//!
-//! | allocator body                                  | instrs | `lea` | `shr` | vs prod |
-//! |-------------------------------------------------|--------|-------|-------|---------|
-//! | production `fetch_add` on `AtomicU32`           | 54     | 0     | 0     | —       |
-//! | `fetch_add`, `debug_assert!` only  (**default**)| 55     | 0     | 0     | +0.2%   |
-//! | `fetch_add` + non-diverging early return        | 58     | 0     | 0     | ~parity |
-//! | `fetch_add` + second atomic op (any form)       | 94     | 2     | 1     | +21.8%  |
-//! | `fetch_add` + diverging panic                   | 94     | 2     | 1     | +21.8%  |
-//! | `fetch_update` CAS loop, no guard at all        | 94     | 2     | 1     | +21.8%  |
-//!
-//! Three independent triggers, each sufficient on its own: a CAS loop, a
-//! diverging (`-> !`) arm branched on the freshly minted id, or a *second*
-//! atomic memory operation. Each splits the basic block in `Vec::with_store`,
-//! which spills the partially-initialized `Vec` to memory and destroys the fact
-//! that a fresh store's length is 0. Downstream, `push` then recomputes length
-//! as `base + i` (two `lea` per iteration) instead of reusing the loop counter,
-//! and `I::try_from_usize`'s overflow test degrades from a hoisted
-//! loop-invariant `cmp` into a per-iteration `mov`/`shr $0x20`/`jne`.
-//! `#[cold]`, `#[inline(never)]`, `extern "C"` (nounwind), `abort`-instead-of-
-//! `panic`, and branchless `cmov` selects were all measured; none help. The
-//! block split is the cost, and one atomic op is the entire budget.
-//!
-//! This is not a Verus artifact: adding the same diverging guard to
-//! *production's* `token.rs` degrades production identically (70 → 86 instrs,
-//! `lea=2`, `shr=1`). It is the inherent price of the check.
-//!
-//! It also only manifests when the push count is a **compile-time constant**,
-//! as it is in the bench. With a runtime count — every real consumer, the
-//! e-graph included — both sides measure parity even with the guard. That is
-//! why the hand-timed harnesses read parity while criterion read +40%: they
-//! compile different loops, and each was right about its own.
+//! The default keeps the one-atomic allocation shape; the strict feature adds
+//! an exhaustion branch. Any machine-sensitive comparison between them belongs
+//! in the maintained Criterion conformance benchmark, with revision and
+//! confidence interval. This module does not preserve fixed percentages from
+//! instruction probes or hand-timed runs as current performance claims.
 //!
 //! Two rejected alternatives worth recording. An *absorbing poison band* (top
 //! 2^32 reserved, counter clamped back on overflow) is sound but needs a second
 //! atomic store to be absorbing — without the clamp a plain `fetch_add` climbs
-//! through the band and wraps to live low ids — and the second store is exactly
-//! what costs 21.8%. A *fail-closed* `eq` (`raw == other.raw && raw <
+//! through the band and wraps to live low ids. That changes the allocation hot
+//! path; its machine cost must be established by the maintained Criterion
+//! benchmark. A *fail-closed* `eq` (`raw == other.raw && raw <
 //! THRESHOLD`) measures at parity but is **unsound here**: `eq` is
 //! `external_body` with `ensures b == (self.id() == other.id())`, so returning
 //! `false` for `self.eq(self)` would make an assumed postcondition false.
@@ -85,7 +57,7 @@
 //! monotone counter threaded as a linear resource and advanced on each `new()`
 //! (`ensures fresh > all prior`), no global mutable static required. Deferred
 //! because the check is off the critical path. See
-//! `doc/design/02-fork-history.md` §4(c).
+//! `doc/design/03-fork-history.md` section 5.
 
 use vstd::prelude::*;
 
@@ -154,15 +126,14 @@ static NEXT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(
 /// Allocation from a shared counter: returns the current value and advances it.
 ///
 /// Deliberately production's algorithm — a single `fetch_add`, no CAS, no second
-/// atomic op, no diverging arm — because each of those costs 21.8% on
-/// constant-count push loops (module doc). Under `strict-id-exhaustion` the
+/// atomic op, no diverging arm. Under `strict-id-exhaustion` the
 /// unconditional trap is restored, paying that cost for a fatal-instead-of-
-/// wrapping exhaustion. `debug_assert!` covers debug builds either way, so the
-/// boundary is exercised by the test suite regardless of features.
+/// wrapping exhaustion. The cost must be measured with Criterion rather than a
+/// fixed historical ratio. `debug_assert!` covers debug builds either way, so
+/// the boundary is exercised by the test suite regardless of features.
 ///
-/// Factored out of `ContainerId::new` so tests can park a counter at the
-/// boundary rather than iterating 2^64 times (plan 2.5: forged-state /
-/// exhaustion cases are in-module unit tests).
+/// Factored out of `ContainerId::new` so tests can inject the exhaustion
+/// boundary rather than iterating 2^64 times.
 ///
 /// Outside `verus!{}`: this is the trusted allocator behind the `external_body`
 /// `new` (trust group A). Its no-reuse property rests on the `u64` width, not on
@@ -187,14 +158,24 @@ fn next_id_from(counter: &core::sync::atomic::AtomicU64) -> u64 {
     prev
 }
 
+// Production-surface parity: derived equality on the raw counter value (the
+// inherent `eq` is the verified spelling; this is the operator form).
+impl PartialEq for ContainerId {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+impl Eq for ContainerId {}
+
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::AtomicU64;
 
     /// The boundary is observable: allocating at the limit trips the guard
     /// (debug builds always; release builds under `strict-id-exhaustion`). The
-    /// terminal-state-injection test from plan 2.5/2.6 — we park the counter at
-    /// the boundary rather than iterating 2^64 times.
+    /// test injects the terminal counter state rather than iterating 2^64
+    /// times.
     ///
     /// `cfg`-gated on the guard being live: with the guard compiled out in a
     /// release test run, `next_id_from` wraps by design and there is nothing to

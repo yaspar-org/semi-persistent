@@ -1,0 +1,18 @@
+;; TYPES: machine
+;; LAZY_AC_EQS: on
+;; Lazy AC completion, phase 1 (frozen graph): z = 6 + (-y) entails
+;; z + z = 6 + (-y) + 6 + (-y), which plain canonization cannot decide
+;; (z's class is atomic, so it is kept as a summand) and the lazy check
+;; decides inside a mark/complete/restore transaction.
+(datatype E
+    (Add E :assoc-comm)
+    (Neg E)
+    (Const i64)
+    (Var String))
+(let z (Var "z"))
+(let y (Var "y"))
+(union z (Add (Const 6) (Neg y)))
+(check (= (Add z z) (Add (Const 6) (Neg y) (Const 6) (Neg y))))
+;; Ran twice: the transaction restored the graph, so the second check
+;; re-decides from the same untouched state.
+(check (= (Add z z) (Add (Const 6) (Neg y) (Const 6) (Neg y))))

@@ -1,0 +1,31 @@
+{
+  "label": "r5",
+  "runs": 10,
+  "warmups": 2,
+  "ours_rev": "a4ab9b7402a2220d67fdd848b4d21da40fc7875e",
+  "egglog_rev": "7b1adf249c918226871b9b3d5e8f089585e46e99",
+  "egglog_pin": "7b1adf2",
+  "benchmarks": [
+    "acgen",
+    "bdd",
+    "calc",
+    "combinators",
+    "eqsat-basic",
+    "eqsolve",
+    "herbie",
+    "integer_math",
+    "intersection",
+    "knapsack",
+    "levenshtein-distance",
+    "math-add-ac",
+    "math-microbenchmark",
+    "matrix",
+    "resolution",
+    "typecheck",
+    "until"
+  ],
+  "skipped": {
+    "array": "datalog relations as rule atoms",
+    "subsume": "subsumption excludes matching, not extraction"
+  }
+}

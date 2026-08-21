@@ -1,0 +1,18 @@
+;; TYPES: machine
+;; Merge-membership regression: (Sub (Num 1) (Num 1)) merges
+;; into the PRE-EXISTING (Num 0) class (nothing is minted, and in one union
+;; direction nothing recanonicalizes), so the absorbed side's member nodes
+;; must enter the touched log for the literal's scan atom to see the new
+;; match. The companion semi_recanon_parent_delta.egg pins the global-in-
+;; pattern half, which needs full matching. EVAL both.
+(datatype E
+    (Add E :assoc-comm)
+    (Sub E E)
+    (Num i64)
+    (x))
+(let z0 (Num 0))
+(rewrite (Sub a a) (Num 0))
+(rewrite (Add (Num 0) ..rest) (Add ..rest))
+(let t (Add (x) (Sub (Num 1) (Num 1))))
+(run 4)
+(check (= t (x)))

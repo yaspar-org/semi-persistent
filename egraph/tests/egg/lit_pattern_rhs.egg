@@ -1,0 +1,21 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Literals on the right-hand side were never affected — the RHS builds a ground term
+;; through `RRhsTerm::Lit`, which already carried the `@sort` constructor the LHS atom was
+;; missing. Pinned here so the two paths stay in step: the RHS-only rule below has a
+;; literal-free left-hand side and passed before the fix as well.
+(datatype Math (Add Math Math) (Zero) (Const i64))
+
+;; RHS-only literal: the pattern carries none.
+(rewrite (Zero) (Const 0))
+
+(let u (Zero))
+(run 5)
+(check (= u (Const 0)))
+
+;; And the two directions agree: a rule whose LHS literal is the same value as an RHS
+;; literal built elsewhere lands in one class.
+(rewrite (Add a (Const 0)) a)
+(let t (Add (Zero) (Const 0)))
+(run 5)
+(check (= t (Zero)))

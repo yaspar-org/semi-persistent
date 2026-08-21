@@ -1,0 +1,45 @@
+;; until, from egglog tests/until.egg at 7b1adf2; see until.deviations.md.
+;;
+;; One change, applied here so that both configurations run the same problem: the
+;; `allgs` datalog relation that drives the non-terminating rule becomes a constructor
+;; into an otherwise empty sort. We have no relations, and the non-termination is the
+;; point of the benchmark — it is what `:until` has to cut short — so the generator is
+;; kept and re-encoded rather than dropped.
+; A simple group
+(datatype G)
+(constructor IConst () G)
+(let $I (IConst))
+(constructor AConst () G)
+(let $A (AConst))
+(constructor BConst () G)
+(let $B (BConst))
+
+(constructor g* (G G) G)
+(constructor inv (G) G)
+(birewrite (g* (g* a b) c) (g* a (g* b c))) ; assoc
+(rewrite (g* $I a) a) ; idl
+(rewrite (g* a $I) a) ; idr
+
+; $A is cyclic of period 4
+(rewrite (g* $A (g* $A (g* $A $A))) $I)
+
+(let $A2 (g* $A $A))
+(let $A4 (g* $A2 $A2))
+(let $A8 (g* $A4 $A4))
+
+; non terminating rule
+(datatype U)
+(constructor allgs (G) U)
+(rule ((= u (allgs x))) ((allgs (g* $B x))))
+(allgs $A)
+
+; if you remove :until, this will take a very long time
+(run 10000 :until (= $A8 $I))
+(check (= $A8 $I))
+(check (!= $B $A))
+(check (!= $I $A))
+
+;; --- added by the comparison harness (see until.deviations.md) ---
+(print-size)
+(print-stats)
+(print-stats :file "until.egglog.stats.json")

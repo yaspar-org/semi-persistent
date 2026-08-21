@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Allocation counter for the saturation workloads of `benches/saturate_bench.rs`.
 //!
-//! Wall-clock on this machine carries two confounds documented in
-//! `containers-verus/doc/design/11-layout-parity.md` — heap position and hot-loop
-//! cache-line alignment, each worth up to ~18% — so a 3% timing delta is not by
+//! Wall-clock on this machine carries two confounds: heap position and hot-loop
+//! cache-line alignment, each measured at up to ~18%, so a 3% timing delta is not by
 //! itself evidence that a change did what it claimed. Allocation counts are
 //! deterministic: they do not move with layout, order, or machine load. When an
 //! experiment's stated mechanism is "this removes N allocations per match", this

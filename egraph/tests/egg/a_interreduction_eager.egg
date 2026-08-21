@@ -1,0 +1,12 @@
+;; DERIVE_AC_EQS: on
+;; TYPES: machine
+;; The A-only erased-reference gap (design doc section 13 companion): merging
+;; two pure Seq classes leaves the equation seq(A,B) = seq(C,X) invisible to
+;; parents that spliced one spelling's elements at build time. Plain
+;; congruence cannot join p and q; the completion modes can (companion
+;; fixtures). Under eager completion the A-only inter-reduction round rewrites the larger spelling to the shortlex-least one and the parents join.
+(datatype E
+    (A) (B) (C) (X)
+    (S E :assoc))
+(union (S (A) (B)) (S (C) (X)))
+(check (= (S (A) (B) (X)) (S (C) (X) (X))))

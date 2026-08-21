@@ -72,7 +72,7 @@ pub struct MapToken {
 }
 
 impl MapToken {
-    /// Reconstruction coordinate (spec twin; the field is `pub(crate)`).
+    /// Reconstruction coordinate (spec counterpart; the field is `pub(crate)`).
     pub open(crate) spec fn frame_idx_spec(self) -> nat {
         self.inner.frame_idx as nat
     }
@@ -110,22 +110,22 @@ where
         self.log.view()
     }
 
-    /// The index map (spec twin; the field is `pub(crate)` — privacy closeout).
+    /// The index map (spec counterpart; the field is `pub(crate)` — privacy closeout).
     pub open(crate) spec fn index_view(&self) -> Map<K, I> {
         self.index@
     }
 
-    /// Frame-stack depth of the log (spec twin).
+    /// Frame-stack depth of the log (spec counterpart).
     pub open(crate) spec fn depth_spec(&self) -> nat {
         self.log.depth_spec()
     }
 
-    /// Lifetime restore count of the log (spec twin).
+    /// Lifetime restore count of the log (spec counterpart).
     pub open(crate) spec fn fork_count_spec(&self) -> nat {
         self.log.fork_count_spec()
     }
 
-    /// Log snapshot stack (spec twin).
+    /// Log snapshot stack (spec counterpart).
     pub open(crate) spec fn log_snapshots_view(&self) -> Seq<Seq<(K, V)>> {
         self.log.snapshots_view()
     }
@@ -231,17 +231,25 @@ where
 
     /// Value+key pair at a dense log index.
     pub fn get(&self, idx: I) -> (r: &(K, V))
-        requires self.wf(), idx.as_nat() < self.log_view().len(),
-        ensures *r == self.log_view()[idx.as_nat() as int],
+        requires self.wf(),
+        ensures idx.as_nat() < self.log_view().len() ==> *r == self.log_view()[idx.as_nat() as int],
     {
+        // Total-with-documented-panic: explicit bound branch (hot family).
+        if !(idx.as_usize() < self.log.data.len()) {
+            crate::guard::refuse("SpMap::get: index out of bounds");
+        }
         self.log.get(idx)
     }
 
     /// The key at a dense log index (production `Map::key` parity).
     pub fn key(&self, idx: I) -> (r: &K)
-        requires self.wf(), idx.as_nat() < self.log_view().len(),
-        ensures *r == self.log_view()[idx.as_nat() as int].0,
+        requires self.wf(),
+        ensures idx.as_nat() < self.log_view().len() ==> *r == self.log_view()[idx.as_nat() as int].0,
     {
+        // Total-with-documented-panic: explicit bound branch (hot family).
+        if !(idx.as_usize() < self.log.data.len()) {
+            crate::guard::refuse("SpMap::key: index out of bounds");
+        }
         &self.log.get(idx).0
     }
 
@@ -249,9 +257,13 @@ where
     /// under the verus names `get` returns the pair and this returns the
     /// value).
     pub fn get_val(&self, idx: I) -> (r: &V)
-        requires self.wf(), idx.as_nat() < self.log_view().len(),
-        ensures *r == self.log_view()[idx.as_nat() as int].1,
+        requires self.wf(),
+        ensures idx.as_nat() < self.log_view().len() ==> *r == self.log_view()[idx.as_nat() as int].1,
     {
+        // Total-with-documented-panic: explicit bound branch (hot family).
+        if !(idx.as_usize() < self.log.data.len()) {
+            crate::guard::refuse("SpMap::get_val: index out of bounds");
+        }
         &self.log.get(idx).1
     }
 
@@ -314,7 +326,7 @@ where
     /// Insert or overwrite. Appends `(key, val)` to the log (the new last
     /// occurrence of `key`) and points the index at it. Returns the dense
     /// log index of the new entry.
-    pub fn insert(&mut self, key: K, val: V) -> (id: I)
+    pub(crate) fn insert(&mut self, key: K, val: V) -> (id: I)
         requires
             old(self).wf(),
             // Room for one more position in the index word; see `AppendOnlyVec::push`.
@@ -394,7 +406,7 @@ where
     }
 
     /// Mark, delegating to the log.
-    pub fn mark(&mut self, shrink: ShrinkPolicy) -> (token: MapToken)
+    pub(crate) fn mark(&mut self, shrink: ShrinkPolicy) -> (token: MapToken)
         requires old(self).wf(), TRACK, old(self).depth_spec() < u32::MAX,
         ensures
             final(self).wf(),
@@ -413,8 +425,84 @@ where
         MapToken { inner }
     }
 
-    /// "Restorable now" (plan 2.2), delegating to the log — the map's single
-    /// component, so component-wise restorability IS map restorability.
+    // ------------------------------------------------------------------
+    // Total-operation shell: the map
+    // delegates every capacity/validity question to its single component.
+    // ------------------------------------------------------------------
+
+    /// Exec counterpart of `insert`'s capacity precondition (the log's).
+    pub fn can_insert(&self) -> (b: bool)
+        requires self.wf(),
+        ensures b == (self.log_view().len() + 1 < I::max_nat()),
+    {
+        self.log.can_push()
+    }
+
+    /// Total insert: refuses at the log's index-word capacity.
+    pub fn try_insert(&mut self, key: K, val: V)
+        -> (r: Result<I, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(id) ==> id.as_nat() == old(self).log_view().len()
+                && final(self).log_view() == old(self).log_view().push((key, val))
+                && final(self).index_view() == old(self).index_view().insert(key, id),
+            r is Err ==> final(self).log_view() == old(self).log_view()
+                && final(self).index_view() == old(self).index_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::CapacityExhausted,
+    {
+        if self.can_insert() {
+            Ok(self.insert(key, val))
+        } else {
+            Err(crate::error::ContainerError::CapacityExhausted)
+        }
+    }
+
+    /// Total mark.
+    pub fn try_mark(&mut self, shrink: ShrinkPolicy)
+        -> (r: Result<MapToken, crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r matches Ok(token) ==> {
+                &&& final(self).log_view() == old(self).log_view()
+                &&& final(self).index_view() == old(self).index_view()
+                &&& token.frame_idx_spec() == old(self).depth_spec()
+            },
+            r is Err ==> final(self).log_view() == old(self).log_view()
+                && final(self).index_view() == old(self).index_view(),
+    {
+        if !TRACK {
+            return Err(crate::error::ContainerError::Untracked);
+        }
+        if !(self.log.frames.len() < (u32::MAX as usize)) {
+            return Err(crate::error::ContainerError::DepthLimit);
+        }
+        Ok(self.mark(shrink))
+    }
+
+    /// Total restore.
+    pub fn try_restore(&mut self, token: MapToken)
+        -> (r: Result<(), crate::error::ContainerError>)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            r is Ok ==> final(self).log_view()
+                == old(self).log_snapshots_view()[token.frame_idx_spec() as int],
+            r is Err ==> final(self).log_view() == old(self).log_view()
+                && final(self).index_view() == old(self).index_view(),
+            r matches Err(e) ==> e == crate::error::ContainerError::InvalidToken,
+    {
+        if self.is_valid_token(&token) {
+            self.restore(token);
+            Ok(())
+        } else {
+            Err(crate::error::ContainerError::InvalidToken)
+        }
+    }
+
+    /// Whether the token is restorable now, delegated to the log. The log is
+    /// the map's only restorable component, so its verdict is the map's.
     pub fn is_valid_token(&self, token: &MapToken) -> (b: bool)
         requires self.wf(),
         ensures b == self.is_restorable_spec(*token),
@@ -425,7 +513,7 @@ where
     /// Restore: truncate the log to the token's snapshot, then rebuild the
     /// index from the survivors. The log restore reproduces the marked
     /// contents (headline theorem composes); rebuild re-establishes agreement.
-    pub fn restore(&mut self, token: MapToken)
+    pub(crate) fn restore(&mut self, token: MapToken)
         requires
             old(self).wf(),
             TRACK,
@@ -582,9 +670,21 @@ where
     V: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_map()
-            .entries(self.iter().map(|(k, v)| (k, v)))
+        // Production's shape: counters, not entries. (Printing entries walks
+        // the log and shows shadowed keys twice; production avoids both.)
+        f.debug_struct("SpMap")
+            .field("len", &self.len())
+            .field("log_len", &self.log_len().as_usize())
             .finish()
+    }
+}
+
+impl<K, V, I: IndexLike, const TRACK: bool> Default for SpMap<K, V, I, TRACK>
+where
+    K: Clone + core::hash::Hash + Eq,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

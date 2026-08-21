@@ -1,0 +1,9 @@
+;; EXPECT: ok
+;; The dual of constructor_unextractable.egg: :unextractable removes a node from the
+;; candidate set, it does not make its class unextractable. The class here also holds an
+;; extractable node, so extraction succeeds through that one.
+(sort E)
+(constructor a () E)
+(constructor hidden () E :unextractable)
+(union (a) (hidden))
+(extract (hidden))

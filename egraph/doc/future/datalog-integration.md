@@ -1,52 +1,98 @@
 # Datalog Integration
 
+**Status**: design for future work; nothing in this document is
+implemented. The engine has no relation declaration form (this is why
+`doc/benchmarks/`'s `array` benchmark is a BLOCKED carrier).
+
 ## 1. Relations as Unit-Typed Functions
 
-The formal encoding: a relation `R(t1, ..., tk)` is a function `R: (S1, ..., Sk) -> Unit`. The unit sort has a single e-class `UNIT_CLASS`, a sentinel outside the union-find that never participates in any merge. Asserting `R(a, b)` inserts the e-node `R(canon(a), canon(b))` into the appropriate mode-specific hashcons pointing to `UNIT_CLASS`. Querying `R(a, b)` is a hashcons lookup after canonicalizing the arguments.
+A possible logical encoding is a function
+`R: (S1, ..., Sk) -> Unit`, where all successful tuples map to one unit value.
+That observation does not make relations free in this engine. The current node
+stores, hash-cons tables, and `IndexStore` are organized around e-nodes and
+e-classes; there is no relation descriptor, unit-result protocol, relation
+tuple index, or relation-specific rollback state.
 
-This encoding is zero-overhead: no additional machinery is needed. Relations over sort-typed arguments automatically benefit from the union-find's canonical representation — a query for `R(a, b)` where `a` and `c` have been unified will find entries for both under `R(canon(a), b)`.
+An implementation must define:
 
-Plain relations use `hashcons_plain`. Commutative relations use `hashcons_c`. Set-valued relations use `hashcons_aci`. The mode-specific hashcons choice is part of the relation declaration.
+- declaration metadata for arity, argument sorts, and any symmetry;
+- a canonical tuple representation whose sort-typed arguments are
+  canonicalized against a specified equality snapshot;
+- tuple insertion and point lookup, including collision-safe equality rather
+  than treating a hash as identity;
+- relation indexes for joins and negative point lookups;
+- mark/restore behavior for tuple storage and reconstruction of transient
+  indexes; and
+- change events for new or recanonicalized tuples.
 
-## 2. Semi-Naïve Evaluation
+Existing plain, commutative, and variadic node-storage machinery may be reused,
+but that is an implementation option to measure and validate, not an already
+wired relation API. In particular, a symmetric binary relation and an ACI
+e-node have different logical meanings and must not be conflated merely because
+both can use canonical child order.
 
-Semi-naïve evaluation avoids re-deriving facts already computed in previous iterations. For each rule with body atoms `A1, ..., Am`, The engine generates `m` delta rules, each using the current generation's diff for exactly one atom:
+## 2. Semi-Naive Evaluation
 
+For each eligible rule with scanning body atoms `A1, ..., Am`, use the same
+disjoint first-delta decomposition as the implemented e-matcher:
+
+```text
+DeltaRule_j:
+  A1(full \ delta), ..., Aj-1(full \ delta),
+  Aj(delta),
+  Aj+1(full), ..., Am(full) -> head
 ```
-ΔRule_j: A1(full), ..., Aj-1(full), ΔAj(new only), Aj+1(full), ..., Am(full) → head
-```
 
-The diff for atom `Aj` is the set of e-nodes added to `Aj`'s backing hashcons since the previous generation boundary — read directly from the `semi_persistent::containers::Vec` length difference, no bookkeeping required.
+The current e-matcher's delta is not a backing-vector length difference. It is
+built from an explicit touched-node log, then indexed separately from the full
+round snapshot. The log includes fresh nodes, recanonicalized nodes, and members
+exposed by class growth; `full \ delta` is a cursor view. Datalog relations need
+the analogous tuple-level bookkeeping. A relation tuple can become newly
+visible because it was inserted or because equality changed one of its
+canonical arguments, even when no relation-storage vector grew.
 
-Correctness: the union of all delta rule results equals the set of new facts derivable in this iteration that were not derivable in the previous iteration. This is Theorem 4.1 of the egglog paper, and the proof carries over directly since the engine's generational diff is exactly the ΔDB in the semi-naïve algorithm.
+The target correctness statement is:
+
+1. `delta` is a subset of the same frozen `full` snapshot under every index key;
+2. every newly enabled eligible match contains at least one delta tuple;
+3. the first-delta variants form a disjoint partition of those matches; and
+4. rule shapes whose enabling event is not represented in a scanning atom's
+   delta use the full matcher.
+
+The textbook/egglog semi-naive theorem motivates this construction, but it does
+not carry over merely by naming the touched log `DeltaDB`. A proof must relate
+relation insertion, e-class merging, recanonicalization, fallback rules, and
+the engine's frozen round indexes to those four premises. Until then, finite
+naive-versus-semi differential tests are evidence, not a universal theorem.
 
 ## 3. The Fixpoint Loop
 
-One saturation iteration proceeds through six phases. The match and
-action phases produce pending mutations. The rebuild phase drains
-them, which is where congruence closure happens and where index
-updates are piggy-backed. The delta and termination phases determine
-whether the loop continues.
+The future relation driver should preserve the implemented round-snapshot
+contract:
 
-1. Match phase: apply all rules (rewrite and Datalog) using
-   semi-naïve evaluation against the current generation's diff and
-   full database.
-2. Action phase: execute all pending actions (unions, inserts,
-   lattice updates).
-3. Rebuild phase: process the pending-merges queue to fixpoint. For
-   each merge, drain `by_child(absorbed)` into `by_child(survivor)`,
-   canonicalize dirty parents in children vecs, decrement Len for
-   ACI/AC deduplication, re-key hashmap entries, and detect
-   collisions and enqueue further merges.
-4. Index phase: if the arena compaction threshold is reached, rewrite
-   the arena in in-order layout. Otherwise indexes are already up to
-   date from step 3.
-5. Delta phase: compute the new generation diff.
-6. Termination check: if the diff is empty (no new facts, no new
-   unions), the fixpoint is reached.
+1. Rebuild the live e-graph to plain congruence closure.
+2. Build immutable full indexes for the round and, after round zero, delta
+   indexes from the touched node and relation-tuple logs.
+3. Clear those logs, match rules against the frozen indexes, and apply actions
+   to the live e-graph. New nodes, merges, and tuples populate the next logs.
+4. Discard/recycle the round indexes.
+5. Stop when no action changed the live state, or at the iteration budget;
+   otherwise repeat so the next rebuild makes those changes visible.
 
-The phases cannot be reordered. Rebuild must see all pending merges
-before indexes stabilize, and the delta can only be computed after
-rebuild produces a congruence-closed state. Repeat until fixpoint or
-the iteration budget is exhausted.
+There is no implemented arena-compaction phase or incrementally maintained
+relation index to reuse here. If either is introduced, it needs a separate
+refinement argument showing that every lookup observes the same round snapshot.
 
+## 4. Validation and Proof Obligations
+
+- Differentially compare naive and semi-naive final relation facts and e-class
+  partitions over generated finite programs.
+- Include tuple insertion, tuple recanonicalization, class merges that preserve
+  the stored representative, mark/restore, and fallback-only rule shapes.
+- Assert per-key `delta subset full` and disjoint first-delta emissions.
+- Specify whether duplicate derivations are observable; if actions are not
+  idempotent, deduplicate at the semantic boundary rather than relying on
+  storage hash-consing.
+- Only claim fixpoint equivalence after proving that every enabling event is
+  either represented by a delta scanning atom or routed through the full
+  fallback.

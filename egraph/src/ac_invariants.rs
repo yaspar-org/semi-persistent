@@ -4,12 +4,12 @@
 //!
 //! These witness, at runtime, the properties the completion machinery is supposed to
 //! maintain, so a diverging run can be inspected via `printf` to see *which* invariant
-//! breaks. Investigation tooling, not production hot path: each function rescans all
+//! breaks. Diagnostic API, not a production hot path: each function rescans all
 //! nodes. See `doc/design/ac-completion-spec.md` §3 (the checkable properties).
 //!
 //! The model: every active AC node (not `FLAG_SUBSUMED`, not `FLAG_AC_COLLAPSED`) whose
-//! own monomial `M` is strictly `≫_f`-greater than its class's canonical summand form
-//! `rhs` is a rule `+M → rhs`. The reduced-basis claims are:
+//! own monomial `M` is strictly `≫_f`-greater than its class's selected summand candidate
+//! `rhs` is a rule `+M → rhs`. The finite diagnostics are:
 //!  - **antichain**: no active rule's LHS is a sub-multiset of another's (collapse, §6b);
 //!  - **irreducible**: no active rule's LHS is reducible by *another* active rule
 //!    (equivalent phrasing of the antichain; the §6b property collapse must keep);
@@ -51,8 +51,9 @@ pub struct BasisReport<G, O, M> {
     pub reducible_pairs: Vec<(usize, usize)>,
     /// Distinct `rules` indices that are reducible (the `j` side of some pair): rules that
     /// inter-reduction would retire. `rules.len() - reducible_rule_count` is the antichain
-    /// core (the true reduced-basis size in one collapse pass). A core far below the active
-    /// count is the signature of a collapse-ordering bug, not an inherently large basis.
+    /// core after one direct-containment pass, not a canonical or necessarily fully reduced
+    /// basis size. A core far below the active count diagnoses direct collapse debt in this
+    /// finite state.
     pub reducible_rule_count: usize,
 }
 
@@ -91,7 +92,7 @@ where
     }
 
     /// Compute the current active AC rule set and check the reduced-basis invariants.
-    /// Pure read; safe to call any time. Investigation tool (rescans all nodes).
+    /// Pure read; safe to call any time. Diagnostic operation that rescans all nodes.
     pub fn cc_basis_report(&self) -> BasisReport<Cfg::G, Cfg::O, Cfg::M> {
         let inactive = FLAG_SUBSUMED | FLAG_AC_COLLAPSED;
         let (mut n_ac_nodes, mut n_subsumed, mut n_collapsed) = (0usize, 0usize, 0usize);
@@ -220,12 +221,14 @@ where
         (nonminimal, offenders)
     }
 
-    /// GROUND-TRUTH check 2: is the active rule set *fully reduced* in Kapur's sense (§3),
-    /// not just a direct-containment antichain? Kapur-reduced: neither the LHS nor the RHS of
-    /// any rule may be rewritten by the *other* rules. `reducible_pairs` only catches direct
-    /// sub-multiset containment; this catches reducibility by multi-step normalization too.
-    /// Returns (n_lhs_reducible, n_rhs_reducible): rules whose LHS / RHS is `normalize_ms`-
-    /// reducible by the rest. Non-zero LHS count ⟹ not Kapur-reduced (collapse incomplete).
+    /// Finite-state diagnostic 2: is the active rule set *fully reduced* in Kapur's sense
+    /// (§3), rather than only a direct-containment antichain? Kapur-reduced means that neither
+    /// side of any rule can be rewritten by the *other* rules. `reducible_pairs` only catches
+    /// direct sub-multiset containment; this computes multi-step normalization in the current
+    /// finite rule set. It is not a theorem about every reachable state.
+    ///
+    /// Returns `(n_lhs_reducible, n_rhs_reducible)`. The `.egg` basis gate currently asserts
+    /// only that the LHS count is zero; callers that require full reducedness must check both.
     pub fn cc_not_kapur_reduced(&self) -> (usize, usize) {
         use crate::egraph::CompletionClamp;
         use crate::multiset::{normalize_nilpotent, normalize_set};
@@ -266,8 +269,8 @@ where
         (n_lhs, n_rhs)
     }
 
-    /// GROUND-TRUTH check 3 (Kapur §4; Kapur-conformance fix W3 (spec §3 table)): every per-rule AXIOM critical
-    /// pair of an idempotent or nilpotent op is joinable under the current state.
+    /// Ground-truth check 3 (Kapur §4): every per-rule axiom critical pair of
+    /// an idempotent or nilpotent op is joinable under the current state.
     ///
     /// - Idempotent (Lemma 4.1(ii)): for a rule `f(M) → f(N)` and each `a ∈ M`, the pair
     ///   `(f(N ⊎ {a}), f(N))` must join.
@@ -396,7 +399,7 @@ where
     }
 
     /// Print the basis report (one line per rule + the invariant verdicts). `tag` labels
-    /// the call site (e.g. a round number). Investigation tool.
+    /// the call site (e.g. a round number). This operation rescans all nodes.
     pub fn cc_basis_dump(&self, tag: &str) {
         let r = self.cc_basis_report();
         let (nonmin, _) = self.cc_min_used_nonminimal();

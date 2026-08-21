@@ -1,9 +1,9 @@
 # Default implementations for container element types
 
-Why every value type stored in a semi-persistent container needs `Default`, why
-a fabricated default is *sound* (never observable), and, the subtle part, how a
-`Tagged` type's niche (stolen bit) stays safe when a default filler is created.
-Ends with a per-type recipe for the production codebase.
+Why regrow-capable semi-persistent vectors need `Default`, why a fabricated
+default is *sound* (never observable), and, the subtle part, how a `Tagged`
+type's niche (stolen bit) stays safe when a default filler is created. Ends
+with a per-type recipe for the production codebase.
 
 ## 0. Why `Default` is required
 
@@ -18,10 +18,12 @@ new slots, and we use `T::default()`:
   (`inline_store.rs`): note the filler is `default()` **passed through
   `into_repr`**. This routing is the whole story for niche safety (§3).
 
-So every `T` that can be the element type of a semi-persistent `Vec` (directly,
-or transitively via `Map`/`SparseSet`/`ListArena`/`BPlusTreeSet`, which are
-built on `Vec`) must implement `Default`. The crate models the `Copy` subset of
-`Clone`, so concretely the bound is `T: Copy + Default`.
+Thus every `T` restored through the general semi-persistent `Vec` path must
+implement `Default`; the crate models the `Copy` subset of `Clone`, so that
+path uses `T: Copy + Default`. Append-only source-of-truth storage, including
+`AppendOnlyVec` and `Map`, restores only by truncation and does not impose this
+element bound. Composite containers inherit `Default` exactly where an inner
+general vector can regrow.
 
 ## 1. Filler soundness: a default is never observable
 
@@ -122,12 +124,13 @@ each needs:
 |---|---|---|
 | `*Id`, `*Id64` (all `define_id*!`) | bit-steal (MSB) | macro emits `impl Default { Self(0) }`; `0` is clean-domain |
 | `u8`, `usize`, `u32`, … | primitive | std `Default` |
-| `VariableArityNode<G,O>` | plain data (`Repr`, `usize`, `u8` fields) | `#[derive(Default)]`: all fields `Default` |
-| `LitNode<G,O,V>` | plain data | `#[derive(Default)]` |
+| `FixedArityNode<G,O,K>` | composite `Tagged` value | explicit `Default` calls `new(default ids, default children)` |
+| `VariableArityNode<G,O>` | composite `Tagged` value | explicit `Default` calls `make(default ids, 0, 0)` |
+| `LitNode<G,O,V>` | composite `Tagged` value | explicit `Default` calls `new(default ids)` |
 | `EClassEntry<T>` | `{next: T, repr_stored}` | `Default { next: T::default(), repr_stored: T::Index::default().into_repr() }` (route the id through `into_repr`, per §4) |
-| `PoolDirector` | newtype `(u64)` | `#[derive(Default)]` |
-| `Justification<G>` | enum | explicit filler: `#[derive(Default)] … #[default] Filler` (or a no-op variant); never observed (§1) |
-| `BPlusNode` | `Tagged`, bit-steal `FLAG_TAG` | `#[derive(Default)]` (all-zero is repr-safe via §3) or `default() = new_leaf()` for a non-degenerate filler |
+| `PoolDirector` | newtype `(u64)` | explicit `Default` calls `PoolDirector::new(0)` |
+| `Justification<G>` | enum | `#[derive(Default)]` with explicit `#[default] Filler`; never observed as proof data (§1) |
+| `BPlusNode` | `Tagged`, bit-steal `FLAG_TAG` | production's explicit all-zero default is a degenerate internal node; the verified value-side default is an empty leaf. Both are restore-only fillers and are overwritten |
 | `BPlusHeader` | plain data (`u32`,`u32`,`usize`) | `#[derive(Default)]` |
 | `ListNode<T,N>` | `Tagged`, composite repr | `Default { payload: T::default(), next: Opt::none() }` (needs `T: Default`) |
 | `ListHead<N>` | `Tagged`, composite repr | `Default = ListHead::empty()` |

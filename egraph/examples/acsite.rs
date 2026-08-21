@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Single-site timer for the AC-rewrite workloads of `benches/saturate_bench.rs`.
 //!
-//! The companion of `complsite.rs`, for the same reason: protocol item 6 in
-//! `doc/perf-results/README.md` requires reproducing a criterion delta in a
+//! The companion of `complsite.rs`: it reproduces a Criterion delta in a
 //! standalone binary before attributing it to code. `complsite` covers the
 //! completion path; this covers the `ac_rules` path, which is where the
 //! index-build experiments show their gains and therefore where those gains have

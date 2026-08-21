@@ -39,7 +39,7 @@ impl Lcg {
 
 type Map = SpMap<u32, u64, usize, false>;
 /// Tracked variant for the mark/restore tests: mark/restore on an untracked
-/// container now panics (production parity, migration plan 2.4).
+/// container now panics, matching production.
 type MapT = SpMap<u32, u64, usize, true>;
 
 #[test]
@@ -55,7 +55,7 @@ fn map_ops_match_oracle() {
             // Keys drawn from a small space so duplicates (overwrites) happen.
             let key = (rng.below(64)) as u32;
             let val = rng.next();
-            let id = m.insert(key, val);
+            let id = m.try_insert(key, val).expect("insert: within index word");
             // insert returns the new dense log index == previous log length.
             vals.insert(key, val);
             last_idx.insert(key, id);
@@ -95,18 +95,20 @@ fn map_mark_restore() {
         for _ in 0..400 {
             match rng.below(8) {
                 0 => {
-                    let token = m.mark(ShrinkPolicy::Never);
+                    let token = m
+                        .try_mark(ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness");
                     frames.push((token, oracle.clone()));
                 }
                 1 if !frames.is_empty() => {
                     let (tok, snap) = frames.pop().unwrap();
-                    m.restore(tok);
+                    m.try_restore(tok).expect("restore: own token");
                     oracle = snap;
                 }
                 _ => {
                     let key = (rng.below(48)) as u32;
                     let val = rng.next();
-                    m.insert(key, val);
+                    m.try_insert(key, val).expect("insert: within index word");
                     oracle.insert(key, val);
                 }
             }
@@ -164,7 +166,7 @@ fn sparse_set_ops_match_oracle() {
             if pick < 5 || ids.is_empty() {
                 // add
                 let val = rng.next() as u32;
-                let id_u = s.add(val).index() as u32;
+                let id_u = s.try_add(val).expect("add: within id space").index() as u32;
                 assert!(
                     !live.contains_key(&id_u),
                     "seed={seed}: add returned a live id {id_u}"
@@ -224,7 +226,9 @@ fn sparse_set_mark_restore() {
         for _ in 0..300 {
             match rng.below(8) {
                 0 => {
-                    let token = s.mark(ShrinkPolicy::Never);
+                    let token = s
+                        .try_mark(ShrinkPolicy::Never)
+                        .expect("mark: depth bounded by this harness");
                     frames.push((token, live.clone(), ids.clone()));
                 }
                 1 if !frames.is_empty() => {
@@ -241,7 +245,7 @@ fn sparse_set_mark_restore() {
                 }
                 _ => {
                     let val = rng.next() as u32;
-                    let id_u = s.add(val).index() as u32;
+                    let id_u = s.try_add(val).expect("add: within id space").index() as u32;
                     live.insert(id_u, val);
                     ids.push(id_u);
                 }

@@ -24,8 +24,9 @@
 //!
 //! The previous eager design pushed/popped the bit-vector in lockstep with
 //! the data (simplest possible invariant, but it made every `Vec::push` pay
-//! word-index math and possible allocation even with `TRACK=false` — the
-//! +112% untracked gap in the conformance benches).
+//! word-index math and possible allocation even with `TRACK=false`). The
+//! retained Criterion conformance benchmarks, rather than a historical point
+//! estimate, are the performance evidence for this choice.
 
 use vstd::prelude::*;
 
@@ -128,10 +129,9 @@ impl CaptureBits {
     /// (production's `set_bit`, verbatim). `i < len` keeps tail-clear.
     ///
     /// `inline(always)` matches production's attribute on `set_bit`
-    /// (`containers/src/diff_store.rs:80`) and is load-bearing, not cosmetic:
-    /// this is the one bitmap op on the `set` capture path, and out-of-lining it
-    /// cost ~12% on the egraph's `mark/bitset` row (a call + spill per
-    /// first-write, against a body whose common case is a load/or/store).
+    /// (`containers/src/diff_store.rs:80`): this is the bitmap op on the
+    /// first-write capture path, and the common case is a load/or/store. Keep
+    /// or change the hint based on the Criterion mark/restore benchmark.
     #[inline(always)]
     pub fn set_true(&mut self, i: usize, Ghost(len): Ghost<int>)
         requires
@@ -157,11 +157,9 @@ impl CaptureBits {
             // stored-zero-false).
             //
             // Kept OUT of line (`grow_to`) even though the enclosing fn is
-            // `inline(always)`. Inlining this loop too is a measured pessimization:
-            // it raises register pressure in `finish_restore`'s survivor pass
-            // enough to spill in `Vec::restore`'s replay loop (restore 46 -> 60 us).
-            // The growth path is cold — `prepare_mark` bulk-materializes, so a
-            // steady-state `set_true` finds its word already present.
+            // `inline(always)`: the growth path is cold because `prepare_mark`
+            // bulk-materializes, so a steady-state `set_true` finds its word
+            // already present. Criterion covers the code-generation tradeoff.
             self.grow_to(wi + 1);
             proof {
                 assert forall|j: int|
@@ -296,12 +294,10 @@ impl CaptureBits {
     ///
     /// Why eager: `set_true` materializes on demand by pushing one word at a
     /// time. Under `zero_all` alone, a frame whose writes span a wide index
-    /// range pays that growth loop INSIDE the write path — for a 100k-element
-    /// vector, ~1560 word-pushes amortized across the frame's writes. Measured
-    /// on the nested-mark workload (128 writes over a 100k span): 15.9 ns/write
-    /// lazy vs 6.8 ns/write with production's eager resize. Narrow spans
-    /// preferred lazy (7.0 vs 11.0 ns/write), but production's protocol is the
-    /// oracle and the wide case is the one that regresses badly.
+    /// range pays that growth loop inside the write path. One bulk resize moves
+    /// that work to the frame boundary. Narrow and wide spans have different
+    /// constant factors, so the maintained Criterion nested-mark workloads are
+    /// the evidence for this policy.
     ///
     /// One `Vec::resize` is a single vectorizable memset, and it subsumes the
     /// zeroing of any words it appends.

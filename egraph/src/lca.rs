@@ -624,7 +624,8 @@ mod tests {
     fn make_pp(n: usize, edges: &[(usize, usize)]) -> VecI<TestId, u32, false> {
         let mut pp = VecI::<TestId, u32, false>::new();
         for i in 0..n {
-            pp.push(TestId::new(i as u32));
+            pp.try_push(TestId::new(i as u32))
+                .expect("push: within index word");
         }
         for &(child, parent) in edges {
             pp.set(TestId::new(child as u32), TestId::new(parent as u32));
@@ -775,7 +776,8 @@ mod tests {
     fn pp_from_parents(parents: &[usize]) -> VecI<TestId, u32, false> {
         let mut pp = VecI::<TestId, u32, false>::new();
         for &p in parents {
-            pp.push(TestId::new(p as u32));
+            pp.try_push(TestId::new(p as u32))
+                .expect("push: within index word");
         }
         pp
     }

@@ -5,8 +5,8 @@
 //! The existing benches are all microbenchmarks over one container or one
 //! cursor. This one times the whole driver loop — index rebuild, scheduling,
 //! e-matching, RHS instantiation, congruence rebuild — so a change to any of
-//! those is visible where it matters. Every performance experiment in
-//! `doc/perf-results/` is accepted or rejected against these numbers.
+//! those is visible where it matters. This is the primary end-to-end suite for
+//! evaluating saturation performance changes.
 //!
 //! **How to compare two revisions.** Save a baseline, change the code, compare:
 //!
@@ -18,8 +18,8 @@
 //!
 //! This is deliberately *not* an A/B pair of arms inside one group. Two arms in
 //! one criterion group measure heap position and code layout as much as they
-//! measure code — see `containers-verus/doc/design/11-layout-parity.md`, where
-//! the second-registered arm read ~18% slow purely for being second. Comparing
+//! measure code: same-binary controls made the second-registered arm read ~18%
+//! slow purely for being second. Comparing
 //! the *same* bench id across two runs holds registration order, predecessor
 //! allocations, and call site fixed, so the only difference is the code.
 //!

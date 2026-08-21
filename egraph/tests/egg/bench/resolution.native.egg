@@ -1,0 +1,53 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/resolution.egg (7b1adf2).
+;; Config: native ACI. myor is declared variadic :assoc-comm-idem, so a clause
+;; is a set of literals: associativity, commutativity and absorption-as-
+;; idempotence are canonization, not rules. The false terminator stays in
+;; every clause as its sentinel, keeping unit clauses as myor nodes (a
+;; singleton set would collapse to its literal and leave clause form).
+;; Deviations: comparison/resolution.deviations.md.
+(datatype Bool
+    (myor Bool :assoc-comm-idem)
+    (negate Bool))
+(constructor TrueConst () Bool)
+(let tt (TrueConst))
+(constructor FalseConst () Bool)
+(let ff (FalseConst))
+
+(union (negate ff) tt)
+(union (negate tt) ff)
+
+; solving negation equations
+(rule ((= x (negate p)) (= x tt)) ((union p ff)))
+(rule ((= x (negate p)) (= x ff)) ((union p tt)))
+
+; complementary-pair absorption: a clause containing a and (negate a) is true
+(rewrite (myor a (negate a) ..rest) tt)
+
+; a clause containing true is true
+(rewrite (myor (TrueConst) ..rest) tt)
+
+; unit propagation: the unit clause is the set {p, false}
+(rule ((= x (myor p (FalseConst))) (= x tt)) ((union p tt)))
+
+; resolution: sets union through the two rest splices; false stays as sentinel
+(rule ((= c1 (myor a ..as)) (= c1 tt) (= c2 (myor (negate a) ..bs)) (= c2 tt))
+      ((union (myor ..as ..bs) tt)))
+
+; example predicate
+(constructor p (i64) Bool)
+(let p0 (p 0))
+(let p1 (p 1))
+(let p2 (p 2))
+(union (myor p1 (negate p2) ff) tt)
+(union (myor p2 (negate p0) ff) tt)
+(union (myor p0 (negate p1) ff) tt)
+(union p1 ff)
+(union (myor (negate p0) p1 p2 ff) tt)
+(run 10)
+
+(check (!= tt ff))
+(check (= p0 ff))
+(check (= p2 ff))
+(print-size)
+(print-stats :file "resolution.native.stats.json")

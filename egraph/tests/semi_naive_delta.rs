@@ -1,18 +1,19 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Semi-naive tests B4-V1 / B4-V2 (see doc/design/future/semi-naive-tasks.md).
+//! Semi-naive touched-log and delta-index correctness tests.
 //!
-//! B4-V1 — touched completeness: every node whose canonical (op, child-reprs)
-//!         form changed during a round is present in the touched log.
-//! B4-V2 — delta correctness: `IndexStore::build_delta(eg, touched)` equals
-//!         `IndexStore::build(eg)` restricted to the touched node set, per key.
+//! Touched completeness: every node whose canonical (op, child-reprs) form
+//! changed during a round is present in the touched log.
+//! Delta correctness: `IndexStore::build_delta(eg, touched)` equals
+//! `IndexStore::build(eg)` restricted to the touched node set, per key.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use proptest::prelude::*;
+use semi_persistent_containers::DenseSpanMap;
 use semi_persistent_egraph::EGraph;
 use semi_persistent_egraph::containers::DenseId;
-use semi_persistent_egraph::index::{FastMap, IndexStore, SortedVec};
+use semi_persistent_egraph::index::IndexStore;
 use semi_persistent_egraph::literal::{NiraLitVal, NiraModel};
 use semi_persistent_egraph::nodes::DefaultConfig;
 
@@ -66,7 +67,7 @@ fn run_round(eg: &mut EG) {
 }
 
 #[test]
-fn b4_v1_touched_superset_of_changed() {
+fn touched_log_contains_every_changed_node() {
     let mut eg = setup();
     let n = eg.node_count(); // freeze the pre-round id range
 
@@ -94,43 +95,42 @@ fn b4_v1_touched_superset_of_changed() {
 }
 
 /// Assert `delta` equals `full` restricted to the touched node set, exactly:
-/// same keys, same (filtered) buckets.
-fn assert_delta_is_full_restricted<K>(
-    full: &FastMap<K, SortedVec<G>>,
-    delta: &FastMap<K, SortedVec<G>>,
+/// every key's delta bucket is that key's full bucket filtered to touched.
+///
+/// The families are dense span maps, so a key is an integer and "absent" is the
+/// empty slice. The delta's span table may be shorter than the full's, because
+/// it is sized to the largest key its own stream carried, and every key past its
+/// end must have an empty full bucket after filtering.
+fn assert_delta_is_full_restricted(
+    family: &str,
+    full: &DenseSpanMap<G>,
+    delta: &DenseSpanMap<G>,
     tset: &HashSet<usize>,
-) where
-    K: Eq + std::hash::Hash + std::fmt::Debug,
-{
-    // Expected: each full bucket filtered to touched, dropping empties.
-    let mut expected: HashMap<&K, Vec<usize>> = HashMap::new();
-    for (k, sv) in full {
-        let f: Vec<usize> = sv
-            .as_slice()
+) {
+    let n = full.len().max(delta.len());
+    for k in 0..n {
+        let expected: Vec<usize> = full
+            .try_get(k)
+            .unwrap_or(&[])
             .iter()
             .map(|g| g.to_usize())
             .filter(|x| tset.contains(x))
             .collect();
-        if !f.is_empty() {
-            expected.insert(k, f);
-        }
-    }
-    assert_eq!(
-        delta.len(),
-        expected.len(),
-        "delta key set differs from full∩touched"
-    );
-    for (k, dsv) in delta {
-        let got: Vec<usize> = dsv.as_slice().iter().map(|g| g.to_usize()).collect();
-        let exp = expected
-            .get(k)
-            .unwrap_or_else(|| panic!("delta key {k:?} not present in full∩touched"));
-        assert_eq!(&got, exp, "delta bucket {k:?} differs from full∩touched");
+        let got: Vec<usize> = delta
+            .try_get(k)
+            .unwrap_or(&[])
+            .iter()
+            .map(|g| g.to_usize())
+            .collect();
+        assert_eq!(
+            got, expected,
+            "{family}: bucket {k} differs from full∩touched"
+        );
     }
 }
 
 #[test]
-fn b4_v2_delta_equals_full_restricted_to_touched() {
+fn delta_index_equals_full_index_restricted_to_touched() {
     let mut eg = setup();
     run_round(&mut eg);
 
@@ -141,10 +141,18 @@ fn b4_v2_delta_equals_full_restricted_to_touched() {
     let delta = IndexStore::<DefaultConfig>::build_delta(&eg, &touched);
 
     assert!(!tset.is_empty(), "round should have touched some nodes");
-    assert_delta_is_full_restricted(&full.by_op, &delta.by_op, &tset);
-    assert_delta_is_full_restricted(&full.by_repr, &delta.by_repr, &tset);
-    assert_delta_is_full_restricted(&full.by_child_pos, &delta.by_child_pos, &tset);
-    assert_delta_is_full_restricted(&full.by_contains, &delta.by_contains, &tset);
+    // Both indices are built at the same node bound, so their `by_child_pos`
+    // keys mean the same `(position, class)` pair.
+    assert_eq!(full.child_pos_stride, delta.child_pos_stride);
+    assert_delta_is_full_restricted("by_op", &full.by_op, &delta.by_op, &tset);
+    assert_delta_is_full_restricted("by_repr", &full.by_repr, &delta.by_repr, &tset);
+    assert_delta_is_full_restricted(
+        "by_child_pos",
+        &full.by_child_pos,
+        &delta.by_child_pos,
+        &tset,
+    );
+    assert_delta_is_full_restricted("by_contains", &full.by_contains, &delta.by_contains, &tset);
 }
 
 /// Build a graph of random fixed-arity nodes (a/b/c consts, g/1, f/2) from a
@@ -189,8 +197,8 @@ fn build_random(specs: &[u8]) -> (EG, Vec<G>) {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(400))]
 
-    /// B4-V1 generalized: across a random graph and a random sequence of
-    /// merges in one round, EVERY node whose canonical (op, child-reprs) form
+    /// Across a random graph and a random sequence of merges in one round,
+    /// every node whose canonical (op, child-reprs) form
     /// changed must appear in the touched log. A missed push here is a silent
     /// soundness failure (subset delta → dropped matches), which the
     /// final-state differential tests can mask if the dropped match happens to

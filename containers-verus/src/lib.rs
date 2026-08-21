@@ -4,9 +4,10 @@
 //! built to be formally verified.
 //!
 //! Goals:
-//! - When `TRACK = false`, every container is observationally equivalent to its
-//!   non-semi-persistent counterpart (`std::Vec`, `Map`, `Set`, ...). Mark/restore
-//!   are not callable in this mode.
+//! - For each container's proved core API, `TRACK = false` refines the
+//!   corresponding non-semi-persistent value model (`Seq`, map, set, ...).
+//!   This is not a full-API, layout, or panic-behavior equivalence theorem.
+//!   Mark/restore are not callable in this mode.
 //! - When `TRACK = true`, an internal ghost stack of deep copies records the
 //!   container's value at each `mark()`. After `restore(token)`, the container's
 //!   `view()` equals the deep copy at the corresponding frame.
@@ -20,7 +21,7 @@
 //! - `parallel_store` — `ParallelStore<T,I>` impl + lemmas
 //! - `inline_store`   — `InlineStore<T,I>` impl + lemmas (T: Tagged)
 //! - `frame`          — frame stack
-//! - `fork_history`   — executable fork history + refinement to ghost ForkTree
+//! - `fork_history`   — executable branch genealogy + validity characterization
 //! - `container_id`   — opaque per-container identity (atomics, external_body)
 //! - `vec`            — `Vec<T,I,S,TRACK>` with full proofs over the trait specs
 
@@ -42,14 +43,18 @@
     clippy::doc_overindented_list_items,  // same: design-doc-style comment formatting
     // `global size_of usize == 8;` is verus syntax; clippy sees the macro expansion as braces.
     unused_braces,
+    // Same class of macro artifact: the `verus!` expansion rewrites a shorthand
+    // struct pattern (`SpanArena { mut spans, .. }`) back into the long form, so the
+    // lint fires on generated code the source does not contain.
+    non_shorthand_field_patterns,
     // `($leaf_cap + 1) / 2` is verified exec arithmetic that must match `split_mid_spec()`'s
-    // same expression; vstd (2026-04-12) has no `div_ceil` spec, so a `.div_ceil(2)` rewrite
+    // same expression; pinned vstd (2026-08-02) has no `div_ceil` spec, so a `.div_ceil(2)` rewrite
     // would jeopardise the `split_mid` ensures for a pure style change.
     clippy::manual_div_ceil,
     // Same reasoning as `manual_div_ceil` above, for `keep_bits % 64 == 0` in
     // `CaptureBits::truncate_words_for`: that expression appears verbatim in the
     // `by (nonlinear_arith)` block that proves the retained words still cover
-    // every kept bit. `is_multiple_of` has no vstd spec (2026-04-12), so the
+    // every kept bit. `is_multiple_of` has no spec in pinned vstd (2026-08-02), so the
     // rewrite would break the proof for a pure style change.
     clippy::manual_is_multiple_of,
     // insert_rec / insert_rec_leaf take 8 args including GHOST proof parameters (is_root, the
@@ -64,6 +69,12 @@
     // `while !done` loop carrying an invariant; clippy's "initialise at declaration" does not
     // fit the loop control flow.
     clippy::needless_late_init,
+    // The three build passes take `&mut Vec<Span>` / `&Vec<usize>` rather than slices
+    // because the proofs are written against vstd's `Vec` specifications: `push`,
+    // `resize` and the `vec_index_mut` `update` postcondition. A slice rewrite would
+    // change which specification each access goes through and jeopardise the build's
+    // refinement proof for a pure style change.
+    clippy::ptr_arg,
     // ListNode construction goes Default-then-set_next because set_next is the verified
     // packing primitive (its ensures establish next_wf/next_ref); a struct literal would
     // bypass the proof surface.
@@ -83,7 +94,10 @@ pub mod capture_bits;
 pub mod circular_list;
 pub mod container_id;
 pub mod dense_id;
+pub mod dense_span_map;
 pub mod diff_store;
+pub mod eclasses;
+pub mod error;
 #[cfg(feature = "literal-types")]
 pub mod external_specs;
 pub mod fork_history;
@@ -95,6 +109,7 @@ pub mod id_factory;
 pub mod id_macros;
 pub mod index_like;
 pub mod inline_store;
+pub mod layered_span_map;
 pub mod list;
 pub mod map;
 pub mod opt;
@@ -103,10 +118,11 @@ pub mod sorted_cursor;
 pub mod sorted_vec_cursor;
 pub mod sparse_set;
 pub mod tagged;
+pub mod union_find;
 pub mod vec;
 
 // ---------------------------------------------------------------------------
-// Root re-exports (migration plan Phase 4): production-style flat surface
+// Root re-exports: production-style flat surface
 // under the verus names. One name per thing, workspace-wide.
 // ---------------------------------------------------------------------------
 
@@ -121,12 +137,14 @@ pub use canonical_keys::{BitsF64, CanonicalF64, CanonicalRational};
 pub use circular_list::{CircularList, CircularListToken, RingIter};
 pub use container_id::ContainerId;
 pub use dense_id::{DenseId31, DenseId63};
+pub use dense_span_map::{DenseSpanMap, Span, SpanArena};
 pub use diff_store::DiffStore;
 pub use fork_history::ForkHistory;
 pub use id_factory::{IdFactory, IdRangeError};
 pub use id_macros::ids::{SparseSetId, UseListId, UseNodeId};
 pub use index_like::IndexLike;
 pub use inline_store::InlineStore;
+pub use layered_span_map::LayeredSpanMap;
 pub use list::{ListArena, ListArenaToken};
 pub use map::{MapToken, SpMap};
 pub use opt::{DenseId, Opt};
@@ -137,6 +155,17 @@ pub use sparse_set::{SparseSet, SparseSetToken};
 pub use tagged::{BoolTagged, Pair, Tagged};
 pub use vec::{ShrinkPolicy, Vec, VecToken, VecView, VecViewIter};
 
+// Production-root parity: names production exports at its crate root, under
+// production's spellings (`Map`/`View`/`ViewIter` alias the renamed types).
+pub use bplus_layout::{
+    BPlusNode, BPlusNode64, BPlusNode64U32, BPlusNode128, BPlusNode128U32, BPlusNode128U64,
+    BPlusNode256, BPlusNode256U32, BPlusNode256U64, BPlusNode512U64, Layout64, Layout128,
+    Layout256,
+};
+pub use list::ListIter;
+pub use map::SpMap as Map;
+pub use vec::{VecView as View, VecViewIter as ViewIter};
+
 // A compact bitset utility, kept outside the container proofs (production
 // exposes it too). Permanent — not part of the retired compat-gate surface.
 pub mod bitset;
@@ -146,6 +175,6 @@ pub mod bitset;
 pub type VecI<T, I, const TRACK: bool = true> = Vec<T, I, InlineStore<T, I>, TRACK>;
 
 /// Parallel capture: flag in a packed side bitvector. Works with any
-/// `T: Copy`. (Production's `VecP` alias; production accepted `T: Clone` —
-/// the Copy narrowing is the documented Phase 0 scope decision.)
+/// `T: Copy`. Production's `VecP` alias accepted `T: Clone`; the verified
+/// compatibility surface intentionally narrows this to `Copy`.
 pub type VecP<T, I, const TRACK: bool = true> = Vec<T, I, ParallelStore<T, I>, TRACK>;

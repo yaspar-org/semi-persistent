@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; Multiple MSet (AC) symbols complete INDEPENDENTLY (multi-AC/ACI plan, step 4).
+;; Multiple MSet (AC) symbols complete independently.
 ;; The §4b superposition fires separately under Add and under Mul, each using its own
 ;; per-class min-monomial pool column, with no cross-op contamination.
 (sort E)

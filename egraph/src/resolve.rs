@@ -110,8 +110,13 @@ pub enum RAtom<O, S, L> {
         op: O,
         children: Vec<PatVar>,
     },
+    /// A ground literal in a pattern: `node` is the `@sort` literal node whose payload
+    /// equals `value`. `op` is that `@sort` constructor — carried so the scheduler can
+    /// emit a real index lookup for this atom. Without it the atom had no lookup to
+    /// scan and compiled to an unsatisfiable join.
     Lit {
         node: VarId,
+        op: O,
         sort: S,
         value: L,
     },
@@ -168,6 +173,89 @@ pub enum RAtom<O, S, L> {
     },
     Eq(VarId, VarId),
     EqGlobal(VarId, GlobalVarId),
+    /// A primitive predicate guard. Scans nothing and binds nothing: it is evaluated
+    /// over already-bound literal values and keeps or drops the partial match.
+    ///
+    /// `deps` names the atoms that bind the guard's literal values: the `LitBind` atoms
+    /// for the variables in `guard.expr`. The scheduler lowers the guard as soon as all
+    /// of them have run, which is as early as the guard can be evaluated at all.
+    Pred {
+        guard: PredGuard<O, L>,
+        deps: Vec<usize>,
+    },
+}
+
+/// A resolved primitive predicate guard: the computation, plus the truth test for the
+/// literal model the query was resolved against.
+///
+/// Both function pointers come from the model (`LitOpDesc::eval`, `LitModel::is_truthy`)
+/// and are captured at resolve time, which is what keeps the matcher generic over the
+/// value type alone rather than over the whole model.
+#[derive(Clone, Debug)]
+pub struct PredGuard<O, L> {
+    pub expr: RPredExpr<O, L>,
+    /// `LitModel::is_truthy`: the guard passes when the value it computes is true.
+    pub truthy: fn(&L) -> bool,
+}
+
+/// Equality on the computation, not on the captured function pointers: an operator
+/// determines its own `eval`, and the truth test is a property of the model, which is
+/// fixed for a program. Comparing the pointers would be comparing addresses that the
+/// compiler is free to merge or duplicate.
+impl<O: PartialEq, L: PartialEq> PartialEq for PredGuard<O, L> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expr == other.expr
+    }
+}
+impl<O: Eq, L: Eq> Eq for PredGuard<O, L> {}
+
+/// A resolved guard expression. Leaves are bound literal values or constants; nodes are
+/// primitive applications carrying the model's evaluator.
+#[derive(Clone, Debug)]
+pub enum RPredExpr<O, L> {
+    /// A literal value bound by a `LitBind` atom.
+    Val(LitValVarId),
+    /// A constant written in the guard, parsed at the argument position's sort.
+    Const(L),
+    App {
+        op: O,
+        eval: fn(&[&L]) -> L,
+        args: Vec<RPredExpr<O, L>>,
+    },
+}
+
+impl<O: PartialEq, L: PartialEq> PartialEq for RPredExpr<O, L> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RPredExpr::Val(a), RPredExpr::Val(b)) => a == b,
+            (RPredExpr::Const(a), RPredExpr::Const(b)) => a == b,
+            (
+                RPredExpr::App {
+                    op: a, args: xs, ..
+                },
+                RPredExpr::App {
+                    op: b, args: ys, ..
+                },
+            ) => a == b && xs == ys,
+            _ => false,
+        }
+    }
+}
+impl<O: Eq, L: Eq> Eq for RPredExpr<O, L> {}
+
+impl<O, L> RPredExpr<O, L> {
+    /// The literal-value variables the guard reads, in evaluation order.
+    pub fn value_vars(&self, out: &mut Vec<LitValVarId>) {
+        match self {
+            RPredExpr::Val(v) => out.push(*v),
+            RPredExpr::Const(_) => {}
+            RPredExpr::App { args, .. } => {
+                for a in args {
+                    a.value_vars(out);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -607,6 +695,8 @@ where
         )?);
     }
 
+    link_pred_deps(&mut resolved, &shape)?;
+
     let mult_intervals = collect_mult_intervals(&resolved, &fq.atoms, &shape)?;
 
     Ok(ResolvedQuery {
@@ -615,6 +705,50 @@ where
         var_sorts,
         mult_intervals,
     })
+}
+
+/// Fill in each predicate guard's `deps`: the atoms that bind the literal values it
+/// reads.
+///
+/// A guard is evaluated, not matched, so it has no join to schedule and no cost to
+/// compare; what it has is a point in the schedule before which it cannot run. That
+/// point is "every `LitBind` atom feeding it has run", which is what this records, and
+/// the scheduler's eager pass fires the guard at exactly that point.
+fn link_pred_deps<O, S, L>(atoms: &mut [RAtom<O, S, L>], shape: &MatchShape) -> R<()> {
+    let mut binder: Vec<Option<usize>> = vec![None; shape.num_lit_val_vars()];
+    for (i, a) in atoms.iter().enumerate() {
+        if let RAtom::LitBind { val, .. } = a {
+            binder[val.idx()] = Some(i);
+        }
+    }
+    let mut vars = Vec::new();
+    for i in 0..atoms.len() {
+        let RAtom::Pred { guard, .. } = &atoms[i] else {
+            continue;
+        };
+        vars.clear();
+        guard.expr.value_vars(&mut vars);
+        let mut deps = Vec::with_capacity(vars.len());
+        for v in &vars {
+            let d = binder[v.idx()].ok_or_else(|| {
+                err(
+                    format!(
+                        "guard variable '{}' is never bound to a literal value by this rule",
+                        shape.lit_val_name(*v)
+                    ),
+                    Span::Dummy,
+                )
+            })?;
+            deps.push(d);
+        }
+        deps.sort_unstable();
+        deps.dedup();
+        let RAtom::Pred { deps: slot, .. } = &mut atoms[i] else {
+            unreachable!()
+        };
+        *slot = deps;
+    }
+    Ok(())
 }
 
 /// Intern a node variable name, growing var_sorts as needed.
@@ -714,9 +848,56 @@ where
                 _ => {
                     let va = iv(a, span, shape, var_sorts)?;
                     let vb = iv(b, span, shape, var_sorts)?;
+                    // The two sides denote one e-class, so they have one sort. Whichever
+                    // side already has one gives it to the other; this is what lets
+                    // `(rewrite (= v pat) rhs)` sort-check its right-hand side against
+                    // `pat`'s sort, since `v` alone constrains nothing.
+                    match (var_sorts[va.idx()], var_sorts[vb.idx()]) {
+                        (Some(sa), None) => var_sorts[vb.idx()] = Some(sa),
+                        (None, Some(sb)) => var_sorts[va.idx()] = Some(sb),
+                        (Some(sa), Some(sb)) if sa != sb => {
+                            return Err(err(
+                                format!(
+                                    "'{a}' and '{b}' are equated but have sorts '{}' and '{}'",
+                                    sorts.name(sa),
+                                    sorts.name(sb)
+                                ),
+                                span,
+                            ));
+                        }
+                        _ => {}
+                    }
                     Ok(vec![RAtom::Eq(va, vb)])
                 }
             }
+        }
+
+        Atom::Pred { expr, span } => {
+            let rexpr = resolve_pred_expr(expr, None, ops, sorts, model, shape)?;
+            let RPredExpr::App { op, .. } = &rexpr else {
+                return Err(err(
+                    "a guard must be a primitive application, e.g. `(i64::< a b)`",
+                    *span,
+                ));
+            };
+            let ret = ops.info(*op).return_sort;
+            if sorts.name(ret) != "bool" {
+                return Err(err(
+                    format!(
+                        "a guard must compute a bool, but this one computes '{}'",
+                        sorts.name(ret)
+                    ),
+                    *span,
+                ));
+            }
+            Ok(vec![RAtom::Pred {
+                guard: PredGuard {
+                    expr: rexpr,
+                    truthy: M::is_truthy,
+                },
+                // Filled in by `link_pred_deps` once every atom is resolved.
+                deps: Vec::new(),
+            }])
         }
 
         Atom::Lit { node, text, span } => {
@@ -728,8 +909,18 @@ where
                 .id_by_name(sort_name)
                 .ok_or_else(|| err(format!("unknown literal sort '{sort_name}'"), *span))?;
             unify_var(nid, lit_sort, var_sorts, &shape.nodes, sorts, *span)?;
+            let lit_op = ops.lit_op_for_sort(lit_sort).ok_or_else(|| {
+                err(
+                    format!(
+                        "sort '{}' has no literal constructor, so '{text}' cannot appear in a pattern",
+                        sorts.name(lit_sort)
+                    ),
+                    *span,
+                )
+            })?;
             Ok(vec![RAtom::Lit {
                 node: nid,
+                op: lit_op,
                 sort: lit_sort,
                 value: val,
             }])
@@ -1085,6 +1276,94 @@ fn lookup_op<'a, O: DenseId + Hash + Copy, S: DenseId + Copy, const TRACK: bool>
     Ok((id, ops.info(id)))
 }
 
+/// Resolve a guard expression against the model's primitives.
+///
+/// `expected` is the sort the enclosing argument position asks for; it types the
+/// literal constants (so `0` in an `i64` position is an `i64` and not a bignum) and
+/// checks the nested applications.
+fn resolve_pred_expr<O, S, L, M, const TRACK: bool>(
+    expr: &crate::compile::PredExpr,
+    expected: Option<S>,
+    ops: &OpRegistry<O, S, TRACK>,
+    sorts: &SortRegistry<S, TRACK>,
+    model: &M,
+    shape: &MatchShape,
+) -> R<RPredExpr<O, L>>
+where
+    O: DenseId + Hash + Copy,
+    S: DenseId + Copy,
+    L: LitVal,
+    M: LitModel<Value = L>,
+{
+    use crate::compile::PredExpr;
+    match expr {
+        PredExpr::Var(name, span) => {
+            let vid = shape.find_lit_val(name).ok_or_else(|| {
+                err(
+                    format!(
+                        "'{name}' is not bound to a literal value; a guard may only read \
+                         variables that some pattern binds in a primitive-sorted argument \
+                         position, and only patterns written before it"
+                    ),
+                    *span,
+                )
+            })?;
+            Ok(RPredExpr::Val(vid))
+        }
+        PredExpr::Lit(text, span) => {
+            let val = match expected {
+                Some(s) => model.parse_as(sorts.name(s), text).ok_or_else(|| {
+                    err(
+                        format!("cannot parse '{text}' as '{}'", sorts.name(s)),
+                        *span,
+                    )
+                })?,
+                None => model
+                    .parse_any(text)
+                    .map(|(_, v)| v)
+                    .ok_or_else(|| err(format!("cannot parse literal '{text}'"), *span))?,
+            };
+            Ok(RPredExpr::Const(val))
+        }
+        PredExpr::App { op, args, span } => {
+            let (op_id, info) = lookup_op(op, ops, *span)?;
+            if !ops.is_prim_op(op_id) {
+                return Err(err(
+                    format!("'{op}' is not a primitive operator, so it cannot appear in a guard"),
+                    *span,
+                ));
+            }
+            if let Some(exp) = expected
+                && exp != info.return_sort
+            {
+                return Err(err(
+                    format!(
+                        "guard operator '{op}' computes '{}', but this position expects '{}'",
+                        sorts.name(info.return_sort),
+                        sorts.name(exp)
+                    ),
+                    *span,
+                ));
+            }
+            let OpKind::Normal { arg_sorts } = &info.kind else {
+                unreachable!("a primitive op is always registered as OpKind::Normal")
+            };
+            check_arity(op, arg_sorts.len(), args.len(), *span)?;
+            let mut rargs = Vec::with_capacity(args.len());
+            for (a, s) in args.iter().zip(arg_sorts) {
+                rargs.push(resolve_pred_expr(a, Some(*s), ops, sorts, model, shape)?);
+            }
+            Ok(RPredExpr::App {
+                op: op_id,
+                // A primitive op's id is its index into the model's op table: the
+                // registry registers `LitModel::ops()` first and in order.
+                eval: model.ops()[op_id.to_usize()].eval,
+                args: rargs,
+            })
+        }
+    }
+}
+
 /// Like `lookup_op` but rejects primitive ops (only constructors allowed in LHS).
 fn lookup_lhs_op<'a, O: DenseId + Hash + Copy, S: DenseId + Copy, const TRACK: bool>(
     name: &str,
@@ -1094,8 +1373,10 @@ fn lookup_lhs_op<'a, O: DenseId + Hash + Copy, S: DenseId + Copy, const TRACK: b
     let (id, info) = lookup_op(name, ops, span)?;
     if ops.is_prim_op(id) {
         return Err(err(
-            "primitive operator 'name' cannot appear in LHS pattern (only in RHS or ground terms)"
-                .to_string(),
+            format!(
+                "primitive operator '{name}' cannot appear inside a left-hand-side pattern \
+                 (it may head a `:when` guard, or appear in a right-hand side or ground term)"
+            ),
             span,
         ));
     }
@@ -1321,15 +1602,34 @@ pub enum RRhsTerm<O, S, L> {
     /// `(+ x y)` where `+` is a `LitOpDesc` prim op.
     PrimApp {
         op: O,
-        args: Vec<LitValVarId>,
+        args: Vec<RPrimArg>,
         ret_sort: S,
     },
+    /// Reconstruct a `@i64(k)` lit node from a bound AC multiplicity variable.
+    MultVar {
+        op: O,
+        var: MultVarId,
+    },
     FetchGlobal(GlobalVarId),
+}
+
+/// A primitive-op argument on a RHS: a bound literal value, or a bound AC
+/// multiplicity variable read as an i64.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RPrimArg {
+    LitVal(LitValVarId),
+    Mult(MultVarId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RRhsChild<O, S, L> {
     Term(RRhsTerm<O, S, L>),
+    /// `term:mult` under a variadic op: the term contributed `mult` times.
+    /// Multiplicity 0 omits the term without evaluating it.
+    TermMult {
+        body: Box<RRhsTerm<O, S, L>>,
+        mult: ResolvedMultExpr,
+    },
     SpliceSeq(SeqVarId),
     SpliceSet(SetVarId),
     SpliceMset(MsetVarId),
@@ -1365,6 +1665,54 @@ pub enum RRhsChild<O, S, L> {
 pub enum ResolvedMultExpr {
     Lit(u64),
     Var(MultVarId),
+    /// Checked u64 arithmetic over multiplicities (`(u64::- k 1)`). Interval-
+    /// checked at rule install against the LHS multiplicity constraints, so a
+    /// possible underflow or division by zero is rejected before the rule
+    /// runs; evaluation still uses checked ops as the second line.
+    Prim {
+        op: MultPrimOp,
+        args: Vec<ResolvedMultExpr>,
+    },
+}
+
+/// The RHS multiplicity-expression vocabulary: the u64 primitive ops that
+/// make sense over counts, same names, same checked semantics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultPrimOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Min,
+    Max,
+}
+
+impl MultPrimOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            MultPrimOp::Add => "u64::+",
+            MultPrimOp::Sub => "u64::-",
+            MultPrimOp::Mul => "u64::*",
+            MultPrimOp::Div => "u64::/",
+            MultPrimOp::Rem => "u64::%",
+            MultPrimOp::Min => "u64::min",
+            MultPrimOp::Max => "u64::max",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "u64::+" => Some(MultPrimOp::Add),
+            "u64::-" => Some(MultPrimOp::Sub),
+            "u64::*" => Some(MultPrimOp::Mul),
+            "u64::/" => Some(MultPrimOp::Div),
+            "u64::%" => Some(MultPrimOp::Rem),
+            "u64::min" => Some(MultPrimOp::Min),
+            "u64::max" => Some(MultPrimOp::Max),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1483,6 +1831,29 @@ pub fn resolve_rhs<
             if let Some(s) = expected_sort
                 && sorts.is_concrete(s)
             {
+                if shape.find_lit_val(v).is_none()
+                    && let Some(mv) = shape.find_mult(v)
+                {
+                    // A bound AC multiplicity used in a literal position,
+                    // e.g. `(Const k)` after `x:k` — readable only as i64.
+                    if sorts.name(s) != "i64" {
+                        return Err(err(
+                            format!(
+                                "multiplicity variable '{v}' can only fill an i64 \
+                                 literal position, found sort {}",
+                                sorts.name(s)
+                            ),
+                            span,
+                        ));
+                    }
+                    let lit_op = ops.lit_op_for_sort(s).ok_or_else(|| {
+                        err(format!("no lit op for sort '{}'", sorts.name(s)), span)
+                    })?;
+                    return Ok(RRhsTerm::MultVar {
+                        op: lit_op,
+                        var: mv,
+                    });
+                }
                 let lvid = shape
                     .find_lit_val(v)
                     .ok_or_else(|| err(format!("unbound literal variable '{v}'"), span))?;
@@ -1570,13 +1941,31 @@ pub fn resolve_rhs<
                             ));
                         }
                     };
-                    let vid = shape.find_lit_val(var_name).ok_or_else(|| {
-                        err(
-                            "'var_name' is not a lit-val variable (bind via OpKind::Lit pattern)"
-                                .to_string(),
+                    let vid = if let Some(lv) = shape.find_lit_val(var_name) {
+                        RPrimArg::LitVal(lv)
+                    } else if let Some(mv) = shape.find_mult(var_name) {
+                        // A bound AC multiplicity is a count; it is readable
+                        // only where the primitive expects an i64.
+                        if sorts.name(arg_sorts[i]) != "i64" {
+                            return Err(err(
+                                format!(
+                                    "multiplicity variable '{var_name}' can only feed an \
+                                     i64 argument; prim op '{op}' arg {i} expects {}",
+                                    sorts.name(arg_sorts[i])
+                                ),
+                                span,
+                            ));
+                        }
+                        RPrimArg::Mult(mv)
+                    } else {
+                        return Err(err(
+                            format!(
+                                "'{var_name}' is not a lit-val or multiplicity variable \
+                                 (bind via OpKind::Lit pattern or a `:k` annotation)"
+                            ),
                             span,
-                        )
-                    })?;
+                        ));
+                    };
                     args.push(vid);
                 }
                 return Ok(RRhsTerm::PrimApp {
@@ -1598,8 +1987,21 @@ pub fn resolve_rhs<
                 ));
             }
             let child_sorts = arg_sorts_for_rhs(&info.kind, op, children.len(), span)?;
+            let variadic = matches!(
+                info.kind,
+                OpKind::A { .. } | OpKind::MSet { .. } | OpKind::Set { .. }
+            );
             let mut rchildren = Vec::with_capacity(children.len());
             for (i, c) in children.iter().enumerate() {
+                if !variadic && matches!(c, crate::ast::RhsChild::TermMult { .. }) {
+                    return Err(err(
+                        format!(
+                            "a multiplicity annotation on an RHS element needs a \
+                             variadic operator; '{op}' has fixed arity"
+                        ),
+                        span,
+                    ));
+                }
                 let cs = child_sorts.get(i).copied();
                 rchildren.push(resolve_rhs_child(
                     c, cs, ops, sorts, model, var_sorts, shape, globals,
@@ -1659,6 +2061,16 @@ fn resolve_rhs_child<
         RhsChild::Term(t) => Ok(RRhsChild::Term(resolve_rhs(
             t, sort, ops, sorts, model, vs, shape, globals,
         )?)),
+        RhsChild::TermMult { term, mult, span } => {
+            // Only a variadic op can absorb a repeated child; the App site
+            // rejects the annotation under fixed-arity ops before recursing.
+            let body = resolve_rhs(term, sort, ops, sorts, model, vs, shape, globals)?;
+            let m = resolve_mult_expr(mult, *span, shape)?;
+            Ok(RRhsChild::TermMult {
+                body: Box::new(body),
+                mult: m,
+            })
+        }
         RhsChild::Splice(name, span) => resolve_splice(name, *span, shape),
         RhsChild::SetComp {
             body,
@@ -1837,6 +2249,31 @@ fn resolve_mult_expr(
         crate::ast::MultExpr::Var(name) => {
             lookup_mult_var(name, span, shape).map(ResolvedMultExpr::Var)
         }
+        crate::ast::MultExpr::Prim { op, args } => {
+            let p = MultPrimOp::from_name(op).ok_or_else(|| {
+                err(
+                    format!(
+                        "'{op}' is not a multiplicity operation (u64::+ u64::- u64::* \
+                         u64::/ u64::% u64::min u64::max)"
+                    ),
+                    span,
+                )
+            })?;
+            if args.len() != 2 {
+                return Err(err(
+                    format!(
+                        "'{op}' in a multiplicity expression takes 2 args, got {}",
+                        args.len()
+                    ),
+                    span,
+                ));
+            }
+            let rargs = args
+                .iter()
+                .map(|a| resolve_mult_expr(a, span, shape))
+                .collect::<R<Vec<_>>>()?;
+            Ok(ResolvedMultExpr::Prim { op: p, args: rargs })
+        }
     }
 }
 
@@ -1887,6 +2324,106 @@ mod tests {
             extra_spans: Vec::new(),
         })?;
         resolve(&fq, &ops, &sorts, &model, &GlobalCtx::<_, ()>::new())
+    }
+
+    fn do_resolve_multi(
+        srcs: &[&str],
+    ) -> Result<ResolvedQuery<OpId, SortId, NiraLitVal>, ResolveError> {
+        let (ops, sorts) = setup();
+        let model = crate::literal::NiraModel;
+        let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
+        let fq = flatten(&pats, &ops).map_err(|e| ResolveError {
+            msg: e,
+            span: crate::ast::Span::Dummy,
+            extra_spans: Vec::new(),
+        })?;
+        resolve(&fq, &ops, &sorts, &model, &GlobalCtx::<_, ()>::new())
+    }
+
+    /// `(= v pat)` adds no atom kind of its own: `pat` flattens as it would alone and one
+    /// `Eq` ties `v` to its root.
+    #[test]
+    fn root_binding_lowers_to_one_eq() {
+        let rq = do_resolve("(= v (g x))").unwrap();
+        assert_eq!(rq.atoms.len(), 2);
+        assert!(matches!(&rq.atoms[0], RAtom::Plain { .. }));
+        assert!(matches!(&rq.atoms[1], RAtom::Eq(..)));
+    }
+
+    /// The bound root carries the pattern's sort, which is what lets a rewrite whose
+    /// left-hand side is `(= v pat)` sort-check its right-hand side.
+    #[test]
+    fn root_binding_propagates_the_sort() {
+        let (_, sorts) = setup();
+        let e = sorts.id_by_name("IExpr").unwrap();
+        let rq = do_resolve("(= v (g x))").unwrap();
+        let v = rq.shape.find_var("v").unwrap();
+        assert_eq!(rq.var_sorts[v.idx()], Some(e));
+    }
+
+    /// Repeating the bound name across conjuncts is the ordinary non-linear case: one
+    /// variable, two roots, one `Eq` each.
+    #[test]
+    fn root_binding_shares_one_variable_across_conjuncts() {
+        let rq = do_resolve_multi(&["(= v (g x))", "(= v (f x y))"]).unwrap();
+        let eqs: Vec<_> = rq
+            .atoms
+            .iter()
+            .filter_map(|a| match a {
+                RAtom::Eq(a, b) => Some((*a, *b)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(eqs.len(), 2);
+        assert_eq!(eqs[0].0, eqs[1].0);
+        assert_ne!(eqs[0].1, eqs[1].1);
+    }
+
+    /// A guard reads the literal values other atoms bind, and records the atoms that bind
+    /// them so the scheduler knows when it can run.
+    #[test]
+    fn guard_records_its_binding_atoms() {
+        let rq = do_resolve_multi(&["(f (ILit a) (ILit b))", "(< a b)"]).unwrap();
+        let (guard, deps) = rq
+            .atoms
+            .iter()
+            .find_map(|at| match at {
+                RAtom::Pred { guard, deps } => Some((guard, deps)),
+                _ => None,
+            })
+            .expect("guard atom");
+        let mut vals = Vec::new();
+        guard.expr.value_vars(&mut vals);
+        assert_eq!(vals.len(), 2);
+        assert_eq!(deps.len(), 2);
+        for d in deps {
+            assert!(matches!(&rq.atoms[*d], RAtom::LitBind { .. }));
+        }
+    }
+
+    /// A constant in a guard is parsed at the argument position's sort, not guessed.
+    #[test]
+    fn guard_constant_takes_the_argument_sort() {
+        let rq = do_resolve_multi(&["(f (ILit a) y)", "(< a 5)"]).unwrap();
+        assert!(rq.atoms.iter().any(|at| matches!(at, RAtom::Pred { .. })));
+    }
+
+    #[test]
+    fn guard_rejects_a_variable_no_pattern_binds() {
+        let e = do_resolve_multi(&["(f x y)", "(< a b)"]).unwrap_err();
+        assert!(e.msg.contains("not bound to a literal value"), "{}", e.msg);
+    }
+
+    #[test]
+    fn guard_rejects_a_non_boolean_computation() {
+        let e = do_resolve_multi(&["(f (ILit a) (ILit b))", "(+ a b)"]).unwrap_err();
+        assert!(e.msg.contains("must compute a bool"), "{}", e.msg);
+    }
+
+    #[test]
+    fn guard_rejects_a_non_primitive_operator() {
+        let e = do_resolve_multi(&["(f (ILit a) (ILit b))", "(< (g a) b)"]).unwrap_err();
+        assert!(e.msg.contains("not a primitive"), "{}", e.msg);
     }
 
     #[test]

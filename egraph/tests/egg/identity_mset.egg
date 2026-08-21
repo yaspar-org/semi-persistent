@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; Identity (unit drop) on an MSet op (multi-AC/ACI plan, property 1). The declared unit `zero`
+;; Identity (unit drop) on an MSet op. The declared unit `zero`
 ;; drops from monomials: +(a, zero) → {a} = a (size-1 monomial collapses to its element), and a
 ;; superposition whose reduct contains the unit collapses through it.
 (sort E)

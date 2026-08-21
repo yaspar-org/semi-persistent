@@ -105,6 +105,17 @@ pub trait VarCanon<G: DenseId, C> {
 }
 
 /// Ordered: apply find, preserve order. (PlainN, A). No clamp; `mode` ignored.
+///
+/// An A-only op's two algebraic laws — flatten a nested same-op child into the sequence, and
+/// collapse a one-element sequence to its element — run at **build** time only
+/// (`EGraph::add`'s `flatten_seq_children` and its `OpKind::A` degeneracy arm), so they are
+/// deliberately absent here. Two reasons, and they agree: recanonization writes children back
+/// into the node's existing span, which can shrink but not grow, so a splice could not be
+/// expressed; and the AC counterpart makes the same choice, where §6c of
+/// `ac-congruence-completeness.md` gives a paper argument that recanon-time flattening is
+/// vacuous. See
+/// `doc/design/04-canonization.md`, "A-Only Operators", for what the build-only placement
+/// leaves open.
 pub struct OrderedCanon;
 
 impl<G: DenseId> VarCanon<G, G> for OrderedCanon {

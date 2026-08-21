@@ -8,11 +8,14 @@
 Chapters 8–9 describe how the engine finds matches (read-only).
 This chapter describes what happens with each match: the RHS is
 evaluated against the binding environment, producing new e-nodes
-and merges. Rule application is the only phase that mutates the e-graph.
+and merges. Within execution of a prepared rule, mutation is confined to
+action/RHS evaluation; command execution and rebuild can also mutate the
+e-graph outside that phase.
 
-The RHS is compiled into a tree of `RhsOp` nodes during sortcheck.
-At runtime, each match drives a walk over this tree, building terms
-bottom-up and interning new literal values as needed.
+Sortcheck resolves the RHS to `RRhsTerm`. When the interpreter installs the
+checked rewrite or rule, `compile_rhs` converts that resolved tree to
+`RhsOp`. Each match then drives a bottom-up evaluation of the compiled tree,
+building terms and interning literal values as needed.
 
 ## Compiled RHS
 
@@ -21,13 +24,15 @@ enum RhsOp<O, V> {
     FetchNode(VarId),
     Lit(O, V),
     LitVar(O, LitValVarId),
+    MultVar(O, MultVarId),
     App { op: O, args: Vec<RhsArg<O, V>> },
-    PrimApp { op: O, args: Vec<LitValVarId> },
+    PrimApp { op: O, args: Vec<RPrimArg> },
     FetchGlobal(GlobalVarId),
 }
 
 enum RhsArg<O, V> {
     One(RhsOp<O, V>),
+    OneMult { body: RhsOp<O, V>, mult: ResolvedMultExpr },
     SpliceSeq(SeqVarId),
     SpliceSet(SetVarId),
     SpliceMset(MsetVarId),
@@ -40,64 +45,65 @@ enum RhsArg<O, V> {
 | Variant | Purpose |
 |---------|---------|
 | `FetchNode` | Read bound e-node id from match environment |
-| `Lit` | Create literal node from a known interned value |
+| `Lit` | Intern a known literal value and create its literal node |
 | `LitVar` | Reconstruct `@sort(val)` literal node from a bound `LitValVarId` |
+| `MultVar` | Reconstruct an `@i64(k)` node from a bound multiplicity |
 | `App` | Build `(op args...)` via `eg.add()` |
-| `PrimApp` | Evaluate a primitive op on bound literal values, intern result |
-| `FetchGlobal` | Fetch a global e-class binding by `GlobalVarId` |
-```
+| `PrimApp` | Evaluate a primitive op on bound literal values or multiplicities, intern result |
+| `FetchGlobal` | Fetch a global binding by `GlobalVarId` and canonicalize it at evaluation |
 
 ## Evaluation
 
 ```rust
-fn eval(op: &RhsOp, match: &Match, eg: &mut EGraph, model: &M) → G {
+fn eval(op: &RhsOp, match: &mut Match, eg: &mut EGraph, model: &M) → G {
     match op {
-        FetchNode(vid) => match.get(vid),
-        Lit(lid) => {
-            let val = eg.lits().get(match.get_lit_val(lid));
-            let vid = eg.intern_lit(val.clone());
-            eg.add_lit(lit_op, vid)
-        }
+        FetchNode(vid) => eg.find(match.get(vid)),
+        Lit(lit_op, value) =>
+            eg.add_lit(lit_op, eg.intern_lit(value.clone())),
+        LitVar(lit_op, vid) => eg.add_lit(lit_op, match.get_lit_val(vid)),
         App { op, args } => {
-            let children = args.flat_map(|arg| match arg {
-                One(inner) => vec![eval(inner)],
-                SpliceSeq(sid) => match.seq_slice(sid).to_vec(),
-                SpliceSet(sid) => match.set_slice(sid).to_vec(),
-                SpliceMset(mid) => expand_mset(match.mset_slice(mid)),
-                SetComp { body, var, source, .. } =>
-                    match.set_slice(source).iter()
-                        .filter(|v| check_filter(...))
-                        .map(|v| { bind var=v; eval(body) })
-                        .collect(),
-                // similar for MsetComp, SeqComp
-            });
+            let mut children = SmallVec::new();
+            for arg in args {
+                eval_arg(arg, match, eg, model, &mut children);
+            }
             eg.add(op, &children)
         }
+        PrimApp { op, args } => {
+            let result = model.eval(op, resolved_values(args, match, eg));
+            let value_id = eg.intern_lit(result);
+            eg.add_lit(return_sort_lit_op(op), value_id)
+        }
+        // MultVar and FetchGlobal are direct reconstructions/lookups.
     }
 }
 ```
+
+`eval_arg` splices rest bindings, evaluates optional multiplicity
+expressions, and handles the three comprehension kinds. `ChildVec` is a
+`SmallVec` with inline capacity 16 and can spill to the heap for larger RHS
+child lists.
 
 ## Actions
 
 ```rust
 enum CompiledAction<O, V> {
-    Union(RhsOp<O, V>, RhsOp<O, V>),
+    Union(RuleId, RhsOp<O, V>, RhsOp<O, V>),
     Insert(RhsOp<O, V>),
     Set { func: O, args: Vec<RhsOp<O, V>>, value: RhsOp<O, V> },
     Subsume(VarId),
 }
 ```
 
-For rewrites, `Union(FetchNode(root_vid), compiled_rhs)` evaluates
-the RHS, then union the result with the matched LHS root.
+For rewrites, `Union(rule_id, FetchNode(root_vid), compiled_rhs)` evaluates
+the RHS, then unions the result with the matched LHS root. `rule_id` labels the
+justification when proof logging is enabled.
 
 For datalog rules, `Insert(App { op, args })` builds the term and
 insert it into the e-graph.
 
-For functional relations, `Set { func, args, value }` updates the
-function table entry for `func(args...)` to `value`. This supports
-semi-lattice merge semantics where the function's value is joined
-with the new value rather than replaced.
+`Set { func, args, value }` is parsed and compiled, but execution currently
+reaches `todo!("lattice set not yet implemented")`. Lattice-valued function
+semantics are future work; this variant is not a usable runtime feature.
 
 For subsumption, `Subsume(root_vid)` marks the matched node as
 subsumed so it is excluded from future matches.
@@ -116,13 +122,16 @@ PrimApp { op, args: [x, y] } => {
 }
 ```
 
-New literal values are interned only when a rule fires, never during
-matching (see Chapter 13).
+This is when a primitive RHS result is interned for a firing rule. It is not
+the only interning site in the program: ground-term construction and an
+algebraic identity declaration can also intern literals. LHS matching and LHS
+predicate guards do not intern (Chapter 13).
 
 ## Filter Guards
 
-`:when` guards are evaluated as boolean predicates on bound values.
-They are read-only, with no interning and no e-graph mutation:
+Filters inside RHS comprehensions are RHS terms, not LHS `:when` predicates.
+They are evaluated through the same mutating `eval` path as the body and can
+intern literals or build e-nodes before their truth value is tested:
 
 ```rust
 fn check_filter_truthy(guard: &RhsOp, match, eg, model) → bool {
@@ -130,6 +139,11 @@ fn check_filter_truthy(guard: &RhsOp, match, eg, model) → bool {
     eg.get_lit_val(id).map(|v| model.is_truthy(v)).unwrap_or(false)
 }
 ```
+
+Each sequence, set, or multiset comprehension first clones its source slice
+with `.to_vec()`. This transient copy permits rebinding the loop variable and
+mutating the e-graph while iterating; the implementation is not allocation-free.
+LHS `:when` guards remain read-only and are described in Chapters 8–9.
 
 ---
 [← Ch 11: Sortcheck and Resolution](11-sortcheck-and-resolution.md) · [Table of Contents](00-table-of-contents.md) · [Ch 13: Literal Model →](13-literal-model.md)

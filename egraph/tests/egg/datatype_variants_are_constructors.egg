@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; Datatype variants are constructors automatically: they take the same :cost and
+;; :unextractable tags as a (constructor …) declaration, and their nodes carry
+;; FLAG_CONSTRUCTOR (asserted in tests/extract_best.rs, `datatype_variants_are_constructors`).
+(datatype Math
+  (Num)
+  (Add Math Math :cost 2)
+  (Mul Math Math :cost 3)
+  (Tmp Math :unextractable))
+
+(union (Add (Num) (Num)) (Num))
+;; Congruence through a datatype variant, unchanged by the tags.
+(check (= (Mul (Add (Num) (Num)) (Num)) (Mul (Num) (Num))))
+;; The :unextractable variant's class extracts through the variant it was merged with.
+(union (Tmp (Num)) (Num))
+(extract (Tmp (Num)))

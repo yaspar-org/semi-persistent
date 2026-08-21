@@ -1,0 +1,20 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A literal in a multi-pattern `(rule (…) (…))` body. Two independent patterns are
+;; flattened into one query; the literal atom belongs to the second and must constrain it
+;; without aborting the join over the first.
+(datatype Math (Add Math Math) (Mul Math Math) (Const i64) (Var String))
+
+(rule ((Add x y) (Mul y (Const 1))) ((union x y)))
+
+;; The join holds for p/q and the literal matches: the rule unions them.
+(let s (Add (Var "p") (Var "q")))
+(let m (Mul (Var "q") (Const 1)))
+(run 5)
+(check (= (Var "p") (Var "q")))
+
+;; The join holds for r/s too, but the `Mul` over s carries 9, not 1: no union.
+(let s2 (Add (Var "r") (Var "s")))
+(let m2 (Mul (Var "s") (Const 9)))
+(run 5)
+(check (!= (Var "r") (Var "s")))

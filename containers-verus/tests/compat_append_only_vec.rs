@@ -30,7 +30,7 @@ fn run_ops(ops: Vec<Op>) {
     for op in ops {
         match op {
             Op::Push(val) => {
-                v.push(val);
+                v.try_push(val).expect("compat: within capacity");
                 oracle.push(val);
             }
             Op::Get(idx) => {
@@ -44,7 +44,9 @@ fn run_ops(ops: Vec<Op>) {
                 if snapshots.len() >= 20 {
                     continue;
                 }
-                let token = v.mark(ShrinkPolicy::Never);
+                let token = v
+                    .try_mark(ShrinkPolicy::Never)
+                    .expect("compat: depth in bounds");
                 snapshots.push((token, oracle.clone()));
             }
             Op::Restore(idx) => {
@@ -53,7 +55,7 @@ fn run_ops(ops: Vec<Op>) {
                 }
                 let idx = idx % snapshots.len();
                 let (token, snap) = snapshots[idx].clone();
-                v.restore(token);
+                v.try_restore(token).expect("compat: own live token");
                 oracle = snap;
                 snapshots.truncate(idx);
             }
@@ -64,7 +66,7 @@ fn run_ops(ops: Vec<Op>) {
     for (i, expected) in oracle.iter().enumerate() {
         assert_eq!(*v.get(i), *expected, "final mismatch at {i}");
     }
-    // Phase 5.2 additions (iter / as_slice), checked once available.
+    // `iter` / `as_slice` compatibility.
     #[cfg(feature = "compat-composites")]
     {
         let collected: Vec<u32> = v.iter().copied().collect();

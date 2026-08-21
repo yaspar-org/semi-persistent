@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; ACI (Set) congruence completion (multi-AC/ACI plan, step 5). Same §4b superposition as
+;; ACI (Set) congruence completion. Same §4b superposition as
 ;; the AC case, but under an idempotent :assoc-comm-idem op: the monomials are SETS (dedup),
 ;; and the reduct normalization clamps counts to 1. or(a,b)=c, or(b,d)=e  ⟹  or(c,d)=or(a,e).
 (sort E)

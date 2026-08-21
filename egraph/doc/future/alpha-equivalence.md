@@ -1,10 +1,19 @@
 # Alpha-Equivalent E-Graphs: Unified Design
 
+**Status**: design for future work. Of the three variants below, only the
+Director variant has landed primitives: `egraph/src/director.rs` (the
+bitmatrix types and `PortArity`). Nothing is wired into the e-graph: no
+module outside `director.rs` uses it, and the `PortAlgebra` trait does not
+exist in the tree. `A3-future-work.md` also records thinnings as a third
+binder-aware candidate; its merge and matching laws are not yet specified
+enough to instantiate the interface proposed here.
+
 ## 1. Overview
 
-This document describes a unified e-graph design that supports alpha-equivalence
-for terms with binders. The design is parameterized over a `PortAlgebra` trait
-that accommodates three variants:
+This document explores a possible common e-graph interface for
+alpha-equivalence with binders. It proposes a `PortAlgebra` trait for three
+variants, but does not establish that the trait is sufficient for the full
+Slotted semantics:
 
 | Variant | Edge label | Class metadata | UF witness | Merge policy |
 |---------|-----------|----------------|------------|--------------|
@@ -12,12 +21,11 @@ that accommodates three variants:
 | Director | partial-injection matrix | port count `u8` | contraction matrix | shrink to intersection |
 | Slotted | slot renaming map | `(SlotSet, SymmetryGroup)` | slot renaming | shrink to intersection |
 
-Both binder-aware variants share the same fundamental insight: on merge,
-the class's port interface shrinks to the intersection of the two sides.
-Ports that appear in one representation but not the other are redundant:
-they don't affect the term's meaning. The narrower representation becomes
-canonical, and a contraction witness is stored in the union-find to map the
-wider representation to the narrower one.
+The binder-aware variants share labeled e-class references and composable
+union-find witnesses. Interface contraction is central to both, but a literal
+set intersection is not a complete shared merge law: Director ports are
+positional, while Slotted classes also quotient references by a symmetry group.
+The exact contraction and canonicalization laws must be stated per instance.
 
 The key invariant is that every eclass reference carries a port mapping.
 In a standard e-graph, an enode stores plain eclass ids for its children,
@@ -165,16 +173,18 @@ iteration.
 | Symmetry tracking | no | yes (group algebra) |
 | UF witness | contraction matrix | slot renaming |
 | Hashcons key | (op, edges with labels) | weak shape |
-| Permutations | yes | yes |
+| Permutations | representable on an edge; no class-symmetry quotient | represented with class symmetry |
 
 Both are instances of the same abstract pattern: edges carry morphisms
 between port interfaces, and merge shrinks the interface to the intersection.
 
 ### 2.4 The Underlying Mathematical Object
 
-Directors and slot maps both encode the same thing: a partial
-injection between two finite sets (parent ports and child ports). The
-difference is how the sets are addressed.
+At the level of one edge, Director and slot-map labels can both encode a
+partial injection between finite interfaces. That common edge-level object is
+not the whole e-graph semantics. Slotted classes additionally carry
+automorphisms that identify multiple slot renamings; positional Directors do
+not obtain that quotient merely by choosing a port order.
 
 For directors, ports are indices `0..n`. The mapping is an array of
 integers: `map[child_port] = parent_port` (child-indexed) or
@@ -182,30 +192,31 @@ integers: `map[child_port] = parent_port` (child-indexed) or
 compact (a few bits per entry) but fragile: indices shift when ports
 are added or removed.
 
-For slot maps, ports are globally unique names (`Slot(u32)`). The
-mapping is a sorted list of `(source_name, target_name)` pairs. The
-encoding is stable (names never change) but bulky: 160 bytes inline
-for ≤10 pairs in the slotted egraph's `SmallVec` representation.
+For slot maps, ports are names such as `Slot(u32)` and a mapping can be a
+sorted list of `(source_name, target_name)` pairs. Its size depends on the
+chosen inline capacity and representation. No implementation or measurement in
+this repository establishes a concrete byte ratio against Directors.
 
-The algorithms are isomorphic between directors and slot maps. You can
-implement slotted semantics with positional encoding by maintaining a
-canonical ordering of slots and converting to/from indices at the boundary,
-or implement director semantics with nominal encoding by assigning names to
-ports. The partial injection is the same; only the addressing differs.
+Converting names to positions can reproduce an individual mapping only after
+choosing an order. Reproducing Slotted semantics also requires canonicalizing
+that order under the class symmetry group and proving that merge, matching,
+and hash-consing respect the quotient. Until those obligations are discharged,
+the algorithms should not be described as isomorphic.
 
 The practical tradeoff between positional and nominal addressing:
 
 | | Positional (directors) | Nominal (slotted) |
 |---|---|---|
-| Storage per edge | k × ceil(log₂(n+1)) bits | k × 2 × 32 bits |
+| Storage per edge | representation-dependent; dense matrix or compact partial map | representation-dependent name pairs |
 | Merge | Compute index correspondence, renumber | Intersect by name, no renumbering |
 | Shrink | Shift indices above removed port | Just drop the name |
 | Composition | Array index chasing, O(k) | Hash/sorted lookup, O(k) |
 | Hashcons | Canonicalize index assignment | Canonicalize name assignment |
 
-Positional is 10-100× more compact per edge but requires index maintenance
-on shrink. Nominal is stable but expensive in memory. For an e-graph with
-millions of edges, the storage difference matters.
+Positional encodings can be more compact when arities are small, while nominal
+encodings avoid positional renumbering. The magnitude is workload- and
+layout-dependent and must be measured with the actual inline/spill and slot-map
+representations before making a ratio claim.
 
 - Commutative operators swap children (the two orderings need different
   port mappings that are not order-preserving)
@@ -213,7 +224,12 @@ millions of edges, the storage difference matters.
 - Symmetry groups exist (two e-nodes in the same class may use ports in
   different orders)
 
-Directors and slot maps handle all of these.
+Positional directors can encode the first two cases after an order is chosen,
+and nominal slot maps can represent the corresponding name relations. Neither
+representation by itself solves the third case: matching Slotted
+alpha-equivalence semantics still requires canonicalizing under the class
+symmetry group and proving that merge, matching, and hash-consing respect that
+quotient.
 
 ### 2.5 Director Encoding: Child-Indexed vs Parent-Indexed
 
@@ -324,8 +340,12 @@ guarded by a type or eta-long condition to prevent it from firing on
 its own output and diverging. We omit the guard here to focus on the
 sharing analysis.)
 
-This wraps `t` under a new binder. If `t` has free variables, their
-"address" changes: in de Bruijn, all indices shift up by 1.
+In a direct de Bruijn substitution that stores indices in nodes, wrapping `t`
+under a new binder changes the indices of its free variables. Implementations
+using explicit substitutions, levels, delayed shifts, or memoized shifted
+views can mitigate the resulting copying, so the example below is a
+worst-case illustration of the direct representation rather than a universal
+cost theorem.
 
 Suppose the e-graph contains a large shared subterm `S` that appears in
 many places, some under 0 binders, some under 1, some under 2. Before
@@ -334,15 +354,17 @@ what happens?
 
 #### De Bruijn indices
 
-`S` at depth 0 uses `var(0)` for its first free variable. After wrapping
-under a new binder, every free variable in `S` must shift: `var(0)` becomes
-`var(1)`, `var(1)` becomes `var(2)`, etc. This creates a NEW term `S'`
-that is structurally different from `S`. The e-graph must store both `S`
-and `S'` as separate e-classes. If `S` is large (say, 1000 nodes), the
-shifted copy `S'` is another 1000 nodes.
+Under that direct representation, `S` at depth 0 uses `var(0)` for its first
+free variable. Wrapping it under a new binder shifts free indices:
+`var(0)` becomes `var(1)`, `var(1)` becomes `var(2)`, and so on. The shifted
+term has a different structural key, so an eager tree-copy implementation may
+materialize a second representation. If every node depends on a shifted free
+index, a 1000-node term can require up to another 1000 changed nodes; unaffected
+subgraphs can still be shared.
 
-Worse: if `S` appears at 10 different binder depths, you get 10 copies.
-The sharing that the e-graph is supposed to provide is destroyed.
+At ten binder depths, the direct eager representation can approach ten shifted
+variants. This is the workload the edge-label designs intend to avoid, not a
+claim about every de Bruijn implementation.
 
 ```
 Before:  S (shared, 1000 nodes)
@@ -357,7 +379,8 @@ slot `$x`, and the edge from the new `Lam` to `App(t, x)` carries a
 slot map `{$a → $a, $b → $b}` (identity on S's slots). The new variable
 `$x` is routed separately to the `Var` node.
 
-`S` remains a single e-class. No copying. No shifting.
+Under the proposed Slotted invariants, `S` can remain one e-class; the new
+context is represented by labels rather than eager index shifting.
 
 ```
 Before:  S (shared, 1000 nodes)
@@ -381,8 +404,8 @@ Child-indexed: [0 → 1, 1 → 2]
  parent port 2 → child port 1"
 ```
 
-`S` itself is unchanged: same arity, same internal structure. The shift
-is absorbed by the edge director. No copying.
+Under the proposed Director invariants, `S` itself remains unchanged: the edge
+director represents the changed context.
 
 ```
 Before:  S (shared, 1000 nodes, arity 2)
@@ -391,9 +414,9 @@ After:   S (unchanged, still 1000 nodes, arity 2)
          + edge to S has director [0→1, 1→2] (the "shift")
 ```
 
-This is the same as slotted: the edge label absorbs the shift. The
-difference is encoding: directors use positional indices, slotted uses
-names. But the sharing behavior is identical.
+Both proposals aim to preserve this sharing in the example. That does not make
+their complete merge, symmetry, matching, or canonicalization semantics
+identical.
 
 
 ## 3. The `PortAlgebra` Trait
@@ -442,13 +465,13 @@ step.
 
 ### Trait Definition
 
-The trait exposes eight methods. `id` produces the identity label
+The trait sketch exposes seven methods. `id` produces the identity label
 for a scope, and `compose` chains two labels: these two are used on
 every `find`. `is_id` is a fast check used to short-circuit no-op
-composition. `canon_key` produces a stable hash-consing key, ensuring
-that slotted and director encodings agree on structurally identical
-terms. `merge` computes the contracted rep scope when two classes
-are unified. `extend_child_scope` is used when entering a binder.
+composition. `canon_key` produces an equality-checkable hash-consing key
+within one instance. Cross-instance agreement is a separate refinement
+obligation. `merge` computes the instance-specific contracted rep scope when
+two classes are unified. `extend_child_scope` is used when entering a binder.
 `factor` is the e-matching primitive: given a pattern edge and a
 candidate edge, find the label that completes the triangle.
 
@@ -456,23 +479,24 @@ candidate edge, find the label that completes the triangle.
 trait PortAlgebra {
     type Scope: Clone + Eq + Hash;
     type Label: Clone + Eq + Hash;
+    type CanonKey: Clone + Eq + Hash;
 
     fn id(s: &Self::Scope) -> Self::Label;
     fn compose(f: &Self::Label, g: &Self::Label) -> Self::Label;
     fn is_id(m: &Self::Label) -> bool;
 
-    /// Stable key for hash-consing. Two labels with equal canon_key
-    /// denote the same port mapping. For slot maps, this relabels
-    /// slots to positional indices 0..n-1 before hashing, so that
-    /// slotted and director hashcons keys agree on structurally
-    /// identical terms.
-    fn canon_key(m: &Self::Label) -> u64;
+    /// Equality-checkable key for hash-consing. The instance must prove:
+    /// equal keys iff the labels denote the same mapping under that
+    /// instance's symmetry semantics. Hash collisions are then resolved by
+    /// CanonKey::eq in the ordinary HashMap contract.
+    fn canon_key(m: &Self::Label) -> Self::CanonKey;
 
     /// Merge two eclasses. Given evidence that eclasses A and B
     /// should be equal (via labels witness_a: W→A and witness_b: W→B
-    /// from a common source scope W), compute the smallest scope R
-    /// that captures only the ports both sides actually use. Returns
-    /// R and the UF labels A→R and B→R.
+    /// from a common source scope W), compute a contracted scope R satisfying
+    /// the instance's merge law. Returns R and the UF labels A→R and B→R.
+    /// Any claim that R is minimal is an instance theorem, not part of this
+    /// signature alone.
     ///
     /// The common source W is implicit: callers construct the
     /// witnesses differently depending on context (see table below).
@@ -530,29 +554,29 @@ Rebuild only ever composes labels; it never needs `factor`. The
 
 ### Instances
 
-In the classic (no-binders) instance, `Scope = ()` and `Label = ()`.
+In the proposed classic (no-binders) instance, `Scope = ()`, `Label = ()`, and
+`CanonKey = ()`.
 All operations are trivial: `compose((), ()) = ()`, `merge` returns
-`((), (), ())`, `canon_key` returns 0, `extend_child_scope` returns
-`()`, and `factor` returns `Some(())`. This recovers standard
-egg-style e-graphs as a degenerate instance, so the engine pays zero
-cost for the `PortAlgebra` abstraction when binders are not needed.
+`((), (), ())`, `canon_key` returns `()`, `extend_child_scope` returns
+`()`, and `factor` returns `Some(())`. This is intended to recover
+standard egg-style e-graphs as a degenerate instance. Whether monomorphization
+preserves the current layout and removes all additional work must be checked
+with layout/code-generation tests and Criterion; it is not established by the
+trait sketch.
 
-In the directors instance, `Scope = u8` (port count) and `Label =
-Bitmatrix` packed into `u64`. Each entry maps a parent port to a
-child port. `compose` is boolean matrix multiply. `merge` intersects
-used-port masks and renumbers. `canon_key` hashes the column-sorted
-bitmatrix. `extend_child_scope(k)` adds k columns (new bound ports
-in the child). `factor` is matrix left-division. Symmetry is trivial
-because ports are positional, so there is no permutation ambiguity.
+In a Directors instance, `Scope` can be a port count and `Label` a compact or
+spilled bitmatrix. Composition follows partial-injection composition. A
+collision-safe `CanonKey` must include dimensions and normalized matrix
+content; a bare 64-bit hash is not identity. Merge, scope extension, and
+factorization remain algorithms to specify and prove. Positional ports avoid
+nominal lookup but do not by themselves represent class automorphism groups.
 
-In the slot-maps instance, `Scope = SmallSet<SlotId>` and `Label =
-SmallMap<SlotId, SlotId>` (partial injection). `compose` is map
-composition. `merge` runs union-find on slot names to identify which
-slots both sides agree on, keeping only those. `canon_key` relabels
-slots to `0..n-1` in canonical order and hashes; this is what makes
-slotted hashcons keys agree with director hashcons keys on
-structurally identical terms. `extend_child_scope(k)` adds k fresh
-slot names, and `factor` solves the bijection on image overlap.
+In a slot-map instance, `Scope` can contain a slot set plus symmetry metadata
+and `Label` a partial renaming. Composition is map composition. Merge,
+factorization, and canonical-key construction must operate modulo the class
+symmetry group. A canonical key must be an equality-checkable representation,
+not only a hash. Agreement with a Director implementation is a future
+cross-instance refinement target, not a property supplied by relabeling alone.
 
 The slotted e-graph design (Schneider et al.) tracks a `SymmetryGroup`
 per eclass: the set of slot permutations that leave the class
@@ -639,11 +663,13 @@ Inserting `foo(x,w,z,0)` for fresh `w`:
 Two harnesses behind the same `PortAlgebra` boundary:
 
 1. Algebraic laws per instance (property-based): `compose`
-   associative, `id` neutral, `merge` produces the smallest scope,
-   `extend_child_scope` distributes over `compose`.
+   associative, `id` neutral, canonical keys agree exactly with semantic label
+   equality, and each instance's stated merge and scope-extension laws hold.
 
-2. Cross-instance equivalence: fix a rewrite system and ground
-   terms, saturate under each `PortAlgebra` instance, assert the
-   induced equivalence relations on ground terms are identical.
+2. Cross-instance equivalence: fix a rewrite system and terms with binders,
+   saturate under each completed `PortAlgebra` instance, and assert the induced
+   alpha-equivalence relation is identical. Include symmetric classes so the
+   test does not erase the main semantic difference between the candidates.
+   This is finite evidence; a refinement theorem remains the release criterion.
    The laws catch internal bugs; the cross-check catches "internally
    consistent but semantically wrong."

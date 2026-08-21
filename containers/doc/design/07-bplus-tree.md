@@ -1,174 +1,146 @@
-# Chapter 7 — `BPlusTreeSet` — Arena-Backed B+ Tree
+# Chapter 7: `BPlusTreeSet`, Arena-Backed B+ Tree
 
-[← Ch 6: SparseSet](06-sparse-set.md) · [Ch 8: Benchmark Analysis →](08-bplus-benchmark-analysis.md) · [Table of Contents](00-table-of-contents.md)
+[← Ch 6: SparseSet](06-sparse-set.md) · [Table of Contents](00-table-of-contents.md)
 
-A cache-line-aligned B+ tree set of `u32` keys, backed by an arena
-of fixed-size 64-byte nodes. Supports O(log n) insert, O(log n) seek,
-and O(1) step for ordered iteration via linked leaves.
+`BPlusTreeSet` is a packed, insert-only B+ tree set of `DenseId` keys. It is
+backed by a semi-persistent node arena and parameterized at compile time over
+key width, node geometry, in-node search, and tracking:
+
+```rust
+pub struct BPlusTreeSet<
+    K: DenseId,
+    L: NodeLayout<Word = K::Index> = Layout64U32,
+    S: SearchKind = BinarySearch,
+    const TRACK: bool = true,
+> { /* ... */ }
+```
+
+Leaves form a linked list, so ordered iteration advances without walking back
+up the tree. The tree supports insertion and query cursors, but not deletion.
 
 ## Motivation
 
-Sorted containers are needed whenever an application must iterate
-keys in order or perform seek-based intersection (e.g. leapfrog
-triejoin). A sorted `Vec` works well when the data is built once and
-queried many times, but incremental insertion into a sorted `Vec` is
-O(n) due to shifting. The B+ tree offers O(log n) insert while
-preserving cache-friendly ordered iteration through linked leaf nodes.
+Sorted containers are needed for ordered iteration and seek-based intersection.
+A sorted vector is compact and fast to scan, but an insertion can shift O(n)
+elements. The B+ tree keeps insertion logarithmic in the number of keys while
+retaining contiguous in-node searches and constant-time movement between
+adjacent leaf entries.
 
-## Node Layout
+## Node Layouts
 
-All nodes — leaf and internal — share a single 64-byte
-cache-aligned struct stored in a flat semi-persistent `Vec<BPlusNode>` arena:
+Every layout supplies one fixed-size, cache-aligned node type. A node contains a
+small header, a word array, and a link field:
 
-```rust
-#[repr(C, align(64))]
-pub struct BPlusNode {
-    len_flags: u16,      // low 15 bits = count, bit 15 = is_leaf
-    link_or_pad: u32,    // leaf: next-leaf pointer; internal: 8th child
-    data: [u32; 14],     // leaf: up to 14 keys; internal: 7 keys + 7 children
-}
-```
+- A leaf stores sorted keys in `data[0..count]`; `link` names the next leaf.
+- An internal node stores sorted separators in the lower part of `data` and
+  child indices in the upper part. Its final child reuses `link`.
+- `ArenaIdx::MAX` is reserved as the null link.
+- Header flag bits distinguish leaves and carry the semi-persistent capture tag.
 
-The 64-byte alignment ensures each node fits in exactly one cache
-line. Leaf vs internal is encoded in the MSB of `len_flags`, avoiding
-a separate discriminant field.
+The available layouts are:
 
-| Node type | Keys | Children | Link |
-|-----------|------|----------|------|
-| Leaf | up to 14 in `data[0..14]` | — | `link_or_pad` → next leaf |
-| Internal | up to 7 in `data[0..7]` | up to 7 in `data[7..14]`, 8th in `link_or_pad` | — |
+| Layout | Word | Arena index | Bytes | Leaf keys | Internal keys | Children |
+|---|---:|---:|---:|---:|---:|---:|
+| `Layout64U32` | `u32` | `u32` | 64 | 14 | 7 | 8 |
+| `Layout128U32` | `u32` | `u32` | 128 | 30 | 14 | 15 |
+| `Layout256U32` | `u32` | `u32` | 256 | 62 | 30 | 31 |
+| `Layout128U64` | `u64` | `usize` | 128 | 14 | 6 | 7 |
+| `Layout256U64` | `u64` | `usize` | 256 | 30 | 14 | 15 |
+| `Layout512U64` | `u64` | `usize` | 512 | 62 | 30 | 31 |
+
+The `u32` layouts pair with 31-bit dense IDs. On 64-bit targets, the `u64`
+layouts pair with 63-bit dense IDs and use `usize` arena indices. The default is
+`Layout64U32`; callers choose a different layout explicitly when its footprint
+and target-specific performance are preferable.
+
+## Search Strategies
+
+`SearchKind` controls how separators and leaf keys are searched:
+
+- `BinarySearch`, the default, uses `slice::partition_point`.
+- `Branchless` counts comparisons in a linear scan that the compiler may
+  vectorize.
+
+Neither strategy is universally faster across layouts and targets. The
+Criterion benchmark in
+[`containers/benches/bplus_bench.rs`](../../benches/bplus_bench.rs) exercises
+the supported combinations; performance decisions should be based on its
+confidence intervals on the deployment architecture, not a single timing run.
 
 ## Operations
 
 ### Insert
 
-Insert follows the standard B+ tree algorithm with an optimization:
+`insert(key)` returns `true` exactly when it adds a new key.
 
-**Fast path:** If the key is greater than all existing keys and the
-rightmost leaf has room, it appends in O(1) without tree traversal.
-This makes sequential insertion (the common case when building an
-index from sorted data) very fast.
+- If the key is greater than the current maximum and the rightmost leaf has
+  room, insertion appends directly to that leaf.
+- Otherwise the tree descends through internal separators while recording the
+  path. A non-full target leaf is updated in place. A full leaf is split and its
+  separator is propagated upward; full internal nodes split in turn, possibly
+  creating a new root.
 
-**General path:** Iterative descent saving the path on a stack-allocated
-array (max depth 8, since branching factor 8 with 14-key leaves
-supports billions of entries). On leaf overflow, split in-place and
-propagate the separator key upward. Root splits create a new root.
+In this reference crate, the descent path uses a fixed 24-entry stack array.
+Every built-in layout has `MAX_DEPTH <= 24`; the reference implementation
+checks that relationship only with `debug_assert!`, so a custom layout that
+exceeds 24 is not rejected in a release build and is outside the supported
+layout set.
 
 ### Bulk Construction
 
-`from_sorted(data)` builds the tree bottom-up in O(n):
+`from_sorted(keys)` builds leaves and internal levels bottom-up in O(n). Its
+input contract is stricter than its type: keys must be strictly increasing and
+deduplicated. The reference implementation checks this only by
+`debug_assert!`, so its release callers must establish the condition
+themselves. The verified production implementation performs an unconditional
+linear refusal check and proves the resulting model for every returning call.
 
-1. Pack leaves left-to-right, filling each to capacity (14 keys)
-2. Link leaves into a chain
-3. Build internal levels bottom-up, each internal node holding up to
-   8 children
+### Cursor
 
-This is significantly faster than repeated insertion for pre-sorted
-data.
+`BPlusCursor` exposes `seek`, `seek_first`, `key`, and `step`:
 
-### Cursor / Iteration
+| Operation | Behavior |
+|---|---|
+| `seek(target)` | Positions at the least key greater than or equal to `target`, or exhaustion. |
+| `seek_first()` | Positions at the least key. |
+| `key()` | Returns the current key, or `None` at exhaustion. |
+| `step()` | Advances one entry, following the leaf link at a leaf boundary. |
 
-`BPlusCursor` provides seek-and-step iteration:
+For repeated forward seeks, `seek` first checks the current leaf and its next
+linked leaf. It falls back to a root descent when those leaves cannot answer the
+query, including backward seeks.
 
-```rust
-pub struct BPlusCursor<'a> {
-    tree: &'a BPlusTreeSet,
-    node: u32,   // current leaf index
-    pos: usize,  // position within leaf
-}
-```
+## Arena And Semi-Persistence
 
-| Operation | Cost | Description |
-|-----------|------|-------------|
-| `seek(key)` | O(log n) | Position at first key ≥ target |
-| `key()` | O(1) | Current key, or `None` if exhausted |
-| `step()` | O(1) | Advance to next key (follows leaf links) |
+Nodes live in `VecI<L::Node, L::ArenaIdx, TRACK>`. The mutable tree header
+(`root`, `last_leaf`, and key count) lives in a one-element
+`VecP<BPlusHeader<_>, u32, TRACK>`. A `BPlusToken` composes snapshots of both
+stores; restoring it rewinds node mutations, post-mark allocations, and header
+changes together.
 
-The linked-leaf chain makes `step()` a simple increment-and-follow-link,
-with no tree traversal. This is the key advantage of B+ trees over
-binary search trees for ordered iteration.
+The tree is append-only at the arena level. It has no free list: ordinary
+operation never removes nodes, while restore can truncate nodes allocated after
+the corresponding mark.
 
-## Arena Allocation
+Capture state uses a flag bit already present in every fixed-size node header,
+so it does not add a separate field per node. Marks are not unconditionally
+O(1): the underlying inline store clears capture bits associated with the prior
+frame, with work proportional to the cells it must clear. Restore cost follows
+the underlying stores and the amount of state changed after the mark.
 
-All nodes live in a single `Vec<BPlusNode>`. Node indices are `u32`
-values into this arena. Allocation is append-only (`push` to the
-arena), and there is no free-list or deallocation — the tree grows
-monotonically. This is appropriate for use cases where the tree is
-built, queried, and then discarded (or rebuilt from scratch).
+With `TRACK = false`, tracking branches and capture/log execution are removed by
+constant specialization. The generic stores and token still retain their
+tracking-related fields, which remain empty or at their initial state; this is
+an execution-overhead elision claim, not a zero-layout-overhead claim.
 
-## Design Tradeoffs
+## Scope And Tradeoffs
 
-- **`u32` keys only.** The current implementation is specialized for
-  `u32` keys. Generalizing to arbitrary `DenseId` types would require
-  parameterizing the node layout.
-
-- **No deletion.** The tree supports insert and query but not removal.
-  For use cases that need removal, the `SparseSet` (Chapter 6) is a
-  better fit.
-
-## Semi-Persistence
-
-The B+ tree is backed by a `VecI<BPlusNode, u32, TRACK>` arena,
-making it fully semi-persistent via the same mark/restore protocol
-as all other containers in this crate.
-
-```rust
-pub struct BPlusTreeSet<const TRACK: bool = true> {
-    nodes: VecI<BPlusNode, u32, TRACK>,
-    root: u32,
-    last_leaf: u32,
-    len: usize,
-}
-```
-
-`mark()` snapshots the arena (via `VecI::mark`) and saves the scalar
-fields (`root`, `last_leaf`, `len`) into a `BPlusToken`. `restore()`
-replays the arena's diff log in reverse and restores the scalars.
-
-This means inserts — including node splits and pointer rewrites — are
-fully reversible. New nodes allocated after the mark are reclaimed by
-truncation; modifications to existing nodes (key shifts, child pointer
-updates during splits) are undone by the diff log.
-
-### The Capture Tag Bit
-
-`VecI` requires its element type to implement `Tagged` so it can
-track which slots have been captured (logged to the diff stack) since
-the last mark. For `DenseId` types this is the MSB, but `BPlusNode`
-is a 64-byte struct, not an integer.
-
-The solution: steal bit 14 of the `len_flags` field.
-
-```
-len_flags (u16):
-  bits 0-3:   count (max 14 for leaves, max 7 for internal)
-  bit 14:     capture tag (used by VecI for semi-persistence)
-  bit 15:     is_leaf flag
-  bits 4-13:  unused
-```
-
-Count never exceeds 14, so only 4 bits are needed. Bit 15 is the
-leaf/internal discriminant. Bit 14 is free in both node types and
-serves as the zero-overhead capture flag — no extra memory per node.
-
-The `Tagged` impl for `BPlusNode`:
-- `tag()`: reads bit 14
-- `set_tag()`: sets bit 14
-- `clear_tag()`: clears bit 14
-- `from_repr()`: strips bit 14 (and only bit 14 — the leaf flag and
-  count are preserved)
-
-This gives the B+ tree the same zero-overhead semi-persistence as
-the flat vectors: the capture tracking is packed into existing padding
-bits of each 64-byte cache-aligned node.
-
-### Compile-Time Elision
-
-Like all containers, `BPlusTreeSet` is parameterized by
-`const TRACK: bool`. When `TRACK = false`, the `VecI` backend
-eliminates all capture tracking at compile time, and `mark()`/
-`restore()` become no-ops. This is useful when the tree is built
-once and never backtracked.
+- The tree is a set: duplicate insertion is a no-op and returns `false`.
+- Deletion and merge/borrow rebalancing are intentionally absent.
+- Layout and search choices affect footprint and machine-specific performance,
+  so the library exposes them instead of asserting one universal optimum.
+- The verified implementation and proof status are documented in
+  [`containers-verus/doc/design/10-bplus-tree.md`](../../../containers-verus/doc/design/10-bplus-tree.md).
 
 ---
-[← Ch 6: SparseSet](06-sparse-set.md) · [Ch 8: Benchmark Analysis →](08-bplus-benchmark-analysis.md) · [Table of Contents](00-table-of-contents.md)
+[← Ch 6: SparseSet](06-sparse-set.md) · [Table of Contents](00-table-of-contents.md)

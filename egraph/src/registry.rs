@@ -2,22 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sort and operator registries.
 
+use crate::containers::AppendOnlyVec;
 use crate::containers::DenseId;
 use crate::containers::IndexLike;
 use crate::containers::MapToken;
 use crate::containers::ShrinkPolicy;
 use crate::containers::SpMap;
+use crate::containers::VecToken;
 use crate::id::{ENodeKind, id_at};
 
 /// Opaque token for [`SortRegistry::mark`] / [`SortRegistry::restore`].
 #[derive(Clone, Copy, Debug)]
 pub struct SortRegistryToken(MapToken);
 
-/// Opaque token for [`OpRegistry::mark`] / [`OpRegistry::restore`].
+/// Opaque token for [`OpRegistry::mark`] / [`OpRegistry::restore`]. Bundles the op log's
+/// token with the completion table's, so the two are always marked and truncated together.
 #[derive(Clone, Copy, Debug)]
-pub struct OpRegistryToken(MapToken);
+pub struct OpRegistryToken {
+    map: MapToken,
+    completion: VecToken,
+}
 
-/// Associativity direction for A/MSet/Set operators.
+/// Source spelling retained for associative-only operators.
+///
+/// All three variants currently use the same flat, order-preserving `Seq`
+/// representation and matching semantics. The value records whether the
+/// declaration used `:assoc-left`, `:assoc-right`, or `:assoc`; no production
+/// path branches on it after registration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssocDir {
     Left,
@@ -25,8 +36,8 @@ pub enum AssocDir {
     Both,
 }
 
-/// How an AC op's normal form bounds a summand's count (design "three independent axes", the
-/// 2026-07-01 correction). This is a *unified* axis carried on BOTH `MSet` and `Set` descriptors,
+/// How an AC op's normal form bounds a summand's count (design "three independent axes").
+/// This is a unified axis carried on both `MSet` and `Set` descriptors,
 /// independent of the storage partition: the partition is derived from the clamp (`Idempotent →
 /// Set`; `None` / `Nilpotent → MSet`). See `doc/design/ac-algebraic-properties.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,7 +50,8 @@ pub enum Clamp {
     /// `x∘x = e` (order 2), or count mod `order` in general: pairs cancel to the unit. `xor`,
     /// `bvxor`. Requires an `identity`. Stored as `MSet` (NOT `Set`): computing count-mod-n needs
     /// the true multiplicity, which the `Set` dedup canonize would destroy at build time; the
-    /// mod-n reduction happens at completion instead. The NF counts are {0,1} at order 2 but the
+    /// mod-n reduction happens during build/recanonization and is also used by completion
+    /// normalization. The NF counts are {0,1} at order 2 but the
     /// *storage* is MSet regardless of order.
     ///
     /// Why `order: u8` and not a node id: the two halves of the law `xⁿ = e` have different
@@ -48,17 +60,18 @@ pub enum Clamp {
     /// so an id type would be a category error. The identity `e` IS a graph entity, and it
     /// is stored as one — a resolved node id in the egraph's per-op `unit_node` map (as the
     /// inverse operator is in `inverse_op`), kept OFF this descriptor because `OpKind<S>`
-    /// is generic over sorts only and cannot carry a `Cfg::G`/`Cfg::O` (hence the deferred
-    /// [`UnitRef`] here). `u8` is the "orders are tiny" choice (xor = 2); its one known
+    /// is generic over sorts only and cannot carry a `Cfg::G`/`Cfg::O`. The parsed
+    /// [`UnitRef`] retained here is resolved immediately by surface registration. `u8` is
+    /// the "orders are tiny" choice (xor = 2); its one known
     /// limit is foreclosing the `bvadd(N)`-as-nilpotent-`2^N` torsion encoding for N ≥ 8 —
     /// widen to `u32` (enum field, `MSetClamp`, the two clamp fns, the tag parser) if
     /// bitvector modeling ever lands. Numbers for laws, ids for entities.
     Nilpotent { order: u8 },
 }
 
-/// A deferred reference to an operator's identity (unit) element (design "the unit is a
-/// deferred ground term"). Parsed and sort-checked at registration, but the actual e-node is
-/// built lazily at first completion use, so registration stays side-effect-free on the e-graph.
+/// Parsed reference to an operator's identity (unit) element. Surface registration
+/// sort-checks and builds the actual e-node immediately, storing it in the egraph's
+/// per-op `unit_node` map; this descriptor retains the source-level form.
 #[derive(Clone, Debug)]
 pub enum UnitRef {
     /// A literal unit (`0`, `true`, `#b0000`): its surface token and the sort to parse it at.
@@ -70,11 +83,10 @@ pub enum UnitRef {
 /// Signature and algebraic kind of a registered operator.
 ///
 /// The `MSet`/`Set` variants carry the resolved algebra beyond the representation: an optional
-/// `identity` (unit-drop; applies to either representation) and `cancellative` flag, plus a
-/// Set-only `clamp`. The group `inverse` op is deferred until the group facet is implemented
-/// (it needs the op-id type, which `OpKind<S>` does not carry); the `:inverse` tag parses and
-/// validates but its resolved op is not stored here yet. See
-/// `doc/design/ac-algebraic-properties.md` (surface property tags).
+/// `identity` (unit-drop; applies to either representation), `cancellative` flag, and count
+/// clamp. Resolved unit nodes and inverse operator ids need the configured node/op id types,
+/// which `OpKind<S>` cannot carry, so the e-graph stores them in its semi-persistent
+/// `unit_node` and `inverse_op` maps. See `doc/design/ac-algebraic-properties.md`.
 #[derive(Clone, Debug)]
 pub enum OpKind<S: DenseId> {
     Normal {
@@ -89,7 +101,7 @@ pub enum OpKind<S: DenseId> {
     },
     /// Associative-commutative, multiset child representation (`(G, mult)`, ℕ counts). Holds
     /// `clamp ∈ {None, Nilpotent}` — plain AC (`None`) or nilpotent (`Nilpotent`, which is stored
-    /// MSet to keep true multiplicities for the completion-time mod-n reduction). Never
+    /// MSet so build/recanonization can compute the mod-n reduction from true multiplicities). Never
     /// `Idempotent` (that is the `Set` partition).
     MSet {
         arg_sort: S,
@@ -109,6 +121,38 @@ pub enum OpKind<S: DenseId> {
     Lit,
 }
 
+/// Non-algebraic registration metadata for an operator: whether it was declared as a
+/// constructor, and the two extraction knobs. Separate from [`OpKind`], which carries only
+/// the algebraic shape. The surface layer parses this straight out of a declaration's tag
+/// list (`ast::Command::Function`, `ast::Variant`) and hands it to
+/// [`OpRegistry::register_kind_meta`], so there is one representation from parse to registry.
+///
+/// `Default` is the undeclared case: a plain `(function …)` — not a constructor, cost 1,
+/// extractable. Cost 1 is what the extractor charged for every node before per-op costs
+/// existed, so a program that declares no `:cost` extracts exactly as it did before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpMeta {
+    /// Declared with `(constructor …)`, or a `(datatype …)` variant. A constructor is a term
+    /// former: it behaves like a function for congruence and matching, and additionally
+    /// stamps [`FLAG_CONSTRUCTOR`](crate::node_types::FLAG_CONSTRUCTOR) on its nodes.
+    pub is_constructor: bool,
+    /// Per-node extraction cost (`:cost n`). The cost of a term is the sum over its nodes,
+    /// with an AC child of multiplicity k counted k times.
+    pub cost: u32,
+    /// `:unextractable` — the extractor never selects a node of this op.
+    pub unextractable: bool,
+}
+
+impl Default for OpMeta {
+    fn default() -> Self {
+        Self {
+            is_constructor: false,
+            cost: 1,
+            unextractable: false,
+        }
+    }
+}
+
 /// Metadata for a registered operator.
 #[derive(Clone, Debug)]
 pub struct OpInfo<S: DenseId> {
@@ -116,6 +160,10 @@ pub struct OpInfo<S: DenseId> {
     pub return_sort: S,
     pub kind: OpKind<S>,
     pub is_constructor: bool,
+    /// Per-node extraction cost, default 1. See [`OpMeta::cost`].
+    pub cost: u32,
+    /// Excluded from extraction. See [`OpMeta::unextractable`].
+    pub unextractable: bool,
 }
 
 impl<S: DenseId> OpInfo<S> {
@@ -169,7 +217,9 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
             "register_builtins must be called on empty registry"
         );
         for name in sort_names {
-            self.map.insert(name.to_string(), ());
+            self.map
+                .try_insert(name.to_string(), ())
+                .expect("registry id space exhausted for its index word");
         }
         self.builtin_count = self.map.len();
         self.concrete_count = self.map.len();
@@ -181,7 +231,10 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
             // range; re-checking costs nothing on this path and keeps one spelling.
             return id_at::<S>(id.as_usize());
         }
-        let id = self.map.insert(name.to_owned(), ());
+        let id = self
+            .map
+            .try_insert(name.to_owned(), ())
+            .expect("registry id space exhausted for its index word");
         id_at::<S>(id.as_usize())
     }
 
@@ -216,12 +269,53 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> SortRegistryToken {
-        SortRegistryToken(self.map.mark(shrink))
+        SortRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: SortRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
+}
+
+/// Which completion segment an op belongs to: the two segments of the completion column
+/// order (MSet first, then Set), plus "neither".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletionKind {
+    NotCompletion,
+    MSet,
+    Set,
+}
+
+/// One op's completion bookkeeping, precomputed at registration.
+///
+/// A column index cannot be stored directly because registering an MSet op shifts every
+/// Set column up by one (the MSet segment precedes the Set segment), so a stored column
+/// would need rewriting on each later registration. The *running counts* do not have that
+/// problem: `msets`/`sets` count the ops of each kind registered up to and including this
+/// one, they are fixed the moment the entry is pushed, and both the totals (the last
+/// entry's counts) and a column (a total plus a rank) read off them in O(1).
+#[derive(Clone, Copy, Debug)]
+struct CompletionSlot {
+    kind: CompletionKind,
+    /// MSet ops registered up to and including this op.
+    msets: usize,
+    /// Set ops registered up to and including this op.
+    sets: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Calls to [`OpRegistry::completion_ops`] on this thread. Lets a test pin that
+    /// `completion_column` answers out of the completion table instead of rebuilding the
+    /// column array per call, which is the regression this counter exists to catch (tests
+    /// run one per thread, so the count is per test).
+    static COMPLETION_OPS_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
 /// Append-only operator registry backed by `SpMap`.
@@ -229,6 +323,15 @@ impl<S: DenseId, const TRACK: bool> SortRegistry<S, TRACK> {
 pub struct OpRegistry<O: DenseId, S: DenseId, const TRACK: bool> {
     /// Positions in this log ARE op ids, so the log's index word is the id's.
     map: SpMap<String, OpInfo<S>, O::Index, TRACK>,
+    /// Completion bookkeeping per op, one entry per op id ([`CompletionSlot`]).
+    ///
+    /// `insert` pushes exactly one entry per op, so entry `i` describes op `i`, and the
+    /// registry's token bundle marks and restores this vector with the op log: a restore
+    /// truncates both at the same length, leaving the counts describing exactly the
+    /// surviving ops. [`completion_column`](OpRegistry::completion_column) is a read out of
+    /// this table rather than a scan of the op map, because the node-creation path calls it
+    /// once per fresh node.
+    completion: AppendOnlyVec<CompletionSlot, O::Index, TRACK>,
     builtin_count: usize,
     concrete_sort_count: usize,
     _phantom: core::marker::PhantomData<O>,
@@ -244,6 +347,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     pub fn new() -> Self {
         Self {
             map: SpMap::new(),
+            completion: AppendOnlyVec::new(),
             builtin_count: 0,
             concrete_sort_count: 0,
             _phantom: core::marker::PhantomData,
@@ -281,13 +385,18 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                     op_desc.ret_sort, op_desc.name
                 )
             });
-            self.insert(op_desc.name, ret_sort, OpKind::Normal { arg_sorts });
+            self.insert(
+                op_desc.name,
+                ret_sort,
+                OpKind::Normal { arg_sorts },
+                OpMeta::default(),
+            );
         }
         // Auto-register a LitNode op for each concrete sort.
         for sort_desc in model.sorts() {
             let sort_id = sorts.id_by_name(sort_desc.name).unwrap();
             let lit_name = format!("@{}", sort_desc.name);
-            self.insert(&lit_name, sort_id, OpKind::Lit);
+            self.insert(&lit_name, sort_id, OpKind::Lit, OpMeta::default());
         }
         self.builtin_count = self.map.log_len().as_usize();
         self.concrete_sort_count = sorts.concrete_count();
@@ -310,15 +419,26 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             OpKind::Normal {
                 arg_sorts: arg_sorts.to_vec(),
             },
+            OpMeta::default(),
         )
     }
 
     pub fn register_c(&mut self, name: &str, arg_sorts: [S; 2], return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::Commutative { arg_sorts })
+        self.insert(
+            name,
+            return_sort,
+            OpKind::Commutative { arg_sorts },
+            OpMeta::default(),
+        )
     }
 
     pub fn register_a(&mut self, name: &str, arg_sort: S, return_sort: S, dir: AssocDir) -> O {
-        self.insert(name, return_sort, OpKind::A { arg_sort, dir })
+        self.insert(
+            name,
+            return_sort,
+            OpKind::A { arg_sort, dir },
+            OpMeta::default(),
+        )
     }
 
     /// Register a plain AC (multiset) op: no identity, not cancellative. Richer algebra
@@ -333,6 +453,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 identity: None,
                 cancellative: false,
             },
+            OpMeta::default(),
         )
     }
 
@@ -348,11 +469,12 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 identity: None,
                 cancellative: false,
             },
+            OpMeta::default(),
         )
     }
 
     pub fn register_lit(&mut self, name: &str, return_sort: S) -> O {
-        self.insert(name, return_sort, OpKind::Lit)
+        self.insert(name, return_sort, OpKind::Lit, OpMeta::default())
     }
 
     /// Register an op from a fully-resolved `OpKind`. Used by the property-tag resolver
@@ -360,11 +482,48 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     /// from the parsed tag set. The plain `register_mset`/`register_set` are the default-filled
     /// special cases of this.
     pub fn register_kind(&mut self, name: &str, return_sort: S, kind: OpKind<S>) -> O {
-        self.insert(name, return_sort, kind)
+        self.insert(name, return_sort, kind, OpMeta::default())
+    }
+
+    /// Register an op from a fully-resolved `OpKind` plus its non-algebraic metadata
+    /// (constructor-ness, `:cost`, `:unextractable`). This is the surface layer's single
+    /// registration entry point: `sortcheck::register_op` builds both descriptors from the
+    /// declaration and calls this, so constructor-ness is registration-time data rather than
+    /// a post-hoc mutation (the backing `SpMap` is append-only and has no `get_mut`).
+    pub fn register_kind_meta(
+        &mut self,
+        name: &str,
+        return_sort: S,
+        kind: OpKind<S>,
+        meta: OpMeta,
+    ) -> O {
+        self.insert(name, return_sort, kind, meta)
     }
 
     pub fn info(&self, id: O) -> &OpInfo<S> {
         self.map.get_val(id.to_index())
+    }
+
+    /// The names of every registered op, in op-id order — the same order as
+    /// [`meta_table`](Self::meta_table) and `EGraph::op_node_counts`, so the three index
+    /// together.
+    pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
+        self.map.iter().map(|(_, i)| i.name.as_str())
+    }
+
+    /// The non-algebraic metadata ([`OpMeta`]) of every registered op, in op-id order. Lets a
+    /// consumer index by op id instead of calling [`info`](Self::info) per node; the extractor
+    /// hoists this out of its fixpoint loop, where the per-node lookup would otherwise repeat
+    /// on every pass.
+    pub fn meta_table(&self) -> Vec<OpMeta> {
+        self.map
+            .iter()
+            .map(|(_, i)| OpMeta {
+                is_constructor: i.is_constructor,
+                cost: i.cost,
+                unextractable: i.unextractable,
+            })
+            .collect()
     }
 
     /// Is this op associative-commutative (`OpKind::MSet`)? Note this is `false`
@@ -377,38 +536,49 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     /// completion to drive the per-AC-op critical-pair pass (see
     /// `doc/design/ac-congruence-completeness.md`). Excludes ACI ops.
     pub fn mset_ops(&self) -> impl Iterator<Item = O> + '_ {
-        self.map
+        self.ops_of_kind(CompletionKind::MSet)
+    }
+
+    /// The ids of the ops in one completion segment, in registration order.
+    fn ops_of_kind(&self, kind: CompletionKind) -> impl Iterator<Item = O> + '_ {
+        self.completion
+            .as_slice()
             .iter()
             .enumerate()
-            .filter(|(_, (_, info))| matches!(info.kind, OpKind::MSet { .. }))
+            .filter(move |(_, slot)| slot.kind == kind)
             .map(|(i, _)| id_at::<O>(i))
     }
 
-    /// Number of registered `OpKind::MSet` ops (excludes Set). Until the per-op
-    /// `min_monomial` pool lands, completion supports exactly one MSet symbol (the single
-    /// per-class slot holds one op's minimal monomial); `rebuild` checks this.
-    pub fn mset_op_count(&self) -> usize {
-        self.mset_ops().count()
+    /// The number of MSet and of Set ops registered, read off the last completion slot:
+    /// every slot carries the running counts, so the totals survive a `restore` truncation
+    /// without a rescan.
+    fn completion_counts(&self) -> (usize, usize) {
+        match self.completion.as_slice().last() {
+            Some(slot) => (slot.msets, slot.sets),
+            None => (0, 0),
+        }
     }
 
-    /// Is this op a `Set` (idempotent/nilpotent) op?
+    /// Number of registered `OpKind::MSet` ops (excludes Set). Completion supports
+    /// multiple symbols through one per-op column in each allocated class row.
+    pub fn mset_op_count(&self) -> usize {
+        self.completion_counts().0
+    }
+
+    /// Is this op a `Set` (idempotent) op? Nilpotent ops use `MSet`.
     pub fn is_set(&self, id: O) -> bool {
         matches!(self.map.get_val(id.to_index()).kind, OpKind::Set { .. })
     }
 
-    /// Iterator over the ids of all registered `Set` ops (idempotent or nilpotent), in
+    /// Iterator over the ids of all registered `Set` ops (idempotent), in
     /// registration order. The Set analogue of [`mset_ops`](Self::mset_ops).
     pub fn set_ops(&self) -> impl Iterator<Item = O> + '_ {
-        self.map
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, info))| matches!(info.kind, OpKind::Set { .. }))
-            .map(|(i, _)| id_at::<O>(i))
+        self.ops_of_kind(CompletionKind::Set)
     }
 
     /// Number of registered `Set` ops.
     pub fn set_op_count(&self) -> usize {
-        self.set_ops().count()
+        self.completion_counts().1
     }
 
     /// The ordered list of *completion* ops (MSet then Set, each in registration order). This
@@ -417,7 +587,13 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     /// and its length is the fixed row width `nb_completion`. Registration order is stable
     /// (the backing `SpMap` is append-only, never renumbered), so a column's meaning is fixed
     /// for the run.
+    ///
+    /// Allocates and scans every op, so it is for per-round callers (the pool builder); a
+    /// single op's column comes from [`completion_column`](Self::completion_column), which
+    /// does neither.
     pub fn completion_ops(&self) -> Vec<O> {
+        #[cfg(test)]
+        COMPLETION_OPS_SCANS.with(|n| n.set(n.get() + 1));
         let mut v: Vec<O> = self.mset_ops().collect();
         v.extend(self.set_ops());
         v
@@ -426,15 +602,26 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
     /// Number of completion ops (`nb_completion` = MSet + Set), the `min_monomial` pool row
     /// width.
     pub fn completion_op_count(&self) -> usize {
-        self.mset_op_count() + self.set_op_count()
+        let (msets, sets) = self.completion_counts();
+        msets + sets
     }
 
     /// The pool column index of a completion op, or `None` if `id` is not an MSet/Set op.
-    /// O(nb_completion) scan of [`completion_ops`](Self::completion_ops); `nb_completion` is
-    /// tiny (a handful), and the pool builder caches the array per round rather than calling
-    /// this in a hot loop.
+    ///
+    /// One indexed read of the per-op completion table plus, for a Set op, the MSet
+    /// total: no allocation and no scan of the op map, because
+    /// `EGraph::register_if_fresh` calls this once per node the engine creates.
+    /// The former implementation scanned the registry; current constant-factor
+    /// comparisons belong in the Criterion registration/completion workload.
     pub fn completion_column(&self, id: O) -> Option<usize> {
-        self.completion_ops().iter().position(|&o| o == id)
+        let slot = self.completion.as_slice().get(id.to_usize())?;
+        match slot.kind {
+            CompletionKind::NotCompletion => None,
+            // Registration order within a segment is the column order, and `msets`/`sets`
+            // count this op too, so its rank in its segment is the count minus one.
+            CompletionKind::MSet => Some(slot.msets - 1),
+            CompletionKind::Set => Some(self.completion_counts().0 + slot.sets - 1),
+        }
     }
 
     pub fn id_by_name(&self, name: &str) -> Option<O> {
@@ -463,7 +650,7 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
             .map(|(i, _)| id_at::<O>(i))
     }
 
-    fn insert(&mut self, name: &str, return_sort: S, kind: OpKind<S>) -> O {
+    fn insert(&mut self, name: &str, return_sort: S, kind: OpKind<S>, meta: OpMeta) -> O {
         assert!(
             !self.map.contains_key(&name.to_owned()),
             "operator '{name}' already registered"
@@ -474,36 +661,68 @@ impl<O: crate::DenseId, S: DenseId, const TRACK: bool> OpRegistry<O, S, TRACK> {
                 return_sort.to_usize()
             );
         }
-        let id = self.map.insert(
-            name.to_owned(),
-            OpInfo {
-                name: name.to_owned(),
-                return_sort,
-                kind,
-                is_constructor: false,
-            },
+        let completion_kind = match kind {
+            OpKind::MSet { .. } => CompletionKind::MSet,
+            OpKind::Set { .. } => CompletionKind::Set,
+            _ => CompletionKind::NotCompletion,
+        };
+        let id = self
+            .map
+            .try_insert(
+                name.to_owned(),
+                OpInfo {
+                    name: name.to_owned(),
+                    return_sort,
+                    kind,
+                    is_constructor: meta.is_constructor,
+                    cost: meta.cost,
+                    unextractable: meta.unextractable,
+                },
+            )
+            .expect("registry id space exhausted for its index word");
+        let (msets, sets) = self.completion_counts();
+        let slot = CompletionSlot {
+            kind: completion_kind,
+            msets: msets + usize::from(completion_kind == CompletionKind::MSet),
+            sets: sets + usize::from(completion_kind == CompletionKind::Set),
+        };
+        let slot_id = self
+            .completion
+            .try_push(slot)
+            .expect("completion table shares the op log's index word");
+        debug_assert_eq!(
+            slot_id.as_usize(),
+            id.as_usize(),
+            "one completion slot per op, pushed in op-id order"
         );
         id_at::<O>(id.as_usize())
     }
 
-    /// Mark an op as a constructor.
-    ///
-    /// prod-parity: the verified `SpMap` has no `get_mut` (its contract is
-    /// append-only with shadow-on-overwrite), so constructor-ness is meant to
-    /// become registration-time metadata. `is_constructor`
-    /// is currently **write-only** — set here but read nowhere in the egraph —
-    /// so this is a no-op that preserves observable behavior. When the flag
-    /// gains a reader it must be threaded through `insert` (the value is known
-    /// at registration; see `register_op` in `sortcheck.rs`) rather than mutated
-    /// after the fact.
-    pub fn set_constructor(&mut self, _id: O) {}
-
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> OpRegistryToken {
-        OpRegistryToken(self.map.mark(shrink))
+        OpRegistryToken {
+            map: self
+                .map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            completion: self
+                .completion
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        }
     }
 
     pub fn restore(&mut self, token: OpRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.map)
+            .expect("restore: token minted by this container's own mark");
+        self.completion
+            .try_restore(token.completion)
+            .expect("restore: token minted by this container's own mark");
+        debug_assert_eq!(
+            self.completion.len().as_usize(),
+            self.map.log_len().as_usize(),
+            "the completion table is truncated with the op log"
+        );
     }
 }
 
@@ -542,14 +761,17 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
     }
 
     pub fn register(&mut self, name: &str, lhs: &str, rhs: &str) -> crate::id::RuleId {
-        let id = self.map.insert(
-            name.to_owned(),
-            RuleInfo {
-                name: name.to_owned(),
-                lhs: lhs.to_owned(),
-                rhs: rhs.to_owned(),
-            },
-        );
+        let id = self
+            .map
+            .try_insert(
+                name.to_owned(),
+                RuleInfo {
+                    name: name.to_owned(),
+                    lhs: lhs.to_owned(),
+                    rhs: rhs.to_owned(),
+                },
+            )
+            .expect("registry id space exhausted for its index word");
         id_at::<crate::id::RuleId>(id.as_usize())
     }
 
@@ -576,11 +798,17 @@ impl<const TRACK: bool> RuleRegistry<TRACK> {
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> RuleRegistryToken {
-        RuleRegistryToken(self.map.mark(shrink))
+        RuleRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: RuleRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -620,14 +848,17 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
     }
 
     pub fn register(&mut self, name: &str, lhs: G, rhs: G) -> crate::id::AxiomId {
-        let id = self.map.insert(
-            name.to_owned(),
-            AxiomInfo {
-                name: name.to_owned(),
-                lhs,
-                rhs,
-            },
-        );
+        let id = self
+            .map
+            .try_insert(
+                name.to_owned(),
+                AxiomInfo {
+                    name: name.to_owned(),
+                    lhs,
+                    rhs,
+                },
+            )
+            .expect("registry id space exhausted for its index word");
         id_at::<crate::id::AxiomId>(id.as_usize())
     }
 
@@ -648,11 +879,17 @@ impl<G: Copy + DenseId, const TRACK: bool> AxiomRegistry<G, TRACK> {
     }
 
     pub fn mark(&mut self, shrink: ShrinkPolicy) -> AxiomRegistryToken {
-        AxiomRegistryToken(self.map.mark(shrink))
+        AxiomRegistryToken(
+            self.map
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+        )
     }
 
     pub fn restore(&mut self, token: AxiomRegistryToken) {
-        self.map.restore(token.0);
+        self.map
+            .try_restore(token.0)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -851,6 +1088,86 @@ mod tests {
         // is_set agrees.
         assert!(ops.is_set(and) && ops.is_set(or));
         assert!(!ops.is_set(add));
+    }
+
+    /// The column of a registered op is a table read: no call to `completion_ops`, hence no
+    /// allocation and no rescan of the op map, however many times it is asked. This is the
+    /// property `EGraph::register_if_fresh` depends on — it asks once per node created.
+    #[test]
+    fn completion_column_does_not_rebuild_the_column_array() {
+        let mut sorts = SR::new();
+        let bool_sort = sorts.intern("Bool");
+        let int_sort = sorts.intern("Int");
+
+        let mut ops = OR::new();
+        let add = ops.register_mset("Add", int_sort, int_sort);
+        let and = ops.register_set("And", bool_sort, bool_sort);
+        let not = ops.register("Not", &[bool_sort], bool_sort);
+
+        let scans = || COMPLETION_OPS_SCANS.with(|n| n.get());
+        let before = scans();
+        for _ in 0..1000 {
+            assert_eq!(ops.completion_column(add), Some(0));
+            assert_eq!(ops.completion_column(and), Some(1));
+            assert_eq!(ops.completion_column(not), None);
+            assert_eq!(ops.completion_op_count(), 2);
+        }
+        assert_eq!(
+            scans(),
+            before,
+            "completion_column rebuilt the column array"
+        );
+
+        // The counter does fire for the array itself, so the assertion above is not vacuous.
+        let _ = ops.completion_ops();
+        assert_eq!(scans(), before + 1);
+    }
+
+    /// Restore truncates the completion table with the op log: columns and counts after a
+    /// restore are the ones the surviving ops alone would produce, and ids registered next
+    /// reuse the freed columns. Registering an MSet op after a Set op is the case that moves
+    /// existing Set columns, so the table cannot cache columns directly.
+    #[test]
+    fn completion_columns_restore_with_the_op_log() {
+        type TrackedOR = OpRegistry<OpId, SortId, true>;
+        let mut sorts = SR::new();
+        let bool_sort = sorts.intern("Bool");
+        let int_sort = sorts.intern("Int");
+
+        let mut ops = TrackedOR::new();
+        let add = ops.register_mset("Add", int_sort, int_sort);
+        let and = ops.register_set("And", bool_sort, bool_sort);
+        assert_eq!(
+            (ops.completion_column(add), ops.completion_column(and)),
+            (Some(0), Some(1))
+        );
+
+        let token = ops.mark(ShrinkPolicy::Never);
+        let mul = ops.register_mset("Mul", int_sort, int_sort);
+        let or = ops.register_set("Or", bool_sort, bool_sort);
+        // The new MSet op takes column 1, pushing every Set op up one.
+        assert_eq!(ops.completion_ops(), vec![add, mul, and, or]);
+        assert_eq!(ops.completion_column(mul), Some(1));
+        assert_eq!(ops.completion_column(and), Some(2));
+        assert_eq!(ops.completion_column(or), Some(3));
+        assert_eq!(ops.completion_op_count(), 4);
+
+        ops.restore(token);
+        assert_eq!(ops.completion_ops(), vec![add, and]);
+        assert_eq!(ops.completion_column(add), Some(0));
+        assert_eq!(ops.completion_column(and), Some(1));
+        assert_eq!(ops.mset_op_count(), 1);
+        assert_eq!(ops.set_op_count(), 1);
+        assert_eq!(ops.completion_op_count(), 2);
+        // The restored ids are unregistered, so their columns are gone with them.
+        assert_eq!(ops.completion_column(mul), None);
+        assert_eq!(ops.completion_column(or), None);
+
+        // Registering again after the restore mints the same ids and columns as before.
+        let mul2 = ops.register_mset("Mul", int_sort, int_sort);
+        assert_eq!(mul2, mul);
+        assert_eq!(ops.completion_column(mul2), Some(1));
+        assert_eq!(ops.completion_column(and), Some(2));
     }
 
     #[test]

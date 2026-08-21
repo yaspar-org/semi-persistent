@@ -37,6 +37,7 @@ pub mod node_store;
 pub mod node_types;
 pub mod nodes;
 pub mod parser;
+pub mod phase_timing;
 pub mod registry;
 pub mod resolve;
 pub mod saturate;
@@ -55,7 +56,7 @@ pub use containers::{DenseId, IdFactory, IndexLike, SparseSet};
 // Flat re-exports from egraph module
 pub use egraph::{
     CompletionOutcome, DEFAULT_COMPLETION_NODE_BUDGET, EGraph, EGraph31, EGraph63, EGraphM16,
-    EGraphToken,
+    EGraphToken, UnionBy,
 };
 
 // Flat re-exports from other modules

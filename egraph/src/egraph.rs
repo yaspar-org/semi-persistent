@@ -72,6 +72,21 @@ pub struct EGraph<
     /// last `clear_touched`. Round-local scratch (cleared on `restore`);
     /// drives the per-round delta index. Not part of persistent state.
     touched: Vec<Cfg::G>,
+    /// When set, every class merge also records the absorbed side's member
+    /// nodes in `touched` (see `merge_in_classes`). Only semi-naive saturation
+    /// consumes it; off everywhere else so merges pay no ring walk.
+    track_merge_members: bool,
+    /// Survivor policy for class merges (see [`UnionBy`]).
+    union_by: UnionBy,
+    /// Goal pair for goal-directed completion (the lazy-check transaction):
+    /// the completion loop polls it between passes and inside a round's apply
+    /// loops, and stops with [`CompletionOutcome::GoalMet`] as soon as the
+    /// two classes join. `None` everywhere else.
+    cc_goal: Option<(Cfg::G, Cfg::G)>,
+    /// Node count at the start of the current completion run, for the
+    /// in-round budget check (`cc_should_stop`): a single blown-up round is
+    /// stopped mid-apply instead of only between rounds.
+    cc_start_nodes: usize,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
     /// inter-reduction). **Default off** — but NOT for the historical flattening reason
     /// (nested same-op flattening, `WF_flat`, landed in `flatten_ac_children`): the
@@ -113,9 +128,11 @@ pub struct EGraph<
     completion_outcome: Option<CompletionOutcome>,
     /// Node-growth budget for one completion-enabled `rebuild`: if completion mints more
     /// than this many nodes beyond where the rebuild started, it stops (sound-but-
-    /// incomplete, reported as [`CompletionOutcome::AbortedGrowthLimit`]) rather than OOM
-    /// on a diverging input. This is NOT the termination argument — it is the divergence
-    /// backstop (review-debt §1). A config knob like `cc`/`basis_checks`, not
+    /// incomplete, reported as [`CompletionOutcome::AbortedGrowthLimit`]) rather than
+    /// allowing unbounded node growth. This is NOT a termination argument or a complete
+    /// work bound; it is the resource backstop described in
+    /// `doc/future/ac-completion-limitations.md`. A config knob like
+    /// `cc`/`basis_checks`, not
     /// semi-persistent state; default [`DEFAULT_COMPLETION_NODE_BUDGET`], overridable via
     /// [`set_completion_node_budget`](Self::set_completion_node_budget) (tests use a tiny
     /// budget to exercise the abort path directly).
@@ -132,11 +149,54 @@ pub const DEFAULT_COMPLETION_NODE_BUDGET: usize = 50_000;
 pub enum CompletionOutcome {
     /// Completion was not enabled (`set_cc(false)`).
     Disabled,
-    /// Completion reached a fixpoint (the rule set is confluent).
+    /// The implemented completion passes reached an unchanged full-round fixpoint.
+    ///
+    /// This is an operational stopping condition, not by itself a certificate
+    /// that the abstract AC/ACI theory is complete.
+    ///
+    /// For associative-only operators this does not claim completeness for
+    /// arbitrary asserted ground equations; that general word problem is
+    /// undecidable. See `doc/future/ac-completion-limitations.md` section 8.
     Converged { rounds: usize },
     /// Completion aborted because the node-growth budget was exceeded. The e-graph is
     /// sound-but-incomplete: some AC-entailed equalities may be missing.
     AbortedGrowthLimit { added_nodes: usize, limit: usize },
+    /// Completion stopped early because the goal pair (`set_cc_goal`) joined.
+    /// The e-graph is a valid plain-congruence-closed state; completion is
+    /// deliberately unfinished — the caller asked a question and it is
+    /// answered. Only the lazy-check transaction sets a goal.
+    GoalMet { rounds: usize },
+}
+
+/// Survivor policy for class merges (`--union-by`). `Rank` leaves the choice
+/// to the union-find's rank heuristic (the historical default). The directed
+/// criteria absorb the cheap side, reading the verified per-class counters:
+/// `Size` compares member counts (bounds the semi-naive touched-log pushes to
+/// amortized O(n log n) — a node is absorbed at most log n times), `Uses`
+/// compares use-list lengths (bounds recanonization work the same way), and
+/// `Sum` adds the two, bounding their aggregate movement. Survivor identity is
+/// intended to be semantically irrelevant because class payloads are
+/// merge-folded (design doc §9a), and finite differential tests compare the
+/// policies. This is not an end-to-end equivalence theorem; budget-, goal-, or
+/// order-sensitive runs may follow different operational paths.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum UnionBy {
+    #[default]
+    Rank,
+    Size,
+    Uses,
+    Sum,
+}
+
+/// Shortlex order on canonical element lists: shorter first, ties broken
+/// element-wise by id. The orientation of the A-only inter-reduction rules
+/// (`a_round`); well-founded, so rewriting under it terminates.
+fn shortlex<G: crate::containers::DenseId>(a: &[G], b: &[G]) -> std::cmp::Ordering {
+    a.len().cmp(&b.len()).then_with(|| {
+        a.iter()
+            .map(|g| g.to_usize())
+            .cmp(b.iter().map(|g| g.to_usize()))
+    })
 }
 
 /// Type alias for the default 31-bit configuration.
@@ -180,6 +240,10 @@ where
             g_buf: Vec::new(),
             mset_buf: Vec::new(),
             touched: Vec::new(),
+            track_merge_members: false,
+            union_by: UnionBy::Rank,
+            cc_goal: None,
+            cc_start_nodes: 0,
             cc: false,
             basis_checks: std::env::var_os("AC_BASIS_DUMP").is_some(),
             cmp_buf_a: Vec::new(),
@@ -211,6 +275,50 @@ where
     /// ago) — see the `cc` field docs and `doc/future/ac-completion-review-debt.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
         self.cc = enabled;
+    }
+
+    /// Select the merge survivor policy (see [`UnionBy`]).
+    pub fn set_union_by(&mut self, u: UnionBy) {
+        self.union_by = u;
+    }
+
+    /// The weight the `--union-by` criterion assigns to the class of repr `r`.
+    fn union_weight(&self, r: Cfg::G) -> usize {
+        let Some(k) = self.classes.repr_id(r) else {
+            return 0;
+        };
+        match self.union_by {
+            UnionBy::Rank => 0,
+            UnionBy::Size => self.classes.class_size(k),
+            UnionBy::Uses => self.classes.use_list_len(k),
+            UnionBy::Sum => self
+                .classes
+                .class_size(k)
+                .saturating_add(self.classes.use_list_len(k)),
+        }
+    }
+
+    /// Set or clear the completion goal pair (see the `cc_goal` field). With a
+    /// goal set, `rebuild` under completion returns
+    /// [`CompletionOutcome::GoalMet`] as soon as the pair joins, without
+    /// finishing the closure.
+    pub fn set_cc_goal(&mut self, goal: Option<(Cfg::G, Cfg::G)>) {
+        self.cc_goal = goal;
+    }
+
+    /// Goal-directed early stop for the completion loops: the goal pair
+    /// joined, or the in-round node budget is exhausted. `rebuild` sorts out
+    /// which of the two happened.
+    fn cc_should_stop(&self) -> bool {
+        if let Some((a, b)) = self.cc_goal
+            && self.classes.find_const(a) == self.classes.find_const(b)
+        {
+            return true;
+        }
+        self.node_count()
+            > self
+                .cc_start_nodes
+                .saturating_add(self.completion_node_budget)
     }
 
     /// Enable or disable the AC reduced-basis invariant checks in `rebuild` (default off,
@@ -332,6 +440,18 @@ where
     pub fn register_c(&mut self, name: &str, arg_sorts: [Cfg::S; 2], ret: Cfg::S) -> Cfg::O {
         self.ops.register_c(name, arg_sorts, ret)
     }
+    /// Register an op from a resolved kind plus its non-algebraic metadata (constructor-ness,
+    /// `:cost`, `:unextractable`). The surface layer's single registration entry point — see
+    /// [`crate::registry::OpRegistry::register_kind_meta`].
+    pub fn register_kind_meta(
+        &mut self,
+        name: &str,
+        ret: Cfg::S,
+        kind: crate::registry::OpKind<Cfg::S>,
+        meta: crate::registry::OpMeta,
+    ) -> Cfg::O {
+        self.ops.register_kind_meta(name, ret, kind, meta)
+    }
     pub fn register_a(
         &mut self,
         name: &str,
@@ -354,14 +474,18 @@ where
     /// Record `op`'s identity (unit) element node (`x ∘ e = x`; the unit drops from monomials).
     /// Called by the resolver in `sortcheck` after it builds the `:identity` term to a node.
     pub fn set_unit_node(&mut self, op: Cfg::O, unit: Cfg::G) {
-        self.unit_node.insert(op, unit);
+        self.unit_node
+            .try_insert(op, unit)
+            .expect("unit/inverse-op map exhausted its index word");
     }
     /// The identity (unit) element node of `op`, or `None` if `op` has no declared identity.
     pub fn unit_node(&self, op: Cfg::O) -> Option<Cfg::G> {
         self.unit_node.get_by_key(&op).copied()
     }
     pub fn set_inverse_op(&mut self, op: Cfg::O, inv: Cfg::O) {
-        self.inverse_op.insert(op, inv);
+        self.inverse_op
+            .try_insert(op, inv)
+            .expect("unit/inverse-op map exhausted its index word");
     }
     /// The group inverse operator of `op` (`:inverse neg`), or `None` if none declared.
     pub fn inverse_op(&self, op: Cfg::O) -> Option<Cfg::O> {
@@ -433,7 +557,7 @@ where
     /// Run a compiled query plan against this e-graph.
     pub fn run_query(
         &self,
-        plan: &crate::schedule::QueryPlan<Cfg::O, Cfg::Index>,
+        plan: &crate::schedule::QueryPlan<Cfg::O, Cfg::Index, L>,
     ) -> Vec<crate::ematch::Match<Cfg>> {
         let index = crate::index::IndexStore::build(self);
         let vindex = crate::index::VariantIndex::naive(&index);
@@ -452,8 +576,8 @@ where
         crate::saturate::saturate(rules, self, model, limit, globals)
     }
 
-    /// Semi-naive saturation (each round matches only what changed). No
-    /// automatic fallback to the naive path.
+    /// Semi-naive saturation via delta variants. The driver does not switch
+    /// wholesale to naive; rules without safe delta coverage use a full-index match.
     pub fn saturate_semi<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
         &mut self,
         rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
@@ -462,6 +586,95 @@ where
         globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     ) -> crate::saturate::SatResult {
         crate::saturate::saturate_semi(rules, self, model, limit, globals)
+    }
+
+    /// Saturate under a full [`RunSpec`](crate::saturate::RunSpec) — budget, ruleset, and
+    /// `:until` goal. The interpreter's `(run …)` path.
+    pub fn saturate_spec<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_spec(rules, self, model, spec, globals)
+    }
+
+    /// Semi-naive counterpart of [`saturate_spec`](Self::saturate_spec).
+    pub fn saturate_semi_spec<
+        M: crate::lit_model::LitModel<Value = L>,
+        S: crate::DenseId + Copy,
+    >(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_semi_spec(rules, self, model, spec, globals)
+    }
+
+    /// [`saturate_spec`](Self::saturate_spec) over a caller-owned index scratch,
+    /// so its span arenas survive the call. See
+    /// [`saturate_spec_in`](crate::saturate::saturate_spec_in).
+    pub fn saturate_spec_in<M: crate::lit_model::LitModel<Value = L>, S: crate::DenseId + Copy>(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+        scratch: &mut crate::index::IndexScratch<Cfg>,
+    ) -> crate::saturate::SatResult {
+        crate::saturate::saturate_spec_in(rules, self, model, spec, globals, scratch)
+    }
+
+    /// Semi-naive counterpart of [`saturate_spec_in`](Self::saturate_spec_in).
+    pub fn saturate_semi_spec_in<
+        M: crate::lit_model::LitModel<Value = L>,
+        S: crate::DenseId + Copy,
+    >(
+        &mut self,
+        rules: &[crate::apply::PreparedRule<Cfg::O, S, L>],
+        model: &M,
+        spec: &crate::saturate::RunSpec<Cfg::G>,
+        globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+        scratch: &mut crate::index::IndexScratch<Cfg>,
+    ) -> crate::saturate::SatResult {
+        // Semi-naive is the one consumer of the merge-membership delta (see
+        // `merge_in_classes`); the flag keeps the per-merge ring walks off
+        // everywhere else.
+        self.track_merge_members = true;
+        let r = crate::saturate::saturate_semi_spec_in(rules, self, model, spec, globals, scratch);
+        self.track_merge_members = false;
+        r
+    }
+
+    /// The number of distinct e-classes over the current node set. A scan, not a maintained
+    /// counter: `(print-size)` / `(print-stats)` ask for it a handful of times per program.
+    pub fn class_count(&self) -> usize {
+        let n = self.len();
+        let mut seen = vec![false; n];
+        let mut count = 0;
+        for id in self.node_ids() {
+            let r = self.find_const(id).to_usize();
+            if !seen[r] {
+                seen[r] = true;
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Node counts per operator, indexed by op id (ops with no nodes read 0).
+    pub fn op_node_counts(&self) -> Vec<usize> {
+        let mut counts = vec![0usize; self.ops.meta_table().len()];
+        for id in self.node_ids() {
+            let op = self.node_op(id).to_usize();
+            if op < counts.len() {
+                counts[op] += 1;
+            }
+        }
+        counts
     }
 
     pub fn find(&mut self, x: Cfg::G) -> Cfg::G {
@@ -557,6 +770,15 @@ where
             self.flatten_ac_children(op);
         }
 
+        // The A-only (`Seq`) counterpart of the same law. Every associative spelling
+        // (`:assoc-left`, `:assoc-right`, and `:assoc`) currently has the same flattened
+        // sequence semantics; `AssocDir` is retained registration metadata. Only the merge
+        // step differs from AC: an order-preserving splice here, because associativity permits
+        // re-association but not reordering.
+        if matches!(self.ops.info(op).kind, OpKind::A { .. }) {
+            self.flatten_seq_children(op);
+        }
+
         // Canonization must *establish* the op's algebraic normal form at build time (not defer
         // it to completion): coalesce/dedup, drop the identity's unit class, apply the count clamp
         // (nilpotent mod-n), and resolve a degenerate arity. Degeneracy is an equality, so the
@@ -565,9 +787,20 @@ where
         //   - single mult-1    ⇒ the term IS that child (`+(a, e) → {a} = a`, `and(a,a) → {a} = a`)
         // These hold with completion off; completion only adds the cross-rule (superposition)
         // consequences. `find_unit`/degeneracy read `unit_node`, resolved at registration.
-        let unit = self.unit_node(op);
+        // The constructor bit is stamped at creation, not written back after:
+        // `set_node_flag` would have to resolve the routing table and dispatch
+        // on the node kind again, for a node the store has just built.
+        let node_flags = if self.ops.info(op).is_constructor {
+            crate::node_types::FLAG_CONSTRUCTOR
+        } else {
+            0
+        };
         let result = match self.ops.info(op).kind {
             OpKind::MSet { .. } => {
+                // Only the two completion arms read the identity, and looking it
+                // up is a hash probe of the semi-persistent unit map — a cost the
+                // plain-op path used to pay on every `add`.
+                let unit = self.unit_node(op);
                 self.g_buf.sort_by_key(|id| id.to_usize());
                 self.mset_buf.clear();
                 for &id in &self.g_buf {
@@ -642,10 +875,11 @@ where
                     1 if Cfg::mset_child_mult(&self.mset_buf[0]) == Cfg::M::ONE => {
                         return self.classes.find(Cfg::mset_child_id(&self.mset_buf[0]));
                     }
-                    _ => self.nodes.add_mset(op, &self.mset_buf),
+                    _ => self.nodes.add_mset(op, &self.mset_buf, node_flags),
                 }
             }
             OpKind::Set { .. } => {
+                let unit = self.unit_node(op);
                 self.g_buf.sort_by_key(|id| id.to_usize());
                 self.g_buf.dedup();
                 // Identity: drop the unit's class (`and(a, unit) → {a}`).
@@ -656,7 +890,7 @@ where
                 // Degenerate arity ⇒ an existing class (idempotent has no nilpotent clamp, so a
                 // Set monomial only reaches {} via identity-drop, and size-1 via dedup/drop).
                 // Empty without a declared unit is an API-contract violation — panic (see the
-                // MSet twin above).
+                // MSet counterpart above).
                 match self.g_buf.len() {
                     0 => match unit {
                         Some(u) => return u,
@@ -666,13 +900,31 @@ where
                         ),
                     },
                     1 => return self.classes.find(self.g_buf[0]),
-                    _ => self.nodes.add_set(op, &self.g_buf),
+                    _ => self.nodes.add_set(op, &self.g_buf, node_flags),
                 }
             }
-            _ => self.nodes.add(op, &self.g_buf, &self.ops),
+            OpKind::A { .. } => {
+                // Degenerate arity ⇒ an existing class, the A-only counterpart of the MSet/Set
+                // degeneracy above: a one-element sequence IS its element (`seq(x) = x`),
+                // so return that child's class instead of minting a node for it. There is
+                // no empty case to resolve — an A-only op cannot declare `:identity` (the
+                // property resolver rejects `:identity` without `:comm`, `sortcheck.rs`),
+                // so the empty sequence names nothing in the algebra. Sortcheck already
+                // rejects a zero-argument A application; reaching here is an API-contract
+                // violation, and panics in ALL builds like the MSet/Set counterparts.
+                match self.g_buf.len() {
+                    0 => panic!(
+                        "zero-child A term — an A-only operator has no identity, so the \
+                         empty sequence has no algebraic meaning for a semigroup op"
+                    ),
+                    1 => return self.classes.find(self.g_buf[0]),
+                    _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
+                }
+            }
+            _ => self.nodes.add(op, &self.g_buf, &self.ops, node_flags),
         };
 
-        let id = self.register_if_fresh(result);
+        let id = self.register_if_fresh(result, op);
         if result.is_fresh() {
             match self.ops.info(op).kind {
                 OpKind::MSet { .. } => {
@@ -696,8 +948,8 @@ where
     }
 
     pub fn add_lit(&mut self, op: Cfg::O, lit: Cfg::V) -> Cfg::G {
-        let result = self.nodes.add_lit(op, lit);
-        self.register_if_fresh(result)
+        let result = self.nodes.add_lit(op, lit, 0);
+        self.register_if_fresh(result, op)
     }
 
     /// Build a *ground* checked term (a literal or a constructor applied to ground args) into a
@@ -973,10 +1225,86 @@ where
             "cannot merge concrete sort '{}' e-classes",
             self.sorts.name(self.node_sort(a))
         );
-        let m = self.classes.merge(a, b)?;
+        let m = self.merge_in_classes(a, b, None)?;
         self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
+    }
+
+    /// Class merge, recording the absorbed side's member nodes in the
+    /// semi-naive touched log when `track_merge_members` is set.
+    ///
+    /// A merge can create matches without changing any node's canonical form:
+    /// when the surviving representative is the id the parents already store,
+    /// nothing recanonicalizes, yet nodes of the absorbed side changed class.
+    /// The variant decomposition's premise — every new match shows up as a new
+    /// or re-canonicalized tuple in some atom's relation — then needs the
+    /// membership change itself in the delta, and the absorbed members are
+    /// exactly that change: a new match either recanonicalizes a parent
+    /// (already touched) or connects through a node whose class assignment
+    /// moved. Collection walks both rings before the merge splices them,
+    /// because the survivor is not known until the union decides; the flag
+    /// keeps the walk off outside semi-naive saturation, where nothing
+    /// consumes the log.
+    fn merge_in_classes(
+        &mut self,
+        a: Cfg::G,
+        b: Cfg::G,
+        just: Option<Justification<Cfg::G>>,
+    ) -> Option<crate::classes::MergeInfo<Cfg::G, Cfg::UL>> {
+        let ra = self.classes.find_const(a);
+        let rb = self.classes.find_const(b);
+        if ra == rb {
+            return None;
+        }
+        // Survivor policy (--union-by): `Rank` leaves the choice to the
+        // union-find; the directed criteria keep the heavier side, so the
+        // absorbed side is the cheap one and is known before the union.
+        let prefer_a = match self.union_by {
+            UnionBy::Rank => None,
+            _ => Some(self.union_weight(ra) >= self.union_weight(rb)),
+        };
+        // Semi-naive merge tracking: collect the absorbed side's members
+        // before the splice. Under a directed policy only the (small)
+        // absorbed ring is walked; under rank the survivor is unknown until
+        // the union decides, so both rings are collected and the absorbed
+        // one pushed after.
+        let pre = if self.track_merge_members {
+            match prefer_a {
+                Some(pa) => {
+                    let absorbed_repr = if pa { rb } else { ra };
+                    let v: Vec<Cfg::G> = self.classes.iter_class(absorbed_repr).collect();
+                    Some((absorbed_repr, v, None))
+                }
+                None => {
+                    let va: Vec<Cfg::G> = self.classes.iter_class(ra).collect();
+                    let vb: Vec<Cfg::G> = self.classes.iter_class(rb).collect();
+                    Some((ra, va, Some(vb)))
+                }
+            }
+        } else {
+            None
+        };
+        let m = match (prefer_a, just) {
+            (None, None) => self.classes.merge(a, b),
+            (None, Some(j)) => self.classes.merge_justified(a, b, j),
+            (Some(pa), None) => self.classes.merge_directed_with(a, b, pa),
+            (Some(pa), Some(j)) => self.classes.merge_justified_directed_with(a, b, pa, j),
+        }?;
+        if let Some((r0, v0, v1)) = pre {
+            let absorbed = match v1 {
+                None => v0,
+                Some(v1) => {
+                    if m.absorbed == r0 {
+                        v0
+                    } else {
+                        v1
+                    }
+                }
+            };
+            self.touched.extend(absorbed);
+        }
+        Some(m)
     }
 
     pub fn merge_justified(
@@ -999,7 +1327,7 @@ where
             "cannot merge concrete sort '{}' e-classes",
             self.sorts.name(self.node_sort(a))
         );
-        let m = self.classes.merge_justified(a, b, just)?;
+        let m = self.merge_in_classes(a, b, Some(just))?;
         self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
         self.worklist.push((m.absorbed_uses, m.survivor));
         Some((m.survivor, m.absorbed))
@@ -1150,38 +1478,53 @@ where
         // additionally superposes with its op's own axiom (Kapur §4 per-rule critical
         // pairs — Kapur-conformance fix W3 (spec §3 table)).
         let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
-        // Safety backstop against a diverging completion (minting unbounded
+        // Safety backstop against an expensive or nonterminating completion run (minting
         // critical-pair nodes): the configurable node-growth budget (see
-        // `set_completion_node_budget`). A convergent completion adds few nodes; if the AC
-        // node count balloons past the budget beyond where it started, we stop rather
-        // than OOM. This is NOT the termination argument — it is a guard rail, and the
+        // `set_completion_node_budget`). If the AC node count grows past the budget beyond
+        // where it started, we stop rather than continue materializing nodes. This is NOT a
+        // termination argument or a work bound — it is a growth guard, and the
         // abort is REPORTED (`CompletionOutcome::AbortedGrowthLimit`), never silent.
         let budget = self.completion_node_budget;
         let start_nodes = self.node_count();
+        self.cc_start_nodes = start_nodes;
         let basis_dump = self.basis_checks;
         let mut round = 0usize;
         // Watermark into the `touched` log: rules whose `(op, monomial)` changed since the
-        // previous round are exactly the nodes touched (created or recanonicalized) in the
+        // previous round are approximated by nodes touched (created or recanonicalized) in the
         // slice `touched[prev_mark..mark]`. Superposition (B) is incremental over this delta
         // (S3b): round 0 is a full pass (base case), each later round superposes only pairs
-        // with ≥1 endpoint in the delta. Old×old pairs were closed earlier and stay closed.
+        // with ≥1 endpoint in the delta. A later full confirmation round compensates for
+        // changes, such as a rule RHS shift, that this node-touch delta does not name.
         let mut prev_mark = 0usize;
         // Incremental rounds run until one finds nothing; then a single *full* confirmation
-        // round certifies convergence (S3b completeness net). The node-touch delta misses a
+        // round checks the whole implemented rule set before reporting its operational
+        // fixpoint. The node-touch delta misses a
         // pair only if a rule's RHS shifted without its node being recanonicalized (its own
         // class merged, not a child's); a full round closes any such pair. Convergence is
-        // declared only when a *full* round is unchanged, so the net is sound. Full rounds
-        // run only at would-be-convergence, where every pair is trivial and cheap.
+        // reported only when a *full* round is unchanged. This is an implementation stopping
+        // condition, not a machine-checked completeness theorem. Full rounds run at the base
+        // case and after an unchanged incremental round; their cost is input-dependent.
         let mut full = true; // round 0 is full (base case)
         loop {
             self.rebuild_congruence();
+            // Goal-directed early stop (the lazy-check transaction): the pair
+            // joined, so the question is answered — stop mid-closure. The
+            // graph is plain-congruence-closed at this point, a valid state.
+            if let Some((ga, gb)) = self.cc_goal
+                && self.classes.find_const(ga) == self.classes.find_const(gb)
+            {
+                self.completion_outcome = Some(CompletionOutcome::GoalMet { rounds: round });
+                return;
+            }
             if basis_dump {
                 self.cc_basis_dump(&format!("round {round} pre"));
             }
             let before = self.node_count();
             let mark = self.touched.len();
             let was_full = full;
-            let changed = self.cc_round(full, prev_mark, mark);
+            // `|`, not `||`: the A-only pass runs every iteration, its changes
+            // and the AC round's alike drain through the same fixpoint.
+            let changed = self.cc_round(full, prev_mark, mark) | self.a_round();
             prev_mark = mark;
             if trace {
                 eprintln!(
@@ -1194,7 +1537,8 @@ where
             round += 1;
             if !changed {
                 // Incremental round found nothing: confirm with a full round before exiting.
-                // A full round that also finds nothing is true convergence.
+                // A full round that also finds nothing is the implemented fixpoint reported
+                // by CompletionOutcome::Converged.
                 if was_full {
                     self.completion_outcome = Some(CompletionOutcome::Converged { rounds: round });
                     return;
@@ -1377,16 +1721,16 @@ where
             for i in 0..self.collisions.len() {
                 let (a, b) = self.collisions[i];
                 let m = if PROOFS {
-                    self.classes.merge_justified(
+                    self.merge_in_classes(
                         a,
                         b,
-                        Justification::Congruence {
+                        Some(Justification::Congruence {
                             node_a: a,
                             node_b: b,
-                        },
+                        }),
                     )
                 } else {
-                    self.classes.merge(a, b)
+                    self.merge_in_classes(a, b, None)
                 };
                 if let Some(m) = m {
                     self.fold_min_monomial(m.survivor, m.absorbed_min_row, m.absorbed_atomic);
@@ -1394,6 +1738,126 @@ where
                 }
             }
         }
+    }
+
+    /// One A-only (`Seq`) inter-reduction round: the transfer of the AC
+    /// repair to associativity-only operators, run inside the same completion
+    /// loop (so only when completion is enabled — plain mode is untouched and
+    /// its node counts stand).
+    ///
+    /// The gap it closes: build-time flattening splices a pure-`op`-sequence
+    /// child into its parents, erasing the class reference, and a class can
+    /// never *become* pure late (merges only add members, and an atom member
+    /// never leaves) — so the one way an A-equation escapes congruence is two
+    /// pure-sequence classes merging. That class then holds two distinct
+    /// `op`-sequence spellings: a ground string equation `seq_1 = seq_2` that
+    /// parents which spliced different spellings cannot see. Each such
+    /// equation is oriented shortlex (longer to shorter, ties by element ids)
+    /// and contiguous occurrences of the larger spelling inside other
+    /// `op`-sequences are rewritten: the rewritten sequence is added and
+    /// merged with its source, justification `ACInterReduction` (the same
+    /// sub-term-for-class substitution shape as the AC case).
+    ///
+    /// Every rewrite is shortlex-decreasing, so a round terminates, and the
+    /// loop above drains rounds to a joint fixpoint under the same budget and
+    /// goal polls as the AC pass. **Deliberately no critical-pair chase**:
+    /// completing a ground string system is Knuth-Bendix on a semi-Thue
+    /// system, and the word problem for finitely presented monoids is
+    /// undecidable — unlike the AC side, where Dickson's Lemma bounds the
+    /// basis, there is no completeness theorem to aim for. This pass closes
+    /// the single-substitution gap (the erased-reference case above) and
+    /// stops; what it derives is sound, what it misses is documented.
+    fn a_round(&mut self) -> bool {
+        use crate::containers::DenseId;
+        use crate::typed_routing::NodeIds;
+        let n_seq = self.nodes.seq.len().to_usize();
+        if n_seq == 0 {
+            return false;
+        }
+        // (op, class) -> the class's `op`-sequence spellings.
+        let mut groups: std::collections::HashMap<(Cfg::O, Cfg::G), Vec<Cfg::G>> =
+            std::collections::HashMap::new();
+        for i in 0..n_seq {
+            let l = <Cfg::Ids as NodeIds>::LSeq::from_usize(i);
+            let g = self.nodes.seq.get(l).global_id();
+            let cls = self.classes.find_const(g);
+            groups.entry((self.node_op(g), cls)).or_default().push(g);
+        }
+        // Oriented rules: larger spelling -> the class's shortlex-least one.
+        let mut rules: Vec<(Cfg::O, Vec<Cfg::G>, Vec<Cfg::G>)> = Vec::new();
+        let mut buf: Vec<Cfg::G> = Vec::new();
+        for ((op, _cls), nodes) in groups.iter().filter(|(_, v)| v.len() > 1) {
+            let mut spellings: Vec<Vec<Cfg::G>> = Vec::with_capacity(nodes.len());
+            for &n in nodes {
+                self.seq_children(n, &mut buf);
+                for e in buf.iter_mut() {
+                    *e = self.classes.find_const(*e);
+                }
+                spellings.push(buf.clone());
+            }
+            let least = spellings
+                .iter()
+                .min_by(|a, b| shortlex(a, b))
+                .expect("non-empty spelling group")
+                .clone();
+            for elems in spellings {
+                if shortlex(&elems, &least) == std::cmp::Ordering::Greater {
+                    rules.push((*op, elems, least.clone()));
+                }
+            }
+        }
+        if rules.is_empty() {
+            return false;
+        }
+        // Rewrite pass over the round-start sequences (nodes added below are
+        // visited next round). One rewrite per node per round: the fixpoint
+        // loop supplies the iteration.
+        let mut changed = false;
+        let mut new_children: Vec<Cfg::G> = Vec::new();
+        for i in 0..n_seq {
+            if self.cc_should_stop() {
+                break;
+            }
+            let l = <Cfg::Ids as NodeIds>::LSeq::from_usize(i);
+            let g = self.nodes.seq.get(l).global_id();
+            let g_op = self.node_op(g);
+            self.seq_children(g, &mut buf);
+            for e in buf.iter_mut() {
+                *e = self.classes.find_const(*e);
+            }
+            for (op, lhs, rhs) in &rules {
+                if *op != g_op || lhs.len() > buf.len() {
+                    continue;
+                }
+                let Some(s) =
+                    (0..=buf.len() - lhs.len()).find(|&s| &buf[s..s + lhs.len()] == lhs.as_slice())
+                else {
+                    continue;
+                };
+                new_children.clear();
+                new_children.extend_from_slice(&buf[..s]);
+                new_children.extend_from_slice(rhs);
+                new_children.extend_from_slice(&buf[s + lhs.len()..]);
+                let nid = self.add(*op, &new_children);
+                if self.classes.find_const(nid) != self.classes.find_const(g) {
+                    let m = if PROOFS {
+                        self.merge_justified(
+                            g,
+                            nid,
+                            Justification::ACInterReduction {
+                                node_a: g,
+                                node_b: nid,
+                            },
+                        )
+                    } else {
+                        self.merge(g, nid)
+                    };
+                    changed |= m.is_some();
+                }
+                break;
+            }
+        }
+        changed
     }
 
     /// One AC congruence-completion round (Kapur FSCD 2021 Algorithm 1, the steps our
@@ -1407,8 +1871,8 @@ where
     /// - **(A) inter-reduction + Collapse** — if `A ⊊ M`, the sub-sum `+A` equals `a`,
     ///   so the residual `(M − A) ⊎ {a}`, **normalized to a fixpoint**, equals `d`:
     ///   merge, then **mark `+M` subsumed** so it leaves the active set. The collapse
-    ///   is what keeps the active rule LHSs a Dickson antichain — without it completion
-    ///   diverges (design doc §6b).
+    ///   is intended to maintain the active-rule antichain required by the conditional
+    ///   Dickson argument (design doc §6b).
     /// - **(B) superposition** — if `A` and `M` overlap but neither contains the other,
     ///   build the lcm `AB`, **normalize both reducts** `(AB−M)⊎{d}` and `(AB−A)⊎{a}`
     ///   to normal form, and merge if they still differ (design doc §4b, §6 (B)).
@@ -1419,14 +1883,17 @@ where
     /// existing rule's LHS, hence itself reducible, and would persist as a runaway
     /// superposition source), and reducible source rules are **collapsed** (subsumed).
     ///
-    /// "Subsumed" is the non-deletable form of Kapur/Conchon's rule retirement: the
-    /// node and the equality it established stay in the DAG (sound, restorable), but the
-    /// snapshot/index builders skip it, so it is no longer a partner or a match target.
+    /// Completion collapse is the non-deletable form of Kapur/Conchon's rule retirement:
+    /// the node and the equality it established stay in the DAG, but completion's
+    /// active-rule projection skips it, so it is no longer a completion partner.
+    /// `FLAG_AC_COLLAPSED` does not remove the node from matching; user-level
+    /// `FLAG_SUBSUMED` does.
     /// One AC completion round. Superposition (B) is incremental (S3b): when `full` is
     /// false, only critical pairs with ≥1 endpoint among the *delta rules* (nodes touched
     /// in `self.touched[delta_lo..delta_hi]`, i.e. created or recanonicalized since the
-    /// previous round) are generated; old×old pairs were closed in an earlier round and
-    /// stay closed under monotone merges. `full` (round 0) generates every pair. The (A′)
+    /// previous round) are generated. A later full round rechecks every pair, including
+    /// old×old pairs whose effective RHS changed without touching their node. `full`
+    /// generates every pair. The (A′)
     /// collapse/normalize pass and the antichain `reducible` check stay full scans: a small
     /// new rule must still be able to collapse a large old one.
     fn cc_round(&mut self, full: bool, delta_lo: usize, delta_hi: usize) -> bool {
@@ -1456,7 +1923,8 @@ where
         // from the per-class slot (`class_rhs_into`: `{class}` if atomic, else the stored
         // `min_monomial` monomial, §9a) — not recomputed per round. The orientation guard keeps
         // only nodes whose own monomial `M` is strictly `≫_f`-greater than that RHS: those
-        // are the genuine rules (a node equal to its class's normal form is no rule, and a
+        // are the currently oriented rules (a node equal to the maintained class candidate
+        // is no rule, and a
         // mis-oriented `M ≺ rhs` is dropped, §9b axis-2a). `node` lets us collapse it.
         struct Rule<G, O, M> {
             /// The typed op id, not a widened `usize` copy of one. Storing the id itself
@@ -1577,9 +2045,9 @@ where
                 return false;
             }
             let m = if PROOFS {
-                eg.classes.merge_justified(x, y, just)
+                eg.merge_in_classes(x, y, Some(just))
             } else {
-                eg.classes.merge(x, y)
+                eg.merge_in_classes(x, y, None)
             };
             match m {
                 Some(m) => {
@@ -1931,6 +2399,12 @@ where
         let mut nf_out: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut nf_ping: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, mset, class, node, _is_rule) in targets {
+            // In-round stop: the goal pair joined, or this round's minting
+            // blew the node budget — bail mid-apply instead of burning the
+            // rest of the round (review-debt §1). `rebuild` reads which.
+            if self.cc_should_stop() {
+                break;
+            }
             nf_refs.clear();
             nf_refs.extend(
                 rules
@@ -1945,8 +2419,8 @@ where
             // mod-n; plain AC (MSet) → ℕ.
             // Linear, not indexed: this rule slice is refilled per target (each target is
             // normalized by every rule but its own), so there is no reuse to amortize an
-            // index over — and inter-reduction is a few percent of completion time against
-            // the critical-pair loop's two thirds.
+            // index over. Any relative phase cost is workload-dependent and belongs in the
+            // Criterion completion benchmark, not in this correctness comment.
             let nf = NfRules::linear(&nf_refs);
             match self.op_clamp(op) {
                 CompletionClamp::Idempotent => {
@@ -2029,9 +2503,8 @@ where
             });
         }
         // Index each op's table by LHS-minimum class, hoisted with the table itself. This
-        // loop is where completion spends 61-72% of its time, normalizing thousands of
-        // reducts against hundreds of rules of which 94-98% cannot apply (perf doc E13), so
-        // the index is amortized over every one of those normalizations.
+        // The index is amortized over all reduct normalizations for the op. Its performance
+        // effect is tracked by the Criterion completion benchmark.
         let nf_index_by_op: Vec<NfIndex<Cfg::G>> =
             nf_by_op.iter().map(|(_, v)| NfIndex::build(v)).collect();
         let empty_nf: Vec<NfRuleRef<'_, Cfg::G, Cfg::M>> = Vec::new();
@@ -2039,6 +2512,10 @@ where
         let mut n1_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         let mut n2_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
         for (op, origin, r1, r2) in crit {
+            // Same in-round stop as the (A′) loop above.
+            if self.cc_should_stop() {
+                break;
+            }
             // Cheap raw-equality reject: most critical pairs are trivial (the two reducts
             // already coincide as multisets), so skip the two full normalizations entirely
             // when r1 == r2 already.
@@ -2135,8 +2612,14 @@ where
             rules: self.rules.mark(shrink),
             axioms: self.axioms.mark(shrink),
             lits: self.lits.mark(shrink),
-            unit_node: self.unit_node.mark(shrink),
-            inverse_op: self.inverse_op.mark(shrink),
+            unit_node: self
+                .unit_node
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
+            inverse_op: self
+                .inverse_op
+                .try_mark(shrink)
+                .expect("mark: frame depth is bounded by the saturation driver"),
             completion_outcome: self.completion_outcome,
         }
     }
@@ -2149,8 +2632,12 @@ where
         self.rules.restore(token.rules);
         self.axioms.restore(token.axioms);
         self.lits.restore(token.lits);
-        self.unit_node.restore(token.unit_node);
-        self.inverse_op.restore(token.inverse_op);
+        self.unit_node
+            .try_restore(token.unit_node)
+            .expect("restore: token minted by this container's own mark");
+        self.inverse_op
+            .try_restore(token.inverse_op)
+            .expect("restore: token minted by this container's own mark");
         // Roll the outcome back with the graph: the mark-time value describes exactly the
         // restored state (mark() rebuilds first), so a post-restore reader never sees an
         // outcome computed for the discarded scope.
@@ -2160,7 +2647,7 @@ where
         self.touched.clear();
     }
 
-    fn register_if_fresh(&mut self, result: Added<Cfg::G>) -> Cfg::G {
+    fn register_if_fresh(&mut self, result: Added<Cfg::G>, op: Cfg::O) -> Cfg::G {
         if result.is_fresh() {
             let id = result.id();
             let repr = self.classes.add_singleton(id);
@@ -2170,7 +2657,7 @@ where
             // that is not a monomial, so the size-1 monomial `{class}` is its normal-form
             // representative (the completion rule RHS, §9a). Completion nodes are not atomic
             // by themselves; they become atomic only when referenced as a child (`add_use`).
-            match self.completion_column(id) {
+            match self.ops.completion_column(op) {
                 Some(col) => {
                     // Fix the pool row width to nb_completion on first completion-node seed.
                     // Ops are declared before terms (declare-before-build), so the count is
@@ -2262,7 +2749,7 @@ where
     fn completion_node_ids(&self) -> impl Iterator<Item = Cfg::G> + '_ {
         use crate::containers::DenseId;
         use crate::typed_routing::NodeIds;
-        // Both completion partitions: MSet (multiset, AC) and Set (idempotent/nilpotent, ACI).
+        // Both completion partitions: MSet (plain AC or nilpotent) and Set (idempotent/ACI).
         //
         // The bare `from_usize` mints below need no bound check, unlike the global-id scans
         // (see [`node_ids`](Self::node_ids)): these arenas are indexed *by* the local id, so
@@ -2559,6 +3046,96 @@ where
         debug_assert!(
             out.len() <= cap,
             "flatten_ac_children exceeded cap (degenerate cyclic AC class?)"
+        );
+
+        self.g_buf = out;
+        self.flatten_buf = work;
+    }
+
+    /// The canonical same-`op` sequence node of `g`'s class, or `None` if the class is not a
+    /// **pure `op`-sequence** — i.e. if any member is something other than an `op` `Seq` node.
+    ///
+    /// This is the A-only counterpart of the AC `summand_form` predicate
+    /// (`ac-congruence-completeness.md` §6c) and it is chosen for the same reason: the answer
+    /// must be a function of the class's *membership*, not of whichever node the union-find
+    /// picked as representative (a representative-keyed test flattens or not depending on
+    /// merge order, so it is not canonical — §6c's representative trap). Two consequences,
+    /// both deliberate:
+    ///
+    /// - **Purity, not AC's `atomic`.** `atomic` cannot serve here: `register_if_fresh` sets
+    ///   it on every class without a completion column, which includes every `Seq` class, so
+    ///   for A-only ops it is constantly true. Purity plays the same role — a class holding
+    ///   only `op`-sequences has no standalone atom form, so spelling it out is forced — and
+    ///   it is what keeps a class that is *also* an atom from being spliced. That case is not
+    ///   hypothetical: once a rule proves `gmul(b, inv(b)) = I`, `I`'s class holds a `Seq`
+    ///   node, and splicing it into every later sequence would rewrite uphill and grow terms
+    ///   without bound.
+    /// - **The `op`-least member.** A class may hold several distinct `op`-sequences that were
+    ///   merged; picking the least node id makes the choice a function of the class, and node
+    ///   ids are assigned at creation and never renumbered, so this is merge-order independent.
+    ///   Every spelling of the child therefore splices to the same sequence and the parents
+    ///   land in one class.
+    ///
+    /// Cost is one class-ring walk, with an early exit on the first non-`op` member — so an
+    /// ordinary atom child (a leaf, a constructor) costs its class's first member, and the
+    /// full walk is paid only by classes that really are pure sequences.
+    fn pure_seq_node(&self, g: Cfg::G, op: Cfg::O) -> Option<Cfg::G> {
+        let cls = self.classes.find_const(g);
+        let mut best: Option<Cfg::G> = None;
+        for n in self.classes.iter_class(cls) {
+            if self.node_op(n) != op || !matches!(self.node_ref(n), NodeRef::Seq(_)) {
+                return None;
+            }
+            if best.is_none_or(|b| n.to_usize() < b.to_usize()) {
+                best = Some(n);
+            }
+        }
+        best
+    }
+
+    /// Flatten nested same-op children of an A-only (`Seq`) op in `self.g_buf`, to a fixpoint,
+    /// **preserving order**: associativity licenses re-association, not reordering, so a
+    /// spliced child's elements take the child's position in the parent's sequence.
+    ///
+    /// A child is spliced iff [`pure_seq_node`](Self::pure_seq_node) names an `op`-sequence
+    /// for its class; otherwise it is kept as one element. Splicing recurses, because a
+    /// spliced sequence's own elements may since have been merged into pure `op`-sequence
+    /// classes.
+    ///
+    /// `g_buf` already holds `find`'d ids. Bounded by the same cap `flatten_ac_children` uses,
+    /// and for the same reason: each splice replaces one element by a strictly shorter
+    /// sequence, so a well-formed graph drains far below the bound and the cap only stops a
+    /// degenerate cyclic class (`X = {seq(X, a)}`) from looping.
+    fn flatten_seq_children(&mut self, op: Cfg::O) {
+        // Move the buffers out to satisfy the borrow checker while reading `self`.
+        let mut work = std::mem::take(&mut self.flatten_buf);
+        let mut out = std::mem::take(&mut self.g_buf);
+        // Seed the worklist reversed, so popping yields the children in sequence order — for
+        // A this is load-bearing, not cosmetic as in the AC counterpart.
+        work.clear();
+        work.extend(out.iter().rev().copied());
+        out.clear();
+        let cap = work.len() + 1 + 64 * self.node_count();
+        while let Some(g) = work.pop() {
+            let mut spliced = false;
+            if out.len() <= cap
+                && let Some(inner) = self.pure_seq_node(g, op)
+                && let NodeRef::Seq(l) = self.node_ref(inner)
+            {
+                let (s, e) = self.nodes.seq.get(l).span();
+                // Reversed again, so the elements pop back in their stored order.
+                for i in (s..e).rev() {
+                    work.push(self.nodes.seq.pool_get(i));
+                }
+                spliced = true;
+            }
+            if !spliced {
+                out.push(g);
+            }
+        }
+        debug_assert!(
+            out.len() <= cap,
+            "flatten_seq_children exceeded cap (degenerate cyclic A class?)"
         );
 
         self.g_buf = out;

@@ -1,0 +1,21 @@
+;; TYPES: machine,bignum
+;; A bound multiplicity lifted into exact rational arithmetic: k copies of a
+;; rational summand fold to k*a (RBig::scale), k factors to a^k (RBig::pow),
+;; and a repeated non-literal summand counts as (Num (RBig::from_int k)) times
+;; the child. Multiplicity 3 pins what fixed :2 variants miss.
+(datatype M
+    (Add M :assoc-comm)
+    (Mul M :assoc-comm)
+    (V String)
+    (Num RBig))
+(rewrite (Add (Num a) (Num b) ..rest) (Add (Num (RBig::+ a b)) ..rest))
+(rewrite (Add (Num a):k>=2 ..rest) (Add (Num (RBig::scale a k)) ..rest))
+(rewrite (Mul (Num a):k>=2 ..rest) (Mul (Num (RBig::pow a k)) ..rest))
+(rewrite (Add x:k>=2 ..rest) (Add (Mul (Num (RBig::from_int k)) x) ..rest))
+(let t (Add (Num 1/2) (Num 1/2) (Num 1/2)))
+(let u (Mul (Num 2/3) (Num 2/3) (Num 2/3)))
+(let v (Add (V "y") (V "y") (V "y")))
+(run 3)
+(check (= t (Num 3/2)))
+(check (= u (Num 8/27)))
+(check (= v (Mul (Num 3/1) (V "y"))))

@@ -1,0 +1,215 @@
+Forms removed from egglog's herbie.egg by gen-herbie.py.
+
+=== [lattice-decl]
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Analyses
+;; --------
+;; This example has three analyses:
+;; an interval analysis consisting of a hi and lo component
+;; and a non-zero analysis.
+;; The non-zero analysis is built off the interval analysis (in order to prove
+;; that rewrites are sound, even if some parts of an expr can't be const-evaled)
+
+; TODO: unbounded intervals?
+(function hi (Math) BigRat :merge (min old new))
+
+=== [lattice-decl]
+(function lo (Math) BigRat :merge (max old new))
+
+=== [lattice-decl]
+(relation non-zero (Math))
+
+=== [non-zero-gated]
+(rewrite (Div (Num a) denom) (Num (/ a b)) :when ((= denom (Num b)) (non-zero denom)))
+
+=== [missing-primitive]
+(rewrite (Pow (Num a) (Num b)) (Num res) :when ((= res (pow a b))))
+
+=== [missing-primitive]
+(rewrite (Ceil (Num a)) (Num (ceil a)))
+
+=== [missing-primitive]
+(rewrite (Floor (Num a)) (Num (floor a)))
+
+=== [missing-primitive]
+(rewrite (Round (Num a)) (Num (round a)))
+
+=== [missing-primitive]
+(rewrite (Log (Num a)) (Num res) :when ((= res (log a))))
+
+=== [non-zero-gated]
+;; To check if something is zero, we check that zero is not contained in the
+;; interval. There are two possible (overlapping!) cases:
+;; - There exists a lo interval, in which case it must be larger than 0
+;; - There exists a hi interval, in which case it must be smaller than 0
+;; This assumes that intervals are well-formed: lo <= hi at all times.
+(rule ((= l (lo e))
+       (> l $r-zero))
+      ((non-zero e)))
+
+=== [non-zero-gated]
+(rule ((= h (hi e))
+       (< h $r-zero))
+      ((non-zero e)))
+
+=== [lattice-rule]
+(rule ((= e (Num ve)))
+      ((set (lo e) ve)
+       (set (hi e) ve)))
+
+=== [lattice-rule]
+;; The interval analyses are similar to the constant-folding analysis,
+;; except we have to take the lower/upper bound of the results we get
+(rule ((= e (Add a b))
+       (= la (lo a))
+       (= lb (lo b)))
+      ((set (lo e) (+ la lb))))
+
+=== [lattice-rule]
+(rule ((= e (Add a b))
+       (= ha (hi a))
+       (= hb (hi b)))
+      ((set (hi e) (+ ha hb))))
+
+=== [lattice-rule]
+(rule ((= e (Sub a b))
+       (= la (lo a))
+       (= ha (hi a))
+       (= lb (lo b))
+       (= hb (hi b)))
+      ((set (lo e) 
+          (min (min (- la lb) (- la hb))
+               (min (- ha lb) (- ha hb))))
+       (set (hi e) 
+          (max (max (- la lb) (- la hb))
+               (max (- ha lb) (- ha hb))))))
+
+=== [lattice-rule]
+(rule ((= e (Mul a b))
+       (= la (lo a))
+       (= ha (hi a))
+       (= lb (lo b))
+       (= hb (hi b)))
+      ((set (lo e) 
+          (min (min (* la lb) (* la hb))
+               (min (* ha lb) (* ha hb))))
+       (set (hi e) 
+          (max (max (* la lb) (* la hb))
+               (max (* ha lb) (* ha hb))))))
+
+=== [lattice-rule]
+(rule ((= e (Div a b))
+       (= la (lo a))
+       (= ha (hi a))
+       (= lb (lo b))
+       (= hb (hi b)))
+      ((set (lo e) 
+          (min (min (/ la lb) (/ la hb))
+               (min (/ ha lb) (/ ha hb))))
+       (set (hi e) 
+          (max (max (/ la lb) (/ la hb))
+               (max (/ ha lb) (/ ha hb))))))
+
+=== [lattice-rule]
+; TODO: Pow
+
+(rule ((= e (Neg a))
+       (= la (lo a))
+       (= ha (hi a)))
+      ((set (lo e) (neg ha))
+       (set (hi e) (neg la))))
+
+=== [lattice-rule]
+; TODO: Sqrt
+; TODO: Cbrt
+
+(rule ((= e (Fabs a))
+       (= la (lo a))
+       (= ha (hi a)))
+      ((set (lo e) (min (abs la) (abs ha)))
+       (set (hi e) (max (abs la) (abs ha)))))
+
+=== [lattice-rule]
+(rule ((= e (Ceil a))
+       (= la (lo a)))
+      ((set (lo e) (ceil la))))
+
+=== [lattice-rule]
+(rule ((= e (Ceil a))
+       (= ha (hi a)))
+      ((set (hi e) (ceil ha))))
+
+=== [lattice-rule]
+(rule ((= e (Floor a))
+       (= la (lo a)))
+      ((set (lo e) (floor la))))
+
+=== [lattice-rule]
+(rule ((= e (Floor a))
+       (= ha (hi a)))
+      ((set (hi e) (floor ha))))
+
+=== [lattice-rule]
+(rule ((= e (Round a))
+       (= la (lo a)))
+      ((set (lo e) (round la))))
+
+=== [lattice-rule]
+(rule ((= e (Round a))
+       (= ha (hi a)))
+      ((set (hi e) (round ha))))
+
+=== [non-zero-gated]
+(rewrite (Div (Mul b c) a) (Div b (Div a c)) :when ((non-zero c)))
+
+=== [non-zero-gated]
+(rewrite (Div a (Div b c)) (Mul (Div a b) c) :when ((non-zero c)))
+
+=== [non-zero-gated]
+(rewrite (Div (Div b c) a) (Div b (Mul a c)) :when ((non-zero a)))
+
+=== [non-zero-gated]
+;; Identity
+;; This isn't subsumed by const folding since this can return results
+;; even if we can't evaluate a precise value for x
+(rewrite (Div $one (Div $one x))
+         x
+         :when ((non-zero x)))
+
+=== [non-zero-gated]
+(rewrite (Mul x (Div $one x))
+         $one
+         :when ((non-zero x)))
+
+=== [non-zero-gated]
+(rewrite (Mul (Div $one x) x)
+         $one
+         :when ((non-zero x)))
+
+=== [non-zero-gated]
+(rewrite (Div x x) $one
+         :when ((non-zero x)))
+
+=== [non-zero-gated]
+(rewrite (Div $zero x) $zero
+         :when ((non-zero x)))
+
+=== [non-zero-gated]
+(rewrite (Div x y) (Div $one (Div y x))
+  :when ((non-zero x)
+         (non-zero y)))
+
+=== [non-zero-gated]
+; 0^0 is undefined
+(rewrite (Pow a $zero) $one :when ((non-zero a)))
+
+=== [non-zero-gated]
+; 0^0 is undefined
+(rewrite (Pow $zero a) $zero :when ((non-zero a)))
+
+=== [lattice-rule]
+(set (lo $x) $r-one)
+
+=== [test-block] $e10 (Div (Mul x 3) x) = 3 — needs the non-zero-gated Div rules
+=== [test-block] $e14 — needs the `pow` constant fold

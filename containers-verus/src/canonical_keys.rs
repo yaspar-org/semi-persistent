@@ -7,8 +7,8 @@
 //! foreign key types FAIL that requirement — `OrderedFloat<f64>` puts every
 //! NaN bit pattern (and ±0.0) in one `==` class; `num_rational::BigRational`
 //! reaches non-reduced representations via `Ratio::new_raw` and compares
-//! them equal — so their `obeys_key_model` axioms would be false and were
-//! withdrawn (Phase 9 review). These wrappers restore float/rational keying
+//! them equal, so their `obeys_key_model` axioms would be false. These wrappers
+//! restore float/rational keying
 //! by making requirement (2) TRUE BY CONSTRUCTION: each constructor
 //! canonicalizes, so exactly one representation per mathematical value is
 //! reachable, and the derived structural `Eq`/`Hash` over that canonical
@@ -54,19 +54,18 @@ const CANONICAL_NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
 /// `CanonicalF64`s are distinct mathematical values, and `==` classes are
 /// singletons — vstd key-model requirement (2) by construction.
 ///
-/// ## The fold is a PRODUCTION-PARITY decision, not a semantic endorsement
+/// ## Compatibility fold, not a semantic endorsement
 ///
 /// Folding NaNs together and `-0.0` onto `+0.0` reproduces what
-/// `OrderedFloat<f64>` keys do in the production interner today — chosen
-/// so a consumer switch onto it is behavior-preserving. It is NOT the
-/// right float-term identity for the e-graph long term: with ±0.0 in one
+/// `OrderedFloat<f64>` keys do in the e-graph interner. This preserves the
+/// existing key identity, but it is NOT the right float-term identity for the
+/// e-graph long term: with ±0.0 in one
 /// e-class, congruence + constant folding over the model's `f64::/` merges
 /// `+inf` with `-inf` (`1.0/0.0` vs `1.0/-0.0`), and `f64::neg(0.0) ≡ 0.0`
-/// — a PRE-EXISTING model-layer unsoundness the fold inherits, not one it
-/// introduces. The semantic fix is [`BitsF64`] (bit-exact, no fold), with
+/// — a model-layer unsoundness inherited from that key identity. The semantic
+/// fix is [`BitsF64`] (bit-exact, no fold), with
 /// any identification you actually want expressed as rewrite rules scoped
-/// to specific operators, migrated SEPARATELY from the container switch so
-/// behavioral diffs have one candidate cause. The fold is pinned by
+/// to specific operators. The fold is pinned by
 /// compliance tests (`canonical_key_model::canonical_f64_fold_is_pinned`);
 /// see `doc/future/key-model-tcb.md` §float-semantics.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -121,8 +120,7 @@ impl From<f64> for CanonicalF64 {
 /// for the e-graph: term identity = bit identity, with any semantic
 /// identification (±0.0, NaN classes) expressed as per-operator rewrite
 /// rules where it is visible and scoped, not in the key layer. See
-/// [`CanonicalF64`]'s doc for why the folding wrapper exists at all
-/// (production parity during the migration).
+/// [`CanonicalF64`]'s doc for why the compatibility wrapper exists.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct BitsF64 {
     bits: u64,

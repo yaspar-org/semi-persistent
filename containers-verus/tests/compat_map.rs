@@ -5,7 +5,7 @@
 //! Exercises Clone (String) keys, overwrite-shadow semantics, `get_by_key`,
 //! and mark/restore with index rebuild. Uses the verus name `SpMap`
 //! (production `Map` collides with `vstd::map::Map`). Gated on
-//! `compat-composites` (Phase 5.1).
+//! `compat-composites`.
 use proptest::prelude::*;
 use semi_persistent_containers_verus::{MapToken, ShrinkPolicy, SpMap};
 
@@ -35,7 +35,7 @@ fn run_ops(ops: Vec<Op>) {
     for op in ops {
         match op {
             Op::Insert(key, val) => {
-                m.insert(key.clone(), val);
+                m.try_insert(key.clone(), val).expect("compat: capacity");
                 oracle.insert(key, val);
             }
             Op::GetByKey(key) => {
@@ -47,7 +47,9 @@ fn run_ops(ops: Vec<Op>) {
                 if snapshots.len() >= 20 {
                     continue;
                 }
-                let token = m.mark(ShrinkPolicy::Never);
+                let token = m
+                    .try_mark(ShrinkPolicy::Never)
+                    .expect("compat: depth in bounds");
                 snapshots.push((token, oracle.clone()));
             }
             Op::Restore(idx) => {
@@ -56,7 +58,7 @@ fn run_ops(ops: Vec<Op>) {
                 }
                 let idx = idx % snapshots.len();
                 let (token, snap) = snapshots[idx].clone();
-                m.restore(token);
+                m.try_restore(token).expect("compat: own live token");
                 oracle = snap;
                 snapshots.truncate(idx);
             }
@@ -133,13 +135,16 @@ mod literal_keys {
         let mut oracle: HashMap<K, u64> = HashMap::new();
 
         for (i, k) in keys.iter().enumerate() {
-            m.insert(k.clone(), i as u64);
+            m.try_insert(k.clone(), i as u64).expect("compat: capacity");
             oracle.insert(k.clone(), i as u64);
         }
         let snap = oracle.clone();
-        let tok = m.mark(ShrinkPolicy::Never);
+        let tok = m
+            .try_mark(ShrinkPolicy::Never)
+            .expect("compat: depth in bounds");
         for (i, k) in keys.iter().enumerate().filter(|(i, _)| i % 2 == 0) {
-            m.insert(k.clone(), (i as u64) + 1000);
+            m.try_insert(k.clone(), (i as u64) + 1000)
+                .expect("compat: capacity");
             oracle.insert(k.clone(), (i as u64) + 1000);
         }
         assert_eq!(m.len(), oracle.len());
@@ -150,7 +155,7 @@ mod literal_keys {
                 "post-overwrite mismatch for {k:?}"
             );
         }
-        m.restore(tok);
+        m.try_restore(tok).expect("compat: own live token");
         assert_eq!(m.len(), snap.len());
         for (k, v) in &snap {
             assert_eq!(m.get_by_key(k), Some(v), "post-restore mismatch for {k:?}");
@@ -472,17 +477,20 @@ mod canonical_key_model {
         ];
         for (i, &f) in inputs.iter().enumerate() {
             let k = CanonicalF64::new(f);
-            m.insert(k, i as u64);
+            m.try_insert(k, i as u64).expect("compat: capacity");
             oracle.insert(k, i as u64);
         }
         // The three NaN inputs are ONE key; ±0.0 are ONE key.
         assert_eq!(oracle.len(), 7, "canonicalization folds NaNs and zeros");
         assert_eq!(m.len(), oracle.len());
 
-        let tok = m.mark(ShrinkPolicy::Never);
-        m.insert(CanonicalF64::new(f64::NAN), 999);
+        let tok = m
+            .try_mark(ShrinkPolicy::Never)
+            .expect("compat: depth in bounds");
+        m.try_insert(CanonicalF64::new(f64::NAN), 999)
+            .expect("compat: capacity");
         assert_eq!(m.get_by_key(&CanonicalF64::new(-f64::NAN)), Some(&999));
-        m.restore(tok);
+        m.try_restore(tok).expect("compat: own live token");
         for (k, v) in &oracle {
             assert_eq!(m.get_by_key(k), Some(v), "post-restore mismatch");
         }
@@ -492,23 +500,21 @@ mod canonical_key_model {
         let half = CanonicalRational::new(BigInt::from(1), BigInt::from(2));
         let raw_half =
             CanonicalRational::from_rational(&Ratio::new_raw(BigInt::from(2), BigInt::from(4)));
-        let id1 = r.insert(half, 1);
+        let id1 = r.try_insert(half, 1).expect("compat: capacity");
         let _ = id1;
         assert_eq!(r.get_by_key(&raw_half), Some(&1), "2/4 interns as 1/2");
         assert_eq!(r.len(), 1);
     }
 }
 
-/// Migration-parity pins for the float keys (feature `literal-types`).
+/// Compatibility checks for float keys (feature `literal-types`).
 ///
-/// `CanonicalF64`'s fold reproduces production's `OrderedFloat` intern
-/// semantics EXACTLY — these tests pin that equivalence so the
-/// consumer switch is behavior-preserving, and pin the fold itself so a
-/// well-meaning "fix" cannot silently change term identity during the
-/// migration. The semantic float-identity question (±0.0 / NaN classes,
-/// the pre-existing `1/0 vs 1/-0` model hazard) is deliberately NOT
-/// resolved here: `BitsF64` is the no-fold key for that, migrated
-/// separately. See canonical_keys.rs and doc/future/key-model-tcb.md.
+/// `CanonicalF64` reproduces the e-graph interner's `OrderedFloat` identity.
+/// These tests pin both that equivalence and the fold itself so a change cannot
+/// silently alter term identity. They do not resolve semantic float identity
+/// (±0.0 / NaN classes or the `1/0` versus `1/-0` model hazard);
+/// `BitsF64` is the no-fold key for that purpose. See `canonical_keys.rs` and
+/// `doc/future/key-model-tcb.md`.
 #[cfg(feature = "literal-types")]
 mod float_key_semantics {
     use ordered_float::OrderedFloat;

@@ -23,10 +23,15 @@ pub enum RhsOp<O, V> {
     Lit(O, V),
     /// Reconstruct `@sort(val)` lit node from a bound LitValVarId.
     LitVar(O, LitValVarId),
+    /// Reconstruct an `@i64(k)` lit node from a bound AC multiplicity variable.
+    MultVar(O, MultVarId),
     /// Build `(op args...)` via `eg.add()`. Args may expand to multiple children.
     App { op: O, args: Vec<RhsArg<O, V>> },
-    /// Evaluate a prim op on bound lit values, intern result.
-    PrimApp { op: O, args: Vec<LitValVarId> },
+    /// Evaluate a prim op on bound lit values or multiplicities, intern result.
+    PrimApp {
+        op: O,
+        args: Vec<crate::resolve::RPrimArg>,
+    },
     /// Fetch a global e-class id from the runtime global bindings.
     FetchGlobal(GlobalVarId),
 }
@@ -36,6 +41,12 @@ pub enum RhsOp<O, V> {
 pub enum RhsArg<O, V> {
     /// Single child.
     One(RhsOp<O, V>),
+    /// One child contributed `mult` times (variadic ops only). Multiplicity 0
+    /// omits the child without evaluating it, so nothing is materialized.
+    OneMult {
+        body: Box<RhsOp<O, V>>,
+        mult: crate::resolve::ResolvedMultExpr,
+    },
     /// Splice sequence rest into children.
     SpliceSeq(SeqVarId),
     /// Splice set rest into children.
@@ -76,6 +87,7 @@ pub fn compile_rhs<O: Clone, S, V: Clone>(term: &RRhsTerm<O, S, V>) -> RhsOp<O, 
         RRhsTerm::Var(vid) => RhsOp::FetchNode(*vid),
         RRhsTerm::Lit { op, value, .. } => RhsOp::Lit(op.clone(), value.clone()),
         RRhsTerm::LitVar { op, val } => RhsOp::LitVar(op.clone(), *val),
+        RRhsTerm::MultVar { op, var } => RhsOp::MultVar(op.clone(), *var),
         RRhsTerm::App { op, children } => {
             let args: Vec<RhsArg<O, V>> = children.iter().map(|c| compile_rhs_arg(c)).collect();
             RhsOp::App {
@@ -94,6 +106,10 @@ pub fn compile_rhs<O: Clone, S, V: Clone>(term: &RRhsTerm<O, S, V>) -> RhsOp<O, 
 fn compile_rhs_arg<O: Clone, S, V: Clone>(child: &RRhsChild<O, S, V>) -> RhsArg<O, V> {
     match child {
         RRhsChild::Term(t) => RhsArg::One(compile_rhs(t)),
+        RRhsChild::TermMult { body, mult } => RhsArg::OneMult {
+            body: Box::new(compile_rhs(body)),
+            mult: mult.clone(),
+        },
         RRhsChild::SpliceSeq(id) => RhsArg::SpliceSeq(*id),
         RRhsChild::SpliceSet(id) => RhsArg::SpliceSet(*id),
         RRhsChild::SpliceMset(id) => RhsArg::SpliceMset(*id),
@@ -153,11 +169,19 @@ pub enum CompiledAction<O, V> {
     Subsume(crate::ast::VarId),
 }
 
+/// Identifier of a declared ruleset: its index in the program's declaration order. `None`
+/// wherever a `RulesetId` is optional means the default ruleset — the one an untagged rule
+/// joins and a bare `(run N)` runs.
+pub type RulesetId = u32;
+
 #[derive(Clone, Debug)]
 pub struct PreparedRule<O, S, V> {
     pub rule_id: crate::id::RuleId,
     pub query: crate::resolve::ResolvedQuery<O, S, V>,
     pub actions: Vec<CompiledAction<O, V>>,
+    /// The ruleset this rule belongs to (`:ruleset name`), or `None` for the default one.
+    /// The saturation driver runs the rules whose ruleset equals the one asked for.
+    pub ruleset: Option<RulesetId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +267,16 @@ fn check_op_mults<Cfg: crate::config::EGraphConfig, O, V>(op: &RhsOp<O, V>) -> R
     for arg in args {
         match arg {
             RhsArg::One(inner) => check_op_mults::<Cfg, _, _>(inner)?,
+            RhsArg::OneMult { body, mult } => {
+                // A literal count above the stored width can never be
+                // represented; multiplicity 0 is legal here (omission).
+                if let crate::resolve::ResolvedMultExpr::Lit(n) = mult
+                    && *n > 0
+                {
+                    check_one::<Cfg>(*n)?;
+                }
+                check_op_mults::<Cfg, _, _>(body)?;
+            }
             RhsArg::MsetComp {
                 body, mult, filter, ..
             } => {
@@ -343,6 +377,7 @@ where
         rule_id,
         query: rq,
         actions,
+        ruleset: None,
     })
 }
 
@@ -385,6 +420,7 @@ where
         rule_id,
         query: rq,
         actions,
+        ruleset: None,
     })
 }
 
@@ -395,7 +431,7 @@ where
 use crate::EGraphConfig;
 use crate::canon::{MSetCanon, VarCanon};
 use crate::egraph::EGraph;
-use crate::ematch::{Match, MatchPool, run_query_into};
+use crate::ematch::{MatchPool, run_query_scheduled_into};
 use crate::index::IndexStore;
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
@@ -407,27 +443,31 @@ use smallvec::SmallVec;
 /// different length distributions. A cursor vector holds one entry per query
 /// atom; a child list holds one per *child*, and a variadic RHS that splices a
 /// rest variable (`(add (mul y x) ..r)`) produces as many children as the
-/// matched node had. Swept on the AC workload, min-reduced:
-///
-/// | inline capacity | `ac10/naive` | allocations |
-/// |---|---|---|
-/// |  4 | 84.9 ms | 1 199 399 |
-/// |  8 | 82.5 ms | — |
-/// | 16 | 79.7 ms | 1 070 299 |
-/// | 32 | 79.6 ms | — |
-///
-/// 16 is the knee: 32 buys 0.1% for twice the stack. Beyond the inline capacity
-/// the list spills to the heap, which is the single allocation the plain `Vec`
-/// made unconditionally.
+/// matched node had. The capacity 16 is a historical AC-workload tuning choice;
+/// it is not a portable knee. Beyond the inline capacity the list spills to the
+/// heap and stays correct. Retuning requires the Criterion rule-application
+/// workload and its allocation counters.
 type ChildVec<Cfg> = SmallVec<[<Cfg as EGraphConfig>::G; 16]>;
 
 /// Inline capacity for a primitive application's argument list. Primitives here
 /// are arithmetic and comparison, so two covers all of them.
 const PRIM_ARGS: usize = 2;
 
-pub fn eval<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
+/// A bound AC multiplicity read as an i64 literal value. Resolution only admits
+/// multiplicity variables in i64 positions, so the model must carry an i64
+/// sort; a count above `i64::MAX` cannot arise from a real node's children.
+fn mult_as_lit<L: LitVal, M: crate::lit_model::LitModel<Value = L>>(model: &M, k: u64) -> L {
+    let desc = model
+        .sorts()
+        .iter()
+        .find(|s| s.name == "i64")
+        .expect("multiplicity in RHS: model has no i64 sort");
+    (desc.parse)(&k.to_string()).expect("multiplicity in RHS does not fit i64")
+}
+
+pub fn eval<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
-    m: &mut Match<Cfg>,
+    m: &mut V,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -436,6 +476,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
+    V: crate::ematch::MatchView<Cfg>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match op {
@@ -449,6 +490,11 @@ where
             let val_id = m.get_lit_val(*lvid);
             eg.add_lit(*op, val_id)
         }
+        RhsOp::MultVar(op, mid) => {
+            let val = mult_as_lit(model, m.get_mult(*mid).to_u64());
+            let id = eg.lits_mut().intern(val);
+            eg.add_lit(*op, id)
+        }
         RhsOp::App { op: o, args } => {
             let mut children = ChildVec::<Cfg>::new();
             for arg in args {
@@ -457,12 +503,17 @@ where
             eg.add(*o, &children)
         }
         RhsOp::PrimApp { op, args } => {
-            // Gather bound lit values from the match
+            // Gather bound lit values (or multiplicities as i64) from the match
             let raw_vals: SmallVec<[L; PRIM_ARGS]> = args
                 .iter()
-                .map(|vid| {
-                    let lit_val_id = m.get_lit_val(*vid);
-                    eg.lits().get(lit_val_id).clone()
+                .map(|arg| match arg {
+                    crate::resolve::RPrimArg::LitVal(vid) => {
+                        let lit_val_id = m.get_lit_val(*vid);
+                        eg.lits().get(lit_val_id).clone()
+                    }
+                    crate::resolve::RPrimArg::Mult(mid) => {
+                        mult_as_lit(model, m.get_mult(*mid).to_u64())
+                    }
                 })
                 .collect();
             let refs: SmallVec<[&L; PRIM_ARGS]> = raw_vals.iter().collect();
@@ -479,9 +530,9 @@ where
     }
 }
 
-fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
+fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     arg: &RhsArg<Cfg::O, L>,
-    m: &mut Match<Cfg>,
+    m: &mut V,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -490,10 +541,31 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
+    V: crate::ematch::MatchView<Cfg>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match arg {
+        // A bound node used directly as a child needs no canonicalization here:
+        // `out` is `EGraph::add`'s child slice and `add` canonicalizes every
+        // child itself — which is also why the splice arms below hand it raw
+        // match bindings. Going through `eval` would `find` each child twice.
+        RhsArg::One(RhsOp::FetchNode(vid)) => out.push(m.get(*vid)),
+        RhsArg::One(RhsOp::FetchGlobal(gid)) => out.push(globals.binding(*gid)),
         RhsArg::One(inner) => out.push(eval(inner, m, eg, model, globals)),
+        RhsArg::OneMult { body, mult } => {
+            // Multiplicity 0 omits the child without evaluating it, so an
+            // omitted term is never materialized (the k-1 = 0 case of a
+            // multiplicity variant). Underflow and division by zero were rejected
+            // at install by the interval check; the checked ops here are the
+            // second line, like the checked literal primitives.
+            let k = eval_mult_expr::<Cfg, V>(mult, m);
+            if k > 0 {
+                let id = eval(body, m, eg, model, globals);
+                for _ in 0..k {
+                    out.push(id);
+                }
+            }
+        }
         RhsArg::SpliceSeq(sid) => out.extend_from_slice(m.seq_slice(*sid)),
         RhsArg::SpliceSet(sid) => out.extend_from_slice(m.set_slice(*sid)),
         RhsArg::SpliceMset(mid) => {
@@ -573,11 +645,9 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
                 // literal is a rule error, not a silently smaller multiplicity.
                 // `check_mult_literals` rejects such rules at install time, which
                 // is why this is an `expect` rather than a propagated error.
-                let n: Cfg::M = match out_mult {
-                    crate::resolve::ResolvedMultExpr::Lit(n) => Cfg::M::try_from_u64(*n)
-                        .expect("RHS multiplicity literal exceeds the configured width"),
-                    crate::resolve::ResolvedMultExpr::Var(mid) => m.get_mult(*mid),
-                };
+                let n = eval_mult_expr::<Cfg, V>(out_mult, m);
+                let n: Cfg::M =
+                    Cfg::M::try_from_u64(n).expect("RHS multiplicity exceeds the configured width");
                 for _ in 0..n.to_usize() {
                     out.push(result);
                 }
@@ -585,6 +655,162 @@ fn eval_arg<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
             m.clear(*var);
         }
     }
+}
+
+/// Evaluate an RHS multiplicity expression over the match's bound
+/// multiplicities, in checked u64 arithmetic. Underflow and division by zero
+/// are rejected statically at rule install ([`check_rhs_mult_exprs`]); the
+/// checked ops here are the second line, and panic like the checked literal
+/// primitives do.
+fn eval_mult_expr<Cfg, V>(e: &crate::resolve::ResolvedMultExpr, m: &V) -> u64
+where
+    Cfg: EGraphConfig,
+    V: crate::ematch::MatchView<Cfg>,
+{
+    use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
+    match e {
+        E::Lit(n) => *n,
+        E::Var(v) => m.get_mult(*v).to_u64(),
+        E::Prim { op, args } => {
+            let a = eval_mult_expr::<Cfg, V>(&args[0], m);
+            let b = eval_mult_expr::<Cfg, V>(&args[1], m);
+            match op {
+                P::Add => a
+                    .checked_add(b)
+                    .expect("u64::+ overflow in RHS multiplicity"),
+                P::Sub => a
+                    .checked_sub(b)
+                    .expect("u64::- underflow in RHS multiplicity"),
+                P::Mul => a
+                    .checked_mul(b)
+                    .expect("u64::* overflow in RHS multiplicity"),
+                P::Div => a
+                    .checked_div(b)
+                    .expect("u64::/ by zero in RHS multiplicity"),
+                P::Rem => a
+                    .checked_rem(b)
+                    .expect("u64::% by zero in RHS multiplicity"),
+                P::Min => a.min(b),
+                P::Max => a.max(b),
+            }
+        }
+    }
+}
+
+/// Interval bounds of an RHS multiplicity expression, from the rule's LHS
+/// multiplicity constraints (`ResolvedQuery::mult_intervals`; an unannotated
+/// `x:k` is `[1, u64::MAX]`). Errors on the two expressions that could be
+/// *wrong* at runtime rather than merely large: a subtraction that cannot be
+/// proved non-negative, and a division or remainder whose divisor could be
+/// zero. Additions and products saturate in the bound computation; a runtime
+/// overflow still traps in [`eval_mult_expr`].
+fn mult_expr_bounds(
+    e: &crate::resolve::ResolvedMultExpr,
+    intervals: &[(crate::ast::MultVarId, u64, u64)],
+) -> Result<(u64, u64), String> {
+    use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
+    Ok(match e {
+        E::Lit(n) => (*n, *n),
+        E::Var(v) => intervals
+            .iter()
+            .find(|(id, _, _)| id == v)
+            .map(|(_, lo, hi)| (*lo, *hi))
+            .unwrap_or((1, u64::MAX)),
+        E::Prim { op, args } => {
+            let (lo_a, hi_a) = mult_expr_bounds(&args[0], intervals)?;
+            let (lo_b, hi_b) = mult_expr_bounds(&args[1], intervals)?;
+            match op {
+                P::Add => (lo_a.saturating_add(lo_b), hi_a.saturating_add(hi_b)),
+                P::Sub => {
+                    if lo_a < hi_b {
+                        return Err(format!(
+                            "u64::- can underflow: the left side is at least {lo_a} but \
+                             the right side can reach {hi_b}; constrain the multiplicity \
+                             on the LHS (e.g. `x:k>=2`) so the subtraction cannot go \
+                             negative"
+                        ));
+                    }
+                    (lo_a - hi_b, hi_a.saturating_sub(lo_b))
+                }
+                P::Mul => (lo_a.saturating_mul(lo_b), hi_a.saturating_mul(hi_b)),
+                P::Div | P::Rem => {
+                    if lo_b == 0 {
+                        return Err(format!(
+                            "{} divisor can be zero; constrain it on the LHS",
+                            op.name()
+                        ));
+                    }
+                    match op {
+                        P::Div => (lo_a / hi_b.max(1), hi_a / lo_b),
+                        _ => (0, hi_b - 1),
+                    }
+                }
+                P::Min => (lo_a.min(lo_b), hi_a.min(hi_b)),
+                P::Max => (lo_a.max(lo_b), hi_a.max(hi_b)),
+            }
+        }
+    })
+}
+
+/// Static safety check for every RHS multiplicity expression in a rule's
+/// actions, against the rule's LHS multiplicity intervals. Rejection here is
+/// what licenses the `expect`s in [`eval_mult_expr`] for underflow and
+/// division by zero; overflow stays a runtime trap because any expression
+/// over an unbounded `k` could overflow and rejecting them all would ban
+/// `k+1`.
+pub fn check_rhs_mult_exprs<O, S, V>(rule: &PreparedRule<O, S, V>) -> Result<(), String> {
+    fn walk_op<O, V>(
+        op: &RhsOp<O, V>,
+        intervals: &[(crate::ast::MultVarId, u64, u64)],
+    ) -> Result<(), String> {
+        let RhsOp::App { args, .. } = op else {
+            return Ok(());
+        };
+        for arg in args {
+            match arg {
+                RhsArg::One(inner) => walk_op(inner, intervals)?,
+                RhsArg::OneMult { body, mult } => {
+                    mult_expr_bounds(mult, intervals)?;
+                    walk_op(body, intervals)?;
+                }
+                RhsArg::MsetComp {
+                    body, mult, filter, ..
+                } => {
+                    mult_expr_bounds(mult, intervals)?;
+                    walk_op(body, intervals)?;
+                    if let Some(f) = filter {
+                        walk_op(f, intervals)?;
+                    }
+                }
+                RhsArg::SetComp { body, filter, .. } | RhsArg::SeqComp { body, filter, .. } => {
+                    walk_op(body, intervals)?;
+                    if let Some(f) = filter {
+                        walk_op(f, intervals)?;
+                    }
+                }
+                RhsArg::SpliceSeq(_) | RhsArg::SpliceSet(_) | RhsArg::SpliceMset(_) => {}
+            }
+        }
+        Ok(())
+    }
+    let iv = &rule.query.mult_intervals;
+    for action in &rule.actions {
+        match action {
+            CompiledAction::Union(_, a, b) => {
+                walk_op(a, iv)?;
+                walk_op(b, iv)?;
+            }
+            CompiledAction::Insert(t) => walk_op(t, iv)?,
+            CompiledAction::Set { args, value, .. } => {
+                for a in args {
+                    walk_op(a, iv)?;
+                }
+                walk_op(value, iv)?;
+            }
+            CompiledAction::Subsume(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn check_filter_truthy<Cfg, L, M, const T: bool, const P: bool>(
@@ -604,9 +830,9 @@ where
     }
 }
 
-pub fn apply_action<Cfg, L, M, S: Copy, const T: bool, const P: bool>(
+pub fn apply_action<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     action: &CompiledAction<Cfg::O, L>,
-    m: &mut Match<Cfg>,
+    m: &mut V,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -615,6 +841,7 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
+    V: crate::ematch::MatchView<Cfg>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match action {
@@ -702,13 +929,15 @@ where
     M: crate::lit_model::LitModel<Value = L>,
     crate::canon::MSetCanon: crate::canon::VarCanon<Cfg::G, Cfg::C>,
 {
-    let plan = crate::schedule::schedule_with_stats(&rule.query, stats);
     let vindex = crate::index::VariantIndex::naive(index);
-    run_query_into(&plan, eg, &vindex, globals, pool);
+    let sampler = crate::index::IndexSampler::new(eg, vindex);
+    let plan = crate::schedule::schedule_with_stats_sampled(&rule.query, stats, &sampler);
+    run_query_scheduled_into(&rule.query, &plan, eg, &vindex, globals, pool);
     let mut changes = 0;
-    for m in pool.matches_mut() {
+    for j in 0..pool.len() {
+        let mut row = pool.row_mut(j);
         for action in &rule.actions {
-            changes += apply_action(action, m, eg, model, globals);
+            changes += apply_action(action, &mut row, eg, model, globals);
         }
     }
     changes
@@ -1078,6 +1307,10 @@ mod tests {
                             println!("{indent}  child[{i}]:");
                             print_rhs(&format!("{indent}    "), t);
                         }
+                        RC::TermMult { body, mult } => {
+                            println!("{indent}  child[{i}] (mult {mult:?}):");
+                            print_rhs(&format!("{indent}    "), body);
+                        }
                         RC::SpliceSeq(id) => println!("{indent}  child[{i}]: SpliceSeq({:?})", id),
                         RC::SpliceSet(id) => println!("{indent}  child[{i}]: SpliceSet({:?})", id),
                         RC::SpliceMset(id) => {
@@ -1104,6 +1337,9 @@ mod tests {
             R::PrimApp { op, args, .. } => {
                 println!("{indent}PrimApp(op={op:?}, args={args:?})");
             }
+            R::MultVar { op, var } => {
+                println!("{indent}MultVar(op={op:?}, var={var:?})");
+            }
             R::LitVar { op, val } => {
                 println!("{indent}LitVar(op={op:?}, val={val:?})");
             }
@@ -1124,6 +1360,10 @@ mod tests {
                         RhsArg::One(inner) => {
                             println!("{indent}  arg[{i}]:");
                             print_compiled(&format!("{indent}    "), inner);
+                        }
+                        RhsArg::OneMult { body, mult } => {
+                            println!("{indent}  arg[{i}] (mult {mult:?}):");
+                            print_compiled(&format!("{indent}    "), body);
                         }
                         RhsArg::SpliceSeq(s) => {
                             println!("{indent}  arg[{i}]: SpliceSeq(SeqVarId({}))", s.idx())
@@ -1157,6 +1397,9 @@ mod tests {
             }
             RhsOp::LitVar(op, lvid) => {
                 println!("{indent}LitVar(op={op:?}, val={lvid:?})");
+            }
+            RhsOp::MultVar(op, mid) => {
+                println!("{indent}MultVar(op={op:?}, var={mid:?})");
             }
             RhsOp::FetchGlobal(gid) => {
                 println!("{indent}FetchGlobal({gid:?})");

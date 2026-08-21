@@ -1,0 +1,94 @@
+;; TYPES: machine
+;; Translation of egglog tests/web-demo/matrix.egg (7b1adf2).
+;; Config: associativity and commutativity supplied as explicit rewrite rules, their
+;; encoding. See matrix.deviations.md.
+(datatype Dim (Times Dim Dim) (NamedDim String) (Lit i64))
+
+(rewrite (Times a (Times b c)) (Times (Times a b) c))
+(rewrite (Times (Times a b) c) (Times a (Times b c)))
+(rewrite (Times (Lit i) (Lit j)) (Lit (i64::* i j)))
+(rewrite (Times a b) (Times b a))
+
+(datatype MExpr
+    (MMul MExpr MExpr)
+    (Kron MExpr MExpr)
+    (NamedMat String)
+    (Id Dim))
+
+(constructor nrows (MExpr) Dim)
+(constructor ncols (MExpr) Dim)
+
+(rewrite (nrows (Kron a b)) (Times (nrows a) (nrows b)))
+(rewrite (ncols (Kron a b)) (Times (ncols a) (ncols b)))
+
+(rewrite (nrows (MMul a b)) (nrows a))
+(rewrite (ncols (MMul a b)) (ncols b))
+
+(rewrite (nrows (Id n)) n)
+(rewrite (ncols (Id n)) n)
+
+(rewrite (MMul (Id n) a) a)
+(rewrite (MMul a (Id n)) a)
+
+(rewrite (MMul a (MMul b c)) (MMul (MMul a b) c))
+(rewrite (MMul (MMul a b) c) (MMul a (MMul b c)))
+
+(rewrite (Kron a (Kron b c)) (Kron (Kron a b) c))
+(rewrite (Kron (Kron a b) c) (Kron a (Kron b c)))
+
+(rewrite (Kron (MMul a c) (MMul b d)) (MMul (Kron a b) (Kron c d)))
+
+;; The benchmark's subject. The guard is an equality between two derived terms: the
+;; e-class of (ncols a) must be the e-class of (nrows c). Each conjunct binds the root
+;; of one pattern, and the repeated name is what requires the two to be one class.
+(rewrite (MMul (Kron a b) (Kron c d))
+    (Kron (MMul a c) (MMul b d))
+    :when
+        ((= p (ncols a)) (= p (nrows c))
+         (= q (ncols b)) (= q (nrows d))))
+
+; demand. Theirs binds the matched root `e` and never uses it, so ours drops the
+; binding rather than paying for a constraint nothing reads.
+(rule ((MMul a b))
+      ((ncols a)
+       (nrows a)
+       (ncols b)
+       (nrows b)))
+
+(rule ((Kron a b))
+      ((ncols a)
+       (nrows a)
+       (ncols b)
+       (nrows b)))
+
+(let dimN (NamedDim "n"))
+(let dimM (NamedDim "m"))
+(let dimP (NamedDim "p"))
+
+(let matA (NamedMat "A"))
+(let matB (NamedMat "B"))
+(let matC (NamedMat "C"))
+
+(union (nrows matA) dimN)
+(union (ncols matA) dimN)
+(union (nrows matB) dimM)
+(union (ncols matB) dimM)
+(union (nrows matC) dimP)
+(union (ncols matC) dimP)
+(let ex1 (MMul (Kron (Id dimN) matB) (Kron matA (Id dimM))))
+(let rows1 (nrows ex1))
+(let cols1 (ncols ex1))
+
+(run 20)
+
+(check (= (nrows matB) dimM))
+(check (= (nrows (Kron (Id dimN) matB)) (Times dimN dimM)))
+(let simpleEx1 (Kron matA matB))
+(check (= ex1 simpleEx1))
+
+(let ex2 (MMul (Kron (Id dimP) matC) (Kron matA (Id dimM))))
+(run 10)
+(check (!= ex2 (Kron matA matC)))
+
+(print-size)
+(print-stats :file "matrix.rules.stats.json")

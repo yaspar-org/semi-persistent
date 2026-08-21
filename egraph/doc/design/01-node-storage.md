@@ -44,12 +44,16 @@ For operators with 0–3 children (plain and commutative).
 └──────────┴───────────┴────────────────────┘
 ```
 
-| Arity | Size (32-bit ids) | Used by |
+| Arity | Tested size (31-bit ids) | Used by |
 |-------|-------------------|---------|
-| 0 | 8 bytes | Constants, nullary functions |
-| 1 | 12 bytes | Unary ops (Neg, Not) |
-| 2 | 16 bytes | Binary ops (Add, Mul), commutative ops |
-| 3 | 20 bytes | Ternary ops (ITE) |
+| 0 | 12 bytes | Constants, nullary functions |
+| 1 | 16 bytes | Unary ops (Neg, Not) |
+| 2 | 20 bytes | Binary ops (Add, Mul), commutative ops |
+| 3 | 24 bytes | Ternary ops (ITE) |
+
+These sizes include the current `flags: u8` field and alignment padding and
+are pinned by `node_types::tests::fixed_arity_sizes`; they are not portable
+claims for other id widths or ABIs.
 
 ### `VariableArityNode<G, O>`
 
@@ -64,9 +68,10 @@ For operators with 4+ children, or associative/AC/ACI operators.
               pool: [..., c₀, c₁, c₂, c₃, ...]
 ```
 
-Children are stored in a shared pool (`Vec<C>`). The node stores a
-`(start, end)` span. The pool element type `C` depends on the operator
-kind:
+Children are stored in the owning cache's shared semi-persistent pool. The
+node stores a `(start, end)` span as two `usize` values; its tested size with
+31-bit ids on the supported 64-bit target is 32 bytes. The pool element type
+`C` depends on the operator kind:
 
 | Kind | Pool element `C` | Invariant |
 |------|-----------------|-----------|
@@ -86,7 +91,8 @@ For `@`-prefixed literal operators (`@IBig`, `@bool`, etc.).
 ```
 
 No e-node children. The `LitValId` references an interned value in
-`LitValStore`. Literal nodes never need re-canonization during rebuild.
+`LitValStore`. Literal nodes never need re-canonization during rebuild. Their
+tested size with 31-bit ids is 16 bytes.
 
 ## Stolen Bits Convention
 
@@ -104,9 +110,10 @@ All node structs follow the same field order and bit-stealing convention:
 Both bits are invisible to `content_hash` and `content_eq`, which
 operate on clean values.
 
-> Note: `node_types.rs` also defines `FLAG_CONSTRUCTOR: u8 = 1 << 1`,
-> but this per-node flag is currently unused. Constructor status is
-> tracked on `OpInfo` in the registry, not on individual nodes.
+`node_types.rs` also defines `FLAG_CONSTRUCTOR: u8 = 1 << 1`. Constructor
+status enters through registration metadata and is stamped onto each node when
+the node is created. Congruence and matching do not branch on it; extraction
+metadata and clients that inspect node flags can distinguish constructors.
 
 ## `TypedRouting` — Global Dispatch Table
 
@@ -115,14 +122,14 @@ different caches with different local id types. The routing table
 bridges the two:
 
 ```rust
-pub struct TypedRouting<G, I: NodeIds> {
-    table: Vec<NodeRef<I>>,   // indexed by G
+pub struct TypedRouting<G, I: NodeIds, const TRACK: bool> {
+    entries: AppendOnlyVec<NodeRef<I>, I::Index, TRACK>, // indexed by G
 }
 
 pub enum NodeRef<I: NodeIds> {
     Plain0(I::L0), Plain1(I::L1), Plain2(I::L2), Plain3(I::L3),
-    C(I::LC),      PlainN(I::LN), A(I::LA),
-    AC(I::LMSet),    ACI(I::LSet),  Lit(I::LLit),
+    SPair(I::LSPair), PlainN(I::LN), Seq(I::LSeq),
+    MSet(I::LMSet), Set(I::LSet), Lit(I::LLit),
 }
 ```
 
@@ -153,11 +160,11 @@ pub struct NodeStore<G, O, V, C, I: NodeIds, const TRACK: bool, const PROOFS: bo
     plain1: FixedArityCache<..., 1, TRACK, PROOFS>,
     plain2: FixedArityCache<..., 2, TRACK, PROOFS>,
     plain3: FixedArityCache<..., 3, TRACK, PROOFS>,
-    c:      FixedArityCache<..., 2, TRACK, PROOFS>,  // commutative (always arity 2)
+    spair:  FixedArityCache<..., 2, TRACK, PROOFS>,  // commutative pair
     plain_n: VariableArityCache<..., TRACK, PROOFS>,
-    a:       VariableArityCache<..., TRACK, PROOFS>,
-    ac:      VariableArityCache<..., TRACK, PROOFS>,
-    aci:     VariableArityCache<..., TRACK, PROOFS>,
+    seq:     VariableArityCache<..., TRACK, PROOFS>,
+    mset:    VariableArityCache<..., TRACK, PROOFS>,
+    set:     VariableArityCache<..., TRACK, PROOFS>,
     lit:     LitCache<..., TRACK>,  // no PROOFS — lit nodes have no children
 }
 ```
@@ -192,15 +199,17 @@ During rebuild, after a merge changes canonical representatives:
 
 ```rust
 pub trait EGraphConfig: 'static {
-    type G: DenseId + Hash;     // global e-node id
-    type O: DenseId + Hash;     // operator id
-    type S: DenseId;            // sort id
-    type V: DenseId + Hash;     // literal value id
-    type UL: DenseId;           // use-list id
-    type UN: DenseId;           // use-list node id
-    type C: Tagged + Copy + Hash + Eq;  // AC child (id, mult)
-    type M: Copy + Eq + Ord + Hash + From<u32> + Into<u32>;  // multiplicity
-    type Ids: NodeIds;          // local id bundle for typed caches
+    type Index: IndexLike + Tagged;
+    type G: DenseId<Index = Self::Index> + Hash;
+    type O: DenseId<Index = Self::Index> + Hash;
+    type S: DenseId<Index = Self::Index>;
+    type V: DenseId<Index = Self::Index> + Hash;
+    type UL: DenseId<Index = Self::Index>;
+    type UN: DenseId<Index = Self::Index>;
+    type C: Tagged + Clone + Copy + Hash + Eq + Debug;
+    type M: MultiplicityLike;
+    type Ids: NodeIds<Index = Self::Index>;
+    type Au: AuIds<Index = Self::Index>;
 
     // Required methods for generic AC child manipulation:
     fn mset_child_id(c: &Self::C) -> Self::G;
@@ -216,8 +225,9 @@ children generically without knowing the concrete `(G, Multiplicity)`
 layout. `mset_child_merge` increments the multiplicity of an existing
 child and returns `true` if the ids belong to the same group.
 
-`DefaultConfig` uses 31-bit ids for everything. `Config64` uses
-63-bit `ENodeId` for e-graphs exceeding 2 billion nodes.
+`DefaultConfig` uses 31-bit capacity-coupled ids and a 32-bit
+multiplicity. `ConfigM16` keeps the ids and narrows multiplicity to 16 bits.
+`Config64` uses 63-bit capacity-coupled ids and a 64-bit multiplicity.
 
 ---
 [← Table of Contents](00-table-of-contents.md) · [Ch 2: E-Classes and Union-Find →](02-classes-and-union-find.md)

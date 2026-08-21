@@ -603,7 +603,7 @@ The proof goal was `mul_sound`. Working backwards:
 
 1. The result has `w=0`, so `has(n)` reduces to `n >= v` and
    `d_allowed(0, x, d, F, true)`. The existing `d_allowed_leq` proved the
-   forward direction. We needed the **converse** to close the proof —
+   forward direction. We needed the **converse** to close the proof,
    hence `d_allowed_leq_converse`.
 
 2. To bound the uncertainty, we needed `d1 <= x1` and `d2 <= x2` from the

@@ -3,8 +3,7 @@
 //! Structural counts for the `extract_bench` workloads: class count, fixpoint
 //! pass count, and reconstructed term size.
 //!
-//! The protocol in `doc/perf-results/README.md` requires confirming the
-//! mechanism behind a timing delta, and for extraction the mechanism is a ratio
+//! This confirms the mechanism behind an extraction timing delta: a ratio
 //! between two costs that no timer separates: the `extract_best` fixpoint is
 //! O(classes x passes) while `reconstruct` is O(term size), which on a shared
 //! DAG is exponentially larger than the class count. These counts say which of

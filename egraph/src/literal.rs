@@ -15,15 +15,31 @@ use crate::containers::DenseId;
 pub trait LitVal: Clone + Eq + Hash + fmt::Debug + fmt::Display {}
 
 /// Opaque token for [`LitValStore::mark`] / [`LitValStore::restore`].
+///
+/// Carries the log length at the mark alongside the container's own token:
+/// restore reads it to find the suffix of values interned since, which is
+/// exactly the set of lookup entries it has to drop. The length is not a
+/// second branch-history encoding: branch validity lives entirely in the
+/// `VecToken`, which restore asserts valid before touching the index, and
+/// the length only tells it which suffix values to read from the log while
+/// they are still live (after the log restore they are gone).
 #[derive(Clone, Copy, Debug)]
-pub struct LitValStoreToken(crate::containers::MapToken);
+pub struct LitValStoreToken(crate::containers::VecToken, usize);
 
-/// Append-only intern table for literals, backed by `SpMap`.
-#[derive(Debug)]
+/// Append-only intern table for literals.
+///
+/// The log is the source of truth and a hash index accelerates lookup, which is
+/// what [`crate::containers::SpMap`] provides, but that map rebuilds its index
+/// from the surviving log on every restore, cloning every live key. Interning is
+/// append-only (a value is pushed once, never overwritten and never mutated),
+/// so restore instead deletes the entries for the log suffix it truncates, which
+/// costs one hash removal per value interned since the mark rather than one key
+/// clone per value in the table. `restore` keeps the rebuild as a fallback on the
+/// same terms as the node caches: see [`crate::caches::REBUILD_RATIO`].
 pub struct LitValStore<L: LitVal, V: DenseId, const TRACK: bool> {
     /// Positions in this log ARE literal-value ids, so the log's index word is `V`'s.
-    map: crate::containers::SpMap<L, (), V::Index, TRACK>,
-    _phantom: core::marker::PhantomData<V>,
+    log: crate::containers::AppendOnlyVec<L, V::Index, TRACK>,
+    index: hashbrown::HashMap<L, V::Index>,
 }
 
 impl<L: LitVal, V: DenseId, const TRACK: bool> Default for LitValStore<L, V, TRACK> {
@@ -32,46 +48,101 @@ impl<L: LitVal, V: DenseId, const TRACK: bool> Default for LitValStore<L, V, TRA
     }
 }
 
+impl<L: LitVal, V: DenseId, const TRACK: bool> fmt::Debug for LitValStore<L, V, TRACK> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LitValStore")
+            .field("len", &self.len())
+            .finish()
+    }
+}
+
 impl<L: LitVal, V: DenseId, const TRACK: bool> LitValStore<L, V, TRACK> {
     pub fn new() -> Self {
         Self {
-            map: crate::containers::SpMap::new(),
-            _phantom: core::marker::PhantomData,
+            log: crate::containers::AppendOnlyVec::new(),
+            index: hashbrown::HashMap::new(),
         }
     }
 
     pub fn intern(&mut self, value: L) -> V {
-        if let Some(id) = self.map.id_of(&value) {
+        if let Some(&id) = self.index.get(&value) {
             return crate::id::id_at_index::<V>(id);
         }
-        let id = self.map.insert(value, ());
+        let id = self
+            .log
+            .try_push(value.clone())
+            .expect("literal interner exhausted the id index word");
+        self.index.insert(value, id);
         crate::id::id_at_index::<V>(id)
     }
 
     pub fn get(&self, id: V) -> &L {
-        self.map.key(id.to_index())
+        self.log.get(id.to_index())
     }
 
     /// Try to look up a value without interning it.
     pub fn try_lookup(&self, value: &L) -> Option<V> {
-        self.map.id_of(value).map(crate::id::id_at_index::<V>)
+        self.index
+            .get(value)
+            .map(|&i| crate::id::id_at_index::<V>(i))
     }
 
     pub fn len(&self) -> usize {
         use crate::containers::IndexLike;
-        self.map.log_len().as_usize()
+        self.log.len().as_usize()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
+        self.log.is_empty()
     }
 
     pub fn mark(&mut self, shrink: crate::containers::ShrinkPolicy) -> LitValStoreToken {
-        LitValStoreToken(self.map.mark(shrink))
+        LitValStoreToken(
+            self.log
+                .try_mark(shrink)
+                .expect("literal mark: depth bounded by the saturation driver"),
+            self.len(),
+        )
     }
 
     pub fn restore(&mut self, token: LitValStoreToken) {
-        self.map.restore(token.0);
+        use crate::containers::IndexLike;
+        // Validate the log token BEFORE touching the index: the removals
+        // below are not undoable, so an invalid token must refuse while the
+        // store is still consistent (index and log in step).
+        assert!(
+            self.log.is_valid_token(&token.0),
+            "literal restore: token is not restorable"
+        );
+        let saved_len = token.1;
+        let live_len = self.len();
+        let incremental = crate::caches::restore_incrementally(live_len - saved_len, 0, saved_len);
+
+        if incremental {
+            for i in saved_len..live_len {
+                let idx = <V::Index as IndexLike>::try_from_usize(i)
+                    .expect("log position: below a length the log already holds");
+                self.index.remove(self.log.get(idx));
+            }
+        }
+
+        self.log
+            .try_restore(token.0)
+            .expect("literal restore: token minted by this container's own mark");
+
+        if !incremental {
+            self.index.clear();
+            for (i, value) in self.log.iter().enumerate() {
+                let idx = <V::Index as IndexLike>::try_from_usize(i)
+                    .expect("log position: below a length the log already holds");
+                self.index.insert(value.clone(), idx);
+            }
+        }
+        debug_assert_eq!(
+            self.index.len(),
+            self.len(),
+            "restore left the literal index out of step with the log"
+        );
     }
 }
 

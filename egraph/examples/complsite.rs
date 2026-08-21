@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Single-site timer for the AC-completion workload of `benches/saturate_bench.rs`.
 //!
-//! `containers-verus/doc/design/11-layout-parity.md` requires that a gap seen in
-//! criterion be reproduced through a standalone binary before it is attributed
+//! A Criterion gap is reproduced through a standalone binary before it is attributed
 //! to code, because criterion's harness fixes neither heap position nor hot-loop
-//! alignment. This is that binary for the completion path: one workload, one
+//! alignment. This binary covers the completion path: one workload, one
 //! loop, no criterion, no other bench in the process.
 //!
 //! `cargo run --release --example complsite [pairs] [reps]`

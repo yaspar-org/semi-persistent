@@ -19,7 +19,7 @@
 //! Keys are modeled as `nat` (the `IndexLike::as_nat` projection of the stored
 //! word), so ordering is `nat` `<`, where transitivity/totality are free.
 //!
-//! ## The recursive-datatype idiom (see proof-attempts log)
+//! ## The recursive-datatype idiom
 //!
 //! `Tree` carries its children as `Seq<Tree>`. A spec fn over `Tree` and its
 //! companion over `Seq<Tree>` are mutually recursive, and their `decreases`
@@ -69,7 +69,7 @@ pub open(crate) spec fn forest_keys(kids: Seq<Tree>) -> Seq<nat>
 }
 
 /// Total number of nodes in the tree (leaves + internal). The arena-capacity
-/// measure for M6: `arena.len() == node_count(tree@)` for an insert-only tree
+/// measure uses `arena.len() == node_count(tree@)` for an insert-only tree
 /// (no orphaned slots), and `node_count` is bounded by `c * tree_keys.len()` via
 /// min-occupancy.
 pub open(crate) spec fn node_count(t: Tree) -> nat
@@ -377,7 +377,7 @@ pub proof fn lemma_leaf_id_offset_succ_head(kids: Seq<Tree>, cp: int)
 /// first-leaf at the same boundary position. Full leaf-id-sequence equality is
 /// NOT required (a deep-absorb split grows the sequence) — only the leftmost
 /// leaf is pinned, which is all `forest_links_to` reads at child boundaries.
-/// (Part of the subset+freshness contract fix; see `insert_rec` (F0).)
+/// See `insert_rec`'s subset-and-freshness contract.
 pub proof fn lemma_forest_leaf_ids_update_first(kids: Seq<Tree>, m: int, nc: Tree)
     requires
         0 <= m < kids.len(),
@@ -486,19 +486,19 @@ pub proof fn lemma_forest_max_height_cons(kids: Seq<Tree>)
 // ===========================================================================
 
 // ===========================================================================
-// M6 structural node-count bound. The chain (for a NON-ROOT-wf tree, where every
+// Structural node-count bound. The chain (for a non-root well-formed tree, where every
 // internal node has >= 2 children and every leaf has >= L_min == (cap+1)/2 keys):
 //   (A)  node_count(t) + 1 <= 2 * leaf_count(t)          -- min branching >= 2
 //   (B)  L_min * leaf_count(t) <= tree_keys(t).len()     -- min leaf occupancy
 // compose to  L_min * (node_count - 1) < 2 * keys, so a full arena (node_count
 // ~= 2^N) forces keys > L_min/2 * (2^N - 1) >> id_bound == 2^(N-1) -- impossible.
-// See [[bplus-m6-arena-capacity-plan]]. Both bounds are tree+forest pairs.
+// Both bounds are proved for trees and forests.
 // ===========================================================================
 
 /// Updating one child shifts the forest node-count by exactly that child's delta:
 /// `forest_node_count(kids.update(m, x)) + node_count(kids[m]) == forest_node_count(kids) + node_count(x)`.
 /// (Stated additively to stay in `nat`.) The compositional step the insert
-/// recursion's M6 delta needs at an absorb (None): one child `gkids[cp]` becomes
+/// recursion's capacity delta needs at an absorb (None): one child `gkids[cp]` becomes
 /// `ncl`, the rest frame.
 pub proof fn lemma_forest_node_count_update(kids: Seq<Tree>, m: int, x: Tree)
     requires 0 <= m < kids.len(),
@@ -667,7 +667,7 @@ pub proof fn lemma_node_count_pos(t: Tree)
 
 /// `tree_height(t) <= node_count(t)`: a root-to-leaf path visits `height + 1`
 /// distinct nodes, all part of the tree, so even `height < node_count`. (Proven
-/// as `<=`, which is all the M6 wiring needs: `height <= arena.len()`.) Needs the
+/// as `<=`, which is sufficient for `height <= arena.len()`.) Needs the
 /// forest fact that some child's node_count dominates the max child height.
 pub proof fn lemma_height_le_node_count(t: Tree)
     ensures tree_height(t) <= node_count(t),
@@ -792,8 +792,8 @@ pub proof fn lemma_strictly_sorted_dominates_index(s: Seq<nat>)
 
 /// A strictly-sorted `nat` sequence whose every element is `< bound` has length
 /// `<= bound`. (It injects order-preservingly into `{0, .., bound)`; the last
-/// element is both `>= len-1` and `< bound`.) The set-cardinality fact behind
-/// M6's "a full arena would need more distinct keys than exist": with all model
+/// element is both `>= len-1` and `< bound`.) This is the set-cardinality fact
+/// showing that a full arena would need more distinct keys than exist: with all model
 /// keys `< K::id_bound()`, `model.len() <= K::id_bound()`.
 pub proof fn lemma_sorted_bounded_len(s: Seq<nat>, bound: nat)
     requires
@@ -1115,7 +1115,8 @@ pub open(crate) spec fn tree_wf(t: Tree, h: nat, cap: nat, key_cap: nat, is_root
                     keys_all_lt(#[trigger] kids[i], seps[i]))
             &&& (forall|i: int| 0 < i < kids.len() ==>
                     keys_all_ge(#[trigger] kids[i], seps[i - 1]))
-            // (weakening) separator-min clause REMOVED (was seps[i-1] == tree_keys(kids[i])[0]).
+            // Separators bound adjacent children but need not equal the right
+            // child's minimum key.
         }
     }
 }
@@ -1419,9 +1420,9 @@ pub proof fn lemma_forest_wf_update(kids: Seq<Tree>, h: nat, cap: nat, key_cap: 
 /// `forest_disjoint`. This is the absorb step's real footprint relation: a node
 /// deep under child `m` split, so `nc` has more ids than `kids[m]` — but the new
 /// ids are freshly-allocated tail slots (`>= bound`), hence disjoint from every
-/// sibling (whose ids are all `< bound`). The old exact-`==` form was a spec bug
-/// (a `None` recursion result can still grow the footprint); see `bplus.rs`
-/// `insert_rec`'s `(F0)` clause and the `footprint_contract_holds` runtime test.
+/// sibling (whose ids are all `< bound`). Exact footprint equality is too
+/// strong because a `None` recursion result can still grow the footprint; see
+/// `bplus.rs` `insert_rec` and the `footprint_contract_holds` runtime test.
 pub proof fn lemma_forest_disjoint_update(kids: Seq<Tree>, m: int, nc: Tree, bound: nat)
     requires
         forest_disjoint(kids),
@@ -1995,7 +1996,7 @@ pub proof fn lemma_tree_keys_nonempty(t: Tree, h: nat, cap: nat, key_cap: nat)
 // length `cap + 1`; splitting at `mid` gives a left prefix and right suffix that
 // recombine to `combined`, each strictly sorted, with `right[0]` a true B+tree
 // separator (every left key `<`, every right key `>=` it). De-risked in a
-// standalone probe before lifting here.
+// The decomposition below keeps the quantified trigger local.
 // ===========================================================================
 
 pub proof fn lemma_median_split(combined: Seq<nat>, mid: int)
@@ -2154,7 +2155,7 @@ pub proof fn lemma_internal_split_tree_wf(
         // cross-node ordering of the combined arrangement.
         (forall|i: int| 0 <= i < cseps.len() ==> keys_all_lt(#[trigger] ckids[i], cseps[i])),
         (forall|i: int| 0 < i < ckids.len() ==> keys_all_ge(#[trigger] ckids[i], cseps[i - 1])),
-        // (weakening) combined separator-min requires REMOVED.
+        // No separator-minimum equality is required.
     ensures
         ({
             let lseps = cseps.subrange(0, imid);
@@ -2224,7 +2225,7 @@ pub proof fn lemma_internal_split_tree_wf(
     assert forall|i: int| 0 < i < rkids.len() implies keys_all_ge(#[trigger] rkids[i], rseps[i - 1]) by {
         assert(rkids[i] == ckids[imid + 1 + i]); assert(rseps[i - 1] == cseps[imid + 1 + i - 1]);
     }
-    // (weakening) per-half separator-min proof REMOVED.
+    // Cross-half ordering is sufficient; no separator-minimum equality is needed.
 
     // heights: both halves wf at h-1 ⟹ forest_max_height <= h-1, so tree_height
     // (1 + max) <= h; and >= 1 step gives == h via wf. tree_wf requires h>=1.
@@ -2334,12 +2335,9 @@ pub proof fn lemma_child_split_combined_wf(
         keys_all_ge(ncr, sep),
         tree_keys(ncl).len() >= 1,
         tree_keys(ncr).len() >= 1,
-        // (second weakening) the `sep ∈ (ncl+ncr)` membership is GONE: it was only
-        // ever used to bound `sep < gseps[cp]`, which we now derive from the median
-        // ordering + model + descent (see the sortedness sub-proof). Carrying it was
-        // an over-strong residual of the first weakening — at a PARENT split the
-        // promoted separator is an original `gseps[j]`, whose membership we deleted
-        // with the separator-min invariant, so it was also UNPROVABLE there.
+        // Membership of `sep` in either output half is not required. The median
+        // ordering, model, and descent facts imply the separator bounds; at a
+        // parent split the promoted separator may originate in the parent.
         (tree_keys(ncl) + tree_keys(ncr)).to_set()
             == tree_keys(gkids[cp]).to_set().insert(key),
         (forall|j: int| 0 <= j < cp ==> gseps[j] <= key),
@@ -2354,7 +2352,7 @@ pub proof fn lemma_child_split_combined_wf(
             &&& forest_wf(ckids, (h - 1) as nat, cap, key_cap)
             &&& (forall|i: int| 0 <= i < cseps.len() ==> keys_all_lt(#[trigger] ckids[i], cseps[i]))
             &&& (forall|i: int| 0 < i < ckids.len() ==> keys_all_ge(#[trigger] ckids[i], cseps[i - 1]))
-            // (weakening) combined separator-min ensures REMOVED.
+            // Ordering is established without separator-minimum equality.
             &&& forest_keys(ckids).to_set() == tree_keys(Tree::Inner { id: gid, seps: gseps, kids: gkids }).to_set().insert(key)
         }),
 {
@@ -2381,9 +2379,8 @@ pub proof fn lemma_child_split_combined_wf(
     // halves' boundary keys (`ncl[0] < sep <= ncr[0]` via the index form of
     // keys_all_lt/ge), and the model places those boundary keys inside the old
     // child (or at `key`), which the descent + cur's cross-node wf bound by
-    // gseps[cp-1] / gseps[cp]. (This is why the `sep ∈ (ncl+ncr)` precondition is
-    // NOT load-bearing — see the second-weakening fixpoint note; the genuinely
-    // needed facts are the median ordering, the model, and non-emptiness.)
+    // gseps[cp-1] / gseps[cp]. Thus `sep ∈ (ncl+ncr)` is not needed; the
+    // load-bearing facts are median ordering, the model, and non-emptiness.
     assert(cp < gseps.len() ==> sep < gseps[cp]) by {
         if cp < gseps.len() {
             lemma_keys_all_lt_set(gkids[cp], gseps[cp]);   // child keys < gseps[cp] (set form)
@@ -2474,7 +2471,7 @@ pub proof fn lemma_child_split_combined_wf(
         else { assert(nkids[i] == gkids[i - 1] && nseps[i - 1] == gseps[i - 2]); }
     }
 
-    // (weakening) combined separator-min proof block REMOVED.
+    // No separator-minimum equality proof is needed.
 
     // (4) model recombination.
     let middle_new = tree_keys(ncl) + tree_keys(ncr);
@@ -2545,8 +2542,8 @@ pub proof fn lemma_child_split_absorb_tree_wf(
         // for STRICT sortedness of the new separator list around `sep`.
         tree_keys(ncl).len() >= 1,
         tree_keys(ncr).len() >= 1,
-        // (second weakening) `sep ∈ (ncl+ncr)` membership REMOVED — not consumed
-        // (see lemma_child_split_combined_wf's sortedness sub-proof).
+        // `lemma_child_split_combined_wf` consumes ordering, not membership of
+        // `sep` in either output half.
         // model: the two halves' keys are the old child's keys plus `key`.
         (tree_keys(ncl) + tree_keys(ncr)).to_set()
             == tree_keys(gkids[cp]).to_set().insert(key),
@@ -2621,9 +2618,9 @@ pub proof fn lemma_parent_split_tree_wf(
         keys_all_ge(ncr, sep),
         tree_keys(ncl).len() >= 1,
         tree_keys(ncr).len() >= 1,
-        // (second weakening) `sep ∈ (ncl+ncr)` membership REMOVED — see
-        // lemma_child_split_combined_wf. (Was unprovable here anyway: the promoted
-        // separator is an original gseps[j], not sep.)
+        // `lemma_child_split_combined_wf` requires ordering, not membership of
+        // `sep` in either output half; the promoted separator can be an original
+        // `gseps[j]`.
         (tree_keys(ncl) + tree_keys(ncr)).to_set()
             == tree_keys(gkids[cp]).to_set().insert(key),
         (forall|j: int| 0 <= j < cp ==> gseps[j] <= key),
@@ -2656,7 +2653,7 @@ pub proof fn lemma_parent_split_tree_wf(
     let rt = Tree::Inner { id: rid, seps: cseps.subrange(imid + 1, cseps.len() as int), kids: ckids.subrange(imid + 1, ckids.len() as int) };
     assert(tree_keys(lt) + tree_keys(rt) == forest_keys(ckids));  // lemma_internal_split_tree_wf
     assert((tree_keys(lt) + tree_keys(rt)).to_set() == forest_keys(ckids).to_set());
-    // (weakening) lemma_parent_split_promoted call REMOVED.
+    // Parent-split correctness does not require promoted-key membership.
 }
 
 

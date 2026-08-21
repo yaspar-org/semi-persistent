@@ -5,10 +5,11 @@
 
 ## The Three-Phase Pipeline
 
-The engine processes programs in three phases. This separation is not
-incidental; it ensures that the interpreter never does string
-lookups or sort inference. By the time a command reaches the
-interpreter, every name is a dense id and every sort has been checked.
+The engine processes programs in three phases. Operator, sort, ruleset, and
+pattern-variable references are resolved before interpretation, and the
+interpreter performs no sort inference. This is not a claim that every source
+name disappears: ground-term globals and AU option spellings are intentionally
+late-bound, as detailed below.
 
 ```
 source → parse (parser.rs) → Vec<SurfaceCommand>
@@ -18,9 +19,10 @@ source → parse (parser.rs) → Vec<SurfaceCommand>
 
 ## `sortcheck_program`
 
-Processes commands sequentially against a live EGraph. Declaration
-commands register sorts/ops. Pattern commands are flattened and
-resolved. Ground terms are sort-checked.
+Processes commands sequentially against a live EGraph. Declaration commands
+register sorts and operators; an AC identity declaration also builds its
+ground unit term at this point. Pattern commands are flattened and resolved.
+Ordinary ground terms are classified and sort-checked without being built.
 
 ## `flatten_surface` — Op-Kind Validation
 
@@ -39,7 +41,27 @@ nested `App` nodes, validates against operator kind:
 | ACI, no rest | ✗ | ✗ | ✗ | `ACIExact` |
 | ACI, with rest | ✗ | ✓ | ✗ | `ACISub` |
 
-Invalid combinations produce clear error messages with spans.
+Invalid combinations produce diagnostic messages. Some retain a source span;
+the top-level sortcheck pipeline currently maps several flatten/resolve errors
+to `Span::Dummy`, so exact source locations are not guaranteed.
+
+Two forms are recognized before the table, by the operator name.
+
+**`(= p q)`, the root-binding form.** Both subpatterns flatten as they would
+alone, and one `Atom::Eq` constrains their roots to one e-class. The name `=` is
+reserved rather than looked up in the registry, so a declaration cannot shadow
+the form and silently change what an existing `(= …)` means. The idiomatic use is
+`(= v pat)`, which names `pat`'s root: the left side is a bare variable, so the
+`Eq` costs one `CopyBinding` once `pat`'s root is bound. Repeating the name
+across conjuncts is the ordinary non-linear case, and it is how a rule states
+that two patterns share a root rather than forming a cross product.
+
+**A primitive application, a predicate guard.** Legal only as a top-level
+conjunct of a rule body or a `:when` list, because a guard is a constraint and
+not a subterm. It flattens to `Atom::Pred`, carrying a `PredExpr` tree over
+primitive operators, literal constants, and the variables other patterns bind to
+literal payloads. Everywhere else in a left-hand side a primitive is still
+rejected: it names a function on values, not a relation the e-graph stores.
 
 ## `resolve` — Name Resolution
 
@@ -58,14 +80,38 @@ Maps string variable names to dense typed ids:
 `MatchShape` records the count of each variable kind, serving as the single
 source of truth for the binding environment layout.
 
-Non-linear variables (same name in multiple atoms) are unified:
-the first occurrence binds, subsequent occurrences emit `CheckEq`.
+Every occurrence of the same local variable name resolves to one `VarId`.
+Whichever executable atom is selected first binds that slot. Later occurrences
+are constrained by the operation appropriate to their atom: an index lookup,
+`CheckChildEq`, or an A/AC/ACI decomposition check. `CheckEq` is specifically
+the lowering of an explicit `Atom::Eq` whose two local slots are already
+bound; if only one side is bound, the equality lowers to `CopyBinding`.
+
+An `Eq` atom also unifies the two sides' sorts, since they denote one e-class.
+That is what gives `(rewrite (= v pat) rhs)` a sort to check `rhs` against: `v`
+alone constrains nothing, and takes its sort from `pat`.
+
+### Predicate Guards
+
+`Atom::Pred` resolves to `RAtom::Pred`, which holds a `PredGuard`: the guard
+expression with each primitive's `eval` and the model's `is_truthy` captured as
+function pointers, plus `deps`, the indices of the `LitBind` atoms that bind the
+values it reads. Three things are checked here:
+
+- Every variable in the guard is already a literal-value variable. A guard may
+  only read variables that some earlier pattern binds in a primitive-sorted
+  argument position, so a guard written before its binder is rejected.
+- Every operator in the guard is a primitive, and its arity matches.
+- The guard computes a `bool`. Literal constants are parsed at the argument
+  position's sort, so `0` in an `i64` position is an `i64`.
+
+`deps` is filled once every atom is resolved, by `link_pred_deps`.
 
 ### Global Name Resolution
 
-When the resolver encounters a name that exists in `GlobalCtx`, it
-emits `PatVar::Global(gid)` instead of a fresh `VarId`. Child
-positions in atoms use the `PatVar` enum:
+When a child or variadic element name exists in `GlobalCtx`, the resolver emits
+`PatVar::Global(gid)` instead of a fresh `VarId`. Such positions use the
+`PatVar` enum:
 
 ```rust
 pub enum PatVar {
@@ -74,15 +120,14 @@ pub enum PatVar {
 }
 ```
 
-A `PatVar::Global` child is always considered "bound" for scheduling
-purposes. The scheduler can immediately use it for `ByChildPos`
-lookups, constraining the join to nodes that have the global's
-e-class as a child. When a global appears alone in a pattern (e.g.,
-`(Add a x)` where `a` is a global), the resolver emits an
-`EqGlobal(local_vid, gid)` atom that compiles to
-`Step::CheckEqGlobal`. In the RHS, globals become
-`RhsOp::FetchGlobal(gid)`, which reads the canonical representative
-from the binding array at apply time.
+A `PatVar::Global` child is considered bound for scheduling, so a pattern such
+as `(Add a x)` can immediately use `a` in a `ByChildPos` lookup. An explicit
+root equality such as `(= x a)`, where `a` is global, resolves instead to
+`EqGlobal(x, gid)` and lowers to `BindGlobal` or `CheckEqGlobal` according to
+whether `x` is already bound. In the RHS, a global becomes
+`RhsOp::FetchGlobal(gid)`: apply reads the stored binding and canonicalizes it
+with `eg.find`. The binding array itself is not continuously rewritten to
+canonical representatives.
 
 ## `check_term` — Ground Term Sort-Checking
 
@@ -93,7 +138,8 @@ Walks `Term` bottom-up:
 4. Return `CTerm::App { op, sort, children }`.
 
 For globals: look up in `GlobalCtx` → `CTerm::Global(name, sort)`.
-For literals: classify via `LitModel::parse` → `CTerm::Lit(value, sort)`.
+For literals: classify via `LitModel::parse_as`/`parse_any` →
+`CTerm::Lit(value, sort)`.
 
 ## `CCommand` / `CTerm`
 
@@ -105,7 +151,7 @@ pub enum CTerm<O, S, L> {
 }
 
 pub enum CCommand<O, S, L> {
-    Decl(SurfaceDecl),
+    Decl(Command),
     Let(String, CTerm<O, S, L>),
     Insert(CTerm<O, S, L>),
     Union(CTerm<O, S, L>, CTerm<O, S, L>),
@@ -113,15 +159,38 @@ pub enum CCommand<O, S, L> {
     CheckEq(CTerm<O, S, L>, CTerm<O, S, L>),
     CheckNeq(CTerm<O, S, L>, CTerm<O, S, L>),
     Extract(CTerm<O, S, L>),
-    Rewrite { query: ResolvedQuery, rhs: ResolvedRhs, root_vid: VarId, subsume: bool },
-    Rule { query: ResolvedQuery, actions: Vec<ResolvedAction> },
-    Run(u32),
-    Push, Pop,
+    Rewrite {
+        query: ResolvedQuery,
+        rhs: RRhsTerm,
+        root_vid: VarId,
+        subsume: bool,
+        ruleset: Option<RulesetId>,
+    },
+    Rule {
+        query: ResolvedQuery,
+        actions: Vec<ResolvedAction>,
+        ruleset: Option<RulesetId>,
+    },
+    Run {
+        ruleset: Option<RulesetId>,
+        limit: u64,
+        until: Option<CGoal<O, S, L>>,
+    },
+    PrintSize(Option<O>),
+    PrintStats(Option<String>),
+    AntiUnify { left: CTerm<O, S, L>, right: CTerm<O, S, L>, ... },
+    CheckAu { left: CTerm<O, S, L>, right: CTerm<O, S, L>, ... },
+    Push(bool),
+    Pop,
 }
 ```
 
-After sortcheck, every `CCommand` is fully resolved. The interpreter
-needs no string lookups or sort inference.
+After sortcheck, operator, sort, rule-set, and pattern-variable references are
+dense ids and no sort inference remains. Two intentionally late-bound strings
+remain: `CTerm::Global` stores the global name and `build_cterm` looks it up in
+`GlobalCtx`; the AU commands also retain the algorithm and cycle-mode spellings
+and validate them when interpreted. Declaration commands are already applied
+to the live e-graph during sortcheck and are interpreter no-ops.
 
 ## `GlobalCtx`
 

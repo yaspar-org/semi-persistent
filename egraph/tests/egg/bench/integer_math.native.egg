@@ -1,0 +1,97 @@
+;; TYPES: machine
+;; Translation of egglog tests/integer_math.egg (7b1adf2), scoped.
+;; Config: native AC. Add and Mul are declared variadic :assoc-comm (one element sort),
+;; the four commutativity/associativity rewrite rules are deleted, and every remaining
+;; rule that matched an Add or a Mul is restated in its n-ary form with a rest variable.
+;; The n-ary restatements are the load-bearing deviation; see
+;; integer_math.deviations.md.
+(datatype Math
+    (Diff Math Math)
+    (Integral Math Math)
+
+    (Add Math :assoc-comm)
+    (Sub Math Math)
+    (Mul Math :assoc-comm)
+    (Div Math Math)
+    (Pow Math Math)
+    (RShift Math Math)
+    (LShift Math Math)
+    (Mod Math Math)
+    (Not Math)
+
+    (Const i64)
+    (Var String))
+
+;; The four A/C rules of the rules encoding are deleted here: the declarations above
+;; give Add and Mul multiset semantics.
+
+;; Evaluation, n-ary: fold two constant summands/factors wherever they sit.
+(rewrite (Add (Const a) (Const b) ..rest) (Add (Const (i64::+ a b)) ..rest))
+;; Multiplicity variant: an element consumes its child's whole multiplicity and two
+;; elements bind distinct children (partition semantics), so a Const summand at
+;; multiplicity k >= 2 needs its own rule; k is readable on the RHS as an i64.
+(rewrite (Add (Const a):k>=2 ..rest) (Add (Const (i64::* a k)) ..rest))
+(rewrite (Sub (Const a) (Const b)) (Const (i64::- a b)))
+(rewrite (Mul (Const a) (Const b) ..rest) (Mul (Const (i64::* a b)) ..rest))
+(rewrite (Mul (Const a):k>=2 ..rest) (Mul (Const (i64::pow a k)) ..rest))
+
+;; No RShift/LShift/Not constant folds: our i64 primitive set has no bitwise
+;; operators. Zero matches on this program, so no measured consequence.
+
+;; Properties
+(rewrite (Sub a b) (Add a (Mul (Const -1) b)))
+
+(rewrite (Add (Const 0) ..rest) (Add ..rest))
+(rewrite (Mul (Const 0) ..rest) (Const 0))
+(rewrite (Mul (Const 1) ..rest) (Mul ..rest))
+
+(rewrite (Sub a a) (Const 0))
+
+;; Distribution, n-ary: peel one summand off the Add factor.
+(rewrite (Mul (Add b ..s) ..rest) (Add (Mul b ..rest) (Mul (Add ..s) ..rest)))
+;; Multiplicity variant: the Add factor at multiplicity k >= 2 distributes one
+;; copy and keeps k-1 (RHS multiplicity expression; 0 omits).
+(rewrite (Mul (Add b ..s):k>=2 ..rest)
+         (Add (Mul b (Add b ..s):(u64::- k 1) ..rest)
+              (Mul (Add ..s) (Add b ..s):(u64::- k 1) ..rest)))
+;; Factoring, n-ary: two Mul summands sharing a factor, inside any Add.
+(rewrite (Add (Mul a ..p) (Mul a ..q) ..rest)
+         (Add (Mul a (Add (Mul ..p) (Mul ..q))) ..rest))
+;; Multiplicity variant: the same Mul summand taken k times (t*u + t*u = 2*t*u).
+(rewrite (Add (Mul a ..p):k>=2 ..rest)
+         (Add (Mul a (Const k) ..p) ..rest))
+
+(rewrite (Pow x (Const 1 )) x)
+(rewrite (Pow x (Const 2)) (Mul x x))
+
+;; Shift introduction, n-ary: the power-of-two factor may sit anywhere in the product.
+(rewrite (Mul (Pow (Const 2) y) ..rest) (LShift (Mul ..rest) y))
+;; Multiplicity variant: (2^y)^k = 2^(y*k).
+(rewrite (Mul (Pow (Const 2) y):k>=2 ..rest)
+         (LShift (Mul ..rest) (Mul y (Const k))))
+(rewrite (Div x (Pow (Const 2) y)) (RShift x y))
+
+(rewrite (Not (Not x)) x)
+
+
+;; Tests
+(let startexpr (Div (
+                        Mul (Var "a") (Pow (Const 2) (Const 3))
+                    ) (
+                        Add (Var "c") (
+                            Sub (Mul (Var "b") (Const 2)) (Mul (Var "b") (Const 2))
+                        )
+                    )))
+
+(let equivexpr (Div (
+                    LShift (Var "a") (Const 3)
+                ) (
+                    Mul (Var "c") (Not (Not (Const 1)))
+                )
+                ))
+
+(run 4)
+
+(check (= startexpr equivexpr))
+(print-size)
+(print-stats :file "integer_math.native.stats.json")

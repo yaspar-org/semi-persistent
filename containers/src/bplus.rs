@@ -851,19 +851,29 @@ where
             let cur = self.tree.node(self.node);
             let n = L::count(&cur);
             if n > 0 {
+                let first = L::data(&cur)[0];
                 let last = L::data(&cur)[n - 1];
-                if word <= last {
+                // The leaf answers only targets inside its own key range. A
+                // backward target below `first` may belong to an EARLIER
+                // leaf, so it must descend from the root: answering from
+                // this leaf returned this leaf's first position instead of
+                // the true global position.
+                if first <= word && word <= last {
                     self.pos = S::find_ge(&L::data(&cur)[..n], word);
                     return;
                 }
-                let link = L::link(&cur);
-                if link != nil {
-                    let nxt = self.tree.node(link);
-                    let nn = L::count(&nxt);
-                    if nn > 0 && word <= L::data(&nxt)[nn - 1] {
-                        self.pos = S::find_ge(&L::data(&nxt)[..nn], word);
-                        self.node = link;
-                        return;
+                // The next-leaf hop is sound only forward: `word > last`
+                // means every key before the next leaf is below `word`.
+                if word > last {
+                    let link = L::link(&cur);
+                    if link != nil {
+                        let nxt = self.tree.node(link);
+                        let nn = L::count(&nxt);
+                        if nn > 0 && word <= L::data(&nxt)[nn - 1] {
+                            self.pos = S::find_ge(&L::data(&nxt)[..nn], word);
+                            self.node = link;
+                            return;
+                        }
                     }
                 }
             }

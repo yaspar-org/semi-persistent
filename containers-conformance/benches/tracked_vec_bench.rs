@@ -3,11 +3,9 @@
 //! Tracked-vector benches shaped like the e-graph's saturation loop:
 //! FREQUENT marks, FEW writes per mark, over VecI (InlineStore — union-find
 //! parent/rank, caches, classes) and VecP, with a size sweep. This is the
-//! workload that exposes an O(len)-per-mark store (the pre-fix verus
-//! InlineStore swept every element's tag at prepare_mark/finish_restore;
-//! production clears only the slots named in the previous frame's diffs —
-//! O(writes-per-mark)). If verus/prod ratio grows with n at fixed
-//! writes-per-mark, a per-mark sweep is the cause.
+//! workload distinguishes an O(len)-per-mark store from one that clears only
+//! slots named by the previous frame's diffs. At fixed writes per mark, scaling
+//! with `n` exposes an unintended whole-vector sweep.
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -54,14 +52,17 @@ fn bench_veci_mark_churn(c: &mut Criterion) {
                 || {
                     let mut v: V = V::new();
                     for i in 0..n {
-                        v.push((i as u32) & 0x7FFF_FFFF);
+                        v.try_push((i as u32) & 0x7FFF_FFFF)
+                            .expect("push: within index word");
                     }
                     v
                 },
                 |v| {
                     let mut x: u64 = 0x2545F491;
                     for _ in 0..MARKS {
-                        let tok = v.mark(verus::ShrinkPolicy::Never);
+                        let tok = v
+                            .try_mark(verus::ShrinkPolicy::Never)
+                            .expect("mark: depth bounded by this harness");
                         for _ in 0..WRITES_PER_MARK {
                             x ^= x << 13;
                             x ^= x >> 7;
@@ -69,7 +70,7 @@ fn bench_veci_mark_churn(c: &mut Criterion) {
                             let idx = (x % n as u64) as u32;
                             v.set_index(idx, (x as u32) & 0x7FFF_FFFF);
                         }
-                        v.restore(tok);
+                        v.try_restore(tok).expect("restore: own token");
                     }
                     black_box(v.len());
                 },
@@ -116,14 +117,16 @@ fn bench_vecp_mark_churn(c: &mut Criterion) {
                 || {
                     let mut v: V = V::new();
                     for i in 0..n {
-                        v.push(i as u64);
+                        v.try_push(i as u64).expect("push: within index word");
                     }
                     v
                 },
                 |v| {
                     let mut x: u64 = 0x2545F492;
                     for _ in 0..MARKS {
-                        let tok = v.mark(verus::ShrinkPolicy::Never);
+                        let tok = v
+                            .try_mark(verus::ShrinkPolicy::Never)
+                            .expect("mark: depth bounded by this harness");
                         for _ in 0..WRITES_PER_MARK {
                             x ^= x << 13;
                             x ^= x >> 7;
@@ -131,7 +134,7 @@ fn bench_vecp_mark_churn(c: &mut Criterion) {
                             let idx = (x % n as u64) as u32;
                             v.set_index(idx, x);
                         }
-                        v.restore(tok);
+                        v.try_restore(tok).expect("restore: own token");
                     }
                     black_box(v.len());
                 },

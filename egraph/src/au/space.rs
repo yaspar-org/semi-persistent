@@ -102,10 +102,16 @@ impl<A: AuIds> ContextStore<A> {
         let id: A::Context = crate::id::id_at_index(self.spans.len());
         let start = self.classes.len().as_usize();
         for &c in sorted_classes {
-            self.classes.push(c);
+            self.classes
+                .try_push(c)
+                .expect("AU arena sized by its index word");
         }
-        self.spans.push(Span::new(start, sorted_classes.len()));
-        self.index.insert(sorted_classes.to_vec(), id);
+        self.spans
+            .try_push(Span::new(start, sorted_classes.len()))
+            .expect("AU arena sized by its index word");
+        self.index
+            .try_insert(sorted_classes.to_vec(), id)
+            .expect("AU arena sized by its index word");
         id
     }
 
@@ -140,9 +146,18 @@ impl<A: AuIds> ContextStore<A> {
 
     pub fn mark(&mut self) -> ContextStoreToken {
         ContextStoreToken {
-            spans: self.spans.mark(ShrinkPolicy::Never),
-            classes: self.classes.mark(ShrinkPolicy::Never),
-            index: self.index.mark(ShrinkPolicy::Never),
+            spans: self
+                .spans
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            classes: self
+                .classes
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            index: self
+                .index
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
@@ -153,9 +168,15 @@ impl<A: AuIds> ContextStore<A> {
     }
 
     pub fn restore(&mut self, token: ContextStoreToken) {
-        self.index.restore(token.index);
-        self.classes.restore(token.classes);
-        self.spans.restore(token.spans);
+        self.index
+            .try_restore(token.index)
+            .expect("restore: token minted by this container's own mark");
+        self.classes
+            .try_restore(token.classes)
+            .expect("restore: token minted by this container's own mark");
+        self.spans
+            .try_restore(token.spans)
+            .expect("restore: token minted by this container's own mark");
     }
 }
 
@@ -222,26 +243,66 @@ impl<A: AuIds> OrArena<A> {
 
     pub fn mark(&mut self) -> OrArenaToken {
         OrArenaToken {
-            left: self.left.mark(ShrinkPolicy::Never),
-            right: self.right.mark(ShrinkPolicy::Never),
-            left_ctx: self.left_ctx.mark(ShrinkPolicy::Never),
-            right_ctx: self.right_ctx.mark(ShrinkPolicy::Never),
-            terminal: self.terminal.mark(ShrinkPolicy::Never),
-            left_best_size: self.left_best_size.mark(ShrinkPolicy::Never),
-            right_best_size: self.right_best_size.mark(ShrinkPolicy::Never),
-            by_key: self.by_key.mark(ShrinkPolicy::Never),
+            left: self
+                .left
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            right: self
+                .right
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            left_ctx: self
+                .left_ctx
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            right_ctx: self
+                .right_ctx
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            terminal: self
+                .terminal
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            left_best_size: self
+                .left_best_size
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            right_best_size: self
+                .right_best_size
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
+            by_key: self
+                .by_key
+                .try_mark(ShrinkPolicy::Never)
+                .expect("mark: depth bounded by the search driver"),
         }
     }
 
     pub fn restore(&mut self, token: OrArenaToken) {
-        self.by_key.restore(token.by_key);
-        self.right_best_size.restore(token.right_best_size);
-        self.left_best_size.restore(token.left_best_size);
-        self.terminal.restore(token.terminal);
-        self.right_ctx.restore(token.right_ctx);
-        self.left_ctx.restore(token.left_ctx);
-        self.right.restore(token.right);
-        self.left.restore(token.left);
+        self.by_key
+            .try_restore(token.by_key)
+            .expect("restore: token minted by this container's own mark");
+        self.right_best_size
+            .try_restore(token.right_best_size)
+            .expect("restore: token minted by this container's own mark");
+        self.left_best_size
+            .try_restore(token.left_best_size)
+            .expect("restore: token minted by this container's own mark");
+        self.terminal
+            .try_restore(token.terminal)
+            .expect("restore: token minted by this container's own mark");
+        self.right_ctx
+            .try_restore(token.right_ctx)
+            .expect("restore: token minted by this container's own mark");
+        self.left_ctx
+            .try_restore(token.left_ctx)
+            .expect("restore: token minted by this container's own mark");
+        self.right
+            .try_restore(token.right)
+            .expect("restore: token minted by this container's own mark");
+        self.left
+            .try_restore(token.left)
+            .expect("restore: token minted by this container's own mark");
     }
 
     pub fn is_valid_token(&self, token: &OrArenaToken) -> bool {
@@ -298,14 +359,38 @@ impl<A: AuIds> SearchSpace<A> {
             return (*self.or_arena.by_key.get_val(log_idx), false);
         }
         let id: A::Or = crate::id::id_at_index(self.or_arena.len());
-        self.or_arena.left.push(l);
-        self.or_arena.right.push(r);
-        self.or_arena.left_ctx.push(ctx_l);
-        self.or_arena.right_ctx.push(ctx_r);
-        self.or_arena.terminal.push(l == r);
-        self.or_arena.left_best_size.push(left_best_size);
-        self.or_arena.right_best_size.push(right_best_size);
-        self.or_arena.by_key.insert(key, id);
+        self.or_arena
+            .left
+            .try_push(l)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .right
+            .try_push(r)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .left_ctx
+            .try_push(ctx_l)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .right_ctx
+            .try_push(ctx_r)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .terminal
+            .try_push(l == r)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .left_best_size
+            .try_push(left_best_size)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .right_best_size
+            .try_push(right_best_size)
+            .expect("AU arena sized by its index word");
+        self.or_arena
+            .by_key
+            .try_insert(key, id)
+            .expect("AU arena sized by its index word");
         (id, true)
     }
 
@@ -330,6 +415,25 @@ impl<A: AuIds> SearchSpace<A> {
         }
 
         self.contexts.intern(&result)
+    }
+
+    /// Intern `ctx` extended with `class` (no-op when already present).
+    ///
+    /// Identity padding needs this: the injected identity class is not a
+    /// structural child of any member, so [`Self::derive_child_context`]'s
+    /// reachability filter records nothing for it, and without the extension
+    /// a padding-created cell can repeat its ancestor's OR key
+    /// `(l, r, ctxL, ctxR)` exactly. Extending the padded cell's contexts
+    /// restores the rank argument's "context grows" disjunct (§3.2):
+    /// contexts are bounded by the class count, so the recursion terminates.
+    pub fn extend_context(&mut self, ctx: A::Context, class: A::Class) -> A::Context {
+        if self.contexts.contains(ctx, class) {
+            return ctx;
+        }
+        let mut classes: Vec<A::Class> = self.contexts.get(ctx).to_vec();
+        classes.push(class);
+        classes.sort_unstable();
+        self.contexts.intern(&classes)
     }
 
     /// Check if an action's child pair is blocked by the cycle mode filter.

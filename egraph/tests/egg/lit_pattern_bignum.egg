@@ -1,0 +1,16 @@
+;; EXPECT: ok
+;; TYPES: bignum
+;; Same defect, arbitrary-precision literal sort. The payload comparison is on the
+;; interned `IBig` value, so a constant wider than a machine word is pinned exactly.
+(datatype Math (Num IBig) (Add Math Math) (Mul Math Math))
+
+(rewrite (Mul a (Num 1000000000000000000000000)) a)
+
+(let t (Mul (Add (Num 1) (Num 2)) (Num 1000000000000000000000000)))
+(run 5)
+(check (= t (Add (Num 1) (Num 2))))
+
+;; A neighbouring bignum in the same position does not match.
+(let u (Mul (Num 7) (Num 1000000000000000000000001)))
+(run 5)
+(check (!= u (Num 7)))

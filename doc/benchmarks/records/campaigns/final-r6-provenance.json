@@ -1,0 +1,740 @@
+{
+  "schema": "semi-persistent-benchmark-provenance-v3",
+  "label": "final-r6",
+  "started_at_utc": "2026-08-21T18:59:55.969638+00:00",
+  "finished_at_utc": "2026-08-21T19:05:34.383902+00:00",
+  "elapsed_seconds": 338.411,
+  "protocol": {
+    "runs": 10,
+    "warmups": 2,
+    "timing": "process wall clock via time.perf_counter_ns",
+    "egglog_threads": 1,
+    "require_stats": true,
+    "required_statistics": {
+      "egglog": [
+        "nodes",
+        "iterations"
+      ],
+      "ours": [
+        "nodes",
+        "classes",
+        "iterations"
+      ]
+    },
+    "statistics_note": "egglog 7b1adf2 does not report e-class counts; one normal-mode stats probe per benchmark is excluded from timings",
+    "raw_samples_file": "final-r6-samples.csv",
+    "aggregate_file": "final-r6-results.csv"
+  },
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "system": "Darwin",
+    "release": "25.6.0",
+    "version": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:17:26 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6041",
+    "machine": "arm64",
+    "processor": "arm",
+    "cpu_count": 14,
+    "load_average_start": [
+      6.78271484375,
+      6.78076171875,
+      6.814453125
+    ]
+  },
+  "tools": {
+    "python": "3.9.6 (default, May 22 2026, 11:13:45) \n[Clang 21.0.0 (clang-2100.1.1.101)]",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)"
+  },
+  "binaries": {
+    "ours": {
+      "sha256": "75797470fb3bec38b3ea0180608fe77617c40e4a42545c8d3e6079aa1dec9729",
+      "size_bytes": 6044928,
+      "source_relation": "built by this runner from the recorded source snapshot",
+      "source": {
+        "revision": "8f0414832894533e6e9205cd24831418f8d64455",
+        "tracked_diff_sha256": "71c2749a4650f9a5b57b576274d50eb132203a9d08f61037cdc71374586ffee1"
+      }
+    },
+    "egglog": {
+      "sha256": "414d0e095eb5d255becef3fc6e3999e93f66ef233fa3d80c7f594a028c07002c",
+      "size_bytes": 9263744,
+      "source_relation": "built from/reused at the manifest-pinned checkout",
+      "source": {
+        "revision": "7b1adf249c918226871b9b3d5e8f089585e46e99",
+        "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "egglog_pin": {
+    "repo": "https://github.com/egraphs-good/egglog",
+    "rev": "7b1adf2"
+  },
+  "benchmarks": [
+    "acgen",
+    "bdd",
+    "calc",
+    "combinators",
+    "eqsat-basic",
+    "eqsolve",
+    "herbie",
+    "integer_math",
+    "intersection",
+    "knapsack",
+    "levenshtein-distance",
+    "math-add-ac",
+    "math-microbenchmark",
+    "matrix",
+    "resolution",
+    "typecheck",
+    "until"
+  ],
+  "skipped": {
+    "array": "datalog relations as rule atoms",
+    "subsume": "subsumption excludes matching, not extraction"
+  },
+  "commands": {
+    "acgen/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/acgen.egglog.egg"
+    ],
+    "acgen/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/acgen.egglog.egg"
+    ],
+    "acgen/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/acgen.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "acgen/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/acgen.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "acgen/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/acgen.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "acgen/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/acgen.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "bdd/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/bdd.egglog.egg"
+    ],
+    "bdd/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/bdd.egglog.egg"
+    ],
+    "bdd/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/bdd.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "bdd/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/bdd.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "bdd/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/bdd.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "bdd/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/bdd.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "calc/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/calc.egglog.egg"
+    ],
+    "calc/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/calc.egglog.egg"
+    ],
+    "calc/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/calc.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "calc/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/calc.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "calc/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/calc.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "calc/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/calc.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "combinators/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/combinators.egglog.egg"
+    ],
+    "combinators/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/combinators.egglog.egg"
+    ],
+    "combinators/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/combinators.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "combinators/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/combinators.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "eqsat-basic/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/eqsat-basic.egglog.egg"
+    ],
+    "eqsat-basic/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/eqsat-basic.egglog.egg"
+    ],
+    "eqsat-basic/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/eqsat-basic.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "eqsat-basic/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/eqsat-basic.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "eqsat-basic/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/eqsat-basic.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "eqsat-basic/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/eqsat-basic.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "eqsolve/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/eqsolve.egglog.egg"
+    ],
+    "eqsolve/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/eqsolve.egglog.egg"
+    ],
+    "eqsolve/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/eqsolve.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "eqsolve/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/eqsolve.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "herbie/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/herbie.egglog.egg"
+    ],
+    "herbie/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/herbie.egglog.egg"
+    ],
+    "herbie/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/herbie.rules.egg",
+      "--types",
+      "machine,bignum",
+      "--use-naive"
+    ],
+    "herbie/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/herbie.rules.egg",
+      "--types",
+      "machine,bignum",
+      "--use-semi-naive"
+    ],
+    "herbie/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/herbie.native.egg",
+      "--types",
+      "machine,bignum",
+      "--use-naive"
+    ],
+    "herbie/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/herbie.native.egg",
+      "--types",
+      "machine,bignum",
+      "--use-semi-naive"
+    ],
+    "integer_math/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/integer_math.egglog.egg"
+    ],
+    "integer_math/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/integer_math.egglog.egg"
+    ],
+    "integer_math/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/integer_math.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "integer_math/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/integer_math.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "integer_math/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/integer_math.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "integer_math/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/integer_math.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "intersection/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/intersection.egglog.egg"
+    ],
+    "intersection/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/intersection.egglog.egg"
+    ],
+    "intersection/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/intersection.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "intersection/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/intersection.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "knapsack/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/knapsack.egglog.egg"
+    ],
+    "knapsack/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/knapsack.egglog.egg"
+    ],
+    "knapsack/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/knapsack.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "knapsack/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/knapsack.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "levenshtein-distance/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/levenshtein-distance.egglog.egg"
+    ],
+    "levenshtein-distance/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/levenshtein-distance.egglog.egg"
+    ],
+    "levenshtein-distance/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/levenshtein-distance.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "levenshtein-distance/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/levenshtein-distance.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "math-add-ac/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/math-add-ac.egglog.egg"
+    ],
+    "math-add-ac/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/math-add-ac.egglog.egg"
+    ],
+    "math-add-ac/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-add-ac.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "math-add-ac/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-add-ac.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "math-add-ac/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-add-ac.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "math-add-ac/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-add-ac.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "math-microbenchmark/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/math-microbenchmark.egglog.egg"
+    ],
+    "math-microbenchmark/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/math-microbenchmark.egglog.egg"
+    ],
+    "math-microbenchmark/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-microbenchmark.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "math-microbenchmark/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-microbenchmark.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "math-microbenchmark/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-microbenchmark.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "math-microbenchmark/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/math-microbenchmark.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "matrix/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/matrix.egglog.egg"
+    ],
+    "matrix/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/matrix.egglog.egg"
+    ],
+    "matrix/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/matrix.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "matrix/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/matrix.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "matrix/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/matrix.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "matrix/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/matrix.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "matrix/native-A-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/matrix.native-A.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "matrix/native-A-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/matrix.native-A.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "resolution/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/resolution.egglog.egg"
+    ],
+    "resolution/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/resolution.egglog.egg"
+    ],
+    "resolution/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/resolution.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "resolution/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/resolution.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "resolution/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/resolution.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "resolution/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/resolution.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "typecheck/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/typecheck.egglog.egg"
+    ],
+    "typecheck/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/typecheck.egglog.egg"
+    ],
+    "typecheck/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/typecheck.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "typecheck/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/typecheck.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "until/egglog": [
+      "<egglog>",
+      "-j",
+      "1",
+      "--mode",
+      "no-messages",
+      "<source>/scripts/egglog-compare/programs/until.egglog.egg"
+    ],
+    "until/egglog-stats-probe-untimed": [
+      "<egglog>",
+      "-j",
+      "1",
+      "<source>/scripts/egglog-compare/programs/until.egglog.egg"
+    ],
+    "until/rules-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/until.rules.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "until/rules-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/until.rules.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ],
+    "until/native-naive": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/until.native.egg",
+      "--types",
+      "machine",
+      "--use-naive"
+    ],
+    "until/native-semi": [
+      "<ours>",
+      "<source>/egraph/tests/egg/bench/until.native.egg",
+      "--types",
+      "machine",
+      "--use-semi-naive"
+    ]
+  }
+}

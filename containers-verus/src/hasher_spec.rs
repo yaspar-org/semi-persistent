@@ -13,15 +13,15 @@
 //!
 //! ## Determinism policy
 //!
-//! Reproducibility is a project requirement: the same inputs must produce the
-//! same run, byte for byte, across processes and machines. A randomly seeded
-//! hasher is the enemy of that, so `IndexHasher` is seeded from a value the
-//! operator CONTROLS, and its default is a fixed compile-time constant rather
-//! than per-process entropy.
+//! Reproducible hashing is a project requirement. `IndexHasher` is therefore
+//! seeded from a value the operator controls; absent configuration, the default
+//! build falls back to a fixed constant rather than per-process entropy. This
+//! pins this hash component, not every source of process- or machine-level
+//! nondeterminism.
 //!
 //! | build | default seed | reproducible across processes? |
 //! |---|---|---|
-//! | default | [`DEFAULT_SEED`] | yes |
+//! | default | configured seed, else [`DEFAULT_SEED`] | yes, when startup configuration is serialized and identical |
 //! | `hasher-random-seed` | fresh per-process entropy | no (deliberately) |
 //!
 //! [`DEFAULT_SEED`] is `0`, and that is not arbitrary: foldhash defines
@@ -36,24 +36,27 @@
 //!    via config" path for an already-deployed binary: no rebuild, no code
 //!    change.
 //! 2. **Programmatically** — [`set_default_seed`] during startup, e.g. from a
-//!    parsed config file. Takes precedence over the environment. It FAILS once
-//!    the seed has been observed (see "Seal-on-first-use"), so the seed in force
-//!    can never change mid-run.
+//!    parsed config file. Takes precedence over the environment. It fails once
+//!    the seed has been observed (see "Seal-on-first-use"). Call it during
+//!    single-threaded startup; a concurrent first use can make the call return
+//!    [`SeedSealed`] after different hashers have observed different seeds.
 //! 3. **Per instance** — [`IndexHasher::with_seed`] is a `const fn`; hand it to
 //!    a `HashMap` directly when one map wants its own seed.
 //!
-//! [`effective_seed`] reports the value actually in force, so a run can log the
-//! seed it used and a later run can reproduce it exactly. That is what makes
-//! even the `hasher-random-seed` build reproducible after the fact.
+//! [`effective_seed`] reports the current process default. Logging it and
+//! feeding it back reproduces hashing when all default hashers were constructed
+//! after one serialized seed choice. It cannot diagnose a caller that ignored
+//! a concurrent [`SeedSealed`] error.
 //!
 //! ### Seal-on-first-use
 //!
 //! Reproducibility is only auditable if the seed is constant for the process.
 //! The first `IndexHasher::default()` therefore *seals* the seed:
-//! [`set_default_seed`] then returns [`SeedSealed`] rather than silently
-//! splitting the run into two hash regimes. Callers that must control the seed
-//! should set it before constructing any container, and can treat the error as
-//! the loud, early failure it is meant to be.
+//! [`set_default_seed`] then returns [`SeedSealed`] rather than accepting a late
+//! update. Callers that must control the seed must set it before constructing
+//! any container and treat the error as fatal. The atomics detect, but do not
+//! roll back, a setter racing with first use; continuing after that race can
+//! leave already-constructed and later hashers with different seeds.
 //!
 //! ### Why the seed lives in `Default`, not a `with_hasher` constructor
 //!
@@ -96,9 +99,10 @@
 //! by value at construction, so `build_hasher` is a pure function of that seed
 //! and every hasher a given instance builds is identically seeded — including
 //! under `hasher-random-seed`, where the entropy is drawn once when the seed is
-//! chosen, never per `build_hasher` call. In the default build the seed is a
-//! compile-time constant, so "deterministic given the bytes" holds without any
-//! appeal to process state at all.
+//! chosen, never per `build_hasher` call. In the default build the unconfigured
+//! fallback is a compile-time constant; environment or programmatic
+//! configuration can replace it. For every constructed `IndexHasher`,
+//! determinism given its stored seed and the fed bytes is the trusted fact.
 //!
 //! Trust ledger: group D (hasher facts), 1 axiom + 2 contract-free external
 //! type registrations (`IndexHasher` and foldhash's `FoldHasher`, both needed
@@ -220,7 +224,10 @@ fn resolve_default_seed() -> u64 {
 /// # Errors
 ///
 /// [`SeedSealed`] if the seed has already been observed — see
-/// "Seal-on-first-use" in the module docs. The seed in force is left unchanged.
+/// "Seal-on-first-use" in the module docs. With serialized startup, an error
+/// means the seed is unchanged. If this call races with first use, it may have
+/// published `seed` before detecting the race; the caller must treat the error
+/// as fatal because an earlier hasher may hold the previous value.
 pub fn set_default_seed(seed: u64) -> Result<(), SeedSealed> {
     let sealed = || SeedSealed {
         in_force: DEFAULT_SEED_CELL.load(Ordering::Acquire),

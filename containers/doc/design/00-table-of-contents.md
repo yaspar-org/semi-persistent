@@ -1,13 +1,24 @@
-# Semi-Persistent Containers — Design Documents
+# Semi-Persistent Containers: Design Documents
 
-Semi-persistent data structures with memory-cheap snapshots (a sparse diff,
-not a copy) and O(k) restoration. Building blocks for applications that need
-fast state snapshots and backtracking — e-graph engines, SAT solvers,
-constraint propagators, game-tree searchers, and similar systems.
+Semi-persistent data structures with memory-cheap snapshots: O(1) frame
+metadata per open mark plus sparse diffs, rather than a copy of the values.
+Fork history also grows by O(1) per restore. For `b` fork-history links walked
+during token validation, `k` replayed diffs, `r` regrown cells, `q` discarded
+live values whose destructors run, `p` surviving-parent diffs, and `w`
+materialized bitmap words, vector restore is O(b+k+r+q+p) for inline capture
+and O(b+k+r+q+p+w) for parallel capture. This crate is the unverified reference
+implementation: the engine links the verified counterpart
+(`containers-verus`, aliased as `semi-persistent-containers`), and this
+crate serves as the differential-conformance oracle and performance
+baseline (`containers-conformance`). The design applies to applications
+that need fast state snapshots and backtracking: e-graph engines, SAT
+solvers, constraint propagators, game-tree searchers, and similar
+systems.
 
-All containers are built on top of a single core primitive: the
-semi-persistent vector (Chapter 2), which uses a diff-log protocol
-to record mutations and replay them in reverse on restore.
+Semi-persistent source-of-truth state is composed from the vector primitives
+in Chapters 2 and 3. Containers may also maintain transient acceleration
+structures, such as `Map`'s `HashMap`, which are rebuilt from that state after
+restore.
 
 ## Chapters
 
@@ -17,7 +28,7 @@ to record mutations and replay them in reverse on restore.
 
 2. **[Semi-Persistent Vectors](02-semi-persistent-vectors.md)**
    The core primitive. Sparse-diff snapshots (memory ∝ changes, not a copy),
-   O(k) restore. `InlineStore` vs `ParallelStore`. The diff-log protocol.
+   backend-specific mark/restore costs. `InlineStore` vs `ParallelStore`. The diff-log protocol.
    Compile-time elision via `const TRACK: bool`.
 
 3. **[`AppendOnlyVec`](03-append-only-vec.md)**
@@ -28,20 +39,17 @@ to record mutations and replay them in reverse on restore.
    Semi-persistent hash map backed by `AppendOnlyVec` + transient
    `HashMap`. Useful for small registries and symbol tables.
 
-5. **[`ListArena` — Intrusive Linked Lists](05-list-arena.md)**
-   Arena of singly-linked list nodes. O(1) prepend, O(n) splice.
+5. **[`ListArena`, Intrusive Linked Lists](05-list-arena.md)**
+   Arena of singly-linked list nodes with cached heads and tails. Amortized
+   O(1) prepend, append, and splice.
    Useful for adjacency lists and dependency tracking.
 
-6. **[`SparseSet` — O(1) Membership](06-sparse-set.md)**
-   Three-vector sparse set with O(1) add/remove/contains, stable
-   id recycling, and full semi-persistence.
+6. **[`SparseSet`, O(1) Membership](06-sparse-set.md)**
+   Three-vector sparse set with amortized O(1) add and O(1) remove/contains,
+   IDs stable while live and recycled after removal, and full
+   semi-persistence.
 
-7. **[`BPlusTreeSet` — Arena-Backed B+ Tree](07-bplus-tree.md)**
-   Cache-line-aligned B+ tree set with O(log n) insert, O(log n)
-   seek, and O(1) step via linked leaves. Semi-persistent via
-   a tag bit stolen from the node header.
-
-8. **[B+ Tree Parameterization: Benchmark Analysis](08-bplus-benchmark-analysis.md)**
-   Sweep across node size (64/128/256 bytes) and search strategy
-   (`BinarySearch` vs `Branchless`). Recommendation to raise the
-   default node size to 256 bytes.
+7. **[`BPlusTreeSet`, Arena-Backed B+ Tree](07-bplus-tree.md)**
+   Packed, layout-parameterized B+ tree set for 31- and 63-bit dense IDs.
+   Supports logarithmic insertion and seek, linked-leaf iteration, bulk
+   construction, selectable in-node search, and semi-persistent restore.

@@ -983,13 +983,13 @@ of nodes in the store, indexed by node ID. Two alternatives are
 available via `with_strategy`.
 
 ```rust
-use semi_persistent_traversals::{Sparse, memo};
+use semi_persistent_traversals::memo;
 
-let r = s.with_strategy::<Sparse>().fold(root, alg_stmt, alg_expr);
+let r = s.with_strategy::<memo::Map>().fold(root, alg_stmt, alg_expr);
 let r = s.with_strategy::<memo::None>().fold(root, alg_stmt, alg_expr);
 ```
 
-`Sparse` uses a hashmap, so allocation is proportional to the nodes
+`memo::Map` (alias `Sparse`) uses a hashmap, so allocation is proportional to the nodes
 actually visited rather than the full store. Good for folding a small
 region of a large store; worse than dense when the fold visits almost
 everything. `memo::None` skips dedup checks entirely and assumes the

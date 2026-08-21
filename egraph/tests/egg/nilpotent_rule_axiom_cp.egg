@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; Nilpotent per-rule AXIOM critical pairs (Kapur Lemma 4.2(ii)/4.5; Kapur-conformance fix W3 (spec §3 table)):
+;; Nilpotent per-rule axiom critical pairs (Kapur Lemma 4.2(ii)/4.5):
 ;; superposing f(M)→f(N) with xⁿ = e gives, per a with multiplicity m in M, the pair
 ;; (f(N ⊎ {a: n−m}), f((M − {a: m}) ⊎ {e})). At order 2: xor(a,b) = c ⟹ xor(a,c) = b
 ;; (a⊕c = a⊕a⊕b = b) and xor(b,c) = a. The clamp alone cannot derive these — they are

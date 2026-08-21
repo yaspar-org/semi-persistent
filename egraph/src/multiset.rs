@@ -305,7 +305,7 @@ pub struct NfRule<G, M> {
 
 /// A borrowed view of a ground AC rewrite rule, the form the completion hot loop lends to
 /// every normalization: the round's rule table owns each `lhs`/`rhs` once and hands out
-/// `Copy` views — no per-call deep copies (adversarial analysis A1). The allocating
+/// `Copy` views, with no per-call deep copies. The allocating
 /// [`normalize_ms`]/[`normalize_set`]/[`normalize_nilpotent`] wrappers keep accepting owned
 /// [`NfRule`]s for tests and diagnostics and build the views internally.
 #[derive(Clone, Copy)]
@@ -409,29 +409,25 @@ fn rule_applies_linear<G: Copy + Ord, M: MultiplicityLike>(
 
 /// Candidate rule positions for one index probe.
 ///
-/// A monomial contributes one bucket per distinct class it contains, and completion
-/// monomials are tiny — mean 2.5 classes, max 5 over the AC completion workloads — so the
-/// candidate set stays small even against a 635-rule table. 32 inline covers the measured
-/// distribution without allocating; beyond it the list spills and stays correct.
+/// A monomial contributes one bucket per distinct class it contains. The inline
+/// capacity is a tuning choice for the retained completion workloads; beyond it
+/// the list spills and stays correct. Capacity changes require the Criterion
+/// completion benchmark.
 type CandVec = smallvec::SmallVec<[u32; 32]>;
 
 /// Inverted index over a rule table's left-hand sides, keyed by each LHS's **smallest
 /// class**.
 ///
-/// The normalize loops are a linear scan over every rule per step, and completion runs them
-/// against a table of hundreds of rules whose LHSs are monomials over a large class space,
-/// so nearly every test fails on the first class compared. Measured over the AC completion
-/// workloads, **93.6% / 96.8% / 98.4%** of `multiset_subset` calls (at 32 / 64 / 128 pairs)
-/// are against a rule whose LHS-minimum is not even present in the host monomial — and the
-/// rate rises with table size, so the scan is the term that grows.
+/// The normalize loops otherwise scan every rule per step. Keying each rule by
+/// a required LHS member avoids testing rules whose key is absent from the host
+/// monomial; the retained Criterion completion workloads measure the resulting
+/// candidate distribution.
 ///
 /// Soundness needs only that the key be *some* fixed member of the LHS: containment
 /// implies every LHS class is present in the host, so whichever member is chosen, a probe
-/// over the host's classes reaches the rule's bucket. The minimum is picked for balance
-/// rather than correctness — measured against keying on the LHS maximum, `accompl64` runs
-/// 2.507 ms vs 2.552 ms (1.8%), because completion's rules are minted in class-id order
-/// and their maxima cluster in the recently-added range while their minima spread, giving
-/// flatter buckets and shorter candidate lists.
+/// over the host's classes reaches the rule's bucket. The minimum is picked as a
+/// deterministic balance heuristic rather than for correctness. Its distributional
+/// advantage, if any, is a Criterion question.
 ///
 /// CSR layout — `keys` ascending and distinct, `order[starts[i]..starts[i + 1]]` the rule
 /// positions for `keys[i]` in ascending order — so a probe is a binary search plus a slice

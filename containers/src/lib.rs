@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Semi-persistent data structures and supporting types.
+//! Semi-persistent data structures and supporting types: the unverified
+//! reference implementation, kept as the conformance oracle and performance
+//! baseline. The engine's container layer is `semi-persistent-containers-verus`
+//! (aliased to this crate's name in `egraph/Cargo.toml`).
 
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]

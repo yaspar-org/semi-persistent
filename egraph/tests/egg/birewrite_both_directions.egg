@@ -1,0 +1,20 @@
+;; EXPECT: ok
+;; Tests (birewrite lhs rhs): sugar for the two rewrites lhs -> rhs and rhs -> lhs. Each
+;; direction is exercised by a term only that direction can rewrite.
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor f (E) E)
+(constructor g (E) E)
+
+(birewrite (f x) (g x))
+
+(let p (f (a)))
+(let q (g (b)))
+(run 10)
+
+;; Forward: (f a) -> (g a).
+(check (= p (g (a))))
+;; Reverse: (g b) -> (f b). Building (f b) here hash-conses onto the node the reverse
+;; direction created; without that direction it would be a fresh, unrelated class.
+(check (= q (f (b))))

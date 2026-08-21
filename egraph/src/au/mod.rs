@@ -34,8 +34,13 @@
 
 pub mod ac_repr;
 pub mod actions;
+pub mod census;
+#[cfg(test)]
+mod dump;
 pub mod egraph_api;
+pub mod estimates;
 pub mod exact;
+pub mod exact_memo;
 pub mod mcgs;
 pub mod pretty;
 pub mod results;

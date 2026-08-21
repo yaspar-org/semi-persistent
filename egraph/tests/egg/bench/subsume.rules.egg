@@ -1,0 +1,30 @@
+;; BLOCKED: subsume does not exclude nodes from extraction
+;; TYPES: machine
+;; Translation carrier for egglog tests/web-demo/subsume.egg (7b1adf2). The
+;; program runs on our engine and both of its checks pass, but its point is
+;; extraction behavior: after (rewrite (Mul (Num 3) x) (Add x (Add x x))
+;; :subsume), egglog extracts the addition form because a subsumed node is
+;; unextractable there; our subsume excludes the node from future matches but
+;; not from extraction, and we extract the original multiplication (measured,
+;; ledger). The file stays BLOCKED so the divergent extraction is not read as
+;; agreement. Deviations: comparison/subsume.deviations.md.
+(datatype Math
+  (Num i64)
+  (Var String)
+  (Add Math Math)
+  (Mul Math Math))
+
+(rewrite (Mul (Num 3) x) (Add x (Add x x)) :subsume)
+
+(let x (Mul (Num 2) (Mul (Num 3) (Var "x"))))
+
+(run 10)
+
+(check (= x (Mul (Num 2) (Add (Var "x") (Add (Var "x") (Var "x"))))))
+(extract x)
+(check (= x (Mul (Num 2) (Mul (Num 3) (Var "x")))))
+
+(rewrite (Mul a b) (Mul b a))
+(run 10)
+(extract x)
+(print-size)

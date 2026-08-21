@@ -84,6 +84,33 @@ pub enum Atom {
     },
     /// Equality constraint: two vars must be in the same e-class.
     Eq(String, String),
+    /// Primitive predicate guard: `expr` must evaluate to a true boolean over the
+    /// literal values bound elsewhere in the query. Binds nothing and scans no
+    /// relation.
+    Pred { expr: PredExpr, span: Span },
+}
+
+/// A primitive-predicate guard expression: a computation over literal values, built
+/// from primitive operators, literal constants, and the pattern variables that other
+/// atoms bind to literal payloads.
+///
+/// This is the one pattern position where a primitive operator may appear. Everywhere
+/// else in a left-hand side a primitive is rejected, because a primitive names a
+/// function on values and not a relation the e-graph stores — there is nothing to
+/// match it against. A guard is not matched; it is evaluated, once its variables are
+/// bound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PredExpr {
+    /// A pattern variable bound to a literal payload by some other atom.
+    Var(String, Span),
+    /// A literal constant written in the guard.
+    Lit(String, Span),
+    /// `(prim arg...)`.
+    App {
+        op: String,
+        args: Vec<PredExpr>,
+        span: Span,
+    },
 }
 
 /// Flattened multiplicity spec.

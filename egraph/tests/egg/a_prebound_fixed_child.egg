@@ -1,0 +1,36 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; A fixed child of a variadic pattern that an earlier atom already bound is a
+;; constraint on the node's children, not a fresh binding: `(sel x)` pins `x` to `(a)`,
+;; so `(seq ..pre x ..suf)` matches only at the window where `(a)` sits. `sel` holds one
+;; node and `seq` three, so the plan puts `sel` first and `x` is bound when the sequence
+;; expands.
+;;
+;; Regression fence for the backtracking defect fixed in this commit: the expansion
+;; cleared every local child after each window, including the ones it had checked rather
+;; than bound, so the next window rebound `x` from its own children and the rule fired on
+;; every position of every sequence. Before the fix the two negative checks below fail.
+
+(sort E)
+(constructor seq (E) E :assoc)
+(constructor sel (E) E)
+(constructor mark (E) E)
+(constructor yes () E)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+
+(rule ((sel x) (seq ..pre x ..suf))
+      ((union (mark x) (yes))))
+
+(let s (sel (a)))
+(let l1 (seq (a) (b) (c)))
+(let l2 (seq (b) (c) (a)))
+(let l3 (seq (c) (a) (b)))
+(run 3)
+
+;; The one match: `x` = `(a)`, at whichever window holds it in each sequence.
+(check (= (mark (a)) (yes)))
+;; The over-matches the defect admitted: every other element of every sequence.
+(check (!= (mark (b)) (yes)))
+(check (!= (mark (c)) (yes)))

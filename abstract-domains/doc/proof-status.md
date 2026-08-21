@@ -33,7 +33,7 @@ concrete pair) is relying on an admitted theorem. `ExecTnum`, `ExecAnum`,
 All proved. No admits.
 
 ### bools.rs — Bit type
-- `Bit::full_add` — 3-input full adder, carry + sum
+- `Bit::full_add`: 3-input full adder, carry + sum
 
 ### tbit.rs — TBit (tristate bit)
 - `has`, `join`, `meet`, `add_carry`, `add`, `xor`, `or`, `and`, `and_not`
@@ -103,8 +103,8 @@ All proved. No admits.
 Macro-generated for u8, u16, u32, u64, u128.
 
 ### Bridge lemmas ✅
-- `bridge_add(a, b)` — `wrapping_add(a,b) as nat == chop(nat_add(a as nat, b as nat), W)`
-- `bridge_mul(a, b)` — `wrapping_mul(a,b) as nat == chop(nat_mul(a as nat, b as nat), W)`
+- `bridge_add(a, b)`: `wrapping_add(a,b) as nat == chop(nat_add(a as nat, b as nat), W)`
+- `bridge_mul(a, b)`: `wrapping_mul(a,b) as nat == chop(nat_mul(a as nat, b as nat), W)`
 
 ### ExecTnum — fully proved ✅ (was 6 admits)
 
@@ -168,7 +168,7 @@ without carrying an `ensures` of its own.
 
 ⚠️ **`ReducedProduct::add` is proved *relative to* an admitted lemma.** Its proof
 calls `self.unum.add(&t.unum)` and then `assert(un.has(s))`, which is discharged
-from `ExecUnum::add`'s `ensures` — and that `ensures` is admitted. So the three
+from `ExecUnum::add`'s `ensures`, and that `ensures` is admitted. So the three
 `ExecUnum` admits are not confined to `ExecUnum`: any `ReducedProduct` soundness
 claim that routes through the `unum` component inherits them. A green
 `verification results:: 939 verified, 0 errors` does **not** mean the reduced
@@ -181,27 +181,27 @@ product's addition is unconditionally sound; it means it is sound given the
 
 Every L4 `has` spec is defined via L2 types over `nat` bitstrings (e.g. `ExecTnum::has(x) == to_tn().has(x as nat)`). But the L4 *computations* use native `$uint` ops (`^`, `|`, `&`, `wrapping_add`). To connect the two we need:
 
-1. **`bit_is_native_bit(n: $uint, i: nat)`** — `bit(n as nat, i) == ((n >> i) & 1 == 1)` for `i < W`. Per-bit bridge from spec `bit()` to native bit extraction. Provable `by(bit_vector)`.
-2. **`native_xor(a, b: $uint)`** — `bw_xor(a as nat, b as nat) == (a ^ b) as nat` via `eq_from_bits` + `bit_is_native_bit` + `xor_bit`.
-3. **`native_or(a, b: $uint)`**, **`native_and(a, b: $uint)`**, **`native_not(a: $uint)`** — same pattern.
+1. **`bit_is_native_bit(n: $uint, i: nat)`**: `bit(n as nat, i) == ((n >> i) & 1 == 1)` for `i < W`. Per-bit bridge from spec `bit()` to native bit extraction. Provable `by(bit_vector)`.
+2. **`native_xor(a, b: $uint)`**: `bw_xor(a as nat, b as nat) == (a ^ b) as nat` via `eq_from_bits` + `bit_is_native_bit` + `xor_bit`.
+3. **`native_or(a, b: $uint)`**, **`native_and(a, b: $uint)`**, **`native_not(a: $uint)`**: same pattern.
 
-Once these exist in the macro, every L4 proof can rewrite native ops into spec ops and delegate to L2/L3 soundness. This unlocks all 13 admits — the 6 ExecTnum ones directly, and the ExecAnum/ExecUnum/ReducedProduct ones indirectly (their `has` definitions expand to Tnum/Anum/Unum `has` over `nat`, which need the bridge to relate to the native fields).
+Once these exist in the macro, every L4 proof can rewrite native ops into spec ops and delegate to L2/L3 soundness. This unlocks all 13 admits: the 6 ExecTnum ones directly, and the ExecAnum/ExecUnum/ReducedProduct ones indirectly (their `has` definitions expand to Tnum/Anum/Unum `has` over `nat`, which need the bridge to relate to the native fields).
 
 The prototype `bit_IsRustBit` in `exec_tnum.rs` (u64-only) proved the approach works. Now generalized into the macro for all 5 widths (commit 3bd4ba8).
 
 ## Critical path to zero admits
 
-1. ~~**Bitwise bridge**~~ — ✅ DONE. `bit_is_native_bit`, `native_xor`, `native_or`, `native_and` proved for all 5 widths.
-2. ~~**ExecAnum::top_has**~~ — ✅ DONE.
-3. ~~**ExecTnum bitwise/lattice**~~ — ✅ DONE (all 6).
-4. ~~**ExecAnum::add**~~ — ✅ DONE (overflow → `top_has`).
-5. ~~**ExecAnum::div_const**~~ — ✅ DONE.
-6. ~~**ReducedProduct::reduce / add**~~ — ✅ DONE, but `add` is only *relatively*
+1. ~~**Bitwise bridge**~~: ✅ DONE. `bit_is_native_bit`, `native_xor`, `native_or`, `native_and` proved for all 5 widths.
+2. ~~**ExecAnum::top_has**~~: ✅ DONE.
+3. ~~**ExecTnum bitwise/lattice**~~: ✅ DONE (all 6).
+4. ~~**ExecAnum::add**~~: ✅ DONE (overflow → `top_has`).
+5. ~~**ExecAnum::div_const**~~: ✅ DONE.
+6. ~~**ReducedProduct::reduce / add**~~: ✅ DONE, but `add` is only *relatively*
    sound: it consumes `ExecUnum::add`'s admitted `ensures` (see the warning in
    the ReducedProduct table). Closing item 7 is what makes it unconditional.
-7. **ExecUnum::add / mul** — `bridge_add`/`bridge_mul` + L3
+7. **ExecUnum::add / mul**: `bridge_add`/`bridge_mul` + L3
    `ChoppedUnum::add_sound`/`mul_sound`. Both bridge lemmas already exist.
-8. **ExecUnum::from_interval** — the interval-to-bitfield abstraction. Needs the
+8. **ExecUnum::from_interval**: the interval-to-bitfield abstraction. Needs the
    L3 `has` bridge for both the degenerate (`lo == hi`) and range cases.
 
 Items 7–8 are the whole remaining gap, and they are all in one type. Because
@@ -224,8 +224,8 @@ reduced product's soundness at the same time.
 - Added `native_and_not` bridge lemma, `ExecTnum::wf_inv`, `ExecTnum::to_chopped` helpers.
 - Added `ExecAnum::has_eq_uint` bridge (nat-level has ↔ uint-level predicate).
 - Strengthened `ones_mask` ensures: `r & (r+1) == 0` (proves 2^k - 1 form).
-- Proved ExecTnum: `bw_or`, `bw_and`, `bw_xor`, `join`, `meet`, `add` — all 6 admits eliminated.
-- Proved ExecAnum: `top_has`, `add` (with overflow→top), `div_const` — all 3 admits eliminated.
+- Proved ExecTnum: `bw_or`, `bw_and`, `bw_xor`, `join`, `meet`, `add`. All 6 admits eliminated.
+- Proved ExecAnum: `top_has`, `add` (with overflow→top), `div_const`. All 3 admits eliminated.
 - Fixed `exp_128` rlimit, `field_admits_add_carry` rlimit, `by(compute_only)` recursion depth.
 - 4 admits remaining: ExecUnum(add, mul), ReducedProduct(reduce, add).
 
@@ -234,13 +234,13 @@ reduced product's soundness at the same time.
   claimed 880 verified / 1 error; the `exp_128` rlimit error is fixed).
 - Grepped `admit()`: **3 tokens**, all `ExecUnum` (`add`, `mul`, `from_interval`),
   stamped per width by `abstract_domain!` over d8/d16/d32/d64.
-- `ReducedProduct::reduce` and `add` are in fact **proved** — the previous entry
+- `ReducedProduct::reduce` and `add` are in fact **proved**: the previous entry
   listed them as pending. But `add`'s proof consumes `ExecUnum::add`'s admitted
   `ensures`, so it is sound only relative to that bridge; recorded as a warning
   on the table rather than left implicit.
 - `ExecUnum::from_interval` carries an admit and was **absent from every table**.
   It is reachable from `src/demo.rs`.
 - Lesson for this file: a hand-maintained proof-status page drifts in *both*
-  directions — understating progress (10 discharged admits still listed as open)
+  directions: understating progress (10 discharged admits still listed as open)
   while omitting a real gap. The counts here are now generated by running the
   verifier and grepping, and should be re-derived that way, not edited by hand.

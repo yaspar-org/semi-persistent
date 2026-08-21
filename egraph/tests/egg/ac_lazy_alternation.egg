@@ -1,0 +1,42 @@
+;; TYPES: machine
+;; LAZY_AC_EQS: on
+;; Lazy AC completion, phase 2 (alternation): the checked equality is not in
+;; the AC closure of the saturated graph alone; it needs a completion-derived
+;; merge to enable a rule to enable a merge. The lazy check alternates rule
+;; rounds with completion fixpoints inside its transaction, goal-directed.
+(datatype Expr
+  (Add Expr :assoc-comm)
+  (Neg Expr)
+  (Num i64)
+  (Mul Expr Expr :comm)
+  (Var String))
+
+(rewrite (Add (Num x) (Num y) ..rest) (Add (Num (i64::+ x y)) ..rest))
+(rewrite (Add (Num x):k>=2 ..rest) (Add (Num (i64::* x k)) ..rest))
+
+(rule ((= (Add y ..rest) z))
+      ((union (Add z (Neg y)) (Add ..rest))))
+
+(rewrite (Neg (Neg x)) x)
+(rewrite (Neg (Num n)) (Num (i64::neg n)))
+
+(rule ((= x (Var v))) ((union (Mul (Num 1) x) x)))
+(rule ((= x (Add ..rest))) ((union (Mul (Num 1) x) x)))
+
+(rewrite (Add (Mul y x) (Mul z x) ..rest) (Add (Mul (Add y z) x) ..rest))
+(rewrite (Add (Mul y x):k>=2 ..rest) (Add (Mul (Add y y) x) ..rest))
+
+(rule ((= (Mul (Num x) y) (Num z))
+       (i64::!= x 0)
+       (i64::== (i64::% z x) 0))
+      ((union y (Num (i64::/ z x)))))
+
+(union (Add (Var "x") (Num 2)) (Num 7))
+(union (Add (Var "z") (Var "y")) (Num 6))
+(union (Add (Var "z") (Var "z")) (Var "y"))
+
+(run 6)
+;; Holds only through the rules-and-completion interaction: eager completion
+;; reaches it, plain saturation does not, and the lazy transaction derives it
+;; in one goal-directed alternation and then restores the 69-node graph.
+(check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))

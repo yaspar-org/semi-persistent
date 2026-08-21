@@ -1,0 +1,75 @@
+# Public exec functions that still expose a `requires` clause.
+# Entries may only be removed.
+#
+# PERMANENT floor (no exec counterpart possible):
+#   - uninterp type-class obligations: map.rs::new (obeys_key_model);
+#     tagged.rs trait laws.
+#   - guard.rs::check_precondition: it IS the verified-caller guard.
+#   - ghost-parameter contracts (erased, spec-carried):
+#     capture_bits.rs::set_true.
+#
+# UNREACHABLE-RECEIVER floor: DiffStore trait methods - store values are
+# unobtainable outside the crate (constructors and with_store pub(crate)),
+# so no external caller can hold a receiver. Compiler-enforced.
+#
+# The DOCUMENTED-UNCHECKED floor (hot sorted-input contracts) is empty:
+# bplus_search.rs::{find_ge, find_gt} and sorted_vec_cursor.rs::{new, seek}
+# converted to requires-free conditional contracts - the sortedness
+# hypothesis moved from `requires` into the ensures as an implication
+# (`sorted ==> characterization`), with the in-bounds guarantees kept
+# unconditional. Zero runtime cost; verified callers discharge the
+# hypothesis and keep the full contract.
+#
+# COMPONENT-BOUNDARY floor: circular_list.rs::{splice, splice_absorb} and
+# sparse_set.rs::restore keep `requires` clauses on their public component
+# surface (distinct rings; snapshot well-formedness). Inside the EClasses
+# aggregate both obligations are theorems: merge_with discharges the
+# distinct-rings precondition from W2 + W3, and the aggregate's archive
+# discharges restore's snapshot well-formedness (eclasses.rs). The entries
+# stay listed because a direct external caller of the component APIs still
+# carries the obligation; they drain if those functions gain requires-free
+# conditional contracts or crate-private visibility.
+#
+# RECHECKED floor: bplus_layout.rs's NodeLayout methods keep their requires
+# (verified callers consume the obligations) but every impl body now opens
+# with a check_precondition mirror, provably dead for verified callers and
+# a release panic for unverified misuse. Debug-only monitoring would leave
+# get_unchecked reachable as UB from safe external code, so the release guard
+# is part of the public safety boundary. The
+# entries stay listed because the requires clauses remain on the public
+# trait; none is a soundness hole. Criterion measurements under host load are
+# inconclusive about guard cost, so no speed claim is made. The refusal arms
+# are #[cold].
+bplus_layout.rs::child
+bplus_layout.rs::first_key
+bplus_layout.rs::internal_insert_at
+bplus_layout.rs::internal_key_insert
+bplus_layout.rs::internal_split_at
+bplus_layout.rs::key
+bplus_layout.rs::keys
+bplus_layout.rs::leaf_insert_at
+bplus_layout.rs::leaf_push
+bplus_layout.rs::leaf_split_at
+bplus_layout.rs::set_internal_child
+capture_bits.rs::set_true
+circular_list.rs::splice
+circular_list.rs::splice_absorb
+diff_store.rs::begin_restore
+diff_store.rs::capture
+diff_store.rs::finish_restore
+diff_store.rs::force_capture
+diff_store.rs::get
+diff_store.rs::mark_captured
+diff_store.rs::prepare_mark
+diff_store.rs::push
+diff_store.rs::resize_default
+diff_store.rs::restore_entry
+diff_store.rs::set_raw
+diff_store.rs::truncate
+guard.rs::check_precondition
+map.rs::new
+sparse_set.rs::restore
+tagged.rs::clear_tag
+tagged.rs::from_repr
+tagged.rs::set_tag
+tagged.rs::tag

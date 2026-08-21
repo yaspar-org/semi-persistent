@@ -1,7 +1,7 @@
 ;; EXPECT: ok
 ;; DERIVE_AC_EQS: on
 ;; CHECK_AC_BASIS: on
-;; Axiom pair whose second reduct EMPTIES to the unit (adversarial analysis B.2): the rule
+;; Axiom pair whose second reduct empties to the unit: the rule
 ;; x3(a,a) = b has singleton LHS {a:2}; the pair for a (m=2, n−m=1) is
 ;; (f({b,a}), f({} ⊎ {e})) — so x3(a,b) = e. Semantically a² = b ⟹ a·b = a³ = e.
 (sort E)

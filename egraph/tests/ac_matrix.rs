@@ -456,7 +456,7 @@ fn aborted_growth_limit<const TRACK: bool, const PROOFS: bool>() {
 }
 
 /// Kapur §4.1 idempotent axiom critical pair: or(a,b)=c ⟹ or(a,c)=c — the idempotent
-/// twin of `nilpotent_axiom_cp`, pinning the same `ACAxiomCP` label on the Set/ACI arm.
+/// counterpart of `nilpotent_axiom_cp`, pinning the same `ACAxiomCP` label on the Set/ACI arm.
 fn idempotent_axiom_cp<const TRACK: bool, const PROOFS: bool>() {
     let mut eg = Eg::<TRACK, PROOFS>::new();
     eg.set_cc(true);

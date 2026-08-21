@@ -1,15 +1,23 @@
 # containers-verus: Verified Semi-Persistent Containers
 
-A Verus port of `semi-persistent-containers`, built to be formally verified.
+The verified counterpart of `semi-persistent-containers`, and the
+semi-persistent container dependency the e-graph engine runs on:
+`egraph/Cargo.toml` aliases `semi-persistent-containers` to this crate. Engine
+logic still uses ordinary Rust collections for transient indexes, scratch, and
+worklists; those are outside these container proofs. The unverified reference
+implementation lives in [`containers/`](../containers) and serves as the
+conformance oracle and performance baseline.
 
-## What we're proving
+## What is proved
 
-For every container `C<T, ..., const TRACK: bool>`:
+For the verified core API of each `TRACK`-parameterized container:
 
 1. **Untracked equivalence (`TRACK = false`).**
-   `C` is observationally equivalent to its non-semi-persistent counterpart
-   (`std::Vec<T>` for `Vec`, `Map<K,V>` for `Map`, `Set<T>` for `SparseSet` /
+   Its abstract contents follow the corresponding non-semi-persistent model
+   (`Seq<T>` for `Vec`, a map model for `SpMap`, set models for `SparseSet` /
    `BPlusTreeSet`, etc.). `mark` and `restore` are statically uncallable.
+   This is not a claim of identical layout, panic behavior, trait surface, or
+   behavior for methods outside the proved core API.
 
 2. **Tracked correctness (`TRACK = true`).**
    An internal ghost stack `snapshots: Seq<Spec>` records the deep copy of
@@ -17,30 +25,39 @@ For every container `C<T, ..., const TRACK: bool>`:
    `view() == snapshots[token.frame_idx]`.
 
 3. **Branch-cut safety.**
-   A ghost append-only fork tree records the history of all marks. Token
-   validity is `current_path.contains(t.node_id)`. `restore(t)` has
-   `requires is_valid(t)`, so tokens for cut subtrees are statically rejected.
-   An exec method `is_token_valid(&self, t) -> bool` mirrors the predicate.
+   Each token carries a container id, branch id, depth, and frame index.
+   Restore appends a `(parent_branch_id, fork_depth)` origin and starts a new
+   branch. Token validity means that its branch is on the current branch's
+   parent chain and its depth does not exceed that branch's path-specific
+   bound; the frame index must also still be in range. `restore(t)` has
+   `requires is_valid(t)`, so tokens beyond a branch cut are statically
+   rejected. An exec `is_token_valid` method computes the same predicate.
+
+The aggregate structures add their own joint invariants on top; the largest is
+the class layer's `eg_model_wf` (invariants W1..W7, defined in the
+`eclasses.rs` module header), which ties rings, union-find roots, class keys,
+use-lists, the min-monomial pool, and the per-class size counter together at
+every method boundary and in every archived frame.
 
 ## What is trusted
 
-The proofs carry **no `admit`s or `assume`s**; but that means no fact is
-injected into a proof, *not* that nothing is trusted. The entire trust boundary
-is a small, explicit set of `#[verifier::external_body]` items modeling things
-the logic cannot describe: a process-global atomic id counter, an opaque
-identity type, a few spec-free byte-accounting diagnostics, and one runtime-trap
-primitive. None hides any algorithmic logic. Every one is enumerated and
-justified in
-[`doc/design/02-trust-boundary.md`](doc/design/02-trust-boundary.md), read it to
-know exactly what the verification does and does not guarantee.
+The proofs carry no `admit`s or `assume`s. The trust boundary is the set of
+`#[verifier::external_body]` items modeling what the logic cannot describe:
+27 in the default build, 32 with the `literal-types` feature, enumerated and
+justified one by one in
+[`doc/design/02-trust-boundary.md`](doc/design/02-trust-boundary.md). Read
+that chapter to know exactly what the verification does and does not
+guarantee.
 
 **Usable from unverified Rust.** A Verus-checked caller proves each public
 method's preconditions; an ordinary Rust caller does not, and the erased
 `requires` would offer no protection against, for example, restoring past the
 `u32` fork-history limit or pushing past the index type, which would silently
 wrap. The overflow/capacity preconditions are therefore also enforced at
-runtime: such a call panics with a descriptive message instead of corrupting the
-container. The fork-history headroom is queryable via `restores_remaining()`.
+runtime: such a call panics with a descriptive message instead of corrupting
+the container. The fork-history headroom is queryable via
+`restores_remaining()`. The remaining public functions whose `requires` have
+no runtime check are enumerated in `partial-api-allowlist.txt`.
 
 ## Architecture
 
@@ -52,45 +69,52 @@ Layer 3: frame.rs / container_id.rs / fork_history.rs -- Frame stack, identity, 
 Layer 4: vec.rs                          -- Vec<T,I,S,TRACK> proved over the trait specs
 Layer 5: append_only_vec / map / sparse_set / list / circular_list  -- containers over the verified Vec/arena
          bplus (+ bplus_tree / bplus_layout / bplus_search)         -- BPlusTreeSet over its own InlineStore arena
+         dense_span_map / layered_span_map                          -- span-table multimaps (index families)
          dense_id / opt / capture_bits                              -- supporting value types
+Layer 6: union_find.rs / eclasses.rs     -- the verified class layer (aggregate)
 ```
-
-All of the Layer-5 containers follow the same diff-store / dynamic-frames pattern
-and are verified (see "Verification status" below).
 
 ## Verification status
 
-**1474 facts verified, 0 errors, 0 `admit`s/`assume`s** (run `cargo verus verify`
-from the package root; add `-- --time-expanded` for the per-module tally).
-The whole container family is verified:
+`cargo verus verify` prints **1719 facts verified, 0 errors**; add
+`-- --time-expanded` for the per-module tally. What each proof covers is
+chapter 1's subject; the trust framing is chapter 2's. The verified set:
 
-- **`Vec`** (the semi-persistent core): the headline reconstruction theorem at
+- **`Vec`** (the semi-persistent core): the reconstruction theorem at
   arbitrary mark-nesting depth, over both `DiffStore` backends
   (`ParallelStore` / `InlineStore`), plus branch-cut safety and faithful `pop`.
 - **`AppendOnlyVec`, `Map` (`SpMap`), `SparseSet`, `ListArena`, `CircularList`**:
   each verified for its core API, including `mark`/`restore`.
-- **`BPlusTreeSet`**: fully verified, not a scaffold: `insert` (with split
-  propagation, new-root growth, and production's O(1) **append fast path** over a
-  `wf`-bound `last_leaf` cache) is *total* and carries its full model
-  transition; sound in-order traversal and `seek` (the cursor enumerates the
-  sorted set, never skipping a present key); the arena provably never overflows
-  (so `insert` needs no caller capacity precondition); and `mark`/`restore`.
-  Insert-only; production has no `remove`.
-- **`SortedVecCursor`**: not a container — the galloping seek the e-graph's
-  leapfrog joins run on, verified against the *same* `seek_target_idx` spec as
-  the B+tree cursor, so the two are substitutable at the `SortedCursor`
-  boundary. `egraph` runs this one: it re-exports the type and no longer defines
-  a cursor of its own, so the proof covers the code that ships. Measured
-  performance-neutral end-to-end (seeks themselves got 2-3x faster, which the
-  saturation workloads barely notice).
+- **`BPlusTreeSet`**: `insert` (with split propagation, new-root growth, and
+  production's O(1) append fast path over a `wf`-bound `last_leaf` cache) is
+  total and carries its full model transition; sound in-order traversal and
+  `seek`; the arena provably never overflows; `mark`/`restore`. Insert-only.
+- **`SortedVecCursor`**: the galloping seek the e-graph's leapfrog joins run
+  on, verified against the same `seek_target_idx` spec as the B+tree cursor,
+  so the two are substitutable at the `SortedCursor` boundary. The engine
+  re-exports this type and defines no cursor of its own.
   See [`doc/design/12-sorted-vec-cursor.md`](doc/design/12-sorted-vec-cursor.md).
+- **`DenseSpanMap`**: the build-once index behind the engine's per-round index
+  families: a two-pass counting build refined to the per-key filter of its
+  input stream, with the generation-stamped arena-reuse build path.
+  See [`doc/design/15-dense-span-map.md`](doc/design/15-dense-span-map.md).
+- **`LayeredSpanMap`**: incremental maintenance over the dense span map
+  (base generation, one delta generation, per-key invalidation). Verified;
+  not enabled in the engine, which uses the stamped-reuse `DenseSpanMap`
+  path. See [`doc/design/16-layered-span-map.md`](doc/design/16-layered-span-map.md).
+- **`UnionFind` and `EClasses`** (the class layer): union with rank and with a
+  caller-chosen survivor, path compression, the proof forest under `PROOFS`,
+  and the aggregate invariants W1..W7, including W7: the stored per-class
+  size equals the class ring's length, in the current state and in every
+  archived frame. The engine's `--union-by` survivor policies read these
+  verified counters. See the `eclasses.rs` module header for the invariant
+  table and [`doc/design/egraph-class-layer.md`](doc/design/egraph-class-layer.md)
+  for the direct engine-integration statement and historical compatibility
+  boundary.
 
-Trusted boundary: 21 `#[verifier::external_body]` items (26 with `literal-types`),
-only three of them carrying load-bearing contracts, all enumerated in
-[`doc/design/02-trust-boundary.md`](doc/design/02-trust-boundary.md). Runtime
-property tests (131 across 20 files) exercise the executable code against
-plain-`std` oracles. The skeptical, method-by-method coverage accounting vs. the production
-crate is [`doc/future/parity-audit-and-plan.md`](doc/future/parity-audit-and-plan.md).
+Runtime property suites exercise the executable code against plain-`std`
+oracles; the finite differential comparison against the legacy reference
+implementation lives in [`containers-conformance/`](../containers-conformance).
 
 ## Prerequisites
 
@@ -112,14 +136,8 @@ cargo verus verify -- --verify-only-module list
 cargo verus verify -- --verify-only-module list --verify-function splice_raw
 ```
 
-Excluded from the default `cargo build` and `cargo test --workspace`. Built
-separately, exactly like `abstract-domains`.
-
-## Long-term goal
-
-If the verification effort succeeds across the full container set, the
-production `containers` crate gets replaced with this verified implementation
-in the e-graph engine. That's a long shot but it's the direction.
+Ordinary `cargo build` compiles the crate with ghost code erased; that build
+is what the engine links.
 
 ## License
 

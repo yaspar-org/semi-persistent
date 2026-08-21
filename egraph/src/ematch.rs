@@ -1,37 +1,48 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! E-matching execution engine: DFS stack machine over a `QueryPlan`.
+//! E-matching execution over flattened relational atoms.
 //!
-//! Walks the plan's steps, materializing index lookups into leapfrog joins,
-//! extracting children from matched nodes, and yielding binding environments.
+//! The primary saturation path executes a statically scheduled `QueryPlan`, or
+//! schedules its next atom from the live bindings, through push-style continuations.
+//! Rust calls explore those continuations depth-first; this is control flow, not
+//! top-down pattern matching. Sortcheck has already flattened nested patterns into
+//! atoms. A separate [`MatchIterator`] provides lazy pull execution of a static plan
+//! with an explicit DFS stack.
 
 use crate::ast::{CmpOp, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, VarId};
 use crate::canon::{MSetCanon, VarCanon};
 use crate::config::EGraphConfig;
 use crate::containers::IndexLike;
 use crate::egraph::EGraph;
-use crate::index::{IndexMode, IndexStore, SortedVec, SortedVecCursor, VariantIndex};
+use crate::index::{IndexMode, IndexStore, SortedVecCursor, VariantIndex};
+use crate::leapfrog::seek_stats::Probed;
 use crate::leapfrog::{CursorVec, Difference, LeapfrogJoin, SortedCursor};
 use crate::literal::LitVal;
 use crate::multiplicity::MultiplicityLike;
 use crate::resolve::{PatVar, RMult};
 use crate::schedule::{IndexLookup, QueryPlan, Step};
+use smallvec::SmallVec;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
 // Match-work instrumentation
 // ---------------------------------------------------------------------------
 //
-// A thread-local counter of "matching steps": one increment per `run_step`
-// entry, i.e. per partial-match extension the DFS explores. This is the
-// faithful measure of e-matching work — it reflects how many candidate
-// bindings the join machinery walks, which is exactly what semi-naive (and
-// driver-narrowing lookups like `ByContains`) aim to reduce.
+// A thread-local counter of "matching steps": one increment per executed
+// `run_step` step and per emitted match. It is an implementation-level proxy
+// for e-matching work, not a count of semantic matches or a machine-independent
+// time measure.
 //
-// Counting is gated at runtime by a thread-local flag, off by default, so a
+// The hot path does not touch the thread-local at all. `run_step` increments a
+// plain `u64` on the `MatchPool` it already carries by `&mut`, and
+// `run_query_into` folds that into the thread-local once per query, if counting
+// is enabled. A thread-local read can be an out-of-line call on Apple targets,
+// so the earlier "one bool load per step" model was incomplete. The maintained
+// Criterion workload owns the current overhead comparison.
+//
+// Counting stays gated at runtime by a thread-local flag, off by default, so a
 // normal (release) run can be profiled by flipping the flag — e.g. the
-// `--count-match-steps` CLI flag — with no test-mode rebuild. When disabled the
-// hot path pays a single thread-local bool load per step and nothing else; the
-// counter is never touched, so its cost is zero in production runs.
+// `--count-match-steps` CLI flag — with no test-mode rebuild.
 //
 // Use `set_match_step_counting(true)` to enable, `reset_match_steps()` before a
 // measured region, and `match_steps()` after to read the delta.
@@ -66,10 +77,11 @@ pub fn match_steps() -> u64 {
     MATCH_STEPS.with(|c| c.get())
 }
 
+/// Fold a query's step tally into the thread-local counter, if counting is on.
 #[inline]
-fn bump_match_steps() {
+fn add_match_steps(n: u64) {
     if COUNTING.with(|c| c.get()) {
-        MATCH_STEPS.with(|c| c.set(c.get() + 1));
+        MATCH_STEPS.with(|c| c.set(c.get() + n));
     }
 }
 
@@ -186,7 +198,7 @@ impl<Cfg: EGraphConfig> Clone for Match<Cfg> {
     /// which drops nine buffers and allocates nine more. `Vec::clone_from`
     /// reuses the destination's capacity when it suffices, so a recycled match
     /// costs nine `memcpy`s and no allocator traffic. This is what makes
-    /// [`MatchPool`] worth having; see `doc/perf-results/E2-match-recycling.md`.
+    /// [`MatchPool`] worth retaining across matches.
     fn clone_from(&mut self, source: &Self) {
         self.nodes.clone_from(&source.nodes);
         self.mults.clone_from(&source.mults);
@@ -301,6 +313,43 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
         self.mset_pool.truncate(s.as_usize());
         self.mset_spans[v.idx()] = empty_span::<Cfg>();
     }
+
+    /// Bind `v` to the still-available residual entries, writing them
+    /// straight onto the pool tail (E15). `push_mset` with a caller-built
+    /// slice re-bought a temporary per binding at every leaf of the AC
+    /// assignment search - 221k bindings per allocprobe run, three growth
+    /// allocations each; the pool was the destination all along.
+    pub fn push_mset_residual(&mut self, v: MsetVarId, residual: &[(Cfg::G, Cfg::M)]) {
+        let start = self.mset_pool.len();
+        let zero = Cfg::M::ZERO;
+        self.mset_pool.extend(
+            residual
+                .iter()
+                .filter(|&&(_, m)| m > zero)
+                .map(|&(g, m)| Cfg::mset_child_with_mult(g, m)),
+        );
+        self.mset_spans[v.idx()] =
+            pool_span::<Cfg>(start, self.mset_pool.len(), "Match::mset_pool");
+    }
+
+    /// The ACI counterpart: bind `v` to the residual ids not consumed by the
+    /// element assignment (same write-through mechanism).
+    pub fn push_set_residual(
+        &mut self,
+        v: SetVarId,
+        residual: &[Cfg::G],
+        used: &crate::containers::bitset::BitSet,
+    ) {
+        let start = self.set_pool.len();
+        self.set_pool.extend(
+            residual
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| !used.test(i))
+                .map(|(_, &g)| g),
+        );
+        self.set_spans[v.idx()] = pool_span::<Cfg>(start, self.set_pool.len(), "Match::set_pool");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -331,12 +380,23 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
 /// `seq_children`/`set_children`/`mset_children` all begin with `buf.clear()` —
 /// so surviving a `clear` is the whole point of them.
 pub struct MatchPool<Cfg: EGraphConfig> {
-    slots: Vec<Match<Cfg>>,
-    len: usize,
+    /// Flat stride-packed storage (E17): the per-slot form allocated ~5 vecs
+    /// per fresh slot up to the query's high-water — 76k slots and ~380k
+    /// allocations on ac10/naive — where the flat arrays grow amortized.
+    set: MatchSet<Cfg>,
     /// Retired child-id buffers, lent to the `ExpandA`/`DecomposeACI` steps.
     id_bufs: Vec<Vec<Cfg::G>>,
     /// Retired `(id, multiplicity)` buffers, lent to the `DecomposeAC` step.
     mset_bufs: Vec<Vec<(Cfg::G, Cfg::M)>>,
+    /// Partial-match extensions the current query has explored — one per
+    /// `run_step` entry. Reset by `run_query_into` and folded into the
+    /// thread-local match-step counter when the query finishes; see the
+    /// match-work instrumentation notes at the top of this file.
+    steps: u64,
+    /// [`op_filter_policy`] as of this query's start. Carried on the pool
+    /// because it is the only per-query state `run_join` already receives; see
+    /// [`OP_FILTER_POLICY`] for why it is not read per join.
+    op_filter_policy: OpFilterPolicy,
 }
 
 impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
@@ -348,11 +408,68 @@ impl<Cfg: EGraphConfig> Default for MatchPool<Cfg> {
 impl<Cfg: EGraphConfig> MatchPool<Cfg> {
     pub fn new() -> Self {
         Self {
-            slots: Vec::new(),
-            len: 0,
+            set: MatchSet::empty(),
             id_bufs: Vec::new(),
             mset_bufs: Vec::new(),
+            steps: 0,
+            op_filter_policy: OpFilterPolicy::Adaptive,
         }
+    }
+
+    /// Adopt a query's shape, dropping stored matches and keeping every flat
+    /// allocation warm.
+    pub fn reshape(&mut self, shape: &crate::resolve::MatchShape) {
+        self.set.reshape(shape);
+    }
+
+    /// One stored match, by row.
+    #[inline]
+    pub fn row_mut(&mut self, j: usize) -> MatchRow<'_, Cfg> {
+        MatchRow {
+            set: &mut self.set,
+            j,
+        }
+    }
+
+    /// Reconstruct row `j` as an owned `Match` (tests and diagnostics; this
+    /// allocates and the hot paths never call it).
+    pub fn clone_match(&self, j: usize) -> Match<Cfg> {
+        let s = &self.set;
+        let mut m = Match {
+            nodes: (0..s.node_stride)
+                .map(|i| Some(s.nodes[j * s.node_stride + i]))
+                .collect(),
+            mults: s.mults[j * s.mult_stride..(j + 1) * s.mult_stride].to_vec(),
+            lit_vals: s.lit_vals[j * s.lit_stride..(j + 1) * s.lit_stride].to_vec(),
+            seq_pool: Vec::new(),
+            seq_spans: vec![empty_span::<Cfg>(); s.seq_stride],
+            set_pool: Vec::new(),
+            set_spans: vec![empty_span::<Cfg>(); s.set_stride],
+            mset_pool: Vec::new(),
+            mset_spans: vec![empty_span::<Cfg>(); s.mset_stride],
+        };
+        for i in 0..s.seq_stride {
+            let span = s.seq_spans[j * s.seq_stride + i];
+            let start = m.seq_pool.len();
+            m.seq_pool
+                .extend_from_slice(&s.seq_pool[span_range::<Cfg>(span)]);
+            m.seq_spans[i] = pool_span::<Cfg>(start, m.seq_pool.len(), "clone_match:seq");
+        }
+        for i in 0..s.set_stride {
+            let span = s.set_spans[j * s.set_stride + i];
+            let start = m.set_pool.len();
+            m.set_pool
+                .extend_from_slice(&s.set_pool[span_range::<Cfg>(span)]);
+            m.set_spans[i] = pool_span::<Cfg>(start, m.set_pool.len(), "clone_match:set");
+        }
+        for i in 0..s.mset_stride {
+            let span = s.mset_spans[j * s.mset_stride + i];
+            let start = m.mset_pool.len();
+            m.mset_pool
+                .extend_from_slice(&s.mset_pool[span_range::<Cfg>(span)]);
+            m.mset_spans[i] = pool_span::<Cfg>(start, m.mset_pool.len(), "clone_match:mset");
+        }
+        m
     }
 
     /// Borrow a child-id buffer, by move.
@@ -384,40 +501,23 @@ impl<Cfg: EGraphConfig> MatchPool<Cfg> {
     /// Drop the previous query's results without releasing their storage.
     #[inline]
     pub fn clear(&mut self) {
-        self.len = 0;
+        self.set.clear();
     }
 
-    /// Append a copy of `env`, reusing a retired slot when one exists.
+    /// Append a copy of `env` into the flat store.
     #[inline]
     pub fn push(&mut self, env: &Match<Cfg>) {
-        if self.len < self.slots.len() {
-            self.slots[self.len].clone_from(env);
-        } else {
-            self.slots.push(env.clone());
-        }
-        self.len += 1;
+        self.set.push(env);
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.len
+        self.set.len()
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// The matches of the last query, mutably — `apply_action` binds RHS
-    /// comprehension variables into the match it is applying.
-    #[inline]
-    pub fn matches_mut(&mut self) -> &mut [Match<Cfg>] {
-        &mut self.slots[..self.len]
-    }
-
-    #[inline]
-    pub fn matches(&self) -> &[Match<Cfg>] {
-        &self.slots[..self.len]
+        self.set.is_empty()
     }
 }
 
@@ -434,11 +534,13 @@ pub struct MatchSet<Cfg: EGraphConfig> {
     pub count: usize,
     node_stride: usize,
     mult_stride: usize,
+    lit_stride: usize,
     seq_stride: usize,
     set_stride: usize,
     mset_stride: usize,
     nodes: Vec<Cfg::G>,
     mults: Vec<Cfg::M>,
+    lit_vals: Vec<Cfg::V>,
     seq_spans: Vec<PoolSpan<Cfg>>,
     set_spans: Vec<PoolSpan<Cfg>>,
     mset_spans: Vec<PoolSpan<Cfg>>,
@@ -453,11 +555,13 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
             count: 0,
             node_stride: shape.num_vars(),
             mult_stride: shape.num_mult_vars(),
+            lit_stride: shape.num_lit_val_vars(),
             seq_stride: shape.num_seq_vars(),
             set_stride: shape.num_set_vars(),
             mset_stride: shape.num_mset_vars(),
             nodes: Vec::new(),
             mults: Vec::new(),
+            lit_vals: Vec::new(),
             seq_spans: Vec::new(),
             set_spans: Vec::new(),
             mset_spans: Vec::new(),
@@ -467,13 +571,62 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         }
     }
 
+    /// A shapeless set (every stride zero); given a real shape by
+    /// [`Self::reshape`] before first use. What lets one warm store serve
+    /// queries of different shapes across a whole saturation.
+    pub fn empty() -> Self {
+        Self {
+            count: 0,
+            node_stride: 0,
+            mult_stride: 0,
+            lit_stride: 0,
+            seq_stride: 0,
+            set_stride: 0,
+            mset_stride: 0,
+            nodes: Vec::new(),
+            mults: Vec::new(),
+            lit_vals: Vec::new(),
+            seq_spans: Vec::new(),
+            set_spans: Vec::new(),
+            mset_spans: Vec::new(),
+            seq_pool: Vec::new(),
+            set_pool: Vec::new(),
+            mset_pool: Vec::new(),
+        }
+    }
+
+    /// Adopt a query's shape: set the strides and drop stored matches, keeping
+    /// every flat allocation (the warm-reuse discipline across queries).
+    pub fn reshape(&mut self, shape: &crate::resolve::MatchShape) {
+        self.node_stride = shape.num_vars();
+        self.mult_stride = shape.num_mult_vars();
+        self.lit_stride = shape.num_lit_val_vars();
+        self.seq_stride = shape.num_seq_vars();
+        self.set_stride = shape.num_set_vars();
+        self.mset_stride = shape.num_mset_vars();
+        self.count = 0;
+        self.nodes.clear();
+        self.mults.clear();
+        self.lit_vals.clear();
+        self.seq_spans.clear();
+        self.set_spans.clear();
+        self.mset_spans.clear();
+        self.seq_pool.clear();
+        self.set_pool.clear();
+        self.mset_pool.clear();
+    }
+
     /// Append one match.
     pub fn push(&mut self, m: &Match<Cfg>) {
-        for i in 0..self.node_stride {
-            self.nodes.push(m.nodes[i].unwrap());
-        }
+        // `extend` over a sized iterator, not a `push` per variable: the
+        // capacity check moves out of the loop, and this runs once per match.
+        self.nodes
+            .extend(m.nodes[..self.node_stride].iter().map(|v| v.unwrap()));
         if !m.mults.is_empty() {
             self.mults.extend_from_slice(&m.mults);
+        }
+        if !m.lit_vals.is_empty() {
+            self.lit_vals.extend_from_slice(&m.lit_vals);
         }
         for &span in &m.seq_spans {
             let start = self.seq_pool.len();
@@ -522,6 +675,15 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
     pub fn get_mult(&self, v: MultVarId, j: usize) -> Cfg::M {
         self.mults[j * self.mult_stride + v.idx()]
     }
+    pub fn get_lit_val(&self, v: LitValVarId, j: usize) -> Cfg::V {
+        self.lit_vals[j * self.lit_stride + v.idx()]
+    }
+    pub fn set_node(&mut self, v: VarId, j: usize, val: Cfg::G) {
+        self.nodes[j * self.node_stride + v.idx()] = val;
+    }
+    pub fn set_mult(&mut self, v: MultVarId, j: usize, val: Cfg::M) {
+        self.mults[j * self.mult_stride + v.idx()] = val;
+    }
     pub fn seq_slice(&self, v: SeqVarId, j: usize) -> &[Cfg::G] {
         let span = self.seq_spans[j * self.seq_stride + v.idx()];
         &self.seq_pool[span_range::<Cfg>(span)]
@@ -534,6 +696,110 @@ impl<Cfg: EGraphConfig> MatchSet<Cfg> {
         let span = self.mset_spans[j * self.mset_stride + v.idx()];
         &self.mset_pool[span_range::<Cfg>(span)]
     }
+
+    /// Drop the stored matches without releasing storage (the `MatchPool`
+    /// warm-reuse discipline, for consumers that keep a `MatchSet` across
+    /// queries).
+    pub fn clear(&mut self) {
+        self.count = 0;
+        self.nodes.clear();
+        self.mults.clear();
+        self.lit_vals.clear();
+        self.seq_spans.clear();
+        self.set_spans.clear();
+        self.mset_spans.clear();
+        self.seq_pool.clear();
+        self.set_pool.clear();
+        self.mset_pool.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MatchView — one access surface over an owned Match and a MatchSet row
+// ---------------------------------------------------------------------------
+
+/// The binding-access surface `apply` consumes: reads of every variable kind
+/// plus the two scalar writes RHS comprehensions perform. Implemented by the
+/// in-progress `Match` and by [`MatchRow`], so the apply loop is agnostic to
+/// whether matches live in per-slot vectors or the flat store.
+pub trait MatchView<Cfg: EGraphConfig> {
+    fn get(&self, v: VarId) -> Cfg::G;
+    fn get_mult(&self, v: MultVarId) -> Cfg::M;
+    fn get_lit_val(&self, v: LitValVarId) -> Cfg::V;
+    fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G];
+    fn set_slice(&self, v: SetVarId) -> &[Cfg::G];
+    fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C];
+    fn set(&mut self, v: VarId, val: Cfg::G);
+    fn set_mult(&mut self, v: MultVarId, val: Cfg::M);
+    /// Unbind `v` after a comprehension. On the owned `Match` this restores
+    /// the panic-on-read guard; the flat store holds no unbound state, so a
+    /// row leaves the stale value in place — equivalent for every compiled
+    /// action sequence, which sets a comprehension variable before each read.
+    fn clear(&mut self, v: VarId);
+}
+
+impl<Cfg: EGraphConfig> MatchView<Cfg> for Match<Cfg> {
+    fn get(&self, v: VarId) -> Cfg::G {
+        Match::get(self, v)
+    }
+    fn get_mult(&self, v: MultVarId) -> Cfg::M {
+        Match::get_mult(self, v)
+    }
+    fn get_lit_val(&self, v: LitValVarId) -> Cfg::V {
+        Match::get_lit_val(self, v)
+    }
+    fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G] {
+        Match::seq_slice(self, v)
+    }
+    fn set_slice(&self, v: SetVarId) -> &[Cfg::G] {
+        Match::set_slice(self, v)
+    }
+    fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
+        Match::mset_slice(self, v)
+    }
+    fn set(&mut self, v: VarId, val: Cfg::G) {
+        Match::set(self, v, val)
+    }
+    fn set_mult(&mut self, v: MultVarId, val: Cfg::M) {
+        Match::set_mult(self, v, val)
+    }
+    fn clear(&mut self, v: VarId) {
+        Match::clear(self, v)
+    }
+}
+
+/// One match of a [`MatchSet`], by row index.
+pub struct MatchRow<'a, Cfg: EGraphConfig> {
+    set: &'a mut MatchSet<Cfg>,
+    j: usize,
+}
+
+impl<'a, Cfg: EGraphConfig> MatchView<Cfg> for MatchRow<'a, Cfg> {
+    fn get(&self, v: VarId) -> Cfg::G {
+        self.set.get_node(v, self.j)
+    }
+    fn get_mult(&self, v: MultVarId) -> Cfg::M {
+        self.set.get_mult(v, self.j)
+    }
+    fn get_lit_val(&self, v: LitValVarId) -> Cfg::V {
+        self.set.get_lit_val(v, self.j)
+    }
+    fn seq_slice(&self, v: SeqVarId) -> &[Cfg::G] {
+        self.set.seq_slice(v, self.j)
+    }
+    fn set_slice(&self, v: SetVarId) -> &[Cfg::G] {
+        self.set.set_slice(v, self.j)
+    }
+    fn mset_slice(&self, v: MsetVarId) -> &[Cfg::C] {
+        self.set.mset_slice(v, self.j)
+    }
+    fn set(&mut self, v: VarId, val: Cfg::G) {
+        self.set.set_node(v, self.j, val);
+    }
+    fn set_mult(&mut self, v: MultVarId, val: Cfg::M) {
+        self.set.set_mult(v, self.j, val);
+    }
+    fn clear(&mut self, _v: VarId) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -573,7 +839,7 @@ where
 /// and do not care about allocation — tests, the REPL, `EGraph::run_query`. The
 /// saturation drivers use `run_query_into` with a persistent [`MatchPool`].
 pub fn run_query<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -585,8 +851,43 @@ where
 {
     let mut pool = MatchPool::new();
     run_query_into(plan, eg, index, globals, &mut pool);
-    pool.slots.truncate(pool.len);
-    pool.slots
+    (0..pool.len()).map(|j| pool.clone_match(j)).collect()
+}
+
+/// The round's class representative for `id` — the one the index snapshot was
+/// built with, not the e-graph's live one.
+///
+/// Matching is specified against the e-graph as of the round's index build
+/// (chapter 09). The e-graph keeps changing inside a round: every rule's
+/// actions merge classes and add nodes before the next rule matches, while the
+/// index buckets stay keyed by the reprs of the build. Canonicalizing with the
+/// live union-find and then probing a bucket keyed at build time therefore
+/// reads a bucket belonging to a different class — `ByRepr` and `ByChildPos`
+/// go wrong in opposite directions on the same merge — and `CheckChildEq`
+/// accepts pairs that the snapshot kept apart. Which of those a query performs
+/// is decided by the join order, so the defect made the match set a function of
+/// the plan. Focused regressions, rather than a workload percentage, pin it.
+/// Every canonicalization in the matcher goes through here instead.
+///
+/// The fallback covers ids the snapshot does not know: a delta store defers to
+/// its full index (which is where the mapping is kept), and a global may be
+/// bound to a node minted after the build. Bindings never need it — each one
+/// descends from a snapshot bucket.
+#[inline]
+fn canon<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    index: &VariantIndex<'_, Cfg>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    id: Cfg::G,
+) -> Cfg::G
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    match index.full.round_repr(id) {
+        Some(r) => r,
+        None => eg.find_const(id),
+    }
 }
 
 /// Collect all matches of `plan` into `pool`, reusing its storage.
@@ -594,7 +895,7 @@ where
 /// The pool is cleared first, so a caller may hand the same pool to every query
 /// in a round; see [`MatchPool`] for why that is where the win is.
 pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -604,13 +905,465 @@ pub fn run_query_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    pool.clear();
+    pool.reshape(&plan.shape);
+    pool.steps = 0;
+    pool.op_filter_policy = op_filter_policy();
     let mut env = Match::new(&plan.shape);
-    run_step(plan, 0, eg, index, globals, &mut env, pool);
+    let exec = Exec::<Cfg, L, S>::static_plan(&plan.steps);
+    run_step(&exec, 0, eg, index, globals, &mut env, pool);
+    add_match_steps(pool.steps);
+}
+
+/// Collect all matches of `rq` into `pool`, choosing the atom order at plan time
+/// (`plan`) or per binding, according to [`runtime_scheduling`].
+///
+/// `plan` is `rq` scheduled by [`schedule_with_stats`](crate::schedule::schedule_with_stats).
+/// It is what runs with the flag off, and it is also the fallback for a query
+/// too wide for the runtime scheduler's masks (see [`ADAPTIVE_MAX_WIDTH`]), so a
+/// caller passes both and gets the same match set either way.
+pub fn run_query_scheduled_into<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    pool: &mut MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    if !runtime_scheduling() || !Adaptive::<Cfg, L, S>::fits(rq) {
+        run_query_into(plan, eg, index, globals, pool);
+        return;
+    }
+    pool.reshape(&rq.shape);
+    pool.steps = 0;
+    pool.op_filter_policy = op_filter_policy();
+    let mut env = Match::new(&rq.shape);
+    let adaptive = Adaptive::new(rq);
+    let exec = Exec::adaptive(&adaptive);
+    run_step(&exec, 0, eg, index, globals, &mut env, pool);
+    add_match_steps(pool.steps);
+}
+
+/// [`run_query_scheduled_into`] into a fresh `Vec`; the counterpart of
+/// [`run_query`] for callers that want the flag respected.
+pub fn run_query_scheduled<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> Vec<Match<Cfg>>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut pool = MatchPool::new();
+    run_query_scheduled_into(rq, plan, eg, index, globals, &mut pool);
+    (0..pool.len()).map(|j| pool.clone_match(j)).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Runtime atom scheduling
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// Whether the matcher picks the next atom per binding instead of once per
+    /// query. Off by default: the plan-time order stays the shipped one.
+    ///
+    /// Thread-local rather than process-wide like [`OP_FILTER_POLICY`], because
+    /// it is read once per query rather than once per join — so the argument
+    /// that made that one an atomic does not apply here — and because the
+    /// differential tests run one match set with the flag on against another
+    /// with it off, which a process-wide flag would make order-dependent under
+    /// the test harness's thread pool.
+    static RUNTIME_SCHEDULING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Turn runtime (per-binding) atom scheduling on or off for subsequent queries
+/// run through [`run_query_scheduled_into`]. Per thread, read at query start.
+pub fn set_runtime_scheduling(on: bool) {
+    RUNTIME_SCHEDULING.with(|c| c.set(on));
+}
+
+/// How the per-binding atom-order choice is selected (design chapter 20).
+///
+/// `Static` and `Runtime` fix [`runtime_scheduling`] for the whole run (the
+/// two existing flags). `Auto` decides per rule per round: the saturation
+/// driver measures each rule's worst access-path skew from the round's
+/// [`FanOuts`](crate::index::FanOuts) and sets the effective flag before the
+/// rule's queries run — skewed paths (a hub bucket) are where a static order
+/// is wrong for exactly the bindings that hit the hub, and flat paths are
+/// where the per-binding overhead buys nothing. The match set is identical in
+/// all three modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SchedulingMode {
+    #[default]
+    Static,
+    Runtime,
+    Auto,
+}
+
+thread_local! {
+    static SCHEDULING_MODE: Cell<SchedulingMode> = const { Cell::new(SchedulingMode::Static) };
+}
+
+/// Select the scheduling mode (see [`SchedulingMode`]). `Static`/`Runtime`
+/// also pin the effective flag; `Auto` leaves it to the saturation driver.
+pub fn set_scheduling_mode(mode: SchedulingMode) {
+    SCHEDULING_MODE.with(|c| c.set(mode));
+    match mode {
+        SchedulingMode::Static => set_runtime_scheduling(false),
+        SchedulingMode::Runtime => set_runtime_scheduling(true),
+        SchedulingMode::Auto => {}
+    }
+}
+
+/// The selected scheduling mode.
+pub fn scheduling_mode() -> SchedulingMode {
+    SCHEDULING_MODE.with(|c| c.get())
+}
+
+/// Whether runtime atom scheduling is in force on this thread.
+pub fn runtime_scheduling() -> bool {
+    RUNTIME_SCHEDULING.with(|c| c.get())
+}
+
+/// Atoms and node variables a runtime-scheduled query may have.
+///
+/// The scheduler state that the static scheduler keeps in two `Vec<bool>` —
+/// which atoms are used and which variables are bound — is a pair of `u64` masks
+/// here, because it is carried per continuation frame and keys the lowering memo. A
+/// wider query falls back to its static plan, which is a performance decision
+/// and not a correctness one: no rule in the corpus has more than a handful of
+/// atoms.
+pub const ADAPTIVE_MAX_WIDTH: usize = 64;
+
+/// Memo key for the eager block, in the slot that otherwise holds an atom index.
+const EAGER: u32 = u32::MAX;
+
+/// One lowered block of steps, with the scheduler state it leaves behind.
+///
+/// `steps` is shared rather than owned because the same block is re-entered once
+/// per partial match that reaches the same decision point, and re-lowering it
+/// there was the whole cost this memo exists to avoid; an `Rc` clone is a
+/// refcount bump and the borrow lives on the executing frame's stack.
+struct Segment<Cfg: EGraphConfig, L: LitVal> {
+    steps: std::rc::Rc<[Step<Cfg::O, Cfg::Index, L>]>,
+    bound: u64,
+    used: u64,
+}
+
+impl<Cfg: EGraphConfig, L: LitVal> Clone for Segment<Cfg, L> {
+    fn clone(&self) -> Self {
+        Self {
+            steps: self.steps.clone(),
+            bound: self.bound,
+            used: self.used,
+        }
+    }
+}
+
+/// The query a runtime-scheduled execution schedules from, plus its lowering
+/// memo.
+///
+/// `emit_atom`'s output is a function of the atom and of which variables are
+/// bound when it is emitted, so a block is memoized under
+/// `(atom, bound-mask, used-mask)` and computed once per distinct mask a run
+/// reaches. There are few of those — a k-atom rule reaches at most the k! atom
+/// prefixes, and in practice a handful — so the memo is a linear-scanned vector
+/// rather than a hash map: three-word key comparisons over a few entries beat
+/// hashing one on the per-partial-match path.
+struct Adaptive<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> {
+    atoms: &'q [crate::resolve::RAtom<Cfg::O, S, L>],
+    /// Atoms phase B ranges over: every atom that is not an equality. The
+    /// equalities are the eager pass's business and are never costed, exactly
+    /// as in the static loop's `min_by` filter.
+    costed: u64,
+    num_vars: usize,
+    memo: std::cell::RefCell<Vec<((u32, u64, u64), Segment<Cfg, L>)>>,
+}
+
+impl<'q, Cfg: EGraphConfig, L: LitVal, S: Copy> Adaptive<'q, Cfg, L, S> {
+    /// Whether `rq` fits the mask width; see [`ADAPTIVE_MAX_WIDTH`].
+    fn fits(rq: &crate::resolve::ResolvedQuery<Cfg::O, S, L>) -> bool {
+        rq.atoms.len() <= ADAPTIVE_MAX_WIDTH && rq.shape.num_vars() <= ADAPTIVE_MAX_WIDTH
+    }
+
+    fn new(rq: &'q crate::resolve::ResolvedQuery<Cfg::O, S, L>) -> Self {
+        let mut costed = 0u64;
+        for (i, atom) in rq.atoms.iter().enumerate() {
+            if !matches!(
+                atom,
+                crate::resolve::RAtom::Eq(..)
+                    | crate::resolve::RAtom::EqGlobal(..)
+                    | crate::resolve::RAtom::Pred { .. }
+            ) {
+                costed |= 1 << i;
+            }
+        }
+        Self {
+            atoms: &rq.atoms,
+            costed,
+            num_vars: rq.shape.num_vars(),
+            memo: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The block `chosen` lowers to at `(bound, used)`: the eager fixpoint when
+    /// `chosen` is [`EAGER`], otherwise that one atom's join and its reads.
+    fn segment(&self, chosen: u32, bound: u64, used: u64) -> Segment<Cfg, L> {
+        let key = (chosen, bound, used);
+        if let Some((_, seg)) = self.memo.borrow().iter().find(|(k, _)| *k == key) {
+            return seg.clone();
+        }
+        // `ADAPTIVE_MAX_WIDTH` bools of stack, in the two shapes the scheduler's
+        // lowering takes its state in.
+        let mut bound_buf = [false; ADAPTIVE_MAX_WIDTH];
+        let mut used_buf = [false; ADAPTIVE_MAX_WIDTH];
+        let bound_arr = &mut bound_buf[..self.num_vars];
+        let used_arr = &mut used_buf[..self.atoms.len()];
+        for (i, b) in bound_arr.iter_mut().enumerate() {
+            *b = bound & (1 << i) != 0;
+        }
+        for (i, u) in used_arr.iter_mut().enumerate() {
+            *u = used & (1 << i) != 0;
+        }
+        let mut steps = Vec::new();
+        if chosen == EAGER {
+            crate::schedule::lower_eager(self.atoms, used_arr, bound_arr, &mut steps);
+        } else {
+            let ai = chosen as usize;
+            crate::schedule::emit_atom(&self.atoms[ai], ai, bound_arr, &mut steps);
+            used_arr[ai] = true;
+        }
+        let seg = Segment {
+            steps: steps.into(),
+            bound: mask_of(bound_arr),
+            used: mask_of(used_arr),
+        };
+        self.memo.borrow_mut().push((key, seg.clone()));
+        seg
+    }
+}
+
+fn mask_of(flags: &[bool]) -> u64 {
+    flags
+        .iter()
+        .enumerate()
+        .fold(0u64, |m, (i, &b)| if b { m | (1 << i) } else { m })
+}
+
+/// A position the matcher executes from: a slice of steps, and — under runtime
+/// scheduling — what to do when it runs out.
+///
+/// Statically scheduled, `steps` is the whole plan and `adaptive` is `None`, so
+/// this is the `&QueryPlan` the engine used to carry. Runtime-scheduled, `steps`
+/// is one lowered block owned by the frame that chose it, and the masks are the
+/// scheduler state at its end. The chain of frames on the stack is the order
+/// chosen for the partial match under execution; a sibling binding at the same
+/// depth may choose a different one.
+struct Exec<'a, Cfg: EGraphConfig, L: LitVal, S: Copy> {
+    steps: &'a [Step<Cfg::O, Cfg::Index, L>],
+    adaptive: Option<&'a Adaptive<'a, Cfg, L, S>>,
+    bound: u64,
+    used: u64,
+}
+
+impl<'a, Cfg: EGraphConfig, L: LitVal, S: Copy> Exec<'a, Cfg, L, S> {
+    fn static_plan(steps: &'a [Step<Cfg::O, Cfg::Index, L>]) -> Self {
+        Self {
+            steps,
+            adaptive: None,
+            bound: 0,
+            used: 0,
+        }
+    }
+
+    /// The empty prefix of a runtime-scheduled run: the first thing the engine
+    /// does is hit the end of it, which is the first decision point.
+    fn adaptive(ad: &'a Adaptive<'a, Cfg, L, S>) -> Self {
+        Self {
+            steps: &[],
+            adaptive: Some(ad),
+            bound: 0,
+            used: 0,
+        }
+    }
+}
+
+/// Decide what runs next, at the end of a runtime-scheduled block.
+///
+/// The two phases of the static scheduling loop (chapter 08), one iteration per
+/// call, with the environment live: the eager pass to fixpoint, then the
+/// cheapest remaining atom. The order is the same as the static one because it
+/// is the same code lowering the same atoms; only the choice in phase B is made
+/// from the bindings in hand rather than from a per-round average.
+///
+/// Both phases run against the state at the end of the current block, and the
+/// block below is executed before the next decision, so every variable the
+/// scheduler calls bound is actually set in `env` when phase B reads it.
+fn advance<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &mut Match<Cfg>,
+    results: &mut MatchPool<Cfg>,
+) where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let eager = ad.segment(EAGER, exec.bound, exec.used);
+    if !eager.steps.is_empty() {
+        let next = Exec {
+            steps: &eager.steps,
+            adaptive: Some(ad),
+            bound: eager.bound,
+            used: eager.used,
+        };
+        run_step(&next, 0, eg, index, globals, env, results);
+        return;
+    }
+
+    // No atom left to schedule: every atom is used, or the ones left are
+    // equalities between two unbound variables, which the static scheduler
+    // leaves unenforced for the same reason (nothing else in the query binds
+    // them). Either way the environment is a match.
+    let Some(ai) = choose_atom(ad, exec, eg, index, globals, env) else {
+        results.steps += 1;
+        results.push(env);
+        return;
+    };
+    let seg = ad.segment(ai as u32, exec.bound, exec.used);
+    let next = Exec {
+        steps: &seg.steps,
+        adaptive: Some(ad),
+        bound: seg.bound,
+        used: seg.used,
+    };
+    run_step(&next, 0, eg, index, globals, env, results);
+}
+
+/// The unused atom whose join opens the shortest cursor under the current
+/// bindings, or `None` if none is schedulable.
+///
+/// Phase B of the scheduling loop with the estimator replaced by a measurement.
+/// The static scheduler prices an atom by its relation scaled by one measured
+/// mean fan-out per bound key (`schedule::estimate_cost`); those means are
+/// averages over skewed distributions, so they are right about the workload and
+/// wrong about the binding (chapter 20, Fact 2). Here the atom is priced by the
+/// length of the shortest bucket its join would actually open, which is the
+/// leapfrog intersection's own bound on the candidates it can propose: an upper
+/// bound on the work, exact for a single-lookup join, and read from the buckets
+/// the join is about to open anyway.
+///
+/// Ties keep the lowest atom index, so the choice is a function of the bindings
+/// and the atom numbering and nothing else.
+fn choose_atom<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    ad: &Adaptive<'_, Cfg, L, S>,
+    exec: &Exec<'_, Cfg, L, S>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> Option<usize>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let candidates = ad.costed & !exec.used;
+    // One candidate is its own minimum. Worth the branch because it is the
+    // common case — the last atom of every rule, and both remaining atoms of a
+    // two-atom one — and because the alternative is a bucket resolution per
+    // lookup that `run_join` is about to repeat.
+    if candidates.count_ones() == 1 {
+        let ai = candidates.trailing_zeros() as usize;
+        #[cfg(test)]
+        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+        return Some(ai);
+    }
+    let mut best: Option<(usize, usize)> = None;
+    for ai in 0..ad.atoms.len() {
+        if candidates & (1 << ai) == 0 {
+            continue;
+        }
+        let seg = ad.segment(ai as u32, exec.bound, exec.used);
+        let len = cursor_len(&seg, ai, eg, index, globals, env);
+        if best.is_none_or(|(b, _)| len < b) {
+            best = Some((len, ai));
+        }
+    }
+    #[cfg(test)]
+    if let Some((_, ai)) = best {
+        ATOM_CHOICE_LOG.with(|l| l.borrow_mut().push((exec.used, ai)));
+    }
+    best.map(|(_, ai)| ai)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One entry per phase-B decision: the atoms already scheduled, and the one
+    /// chosen next. Drained by the tests that assert the choice is per binding;
+    /// release has no probe on the path.
+    static ATOM_CHOICE_LOG: std::cell::RefCell<Vec<(u64, usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take and clear this thread's record of per-binding atom choices.
+#[cfg(test)]
+pub(crate) fn take_atom_choices() -> Vec<(u64, usize)> {
+    ATOM_CHOICE_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// Shortest bucket the block's join would open, in the slice this atom's
+/// semi-naive mode reads.
+///
+/// One `len` per lookup on buckets `run_join` is about to resolve again, which
+/// is the same pair of reads the operator-restriction policy already makes per
+/// binding (see [`demote_by_op`]). `FullMinusDelta` reads the full side, an
+/// upper bound on `full ∖ delta`, for the reason given in `run_join`: a tighter
+/// number would cost the overlap, which is the work being priced.
+fn cursor_len<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    seg: &Segment<Cfg, L>,
+    atom_id: usize,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    index: &VariantIndex<'_, Cfg>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> usize
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    // Every atom phase B costs lowers to a `Join` first; the ones that do not
+    // are the equalities, which are filtered out before this is called.
+    let Some(Step::Join { lookups, .. }) = seg.steps.first() else {
+        return usize::MAX;
+    };
+    let store = match index.mode(atom_id) {
+        IndexMode::Delta => index.delta,
+        IndexMode::Full | IndexMode::FullMinusDelta => index.full,
+    };
+    let mut best = usize::MAX;
+    for l in lookups {
+        let len = bucket_in(store, index, l, eg, globals, env).len();
+        if len < best {
+            best = len;
+        }
+    }
+    best
 }
 
 fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     index: &VariantIndex<'_, Cfg>,
@@ -622,20 +1375,32 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    bump_match_steps();
-    if step_idx >= plan.steps.len() {
-        results.push(env);
+    if step_idx >= exec.steps.len() {
+        // End of the step sequence. Statically scheduled, that is the whole
+        // plan and the environment is a match; runtime-scheduled, it is a
+        // decision point — `advance` either finds another atom to lower or
+        // reaches the same conclusion. The step tally counts one per executed
+        // step and one per emitted match in both modes, so the two are
+        // comparable; the choice itself is not a step.
+        match exec.adaptive {
+            None => {
+                results.steps += 1;
+                results.push(env);
+            }
+            Some(ad) => advance(ad, exec, eg, index, globals, env, results),
+        }
         return;
     }
+    results.steps += 1;
 
-    match &plan.steps[step_idx] {
+    match &exec.steps[step_idx] {
         Step::Join {
             target,
             lookups,
             atom_id,
         } => {
             run_join(
-                plan, step_idx, *target, lookups, *atom_id, eg, index, globals, env, results,
+                exec, step_idx, *target, lookups, *atom_id, eg, index, globals, env, results,
             );
         }
         Step::ExtractChild {
@@ -646,7 +1411,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let parent_id = env.get(*parent);
             let child = eg.child_at(parent_id, *pos);
             env.set(*target, child);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.clear(*target);
         }
         Step::CheckChildEq {
@@ -657,24 +1422,30 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let parent_id = env.get(*parent);
             let child = eg.child_at(parent_id, *pos);
             let exp = env.resolve_pv(*expected, globals);
-            if eg.find_const(child) == eg.find_const(exp) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            if canon(index, eg, child) == canon(index, eg, exp) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckEq { a, b } => {
-            if eg.find_const(env.get(*a)) == eg.find_const(env.get(*b)) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            if canon(index, eg, env.get(*a)) == canon(index, eg, env.get(*b)) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
         Step::CheckEqGlobal { local, global } => {
-            if eg.find_const(env.get(*local)) == eg.find_const(globals.binding(*global)) {
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            if canon(index, eg, env.get(*local)) == canon(index, eg, globals.binding(*global)) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
         }
-        Step::CopyBinding { target, other } => {
-            let val = eg.find_const(env.get(*other));
+        Step::BindGlobal { target, global } => {
+            let val = canon(index, eg, globals.binding(*global));
             env.set(*target, val);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
+            env.clear(*target);
+        }
+        Step::CopyBinding { target, other } => {
+            let val = canon(index, eg, env.get(*other));
+            env.set(*target, val);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.clear(*target);
         }
         Step::ExpandA {
@@ -689,7 +1460,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let mut buf = results.take_id_buf();
             eg.seq_children(node_id, &mut buf);
             run_expand_a(
-                plan, step_idx, children, *pre, *suf, &buf, eg, index, globals, env, results,
+                exec, step_idx, children, *pre, *suf, &buf, eg, index, globals, env, results,
             );
             results.give_id_buf(buf);
         }
@@ -703,10 +1474,10 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let mut residual = results.take_mset_buf();
             eg.mset_children(node_id, &mut residual);
             for entry in &mut residual {
-                entry.0 = eg.find_const(entry.0);
+                entry.0 = canon(index, eg, entry.0);
             }
             run_decompose_ac(
-                plan,
+                exec,
                 step_idx,
                 elems,
                 *rest,
@@ -724,10 +1495,10 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let mut residual = results.take_id_buf();
             eg.set_children(node_id, &mut residual);
             for entry in &mut residual {
-                *entry = eg.find_const(*entry);
+                *entry = canon(index, eg, *entry);
             }
             run_decompose_aci(
-                plan, step_idx, elems, *rest, &residual, eg, index, globals, env, results,
+                exec, step_idx, elems, *rest, &residual, eg, index, globals, env, results,
             );
             results.give_id_buf(residual);
         }
@@ -735,8 +1506,65 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let node_id = env.get(*node);
             if let Some(lit_val_id) = eg.get_lit_val_id(node_id) {
                 env.set_lit_val(*val, lit_val_id);
-                run_step(plan, step_idx + 1, eg, index, globals, env, results);
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
             }
+        }
+        Step::CheckLit { node, value } => {
+            let node_id = env.get(*node);
+            if eg.get_lit_val(node_id) == Some(value) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
+            }
+        }
+        Step::CheckPred { guard } => {
+            if eval_guard(guard, eg, env) {
+                run_step(exec, step_idx + 1, eg, index, globals, env, results);
+            }
+        }
+    }
+}
+
+/// Inline capacity for a guard's argument list; the primitives are arithmetic and
+/// comparison, so two covers all of them (`apply::PRIM_ARGS`, same reasoning).
+const GUARD_ARGS: usize = 2;
+
+/// Evaluate a guard against the current bindings.
+///
+/// The values come from the match's literal slots, which the guard's `deps` guarantee
+/// are filled: the scheduler emits the check only after every `LitBind` atom feeding it
+/// has run.
+fn eval_guard<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    guard: &crate::resolve::PredGuard<Cfg::O, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    env: &Match<Cfg>,
+) -> bool
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let v = eval_pred_expr(&guard.expr, eg, env);
+    (guard.truthy)(&v)
+}
+
+fn eval_pred_expr<Cfg, L, const TRACK: bool, const PROOFS: bool>(
+    expr: &crate::resolve::RPredExpr<Cfg::O, L>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    env: &Match<Cfg>,
+) -> L
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    use crate::resolve::RPredExpr;
+    match expr {
+        RPredExpr::Val(v) => eg.lits().get(env.get_lit_val(*v)).clone(),
+        RPredExpr::Const(l) => l.clone(),
+        RPredExpr::App { eval, args, .. } => {
+            let vals: SmallVec<[L; GUARD_ARGS]> =
+                args.iter().map(|a| eval_pred_expr(a, eg, env)).collect();
+            let refs: SmallVec<[&L; GUARD_ARGS]> = vals.iter().collect();
+            eval(&refs)
         }
     }
 }
@@ -746,7 +1574,7 @@ fn run_step<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     children: &[PatVar],
     pre: Option<SeqVarId>,
@@ -769,7 +1597,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 return;
             }
             bind_fixed_and_continue(
-                plan, step_idx, children, seq, 0, eg, index, globals, env, results,
+                exec, step_idx, children, seq, 0, eg, index, globals, env, results,
             );
         }
         (Some(p), None) => {
@@ -779,7 +1607,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let split = seq.len() - nfixed;
             env.push_seq(p, &seq[..split]);
             bind_fixed_and_continue(
-                plan, step_idx, children, seq, split, eg, index, globals, env, results,
+                exec, step_idx, children, seq, split, eg, index, globals, env, results,
             );
             env.pop_seq(p);
         }
@@ -789,7 +1617,7 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             }
             env.push_seq(s, &seq[nfixed..]);
             bind_fixed_and_continue(
-                plan, step_idx, children, seq, 0, eg, index, globals, env, results,
+                exec, step_idx, children, seq, 0, eg, index, globals, env, results,
             );
             env.pop_seq(s);
         }
@@ -802,13 +1630,8 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
                 env.push_seq(p, &seq[..offset]);
                 env.push_seq(s, &seq[offset + nfixed..]);
                 bind_fixed_and_continue(
-                    plan, step_idx, children, seq, offset, eg, index, globals, env, results,
+                    exec, step_idx, children, seq, offset, eg, index, globals, env, results,
                 );
-                for &cv in children {
-                    if let PatVar::Local(v) = cv {
-                        env.clear(v)
-                    };
-                }
                 env.pop_seq(s);
                 env.pop_seq(p);
             }
@@ -816,8 +1639,29 @@ fn run_expand_a<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     }
 }
 
+/// The local variables a single fixed-child binding pass bound, in binding order.
+/// Inline for the fixed children of a variadic pattern; a pattern with more than eight
+/// spills to the heap.
+type BoundHere = SmallVec<[VarId; 8]>;
+
+/// Unbind exactly the variables `bound` records.
+///
+/// A child variable already bound when a fixed-child pass runs is checked against the
+/// node's child, not rebound: an earlier step bound it, and its value constrains this
+/// node. Cleanup must therefore clear the variables that pass bound and no others, on
+/// the failure path as well as after the continuation returns. Clearing every local
+/// child instead unbinds a variable an enclosing step owns, with two consequences: a
+/// later re-join keyed on that variable reads it as unbound and `Match::get` panics, and
+/// the next candidate of an enclosing loop rebinds it from its own children rather than
+/// checking it, which drops the constraint and admits matches that violate it.
+fn unbind<Cfg: EGraphConfig>(env: &mut Match<Cfg>, bound: &BoundHere) {
+    for &v in bound {
+        env.clear(v);
+    }
+}
+
 fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     children: &[PatVar],
     seq: &[Cfg::G],
@@ -832,31 +1676,31 @@ fn bind_fixed_and_continue<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: boo
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
+    let mut bound: BoundHere = BoundHere::new();
     for (i, &cv) in children.iter().enumerate() {
         let val = seq[offset + i];
         match cv {
             PatVar::Global(gid) => {
-                if eg.find_const(globals.binding(gid)) != eg.find_const(val) {
+                if canon(index, eg, globals.binding(gid)) != canon(index, eg, val) {
+                    unbind(env, &bound);
                     return;
                 }
             }
             PatVar::Local(vid) => {
                 if let Some(existing) = env.nodes[vid.idx()] {
-                    if eg.find_const(existing) != eg.find_const(val) {
+                    if canon(index, eg, existing) != canon(index, eg, val) {
+                        unbind(env, &bound);
                         return;
                     }
                 } else {
                     env.set(vid, val);
+                    bound.push(vid);
                 }
             }
         }
     }
-    run_step(plan, step_idx + 1, eg, index, globals, env, results);
-    for &cv in children {
-        if let PatVar::Local(v) = cv {
-            env.clear(v)
-        };
-    }
+    run_step(exec, step_idx + 1, eg, index, globals, env, results);
+    unbind(env, &bound);
 }
 
 // ---------------------------------------------------------------------------
@@ -916,7 +1760,7 @@ fn bound_mult_val<Cfg: EGraphConfig>(mult: &RMult, env: &Match<Cfg>) -> Option<u
     }
 }
 fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     rest: Option<MsetVarId>,
@@ -932,12 +1776,12 @@ fn run_decompose_ac<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     decompose_ac_elem(
-        plan, step_idx, elems, 0, rest, residual, eg, index, globals, env, results,
+        exec, step_idx, elems, 0, rest, residual, eg, index, globals, env, results,
     );
 }
 
 fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[(PatVar, RMult)],
     ei: usize,
@@ -956,16 +1800,11 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let zero = Cfg::M::ZERO;
     if ei >= elems.len() {
         if let Some(rv) = rest {
-            let remaining: Vec<Cfg::C> = residual
-                .iter()
-                .filter(|&&(_, m)| m > zero)
-                .map(|&(g, m)| Cfg::mset_child_with_mult(g, m))
-                .collect();
-            env.push_mset(rv, &remaining);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            env.push_mset_residual(rv, residual);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.pop_mset(rv);
         } else if residual.iter().all(|&(_, m)| m == zero) {
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
         }
         return;
     }
@@ -973,8 +1812,8 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     let (var, mult) = &elems[ei];
 
     let bound_repr = match *var {
-        PatVar::Global(gid) => Some(eg.find_const(globals.binding(gid))),
-        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| eg.find_const(v)),
+        PatVar::Global(gid) => Some(canon(index, eg, globals.binding(gid))),
+        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| canon(index, eg, v)),
     };
 
     if let Some(repr) = bound_repr {
@@ -1000,7 +1839,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
             let prev = residual[pos].1;
             residual[pos].1 = prev.saturating_sub(take);
             decompose_ac_elem(
-                plan,
+                exec,
                 step_idx,
                 elems,
                 ei + 1,
@@ -1046,7 +1885,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         let prev = residual[ri].1;
         residual[ri].1 = prev.saturating_sub(take);
         decompose_ac_elem(
-            plan,
+            exec,
             step_idx,
             elems,
             ei + 1,
@@ -1071,7 +1910,7 @@ fn decompose_ac_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // ---------------------------------------------------------------------------
 
 fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[PatVar],
     rest: Option<SetVarId>,
@@ -1088,12 +1927,12 @@ fn run_decompose_aci<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     let mut used = crate::containers::bitset::BitSet::new(residual.len());
     decompose_aci_elem(
-        plan, step_idx, elems, 0, rest, residual, &mut used, eg, index, globals, env, results,
+        exec, step_idx, elems, 0, rest, residual, &mut used, eg, index, globals, env, results,
     );
 }
 
 fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     elems: &[PatVar],
     ei: usize,
@@ -1112,25 +1951,19 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 {
     if ei >= elems.len() {
         if let Some(rv) = rest {
-            let remaining: Vec<Cfg::G> = residual
-                .iter()
-                .enumerate()
-                .filter(|&(i, _)| !used.test(i))
-                .map(|(_, &g)| g)
-                .collect();
-            env.push_set(rv, &remaining);
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            env.push_set_residual(rv, residual, used);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
             env.pop_set(rv);
         } else if (0..residual.len()).all(|i| used.test(i)) {
-            run_step(plan, step_idx + 1, eg, index, globals, env, results);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
         }
         return;
     }
 
     let var = elems[ei];
     let bound_repr = match var {
-        PatVar::Global(gid) => Some(eg.find_const(globals.binding(gid))),
-        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| eg.find_const(v)),
+        PatVar::Global(gid) => Some(canon(index, eg, globals.binding(gid))),
+        PatVar::Local(vid) => env.nodes[vid.idx()].map(|v| canon(index, eg, v)),
     };
 
     if let Some(repr) = bound_repr {
@@ -1141,7 +1974,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         {
             used.set(pos);
             decompose_aci_elem(
-                plan,
+                exec,
                 step_idx,
                 elems,
                 ei + 1,
@@ -1169,7 +2002,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         env.set(vid, residual[ri]);
         used.set(ri);
         decompose_aci_elem(
-            plan,
+            exec,
             step_idx,
             elems,
             ei + 1,
@@ -1191,8 +2024,145 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 // Join — leapfrog intersection of index lookups
 // ---------------------------------------------------------------------------
 
+/// Relation size per candidate above which a join applies its operator
+/// restriction as a per-candidate test rather than as a leapfrog operand, and
+/// the ceiling that threshold stops climbing at.
+///
+/// The two mechanisms are priced by two lengths the join reads before it opens
+/// anything: `m`, the smallest of the atom's other buckets, which bounds the
+/// candidates the ring will propose, and `n = |by_op[op]|`. The test costs `m`
+/// random loads into the round's `op` table. The operand costs a fixed start-up,
+/// a sort of the ring plus a gallop of the `by_op` cursor to the bucket's first
+/// key, plus one iteration per element of the smaller side, `min(m, n)`. The
+/// rule is
+///
+/// ```text
+/// filter  iff  n >= min(512 * m, 131_072)  and  m <= 2 * n
+/// ```
+///
+/// The first condition prevents a per-candidate test when the operator relation
+/// is small enough to be the better intersection driver. The second prevents
+/// the test from scaling with an enormous candidate bucket after the relation
+/// side has become the tighter bound. Chapter 20 records the design boundary;
+/// deterministic tests pin the rule and set equivalence.
+const OP_FILTER_RELATION_PER_CANDIDATE: usize = 512;
+
+/// Ceiling on the fitted threshold; see [`OP_FILTER_RELATION_PER_CANDIDATE`].
+pub const OP_FILTER_MIN_RELATION: usize = 131_072;
+
+/// Relative work bound used to stop filtering when the candidate bucket grows
+/// beyond twice the operator relation.
+const OP_FILTER_SEEK_COST: usize = 2;
+
+/// Which mechanism a join uses for its `ByOp` restriction.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OpFilterPolicy {
+    /// Decide per binding from the two bucket lengths. The shipped policy; see
+    /// [`OP_FILTER_MIN_RELATION`].
+    Adaptive,
+    /// Always demote `ByOp` to a per-candidate operator test.
+    AlwaysFilter,
+    /// Always keep `ByOp` in the leapfrog ring.
+    AlwaysLeapfrog,
+}
+
+/// The live policy. Tests can pin either equivalent mechanism. It is read once
+/// per query into [`MatchPool`], never per join, so the atomic load stays off the
+/// per-partial-match path.
+static OP_FILTER_POLICY: AtomicUsize = AtomicUsize::new(0);
+
+/// Pin the operator-restriction policy for subsequent queries. Process-wide, and
+/// read at query start.
+pub fn set_op_filter_policy(p: OpFilterPolicy) {
+    OP_FILTER_POLICY.store(
+        match p {
+            OpFilterPolicy::Adaptive => 0,
+            OpFilterPolicy::AlwaysFilter => 1,
+            OpFilterPolicy::AlwaysLeapfrog => 2,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+/// The operator-restriction policy in force.
+pub fn op_filter_policy() -> OpFilterPolicy {
+    match OP_FILTER_POLICY.load(Ordering::Relaxed) {
+        1 => OpFilterPolicy::AlwaysFilter,
+        2 => OpFilterPolicy::AlwaysLeapfrog,
+        _ => OpFilterPolicy::Adaptive,
+    }
+}
+
+/// Which mechanism a join applied its `ByOp` restriction with. Recorded per
+/// join execution in test builds only; release has no probe on the path.
+#[cfg(test)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum OpRestriction {
+    /// `ByOp` stayed in the leapfrog ring as an intersection operand.
+    Leapfrog,
+    /// `ByOp` was demoted to a per-candidate `op[id]` test.
+    Filter,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One entry per join execution that had a `ByOp` restriction to place.
+    /// Drained by the policy tests; see `op_restriction_log`.
+    static OP_RESTRICTION_LOG: std::cell::RefCell<Vec<OpRestriction>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take and clear this thread's record of per-join restriction decisions.
+#[cfg(test)]
+pub(crate) fn take_op_restriction_log() -> Vec<OpRestriction> {
+    OP_RESTRICTION_LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// Decide how this join places its `ByOp` restriction: `true` to demote it to a
+/// per-candidate operator test, `false` to keep it as a leapfrog operand.
+///
+/// `m` is the smallest of the atom's other buckets, `usize::MAX` when it has
+/// none; `n` is `|by_op[op]|`, or `None` when the join has no `ByOp` to place,
+/// which is a single-lookup `ByOp` scan: it has to stay a cursor because it is
+/// the only thing enumerating anything. Two compares and a shift on values already
+/// in registers; see [`OP_FILTER_RELATION_PER_CANDIDATE`] for where they come
+/// from.
+#[inline]
+fn demote_by_op(m: usize, n: Option<usize>, policy: OpFilterPolicy) -> bool {
+    let Some(n) = n else { return false };
+    let demote = match policy {
+        OpFilterPolicy::AlwaysFilter => true,
+        OpFilterPolicy::AlwaysLeapfrog => false,
+        OpFilterPolicy::Adaptive => {
+            n >= OP_FILTER_MIN_RELATION.min(m.saturating_mul(OP_FILTER_RELATION_PER_CANDIDATE))
+                && m <= n.saturating_mul(OP_FILTER_SEEK_COST)
+        }
+    };
+    #[cfg(test)]
+    OP_RESTRICTION_LOG.with(|l| {
+        l.borrow_mut().push(if demote {
+            OpRestriction::Filter
+        } else {
+            OpRestriction::Leapfrog
+        })
+    });
+    demote
+}
+
+/// Turn a resolved bucket into a cursor; an absent key resolves to the empty
+/// slice, hence to an empty cursor.
+///
+/// The cursor type is [`Probed`], which is `SortedVecCursor` itself unless the
+/// `seek-stats` feature is on; see `leapfrog::seek_stats`. This function and
+/// [`cursor_in`] are the two places the push-based matcher opens an index
+/// bucket, so wrapping them counts every seek the join layer issues.
+#[inline]
+fn cursor_of<G: crate::containers::DenseId>(b: &[G]) -> Probed<'_, G> {
+    Probed::new(b)
+}
+
 fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     target: VarId,
     lookups: &[IndexLookup<Cfg::O, Cfg::Index>],
@@ -1211,87 +2181,173 @@ fn run_join<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
         // No constraints — preserve original behavior (no match emitted).
         return;
     }
-    // Build a homogeneous cursor vector for this atom's mode, then run the
-    // generic leapfrog. The mode is fixed for the whole atom (all its
-    // lookups read the same flavor); see design doc "How a Variant Executes".
+    // Every `Step::Join` the scheduler emits carries exactly one `ByOp`: it is
+    // the first lookup at all eight emission sites in `schedule.rs`, and none of
+    // them appends a second. The demotion below relies on that: it takes one
+    // `ByOp` out of the ring and covers it with the per-candidate test, so a
+    // second one would silently stay a cursor while the first became a filter,
+    // which is a different split, still sound but unpriced.
+    debug_assert_eq!(
+        lookups
+            .iter()
+            .filter(|l| matches!(l, IndexLookup::ByOp { .. }))
+            .count(),
+        1,
+        "a join's lookups must carry exactly one ByOp"
+    );
+    // A `ByOp` lookup in a join that has a narrower lookup too can be applied
+    // two ways, and which is cheaper depends on the binding, not on the atom.
+    //
+    // `IndexStore::build_from` files every non-subsumed node into `by_op` and
+    // into its `by_repr` / `by_child_pos` / `by_contains` buckets from one id
+    // stream, so for any other bucket `B` of the same store
+    // `by_op[o] ∩ B = { n ∈ B : op(n) = o }`: the intersection and the test are
+    // the same set. They are not the same cost. Demoting `by_op[o]` to a test
+    // costs one `op[id]` load per element of `B`, whatever the intersection
+    // turns out to be. Keeping it in the leapfrog ring costs one iteration per
+    // element of the *smaller* of `B` and `by_op[o]`, because a seek from either
+    // side clears every key of the other side below it in one step, and each is a
+    // doubling gallop plus a bisection over the two vectors. So the ring wins when
+    // `by_op[o]` is small, both because it does less work and because its
+    // working set stays in cache, and `|B|` and `|by_op[o]|` are `len` reads on
+    // buckets the join is opening anyway (see `OP_FILTER_RELATION_PER_CANDIDATE`
+    // for the measured crossover and the rule fitted to it).
+    //
+    // The set identity holds in each of the three modes because the delta store
+    // is built by the same `build_from` over the same e-graph: a node in
+    // `full.B ∖ delta.B` cannot be in the delta id stream at all (if it were,
+    // the same child/class/op reads that put it in `full.B` would have put it
+    // in `delta.B`), so it is not in `delta.by_op[o]` either.
+    let op_pos = if lookups.len() > 1 {
+        lookups
+            .iter()
+            .position(|l| matches!(l, IndexLookup::ByOp { .. }))
+    } else {
+        None
+    };
+    let policy = results.op_filter_policy;
+
+    // One pass per mode: resolve the `ByOp` bucket for its length, then resolve
+    // and open the other lookups while tracking the smallest of them, and put
+    // the `ByOp` cursor back in the ring only if the decision keeps it. The ring
+    // is sorted by key at construction, so appending it last is the same join.
+    //
+    // The mode is fixed for the whole atom (all its lookups read the same
+    // flavor); see design doc "How a Variant Executes".
+    macro_rules! dispatch {
+        ($store:expr, $open:expr) => {{
+            let store = $store;
+            let mut m = usize::MAX;
+            let mut cursors = CursorVec::new();
+            for (i, l) in lookups.iter().enumerate() {
+                if Some(i) == op_pos {
+                    continue;
+                }
+                let b = bucket_in(store, index, l, eg, globals, env);
+                let len = b.len();
+                if len < m {
+                    m = len;
+                }
+                cursors.push($open(b, l));
+            }
+            let op_bucket = op_pos.map(|p| bucket_in(store, index, &lookups[p], eg, globals, env));
+            let op_filter = if demote_by_op(m, op_bucket.map(|b| b.len()), policy) {
+                match &lookups[op_pos.expect("a demoted join has a ByOp lookup")] {
+                    IndexLookup::ByOp { op } => Some(*op),
+                    _ => unreachable!("op_pos indexes a ByOp lookup"),
+                }
+            } else {
+                if let (Some(b), Some(p)) = (op_bucket, op_pos) {
+                    cursors.push($open(b, &lookups[p]));
+                }
+                None
+            };
+            leapfrog_join(
+                cursors, op_filter, exec, step_idx, target, eg, index, globals, env, results,
+            );
+        }};
+    }
+
     match index.mode(atom_id) {
-        IndexMode::Full => {
-            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
-                .iter()
-                .map(|l| cursor_in(index.full, l, eg, globals, env))
-                .collect();
-            leapfrog_join(
-                cursors, plan, step_idx, target, eg, index, globals, env, results,
-            );
-        }
-        IndexMode::Delta => {
-            let cursors: CursorVec<SortedVecCursor<'_, Cfg::G>> = lookups
-                .iter()
-                .map(|l| cursor_in(index.delta, l, eg, globals, env))
-                .collect();
-            leapfrog_join(
-                cursors, plan, step_idx, target, eg, index, globals, env, results,
-            );
-        }
-        IndexMode::FullMinusDelta => {
-            let cursors: CursorVec<
-                Difference<SortedVecCursor<'_, Cfg::G>, SortedVecCursor<'_, Cfg::G>>,
-            > = lookups
-                .iter()
-                .map(|l| {
-                    Difference::new(
-                        cursor_in(index.full, l, eg, globals, env),
-                        cursor_in(index.delta, l, eg, globals, env),
-                    )
-                })
-                .collect();
-            leapfrog_join(
-                cursors, plan, step_idx, target, eg, index, globals, env, results,
-            );
-        }
+        IndexMode::Full => dispatch!(index.full, |b, _l| cursor_of(b)),
+        IndexMode::Delta => dispatch!(index.delta, |b, _l| cursor_of(b)),
+        // The candidate set is `full ∖ delta`, so the full-side length is an
+        // upper bound on it and the decision reads that. A tighter estimate
+        // would need the delta bucket's overlap, which is the work being priced.
+        IndexMode::FullMinusDelta => dispatch!(index.full, |b, l| Difference::new(
+            cursor_of(b),
+            cursor_in(index.delta, index, l, eg, globals, env)
+        )),
     }
 }
 
-/// Resolve one lookup's key against a single index store, returning a cursor
-/// over the matching bucket (empty if the key is absent).
-fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+/// Resolve one lookup's key against a single index store, returning the bucket
+/// it selects (the empty slice if the key names no bucket of this build).
+///
+/// `store` is the slice this atom's mode reads (full or delta); `index` is the
+/// round's view, consulted only for the canonicalization the buckets are keyed
+/// by (see [`canon`]). Kept apart from [`cursor_of`] because `run_join` reads
+/// each bucket's length before it decides which buckets become cursors, and
+/// resolving twice would repeat the canonicalization and the hash probe.
+fn bucket_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
     store: &'a IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
     l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
-) -> SortedVecCursor<'a, Cfg::G>
+) -> &'a [Cfg::G]
 where
     Cfg: EGraphConfig,
     L: LitVal,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let sv: Option<&SortedVec<Cfg::G>> = match l {
-        IndexLookup::ByOp { op } => store.by_op.get(op),
+    match l {
+        IndexLookup::ByOp { op } => store.nodes_by_op(*op),
         IndexLookup::ByChildPos { child, pos } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
-            store.by_child_pos.get(&(r, *pos))
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
+            store.nodes_by_child_pos(r, *pos)
         }
         IndexLookup::ByRepr { repr } => {
-            let r = eg.find_const(env.get(*repr));
-            store.by_repr.get(&r)
+            let r = canon(index, eg, env.get(*repr));
+            store.nodes_by_repr(r)
         }
         IndexLookup::ByContains { child } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
-            store.by_contains.get(&r)
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
+            store.nodes_by_contains(r)
         }
-    };
-    match sv {
-        Some(v) => v.iter(),
-        None => SortedVecCursor::new(&[]),
     }
 }
 
+/// [`bucket_in`] followed by [`cursor_of`], for the one caller that needs no
+/// length: the delta side of a `FullMinusDelta` cursor, which is subtracted
+/// rather than enumerated.
+fn cursor_in<'a, Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
+    store: &'a IndexStore<Cfg>,
+    index: &VariantIndex<'_, Cfg>,
+    l: &IndexLookup<Cfg::O, Cfg::Index>,
+    eg: &EGraph<Cfg, L, TRACK, PROOFS>,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+    env: &Match<Cfg>,
+) -> Probed<'a, Cfg::G>
+where
+    Cfg: EGraphConfig,
+    L: LitVal,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    cursor_of(bucket_in(store, index, l, eg, globals, env))
+}
+
 /// Run a leapfrog intersection over `cursors` (any `SortedCursor` flavor),
-/// binding `target` to each match and recursing into the next plan step.
+/// binding `target` to each match and recursing into the next step.
+///
+/// `op_filter` carries the operator of a `ByOp` lookup that `run_join` left out
+/// of `cursors`; a candidate whose operator differs is skipped without being
+/// bound or counted as a match step (see `run_join` for why the two forms agree).
 fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     cursors: CursorVec<C>,
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    op_filter: Option<Cfg::O>,
+    exec: &Exec<'_, Cfg, L, S>,
     step_idx: usize,
     target: VarId,
     eg: &EGraph<Cfg, L, TRACK, PROOFS>,
@@ -1315,8 +2371,11 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
     let mut join = LeapfrogJoin::new(cursors);
     while join.is_valid() {
         let id = join.key();
-        env.set(target, id);
-        run_step(plan, step_idx + 1, eg, index, globals, env, results);
+        if op_filter.is_none_or(|o| index.full.round_op(id).unwrap_or_else(|| eg.node_op(id)) == o)
+        {
+            env.set(target, id);
+            run_step(exec, step_idx + 1, eg, index, globals, env, results);
+        }
         join.next();
     }
     env.set_opt(target, prev);
@@ -1326,32 +2385,32 @@ fn leapfrog_join<Cfg, L, S: Copy, C, const TRACK: bool, const PROOFS: bool>(
 // MatchIterator — explicit DFS stack machine (lazy, pull-based)
 // ---------------------------------------------------------------------------
 
-/// Resolve an `IndexLookup` to a `&SortedVec` from the **full** index (the
+/// Resolve an `IndexLookup` to a bucket slice from the **full** index (the
 /// pull-based engine runs naive only — see semi-naive design notes).
-/// Returns `None` when the lookup key is absent (i.e. no matches).
+/// Returns the empty slice when the lookup key names no bucket (i.e. no matches).
 fn resolve_lookup<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool>(
     l: &IndexLookup<Cfg::O, Cfg::Index>,
     eg: &EGraph<Cfg, L, T, P>,
     index: &'a VariantIndex<'a, Cfg>,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
     env: &Match<Cfg>,
-) -> Option<&'a SortedVec<Cfg::G>>
+) -> &'a [Cfg::G]
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match l {
-        IndexLookup::ByOp { op } => index.full.by_op.get(op),
+        IndexLookup::ByOp { op } => index.full.nodes_by_op(*op),
         IndexLookup::ByChildPos { child, pos } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
-            index.full.by_child_pos.get(&(r, *pos))
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
+            index.full.nodes_by_child_pos(r, *pos)
         }
         IndexLookup::ByRepr { repr } => {
-            let r = eg.find_const(env.get(*repr));
-            index.full.by_repr.get(&r)
+            let r = canon(index, eg, env.get(*repr));
+            index.full.nodes_by_repr(r)
         }
         IndexLookup::ByContains { child } => {
-            let r = eg.find_const(env.resolve_pv(*child, globals));
-            index.full.by_contains.get(&r)
+            let r = canon(index, eg, env.resolve_pv(*child, globals));
+            index.full.nodes_by_contains(r)
         }
     }
 }
@@ -1368,12 +2427,18 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         seq: Vec<Cfg::G>,
         offset: usize,
         slack: usize,
+        /// The local children the current offset's `bind_fixed` bound, which are the
+        /// ones this frame unbinds when it advances or is dropped.
+        bound: BoundHere,
     },
     ACDecompose {
         elems: Vec<(PatVar, RMult)>,
         rest: Option<MsetVarId>,
         residual: Vec<(Cfg::G, Cfg::M)>,
         ri_at: Vec<usize>,
+        /// Per element, whether the scan bound its variable, which is the condition for
+        /// the undo to unbind it.
+        bound: Vec<bool>,
         ei: usize,
     },
     ACIDecompose {
@@ -1382,6 +2447,8 @@ enum FrameKind<'a, Cfg: EGraphConfig> {
         residual: Vec<Cfg::G>,
         used: crate::containers::bitset::BitSet,
         ri_at: Vec<usize>,
+        /// Per element, whether the scan bound its variable.
+        bound: Vec<bool>,
         ei: usize,
     },
 }
@@ -1392,7 +2459,7 @@ struct Frame<'a, Cfg: EGraphConfig> {
 }
 
 pub struct MatchIterator<'a, Cfg: EGraphConfig, L: LitVal, S: Copy, const T: bool, const P: bool> {
-    plan: &'a QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &'a QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &'a EGraph<Cfg, L, T, P>,
     index: &'a VariantIndex<'a, Cfg>,
     globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1410,7 +2477,7 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub fn new(
-        plan: &'a QueryPlan<Cfg::O, Cfg::Index>,
+        plan: &'a QueryPlan<Cfg::O, Cfg::Index, L>,
         eg: &'a EGraph<Cfg, L, T, P>,
         index: &'a VariantIndex<'a, Cfg>,
         globals: &'a crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -1506,10 +2573,12 @@ where
                 expected,
             } => {
                 let child = self.eg.child_at(self.env.get(*parent), *pos);
-                if self.eg.find_const(child)
-                    == self
-                        .eg
-                        .find_const(self.env.resolve_pv(*expected, self.globals))
+                if canon(self.index, self.eg, child)
+                    == canon(
+                        self.index,
+                        self.eg,
+                        self.env.resolve_pv(*expected, self.globals),
+                    )
                 {
                     self.cursor += 1;
                     Enter::Advanced
@@ -1518,16 +2587,24 @@ where
                 }
             }
             Step::CheckEq { a, b } => {
-                if self.eg.find_const(self.env.get(*a)) == self.eg.find_const(self.env.get(*b)) {
+                if canon(self.index, self.eg, self.env.get(*a))
+                    == canon(self.index, self.eg, self.env.get(*b))
+                {
                     self.cursor += 1;
                     Enter::Advanced
                 } else {
                     Enter::Failed
                 }
             }
+            Step::BindGlobal { target, global } => {
+                let val = canon(self.index, self.eg, self.globals.binding(*global));
+                self.env.set(*target, val);
+                self.cursor += 1;
+                Enter::Advanced
+            }
             Step::CheckEqGlobal { local, global } => {
-                if self.eg.find_const(self.env.get(*local))
-                    == self.eg.find_const(self.globals.binding(*global))
+                if canon(self.index, self.eg, self.env.get(*local))
+                    == canon(self.index, self.eg, self.globals.binding(*global))
                 {
                     self.cursor += 1;
                     Enter::Advanced
@@ -1537,7 +2614,7 @@ where
             }
             Step::CopyBinding { target, other } => {
                 self.env
-                    .set(*target, self.eg.find_const(self.env.get(*other)));
+                    .set(*target, canon(self.index, self.eg, self.env.get(*other)));
                 self.cursor += 1;
                 Enter::Advanced
             }
@@ -1569,7 +2646,7 @@ where
                 let mut residual = Vec::new();
                 self.eg.mset_children(node_id, &mut residual);
                 for e in &mut residual {
-                    e.0 = self.eg.find_const(e.0);
+                    e.0 = canon(self.index, self.eg, e.0);
                 }
                 let elems = elems.clone();
                 let rest = *rest;
@@ -1580,7 +2657,7 @@ where
                 let mut residual = Vec::new();
                 self.eg.set_children(node_id, &mut residual);
                 for e in &mut residual {
-                    *e = self.eg.find_const(*e);
+                    *e = canon(self.index, self.eg, *e);
                 }
                 let elems = elems.clone();
                 let rest = *rest;
@@ -1596,23 +2673,44 @@ where
                     Enter::Failed
                 }
             }
+            Step::CheckLit { node, value } => {
+                let node_id = self.env.get(*node);
+                if self.eg.get_lit_val(node_id) == Some(value) {
+                    self.cursor += 1;
+                    Enter::Advanced
+                } else {
+                    Enter::Failed
+                }
+            }
+            Step::CheckPred { guard } => {
+                if eval_guard(guard, self.eg, &self.env) {
+                    self.cursor += 1;
+                    Enter::Advanced
+                } else {
+                    Enter::Failed
+                }
+            }
         }
     }
 
     fn enter_join(&mut self, target: VarId, lookups: &[IndexLookup<Cfg::O, Cfg::Index>]) -> Enter {
         // Collected straight into cursors: `resolve_lookup` borrows from the
-        // index, which outlives the frame, so there is no need for the
-        // intermediate `Vec<&SortedVec>` this used to build.
-        let iters: CursorVec<SortedVecCursor<'a, Cfg::G>> = match lookups
-            .iter()
-            .map(|l| {
-                resolve_lookup(l, self.eg, self.index, self.globals, &self.env).map(SortedVec::iter)
-            })
-            .collect::<Option<CursorVec<_>>>()
-        {
-            Some(v) if !v.is_empty() => v,
-            _ => return Enter::Failed,
-        };
+        // index's pool, which outlives the frame, so there is no intermediate
+        // vector of bucket references. An empty bucket short-circuits the whole
+        // join, as the absent key it stands for did before the families became
+        // dense: the intersection is empty either way, and failing here keeps
+        // the frame off the stack.
+        let mut iters: CursorVec<SortedVecCursor<'a, Cfg::G>> = CursorVec::new();
+        for l in lookups {
+            let b = resolve_lookup(l, self.eg, self.index, self.globals, &self.env);
+            if b.is_empty() {
+                return Enter::Failed;
+            }
+            iters.push(SortedVecCursor::new(b));
+        }
+        if iters.is_empty() {
+            return Enter::Failed;
+        }
         let join = LeapfrogJoin::new(iters);
         let valid = join.is_valid();
         if valid {
@@ -1639,13 +2737,27 @@ where
                     return Enter::Failed;
                 }
                 let slack = seq.len() - nfixed;
-                // Bind offset 0.
-                self.env.push_seq(p, &seq[..0]);
-                self.env.push_seq(s, &seq[nfixed..]);
-                let valid = self.bind_fixed(children, &seq, 0);
-                if !valid {
+                // Scan to the first window the fixed children bind against, the same
+                // search `backtrack` resumes. Entering at offset 0 and reporting failure
+                // there instead drops the frame with the later offsets untried, which is
+                // reachable as soon as a fixed child is pre-bound or global: then window
+                // 0 can fail on a node whose later windows match.
+                let mut bound = BoundHere::new();
+                let mut offset = 0;
+                let mut valid = false;
+                while offset <= slack {
+                    self.env.push_seq(p, &seq[..offset]);
+                    self.env.push_seq(s, &seq[offset + nfixed..]);
+                    if self.bind_fixed(children, &seq, offset, &mut bound) {
+                        valid = true;
+                        break;
+                    }
                     self.env.pop_seq(s);
                     self.env.pop_seq(p);
+                    offset += 1;
+                }
+                if !valid {
+                    return Enter::Failed;
                 }
                 self.frames.push(Frame {
                     kind: FrameKind::SlidingWindow {
@@ -1653,20 +2765,22 @@ where
                         pre: p,
                         suf: s,
                         seq,
-                        offset: 0,
+                        offset,
                         slack,
+                        bound,
                     },
                     step_idx: self.cursor,
                 });
-                Enter::Pushed(valid)
+                Enter::Pushed(true)
             }
             _ => {
                 // Single-shot cases: no generator needed.
+                let mut bound = BoundHere::new();
                 if pre.is_none() && suf.is_none() {
                     if seq.len() != nfixed {
                         return Enter::Failed;
                     }
-                    if !self.bind_fixed(children, &seq, 0) {
+                    if !self.bind_fixed(children, &seq, 0, &mut bound) {
                         return Enter::Failed;
                     }
                     self.cursor += 1;
@@ -1677,7 +2791,7 @@ where
                     }
                     let split = seq.len() - nfixed;
                     self.env.push_seq(p, &seq[..split]);
-                    if !self.bind_fixed(children, &seq, split) {
+                    if !self.bind_fixed(children, &seq, split, &mut bound) {
                         self.env.pop_seq(p);
                         return Enter::Failed;
                     }
@@ -1690,7 +2804,7 @@ where
                         return Enter::Failed;
                     }
                     self.env.push_seq(s, &seq[nfixed..]);
-                    if !self.bind_fixed(children, &seq, 0) {
+                    if !self.bind_fixed(children, &seq, 0, &mut bound) {
                         self.env.pop_seq(s);
                         return Enter::Failed;
                     }
@@ -1726,8 +2840,8 @@ where
             }
         }
         let mut ri_at = vec![0usize; elems.len()];
-        let valid = self.ac_find_first(elems, &mut residual, &mut ri_at, 0);
-        let mut accepted = valid;
+        let mut bound = vec![false; elems.len()];
+        let mut valid = self.ac_find_first(elems, &mut residual, &mut ri_at, &mut bound, 0);
         if valid {
             if let Some(rv) = rest {
                 let zero = Cfg::M::ZERO;
@@ -1738,25 +2852,36 @@ where
                     .collect();
                 self.env.push_mset(rv, &rem);
             } else {
-                // Exact: all residual must be consumed.
+                // Exact: all residual must be consumed. Each element consumes one whole
+                // entry, so an assignment that leaves an entry behind means there are
+                // more entries than elements and no assignment consumes them all. Undo
+                // this one rather than pushing a frame the caller drops, which would
+                // leave the element variables bound for whatever runs next.
                 let zero = Cfg::M::ZERO;
                 if !residual.iter().all(|&(_, m)| m == zero) {
-                    accepted = false;
+                    for e in (0..elems.len()).rev() {
+                        self.ac_undo(elems, &mut residual, e, ri_at[e], &mut bound);
+                    }
+                    valid = false;
                 }
             }
         }
-        let ei = if valid { elems.len() } else { 0 };
+        if !valid {
+            return Enter::Failed;
+        }
+        let ei = elems.len();
         self.frames.push(Frame {
             kind: FrameKind::ACDecompose {
                 elems: elems.to_vec(),
                 rest,
                 residual,
                 ri_at,
+                bound,
                 ei,
             },
             step_idx: self.cursor,
         });
-        Enter::Pushed(accepted)
+        Enter::Pushed(true)
     }
 
     fn enter_aci(
@@ -1779,8 +2904,8 @@ where
         }
         let mut used = crate::containers::bitset::BitSet::new(residual.len());
         let mut ri_at = vec![0usize; elems.len()];
-        let valid = self.aci_find_first(elems, &residual, &mut used, &mut ri_at, 0);
-        let mut accepted = valid;
+        let mut bound = vec![false; elems.len()];
+        let mut valid = self.aci_find_first(elems, &residual, &mut used, &mut ri_at, &mut bound, 0);
         if valid {
             if let Some(rv) = rest {
                 let rem: Vec<Cfg::G> = residual
@@ -1790,14 +2915,19 @@ where
                     .map(|(_, &g)| g)
                     .collect();
                 self.env.push_set(rv, &rem);
-            } else {
-                // Exact: all must be used.
-                if !(0..residual.len()).all(|i| used.test(i)) {
-                    accepted = false;
+            } else if !(0..residual.len()).all(|i| used.test(i)) {
+                // Exact: all must be used. See `enter_ac` for why this undoes the
+                // assignment instead of pushing a frame the caller drops.
+                for e in (0..elems.len()).rev() {
+                    self.aci_undo(elems, &mut used, e, ri_at[e], &mut bound);
                 }
+                valid = false;
             }
         }
-        let ei = if valid { elems.len() } else { 0 };
+        if !valid {
+            return Enter::Failed;
+        }
+        let ei = elems.len();
         self.frames.push(Frame {
             kind: FrameKind::ACIDecompose {
                 elems: elems.to_vec(),
@@ -1805,39 +2935,48 @@ where
                 residual,
                 used,
                 ri_at,
+                bound,
                 ei,
             },
             step_idx: self.cursor,
         });
-        Enter::Pushed(accepted)
+        Enter::Pushed(true)
     }
 
-    fn bind_fixed(&mut self, children: &[PatVar], seq: &[Cfg::G], offset: usize) -> bool {
+    /// Bind the fixed children against `seq[offset..]`, recording in `bound` the local
+    /// variables this call bound. On failure it unbinds them itself and leaves `bound`
+    /// empty. See [`unbind`] for why a pre-bound child is checked rather than rebound and
+    /// must survive the cleanup.
+    fn bind_fixed(
+        &mut self,
+        children: &[PatVar],
+        seq: &[Cfg::G],
+        offset: usize,
+        bound: &mut BoundHere,
+    ) -> bool {
+        bound.clear();
         for (i, &cv) in children.iter().enumerate() {
             let val = seq[offset + i];
             match cv {
                 PatVar::Global(gid) => {
-                    if self.eg.find_const(self.globals.binding(gid)) != self.eg.find_const(val) {
-                        for &cv2 in &children[..i] {
-                            if let PatVar::Local(v) = cv2 {
-                                self.env.clear(v);
-                            }
-                        }
+                    if canon(self.index, self.eg, self.globals.binding(gid))
+                        != canon(self.index, self.eg, val)
+                    {
+                        unbind(&mut self.env, bound);
+                        bound.clear();
                         return false;
                     }
                 }
                 PatVar::Local(vid) => {
                     if let Some(existing) = self.env.nodes[vid.idx()] {
-                        if self.eg.find_const(existing) != self.eg.find_const(val) {
-                            for &cv2 in &children[..i] {
-                                if let PatVar::Local(v) = cv2 {
-                                    self.env.clear(v);
-                                }
-                            }
+                        if canon(self.index, self.eg, existing) != canon(self.index, self.eg, val) {
+                            unbind(&mut self.env, bound);
+                            bound.clear();
                             return false;
                         }
                     } else {
                         self.env.set(vid, val);
+                        bound.push(vid);
                     }
                 }
             }
@@ -1874,12 +3013,9 @@ where
                     seq,
                     offset,
                     slack,
+                    bound,
                 } => {
-                    for &cv in children.iter() {
-                        if let PatVar::Local(v) = cv {
-                            self.env.clear(v)
-                        };
-                    }
+                    unbind(&mut self.env, bound);
                     self.env.pop_seq(*suf);
                     self.env.pop_seq(*pre);
                     *offset += 1;
@@ -1888,15 +3024,10 @@ where
                         let o = *offset;
                         self.env.push_seq(*pre, &seq[..o]);
                         self.env.push_seq(*suf, &seq[o + nfixed..]);
-                        if self.bind_fixed(children, seq, o) {
+                        if self.bind_fixed(children, seq, o, bound) {
                             self.cursor += 1;
                             self.frames.push(frame);
                             return true;
-                        }
-                        for &cv in children.iter() {
-                            if let PatVar::Local(v) = cv {
-                                self.env.clear(v)
-                            };
                         }
                         self.env.pop_seq(*suf);
                         self.env.pop_seq(*pre);
@@ -1909,6 +3040,7 @@ where
                     rest,
                     residual,
                     ri_at,
+                    bound,
                     ei,
                 } => {
                     if *ei == elems.len()
@@ -1917,7 +3049,7 @@ where
                         self.env.pop_mset(rv);
                     }
                     loop {
-                        if !self.ac_advance(elems, residual, ri_at, ei) {
+                        if !self.ac_advance(elems, residual, ri_at, bound, ei) {
                             break;
                         }
                         if let Some(rv) = *rest {
@@ -1949,6 +3081,7 @@ where
                     residual,
                     used,
                     ri_at,
+                    bound,
                     ei,
                 } => {
                     if *ei == elems.len()
@@ -1957,7 +3090,7 @@ where
                         self.env.pop_set(rv);
                     }
                     loop {
-                        if !self.aci_advance(elems, residual, used, ri_at, ei) {
+                        if !self.aci_advance(elems, residual, used, ri_at, bound, ei) {
                             break;
                         }
                         if let Some(rv) = *rest {
@@ -1990,12 +3123,13 @@ where
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
+        bound: &mut [bool],
         from: usize,
     ) -> bool {
         let mut ei = from;
         while ei < elems.len() {
             let start = if ei == from { ri_at[ei] } else { 0 };
-            match self.ac_scan(elems, residual, ei, start) {
+            match self.ac_scan(elems, residual, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
@@ -2006,7 +3140,7 @@ where
                         return false;
                     }
                     ei -= 1;
-                    self.ac_undo(elems, residual, ei, ri_at[ei]);
+                    self.ac_undo(elems, residual, ei, ri_at[ei], bound);
                     ri_at[ei] += 1;
                 }
             }
@@ -2014,18 +3148,24 @@ where
         true
     }
 
+    /// Take one residual entry for element `ei`, recording in `bound[ei]` whether this
+    /// scan bound the element variable. A variable already bound is matched against the
+    /// residual and left alone, and [`Self::ac_undo`] must leave it alone too; see
+    /// [`unbind`].
     fn ac_scan(
         &mut self,
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ei: usize,
         start: usize,
+        bound: &mut [bool],
     ) -> Option<usize> {
         let (var, mult) = &elems[ei];
+        bound[ei] = false;
 
         let bound_repr = match *var {
-            PatVar::Global(gid) => Some(self.eg.find_const(self.globals.binding(gid))),
-            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| self.eg.find_const(v)),
+            PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
+            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| canon(self.index, self.eg, v)),
         };
 
         if let Some(repr) = bound_repr {
@@ -2062,6 +3202,7 @@ where
                 unreachable!()
             };
             self.env.set(vid, repr);
+            bound[ei] = true;
             let take: Cfg::M = match mult {
                 // See the bound-repr path above.
                 RMult::Exact(_) => avail,
@@ -2082,6 +3223,7 @@ where
         residual: &mut [(Cfg::G, Cfg::M)],
         ei: usize,
         ri: usize,
+        bound: &mut [bool],
     ) {
         let (var, mult) = &elems[ei];
         let restore: Cfg::M = match mult {
@@ -2099,9 +3241,12 @@ where
         residual[ri].1 = residual[ri].1.checked_add(restore).expect(
             "ac_undo restores a multiplicity previously subtracted from this entry, so the sum fits",
         );
-        if let PatVar::Local(vid) = *var {
+        if let PatVar::Local(vid) = *var
+            && bound[ei]
+        {
             self.env.clear(vid);
         }
+        bound[ei] = false;
         if let RMult::Var { var: mv, .. } = mult {
             // Only clear if no earlier element uses the same mult variable
             let earlier_uses = elems[..ei]
@@ -2118,6 +3263,7 @@ where
         elems: &[(PatVar, RMult)],
         residual: &mut [(Cfg::G, Cfg::M)],
         ri_at: &mut [usize],
+        bound: &mut [bool],
         ei: &mut usize,
     ) -> bool {
         if elems.is_empty() || *ei != elems.len() {
@@ -2126,22 +3272,22 @@ where
         // Undo last element, try next residual entry. If exhausted, undo previous, etc.
         let mut e = elems.len() - 1;
         loop {
-            self.ac_undo(elems, residual, e, ri_at[e]);
+            self.ac_undo(elems, residual, e, ri_at[e], bound);
             ri_at[e] += 1;
             // Try to find a valid entry for element e and all subsequent elements.
             // ac_scan only looks at element e; if it succeeds we try e+1.. from scratch.
-            if let Some(ri) = self.ac_scan(elems, residual, e, ri_at[e]) {
+            if let Some(ri) = self.ac_scan(elems, residual, e, ri_at[e], bound) {
                 ri_at[e] = ri;
                 // Now try to bind e+1..end from scratch.
                 let mut ok = true;
                 for e2 in (e + 1)..elems.len() {
                     ri_at[e2] = 0;
-                    match self.ac_scan(elems, residual, e2, 0) {
+                    match self.ac_scan(elems, residual, e2, 0, bound) {
                         Some(ri2) => ri_at[e2] = ri2,
                         None => {
                             // Undo e2-1..=e+1 that we just bound, then undo e and try next.
                             for undo in (e + 1..e2).rev() {
-                                self.ac_undo(elems, residual, undo, ri_at[undo]);
+                                self.ac_undo(elems, residual, undo, ri_at[undo], bound);
                             }
                             ok = false;
                             break;
@@ -2153,7 +3299,7 @@ where
                     return true;
                 }
                 // ac_scan for e succeeded but downstream failed. Undo e and try next ri.
-                self.ac_undo(elems, residual, e, ri_at[e]);
+                self.ac_undo(elems, residual, e, ri_at[e], bound);
                 ri_at[e] += 1;
                 continue;
             }
@@ -2175,12 +3321,13 @@ where
         residual: &[Cfg::G],
         used: &mut crate::containers::bitset::BitSet,
         ri_at: &mut [usize],
+        bound: &mut [bool],
         from: usize,
     ) -> bool {
         let mut ei = from;
         while ei < elems.len() {
             let start = if ei == from { ri_at[ei] } else { 0 };
-            match self.aci_scan(elems, residual, used, ei, start) {
+            match self.aci_scan(elems, residual, used, ei, start, bound) {
                 Some(ri) => {
                     ri_at[ei] = ri;
                     ei += 1;
@@ -2191,7 +3338,7 @@ where
                         return false;
                     }
                     ei -= 1;
-                    self.aci_undo(elems, used, ei, ri_at[ei]);
+                    self.aci_undo(elems, used, ei, ri_at[ei], bound);
                     ri_at[ei] += 1;
                 }
             }
@@ -2199,6 +3346,8 @@ where
         true
     }
 
+    /// Take one residual element for `ei`, recording in `bound[ei]` whether this scan
+    /// bound the element variable. See [`Self::ac_scan`].
     fn aci_scan(
         &mut self,
         elems: &[PatVar],
@@ -2206,11 +3355,13 @@ where
         used: &mut crate::containers::bitset::BitSet,
         ei: usize,
         start: usize,
+        bound: &mut [bool],
     ) -> Option<usize> {
         let var = elems[ei];
+        bound[ei] = false;
         let bound_repr = match var {
-            PatVar::Global(gid) => Some(self.eg.find_const(self.globals.binding(gid))),
-            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| self.eg.find_const(v)),
+            PatVar::Global(gid) => Some(canon(self.index, self.eg, self.globals.binding(gid))),
+            PatVar::Local(vid) => self.env.nodes[vid.idx()].map(|v| canon(self.index, self.eg, v)),
         };
         if let Some(repr) = bound_repr {
             for ri in start..residual.len() {
@@ -2229,6 +3380,7 @@ where
                 continue;
             }
             self.env.set(vid, residual[ri]);
+            bound[ei] = true;
             used.set(ri);
             return Some(ri);
         }
@@ -2241,11 +3393,15 @@ where
         used: &mut crate::containers::bitset::BitSet,
         ei: usize,
         ri: usize,
+        bound: &mut [bool],
     ) {
         used.clear(ri);
-        if let PatVar::Local(vid) = elems[ei] {
+        if let PatVar::Local(vid) = elems[ei]
+            && bound[ei]
+        {
             self.env.clear(vid);
         }
+        bound[ei] = false;
     }
 
     fn aci_advance(
@@ -2254,6 +3410,7 @@ where
         residual: &[Cfg::G],
         used: &mut crate::containers::bitset::BitSet,
         ri_at: &mut [usize],
+        bound: &mut [bool],
         ei: &mut usize,
     ) -> bool {
         if elems.is_empty() || *ei != elems.len() {
@@ -2261,18 +3418,18 @@ where
         }
         let mut e = elems.len() - 1;
         loop {
-            self.aci_undo(elems, used, e, ri_at[e]);
+            self.aci_undo(elems, used, e, ri_at[e], bound);
             ri_at[e] += 1;
-            if let Some(ri) = self.aci_scan(elems, residual, used, e, ri_at[e]) {
+            if let Some(ri) = self.aci_scan(elems, residual, used, e, ri_at[e], bound) {
                 ri_at[e] = ri;
                 let mut ok = true;
                 for e2 in (e + 1)..elems.len() {
                     ri_at[e2] = 0;
-                    match self.aci_scan(elems, residual, used, e2, 0) {
+                    match self.aci_scan(elems, residual, used, e2, 0, bound) {
                         Some(ri2) => ri_at[e2] = ri2,
                         None => {
                             for undo in (e + 1..e2).rev() {
-                                self.aci_undo(elems, used, undo, ri_at[undo]);
+                                self.aci_undo(elems, used, undo, ri_at[undo], bound);
                             }
                             ok = false;
                             break;
@@ -2283,7 +3440,7 @@ where
                     *ei = elems.len();
                     return true;
                 }
-                self.aci_undo(elems, used, e, ri_at[e]);
+                self.aci_undo(elems, used, e, ri_at[e], bound);
                 ri_at[e] += 1;
                 continue;
             }
@@ -2305,7 +3462,7 @@ enum Enter {
 
 /// Convenience: collect all matches using the iterator.
 pub fn run_query_iter<Cfg, L, const T: bool, const P: bool>(
-    plan: &QueryPlan<Cfg::O, Cfg::Index>,
+    plan: &QueryPlan<Cfg::O, Cfg::Index, L>,
     eg: &EGraph<Cfg, L, T, P>,
     index: &VariantIndex<'_, Cfg>,
 ) -> Vec<Match<Cfg>>
@@ -2326,7 +3483,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::id::{OpId, SortId};
+    use crate::id::{ENodeId, OpId, SortId};
     use crate::literal::{NiraLitVal, NiraModel};
     use crate::nodes::DefaultConfig;
     use crate::registry::{OpRegistry, SortRegistry};
@@ -2447,8 +3604,12 @@ mod tests {
                 run_query_into(plan, &eg, &index, &ng, &mut shared);
 
                 assert_eq!(shared.len(), fresh.len(), "match count diverged");
-                let expect: Vec<_> = fresh.matches().iter().map(|m| env_key(m, &eg)).collect();
-                let got: Vec<_> = shared.matches().iter().map(|m| env_key(m, &eg)).collect();
+                let expect: Vec<_> = (0..fresh.len())
+                    .map(|j| env_key(&fresh.clone_match(j), &eg))
+                    .collect();
+                let got: Vec<_> = (0..shared.len())
+                    .map(|j| env_key(&shared.clone_match(j), &eg))
+                    .collect();
                 assert_eq!(got, expect, "reused pool produced different bindings");
             }
         }
@@ -4253,5 +5414,698 @@ mod tests {
         // b has mult 2 (in [2,3]), c has mult 3 (in [2,3]), but 2≠3 → non-linear fails
         // a has mult 1 (not in [2,3])
         assert_eq!(matches.len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshot semantics: the match set does not depend on the join order
+    // -----------------------------------------------------------------------
+
+    /// Schedule `srcs` with `first`'s operator forced to the front of the
+    /// greedy order, by handing the scheduler a cardinality of 0 for it.
+    /// The other operators get an equal, large cardinality, so nothing but the
+    /// pin decides the first atom.
+    fn plan_driven_from(
+        eg: &EG,
+        srcs: &[&str],
+        first: &str,
+        ops_in_query: &[&str],
+    ) -> (RQ, QueryPlan<OpId, u32, NiraLitVal>) {
+        let rq = resolve_srcs(eg, srcs);
+        let mut stats = crate::schedule::IndexStats::<OpId>::new();
+        for name in ops_in_query {
+            stats
+                .op_card
+                .insert(eg.ops().id_by_name(name).unwrap(), 1000);
+        }
+        stats.op_card.insert(eg.ops().id_by_name(first).unwrap(), 0);
+        let plan = crate::schedule::schedule_with_stats(&rq, &stats);
+        (rq, plan)
+    }
+
+    type RQ = crate::resolve::ResolvedQuery<OpId, SortId, NiraLitVal>;
+
+    /// Compile and resolve `srcs` against `eg`'s registries.
+    fn resolve_srcs(eg: &EG, srcs: &[&str]) -> RQ {
+        let pats: Vec<_> = srcs.iter().map(|s| parse_pattern(s)).collect();
+        let fq = flatten(&pats, eg.ops()).unwrap();
+        resolve(
+            &fq,
+            eg.ops(),
+            eg.sorts(),
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<SortId, ()>::new(),
+        )
+        .unwrap()
+    }
+
+    /// Run the query through all three engines and return the match set as a
+    /// sorted list of binding keys.
+    ///
+    /// The three must agree. Static push against static pull is the check that
+    /// was already here: two independent walks of one plan. Runtime-scheduled
+    /// push against static pull is the oracle for the scheduling flag, and it is
+    /// the strongest one available, because the pull engine shares nothing with
+    /// the flag — it is a different control structure (an explicit stack, not
+    /// recursion) walking a different atom order (the plan's, fixed) — so an
+    /// agreement between them is not two copies of the same mistake.
+    ///
+    /// A divergence here is a bug in its own right, so it is asserted rather
+    /// than returned.
+    fn match_keys(
+        eg: &EG,
+        rq: &RQ,
+        plan: &QueryPlan<OpId, u32, NiraLitVal>,
+        index: &IndexStore<DefaultConfig>,
+    ) -> Vec<Vec<Option<u32>>> {
+        let vindex = VariantIndex::naive(index);
+        let ng = crate::resolve::GlobalCtx::<SortId, _>::new();
+
+        let key = |m: &Match<DefaultConfig>| -> Vec<Option<u32>> {
+            m.nodes
+                .iter()
+                .map(|o| o.map(|g| index.round_repr(g).unwrap_or(g).raw()))
+                .collect()
+        };
+
+        let mut recursive: Vec<_> = run_query(plan, eg, &vindex, &ng).iter().map(key).collect();
+        let mut it = MatchIterator::new(plan, eg, &vindex, &ng);
+        let mut pull = Vec::new();
+        while it.next_match() {
+            pull.push(key(it.env()));
+        }
+        set_runtime_scheduling(true);
+        let mut adaptive: Vec<_> = run_query_scheduled(rq, plan, eg, &vindex, &ng)
+            .iter()
+            .map(key)
+            .collect();
+        set_runtime_scheduling(false);
+        recursive.sort();
+        pull.sort();
+        adaptive.sort();
+        assert_eq!(recursive, pull, "the two matcher engines disagree");
+        assert_eq!(
+            adaptive, pull,
+            "runtime atom scheduling changed the match set"
+        );
+        recursive
+    }
+
+    /// `(f b c)` and `(g a)`, with `c` and `(g a)` in different classes at the
+    /// index build and merged afterwards — the shape of a mid-round merge by an
+    /// earlier rule's actions. `tall_g_class` decides which of the two classes
+    /// the union-find keeps as representative, by giving the `g`-node's class a
+    /// second member (hence a taller tree) before the build.
+    ///
+    /// The snapshot answer for `(f x (g y))` is *no match*: at the build,
+    /// `(f b c)`'s second child was alone in its class and that class held no
+    /// `g`-node.
+    fn mid_round_merge(tall_g_class: bool) -> (EG, IndexStore<DefaultConfig>) {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let ga = eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+        if tall_g_class {
+            let haa = eg.add(eg.ops().id_by_name("h").unwrap(), &[a, a]);
+            eg.merge(ga, haa);
+        }
+        eg.rebuild();
+
+        // The round's index. Everything after this point is what a rule's
+        // actions do to the e-graph while later rules of the same round match.
+        let index = IndexStore::build(&eg);
+        eg.merge(c, ga);
+        (eg, index)
+    }
+
+    /// The match set is a function of the e-graph the round's index was built
+    /// from, not of the join order the scheduler happened to choose.
+    ///
+    /// Both orders below reach the `g` atom by a different access path — from
+    /// the `f` atom it is `ByRepr` on the extracted child, from the `g` atom it
+    /// is `ByChildPos` on the bound `g`-node — and a mid-round merge moves the
+    /// two paths in opposite directions: whichever class the union-find keeps,
+    /// exactly one of the two paths lands on a bucket that the merge made
+    /// reachable. Canonicalizing with the live union-find therefore made one
+    /// order report a match and the other none, on the same e-graph. Both
+    /// parameterizations are here because they disagree in opposite directions;
+    /// which one a given union-by-rank policy produces is not this test's
+    /// business.
+    #[test]
+    fn match_set_is_independent_of_join_order() {
+        for tall_g_class in [false, true] {
+            let (eg, index) = mid_round_merge(tall_g_class);
+            let from_f = plan_driven_from(&eg, &["(f x (g y))"], "f", &["f", "g"]);
+            let from_g = plan_driven_from(&eg, &["(f x (g y))"], "g", &["f", "g"]);
+
+            // The pin is worth nothing if both orders compile to the same plan.
+            assert_ne!(
+                from_f.1.steps, from_g.1.steps,
+                "the two pins produced the same plan (tall_g_class={tall_g_class})"
+            );
+
+            let mf = match_keys(&eg, &from_f.0, &from_f.1, &index);
+            let mg = match_keys(&eg, &from_g.0, &from_g.1, &index);
+            assert_eq!(
+                mf, mg,
+                "join order changed the match set (tall_g_class={tall_g_class})"
+            );
+            assert!(
+                mf.is_empty(),
+                "matched a class membership the round's index does not have \
+                 (tall_g_class={tall_g_class}): {mf:?}"
+            );
+        }
+    }
+
+    /// The other half of the same contract, on the equality-check path rather
+    /// than the index path: two children that the round's index kept apart do
+    /// not satisfy a non-linear pattern just because a later merge joined them.
+    /// `CheckChildEq` used to test live equality, which admitted the match.
+    #[test]
+    fn nonlinear_check_uses_the_rounds_classes() {
+        let mut eg = make_eg();
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+        eg.merge(b, c);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(&eg, &["(f x x)"], "f", &["f"]);
+        assert_eq!(
+            match_keys(&eg, &driven.0, &driven.1, &index).len(),
+            1,
+            "control: a merge the index build can see does make the pattern match"
+        );
+
+        let mut eg = make_eg();
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let _fbc = eg.add(eg.ops().id_by_name("f").unwrap(), &[b, c]);
+        eg.rebuild();
+        let index = IndexStore::build(&eg);
+        eg.merge(b, c);
+        let driven = plan_driven_from(&eg, &["(f x x)"], "f", &["f"]);
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert!(
+            matches.is_empty(),
+            "a merge after the index build made `(f x x)` match: {matches:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Pre-bound children of a variadic, multiset or set pattern
+    // -----------------------------------------------------------------------
+    //
+    // Each of the three decompositions binds the pattern's children one at a
+    // time and backtracks over the alternatives. A child variable an earlier
+    // atom already bound is a constraint on the node's children, so the
+    // decomposition checks it and its cleanup leaves it bound. `plan_driven_from`
+    // pins the atom that binds it to the front of the plan, which is what makes
+    // the variable pre-bound when the decomposition runs.
+
+    /// `(g x)` pins `x`, so `(concat ..pre x ..suf)` matches only at the windows
+    /// where `x`'s class sits: two positions per `concat` node, four in total.
+    /// Cleanup that unbinds `x` after a window leaves the next window free to
+    /// rebind it, which admits every position of both nodes.
+    #[test]
+    fn expand_a_checks_a_prebound_fixed_child() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[c]);
+        let cat = eg.ops().id_by_name("concat").unwrap();
+        eg.add(cat, &[a, b, c]);
+        eg.add(cat, &[c, a, b]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(
+            &eg,
+            &["(g x)", "(concat ..pre x ..suf)"],
+            "g",
+            &["g", "concat"],
+        );
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            4,
+            "expected x=a and x=c once per concat node: {matches:?}"
+        );
+
+        // The same plan through the push engine, checked at the binding level:
+        // `b` is a member of both sequences and of neither `g` node, so it is
+        // the class an unbound window admits.
+        let vindex = VariantIndex::naive(&index);
+        let ms = run_query(
+            &driven.1,
+            &eg,
+            &vindex,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        assert_eq!(ms.len(), 4);
+        assert!(has_binding(&ms, &driven.0.shape, &eg, &[("x", "a")]));
+        assert!(has_binding(&ms, &driven.0.shape, &eg, &[("x", "c")]));
+        assert!(!has_binding(&ms, &driven.0.shape, &eg, &[("x", "b")]));
+    }
+
+    /// The same shape at its minimum: one `g` node and one `concat` node, which is
+    /// the case both engines got wrong in the same direction. Before the fix all
+    /// three engines returned three matches, one per window, and the differential
+    /// assertion in [`match_keys`] passed on that answer: the push and pull engines
+    /// carried the same defect, so their agreement was not evidence. The count below
+    /// is the assertion that fails.
+    #[test]
+    fn expand_a_prebound_child_oracle_blind_spot() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("concat").unwrap(), &[a, b, c]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(
+            &eg,
+            &["(g x)", "(concat ..pre x ..suf)"],
+            "g",
+            &["g", "concat"],
+        );
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            1,
+            "only the window at `a` matches: {matches:?}"
+        );
+    }
+
+    /// The multiset counterpart: `(g x)` pins `x`, so `(add x:1 ..rest)` matches
+    /// once per `add` node holding that class, not once per element.
+    #[test]
+    fn decompose_ac_checks_a_prebound_element() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[c]);
+        let add = eg.ops().id_by_name("add").unwrap();
+        eg.add(add, &[a, b, c]);
+        eg.add(add, &[a, b]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(&eg, &["(g x)", "(add x:1 ..rest)"], "g", &["g", "add"]);
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            3,
+            "expected x=a in both add nodes and x=c in the first: {matches:?}"
+        );
+
+        let vindex = VariantIndex::naive(&index);
+        let ms = run_query(
+            &driven.1,
+            &eg,
+            &vindex,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        assert_eq!(ms.len(), 3);
+        assert!(!has_binding(&ms, &driven.0.shape, &eg, &[("x", "b")]));
+    }
+
+    /// The set counterpart of [`decompose_ac_checks_a_prebound_element`].
+    #[test]
+    fn decompose_aci_checks_a_prebound_element() {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        eg.add(eg.ops().id_by_name("g").unwrap(), &[c]);
+        let un = eg.ops().id_by_name("union").unwrap();
+        eg.add(un, &[a, b, c]);
+        eg.add(un, &[a, b]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let driven = plan_driven_from(&eg, &["(g x)", "(union x ..rest)"], "g", &["g", "union"]);
+        let matches = match_keys(&eg, &driven.0, &driven.1, &index);
+        assert_eq!(
+            matches.len(),
+            3,
+            "expected x=a in both union nodes and x=c in the first: {matches:?}"
+        );
+
+        let vindex = VariantIndex::naive(&index);
+        let ms = run_query(
+            &driven.1,
+            &eg,
+            &vindex,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        assert_eq!(ms.len(), 3);
+        assert!(!has_binding(&ms, &driven.0.shape, &eg, &[("x", "b")]));
+    }
+
+    // -----------------------------------------------------------------------
+    // Runtime atom scheduling
+    // -----------------------------------------------------------------------
+
+    /// An e-graph holding one node of every shape the lowering can emit, so the
+    /// sweep below reaches every branch of `emit_atom` and `try_eager_lower`.
+    fn every_shape() -> EG {
+        let mut eg = make_eg();
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        let ga = eg.add(eg.ops().id_by_name("g").unwrap(), &[a]);
+        let gb = eg.add(eg.ops().id_by_name("g").unwrap(), &[b]);
+        let f = eg.ops().id_by_name("f").unwrap();
+        let fab = eg.add(f, &[a, b]);
+        eg.add(f, &[ga, b]);
+        eg.add(f, &[a, a]);
+        eg.add(f, &[gb, ga]);
+        eg.add(eg.ops().id_by_name("h").unwrap(), &[fab, gb]);
+        eg.add(eg.ops().id_by_name("concat").unwrap(), &[a, b, c]);
+        eg.add(eg.ops().id_by_name("add").unwrap(), &[a, b, c]);
+        eg.add(eg.ops().id_by_name("union").unwrap(), &[a, b, c]);
+        eg.rebuild();
+        eg
+    }
+
+    /// The flag does not change the match set, on every atom shape.
+    ///
+    /// `match_keys` runs the query three ways and asserts all three agree, so
+    /// this is the sweep of shapes rather than the comparison itself. The
+    /// property is not an accident of these patterns: the match set is a
+    /// function of the round's index and the query (chapter 09, "Which
+    /// Snapshot"), which is exactly what makes an order change a performance
+    /// change. This is that guarantee held to the strongest oracle available.
+    #[test]
+    fn runtime_scheduling_matches_the_static_plan() {
+        let eg = every_shape();
+        let index = IndexStore::build(&eg);
+        let shapes: &[&[&str]] = &[
+            &["(f x y)"],
+            &["(f (g x) y)"],
+            &["(f x x)"],
+            &["(h (f x y) (g y))"],
+            &["(concat x y ..rest)"],
+            &["(add x:1 ..rest)"],
+            &["(union x ..rest)"],
+            // Disconnected conjuncts: two atoms with no variable in common, so
+            // the order is decided by cost alone.
+            &["(f x y)", "(g z)"],
+            // Three atoms joined through child variables — the shape whose
+            // order the flag can change per binding.
+            &["(f x y)", "(g x)", "(g y)"],
+        ];
+        for srcs in shapes {
+            let rq = resolve_srcs(&eg, srcs);
+            let plan = schedule(&rq);
+            let m = match_keys(&eg, &rq, &plan, &index);
+            assert!(!m.is_empty(), "{srcs:?}: shape must match something");
+        }
+    }
+
+    /// Two bindings of one query, at the same depth, schedule different atoms.
+    ///
+    /// The counterpart of `op_restriction_policy_is_taken_per_binding` for the
+    /// atom choice: it asserts the mechanism ran, not just that the answer came
+    /// out right. `(f x y)` binds a pair of child classes; the `g` atom over `x`
+    /// and the `h` atom over `y` have their bucket sizes swapped between the two
+    /// `f` nodes, so a plan-time order is wrong on one of them and the per-binding
+    /// choice is right on both.
+    #[test]
+    fn atom_order_is_chosen_per_binding() {
+        let mut eg = make_eg();
+        let (f, g, h) = (
+            eg.ops().id_by_name("f").unwrap(),
+            eg.ops().id_by_name("g").unwrap(),
+            eg.ops().id_by_name("h").unwrap(),
+        );
+        let a = eg.add(eg.ops().id_by_name("a").unwrap(), &[]);
+        let b = eg.add(eg.ops().id_by_name("b").unwrap(), &[]);
+        let c = eg.add(eg.ops().id_by_name("c").unwrap(), &[]);
+        // Two `f` nodes over four leaf classes. `x` is read by the `h` atom at
+        // position 1 and `y` by the `g` atom at position 0, neither of which is
+        // where `f` puts them, so the two buckets hold only the probe nodes.
+        let x0 = eg.add(g, &[a]);
+        let y0 = eg.add(g, &[b]);
+        let x1 = eg.add(g, &[c]);
+        let y1 = eg.add(h, &[a, b]);
+        eg.add(f, &[x0, y0]);
+        eg.add(f, &[x1, y1]);
+        // Binding 0: `x0` has two `h` parents, `y0` has none — the `g` atom is
+        // the empty one. Binding 1: the other way round.
+        eg.add(h, &[a, x0]);
+        eg.add(h, &[b, x0]);
+        eg.add(g, &[y1]);
+        eg.rebuild();
+
+        let index = IndexStore::build(&eg);
+        let rq = resolve_srcs(&eg, &["(f x y)", "(h w x)", "(g y)"]);
+        let plan = schedule(&rq);
+        let _ = take_atom_choices();
+        match_keys(&eg, &rq, &plan, &index);
+        let choices = take_atom_choices();
+
+        // The first choice is made with nothing bound and is the same for every
+        // binding; what this test is about is the ones after it.
+        let after_f: Vec<usize> = choices
+            .iter()
+            .filter(|(used, _)| *used != 0)
+            .map(|(_, ai)| *ai)
+            .collect();
+        assert!(
+            after_f.contains(&1) && after_f.contains(&2),
+            "both atoms must be chosen second on some binding, got {choices:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Operator-restriction policy
+    // -----------------------------------------------------------------------
+
+    /// The policy is process-wide, so the tests that pin it take turns.
+    static OP_FILTER_PIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The rule of `demote_by_op`, stated against the two lengths directly.
+    ///
+    /// Exhaustive where the e-graph tests cannot be: the filter branch needs a
+    /// relation of [`OP_FILTER_MIN_RELATION`], and materializing one at every
+    /// corner would cost a hundred thousand nodes per case.
+    #[test]
+    fn op_restriction_rule_reads_both_lengths() {
+        let c = OP_FILTER_MIN_RELATION;
+        let k = OP_FILTER_RELATION_PER_CANDIDATE;
+        // (m, n, expected demotion)
+        let cases = [
+            // The threshold on the relation climbs with the bucket, so a small
+            // bucket filters against a relation a large one would leapfrog.
+            (1, k - 1, false),
+            (1, k, true),
+            (16, 16 * k - 1, false),
+            (16, 16 * k, true),
+            // Until it reaches the ceiling, past which no bucket size matters.
+            (c / k, c, true),
+            (c, c - 1, false),
+            (c, c, true),
+            // The hub shape: a quarter of a million parents against a relation
+            // of twenty-six. This is the case the unconditional filter lost on.
+            (262_144, 26, false),
+            // The guard: once the bucket outgrows twice the relation, the
+            // operand's `min(m, n)` work stops growing and the test's does not.
+            (2 * c, c, true),
+            (2 * c + 1, c, false),
+            // Saturating arithmetic at both ends rather than wrapping.
+            (usize::MAX, c, false),
+            (usize::MAX, usize::MAX, true),
+            (0, 1, true),
+        ];
+        for (m, n, expect) in cases {
+            assert_eq!(
+                demote_by_op(m, Some(n), OpFilterPolicy::Adaptive),
+                expect,
+                "m={m} n={n}"
+            );
+            // The pins ignore the lengths.
+            assert!(demote_by_op(m, Some(n), OpFilterPolicy::AlwaysFilter));
+            assert!(!demote_by_op(m, Some(n), OpFilterPolicy::AlwaysLeapfrog));
+        }
+        // A join with no `ByOp` to place decides nothing under any policy: its
+        // single lookup is the only thing enumerating candidates.
+        for p in [
+            OpFilterPolicy::Adaptive,
+            OpFilterPolicy::AlwaysFilter,
+            OpFilterPolicy::AlwaysLeapfrog,
+        ] {
+            assert!(!demote_by_op(3, None, p));
+        }
+        take_op_restriction_log();
+    }
+
+    /// Two hub classes, one whose `f0` parents are read against a relation above
+    /// the threshold and one whose `f1` parents are read against a relation of
+    /// forty, so one query per operator drives the decision both ways.
+    ///
+    /// `f0`'s relation is sized from the rule's own constant rather than written
+    /// down, so it stays on the filter side of the threshold if the constant
+    /// moves: four parents against `4 * OP_FILTER_RELATION_PER_CANDIDATE` is
+    /// exactly at it. The ceiling and the bucket guard are corners this shape
+    /// cannot reach at a scale worth building; `op_restriction_rule_reads_both_lengths`
+    /// covers them.
+    fn op_restriction_eg() -> (EG, ENodeId, ENodeId) {
+        let mut eg = EG::from_model(&NiraModel);
+        let e = eg.intern_sort("IExpr");
+        eg.register_op0("z", e);
+        eg.register_op1("s", e, e);
+        eg.register_op1("hub", e, e);
+        eg.register_op2("f0", e, e, e);
+        eg.register_op2("f1", e, e, e);
+        let s = eg.ops().id_by_name("s").unwrap();
+        let hub = eg.ops().id_by_name("hub").unwrap();
+        let f0 = eg.ops().id_by_name("f0").unwrap();
+        let f1 = eg.ops().id_by_name("f1").unwrap();
+
+        // Enough distinct classes that `side * side` distinct `f0` child pairs
+        // reach the relation size.
+        let relation = 4 * OP_FILTER_RELATION_PER_CANDIDATE;
+        let side = (relation as f64).sqrt().ceil() as usize + 1;
+        let mut leaves = vec![eg.add(eg.ops().id_by_name("z").unwrap(), &[])];
+        for i in 1..side {
+            let prev = leaves[i - 1];
+            leaves.push(eg.add(s, &[prev]));
+        }
+        let hub_a = eg.add(hub, &[leaves[0]]);
+        let hub_b = eg.add(hub, &[leaves[1]]);
+
+        // `by_op[f0]`: four parents of `hub_a` and the rest off the hubs.
+        for k in 0..4 {
+            eg.add(f0, &[hub_a, leaves[k]]);
+        }
+        let mut made = 4;
+        'fill: for i in 0..side {
+            for j in 0..side {
+                if made >= relation {
+                    break 'fill;
+                }
+                eg.add(f0, &[leaves[i], leaves[j]]);
+                made += 1;
+            }
+        }
+        // `by_op[f1]`: forty parents of `hub_b` and nothing else.
+        for k in 0..40 {
+            eg.add(f1, &[hub_b, leaves[k]]);
+        }
+        eg.rebuild();
+        (eg, hub_a, hub_b)
+    }
+
+    /// Run `src` against `eg` under `policy` and return the decisions the joins
+    /// made together with the match set, keyed so it can be compared across
+    /// policies.
+    fn op_restriction_run(
+        eg: &EG,
+        src: &str,
+        policy: OpFilterPolicy,
+    ) -> (Vec<OpRestriction>, Vec<Vec<ENodeId>>) {
+        set_op_filter_policy(policy);
+        let pats = [parse_pattern(src)];
+        let fq = flatten(&pats, eg.ops()).unwrap();
+        let rq = resolve(
+            &fq,
+            eg.ops(),
+            eg.sorts(),
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<_, ()>::new(),
+        )
+        .unwrap();
+        let plan = schedule(&rq);
+        let store = IndexStore::build(eg);
+        let index = VariantIndex::naive(&store);
+        take_op_restriction_log();
+        let ms = run_query(
+            &plan,
+            eg,
+            &index,
+            &crate::resolve::GlobalCtx::<(), _>::new(),
+        );
+        let log = take_op_restriction_log();
+        let mut keys: Vec<Vec<ENodeId>> = ms
+            .iter()
+            .map(|m| {
+                (0..plan.shape.num_vars())
+                    .map(|v| m.get(VarId(v as u16)))
+                    .collect()
+            })
+            .collect();
+        keys.sort();
+        (log, keys)
+    }
+
+    /// The shipped rule decides per binding, not per atom: one query, two
+    /// bindings of the same join, two mechanisms.
+    ///
+    /// `hub_a` has four `f0` parents and is read against the whole `f0`
+    /// relation, the shape the demotion was landed for — a handful of
+    /// candidates and a relation two orders larger, where the test wins.
+    /// `hub_b`'s bucket holds its forty `f1` parents, which is the same
+    /// position-0 bucket the `f0` join probes, and against a relation of that
+    /// size the operand wins. Both decisions are taken inside one `run_query`.
+    ///
+    /// This is the decision gate: it asserts which mechanism ran, not how long
+    /// it took, so it holds in every build profile. The timing half is
+    /// `tests/ematch_op_filter.rs`.
+    #[test]
+    fn op_restriction_policy_is_taken_per_binding() {
+        let _pin = OP_FILTER_PIN.lock().unwrap_or_else(|e| e.into_inner());
+        let (eg, _, _) = op_restriction_eg();
+
+        let (log, _) = op_restriction_run(&eg, "(f0 (hub z) y)", OpFilterPolicy::Adaptive);
+        assert_eq!(
+            log,
+            vec![OpRestriction::Filter, OpRestriction::Leapfrog],
+            "4 parents against a relation of {} must filter and 40 must not",
+            4 * OP_FILTER_RELATION_PER_CANDIDATE
+        );
+
+        // Against a relation of forty, neither bucket is small enough to make
+        // the test worth its per-candidate load.
+        let (log, _) = op_restriction_run(&eg, "(f1 (hub z) y)", OpFilterPolicy::Adaptive);
+        assert_eq!(log, vec![OpRestriction::Leapfrog; 2]);
+
+        set_op_filter_policy(OpFilterPolicy::Adaptive);
+    }
+
+    /// The two mechanisms return the same match set on both shapes.
+    ///
+    /// The demotion's soundness argument is the identity
+    /// `by_op[o] ∩ B = { n ∈ B : op(n) = o }` over one index build; this is that
+    /// identity checked on the shapes the policy sends each way, so a change
+    /// that moves the rule cannot also change what the matcher returns.
+    #[test]
+    fn op_restriction_mechanisms_agree_on_the_match_set() {
+        let _pin = OP_FILTER_PIN.lock().unwrap_or_else(|e| e.into_inner());
+        let (eg, _, _) = op_restriction_eg();
+        for src in ["(f0 (hub z) y)", "(f1 (hub z) y)", "(f0 x y)"] {
+            let (_, adaptive) = op_restriction_run(&eg, src, OpFilterPolicy::Adaptive);
+            let (fl, filter) = op_restriction_run(&eg, src, OpFilterPolicy::AlwaysFilter);
+            let (ll, leapfrog) = op_restriction_run(&eg, src, OpFilterPolicy::AlwaysLeapfrog);
+            assert_eq!(adaptive, filter, "{src}: filter changed the match set");
+            assert_eq!(adaptive, leapfrog, "{src}: leapfrog changed the match set");
+            assert!(!adaptive.is_empty(), "{src}: shape must match something");
+            // `(f0 x y)` is a one-lookup join: no `ByOp` to place, no decision.
+            if src == "(f0 x y)" {
+                assert!(fl.is_empty() && ll.is_empty());
+            }
+        }
+        set_op_filter_policy(OpFilterPolicy::Adaptive);
     }
 }

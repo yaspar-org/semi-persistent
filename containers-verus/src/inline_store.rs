@@ -65,7 +65,7 @@ where
     /// `InlineStore::new()` takes no turbofish, and the const generic could not
     /// be inferred through `Vec::with_store` (whose return type does not mention
     /// `TRACK`) — the consumer calls `InlineStore::new()` bare.
-    pub fn new() -> (s: InlineStore<T, I>)
+    pub(crate) fn new() -> (s: InlineStore<T, I>)
         ensures
             DiffStore::<T, I, false>::wf(&s),
             DiffStore::<T, I, true>::wf(&s),
@@ -102,6 +102,10 @@ where
         self.data.len() == 0
     }
 
+    fn raw_len(&self) -> (n: usize) {
+        self.data.len()
+    }
+
     #[inline(always)]
     fn len(&self) -> I {
         // Production's line verbatim (containers/src/diff_store.rs:246); vstd's
@@ -134,9 +138,8 @@ where
         // `TRACK &&` is production's guard verbatim (`diff_store.rs:263`) and it
         // matters: preserving the inline capture flag across a write costs a
         // load and a branch, and when `!TRACK` the flag is dead — nothing reads
-        // `captured()`. Paying it unconditionally cost +23% on an untracked
-        // e-class-ring splice; see `set_raw`'s TRACK-conditional postcondition
-        // in `diff_store.rs`.
+        // `captured()`. See `set_raw`'s TRACK-conditional postcondition in
+        // `diff_store.rs`; current machine effects belong in Criterion.
         let was_captured = TRACK && T::tag(&self.data[iu]);
         let mut new_repr = value.into_repr();
         if was_captured {

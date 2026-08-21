@@ -5,6 +5,8 @@
 //! All names are strings at this stage; resolution to OpId/SortId/VarId
 //! happens in a later pass.
 
+use crate::registry::OpMeta;
+
 macro_rules! typed_var_id {
     ($(#[doc = $doc:expr] pub struct $name:ident;)*) => {$(
         #[doc = $doc]
@@ -224,6 +226,13 @@ impl RhsTerm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RhsChild {
     Term(RhsTerm),
+    /// `term:mult` under a variadic op — the term contributed `mult` times.
+    /// Multiplicity 0 omits the term (the k−1 = 0 case of a multiplicity variant).
+    TermMult {
+        term: RhsTerm,
+        mult: MultExpr,
+        span: Span,
+    },
     /// `..name` — splice rest variable contents.
     Splice(String, Span),
     /// `..{body for v in source [if guard]}` — set comprehension.
@@ -259,6 +268,15 @@ pub enum RhsChild {
 pub enum MultExpr {
     Lit(u64),
     Var(String),
+    /// `(u64::- k 1)` — checked u64 arithmetic over multiplicity variables
+    /// and literals. The op vocabulary mirrors the u64 primitive ops; the
+    /// resolver interval-checks the expression against the LHS multiplicity
+    /// constraints so an underflow or division by zero is a compile error,
+    /// not a runtime one.
+    Prim {
+        op: String,
+        args: Vec<MultExpr>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -289,33 +307,65 @@ pub enum AlgTag {
     Inverse(String),
 }
 
+/// The `:until` goal of a `(run …)`: two ground terms and the relation that has to hold
+/// between their classes for the run to stop. `equal` distinguishes `(= a b)` from `(!= a b)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunGoal {
+    pub left: Term,
+    pub right: Term,
+    pub equal: bool,
+}
+
+/// One `(datatype …)` variant: a constructor declaration whose return sort is the datatype.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Variant {
+    pub name: String,
+    pub arg_sorts: Vec<String>,
+    pub tags: Vec<AlgTag>,
+    /// Always has `is_constructor: true` — a datatype variant is a constructor by
+    /// construction — plus whatever `:cost` / `:unextractable` the variant declared.
+    pub meta: OpMeta,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Sort(String),
+    /// `(function …)` and `(constructor …)`: the same declaration, distinguished only by
+    /// `meta.is_constructor`. Both register an operator with identical congruence and
+    /// matching behavior; a constructor additionally carries the extraction semantics
+    /// (`FLAG_CONSTRUCTOR` on its nodes, `:cost`, `:unextractable`).
     Function {
         name: String,
         arg_sorts: Vec<String>,
         ret_sort: String,
         tags: Vec<AlgTag>,
+        meta: OpMeta,
     },
     Datatype {
         name: String,
-        variants: Vec<(String, Vec<String>, Vec<AlgTag>)>,
+        variants: Vec<Variant>,
     },
-    Rewrite {
-        lhs: Pattern,
-        rhs: RhsTerm,
-        when: Vec<Pattern>,
-        subsume: bool,
-    },
-    Rule {
-        body: Vec<Pattern>,
-        head: Vec<Action>,
-    },
+    /// `(ruleset name)` — declares a ruleset. Rules tagged `:ruleset name` join it, and
+    /// `(run name N)` runs exactly those rules.
+    Ruleset(String),
     Let(String, Term),
     Union(Term, Term),
     Insert(Term),
-    Run(u64),
+    /// `(run [ruleset] N [:until (= a b) | :until (!= a b)])`.
+    Run {
+        /// The ruleset to run, or `None` for the default one (rules with no `:ruleset` tag).
+        ruleset: Option<String>,
+        /// Iteration budget.
+        limit: u64,
+        /// Goal that stops the run early once it holds.
+        until: Option<RunGoal>,
+    },
+    /// `(print-size)` — per-operator node counts and the total — or `(print-size Op)`, the
+    /// count for one operator.
+    PrintSize(Option<String>),
+    /// `(print-stats)` — the last run's counters on stdout — or `(print-stats :file "p.json")`,
+    /// the same numbers as JSON in a file.
+    PrintStats(Option<String>),
     Check(Term),
     CheckEq(Term, Term),
     CheckNeq(Term, Term),
