@@ -765,16 +765,17 @@ mod stress_proof_test {
         );
     }
 
-    /// Investigation harness (F5): rebuild the same stress structure with AC completion
-    /// ON, so the basis-invariant dump (`AC_BASIS_DUMP=1`) and the divergence trace
-    /// (`AC_COMPLETE_TRACE=1`) fire per completion round. Ignored by default because
-    /// completion is known to diverge on these graphs; this exists to witness *why*.
-    /// Run: `AC_BASIS_DUMP=1 AC_COMPLETE_TRACE=1 cargo test investigate_completion -- --ignored --nocapture`
-    fn build_stress_cc(seed: u64, n_leaves: usize, n_layers: usize, n_merges: usize) {
+    /// Rebuild a stress structure with AC completion and reduced-basis reports enabled.
+    /// This supports the ignored divergence reproducer below.
+    fn build_completion_stress_with_reports(
+        seed: u64,
+        n_leaves: usize,
+        n_layers: usize,
+        n_merges: usize,
+    ) {
         let mut eg = EGraph31::<NiraLitVal, false, true>::new();
         eg.set_cc(true);
-        // Investigation harness: always run the reduced-basis invariant checks so the
-        // per-round and final `cc_basis_dump`s fire regardless of the env var.
+        // Always run reduced-basis checks so each completion round is validated.
         eg.set_basis_checks(true);
         let int = eg.intern_sort("Int");
         let ops = Ops {
@@ -838,18 +839,18 @@ mod stress_proof_test {
             let axiom_id = crate::id::AxiomId::new(i as u16);
             eg.merge_justified(a, b, Justification::Axiom { axiom_id });
         }
-        eprintln!("[investigate] seed={seed} starting rebuild with completion ON");
+        eprintln!("[completion] seed={seed} starting rebuild");
         eg.rebuild();
         eg.cc_basis_dump("final");
         eprintln!(
-            "[investigate] seed={seed} final node_count={}",
+            "[completion] seed={seed} final node_count={}",
             eg.node_count()
         );
     }
 
-    /// Like `build_stress_cc` but with no basis dump; returns the final node count.
-    /// On divergence the `rebuild` backstop's `debug_assert` panics, which the sweep catches.
-    fn build_stress_ac_complete_quiet(
+    /// Run the same completion stress case without reports and return its node count.
+    /// On divergence, the rebuild backstop panics.
+    fn build_completion_stress(
         seed: u64,
         n_leaves: usize,
         n_layers: usize,
@@ -918,19 +919,16 @@ mod stress_proof_test {
     }
 
     #[test]
-    #[ignore = "completion diverges on this graph; investigation harness only"]
-    fn investigate_completion() {
-        build_stress_cc(42, 30, 4, 20);
+    #[ignore = "known completion-divergence reproducer; slow"]
+    fn completion_divergence_reproducer() {
+        build_completion_stress_with_reports(42, 30, 4, 20);
     }
 
-    /// Sweep a grid of stress configs with AC completion ON and report which converge and
-    /// which hit the divergence backstop (the `debug_assert` in `rebuild`, caught per config).
-    /// Maps the boundary of "what still blows up". Basis checks off here (we only want the
-    /// converge/diverge verdict, not the per-round dump).
-    /// Run: `cargo test investigate_completion_sweep -- --ignored --nocapture`
+    /// Check a grid of completion stress cases and report convergence versus the
+    /// rebuild backstop. Basis reports stay off so only the verdict is collected.
     #[test]
-    #[ignore = "investigation sweep: maps the converge/diverge boundary; slow"]
-    fn investigate_completion_sweep() {
+    #[ignore = "completion convergence matrix; slow"]
+    fn completion_convergence_matrix() {
         // (seed, leaves, layers, merges)
         let grid: &[(u64, usize, usize, usize)] = &[
             (1, 6, 2, 4),
@@ -944,31 +942,28 @@ mod stress_proof_test {
             (123, 30, 4, 20),
             (999, 40, 3, 30),
         ];
-        // NOTE: seed 42 at (30, 4, 20) is the one known *diverging* input; it is witnessed
-        // separately by `investigate_completion` (it churns slowly to the 50k-node backstop,
-        // so including it here would make the sweep hang for minutes). Divergence is
-        // input-specific, not size-specific: same-size configs above converge in well under a
-        // second. See the spec §3.3 / plan §0.5.
+        // Seed 42 at (30, 4, 20) is the known diverging input. It is covered by
+        // `completion_divergence_reproducer` because reaching the node backstop
+        // is slow. Divergence is input-specific, not size-specific; see the
+        // completion specification section 3.3.
         for &(seed, leaves, layers, merges) in grid {
-            let res = std::panic::catch_unwind(|| {
-                build_stress_ac_complete_quiet(seed, leaves, layers, merges)
-            });
+            let res =
+                std::panic::catch_unwind(|| build_completion_stress(seed, leaves, layers, merges));
             match res {
                 Ok(nodes) => eprintln!(
-                    "[sweep] seed={seed} leaves={leaves} layers={layers} merges={merges}: CONVERGED, {nodes} nodes"
+                    "[matrix] seed={seed} leaves={leaves} layers={layers} merges={merges}: CONVERGED, {nodes} nodes"
                 ),
                 Err(_) => eprintln!(
-                    "[sweep] seed={seed} leaves={leaves} layers={layers} merges={merges}: DIVERGED (hit backstop)"
+                    "[matrix] seed={seed} leaves={leaves} layers={layers} merges={merges}: DIVERGED (hit backstop)"
                 ),
             }
         }
     }
 
     #[test]
-    #[ignore = "investigation harness: a small CONVERGING graph, to check the basis is fully
-                Kapur-reduced at the true fixpoint (kapur_lhs_reducible=0 in the final dump)"]
-    fn investigate_completion_small() {
-        build_stress_cc(7, 12, 2, 5);
+    #[ignore = "slow reduced-basis report on a converging completion case"]
+    fn completion_reduced_basis_smoke() {
+        build_completion_stress_with_reports(7, 12, 2, 5);
     }
 
     #[test]

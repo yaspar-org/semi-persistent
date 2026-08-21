@@ -310,12 +310,12 @@ pub open(crate) spec fn ring_payloads<T: DenseId>(
     Seq::new(cells.len(), |i: int| cells[i].payload)
 }
 
-/// The aggregate archive (Phase 7): each frame's component snapshots jointly
+/// The aggregate archive: each frame's component snapshots jointly
 /// satisfy the invariant, the stacks move in lockstep, the archived pool
 /// lengths are monotone (the pool only grows between marks), and each
-/// archived repr triple is a valid sparse-set state - which is what lets the
-/// aggregate's restore discharge `SparseSet::restore`'s snapshot-wf
-/// precondition, the allowlist's WITNESS-PENDING item, from its own `wf`.
+/// archived repr triple is a valid sparse-set state. This lets the aggregate's
+/// restore discharge `SparseSet::restore`'s snapshot-wf precondition from its
+/// own `wf`.
 /// Opaque for the standard reason; only mark/restore (and `set_min_width`,
 /// which re-checks W6 vacuity over empty archived pools) reveal it.
 #[verifier::opaque]
@@ -369,7 +369,7 @@ where
     /// Per-class data, keyed by repr id.
     pub(crate) reprs: SparseSet<ClassData<L, T>, <T as DenseId>::Index,
         InlineStore<ClassData<L, T>, <T as DenseId>::Index>, TRACK>,
-    /// Canonical-representative lookup (verified stage 1).
+    /// Verified canonical-representative lookup.
     pub(crate) uf: UnionFind<T, J, TRACK, PROOFS>,
     /// Per-class parent lists.
     pub(crate) uses: ListArena<T, L, N, TRACK>,
@@ -470,7 +470,7 @@ where
                 self.uses.nodes_view(),
                 self.min_pool.view(),
                 self.min_width as nat)
-        // Phase 7: the joint archive over the component snapshot stacks.
+        // Joint archive over the component snapshot stacks.
         &&& eg_archive_agrees::<T, L, N>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
@@ -1433,9 +1433,7 @@ where
     /// Merge the classes of `a` and `b`: union-find link, ring splice with
     /// the absorbed payload cleared, repr removal. `None` iff already one
     /// class. The core of `merge` and `merge_directed`; the distinct-rings
-    /// precondition of `splice_absorb` is DISCHARGED here from W2 + W3 —
-    /// the machine-checked form of the argument that closes the
-    /// WITNESS-PENDING allowlist entries for the aggregate's use.
+    /// precondition of `splice_absorb` is discharged here from W2 + W3.
     pub(crate) fn merge_with(&mut self, a: T, b: T, directed: bool, prefer_a: bool)
         -> (r: Option<MergeInfo<T, L>>)
         requires old(self).wf(),
@@ -2538,7 +2536,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Semi-persistence: compose from the five components (Phase 7)
+// Semi-persistence: compose from the five components
 // ---------------------------------------------------------------------------
 
 /// Token bundling the five component tokens.
@@ -2956,6 +2954,22 @@ where
     /// Explain why `a ≡ b` by walking the proof tree (production's surface).
     pub fn explain(&self, a: T, b: T, buf: &mut crate::union_find::ProofBuf<T, J>) -> bool {
         self.uf.explain(a, b, buf)
+    }
+
+    /// Read-only proof-parent forest for an Euler-tour batch index.
+    pub fn proof_parent(&self) -> Option<&crate::VecI<T, T::Index, TRACK>> {
+        self.uf.proof_parent()
+    }
+
+    /// Extract a proof using an LCA obtained from [`Self::proof_parent`].
+    pub fn explain_with_lca(
+        &self,
+        a: T,
+        b: T,
+        lca: T,
+        buf: &mut crate::union_find::ProofBuf<T, J>,
+    ) -> bool {
+        self.uf.explain_with_lca(a, b, lca, buf)
     }
 }
 

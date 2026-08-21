@@ -166,10 +166,12 @@ narrower than classical AC matching.
 A dual-parent-pointer union-find maintains both a path-compressed
 fast path and an uncompressed proof path. The proof path records
 the justification for every merge (rewrite, congruence, or axiom).
-Proof extraction walks the proof forest via LCA to find the shortest
-chain connecting two nodes. A history bit on each e-node supports
+Proof extraction walks the proof forest via LCA to recover its unique
+tree path connecting two nodes. A history bit on each e-node supports
 copy-on-first-re-canonization, so the original node structure is
-preserved for proof reconstruction.
+preserved for proof reconstruction. The implementation and its regressions are
+ordinary Rust; forest acyclicity and explanation correctness are not currently
+Verus theorems.
 
 ### Datalog-style rules
 

@@ -1,6 +1,7 @@
 # Anti-Unification Correctness and Validation
 
-[Anti-Unification design](../design/19-anti-unification.md)
+[Anti-Unification design](../design/19-anti-unification.md) |
+[Proof certificates](au-proof-certificates.md)
 
 The production exact solver has extensive finite differential and property
 evidence. The current Verus model proves objective-order, representation, and

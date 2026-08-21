@@ -88,11 +88,11 @@ pub struct EGraph<
     /// stopped mid-apply instead of only between rounds.
     cc_start_nodes: usize,
     /// Whether `rebuild` runs the AC congruence-completion pass (superposition +
-    /// inter-reduction). **Default off** — but NOT for the historical flattening reason
-    /// (nested same-op flattening, `WF_flat`, landed in `flatten_ac_children`): the
-    /// standing gate is divergence *scoping* — ground AC completion is doubly exponential
-    /// in the worst case and the growth backstop is only checked between rounds (see
-    /// `doc/future/ac-completion-review-debt.md` §1). Opt in with [`set_cc`](Self::set_cc).
+    /// inter-reduction). **Default off** because ground AC completion is doubly
+    /// exponential in the worst case. The growth backstop is checked between rounds and
+    /// inside the apply loops, but a bounded node count does not make the algorithm cheap.
+    /// See `doc/future/ac-completion-limitations.md` section 1. Opt in with
+    /// [`set_cc`](Self::set_cc).
     cc: bool,
     /// Whether `rebuild` runs the AC reduced-basis invariant checks (`cc_basis_dump`:
     /// `min_monomial` minimality, the Kapur-reduced antichain, etc., see `ac_invariants.rs`).
@@ -140,8 +140,7 @@ pub struct EGraph<
 }
 
 /// Default node-growth budget for one completion-enabled `rebuild` (see
-/// [`EGraph::set_completion_node_budget`]). A convergent completion adds few nodes; the
-/// measured diverging stress instance balloons past this within a few rounds.
+/// [`EGraph::set_completion_node_budget`]).
 pub const DEFAULT_COMPLETION_NODE_BUDGET: usize = 50_000;
 
 /// Outcome of the AC congruence-completion pass inside `rebuild`.
@@ -166,6 +165,17 @@ pub enum CompletionOutcome {
     /// deliberately unfinished — the caller asked a question and it is
     /// answered. Only the lazy-check transaction sets a goal.
     GoalMet { rounds: usize },
+}
+
+/// Aggregate counts from [`EGraph::dump_all_proofs`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProofDumpStats {
+    /// One proof-path record is emitted for every e-node, including representatives.
+    pub terms: usize,
+    /// Records with at least one proof edge.
+    pub nontrivial_proofs: usize,
+    /// Total proof edges written across all certificates.
+    pub steps: usize,
 }
 
 /// Survivor policy for class merges (`--union-by`). `Rank` leaves the choice
@@ -271,8 +281,7 @@ where
     }
 
     /// Enable or disable the AC congruence-completion pass in `rebuild` (default off).
-    /// Off by default for divergence *scoping* (nested same-op flattening landed long
-    /// ago) — see the `cc` field docs and `doc/future/ac-completion-review-debt.md` §1.
+    /// See the `cc` field docs and `doc/future/ac-completion-limitations.md` §1.
     pub fn set_cc(&mut self, enabled: bool) {
         self.cc = enabled;
     }
@@ -760,9 +769,8 @@ where
         // any child whose class is a pure same-op sum, keyed on the class's canonical
         // summand form (atomic-aware), so `+(+(a,b), c)` becomes `+(a,b,c)`. An atomic child
         // (e.g. `c` used as `neg`'s child in §5b) is kept as a summand. BOTH completion
-        // representations flatten — gating on MSet only left `(Or (Or x y) z) ≠ (Or x y z)`
-        // for Set (ACI) ops with completion off (bug found 2026-07-10; fixture
-        // set_flatten_build.egg).
+        // representations flatten; otherwise `(Or (Or x y) z)` and `(Or x y z)`
+        // differ for Set (ACI) ops with completion off. See set_flatten_build.egg.
         if matches!(
             self.ops.info(op).kind,
             OpKind::MSet { .. } | OpKind::Set { .. }
@@ -990,9 +998,8 @@ where
         buf.clear();
         match self.node_ref(node) {
             NodeRef::MSet(_) => {
-                // Children find-canonicalized, then sorted + coalesced IN PLACE in the
-                // destination (same form as MSetCanon) — no intermediate Vec (adversarial
-                // analysis A3: this `_into` used to allocate twice internally).
+                // Children find-canonicalized, then sorted + coalesced in place in the
+                // destination (same form as MSetCanon), with no intermediate Vec.
                 self.for_each_child(node, |g, mult| {
                     buf.push((self.classes.find_const(g), mult));
                 });
@@ -1036,12 +1043,10 @@ where
         // No clamp / unit-drop here: canonization (`add`, `recanonize_node`) already established
         // the op's algebraic normal form (nilpotent mod-n, identity unit-drop) in the stored node,
         // and `cc_round` only runs after `rebuild_congruence` recanonicalizes every node. So a
-        // stored MSet/Set node's children are already the canonical monomial; reading them back is
-        // enough. The unit-drop holds on the recanonize path via `CanonMode.unit` plus the
-        // became-a-unit sweep in `rebuild_congruence` (Kapur-conformance fix W2 (spec §3 table)) — before that fix,
-        // only the build path dropped units and this claim overclaimed. (It also used to
-        // re-apply the clamp/drop here, the symptom of the clamp living in completion rather
-        // than canonization — long fixed.)
+        // stored MSet/Set node's children are already the canonical monomial; reading them
+        // back is enough. Unit dropping on the recanonize path is enforced by
+        // `CanonMode.unit` plus the became-a-unit sweep in `rebuild_congruence`;
+        // completion does not reapply canonization.
     }
 
     /// The completion column of `node`'s op (its position in the registry `completion_ops`
@@ -1337,6 +1342,183 @@ where
         self.classes.explain(a, b, buf)
     }
 
+    /// Write a deterministic, line-oriented proof-path record for every e-node.
+    ///
+    /// Each record names the node's current operator, children, representative,
+    /// proof-tree LCA, and every justified edge from the node to that
+    /// representative. One Euler-tour table is built in O(n), then each LCA is
+    /// queried in O(1); writing the proof paths costs O(number of emitted
+    /// steps). Representative records have an empty reflexive proof.
+    ///
+    /// The dump is available only when `PROOFS = true`. Any successful
+    /// justified merge or restore invalidates the table, so the complete build
+    /// and write happen under this single immutable borrow.
+    pub fn dump_all_proofs<W: std::io::Write>(
+        &self,
+        mut out: W,
+    ) -> std::io::Result<ProofDumpStats> {
+        if !PROOFS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "proof dump requires an EGraph with PROOFS=true",
+            ));
+        }
+
+        let lca = {
+            let parents = self.classes.proof_parent().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "PROOFS=true e-graph has no proof-parent forest",
+                )
+            })?;
+            crate::lca::LcaTable::build(parents, self.len())
+        };
+
+        writeln!(out, "# semi-persistent-proof-dump v1")?;
+        writeln!(
+            out,
+            "# each term record proves node == representative; ids are decimal"
+        )?;
+        writeln!(out, "terms {}", self.len())?;
+
+        let mut stats = ProofDumpStats::default();
+        let mut buf = ProofBuf::new();
+        let mut children = Vec::new();
+
+        for node in self.node_ids() {
+            let representative = self.find_const(node);
+            let ancestor = lca.lca(node, representative).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "proof forest has no LCA for equivalent nodes {} and {}",
+                        node.to_usize(),
+                        representative.to_usize()
+                    ),
+                )
+            })?;
+
+            buf.clear();
+            if !self
+                .classes
+                .explain_with_lca(node, representative, ancestor, &mut buf)
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "LCA {} is not on both proof paths for nodes {} and {}",
+                        ancestor.to_usize(),
+                        node.to_usize(),
+                        representative.to_usize()
+                    ),
+                ));
+            }
+
+            write!(
+                out,
+                "term {} representative {} op {:?}",
+                node.to_usize(),
+                representative.to_usize(),
+                self.node_op_name(node)
+            )?;
+            match self.get_lit_val(node) {
+                Some(value) => write!(out, " literal {:?}", value.to_string())?,
+                None => write!(out, " literal -")?,
+            }
+            children.clear();
+            self.for_each_child(node, |child, mult| {
+                children.push((child, mult.to_u64()));
+            });
+            write!(out, " children [")?;
+            for (i, (child, mult)) in children.iter().enumerate() {
+                if i > 0 {
+                    write!(out, ",")?;
+                }
+                write!(out, "{}:{}", child.to_usize(), mult)?;
+            }
+            writeln!(out, "]")?;
+
+            writeln!(
+                out,
+                "proof lca {} steps {}",
+                ancestor.to_usize(),
+                buf.steps.len()
+            )?;
+            for &(from, to, justification) in &buf.steps {
+                write!(out, "step {} {} ", from.to_usize(), to.to_usize())?;
+                self.write_proof_dump_justification(&mut out, justification)?;
+                writeln!(out)?;
+            }
+            writeln!(out, "end")?;
+
+            stats.terms += 1;
+            stats.nontrivial_proofs += usize::from(!buf.steps.is_empty());
+            stats.steps += buf.steps.len();
+        }
+
+        writeln!(
+            out,
+            "summary terms {} nontrivial {} steps {}",
+            stats.terms, stats.nontrivial_proofs, stats.steps
+        )?;
+        Ok(stats)
+    }
+
+    fn write_proof_dump_justification<W: std::io::Write>(
+        &self,
+        out: &mut W,
+        justification: Justification<Cfg::G>,
+    ) -> std::io::Result<()> {
+        match justification {
+            Justification::Filler => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "proof path contains a filler justification",
+            )),
+            Justification::Rewrite { rule_id } => {
+                write!(out, "rewrite rule={}", rule_id.to_usize())
+            }
+            Justification::Congruence { node_a, node_b } => write!(
+                out,
+                "congruence nodes={},{}",
+                node_a.to_usize(),
+                node_b.to_usize()
+            ),
+            Justification::Axiom { axiom_id } => {
+                write!(out, "axiom id={}", axiom_id.to_usize())
+            }
+            Justification::ACSuperposition { node_a, node_b } => write!(
+                out,
+                "ac-superposition nodes={},{}",
+                node_a.to_usize(),
+                node_b.to_usize()
+            ),
+            Justification::ACInterReduction { node_a, node_b } => write!(
+                out,
+                "ac-inter-reduction nodes={},{}",
+                node_a.to_usize(),
+                node_b.to_usize()
+            ),
+            Justification::ACAxiomCP { node_a, node_b } => write!(
+                out,
+                "ac-axiom-cp nodes={},{}",
+                node_a.to_usize(),
+                node_b.to_usize()
+            ),
+            Justification::Cancellative { node_a, node_b } => write!(
+                out,
+                "cancellative nodes={},{}",
+                node_a.to_usize(),
+                node_b.to_usize()
+            ),
+            Justification::InverseCancel { node_a, node_b } => write!(
+                out,
+                "inverse-cancel nodes={},{}",
+                node_a.to_usize(),
+                node_b.to_usize()
+            ),
+        }
+    }
+
     /// Deep explanation: expand Congruence justifications into child-pair proofs.
     /// Appends all steps (including recursive child explanations) to `buf.steps`.
     /// Uses an iterative worklist — no recursion.
@@ -1446,10 +1628,12 @@ where
     // Rebuild — worklist-based congruence closure
     // -----------------------------------------------------------------------
 
-    /// Rebuild to a congruence-closed, AC-congruence-closed fixpoint.
+    /// Rebuild to a plain-congruence-closed state.
     ///
-    /// Two interleaved closures run to a joint fixpoint (see
-    /// `doc/design/ac-congruence-completeness.md` §8, rebuild = Kapur's Algorithm 3):
+    /// Plain congruence closure always runs. AC/ACI completion is opt-in through
+    /// [`set_cc`](Self::set_cc); it is disabled by default. When enabled, two
+    /// closures are interleaved (see `doc/design/ac-congruence-completeness.md`
+    /// section 8, rebuild = Kapur's Algorithm 3):
     /// - [`rebuild_congruence`](Self::rebuild_congruence): ordinary worklist-driven
     ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
     /// - [`cc_round`](Self::cc_round): AC completion (substitutes
@@ -1457,8 +1641,11 @@ where
     ///
     /// A completion round may push new merges onto the worklist; we drain them with
     /// another congruence pass, then complete again, until a whole completion round
-    /// adds nothing. The fixpoint is the AC congruence closure of the asserted
-    /// equalities.
+    /// adds nothing. Only [`CompletionOutcome::Converged`] reports that joint
+    /// fixpoint. [`CompletionOutcome::Disabled`], [`CompletionOutcome::GoalMet`],
+    /// and [`CompletionOutcome::AbortedGrowthLimit`] guarantee plain congruence
+    /// closure but not complete AC/ACI congruence closure. Inspect
+    /// [`completion_outcome`](Self::completion_outcome) after each call.
     pub fn rebuild(&mut self) {
         // Ordinary atom-level congruence closure always runs. AC completion runs only
         // when opted in (default off for divergence scoping — see the `cc` field docs).
@@ -1476,7 +1663,7 @@ where
         // completion is driven too: `completion_node_ids` yields both partitions, reducts
         // normalize in the op's count domain (idempotent clamp / mod-n / ℕ), and each rule
         // additionally superposes with its op's own axiom (Kapur §4 per-rule critical
-        // pairs — Kapur-conformance fix W3 (spec §3 table)).
+        // pairs).
         let trace = std::env::var_os("AC_COMPLETE_TRACE").is_some();
         // Safety backstop against an expensive or nonterminating completion run (minting
         // critical-pair nodes): the configurable node-growth budget (see
@@ -1863,9 +2050,8 @@ where
     /// One AC congruence-completion round (Kapur FSCD 2021 Algorithm 1, the steps our
     /// rebuild otherwise omits). Returns `true` if it scheduled any new merge.
     ///
-    /// Reading each non-subsumed AC node `+M = d` as a ground rule `+M → d`, over a
-    /// frozen snapshot of the active AC nodes
-    /// ([`crate::cc::CcSnapshot`]), for each pair of partners (same op,
+    /// Reading each non-subsumed AC node `+M = d` as a ground rule `+M → d`,
+    /// for each pair of partners found through the class use-lists (same op,
     /// sharing ≥1 child class):
     ///
     /// - **(A) inter-reduction + Collapse** — if `A ⊊ M`, the sub-sum `+A` equals `a`,
@@ -1973,7 +2159,7 @@ where
         // (the implied equality fires through `targets`, not `rules`). Without the dedup, every
         // copy reduces every other copy, so they mutually collapse and the rule vanishes
         // entirely (the §6b "merge before mark" / self-reduction hazard, at the set level).
-        // Clone-free (adversarial analysis A4): sort by (op, lhs, node) with borrowed
+        // Clone-free: sort by (op, lhs, node) with borrowed
         // comparisons, drop adjacent (op, lhs) duplicates keeping the first (= lowest node
         // id), then restore node order for the (B) binary search.
         rules.sort_unstable_by(|x, y| {
@@ -2006,7 +2192,7 @@ where
         // over the inter-reduced *antichain*, never over a reducible rule (FSCD'21 Algo 1:
         // collapse before superpose). The batch round collapses these only on the *next*
         // round, so excluding them as (B) sources/partners here is what keeps the active
-        // set an antichain within the round and stops the critical-pair blowup (plan §0.4).
+        // set an antichain within the round and stops the critical-pair blowup.
         // O(rules²) over the small active set; acceptable while the worklist rewrite (S3b)
         // is pending.
         let phase_time = std::env::var_os("AC_PHASE_TIME").is_some();
@@ -2027,8 +2213,8 @@ where
         // re-coalesces. The expansion (O(total count), not O(distinct summands)) stays for
         // now: `add`'s whole canonize pipeline — flatten, unit-drop, clamp, degeneracy —
         // operates on child lists, and counts are bounded by the lcm of existing monomials.
-        // A pair-based `add` entry that multiplies multiplicities through the splice is the
-        // remaining follow-up (adversarial analysis A5).
+        // A pair-based `add` entry could multiply multiplicities through the splice
+        // without materializing repeated children.
         let mut mat_buf: Vec<Cfg::G> = Vec::new();
         let materialize =
             |eg: &mut Self, op: Cfg::O, ms: &[(Cfg::G, Cfg::M)], buf: &mut Vec<Cfg::G>| {
@@ -2114,7 +2300,7 @@ where
         // binary search (no map, no per-round allocation). Each unordered pair is processed
         // once (`ti.node < partner.node`). Both reducts are normalized before merge.
         let mut partner_buf: Vec<Cfg::G> = Vec::new();
-        // Reusable temporaries for the (B) reduct arithmetic (adversarial analysis A2): the
+        // Reusable temporaries for the (B) reduct arithmetic: the
         // lcm and residual are per-pair scratch; only the stored reducts (`crit` entries)
         // allocate. Grown once, reused across every pair.
         let mut ab_buf: Vec<(Cfg::G, Cfg::M)> = Vec::new();
@@ -2123,15 +2309,15 @@ where
         let delta_in_rules = rules.iter().filter(|r| in_delta(r.node)).count();
         for ti in 0..rules.len() {
             // A reducible rule is not a member of the antichain: collapse will retire it,
-            // so it must not seed critical pairs (plan §0.4).
+            // so it must not seed critical pairs.
             if reducible[ti] {
                 continue;
             }
             let op = rules[ti].op;
             let m_node = rules[ti].node;
 
-            // Per-rule AXIOM critical pairs (Kapur §4, Kapur-conformance fix W3 (spec §3 table)): superpose the
-            // rule with the op's own semantic axiom. The count clamp canonizes counts
+            // Per-rule axiom critical pairs (Kapur §4): superpose the rule with
+            // the op's own semantic axiom. The count clamp canonizes counts
             // *within* a monomial but cannot produce these cross-rule consequences — e.g.
             // or(a,b)=c ⟹ or(a,c)=c, and xor(a,b)=c ⟹ xor(a,c)=b — so without these
             // pairs completion is incomplete (Lemmas 4.1(ii), 4.2(ii)/4.5). Generated for
@@ -2391,7 +2577,7 @@ where
         // LHS is in normal form w.r.t. itself; reducing it by itself would subsume the
         // rule before it can superpose — the §4b regression). So a node is collapsed only
         // when a *different*, strictly-contained rule reduces it (genuine inter-reduction).
-        // Borrowed rule views + reused normalize buffers (adversarial analysis A1/A2):
+        // Borrowed rule views plus reused normalize buffers:
         // the per-target rule set is a `clear`+`extend` refill of `Copy` views into the
         // round's rule table — no deep clones — and the normal form lands in a reused
         // destination buffer. Zero steady-state allocation per target.
@@ -2401,7 +2587,7 @@ where
         for (op, mset, class, node, _is_rule) in targets {
             // In-round stop: the goal pair joined, or this round's minting
             // blew the node budget — bail mid-apply instead of burning the
-            // rest of the round (review-debt §1). `rebuild` reads which.
+            // rest of the round. `rebuild` reads which outcome occurred.
             if self.cc_should_stop() {
                 break;
             }
@@ -2477,7 +2663,7 @@ where
         // Normalize BOTH reducts to multisets first; if they coincide the pair is already
         // joinable (a trivial critical pair) — skip it, minting no node and no merge.
         // Materializing trivial pairs was a second blowup source: each spurious node became
-        // a fresh rule that fed the next round (plan §0.4). Only genuinely-divergent pairs
+        // a fresh rule that fed the next round. Only genuinely divergent pairs
         // are materialized and merged.
         let mut trivial = 0usize;
         let mut nontrivial = 0usize;
@@ -2982,8 +3168,8 @@ where
 
     /// Flatten nested same-op AC children of `op` in `self.g_buf`, to a fixpoint
     /// (`WF_flat`, design §6c). Each element is examined by its class's *canonical summand
-    /// form* (`summand_form`, §9a), NOT by its union-find representative (that depends on
-    /// merge order and is non-canonical — the F1 bug, §0.1):
+    /// form* (`summand_form`, §9a), NOT by its union-find representative (which depends on
+    /// merge order and is therefore non-canonical):
     ///
     /// - if the child's class is **non-`atomic`** (a pure `op`-sum), splice in that class's
     ///   `min_monomial` children (each by multiplicity), recursively;
@@ -3481,7 +3667,7 @@ mod tests {
         assert_eq!(eg.add(th.eq, &[x, y]), eg.add(th.eq, &[y, x]));
     }
 
-    // S1: the per-class min-monomial pool column for the `plus` op tracks the degree-lex-least
+    // The per-class min-monomial pool column for the `plus` op tracks the degree-lex-least
     // `plus`-monomial across merges, and rolls back with the e-graph token. A leaf constant is
     // NOT a `plus`-monomial (it has no `plus` column); merging it in makes the class `atomic`
     // rather than lowering the `plus` column. See design §9a and the pool design in
@@ -3710,6 +3896,104 @@ mod tests {
             eprintln!("  {:?} ≡ {:?}  by {:?}", from, to, just);
         }
         assert!(buf.steps.len() >= 2);
+    }
+
+    #[test]
+    fn lca_batch_explanations_match_regular_explanations() {
+        let (ref mut eg, th) = eg::<false, true>();
+        let nodes = [
+            eg.add(th.x, &[]),
+            eg.add(th.y, &[]),
+            eg.add(th.z, &[]),
+            eg.add(th.w, &[]),
+        ];
+        for (i, &(a, b)) in [
+            (nodes[0], nodes[1]),
+            (nodes[2], nodes[3]),
+            (nodes[1], nodes[2]),
+        ]
+        .iter()
+        .enumerate()
+        {
+            eg.merge_justified(
+                a,
+                b,
+                Justification::Axiom {
+                    axiom_id: crate::id::AxiomId::new(i as u16),
+                },
+            );
+        }
+
+        let table = crate::lca::LcaTable::build(
+            eg.classes
+                .proof_parent()
+                .expect("PROOFS=true has a proof forest"),
+            eg.len(),
+        );
+        for node in nodes {
+            let representative = eg.find_const(node);
+            let lca = table
+                .lca(node, representative)
+                .expect("equivalent nodes share a proof tree");
+            let mut ordinary = ProofBuf::new();
+            let mut indexed = ProofBuf::new();
+            assert!(eg.explain(node, representative, &mut ordinary));
+            assert!(
+                eg.classes
+                    .explain_with_lca(node, representative, lca, &mut indexed)
+            );
+            assert_eq!(indexed.steps, ordinary.steps);
+        }
+    }
+
+    #[test]
+    fn dump_all_proofs_covers_every_node() {
+        let (ref mut eg, th) = eg::<false, true>();
+        let x = eg.add(th.x, &[]);
+        let y = eg.add(th.y, &[]);
+        let z = eg.add(th.z, &[]);
+        eg.merge_justified(
+            x,
+            y,
+            Justification::Axiom {
+                axiom_id: crate::id::AxiomId::new(7),
+            },
+        );
+        eg.merge_justified(
+            y,
+            z,
+            Justification::Axiom {
+                axiom_id: crate::id::AxiomId::new(8),
+            },
+        );
+
+        let mut dump = Vec::new();
+        let stats = eg.dump_all_proofs(&mut dump).expect("proof dump");
+        assert_eq!(stats.terms, eg.len());
+        assert_eq!(stats.nontrivial_proofs, 2);
+        assert!(stats.steps >= 2);
+
+        let text = String::from_utf8(dump).expect("UTF-8 proof dump");
+        assert!(text.starts_with("# semi-persistent-proof-dump v1\n"));
+        assert_eq!(
+            text.lines()
+                .filter(|line| line.starts_with("term "))
+                .count(),
+            3
+        );
+        assert!(text.contains("axiom id=7"));
+        assert!(text.contains("axiom id=8"));
+        assert!(text.contains("summary terms 3 nontrivial 2"));
+    }
+
+    #[test]
+    fn dump_all_proofs_rejects_proof_disabled_graph() {
+        let (ref mut eg, th) = eg::<false, false>();
+        eg.add(th.x, &[]);
+        let err = eg
+            .dump_all_proofs(Vec::new())
+            .expect_err("PROOFS=false must reject proof dumps");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]

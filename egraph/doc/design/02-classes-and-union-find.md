@@ -60,7 +60,9 @@ The union-find maintains two parent vectors when `PROOFS = true`:
   justifications along the way. Never modified by `find()`.
 
 When `PROOFS = false`, `parent_proof` and `justification` are `None`
-and never allocated. Zero overhead.
+and their vectors are never allocated. The two `Option` fields remain in the
+union-find layout; const-gated proof recording is eliminated, but this is not a
+zero-layout-overhead claim.
 
 ### `find(x) → T`
 

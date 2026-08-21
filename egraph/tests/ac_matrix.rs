@@ -9,7 +9,7 @@
 //! The egg fixture harness runs `(TRACK = true, PROOFS = false)` and the proof suite
 //! `(false, true)`, so without this file the new mechanisms were never compiled — let
 //! alone asserted — under `(false, false)` and `(true, true)`, and no proof was ever
-//! reconstructed across the new merge kinds (review-debt §2.1).
+//! reconstructed across the completion merge kinds.
 
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::containers::ShrinkPolicy;
