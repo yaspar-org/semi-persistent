@@ -73,7 +73,7 @@ bootstrap confidence intervals.
 | [`containers`](containers/) | The unverified reference implementation of the container layer, kept as the differential-conformance oracle and performance baseline (`containers-conformance`). ([design docs](containers/doc/design/00-table-of-contents.md)) |
 | [`egraph`](egraph/) | Equality saturation engine: e-graphs, e-matching, rewrite scheduling, term extraction, proofs. ([design docs](egraph/doc/design/00-table-of-contents.md)) |
 | [`traversals`](traversals/) | Arena-based recursion schemes. Stack-safe folds, unfolds, transforms, zippers. Includes `traversals-derive` proc-macro. ([tutorial](traversals/TUTORIAL.md)) |
-| [`abstract-domains`](abstract-domains/) | Verified bitvector abstract domains (Tnums, Anums, Unums, Intervals, reduced products). 952 verified lemmas, 0 admits. Built separately from the default workflow. |
+| [`abstract-domains`](abstract-domains/) | Verified bitvector abstract domains (Tnums, Anums, Unums, Intervals, reduced products). The ordinary Verus run reports 994 verified conditions and 0 errors at the enabled `u8`/`u16`/`u32`/`u64` widths; a CI source gate rejects project-local `admit()`/`assume()`. The pinned `vstd` dependency remains part of the trust boundary. Its executable Rust mirror participates in workspace builds and tests; proof checking runs separately under Verus. |
 
 The live headline-claim inventory, with proved, measured, and argued statements
 kept separate, is [`doc/claims.md`](doc/claims.md). It includes retractions and
@@ -96,18 +96,22 @@ remain beside the crates they extend.
 ## Building
 
 ```bash
-# Build all crates (except Verus-only ones)
-cargo build
+# Build every workspace crate with stable Rust.
+# Verus proof items erase under rustc.
+cargo build --workspace
 
-# Run all tests. containers-verus builds as a dependency of egraph; the
-# excludes skip its own test suites and abstract-domains', which run under
-# the Verus toolchain below.
-cargo test --workspace --exclude semi-persistent-abstract-domains --exclude semi-persistent-containers-verus
+# Run the default runtime, property, and documentation tests.
+cargo test --workspace
 
-# Verify the proof-carrying crates (Verus toolchain)
-cd abstract-domains && cargo verus verify
-cd containers-verus && cargo verus verify
-cd au-verus && cargo verus verify
+# Cover optional features, examples, benches, and feature-gated binaries.
+cargo build --workspace --all-targets --all-features
+cargo test --workspace --all-features
+
+# Verify the proof-carrying crates with the pinned Verus toolchain.
+(cd abstract-domains && cargo verus verify)
+(cd containers-verus && cargo verus verify)
+(cd containers-verus && cargo verus verify --features literal-types)
+(cd au-verus && cargo verus verify)
 ```
 
 ## Design Principles

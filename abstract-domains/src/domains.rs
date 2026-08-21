@@ -3,13 +3,14 @@
 #![allow(unused_imports, unused_variables)]
 /// Multi-width abstract domains via macro instantiation.
 ///
-/// The `abstract_domain!` macro stamps out ExecTnum, ExecAnum, Interval, and TAI
-/// for each unsigned integer width. All `by(bit_vector)` proofs work
+/// The `abstract_domain!` macro stamps out ExecTnum, ExecAnum, ExecUnum,
+/// Interval, and ReducedProduct for each unsigned integer width. All
+/// `by(bit_vector)` proofs work
 /// generically because they only use the type's native operators.
 ///
 /// Usage:
 /// ```ignore
-/// use crate::domains::d64::{ExecTnum, ExecAnum, Interval, TAI};
+/// use crate::domains::d64::{ExecTnum, ExecAnum, ExecUnum, Interval, ReducedProduct};
 /// let x = ReducedProduct::constant(42);
 /// let y = ReducedProduct::constant(10);
 /// let sum = x.add(&y);  // ReducedProduct with Tnum=00110100, Anum=52, Iv=52
@@ -23,7 +24,7 @@ macro_rules! abstract_domain {
             use crate::tnum::Tnum;
             use crate::anum::Anum;
             use crate::unum::Unum;
-            use crate::chopped::ChoppedTnum;
+            use crate::chopped::{ChoppedTnum, ChoppedUnum};
             verus! {
 
             // ============================================================
@@ -48,6 +49,55 @@ macro_rules! abstract_domain {
                 chop_is_mod(prod(a as nat, b as nat), w);
                 // exp(W) == MAX+1: call concrete lemma for this width
                 exp_concrete($bits as nat);
+            }
+
+            /// A native addition that did not wrap is the corresponding
+            /// natural-number addition and fits in the native width.
+            #[verifier::spinoff_prover]
+            pub proof fn add_no_overflow(a: $uint, b: $uint, sum: $uint)
+                requires
+                    sum == a.wrapping_add(b),
+                    sum >= a,
+                    sum >= b,
+                ensures
+                    sum as nat == a as nat + b as nat,
+                    nat_add(a as nat, b as nat) == sum as nat,
+                    nat_add(a as nat, b as nat) < exp($bits as nat),
+                    fits(nat_add(a as nat, b as nat), $bits as nat),
+            {
+                assert(sum as nat == a as nat + b as nat) by(bit_vector)
+                    requires
+                        sum == a.wrapping_add(b),
+                        sum >= a,
+                        sum >= b;
+                nat_add_correct(a as nat, b as nat);
+                exp_concrete($bits as nat);
+                chop_id(nat_add(a as nat, b as nat), $bits as nat);
+            }
+
+            pub proof fn native_fits(n: $uint)
+                ensures fits(n as nat, $bits as nat)
+            {
+                exp_concrete($bits as nat);
+                chop_id(n as nat, $bits as nat);
+            }
+
+            /// Bridge a successful standard-library `checked_mul` result to
+            /// the multiplication specification.
+            pub proof fn mul_exact(a: $uint, b: $uint, product: $uint)
+                requires
+                    product as nat == (a as nat) * (b as nat),
+                ensures
+                    product as nat == (a as nat) * (b as nat),
+                    prod(a as nat, b as nat) == product as nat,
+                    prod(a as nat, b as nat) < exp($bits as nat),
+                    fits(prod(a as nat, b as nat), $bits as nat),
+            {
+                native_fits(product);
+                assert(prod(a as nat, b as nat) == product as nat);
+                exp_concrete($bits as nat);
+                assert((product as nat) <= ($max_val as nat));
+                assert(($max_val as nat) < exp($bits as nat));
             }
 
             // ============================================================
@@ -180,6 +230,42 @@ macro_rules! abstract_domain {
                     }
                 };
                 eq_from_bits((a & !b) as nat, bw_and_not(a as nat, b as nat));
+            }
+
+            /// Native fixed-width left shift is infinite-bitstring left shift,
+            /// truncated back to the native width.
+            #[verifier::spinoff_prover]
+            pub proof fn native_lsh(a: $uint)
+                ensures (a << (1 as $uint)) as nat == chop(lsh(a as nat), $bits as nat)
+            {
+                assert forall|i: nat| #![auto]
+                    bit((a << (1 as $uint)) as nat, i)
+                        == bit(chop(lsh(a as nat), $bits as nat), i) by {
+                    chop_bit(lsh(a as nat), $bits as nat, i);
+                    if i < ($bits as nat) {
+                        bit_is_native_bit(a << (1 as $uint), i);
+                        bit_cons(a as nat, Bit::f(), i);
+                        let iu = i as $uint;
+                        if i == 0 {
+                            assert((((a << (1 as $uint)) >> iu) & (1 as $uint))
+                                == (0 as $uint)) by(bit_vector)
+                                requires iu == (0 as $uint);
+                        } else {
+                            bit_is_native_bit(a, (i - 1) as nat);
+                            assert((((a << (1 as $uint)) >> iu) & (1 as $uint))
+                                == ((a >> ((iu - (1 as $uint)) as $uint)) & (1 as $uint)))
+                                by(bit_vector)
+                                requires iu < ($bits as $uint), iu > (0 as $uint);
+                        }
+                    } else {
+                        exp_concrete($bits as nat);
+                        bit_above_width((a << (1 as $uint)) as nat, $bits as nat, i);
+                    }
+                };
+                eq_from_bits(
+                    (a << (1 as $uint)) as nat,
+                    chop(lsh(a as nat), $bits as nat),
+                );
             }
 
             // ============================================================
@@ -783,14 +869,24 @@ macro_rules! abstract_domain {
             // The set D is the set of all sums of per-bitfield values,
             // where each bitfield's value ranges from 0 to its max.
             //
-            // Addition is precise: (u1 + u2).has(c1 + c2) for all c1 in u1, c2 in u2,
-            // and no extraneous values are introduced.
+            // The unbounded operation has the precise carry-boundary formula. The
+            // executable operation below proves soundness at fixed width and widens
+            // to top whenever a represented bound or result range would wrap.
             #[derive(Clone, Copy)]
             pub struct ExecUnum { pub base: $uint, pub walls: $uint, pub extent: $uint }
 
             impl ExecUnum {
                 pub open spec fn to_un(self) -> Unum { Unum { base: self.base as nat, walls: self.walls as nat, extent: self.extent as nat } }
                 pub open spec fn has(self, n: $uint) -> bool { self.to_un().has(n as nat) }
+
+                proof fn to_chopped(self)
+                    ensures (ChoppedUnum { unum: self.to_un(), w: $bits as nat }).inv()
+                {
+                    exp_concrete($bits as nat);
+                    chop_id(self.base as nat, $bits as nat);
+                    chop_id(self.walls as nat, $bits as nat);
+                    chop_id(self.extent as nat, $bits as nat);
+                }
 
                 /// top contains everything.
                 pub proof fn top_has(n: $uint)
@@ -803,26 +899,115 @@ macro_rules! abstract_domain {
                 #[inline] pub fn constant(n: $uint) -> ExecUnum {
                     ExecUnum { base: n, walls: !(0 as $uint), extent: 0 }
                 }
-                #[inline] pub fn top() -> ExecUnum {
-                    ExecUnum { base: 0, walls: 0, extent: !(0 as $uint) }
+                #[inline] pub fn top() -> (r: ExecUnum)
+                    ensures forall|n: $uint| #![auto] r.has(n)
+                {
+                    let r = ExecUnum { base: 0, walls: 0, extent: !(0 as $uint) };
+                    proof {
+                        assert forall|n: $uint| #![auto] r.has(n) by {
+                            ExecUnum::top_has(n);
+                        };
+                    }
+                    r
                 }
 
-                /// Addition: precise, associative.
+                /// Sound fixed-width addition. Uses the precise field formula when
+                /// represented bounds do not wrap; otherwise widens to top.
                 /// cout = (x1 & x2) | ((x1 | x2) & ~(x1 + x2))
                 /// w = (w1 & w2) & ~(cout << 1)
+                #[verifier::rlimit(30)]
+                #[verifier::spinoff_prover]
                 #[inline] pub fn add(&self, t: &ExecUnum) -> (r: ExecUnum)
                     ensures forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_add(c2))
-                { proof { admit(); }
-                    let v = self.base.wrapping_add(t.base);
-                    let x12 = self.extent.wrapping_add(t.extent);
-                    // Overflow: x1 + x2 wrapped the register
-                    if x12 < self.extent || x12 < t.extent { return ExecUnum::top(); }
-                    let sx = self.extent; let tx = t.extent;
+                {
+                    let b1 = self.base; let sx = self.extent;
+                    let b2 = t.base;    let tx = t.extent;
+                    let v = b1.wrapping_add(b2);
+                    let x12 = sx.wrapping_add(tx);
+                    let max1 = b1.wrapping_add(sx);
+                    let max2 = b2.wrapping_add(tx);
+                    let max_sum = max1.wrapping_add(max2);
+                    if v < b1 || v < b2
+                        || x12 < sx || x12 < tx
+                        || max1 < b1 || max2 < b2
+                        || max_sum < max1 || max_sum < max2
+                    {
+                        let r = ExecUnum::top();
+                        proof {
+                            assert forall|c1: $uint, c2: $uint| #![auto]
+                                self.has(c1) && t.has(c2)
+                                implies r.has(c1.wrapping_add(c2)) by {
+                                ExecUnum::top_has(c1.wrapping_add(c2));
+                            };
+                        }
+                        return r;
+                    }
                     let cout = (sx & tx) | ((sx | tx) & !x12);
                     let carry_in = cout << 1;
                     let sw = self.walls; let tw = t.walls;
                     let w = (sw & tw) & !carry_in;
-                    ExecUnum { base: v, walls: w, extent: x12 }
+                    let r = ExecUnum { base: v, walls: w, extent: x12 };
+                    proof {
+                        let width = $bits as nat;
+                        let left = ChoppedUnum { unum: self.to_un(), w: width };
+                        let right = ChoppedUnum { unum: t.to_un(), w: width };
+                        self.to_chopped();
+                        t.to_chopped();
+
+                        add_no_overflow(b1, b2, v);
+                        add_no_overflow(sx, tx, x12);
+
+                        native_and(sx, tx);
+                        native_or(sx, tx);
+                        native_and_not(sx | tx, x12);
+                        native_or(sx & tx, (sx | tx) & !x12);
+                        Unum::carry_out_formula(sx as nat, tx as nat);
+                        assert(cout as nat == Unum::carry_out(sx as nat, tx as nat));
+
+                        native_lsh(cout);
+                        native_and(sw, tw);
+                        native_and_not(sw & tw, carry_in);
+                        chop_bw_and_not(
+                            bw_and(sw as nat, tw as nat),
+                            lsh(Unum::carry_out(sx as nat, tx as nat)),
+                            width,
+                        );
+                        native_fits(sw & tw);
+                        assert(w as nat
+                            == chop(
+                                bw_and_not(
+                                    bw_and(sw as nat, tw as nat),
+                                    lsh(Unum::carry_out(sx as nat, tx as nat)),
+                                ),
+                                width,
+                            ));
+                        assert(r.to_un() == self.to_un().add(t.to_un()).truncate(width));
+
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2)
+                            implies r.has(c1.wrapping_add(c2)) by {
+                            self.has_upper_bound(c1);
+                            t.has_upper_bound(c2);
+                            assert(c1.wrapping_add(c2) >= c1
+                                && c1.wrapping_add(c2) >= c2) by(bit_vector)
+                                requires c1 <= max1, c2 <= max2,
+                                    max_sum == max1.wrapping_add(max2),
+                                    max_sum >= max1, max_sum >= max2;
+                            add_no_overflow(c1, c2, c1.wrapping_add(c2));
+                            native_fits(c1);
+                            native_fits(c2);
+                            assert(left.has(c1 as nat));
+                            assert(right.has(c2 as nat));
+                            self.to_un().add_bounded_sound(
+                                t.to_un(),
+                                c1 as nat,
+                                c2 as nat,
+                                width,
+                            );
+                            assert(r.has(c1.wrapping_add(c2)));
+                        };
+                    }
+                    r
                 }
 
                 /// Convert to EAn: widen each field's max to ones_mask.
@@ -857,10 +1042,18 @@ macro_rules! abstract_domain {
                 pub fn from_interval(iv: &Interval) -> (r: ExecUnum)
                     requires iv.wf()
                     ensures forall|c: $uint| #![auto] iv.has(c) ==> r.has(c)
-                { proof { admit(); }
-                    if iv.lo == iv.hi { return ExecUnum { base: iv.lo, walls: !(0 as $uint), extent: 0 }; }
+                {
                     let range = iv.hi - iv.lo;
-                    ExecUnum { base: iv.lo, walls: 1, extent: range }
+                    let r = ExecUnum { base: iv.lo, walls: 0, extent: range };
+                    proof {
+                        assert forall|c: $uint| #![auto] iv.has(c) implies r.has(c) by {
+                            assert(c >= iv.lo && c <= iv.hi);
+                            assert((c - iv.lo) as nat <= range as nat);
+                            Unum::offset_from_bound(range as nat, (c - iv.lo) as nat);
+                            assert(nat_sub(c as nat, iv.lo as nat) == (c - iv.lo) as nat);
+                        };
+                    }
+                    r
                 }
 
                 /// Negation: negate v, keep uncertainty structure.
@@ -868,6 +1061,9 @@ macro_rules! abstract_domain {
                 /// We need -d which ranges from -max to 0.
                 /// So result.base = -v - total_max, result uncertainty = same structure.
                 #[inline] pub fn neg(&self) -> ExecUnum {
+                    if self.base.wrapping_add(self.extent) < self.base {
+                        return ExecUnum::top();
+                    }
                     let new_v = (0 as $uint).wrapping_sub(self.base).wrapping_sub(self.extent);
                     ExecUnum { base: new_v, walls: self.walls, extent: self.extent }
                 }
@@ -881,25 +1077,104 @@ macro_rules! abstract_domain {
                 /// Uncertainty bounded by v1*x2 + v2*x1 + x1*x2.
                 pub fn mul(&self, t: &ExecUnum) -> (r: ExecUnum)
                     ensures forall|c1: $uint, c2: $uint| #![auto] self.has(c1) && t.has(c2) ==> r.has(c1.wrapping_mul(c2))
-                { proof { admit(); }
+                {
                     let v1 = self.base; let x1 = self.extent;
                     let v2 = t.base;   let x2 = t.extent;
-                    let mul_checked = |a: $uint, b: $uint| -> Option<$uint> {
-                        if a == 0 || b == 0 { Some(0) }
-                        else {
-                            let r = a.wrapping_mul(b);
-                            if r / a == b { Some(r) } else { None }
-                        }
+                    let max1 = v1.wrapping_add(x1);
+                    let max2 = v2.wrapping_add(x2);
+                    if max1 < v1 || max1 < x1 || max2 < v2 || max2 < x2 {
+                        return ExecUnum::top();
+                    }
+                    let max_product = match max1.checked_mul(max2) {
+                        Some(value) => value,
+                        None => return ExecUnum::top(),
                     };
-                    let base = match mul_checked(v1, v2) { Some(r) => r, None => return ExecUnum::top() };
-                    let v1x2 = match mul_checked(v1, x2) { Some(r) => r, None => return ExecUnum::top() };
-                    let v2x1 = match mul_checked(v2, x1) { Some(r) => r, None => return ExecUnum::top() };
-                    let x1x2 = match mul_checked(x1, x2) { Some(r) => r, None => return ExecUnum::top() };
+                    let base = match v1.checked_mul(v2) {
+                        Some(value) => value,
+                        None => return ExecUnum::top(),
+                    };
+                    let v1x2 = match v1.checked_mul(x2) {
+                        Some(value) => value,
+                        None => return ExecUnum::top(),
+                    };
+                    let v2x1 = match v2.checked_mul(x1) {
+                        Some(value) => value,
+                        None => return ExecUnum::top(),
+                    };
+                    let x1x2 = match x1.checked_mul(x2) {
+                        Some(value) => value,
+                        None => return ExecUnum::top(),
+                    };
                     let unc1 = v1x2.wrapping_add(v2x1);
-                    if unc1 < v1x2 { return ExecUnum::top(); }
+                    if unc1 < v1x2 || unc1 < v2x1 { return ExecUnum::top(); }
                     let unc = unc1.wrapping_add(x1x2);
-                    if unc < unc1 { return ExecUnum::top(); }
-                    ExecUnum { base, walls: 1, extent: unc }
+                    if unc < unc1 || unc < x1x2 { return ExecUnum::top(); }
+                    let upper = base.wrapping_add(unc);
+                    if upper < base || upper < unc { return ExecUnum::top(); }
+                    let r = ExecUnum { base, walls: 0, extent: unc };
+                    proof {
+                        let width = $bits as nat;
+                        mul_exact(max1, max2, max_product);
+                        mul_exact(v1, v2, base);
+                        mul_exact(v1, x2, v1x2);
+                        mul_exact(v2, x1, v2x1);
+                        mul_exact(x1, x2, x1x2);
+                        add_no_overflow(v1x2, v2x1, unc1);
+                        add_no_overflow(unc1, x1x2, unc);
+                        add_no_overflow(base, unc, upper);
+                        assert(upper == max_product) by(nonlinear_arith)
+                            requires
+                                max1 as nat == v1 as nat + x1 as nat,
+                                max2 as nat == v2 as nat + x2 as nat,
+                                max_product as nat == (max1 as nat) * (max2 as nat),
+                                base as nat == (v1 as nat) * (v2 as nat),
+                                v1x2 as nat == (v1 as nat) * (x2 as nat),
+                                v2x1 as nat == (v2 as nat) * (x1 as nat),
+                                x1x2 as nat == (x1 as nat) * (x2 as nat),
+                                unc1 as nat == v1x2 as nat + v2x1 as nat,
+                                unc as nat == unc1 as nat + x1x2 as nat,
+                                upper as nat == base as nat + unc as nat;
+                        native_fits(base);
+                        native_fits(unc);
+                        assert(chop(base as nat, width) == base as nat);
+                        assert(chop(unc as nat, width) == unc as nat);
+                        chop_id(0, width);
+                        assert(self.to_un().mul(t.to_un()).base == base as nat);
+                        assert(self.to_un().mul(t.to_un()).walls == 0);
+                        assert(self.to_un().mul(t.to_un()).extent == unc as nat);
+                        assert(r.to_un() == self.to_un().mul(t.to_un()).truncate(width));
+
+                        assert forall|c1: $uint, c2: $uint| #![auto]
+                            self.has(c1) && t.has(c2)
+                            implies r.has(c1.wrapping_mul(c2)) by {
+                            self.has_upper_bound(c1);
+                            t.has_upper_bound(c2);
+                            let concrete = c1.wrapping_mul(c2);
+                            vstd::arithmetic::mul::lemma_mul_upper_bound(
+                                c1 as int,
+                                max1 as int,
+                                c2 as int,
+                                max2 as int,
+                            );
+                            assert(prod(c1 as nat, c2 as nat) <= max_product as nat);
+                            assert((max_product as nat) < exp(width));
+                            chop_id(prod(c1 as nat, c2 as nat), width);
+                            bridge_mul(c1, c2);
+                            assert(concrete as nat == prod(c1 as nat, c2 as nat));
+                            native_fits(v1);
+                            native_fits(x1);
+                            native_fits(v2);
+                            native_fits(x2);
+                            self.to_un().mul_bounded_sound(
+                                t.to_un(),
+                                c1 as nat,
+                                c2 as nat,
+                                width,
+                            );
+                            assert(r.has(concrete));
+                        };
+                    }
+                    r
                 }
 
                 #[inline] pub fn min_val(&self) -> (r: $uint) ensures r == self.base { self.base }

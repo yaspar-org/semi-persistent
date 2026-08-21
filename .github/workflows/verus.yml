@@ -112,11 +112,11 @@ jobs:
         working-directory: containers-verus
         run: cargo verus verify -- --trace
 
-      # The anti-unification objective: the decomposition lemma the dynamic
-      # program rests on, and the induction step of chapter 19 §9.6's optimality
-      # theorem. The solver itself is in `egraph`, outside the Verus toolchain,
-      # so this checks the algorithm and `egraph/tests/au_oracle.rs` checks that
-      # the implementation matches it.
+      # The positional anti-unification model: objective-order lemmas,
+      # representation clauses, and a lower-bound induction for functions that
+      # satisfy the stated recurrence inequalities. This does not prove that
+      # the production AC/ACI solver computes OPT; doc/claims.md records that
+      # remaining proof and refinement work.
       - name: Verify au-verus
         working-directory: au-verus
         run: cargo verus verify -- --trace
@@ -172,27 +172,26 @@ jobs:
           python3 containers-verus/tools/check_partial_api.py \
             containers-verus/src containers-verus/partial-api-allowlist.txt
 
-      # No `admit()`/`assume()` in the verified modules. The ledger's central
-      # claim is that the ONLY trusted code is external_body signatures plus the
-      # enumerated axioms; an admit would silently break that without changing
-      # any marker count, so it is gated separately. (The sibling crate
-      # abstract-domains does carry admits, tracked in its own proof-status.md;
-      # this gate is scoped to containers-verus, which claims none.)
-      - name: No admits or assumes in containers-verus
+      # No project-local `admit()`/`assume()` in any verified crate. The pinned
+      # vstd dependency itself contains admitted specifications, so a global
+      # `--no-cheating` run fails in vstd before checking this workspace. Keep
+      # the dependency in the documented trust boundary and make this source
+      # gate the direct project policy.
+      - name: No admits or assumes in verified crates
         run: |
           set -euo pipefail
           # Strip line and block-ish comments before matching so prose about
           # admits (the ledger references vstd's admitted RandomState axiom)
           # does not trip the gate. Match a call, not a bare word.
           hits=$(grep -rn --include='*.rs' -E '(^|[^[:alnum:]_])(admit|assume)[[:space:]]*\(' \
-            containers-verus/src \
+            abstract-domains/src containers-verus/src au-verus/src \
             | grep -vE ':[0-9]+:[[:space:]]*(//|///|//!|\*)' || true)
           if [ -n "$hits" ]; then
-            echo "::error::admit()/assume() found in containers-verus/src (the trust ledger claims none):"
+            echo "::error::admit()/assume() found in a verified crate:"
             echo "$hits"
             exit 1
           fi
-          echo "no admit()/assume() in containers-verus/src"
+          echo "no admit()/assume() in verified crate sources"
 
       # Axiom discipline (trust ledger group D): every obeys_key_model
       # axiom must either live in the audited external_specs.rs or carry

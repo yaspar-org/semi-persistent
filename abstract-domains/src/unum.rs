@@ -46,6 +46,65 @@ impl Unum {
 
     pub open spec fn carry_out(a: nat, b: nat) -> nat { Self::carry_out_c(a, b, Bit::f()) }
 
+    /// The carry register can also be computed with the standard broadword
+    /// identity used by the executable implementation.
+    pub proof fn carry_out_formula(a: nat, b: nat)
+        ensures Self::carry_out(a, b)
+            == bw_or(
+                bw_and(a, b),
+                bw_and_not(bw_or(a, b), nat_add(a, b)),
+            )
+    {
+        Self::carry_out_formula_c(a, b, Bit::f());
+    }
+
+    proof fn carry_out_formula_c(a: nat, b: nat, c: Bit)
+        ensures Self::carry_out_c(a, b, c)
+            == bw_or(
+                bw_and(a, b),
+                bw_and_not(bw_or(a, b), nat_add_carry(a, b, c)),
+            )
+        decreases a + b
+    {
+        if a == 0 && b == 0 {
+            bit_zero(0);
+        } else {
+            let (sum_bit, carry) = hd(a).full_add(hd(b), c);
+            let sum = nat_add_carry(a, b, c);
+            let either = bw_or(a, b);
+            let generated = bw_and(a, b);
+            let propagated = bw_and_not(either, sum);
+            let formula = bw_or(generated, propagated);
+
+            Self::carry_out_formula_c(tl(a), tl(b), carry);
+
+            mapd_hd_tl(a, b, |x: Bit, y: Bit| x.or(y));
+            mapd_hd_tl(a, b, |x: Bit, y: Bit| x.and(y));
+            mapd_hd_tl(either, sum, |x: Bit, y: Bit| x.and_not(y));
+            mapd_hd_tl(generated, propagated, |x: Bit, y: Bit| x.or(y));
+            hd_cons(nat_add_carry(tl(a), tl(b), carry), sum_bit);
+            hd_cons(Self::carry_out_c(tl(a), tl(b), carry), carry);
+
+            assert(hd(formula) == carry) by {
+                assert(
+                    hd(a).and(hd(b)).or(
+                        hd(a).or(hd(b)).and_not(sum_bit),
+                    ) == carry
+                );
+            };
+            assert(tl(formula)
+                == bw_or(
+                    bw_and(tl(a), tl(b)),
+                    bw_and_not(
+                        bw_or(tl(a), tl(b)),
+                        nat_add_carry(tl(a), tl(b), carry),
+                    ),
+                ));
+            hd_tl(formula);
+            hd_tl(Self::carry_out_c(a, b, c));
+        }
+    }
+
     pub open spec fn add(self, other: Unum) -> Unum {
         let x12 = nat_add(self.extent, other.extent);
         let w = bw_and_not(bw_and(self.walls, other.walls), lsh(Self::carry_out(self.extent, other.extent)));
@@ -105,7 +164,18 @@ impl Unum {
         if w1 == 0 && x1 == 0 && d1 == 0 && w2 == 0 && x2 == 0 && d2 == 0 {
             nat_add_carry_correct(0, 0, cx);
             nat_add_carry_correct(0, 0, cd);
-            Self::field_admits_leq(cx.n(), cd.n(), br, true);
+            assert(!b1.b() && !b2.b());
+            assert(cd.n() + br.n() <= cx.n());
+            if br.b() {
+                assert(cd.n() + 1 <= cx.n());
+                Self::offset_from_bound_borrow(cx.n(), cd.n());
+                assert(field_admits(0, cx.n(), cd.n(), br, true)) by {
+                    reveal_with_fuel(field_admits, 1);
+                };
+            } else {
+                assert(cd.n() <= cx.n());
+                Self::offset_from_bound(cx.n(), cd.n());
+            }
         } else {
             assert(!(w1 == 0 && x1 == 0) || d1 == 0);
             assert(!(w2 == 0 && x2 == 0) || d2 == 0);
@@ -479,6 +549,9 @@ impl Unum {
                     vstd::arithmetic::mul::lemma_mul_upper_bound(d2 as int, x2 as int, v1 as int, v1 as int);
                     vstd::arithmetic::mul::lemma_mul_upper_bound(d1 as int, x1 as int, v2 as int, v2 as int);
                     vstd::arithmetic::mul::lemma_mul_upper_bound(d1 as int, x1 as int, d2 as int, x2 as int);
+                    assert(v1*d2 <= v1*x2);
+                    assert(v2*d1 <= v2*x1);
+                    assert(d1*d2 <= x1*x2);
                 };
                 // result.has(c1*c2): c1*c2 >= v1*v2 and field_admits(0, x_total, unc, F, true)
                 let x_total = v1*x2 + v2*x1 + x1*x2;
