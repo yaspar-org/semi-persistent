@@ -76,10 +76,11 @@ recursive definitions". Above, `Stmt` and `Expr` are sorts. Each sort
 produces a small set of Rust types with systematic suffixes. `StmtNode`
 is the enum stored in the arena. `StmtId` is a typed handle into the
 arena. `StmtNodeMapped<A_stmt, A_expr>` is what an algebra receives,
-with each child ID replaced by the algebra's result for that child.
-Parameter order on the mapped enums follows sort declaration order
-family-wide. [TUTORIAL §1](TUTORIAL.md) walks through the full macro
-expansion for this example.
+with each child ID replaced by the algebra's result for that child. Each
+mapped enum includes parameters only for the child sorts it references,
+ordered by the family's sort declaration order.
+[TUTORIAL §1](TUTORIAL.md) walks through the full macro expansion for
+this example.
 
 ## Calling convention
 
@@ -130,15 +131,22 @@ right choice when you fold a small subtree of a large store.
 
 Dedup controls whether `push_*` deduplicates structurally identical
 nodes. `Store::new()` appends unconditionally; `Store::new_dedup()`
-hashes and reuses. Dedup costs roughly 2 to 3× more per push but can
-shrink highly redundant inputs by orders of magnitude. Use it for
-acyclic term DAGs, canonicalized IRs, and any pipeline where you fold
-the store more than once. Children must be inserted before their
+hashes and reuses. Dedup makes each push more expensive but can shrink
+highly redundant inputs by orders of magnitude; the included synthetic
+benchmark measures a 2.4-4.7× construction cost, depending on size. Use
+it for acyclic term DAGs, canonicalized IRs, and any pipeline where you
+fold the store more than once. Children must be inserted before their
 parents. `push_*` rejects missing or forward child IDs, and `set_*`
-rejects mutations that would introduce a cycle. An e-graph can store
-its acyclic terms here, but not its cyclic e-class topology. Dedup
-interacts correctly with `mark` and `restore`: entries pointing past a
-restored mark are pruned automatically.
+rejects mutations that would introduce a cycle. Top-down rewrites and
+copy-on-write zipper replacements also reject rule-induced cycles. An
+e-graph can store its acyclic terms here, but not its cyclic e-class
+topology.
+
+`mark` returns a store-bound append checkpoint, and `restore` truncates
+every arena and variadic pool to that checkpoint. Restoring also prunes
+dedup entries into the discarded suffix. A mark from another store, a
+mark ahead of the current store, or a mark made before a successful
+in-place `set_*` mutation is rejected.
 
 See [`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for
 the full decision guide with benchmark numbers.
