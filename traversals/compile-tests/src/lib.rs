@@ -84,3 +84,41 @@ fn smart_constructors_escape_generated_store_methods() {
     assert_eq!(fold_node, CollisionStmtId(1));
     store.restore(&snapshot);
 }
+
+mod readme_quick_start {
+    #![allow(dead_code)]
+
+    use semi_persistent_traversals::rec_family;
+
+    rec_family! {
+        family Lang => LangStore;
+
+        enum Stmt { Let(String, Expr), Print(Expr), Noop }
+        enum Expr { Lit(i64), Var(String), Add(Expr, Expr) }
+    }
+
+    #[test]
+    fn mapped_enums_only_take_the_sort_parameters_they_use() {
+        let mut s = LangStore::new();
+        let one = s.push_expr(ExprNode::Lit(1));
+        let two = s.push_expr(ExprNode::Lit(2));
+        let sum = s.push_expr(ExprNode::Add(one, two));
+        let bind = s.push_stmt(StmtNode::Let("x".into(), sum));
+
+        let result = s.fold(
+            LangStoreRoot::Stmt(bind),
+            |stmt: StmtNodeMapped<i64>| match stmt {
+                StmtNodeMapped::Let(name, value) => format!("{name} = {value}"),
+                StmtNodeMapped::Print(value) => format!("print({value})"),
+                StmtNodeMapped::Noop => "noop".into(),
+            },
+            |expr: ExprNodeMapped<i64>| match expr {
+                ExprNodeMapped::Lit(value) => value,
+                ExprNodeMapped::Var(_) => 0,
+                ExprNodeMapped::Add(left, right) => left + right,
+            },
+        );
+
+        assert_eq!(result.unwrap_stmt(), "x = 3");
+    }
+}
