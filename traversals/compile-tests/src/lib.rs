@@ -24,3 +24,63 @@ fn macro_expansion_needs_only_the_public_crate() {
 
     assert_eq!(result.unwrap_expr(), 3);
 }
+
+rec_family! {
+    family FloatData => FloatDataStore;
+    enum FloatExpr {
+        F64(f64),
+        F32(f32),
+        Series(f64, Variadic<FloatExpr>),
+    }
+    enum FloatStmt { Print(FloatExpr) }
+}
+
+#[test]
+fn bare_float_data_has_bitwise_structural_identity() {
+    let mut plain = FloatDataStore::new();
+    let value = plain.push_floatexpr(FloatExprNode::F64(1.5));
+    let _print = plain.push_floatstmt(FloatStmtNode::Print(value));
+
+    let mut dedup = FloatDataStore::new_dedup();
+    let nan = f64::from_bits(0x7ff8_0000_0000_0001);
+    let same_nan = dedup.push_floatexpr(FloatExprNode::F64(nan));
+    let duplicate_nan = dedup.push_floatexpr(FloatExprNode::F64(nan));
+    let other_nan = dedup.push_floatexpr(FloatExprNode::F64(f64::from_bits(0x7ff8_0000_0000_0002)));
+    let positive_zero = dedup.push_floatexpr(FloatExprNode::F64(0.0));
+    let negative_zero = dedup.push_floatexpr(FloatExprNode::F64(-0.0));
+    let f32_value = dedup.push_floatexpr(FloatExprNode::F32(f32::NAN));
+    let f32_duplicate = dedup.push_floatexpr(FloatExprNode::F32(f32::NAN));
+    let first_children = dedup.alloc_floatexpr_floatexpr(&[same_nan, positive_zero]);
+    let first_series = dedup.push_floatexpr(FloatExprNode::Series(nan, first_children));
+    let second_children = dedup.alloc_floatexpr_floatexpr(&[same_nan, positive_zero]);
+    let second_series = dedup.push_floatexpr(FloatExprNode::Series(nan, second_children));
+
+    assert_eq!(same_nan, duplicate_nan);
+    assert_ne!(same_nan, other_nan);
+    assert_ne!(positive_zero, negative_zero);
+    assert_eq!(f32_value, f32_duplicate);
+    assert_eq!(first_series, second_series);
+}
+
+rec_family! {
+    #[smart_constructors]
+    family ConstructorNames => ConstructorNamesStore;
+    enum CollisionStmt { Mark, Fold(CollisionExpr) }
+    enum CollisionExpr { New, PushCollisionexpr(i64) }
+}
+
+#[test]
+fn smart_constructors_escape_generated_store_methods() {
+    let mut store = ConstructorNamesStore::new();
+    let new_node = store.new_();
+    let pushed_node = store.push_collisionexpr_(7);
+    let mark_node = store.mark_();
+    let fold_node = store.fold_(pushed_node);
+    let snapshot = store.mark();
+
+    assert_eq!(new_node, CollisionExprId(0));
+    assert_eq!(pushed_node, CollisionExprId(1));
+    assert_eq!(mark_node, CollisionStmtId(0));
+    assert_eq!(fold_node, CollisionStmtId(1));
+    store.restore(&snapshot);
+}
