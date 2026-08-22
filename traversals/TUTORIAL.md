@@ -520,6 +520,11 @@ Because the rewrite runs bottom-up, by the time the `Add(l, r)` arm
 fires the children at `l` and `r` are already in the new store. Calling
 `new.get_expr(l)` returns the rewritten child, so if both children
 rewrote to literals, the rule can push a single collapsed `Lit`.
+Every rule must return an ID whose numeric index exists in the
+corresponding output arena. `rewrite` checks that bound after each rule
+call and rejects an out-of-range ID. IDs are typed by sort but are not
+branded by store, so a valid numeric index always denotes the node at
+that position in the output store.
 
 ## 6. `rewrite_down`: top-down transform
 
@@ -547,6 +552,10 @@ visited and rewrites to `Mul(5, 5)`. The final tree is
 `Mul(Mul(5, 5), Mul(5, 5))`, which evaluates to 625. A bottom-up
 rewrite would miss the inner rewrites, because the outer `Neg` would
 already have been consumed before its children were visited.
+
+The rewritten graph must remain acyclic. A rule may point to existing
+source IDs, but if that introduces a back-edge to a node whose output
+mapping is still under construction, `rewrite_down` rejects the cycle.
 
 ## 7. `fold_short`: postorder early exit
 
@@ -936,10 +945,12 @@ elided by monomorphization: at runtime the `if DEDUP` branches in
 on which store you built.
 
 Dedup operates per sort: pushing an `Expr` does not consult the `Stmt`
-table. It also interacts correctly with `mark` and `restore`; on
-restore, dedup entries pointing at truncated nodes are pruned, so a
-later push of an identical node starts fresh rather than returning a
-stale ID.
+table. A mark is a store-bound append checkpoint, not a copy of the
+nodes. `restore` truncates every arena and variadic pool and prunes
+dedup entries pointing at the discarded suffix, so a later push of an
+identical node starts fresh rather than returning a stale ID. Foreign
+marks, marks ahead of the current store, and marks made before a
+successful in-place mutation are rejected.
 
 Dedup trades construction time for memory. See
 [`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for
@@ -1012,7 +1023,7 @@ storage.
 
 The focus identifies a node ID, not one path occurrence. If that ID is
 shared, replacement affects every reachable reference to it in the new
-store.
+store. A replacement that would introduce a cycle is rejected.
 
 ```rust
 let z = LangStoreZipperCow::new(&s, root);

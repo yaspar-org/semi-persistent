@@ -114,10 +114,12 @@ appears hundreds or thousands of times in a real program. Dedup turns
 every one of those occurrences into a single node. Any later fold then
 visits each unique node once.
 
-Dedup also interacts correctly with `mark` and `restore`. If you push
-new nodes after calling `mark()` and then call `restore(&mark)`, the
-dedup entries pointing at the truncated region are pruned. Stale IDs
-from the discarded nodes are never returned.
+Dedup also interacts correctly with `mark` and `restore`. A mark records
+the append positions of all arenas and variadic pools and is bound to
+the store that created it. If you push new nodes and restore the mark,
+the store truncates to those positions and prunes dedup entries pointing
+at the discarded suffix. Foreign marks, marks ahead of the current
+store, and marks invalidated by in-place mutation are rejected.
 
 When to turn dedup on:
 

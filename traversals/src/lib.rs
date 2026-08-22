@@ -184,8 +184,19 @@ impl VisitOps for SparseVisit {
 // --- MappingOps: usize → usize table ---
 
 pub trait MappingOps {
+    /// Creates a mapping with no assigned entries.
     fn new(arena_len: usize) -> Self;
+
+    /// Returns the value assigned to `k`.
+    ///
+    /// Panics if `k` is out of bounds or has not been assigned. Generated
+    /// postorder transforms rely on this check to reject cycles instead of
+    /// silently treating an unfinished node as node zero.
     fn get(&self, k: usize) -> usize;
+
+    /// Assigns `v` to `k`.
+    ///
+    /// `usize::MAX` is reserved as the dense mapping's unassigned sentinel.
     fn set(&mut self, k: usize, v: usize);
 }
 
@@ -193,14 +204,17 @@ pub struct DenseMapping(Vec<usize>);
 impl MappingOps for DenseMapping {
     #[inline]
     fn new(len: usize) -> Self {
-        Self(vec![0; len])
+        Self(vec![usize::MAX; len])
     }
     #[inline(always)]
     fn get(&self, k: usize) -> usize {
-        self.0[k]
+        let value = self.0[k];
+        assert_ne!(value, usize::MAX, "mapping read before assignment");
+        value
     }
     #[inline(always)]
     fn set(&mut self, k: usize, v: usize) {
+        assert_ne!(v, usize::MAX, "usize::MAX is reserved for an unset mapping");
         self.0[k] = v;
     }
 }
@@ -217,6 +231,7 @@ impl MappingOps for SparseMapping {
     }
     #[inline(always)]
     fn set(&mut self, k: usize, v: usize) {
+        assert_ne!(v, usize::MAX, "usize::MAX is reserved for an unset mapping");
         self.0.insert(k, v);
     }
 }
@@ -226,6 +241,21 @@ impl MappingOps for SparseMapping {
 // ---------------------------------------------------------------------------
 
 static NEXT_VARIADIC_POOL_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_STORE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreIdentity(u64);
+
+impl StoreIdentity {
+    #[doc(hidden)]
+    pub fn new() -> Self {
+        let id = NEXT_STORE_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("store identity space exhausted");
+        Self(id)
+    }
+}
 
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
