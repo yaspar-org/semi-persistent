@@ -881,6 +881,68 @@ fn gen_container(
         })
         .collect();
 
+    let child_validation_methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, sort)| {
+            let node = format_ident!("{}Node", sort_names[si]);
+            let method = format_ident!("__validate_{}_children", sort_lowers[si]);
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { #node::#vn => {} };
+                    }
+                    let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let checks: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .filter_map(|(b, field)| match field {
+                            FieldKind::Child(child_sort) => {
+                                let arena =
+                                    format_ident!("{}_nodes", sort_lowers[*child_sort]);
+                                Some(quote! {
+                                    assert!(
+                                        #b.0 < self.#arena.len(),
+                                        "child ID does not exist; forward or cyclic references are not supported"
+                                    );
+                                })
+                            }
+                            FieldKind::VariadicChild(child_sort) => {
+                                let arena =
+                                    format_ident!("{}_nodes", sort_lowers[*child_sort]);
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                Some(quote! {
+                                    for __child in #b.as_slice(&self.#pool) {
+                                        assert!(
+                                            __child.0 < self.#arena.len(),
+                                            "child ID does not exist; forward or cyclic references are not supported"
+                                        );
+                                    }
+                                })
+                            }
+                            FieldKind::Data(_) => None,
+                        })
+                        .collect();
+                    quote! { #node::#vn(#(#bs),*) => { #(#checks)* } }
+                })
+                .collect();
+            quote! {
+                fn #method(&self, node: &#node) {
+                    match node { #(#arms),* }
+                }
+            }
+        })
+        .collect();
+
     // Mark struct fields
     let mark_arena_fields: Vec<TokenStream2> = sorts
         .iter()
@@ -1037,9 +1099,11 @@ fn gen_container(
             let dedup = format_ident!("{}_dedup", sort_lowers[i]);
             let hash_method = format_ident!("__hash_{}_node", sort_lowers[i]);
             let eq_method = format_ident!("__eq_{}_node", sort_lowers[i]);
+            let validate_children = format_ident!("__validate_{}_children", sort_lowers[i]);
             if sort_variadic_child_sorts[i].is_empty() {
                 quote! {
                     #vis fn #method(&mut self, node: #node) -> #id {
+                        self.#validate_children(&node);
                         if DEDUP {
                             let idx_map = self.#dedup.as_ref()
                                 .expect("DEDUP=true requires initialized dedup map");
@@ -1065,6 +1129,7 @@ fn gen_container(
                 quote! {
                     #vis fn #method(&mut self, node: #node) -> #id {
                         self.#validate_method(&node);
+                        self.#validate_children(&node);
                         if DEDUP {
                             let __hash = self.#hash_method(&node);
                             let __buckets = self.#dedup.as_ref()
@@ -1387,6 +1452,7 @@ fn gen_container(
             #(#resolve_node_methods)*
             #(#span_validation_methods)*
             #(#intern_variadic_methods)*
+            #(#child_validation_methods)*
             #(#get_methods)*
             #(#resolved_get_methods)*
             #(#len_methods)*
@@ -4504,12 +4570,54 @@ fn gen_zipper(
     // Need a store method set_<sort>(id, node)
     let set_store_methods: Vec<TokenStream2> = (0..n)
         .map(|i| {
+            let sn = sort_names[i];
             let node_name = format_ident!("{}Node", sort_names[i]);
             let id_name = format_ident!("{}Id", sort_names[i]);
             let set_method = format_ident!("set_{}", sort_lowers[i]);
             let field_name = format_ident!("{}_nodes", sort_lowers[i]);
+            let validate_children = format_ident!("__validate_{}_children", sort_lowers[i]);
+            let children_fn = format_ident!("__zipper_children_{}", sort_lowers[i]);
+            let prepare_node = if has_variadic_children(&sorts[i]) {
+                let intern = format_ident!("__intern_{}_variadics", sort_lowers[i]);
+                quote! { let node = self.#intern(node); }
+            } else {
+                quote! {}
+            };
+            let walk_arms: Vec<TokenStream2> = (0..n)
+                .map(|j| {
+                    let child_sn = sort_names[j];
+                    let child_get = format_ident!("get_{}", sort_lowers[j]);
+                    let child_children = format_ident!("__zipper_children_{}", sort_lowers[j]);
+                    quote! {
+                        #root_name::#child_sn(__child_id) => {
+                            #child_children(
+                                self,
+                                self.#child_get(__child_id),
+                                &mut __stack,
+                            );
+                        }
+                    }
+                })
+                .collect();
             quote! {
                 #vis fn #set_method(&mut self, id: #id_name, node: #node_name) {
+                    assert!(id.0 < self.#field_name.len(), "node ID does not exist");
+                    self.#validate_children(&node);
+                    let __target = #root_name::#sn(id);
+                    let mut __stack = Vec::new();
+                    #children_fn(self, &node, &mut __stack);
+                    let mut __seen = ::semi_persistent_traversals::FxHashSet::default();
+                    while let Some(__current) = __stack.pop() {
+                        assert_ne!(
+                            __current,
+                            __target,
+                            "mutation would introduce a cycle"
+                        );
+                        if __seen.insert(__current) {
+                            match __current { #(#walk_arms),* }
+                        }
+                    }
+                    #prepare_node
                     self.#field_name[id.0] = node;
                 }
             }

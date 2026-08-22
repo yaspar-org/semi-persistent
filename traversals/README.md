@@ -132,10 +132,13 @@ Dedup controls whether `push_*` deduplicates structurally identical
 nodes. `Store::new()` appends unconditionally; `Store::new_dedup()`
 hashes and reuses. Dedup costs roughly 2 to 3× more per push but can
 shrink highly redundant inputs by orders of magnitude. Use it for
-e-graphs, canonicalized IRs, and any pipeline where you fold the
-store more than once. Dedup interacts correctly with `mark` and
-`restore`: entries pointing past a restored mark are pruned
-automatically.
+acyclic term DAGs, canonicalized IRs, and any pipeline where you fold
+the store more than once. Children must be inserted before their
+parents. `push_*` rejects missing or forward child IDs, and `set_*`
+rejects mutations that would introduce a cycle. An e-graph can store
+its acyclic terms here, but not its cyclic e-class topology. Dedup
+interacts correctly with `mark` and `restore`: entries pointing past a
+restored mark are pruned automatically.
 
 See [`doc/design/memo-and-dedup.md`](doc/design/memo-and-dedup.md) for
 the full decision guide with benchmark numbers.
