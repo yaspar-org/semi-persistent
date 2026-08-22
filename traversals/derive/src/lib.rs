@@ -389,6 +389,16 @@ fn partition_field_type(fk: &FieldKind, sort_names: &[&syn::Ident]) -> TokenStre
     }
 }
 
+fn is_bare_float(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(tp) = ty
+        && tp.qself.is_none()
+        && let Some(ident) = tp.path.get_ident()
+    {
+        return ident == "f32" || ident == "f64";
+    }
+    false
+}
+
 fn gen_node_enums(
     vis: &syn::Visibility,
     sorts: &[ResolvedSort],
@@ -416,9 +426,122 @@ fn gen_node_enums(
                     }
                 })
                 .collect();
+            let contains_float = sort.variants.iter().any(|variant| {
+                variant
+                    .fields
+                    .iter()
+                    .any(|field| matches!(field, FieldKind::Data(ty) if is_bare_float(ty)))
+            });
+            if !contains_float {
+                return quote! {
+                    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+                    #vis enum #node_name { #(#variants),* }
+                };
+            }
+
+            let eq_arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { (#node_name::#vn, #node_name::#vn) => true };
+                    }
+                    let left: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|index| format_ident!("__left{}", index))
+                        .collect();
+                    let right: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|index| format_ident!("__right{}", index))
+                        .collect();
+                    let comparisons: Vec<TokenStream2> = left
+                        .iter()
+                        .zip(right.iter())
+                        .zip(variant.fields.iter())
+                        .map(|((left, right), field)| match field {
+                            FieldKind::Data(ty) if is_bare_float(ty) => {
+                                quote! { #left.to_bits() == #right.to_bits() }
+                            }
+                            FieldKind::Child(_)
+                            | FieldKind::VariadicChild(_)
+                            | FieldKind::Data(_) => quote! { __eq(#left, #right) },
+                        })
+                        .collect();
+                    quote! {
+                        (
+                            #node_name::#vn(#(#left),*),
+                            #node_name::#vn(#(#right),*)
+                        ) => true #(&& #comparisons)*
+                    }
+                })
+                .collect();
+            let hash_arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(variant_index, variant)| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! {
+                            #node_name::#vn => {
+                                __hash(&#variant_index, state);
+                            }
+                        };
+                    }
+                    let fields: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|index| format_ident!("__field{}", index))
+                        .collect();
+                    let hashes: Vec<TokenStream2> = fields
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .map(|(field_name, field)| match field {
+                            FieldKind::Data(ty) if is_bare_float(ty) => {
+                                quote! { __hash(&#field_name.to_bits(), state); }
+                            }
+                            FieldKind::Child(_)
+                            | FieldKind::VariadicChild(_)
+                            | FieldKind::Data(_) => {
+                                quote! { __hash(#field_name, state); }
+                            }
+                        })
+                        .collect();
+                    quote! {
+                        #node_name::#vn(#(#fields),*) => {
+                            __hash(&#variant_index, state);
+                            #(#hashes)*
+                        }
+                    }
+                })
+                .collect();
+
             quote! {
-                #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+                #[derive(Clone, Debug)]
                 #vis enum #node_name { #(#variants),* }
+
+                impl ::core::cmp::PartialEq for #node_name {
+                    fn eq(&self, other: &Self) -> bool {
+                        fn __eq<T: ::core::cmp::Eq>(left: &T, right: &T) -> bool {
+                            left == right
+                        }
+                        match (self, other) {
+                            #(#eq_arms,)*
+                            _ => false,
+                        }
+                    }
+                }
+
+                impl ::core::cmp::Eq for #node_name {}
+
+                impl ::core::hash::Hash for #node_name {
+                    fn hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
+                        fn __hash<T: ::core::hash::Hash, H: ::core::hash::Hasher>(
+                            value: &T,
+                            state: &mut H,
+                        ) {
+                            ::core::hash::Hash::hash(value, state);
+                        }
+                        match self { #(#hash_arms),* }
+                    }
+                }
             }
         })
         .collect();
@@ -1007,6 +1130,14 @@ fn gen_container(
                                     );
                                 }
                             }
+                            FieldKind::Data(ty) if is_bare_float(ty) => {
+                                quote! {
+                                    ::core::hash::Hash::hash(
+                                        &#b.to_bits(),
+                                        &mut __state,
+                                    );
+                                }
+                            }
                             FieldKind::Child(_) | FieldKind::Data(_) => {
                                 quote! {
                                     ::core::hash::Hash::hash(#b, &mut __state);
@@ -1052,6 +1183,9 @@ fn gen_container(
                                     #left.as_slice(&self.#pool)
                                         == #right.as_slice(&self.#pool)
                                 }
+                            }
+                            FieldKind::Data(ty) if is_bare_float(ty) => {
+                                quote! { #left.to_bits() == #right.to_bits() }
                             }
                             FieldKind::Child(_) | FieldKind::Data(_) => {
                                 quote! { #left == #right }
@@ -4838,11 +4972,15 @@ fn camel_to_snake(name: &str) -> String {
     out
 }
 
-/// Returns the method name for a variant: snake_case, with trailing underscore
-/// if the result is a Rust keyword.
-fn constructor_method_name(variant: &syn::Ident) -> syn::Ident {
+/// Returns the method name for a variant: snake_case, with a trailing
+/// underscore if the result is a Rust keyword or generated store method.
+fn constructor_method_name(
+    variant: &syn::Ident,
+    reserved: &std::collections::HashSet<String>,
+) -> syn::Ident {
     let snake = camel_to_snake(&variant.to_string());
-    let escaped = if is_rust_keyword(&snake) {
+    let escaped = if is_rust_keyword(&snake) || reserved.contains(&snake) || snake.starts_with("__")
+    {
         format!("{}_", snake)
     } else {
         snake
@@ -4868,26 +5006,71 @@ fn gen_smart_constructors(
     sort_names: &[&syn::Ident],
     sort_lowers: &[syn::Ident],
 ) -> TokenStream2 {
-    // Detect cross-sort collisions: two variants in different sorts
-    // whose constructor method names would be the same.
+    let mut reserved: std::collections::HashSet<String> = [
+        "new",
+        "new_dedup",
+        "mark",
+        "restore",
+        "with_strategy",
+        "fold",
+        "fold_all",
+        "fold_with_ids",
+        "transform",
+        "fold_with_history",
+        "fold_with_aux",
+        "fold_short",
+        "fold_with_original",
+        "unfold",
+        "rewrite",
+        "unfold_short",
+        "fold_pair",
+        "prefold",
+        "postunfold",
+        "rewrite_down",
+        "refold",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    for sort in sort_lowers {
+        reserved.insert(format!("push_{}", sort));
+        reserved.insert(format!("get_{}", sort));
+        reserved.insert(format!("get_{}_resolved", sort));
+        reserved.insert(format!("len_{}", sort));
+        reserved.insert(format!("map_{}_children", sort));
+        reserved.insert(format!("set_{}", sort));
+    }
+    for (si, sort) in sorts.iter().enumerate() {
+        for child_sort in child_sort_indices(sort).into_iter().filter(|child_sort| {
+            sort.variants.iter().any(|variant| {
+                variant.fields.iter().any(
+                    |field| matches!(field, FieldKind::VariadicChild(index) if index == child_sort),
+                )
+            })
+        }) {
+            reserved.insert(format!(
+                "alloc_{}_{}",
+                sort_lowers[si], sort_lowers[child_sort]
+            ));
+        }
+    }
+
+    // Detect any two variants whose escaped constructor names still collide.
     let mut seen: std::collections::HashMap<String, (usize, syn::Ident)> =
         std::collections::HashMap::new();
     let mut collision_errors: Vec<TokenStream2> = Vec::new();
     for (si, sort) in sorts.iter().enumerate() {
         for v in &sort.variants {
-            let method = constructor_method_name(&v.name);
+            let method = constructor_method_name(&v.name, &reserved);
             let key = method.to_string();
             if let Some((prev_si, prev_variant)) = seen.get(&key) {
-                if *prev_si != si {
-                    // Cross-sort collision.
-                    let msg = format!(
-                        "smart_constructors: variant `{}` in sort `{}` collides with variant `{}` in sort `{}` (both would generate `{}`). Rename one, or remove #[smart_constructors] and write helpers by hand.",
-                        v.name, sort_names[si], prev_variant, sort_names[*prev_si], method,
-                    );
-                    collision_errors.push(quote! {
-                        ::core::compile_error!(#msg);
-                    });
-                }
+                let msg = format!(
+                    "smart_constructors: variant `{}` in sort `{}` collides with variant `{}` in sort `{}` (both would generate `{}`). Rename one, or remove #[smart_constructors] and write helpers by hand.",
+                    v.name, sort_names[si], prev_variant, sort_names[*prev_si], method,
+                );
+                collision_errors.push(quote! {
+                    ::core::compile_error!(#msg);
+                });
             } else {
                 seen.insert(key, (si, v.name.clone()));
             }
@@ -4909,7 +5092,7 @@ fn gen_smart_constructors(
                 .iter()
                 .map(|v| {
                     let variant = &v.name;
-                    let method = constructor_method_name(variant);
+                    let method = constructor_method_name(variant, &reserved);
                     // Build parameter list and body piece by piece.
                     let mut params: Vec<TokenStream2> = Vec::new();
                     let mut forward_exprs: Vec<TokenStream2> = Vec::new();

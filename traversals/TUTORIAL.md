@@ -220,10 +220,13 @@ them:
 
 2. A variant's fields are classified by matching their types against
    the sort names. Any type that is not a sort name (`String`, `i64`,
-   `bool`, any user type) becomes a data field stored inline in the
-   node. Any type that matches a sort name becomes a typed child ID.
-   A third form, `Variadic<Sort>`, declares a variable-length list of
-   children of that sort, covered in §14 below.
+   `bool`, or a user type implementing `Clone + Debug + Eq + Hash`)
+   becomes a data field stored inline in the node. Bare `f32` and `f64`
+   fields are also supported, using bitwise equality and hashing so
+   NaNs are reflexive and signed zero remains distinct. Any type that
+   matches a sort name becomes a typed child ID. A third form,
+   `Variadic<Sort>`, declares a variable-length list of children of that
+   sort, covered in §14 below.
 
 ## 2. Build an AST
 
@@ -271,8 +274,8 @@ rec_family! {
 With that attribute, the store gains methods like `s.lit(1)`,
 `s.add(l, r)`, `s.let_("x", sum)`, and so on. The method name is the
 variant name lowercased, with a trailing underscore when the result
-would collide with a Rust keyword (`let_`, `if_`, `while_`). The
-sample builder becomes:
+would collide with a Rust keyword or generated store method (`let_`,
+`if_`, `mark_`, `fold_`). The sample builder becomes:
 
 ```rust
 fn sample() -> (LangStore, LangStoreRoot) {
@@ -291,16 +294,15 @@ The generated constructors apply two small ergonomic improvements.
 Fields declared `String` become `impl Into<String>` in the method
 signature, so `s.let_("x", sum)` accepts a `&str` directly without
 a `.to_string()` call. Fields declared `Variadic<Sort>` become
-`&[SortId]`, and the method calls the corresponding `alloc_*` pool
-helper internally, so you write `s.call("f", &[a, b, c])` instead of
+`&[SortId]`, and insertion copies unique lists into the corresponding
+typed pool, so you write `s.call("f", &[a, b, c])` instead of
 `s.alloc_stmt_expr(&[a, b, c])` followed by a `push_stmt`.
 
 Two limitations. First, the macro generates one method per variant
-across all sorts in the family, so two variants in different sorts
-that would share a method name (both lowercase to `add`, for example)
-produce a `compile_error!` at macro expansion time. Rename one of the
-colliding variants, or drop `#[smart_constructors]` and write the
-helpers you want by hand.
+across all sorts in the family, so any two variants that would share a
+method name (both lowercase to `add`, for example) produce a targeted
+macro error. Rename one of the colliding variants, or drop
+`#[smart_constructors]` and write the helpers you want by hand.
 
 Second, the methods take `&mut self`, so you cannot nest two calls
 on the same store in one expression. Rust's borrow checker rejects
