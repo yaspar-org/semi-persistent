@@ -229,7 +229,11 @@ them:
 
 With the family declared, you build ASTs by pushing nodes into the
 store. The typed IDs make it impossible to put a `Stmt` where an `Expr`
-is expected.
+is expected. The arenas represent trees and acyclic term DAGs: insert
+children before parents. `push_*` rejects missing or forward child IDs,
+and mutable `set_*` operations reject replacements that would create a
+cycle. This keeps recursion schemes terminating without adding cycle
+detection to every traversal.
 
 ```rust
 fn sample() -> (LangStore, LangStoreRoot) {
