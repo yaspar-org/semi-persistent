@@ -934,7 +934,6 @@ dependencies = [
  "rustc-hash",
  "semi-persistent-traversals-derive",
  "smallvec",
- "winnow",
 ]
 
 [[package]]
@@ -1067,6 +1066,13 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "traversals-compile-tests"
+version = "0.0.0"
+dependencies = [
+ "semi-persistent-traversals",
 ]
 
 [[package]]

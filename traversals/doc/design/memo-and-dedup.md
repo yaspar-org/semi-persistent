@@ -71,9 +71,12 @@ let r = s.with_strategy::<memo::None>().fold(root, alg_stmt, alg_expr);
 
 A plain store (`LangStore::new()`) appends every pushed node, even if it
 is structurally identical to an earlier one. A deduplicating store
-(`LangStore::new_dedup()`) keeps a per-sort hashmap keyed by node
-structure; pushing a node that is already present returns the existing
-ID instead of appending a duplicate.
+(`LangStore::new_dedup()`) keeps a per-sort hash index; pushing a node
+that is already present returns the existing ID instead of appending a
+duplicate. Sorts with variadic fields use semantic-hash buckets whose
+candidates are checked for structural equality. Variadic children are
+hashed and compared through their pool slices, so span offsets do not
+affect node identity.
 
 The two constructors return different types. `new()` gives back a
 `LangStore<false>` and `new_dedup()` gives back a `LangStore<true>`,

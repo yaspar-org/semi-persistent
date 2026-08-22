@@ -225,7 +225,7 @@ fn gen_family(def: &FamilyDef) -> syn::Result<TokenStream2> {
     let root_enum = gen_root_enum(vis, store, &sorts, &sort_names);
     let node_enums = gen_node_enums(vis, &sorts, &sort_names);
     let mapped_enums = gen_mapped_enums(vis, &sorts, &sort_names, n);
-    let map_children_impls = gen_map_children(vis, &sorts, &sort_names, n);
+    let map_children_impls = gen_map_children(vis, store, &sorts, &sort_names, &sort_lowers, n);
     let container = gen_container(
         vis,
         store,
@@ -489,12 +489,17 @@ fn gen_mapped_enums(
 
 fn gen_map_children(
     vis: &syn::Visibility,
+    store: &syn::Ident,
     sorts: &[ResolvedSort],
     sort_names: &[&syn::Ident],
+    sort_lowers: &[syn::Ident],
     n: usize,
 ) -> TokenStream2 {
     let aps: Vec<syn::Ident> = (0..n).map(|i| format_ident!("__A{}", i)).collect();
-    let impls: Vec<TokenStream2> = sorts.iter().enumerate().map(|(si, sort)| {
+    let node_impls: Vec<TokenStream2> = sorts.iter().enumerate().filter_map(|(si, sort)| {
+        if has_variadic_children(sort) {
+            return None;
+        }
         let node_name = format_ident!("{}Node", sort_names[si]);
         let mapped_name = format_ident!("{}NodeMapped", sort_names[si]);
         // Which sorts does this sort reference as children?
@@ -529,7 +534,7 @@ fn gen_map_children(
             }).collect();
             quote! { #node_name::#vn(#(#bs),*) => #mapped_name::#vn(#(#mapped),*) }
         }).collect();
-        quote! {
+        Some(quote! {
             impl #node_name {
                 #vis fn map_children<#(#result_params),*>(
                     &self,
@@ -538,9 +543,106 @@ fn gen_map_children(
                     match self { #(#arms),* }
                 }
             }
-        }
+        })
     }).collect();
-    quote! { #(#impls)* }
+
+    // Stored variadics are spans into the owning store's typed pools. Route
+    // generated traversals and public direct mapping through store-aware
+    // methods. Context-free Node::map_children is generated only for sorts
+    // that cannot contain spans.
+    let store_impls: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, sort)| {
+            let node_name = format_ident!("{}Node", sort_names[si]);
+            let mapped_name = format_ident!("{}NodeMapped", sort_names[si]);
+            let method = format_ident!("__map_{}_children", sort_lowers[si]);
+            let public_method = format_ident!("map_{}_children", sort_lowers[si]);
+            let get_method = format_ident!("get_{}", sort_lowers[si]);
+            let id = format_ident!("{}Id", sort_names[si]);
+            let mut child_sorts: Vec<usize> = sort
+                .variants
+                .iter()
+                .flat_map(|v| {
+                    v.fields.iter().filter_map(|f| match f {
+                        FieldKind::Child(i) | FieldKind::VariadicChild(i) => Some(*i),
+                        _ => None,
+                    })
+                })
+                .collect();
+            child_sorts.sort();
+            child_sorts.dedup();
+            let fn_params: Vec<TokenStream2> = child_sorts
+                .iter()
+                .map(|&j| {
+                    let p = format_ident!("__f{}", j);
+                    let id = format_ident!("{}Id", sort_names[j]);
+                    let a = &aps[j];
+                    quote! { #p: &mut impl FnMut(&#id) -> #a }
+                })
+                .collect();
+            let result_params: Vec<&syn::Ident> = child_sorts.iter().map(|&j| &aps[j]).collect();
+            let fn_args: Vec<syn::Ident> = child_sorts
+                .iter()
+                .map(|&j| format_ident!("__f{}", j))
+                .collect();
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|v| {
+                    let vn = &v.name;
+                    if v.fields.is_empty() {
+                        return quote! { #node_name::#vn => #mapped_name::#vn };
+                    }
+                    let bs: Vec<syn::Ident> = (0..v.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let mapped: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(v.fields.iter())
+                        .map(|(b, fk)| match fk {
+                            FieldKind::Child(j) => {
+                                let f = format_ident!("__f{}", j);
+                                quote! { #f(#b) }
+                            }
+                            FieldKind::VariadicChild(j) => {
+                                let f = format_ident!("__f{}", j);
+                                let pool =
+                                    format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[*j]);
+                                quote! {
+                                    ::semi_persistent_traversals::Variadic::Resolved(
+                                        #b.as_slice(&self.#pool).iter().map(|__c| #f(__c)).collect()
+                                    )
+                                }
+                            }
+                            FieldKind::Data(_) => quote! { #b.clone() },
+                        })
+                        .collect();
+                    quote! { #node_name::#vn(#(#bs),*) => #mapped_name::#vn(#(#mapped),*) }
+                })
+                .collect();
+            quote! {
+                impl<const DEDUP: bool> #store<DEDUP> {
+                    fn #method<#(#result_params),*>(
+                        &self,
+                        __node: &#node_name,
+                        #(#fn_params),*
+                    ) -> #mapped_name<#(#result_params),*> {
+                        match __node { #(#arms),* }
+                    }
+
+                    #vis fn #public_method<#(#result_params),*>(
+                        &self,
+                        __id: #id,
+                        #(#fn_params),*
+                    ) -> #mapped_name<#(#result_params),*> {
+                        self.#method(self.#get_method(__id), #(#fn_args),*)
+                    }
+                }
+            }
+        })
+        .collect();
+    quote! { #(#node_impls)* #(#store_impls)* }
 }
 
 fn gen_container(
@@ -564,18 +666,32 @@ fn gen_container(
         })
         .collect();
 
-    // Fields: one Option<FxHashMap<Node, usize>> per sort for dedup
+    // Fields: semantic-hash buckets per sort for dedup. Nodes containing
+    // variadic spans cannot be map keys directly because span offsets are a
+    // storage detail, not part of structural equality.
     let dedup_fields: Vec<TokenStream2> = sorts
         .iter()
         .enumerate()
         .map(|(i, _)| {
             let field = format_ident!("{}_dedup", sort_lowers[i]);
-            let node = format_ident!("{}Node", sort_names[i]);
-            quote! { #field: Option<::semi_persistent_traversals::FxHashMap<#node, usize>> }
+            if sort_variadic_child_sorts[i].is_empty() {
+                let node = format_ident!("{}Node", sort_names[i]);
+                quote! {
+                    #field: Option<
+                        ::semi_persistent_traversals::FxHashMap<#node, usize>
+                    >
+                }
+            } else {
+                quote! {
+                    #field: Option<
+                        ::semi_persistent_traversals::FxHashMap<u64, Vec<usize>>
+                    >
+                }
+            }
         })
         .collect();
 
-    // Fields: variadic pools — one Vec<SortId> per (owning_sort, child_sort) pair
+    // Fields: one branded pool per (owning_sort, child_sort) pair.
     let pool_fields: Vec<TokenStream2> = sorts
         .iter()
         .enumerate()
@@ -583,7 +699,184 @@ fn gen_container(
             sort_variadic_child_sorts[si].iter().map(move |&ci| {
                 let field = format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[ci]);
                 let id = format_ident!("{}Id", sort_names[ci]);
-                quote! { #field: Vec<#id> }
+                quote! {
+                    #field: ::semi_persistent_traversals::VariadicPool<#id>
+                }
+            })
+        })
+        .collect();
+
+    let resolve_node_methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .filter_map(|(si, sort)| {
+            if sort_variadic_child_sorts[si].is_empty() {
+                return None;
+            }
+            let node = format_ident!("{}Node", sort_names[si]);
+            let method = format_ident!("__resolve_{}_node", sort_lowers[si]);
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { #node::#vn => #node::#vn };
+                    }
+                    let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let resolved: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .map(|(b, field)| match field {
+                            FieldKind::Child(_) => quote! { *#b },
+                            FieldKind::VariadicChild(child_sort) => {
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                quote! {
+                                    ::semi_persistent_traversals::Variadic::Resolved(
+                                        #b.as_slice(&self.#pool).iter().copied().collect()
+                                    )
+                                }
+                            }
+                            FieldKind::Data(_) => quote! { #b.clone() },
+                        })
+                        .collect();
+                    quote! { #node::#vn(#(#bs),*) => #node::#vn(#(#resolved),*) }
+                })
+                .collect();
+            Some(quote! {
+                fn #method(&self, node: &#node) -> #node {
+                    match node { #(#arms),* }
+                }
+            })
+        })
+        .collect();
+
+    let resolved_get_methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, sort)| {
+            let node = format_ident!("{}Node", sort_names[si]);
+            let id = format_ident!("{}Id", sort_names[si]);
+            let get = format_ident!("get_{}", sort_lowers[si]);
+            let get_resolved = format_ident!("get_{}_resolved", sort_lowers[si]);
+            if has_variadic_children(sort) {
+                let resolve = format_ident!("__resolve_{}_node", sort_lowers[si]);
+                quote! {
+                    /// Return an owned node whose variadic fields are resolved
+                    /// from this store's pools.
+                    #vis fn #get_resolved(&self, id: #id) -> #node {
+                        self.#resolve(self.#get(id))
+                    }
+                }
+            } else {
+                quote! {
+                    /// Return an owned copy of a stored node.
+                    #vis fn #get_resolved(&self, id: #id) -> #node {
+                        self.#get(id).clone()
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let span_validation_methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .filter_map(|(si, sort)| {
+            if sort_variadic_child_sorts[si].is_empty() {
+                return None;
+            }
+            let node = format_ident!("{}Node", sort_names[si]);
+            let method = format_ident!("__validate_{}_spans", sort_lowers[si]);
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { #node::#vn => {} };
+                    }
+                    let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let checks: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .filter_map(|(b, field)| match field {
+                            FieldKind::VariadicChild(child_sort) => {
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                Some(quote! {
+                                    let _ = #b.as_slice(&self.#pool);
+                                })
+                            }
+                            FieldKind::Child(_) | FieldKind::Data(_) => None,
+                        })
+                        .collect();
+                    quote! { #node::#vn(#(#bs),*) => { #(#checks)* } }
+                })
+                .collect();
+            Some(quote! {
+                fn #method(&self, node: &#node) {
+                    match node { #(#arms),* }
+                }
+            })
+        })
+        .collect();
+
+    let intern_variadic_methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .filter_map(|(si, sort)| {
+            if sort_variadic_child_sorts[si].is_empty() {
+                return None;
+            }
+            let node = format_ident!("{}Node", sort_names[si]);
+            let method = format_ident!("__intern_{}_variadics", sort_lowers[si]);
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { #node::#vn => #node::#vn };
+                    }
+                    let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let interned: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .map(|(b, field)| match field {
+                            FieldKind::VariadicChild(child_sort) => {
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                quote! {
+                                    #b.into_pooled(&mut self.#pool)
+                                }
+                            }
+                            FieldKind::Child(_) | FieldKind::Data(_) => quote! { #b },
+                        })
+                        .collect();
+                    quote! { #node::#vn(#(#bs),*) => #node::#vn(#(#interned),*) }
+                })
+                .collect();
+            Some(quote! {
+                fn #method(&mut self, node: #node) -> #node {
+                    match node { #(#arms),* }
+                }
             })
         })
         .collect();
@@ -608,6 +901,129 @@ fn gen_container(
         })
         .collect();
 
+    let semantic_dedup_methods: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .filter_map(|(si, sort)| {
+            if sort_variadic_child_sorts[si].is_empty() {
+                return None;
+            }
+            let node = format_ident!("{}Node", sort_names[si]);
+            let hash_method = format_ident!("__hash_{}_node", sort_lowers[si]);
+            let eq_method = format_ident!("__eq_{}_node", sort_lowers[si]);
+
+            let hash_arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(variant_index, variant)| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! {
+                            #node::#vn => {
+                                ::core::hash::Hash::hash(&#variant_index, &mut __state);
+                            }
+                        };
+                    }
+                    let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let field_hashes: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .map(|(b, field)| match field {
+                            FieldKind::VariadicChild(child_sort) => {
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                quote! {
+                                    ::core::hash::Hash::hash(
+                                        #b.as_slice(&self.#pool),
+                                        &mut __state,
+                                    );
+                                }
+                            }
+                            FieldKind::Child(_) | FieldKind::Data(_) => {
+                                quote! {
+                                    ::core::hash::Hash::hash(#b, &mut __state);
+                                }
+                            }
+                        })
+                        .collect();
+                    quote! {
+                        #node::#vn(#(#bs),*) => {
+                            ::core::hash::Hash::hash(&#variant_index, &mut __state);
+                            #(#field_hashes)*
+                        }
+                    }
+                })
+                .collect();
+
+            let eq_arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { (#node::#vn, #node::#vn) => true };
+                    }
+                    let left: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__left{}", i))
+                        .collect();
+                    let right: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__right{}", i))
+                        .collect();
+                    let comparisons: Vec<TokenStream2> = left
+                        .iter()
+                        .zip(right.iter())
+                        .zip(variant.fields.iter())
+                        .map(|((left, right), field)| match field {
+                            FieldKind::VariadicChild(child_sort) => {
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                quote! {
+                                    #left.as_slice(&self.#pool)
+                                        == #right.as_slice(&self.#pool)
+                                }
+                            }
+                            FieldKind::Child(_) | FieldKind::Data(_) => {
+                                quote! { #left == #right }
+                            }
+                        })
+                        .collect();
+                    quote! {
+                        (
+                            #node::#vn(#(#left),*),
+                            #node::#vn(#(#right),*)
+                        ) => true #(&& #comparisons)*
+                    }
+                })
+                .collect();
+
+            Some(quote! {
+                fn #hash_method(&self, node: &#node) -> u64 {
+                    let mut __state = ::core::hash::BuildHasher::build_hasher(
+                        &::semi_persistent_traversals::FxBuildHasher::default(),
+                    );
+                    match node { #(#hash_arms),* }
+                    ::core::hash::Hasher::finish(&__state)
+                }
+
+                fn #eq_method(&self, left: &#node, right: &#node) -> bool {
+                    match (left, right) {
+                        #(#eq_arms,)*
+                        _ => false,
+                    }
+                }
+            })
+        })
+        .collect();
+
     // push_* methods — when DEDUP is true at the type level, hash-cons.
     // The `if DEDUP` const branches are eliminated at monomorphization.
     let push_methods: Vec<TokenStream2> = sorts
@@ -619,21 +1035,62 @@ fn gen_container(
             let id = format_ident!("{}Id", sort_names[i]);
             let field = format_ident!("{}_nodes", sort_lowers[i]);
             let dedup = format_ident!("{}_dedup", sort_lowers[i]);
-            quote! {
-                #vis fn #method(&mut self, node: #node) -> #id {
-                    if DEDUP {
-                        let idx_map = self.#dedup.as_ref().expect("DEDUP=true requires initialized dedup map");
-                        if let Some(&existing) = idx_map.get(&node) {
-                            return #id(existing);
+            let hash_method = format_ident!("__hash_{}_node", sort_lowers[i]);
+            let eq_method = format_ident!("__eq_{}_node", sort_lowers[i]);
+            if sort_variadic_child_sorts[i].is_empty() {
+                quote! {
+                    #vis fn #method(&mut self, node: #node) -> #id {
+                        if DEDUP {
+                            let idx_map = self.#dedup.as_ref()
+                                .expect("DEDUP=true requires initialized dedup map");
+                            if let Some(&existing) = idx_map.get(&node) {
+                                return #id(existing);
+                            }
+                            let idx = self.#field.len();
+                            self.#field.push(node.clone());
+                            self.#dedup.as_mut()
+                                .expect("DEDUP=true requires initialized dedup map")
+                                .insert(node, idx);
+                            #id(idx)
+                        } else {
+                            let idx = self.#field.len();
+                            self.#field.push(node);
+                            #id(idx)
                         }
-                        let idx = self.#field.len();
-                        self.#field.push(node.clone());
-                        self.#dedup.as_mut().expect("DEDUP=true requires initialized dedup map").insert(node, idx);
-                        #id(idx)
-                    } else {
-                        let idx = self.#field.len();
-                        self.#field.push(node);
-                        #id(idx)
+                    }
+                }
+            } else {
+                let validate_method = format_ident!("__validate_{}_spans", sort_lowers[i]);
+                let intern_method = format_ident!("__intern_{}_variadics", sort_lowers[i]);
+                quote! {
+                    #vis fn #method(&mut self, node: #node) -> #id {
+                        self.#validate_method(&node);
+                        if DEDUP {
+                            let __hash = self.#hash_method(&node);
+                            let __buckets = self.#dedup.as_ref()
+                                .expect("DEDUP=true requires initialized dedup map");
+                            if let Some(__candidates) = __buckets.get(&__hash) {
+                                for &__existing in __candidates {
+                                    if self.#eq_method(&self.#field[__existing], &node) {
+                                        return #id(__existing);
+                                    }
+                                }
+                            }
+                            let node = self.#intern_method(node);
+                            let idx = self.#field.len();
+                            self.#field.push(node);
+                            self.#dedup.as_mut()
+                                .expect("DEDUP=true requires initialized dedup map")
+                                .entry(__hash)
+                                .or_default()
+                                .push(idx);
+                            #id(idx)
+                        } else {
+                            let node = self.#intern_method(node);
+                            let idx = self.#field.len();
+                            self.#field.push(node);
+                            #id(idx)
+                        }
                     }
                 }
             }
@@ -674,11 +1131,7 @@ fn gen_container(
             let id = format_ident!("{}Id", sort_names[ci]);
             quote! {
                 #vis fn #method(&mut self, children: &[#id]) -> ::semi_persistent_traversals::Variadic<#id> {
-                    // Pool offsets are usize by rule: the pool's population is
-                    // the sum of arities, which no id capacity bounds.
-                    let start = self.#pool_field.len();
-                    self.#pool_field.extend_from_slice(children);
-                    ::semi_persistent_traversals::Variadic::Span { start, len: children.len() }
+                    self.#pool_field.alloc(children)
                 }
             }
         })
@@ -743,10 +1196,108 @@ fn gen_container(
         .flat_map(|(si, _)| {
             sort_variadic_child_sorts[si].iter().map(move |&ci| {
                 let field = format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[ci]);
-                quote! { #field: Vec::new() }
+                quote! {
+                    #field: ::semi_persistent_traversals::VariadicPool::new()
+                }
             })
         })
         .collect();
+
+    // A cloned store owns independent pools. Rebrand every stored span so a
+    // span allocated by either clone cannot be resolved through the other.
+    let pool_clone_decls: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .flat_map(|(si, _)| {
+            sort_variadic_child_sorts[si].iter().map(move |&ci| {
+                let field = format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[ci]);
+                let local = format_ident!("__clone_{}", field);
+                quote! {
+                    let #local = self.#field.clone_rebranded();
+                }
+            })
+        })
+        .collect();
+    let clone_arena_decls: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, sort)| {
+            let field = format_ident!("{}_nodes", sort_lowers[si]);
+            let local = format_ident!("__clone_{}", field);
+            if sort_variadic_child_sorts[si].is_empty() {
+                return quote! {
+                    let #local = self.#field.clone();
+                };
+            }
+            let node = format_ident!("{}Node", sort_names[si]);
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|variant| {
+                    let vn = &variant.name;
+                    if variant.fields.is_empty() {
+                        return quote! { #node::#vn => #node::#vn };
+                    }
+                    let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let cloned: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(variant.fields.iter())
+                        .map(|(b, field)| match field {
+                            FieldKind::VariadicChild(child_sort) => {
+                                let pool = format_ident!(
+                                    "{}_pool_{}",
+                                    sort_lowers[si],
+                                    sort_lowers[*child_sort]
+                                );
+                                let cloned_pool = format_ident!("__clone_{}", pool);
+                                quote! {
+                                    #b.rebrand(&self.#pool, &#cloned_pool)
+                                }
+                            }
+                            FieldKind::Child(_) | FieldKind::Data(_) => quote! { #b.clone() },
+                        })
+                        .collect();
+                    quote! { #node::#vn(#(#bs),*) => #node::#vn(#(#cloned),*) }
+                })
+                .collect();
+            quote! {
+                let #local = self.#field.iter().map(|__node| {
+                    match __node { #(#arms),* }
+                }).collect();
+            }
+        })
+        .collect();
+    let clone_arena_inits: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, _)| {
+            let field = format_ident!("{}_nodes", sort_lowers[si]);
+            let local = format_ident!("__clone_{}", field);
+            quote! { #field: #local }
+        })
+        .collect();
+    let clone_pool_inits: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .flat_map(|(si, _)| {
+            sort_variadic_child_sorts[si].iter().map(move |&ci| {
+                let field = format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[ci]);
+                let local = format_ident!("__clone_{}", field);
+                quote! { #field: #local }
+            })
+        })
+        .collect();
+    let clone_dedup_inits: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, _)| {
+            let field = format_ident!("{}_dedup", sort_lowers[si]);
+            quote! { #field: self.#field.clone() }
+        })
+        .collect();
+
     // Dedup field initializer: `None` when DEDUP=false, `Some(FxHashMap::default())` when
     // DEDUP=true. The `if DEDUP` is const-evaluated at monomorphization.
     let dedup_defaults_conditional: Vec<TokenStream2> = sorts
@@ -772,10 +1323,24 @@ fn gen_container(
         .map(|(i, _)| {
             let field = format_ident!("{}_dedup", sort_lowers[i]);
             let len_field = format_ident!("{}_len", sort_lowers[i]);
-            quote! {
-                if DEDUP {
-                    let idx_map = self.#field.as_mut().expect("DEDUP=true requires initialized dedup map");
-                    idx_map.retain(|_, v| *v < mark.#len_field);
+            if sort_variadic_child_sorts[i].is_empty() {
+                quote! {
+                    if DEDUP {
+                        let idx_map = self.#field.as_mut()
+                            .expect("DEDUP=true requires initialized dedup map");
+                        idx_map.retain(|_, index| *index < mark.#len_field);
+                    }
+                }
+            } else {
+                quote! {
+                    if DEDUP {
+                        let idx_map = self.#field.as_mut()
+                            .expect("DEDUP=true requires initialized dedup map");
+                        idx_map.retain(|_, indices| {
+                            indices.retain(|index| *index < mark.#len_field);
+                            !indices.is_empty()
+                        });
+                    }
                 }
             }
         })
@@ -788,11 +1353,22 @@ fn gen_container(
             #(#mark_pool_fields,)*
         }
 
-        #[derive(Clone)]
         #vis struct #store<const DEDUP: bool = false> {
             #(#arena_fields,)*
             #(#pool_fields,)*
             #(#dedup_fields,)*
+        }
+
+        impl<const DEDUP: bool> ::core::clone::Clone for #store<DEDUP> {
+            fn clone(&self) -> Self {
+                #(#pool_clone_decls)*
+                #(#clone_arena_decls)*
+                Self {
+                    #(#clone_arena_inits,)*
+                    #(#clone_pool_inits,)*
+                    #(#clone_dedup_inits,)*
+                }
+            }
         }
 
         impl<const DEDUP: bool> #store<DEDUP> {
@@ -807,7 +1383,12 @@ fn gen_container(
             }
 
             #(#push_methods)*
+            #(#semantic_dedup_methods)*
+            #(#resolve_node_methods)*
+            #(#span_validation_methods)*
+            #(#intern_variadic_methods)*
             #(#get_methods)*
+            #(#resolved_get_methods)*
             #(#len_methods)*
             #(#alloc_methods)*
 
@@ -859,11 +1440,22 @@ fn child_sort_indices(sort: &ResolvedSort) -> Vec<usize> {
     cs
 }
 
+fn has_variadic_children(sort: &ResolvedSort) -> bool {
+    sort.variants.iter().any(|variant| {
+        variant
+            .fields
+            .iter()
+            .any(|field| matches!(field, FieldKind::VariadicChild(_)))
+    })
+}
+
 // Helper: generate children_into arms for a node enum (pushes typed IDs into per-sort buffers)
 fn gen_children_into_arms(
     sort: &ResolvedSort,
     sort_names: &[&syn::Ident],
+    sort_lowers: &[syn::Ident],
     si: usize,
+    store_expr: &TokenStream2,
 ) -> Vec<TokenStream2> {
     let node_name = format_ident!("{}Node", sort_names[si]);
     sort.variants
@@ -886,7 +1478,12 @@ fn gen_children_into_arms(
                     }
                     FieldKind::VariadicChild(j) => {
                         let buf = format_ident!("__ch{}", j);
-                        Some(quote! { for __c in #b.iter() { #buf.push(*__c); } })
+                        let pool = format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[*j]);
+                        Some(quote! {
+                            for __c in #b.as_slice(&#store_expr.#pool) {
+                                #buf.push(*__c);
+                            }
+                        })
                     }
                     FieldKind::Data(_) => None,
                 })
@@ -946,7 +1543,7 @@ fn gen_fold(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -967,7 +1564,8 @@ fn gen_fold(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -1004,6 +1602,7 @@ fn gen_fold(
         let memo = format_ident!("__memo{}", si);
         let alg = format_ident!("__alg{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
@@ -1017,7 +1616,10 @@ fn gen_fold(
                 {
                     continue;
                 }
-                let __mapped = __store.#get_method(__id).map_children(#(#closure_args),*);
+                let __mapped = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args),*
+                );
                 ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, #alg(__mapped));
             }
         }
@@ -1149,7 +1751,7 @@ fn gen_fold_all(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -1169,7 +1771,8 @@ fn gen_fold_all(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -1205,6 +1808,7 @@ fn gen_fold_all(
         let memo = format_ident!("__memo{}", si);
         let alg = format_ident!("__alg{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
@@ -1218,7 +1822,10 @@ fn gen_fold_all(
                 {
                     continue;
                 }
-                let __mapped = __store.#get_method(__id).map_children(#(#closure_args),*);
+                let __mapped = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args),*
+                );
                 ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, #alg(__mapped));
             }
         }
@@ -1334,7 +1941,7 @@ fn gen_para(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -1354,7 +1961,8 @@ fn gen_para(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -1390,6 +1998,7 @@ fn gen_para(
         let memo = format_ident!("__memo{}", si);
         let alg = format_ident!("__alg{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
@@ -1403,7 +2012,10 @@ fn gen_para(
                 {
                     continue;
                 }
-                let __mapped = __store.#get_method(__id).map_children(#(#closure_args),*);
+                let __mapped = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args),*
+                );
                 ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, #alg(__mapped));
             }
         }
@@ -1507,7 +2119,7 @@ fn gen_transform(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -1521,7 +2133,8 @@ fn gen_transform(
             let buf = format_ident!("__ch{}", j);
             quote! { #buf.clear(); }
         }).collect();
-        let children_arms = gen_children_into_arms(sort, sort_names, si);
+        let children_arms =
+            gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { self.store });
         let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -1568,7 +2181,21 @@ fn gen_transform(
                 FieldKind::VariadicChild(j) => {
                     let m = format_ident!("__map{}", j);
                     let jid = format_ident!("{}Id", sort_names[*j]);
-                    quote! { ::semi_persistent_traversals::Variadic::Resolved(#b.iter().map(|__c| #jid(::semi_persistent_traversals::MappingOps::get(&#m, __c.0))).collect()) }
+                    let pool =
+                        format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[*j]);
+                    quote! {
+                        ::semi_persistent_traversals::Variadic::Resolved(
+                            #b.as_slice(&self.store.#pool)
+                                .iter()
+                                .map(|__c| #jid(
+                                    ::semi_persistent_traversals::MappingOps::get(
+                                        &#m,
+                                        __c.0,
+                                    )
+                                ))
+                                .collect()
+                        )
+                    }
                 }
                 FieldKind::Data(_) => quote! { #b.clone() },
             }).collect();
@@ -1692,7 +2319,7 @@ fn gen_histo(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -1712,7 +2339,8 @@ fn gen_histo(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -1748,6 +2376,7 @@ fn gen_histo(
         let memo = format_ident!("__memo{}", si);
         let alg = format_ident!("__alg{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
@@ -1761,7 +2390,8 @@ fn gen_histo(
             let buf = format_ident!("__ch{}", j);
             quote! { #buf.clear(); }
         }).collect();
-        let children_arms = gen_children_into_arms(sort, sort_names, si);
+        let children_arms =
+            gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
         let extend_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             quote! { for &__c in #buf.iter() { __all_children.push(__c.0); } }
@@ -1775,9 +2405,12 @@ fn gen_histo(
                 }
                 #(#collect_children)*
                 match __store.#get_method(__id) { #(#children_arms)* }
-                let mut __all_children = ::smallvec::SmallVec::<[usize; 8]>::new();
+                let mut __all_children = ::semi_persistent_traversals::__private::SmallVec::<[usize; 8]>::new();
                 #(#extend_children)*
-                let __mapped = __store.#get_method(__id).map_children(#(#closure_args),*);
+                let __mapped = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args),*
+                );
                 let __value = #alg(__mapped);
                 ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, ::semi_persistent_traversals::Ann { value: __value, children: __all_children });
             }
@@ -1907,7 +2540,7 @@ fn gen_zygo(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -1927,7 +2560,8 @@ fn gen_zygo(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -1964,6 +2598,7 @@ fn gen_zygo(
         let alg_aux = format_ident!("__aux{}", si);
         let alg_main = format_ident!("__main{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let aux_closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
@@ -1982,8 +2617,14 @@ fn gen_zygo(
                 {
                     continue;
                 }
-                let __b = #alg_aux(__store.#get_method(__id).map_children(#(#aux_closure_args),*));
-                let __a = #alg_main(__store.#get_method(__id).map_children(#(#main_closure_args),*));
+                let __b = #alg_aux(__store.#map_method(
+                    __store.#get_method(__id),
+                    #(#aux_closure_args),*
+                ));
+                let __a = #alg_main(__store.#map_method(
+                    __store.#get_method(__id),
+                    #(#main_closure_args),*
+                ));
                 ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, (__a, __b));
             }
         }
@@ -2088,7 +2729,7 @@ fn gen_fold_short(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -2108,7 +2749,8 @@ fn gen_fold_short(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -2144,6 +2786,7 @@ fn gen_fold_short(
         let memo = format_ident!("__memo{}", si);
         let alg = format_ident!("__alg{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let sn = sort_names[si];
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
@@ -2158,7 +2801,10 @@ fn gen_fold_short(
                 {
                     continue;
                 }
-                let __mapped = __store.#get_method(__id).map_children(#(#closure_args),*);
+                let __mapped = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args),*
+                );
                 match #alg(__mapped) {
                     Ok(__v) => { ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, __v); }
                     Err(__v) => return #result_name::#sn(__v),
@@ -2266,7 +2912,7 @@ fn gen_fold_with_original(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -2286,7 +2932,8 @@ fn gen_fold_with_original(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -2322,12 +2969,27 @@ fn gen_fold_with_original(
         let memo = format_ident!("__memo{}", si);
         let alg = format_ident!("__alg{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
+        let resolve_method = format_ident!("__resolve_{}_node", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
             let id = format_ident!("{}Id", sort_names[j]);
             quote! { &mut |__c: &#id| ::semi_persistent_traversals::MemoOps::get(&#memo_j, __c.0).unwrap().clone() }
         }).collect();
+        let evaluate = if has_variadic_children(sort) {
+            quote! {
+                let __orig = __store.#resolve_method(__store.#get_method(__id));
+                let __mapped = __store.#map_method(&__orig, #(#closure_args),*);
+                let __value = #alg(&__orig, __mapped);
+            }
+        } else {
+            quote! {
+                let __orig = __store.#get_method(__id);
+                let __mapped = __orig.map_children(#(#closure_args),*);
+                let __value = #alg(__orig, __mapped);
+            }
+        };
         quote! {
             __Task::#eval(__id) => {
                 if !<M as ::semi_persistent_traversals::MemoStrategy>::NO_MEMO
@@ -2335,9 +2997,8 @@ fn gen_fold_with_original(
                 {
                     continue;
                 }
-                let __orig = __store.#get_method(__id);
-                let __mapped = __orig.map_children(#(#closure_args),*);
-                ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, #alg(__orig, __mapped));
+                #evaluate
+                ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, __value);
             }
         }
     }).collect();
@@ -2464,7 +3125,7 @@ fn gen_unfold(
                     let jid = format_ident!("{}Id", sort_names[*j]);
                     quote! { {
                         let __vlen = #b.len();
-                        let __v: ::smallvec::SmallVec<[#jid; 4]> = (0..__vlen).map(|_| {
+                        let __v: ::semi_persistent_traversals::__private::SmallVec<[#jid; 4]> = (0..__vlen).map(|_| {
                             match __child_results[__ci] { #root_name::#jsn(__id) => { __ci += 1; __id }, _ => panic!("sort mismatch") }
                         }).collect();
                         ::semi_persistent_traversals::Variadic::Resolved(__v)
@@ -2580,7 +3241,7 @@ fn gen_rewrite(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -2594,7 +3255,8 @@ fn gen_rewrite(
             let buf = format_ident!("__ch{}", j);
             quote! { #buf.clear(); }
         }).collect();
-        let children_arms = gen_children_into_arms(sort, sort_names, si);
+        let children_arms =
+            gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { self.store });
         let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -2640,7 +3302,21 @@ fn gen_rewrite(
                 FieldKind::VariadicChild(j) => {
                     let m = format_ident!("__map{}", j);
                     let jid = format_ident!("{}Id", sort_names[*j]);
-                    quote! { ::semi_persistent_traversals::Variadic::Resolved(#b.iter().map(|__c| #jid(::semi_persistent_traversals::MappingOps::get(&#m, __c.0))).collect()) }
+                    let pool =
+                        format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[*j]);
+                    quote! {
+                        ::semi_persistent_traversals::Variadic::Resolved(
+                            #b.as_slice(&self.store.#pool)
+                                .iter()
+                                .map(|__c| #jid(
+                                    ::semi_persistent_traversals::MappingOps::get(
+                                        &#m,
+                                        __c.0,
+                                    )
+                                ))
+                                .collect()
+                        )
+                    }
                 }
                 FieldKind::Data(_) => quote! { #b.clone() },
             }).collect();
@@ -2792,7 +3468,7 @@ fn gen_unfold_short(
                     let jid = format_ident!("{}Id", sort_names[*j]);
                     quote! { {
                         let __vlen = #b.len();
-                        let __v: ::smallvec::SmallVec<[#jid; 4]> = (0..__vlen).map(|_| {
+                        let __v: ::semi_persistent_traversals::__private::SmallVec<[#jid; 4]> = (0..__vlen).map(|_| {
                             match __child_results[__ci] { #root_name::#jsn(__id) => { __ci += 1; __id }, _ => panic!("sort mismatch") }
                         }).collect();
                         ::semi_persistent_traversals::Variadic::Resolved(__v)
@@ -2916,7 +3592,7 @@ fn gen_fold_pair(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -2936,7 +3612,8 @@ fn gen_fold_pair(
                     quote! { #buf.clear(); }
                 })
                 .collect();
-            let children_arms = gen_children_into_arms(sort, sort_names, si);
+            let children_arms =
+                gen_children_into_arms(sort, sort_names, sort_lowers, si, &quote! { __store });
             let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -2973,6 +3650,7 @@ fn gen_fold_pair(
         let alg_a = format_ident!("__alg_a{}", si);
         let alg_b = format_ident!("__alg_b{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let map_method = format_ident!("__map_{}_children", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let closure_args: Vec<TokenStream2> = cs.iter().map(|&j| {
             let memo_j = format_ident!("__memo{}", j);
@@ -2987,8 +3665,14 @@ fn gen_fold_pair(
                 {
                     continue;
                 }
-                let __for_a = __store.#get_method(__id).map_children(#(#closure_args),*);
-                let __for_b = __store.#get_method(__id).map_children(#(#closure_args2),*);
+                let __for_a = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args),*
+                );
+                let __for_b = __store.#map_method(
+                    __store.#get_method(__id),
+                    #(#closure_args2),*
+                );
                 let __a = #alg_a(__for_a);
                 let __b = #alg_b(__for_b);
                 ::semi_persistent_traversals::MemoOps::set(&mut #memo, __id.0, (__a, __b));
@@ -3218,7 +3902,7 @@ fn gen_postunfold(
                     let jid = format_ident!("{}Id", sort_names[*j]);
                     quote! { {
                         let __vlen = #b.len();
-                        let __v: ::smallvec::SmallVec<[#jid; 4]> = (0..__vlen).map(|_| {
+                        let __v: ::semi_persistent_traversals::__private::SmallVec<[#jid; 4]> = (0..__vlen).map(|_| {
                             match __child_results[__ci] { #root_name::#jsn(__id) => { __ci += 1; __id }, _ => panic!("sort mismatch") }
                         }).collect();
                         ::semi_persistent_traversals::Variadic::Resolved(__v)
@@ -3323,7 +4007,7 @@ fn gen_rewrite_down(
         .map(|i| {
             let buf = format_ident!("__ch{}", i);
             let id = format_ident!("{}Id", sort_names[i]);
-            quote! { let mut #buf = ::smallvec::SmallVec::<[#id; 8]>::new(); }
+            quote! { let mut #buf = ::semi_persistent_traversals::__private::SmallVec::<[#id; 8]>::new(); }
         })
         .collect();
 
@@ -3334,6 +4018,7 @@ fn gen_rewrite_down(
         let rw = format_ident!("__rw{}", si);
         let vis_si = format_ident!("__vis{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let resolve_method = format_ident!("__resolve_{}_node", sort_lowers[si]);
         let cs = child_sort_indices(sort);
         let clear_bufs: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
@@ -3359,6 +4044,16 @@ fn gen_rewrite_down(
             }).collect();
             quote! { #node_name::#vn(#(#bs),*) => { #(#pushes)* } }
         }).collect();
+        // Rules must see a representation-independent node. Resolving here
+        // also makes the rewritten node safe for the inline iteration in the
+        // child collection and remapping phases below.
+        let apply_rule = if has_variadic_children(sort) {
+            quote! {
+                #rule(self.store.#resolve_method(self.store.#get_method(__id)))
+            }
+        } else {
+            quote! { #rule(self.store.#get_method(__id).clone()) }
+        };
         let push_children: Vec<TokenStream2> = cs.iter().map(|&j| {
             let buf = format_ident!("__ch{}", j);
             let enter_child = format_ident!("Enter{}", sort_names[j]);
@@ -3375,7 +4070,7 @@ fn gen_rewrite_down(
             __Task::#enter(__id) => {
                 if ::semi_persistent_traversals::VisitOps::visited(&#vis_si, __id.0) { continue; }
                 ::semi_persistent_traversals::VisitOps::mark(&mut #vis_si, __id.0);
-                let __rewritten = #rule(self.store.#get_method(__id).clone());
+                let __rewritten = #apply_rule;
                 #(#clear_bufs)*
                 match &__rewritten { #(#children_arms)* }
                 ::semi_persistent_traversals::MemoOps::set(&mut #rw, __id.0, __rewritten);
@@ -3492,43 +4187,75 @@ fn gen_zipper(
 
     // children_arms: given a node (borrowed), produce a Vec<Root> of its children in order.
     // One match block per sort.
-    let children_root_impls: Vec<TokenStream2> = sorts.iter().enumerate().map(|(si, sort)| {
-        let node_name = format_ident!("{}Node", sort_names[si]);
-        let fn_name = format_ident!("__zipper_children_{}", sort_lowers[si]);
-        let arms: Vec<TokenStream2> = sort.variants.iter().map(|v| {
-            let vn = &v.name;
-            if v.fields.is_empty() {
-                return quote! { #node_name::#vn => {} };
-            }
-            let bs: Vec<syn::Ident> = (0..v.fields.len()).map(|i| format_ident!("__x{}", i)).collect();
-            let pushes: Vec<TokenStream2> = bs.iter().zip(v.fields.iter()).filter_map(|(b, fk)| match fk {
-                FieldKind::Child(j) => {
-                    let jsn = sort_names[*j];
-                    Some(quote! { __out.push(#root_name::#jsn(*#b)); })
+    let children_root_impls: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(si, sort)| {
+            let node_name = format_ident!("{}Node", sort_names[si]);
+            let fn_name = format_ident!("__zipper_children_{}", sort_lowers[si]);
+            let arms: Vec<TokenStream2> = sort
+                .variants
+                .iter()
+                .map(|v| {
+                    let vn = &v.name;
+                    if v.fields.is_empty() {
+                        return quote! { #node_name::#vn => {} };
+                    }
+                    let bs: Vec<syn::Ident> = (0..v.fields.len())
+                        .map(|i| format_ident!("__x{}", i))
+                        .collect();
+                    let pushes: Vec<TokenStream2> = bs
+                        .iter()
+                        .zip(v.fields.iter())
+                        .filter_map(|(b, fk)| match fk {
+                            FieldKind::Child(j) => {
+                                let jsn = sort_names[*j];
+                                Some(quote! { __out.push(#root_name::#jsn(*#b)); })
+                            }
+                            FieldKind::VariadicChild(j) => {
+                                let jsn = sort_names[*j];
+                                let pool =
+                                    format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[*j]);
+                                Some(quote! {
+                                    for __c in #b.as_slice(&__store.#pool) {
+                                        __out.push(#root_name::#jsn(*__c));
+                                    }
+                                })
+                            }
+                            FieldKind::Data(_) => None,
+                        })
+                        .collect();
+                    quote! { #node_name::#vn(#(#bs),*) => { #(#pushes)* } }
+                })
+                .collect();
+            quote! {
+                #[allow(non_snake_case)]
+                fn #fn_name<const DEDUP: bool>(
+                    __store: &#store<DEDUP>,
+                    node: &#node_name,
+                    __out: &mut Vec<#root_name>,
+                ) {
+                    match node { #(#arms),* }
                 }
-                FieldKind::VariadicChild(j) => {
-                    let jsn = sort_names[*j];
-                    Some(quote! { for __c in #b.iter() { __out.push(#root_name::#jsn(*__c)); } })
-                }
-                FieldKind::Data(_) => None,
-            }).collect();
-            quote! { #node_name::#vn(#(#bs),*) => { #(#pushes)* } }
-        }).collect();
-        quote! {
-            #[allow(non_snake_case)]
-            fn #fn_name(node: &#node_name, __out: &mut Vec<#root_name>) {
-                match node { #(#arms),* }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     // Dispatcher: take a Root and get its node's children as a Vec<Root>
-    let dispatch_children: Vec<TokenStream2> = (0..n).map(|i| {
-        let sn = sort_names[i];
-        let get_method = format_ident!("get_{}", sort_lowers[i]);
-        let fn_name = format_ident!("__zipper_children_{}", sort_lowers[i]);
-        quote! { #root_name::#sn(__id) => { let mut __out = Vec::new(); #fn_name(__store.#get_method(__id), &mut __out); __out } }
-    }).collect();
+    let dispatch_children: Vec<TokenStream2> = (0..n)
+        .map(|i| {
+            let sn = sort_names[i];
+            let get_method = format_ident!("get_{}", sort_lowers[i]);
+            let fn_name = format_ident!("__zipper_children_{}", sort_lowers[i]);
+            quote! {
+                #root_name::#sn(__id) => {
+                    let mut __out = Vec::new();
+                    #fn_name(__store, __store.#get_method(__id), &mut __out);
+                    __out
+                }
+            }
+        })
+        .collect();
 
     // set_focus: take a sort-tagged node enum. We define set_focus_<sort> methods.
     let set_focus_methods: Vec<TokenStream2> = (0..n)
@@ -3579,7 +4306,21 @@ fn gen_zipper(
                 FieldKind::VariadicChild(j) => {
                     let m = format_ident!("__map{}", j);
                     let jid = format_ident!("{}Id", sort_names[*j]);
-                    quote! { ::semi_persistent_traversals::Variadic::Resolved(#b.iter().map(|__c| #jid(::semi_persistent_traversals::MappingOps::get(#m, __c.0))).collect()) }
+                    let pool =
+                        format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[*j]);
+                    quote! {
+                        ::semi_persistent_traversals::Variadic::Resolved(
+                            #b.as_slice(&__store.#pool)
+                                .iter()
+                                .map(|__c| #jid(
+                                    ::semi_persistent_traversals::MappingOps::get(
+                                        #m,
+                                        __c.0,
+                                    )
+                                ))
+                                .collect()
+                        )
+                    }
                 }
                 FieldKind::Data(_) => quote! { #b.clone() },
             }).collect();
@@ -3587,7 +4328,11 @@ fn gen_zipper(
         }).collect();
         quote! {
             #[allow(non_snake_case, clippy::too_many_arguments)]
-            fn #fn_name<#(#map_type_bounds),*>(node: &#node_name, #(#map_params),*) -> #node_name {
+            fn #fn_name<const DEDUP: bool, #(#map_type_bounds),*>(
+                __store: &#store<DEDUP>,
+                node: &#node_name,
+                #(#map_params),*
+            ) -> #node_name {
                 match node { #(#arms),* }
             }
         }
@@ -3635,14 +4380,22 @@ fn gen_zipper(
             let focused_case = if is_focused_sort {
                 quote! {
                     if __id.0 == __focus_id.0 {
-                        #fn_children(&__new_node, &mut __ch_tmp);
+                        #fn_children(self.src, &__new_node, &mut __ch_tmp);
                     } else {
-                        #fn_children(self.src.#get_method(__id), &mut __ch_tmp);
+                        #fn_children(
+                            self.src,
+                            self.src.#get_method(__id),
+                            &mut __ch_tmp,
+                        );
                     }
                 }
             } else {
                 quote! {
-                    #fn_children(self.src.#get_method(__id), &mut __ch_tmp);
+                    #fn_children(
+                        self.src,
+                        self.src.#get_method(__id),
+                        &mut __ch_tmp,
+                    );
                 }
             };
             let push_children_arms: Vec<TokenStream2> = (0..n).map(|j| {
@@ -3680,11 +4433,19 @@ fn gen_zipper(
             let body = if is_focused_sort {
                 quote! {
                     let __node_ref = if __id.0 == __focus_id.0 { &__new_node } else { self.src.#get_method(__id) };
-                    let __remapped = #remap_fn(__node_ref, #(#map_refs),*);
+                    let __remapped = #remap_fn(
+                        self.src,
+                        __node_ref,
+                        #(#map_refs),*
+                    );
                 }
             } else {
                 quote! {
-                    let __remapped = #remap_fn(self.src.#get_method(__id), #(#map_refs),*);
+                    let __remapped = #remap_fn(
+                        self.src,
+                        self.src.#get_method(__id),
+                        #(#map_refs),*
+                    );
                 }
             };
             quote! {
@@ -4044,8 +4805,6 @@ fn gen_smart_constructors(
                     // Build parameter list and body piece by piece.
                     let mut params: Vec<TokenStream2> = Vec::new();
                     let mut forward_exprs: Vec<TokenStream2> = Vec::new();
-                    // Extra "alloc" prelude statements, for Variadic fields.
-                    let mut prelude: Vec<TokenStream2> = Vec::new();
                     for (i, f) in v.fields.iter().enumerate() {
                         let pname = format_ident!("__p{}", i);
                         match f {
@@ -4056,12 +4815,12 @@ fn gen_smart_constructors(
                             }
                             FieldKind::VariadicChild(j) => {
                                 let child_id = format_ident!("{}Id", sort_names[*j]);
-                                let alloc_method =
-                                    format_ident!("alloc_{}_{}", sort_lowers[si], sort_lowers[*j]);
-                                let tmp = format_ident!("__v{}", i);
                                 params.push(quote! { #pname: &[#child_id] });
-                                prelude.push(quote! { let #tmp = self.#alloc_method(#pname); });
-                                forward_exprs.push(quote! { #tmp });
+                                forward_exprs.push(quote! {
+                                    ::semi_persistent_traversals::Variadic::Resolved(
+                                        #pname.iter().copied().collect()
+                                    )
+                                });
                             }
                             FieldKind::Data(ty) => {
                                 if is_bare_string(ty) {
@@ -4084,7 +4843,6 @@ fn gen_smart_constructors(
                     quote! {
                         #[inline]
                         #vis fn #method(&mut self, #(#params),*) -> #id_name {
-                            #(#prelude)*
                             self.#push_method(#build_call)
                         }
                     }

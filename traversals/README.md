@@ -39,7 +39,7 @@ store can be created plain with `Store::new()` or with hash-consing via
 ## Quick example
 
 ```rust
-use semi_persistent_traversals_derive::rec_family;
+use semi_persistent_traversals::rec_family;
 
 rec_family! {
     family Lang => LangStore;
@@ -101,9 +101,12 @@ is which.
 ## Variadic children
 
 Use `Variadic<Sort>` in a variant to declare a variable-length list of
-children of that sort. The macro stores short lists inline and longer
-lists in a pool. In algebras the list appears as `Variadic<A>` and
-iterates with `.iter()`.
+children of that sort. Allocators and smart constructors store each
+list as a span in a typed pool. Generated traversals resolve that span;
+in algebras the mapped list appears as an inline `Variadic<A>` and
+iterates with `.iter()`. For direct inspection,
+`get_<sort>_resolved(id)` returns an owned node with inline lists, while
+`map_<sort>_children(id, ...)` performs store-aware child mapping.
 
 ```rust
 rec_family! {
@@ -139,10 +142,10 @@ the full decision guide with benchmark numbers.
 
 ## Crate structure
 
-The workspace has two crates. `amzn-semi-persistent-traversals` is the
-core library and contains the memo strategy types, `Variadic`,
-`HasVariadic`, and `Ann`. `amzn-semi-persistent-traversals-derive`
-contains the `rec_family!` proc macro.
+The workspace has two crates. `semi-persistent-traversals` is the
+core library and contains the memo strategy types, `Variadic`, and
+`Ann`, and re-exports the `rec_family!` proc macro.
+`semi-persistent-traversals-derive` contains the macro implementation.
 
 ## Documentation
 

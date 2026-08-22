@@ -4,6 +4,7 @@ members = [
     "containers",
     "egraph",
     "traversals",
+    "traversals/compile-tests",
     "traversals/derive",
     "abstract-domains",
     "containers-verus",
