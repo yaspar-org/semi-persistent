@@ -1717,6 +1717,38 @@ fn has_variadic_children(sort: &ResolvedSort) -> bool {
     })
 }
 
+fn gen_child_count_arms(
+    sort: &ResolvedSort,
+    sort_names: &[&syn::Ident],
+    si: usize,
+) -> Vec<TokenStream2> {
+    let node_name = format_ident!("{}Node", sort_names[si]);
+    sort.variants
+        .iter()
+        .map(|variant| {
+            let vn = &variant.name;
+            if variant.fields.is_empty() {
+                return quote! { #node_name::#vn => 0usize };
+            }
+            let bs: Vec<syn::Ident> = (0..variant.fields.len())
+                .map(|i| format_ident!("__x{}", i))
+                .collect();
+            let counts: Vec<TokenStream2> = bs
+                .iter()
+                .zip(variant.fields.iter())
+                .filter_map(|(binding, field)| match field {
+                    FieldKind::Child(_) => Some(quote! { 1usize }),
+                    FieldKind::VariadicChild(_) => Some(quote! { #binding.len() }),
+                    FieldKind::Data(_) => None,
+                })
+                .collect();
+            quote! {
+                #node_name::#vn(#(#bs),*) => 0usize #(+ #counts)*
+            }
+        })
+        .collect()
+}
+
 // Helper: generate children_into arms for a node enum (pushes typed IDs into per-sort buffers)
 fn gen_children_into_arms(
     sort: &ResolvedSort,
@@ -3357,11 +3389,22 @@ fn gen_unfold(
         })
         .collect();
 
-    let expand_arms: Vec<TokenStream2> = (0..n)
-        .map(|i| {
+    let expand_arms: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(i, sort)| {
             let sn = sort_names[i];
+            let child_count_arms = gen_child_count_arms(sort, sort_names, i);
             quote! {
                 #layer_name::#sn(__node, __child_seeds) => {
+                    let __expected_children = match &__node {
+                        #(#child_count_arms),*
+                    };
+                    assert_eq!(
+                        __child_seeds.len(),
+                        __expected_children,
+                        "unfold layer child count does not match node holes"
+                    );
                     let __nc = __child_seeds.len();
                     __nodes.push((__nc, #skel_name::#sn(__node)));
                     __work.push(__AnaTask::Build);
@@ -3704,12 +3747,23 @@ fn gen_unfold_short(
         }
         v
     };
-    let expand_arms: Vec<TokenStream2> = (0..n)
-        .map(|i| {
+    let expand_arms: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(i, sort)| {
             let sn = sort_names[i];
             let cont_arms = cont_to_task.clone();
+            let child_count_arms = gen_child_count_arms(sort, sort_names, i);
             quote! {
                 #layer_name::#sn(__node, __child_seeds) => {
+                    let __expected_children = match &__node {
+                        #(#child_count_arms),*
+                    };
+                    assert_eq!(
+                        __child_seeds.len(),
+                        __expected_children,
+                        "unfold layer child count does not match node holes"
+                    );
                     let __nc = __child_seeds.len();
                     __nodes.push((__nc, #skel_name::#sn(__node)));
                     __work.push(__ApoTask::Build);
@@ -4138,11 +4192,22 @@ fn gen_postunfold(
         })
         .collect();
 
-    let expand_arms: Vec<TokenStream2> = (0..n)
-        .map(|i| {
+    let expand_arms: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(i, sort)| {
             let sn = sort_names[i];
+            let child_count_arms = gen_child_count_arms(sort, sort_names, i);
             quote! {
                 #layer_name::#sn(__node, __child_seeds) => {
+                    let __expected_children = match &__node {
+                        #(#child_count_arms),*
+                    };
+                    assert_eq!(
+                        __child_seeds.len(),
+                        __expected_children,
+                        "unfold layer child count does not match node holes"
+                    );
                     let __nc = __child_seeds.len();
                     __nodes.push((__nc, #skel_name::#sn(__node)));
                     __work.push(__AnaTask::Build);
@@ -4877,8 +4942,17 @@ fn gen_zipper(
                 }
             }
             #vis fn sibling(&mut self, child_index: usize) -> bool {
-                if !self.up() { return false; }
-                self.down(child_index)
+                let Some(&(__parent, _)) = self.crumbs.last() else {
+                    return false;
+                };
+                let __store = self.store;
+                let __kids = match __parent { #(#dispatch_children),* };
+                if child_index >= __kids.len() {
+                    return false;
+                }
+                self.focus = __kids[child_index];
+                self.crumbs.last_mut().unwrap().1 = child_index;
+                true
             }
             #vis fn top(&mut self) {
                 if !self.crumbs.is_empty() {
@@ -5103,6 +5177,9 @@ fn gen_smart_constructors(
         "postunfold",
         "rewrite_down",
         "refold",
+        "clone",
+        "clone_from",
+        "drop",
     ]
     .into_iter()
     .map(str::to_owned)
