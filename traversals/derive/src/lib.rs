@@ -1380,6 +1380,37 @@ fn gen_container(
         })
         .collect();
 
+    let validate_restore_arenas: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let field = format_ident!("{}_len", sort_lowers[i]);
+            let arena_field = format_ident!("{}_nodes", sort_lowers[i]);
+            quote! {
+                assert!(
+                    mark.#field <= self.#arena_field.len(),
+                    "cannot restore a mark ahead of the current store"
+                );
+            }
+        })
+        .collect();
+    let validate_restore_pools: Vec<TokenStream2> = sorts
+        .iter()
+        .enumerate()
+        .flat_map(|(si, _)| {
+            sort_variadic_child_sorts[si].iter().map(move |&ci| {
+                let field = format_ident!("{}_pool_{}_len", sort_lowers[si], sort_lowers[ci]);
+                let pool_field = format_ident!("{}_pool_{}", sort_lowers[si], sort_lowers[ci]);
+                quote! {
+                    assert!(
+                        mark.#field <= self.#pool_field.len(),
+                        "cannot restore a mark ahead of the current store"
+                    );
+                }
+            })
+        })
+        .collect();
+
     // Default field inits
     let arena_defaults: Vec<TokenStream2> = sorts
         .iter()
@@ -1548,11 +1579,15 @@ fn gen_container(
     quote! {
         #[derive(Clone, Debug)]
         #vis struct #mark_name {
+            __store_identity: ::semi_persistent_traversals::StoreIdentity,
+            __mutation_epoch: u64,
             #(#mark_arena_fields,)*
             #(#mark_pool_fields,)*
         }
 
         #vis struct #store<const DEDUP: bool = false> {
+            __store_identity: ::semi_persistent_traversals::StoreIdentity,
+            __mutation_epoch: u64,
             #(#arena_fields,)*
             #(#pool_fields,)*
             #(#dedup_fields,)*
@@ -1563,6 +1598,8 @@ fn gen_container(
                 #(#pool_clone_decls)*
                 #(#clone_arena_decls)*
                 Self {
+                    __store_identity: ::semi_persistent_traversals::StoreIdentity::new(),
+                    __mutation_epoch: 0,
                     #(#clone_arena_inits,)*
                     #(#clone_pool_inits,)*
                     #(#clone_dedup_inits,)*
@@ -1575,6 +1612,8 @@ fn gen_container(
             /// Initializes the dedup fields based on the DEDUP const parameter.
             fn __new_inner() -> Self {
                 Self {
+                    __store_identity: ::semi_persistent_traversals::StoreIdentity::new(),
+                    __mutation_epoch: 0,
                     #(#arena_defaults,)*
                     #(#pool_defaults,)*
                     #(#dedup_defaults_conditional,)*
@@ -1592,11 +1631,40 @@ fn gen_container(
             #(#len_methods)*
             #(#alloc_methods)*
 
+            /// Captures the current append positions of every arena and
+            /// variadic pool in this store.
+            ///
+            /// A mark is a store-bound truncation checkpoint, not a copy of
+            /// the stored nodes. It is invalid for another store and is
+            /// invalidated by any successful in-place `set_*` mutation.
             #vis fn mark(&self) -> #mark_name {
-                #mark_name { #(#mark_arena_inits,)* #(#mark_pool_inits,)* }
+                #mark_name {
+                    __store_identity: self.__store_identity,
+                    __mutation_epoch: self.__mutation_epoch,
+                    #(#mark_arena_inits,)*
+                    #(#mark_pool_inits,)*
+                }
             }
 
+            /// Truncates every arena and variadic pool to `mark` and removes
+            /// dedup entries that point into the discarded suffix.
+            ///
+            /// Panics if the mark belongs to another store, predates an
+            /// in-place mutation, or records a position ahead of the current
+            /// store.
             #vis fn restore(&mut self, mark: &#mark_name) {
+                assert_eq!(
+                    mark.__store_identity,
+                    self.__store_identity,
+                    "mark belongs to a different store"
+                );
+                assert_eq!(
+                    mark.__mutation_epoch,
+                    self.__mutation_epoch,
+                    "mark was invalidated by in-place mutation"
+                );
+                #(#validate_restore_arenas)*
+                #(#validate_restore_pools)*
                 #(#restore_arenas)*
                 #(#restore_pools)*
                 #(#restore_dedup_prune)*
@@ -3486,6 +3554,7 @@ fn gen_rewrite(
         let rule = format_ident!("__rule{}", si);
         let map_si = format_ident!("__map{}", si);
         let get_method = format_ident!("get_{}", sort_lowers[si]);
+        let len_method = format_ident!("len_{}", sort_lowers[si]);
         let node_name = format_ident!("{}Node", sort_names[si]);
         let remap_arms: Vec<TokenStream2> = sort.variants.iter().map(|v| {
             let vn = &v.name;
@@ -3526,6 +3595,10 @@ fn gen_rewrite(
             __Task::#eval(__id) => {
                 let __remapped = match self.store.#get_method(__id) { #(#remap_arms),* };
                 let __new_id = #rule(__remapped, &mut __new);
+                assert!(
+                    __new_id.0 < __new.#len_method(),
+                    "rewrite rule returned an ID outside the output arena"
+                );
                 ::semi_persistent_traversals::MappingOps::set(&mut #map_si, __id.0, __new_id.0);
             }
         }
@@ -4734,6 +4807,9 @@ fn gen_zipper(
             quote! {
                 #vis fn #set_method(&mut self, id: #id_name, node: #node_name) {
                     assert!(id.0 < self.#field_name.len(), "node ID does not exist");
+                    let __next_mutation_epoch = self.__mutation_epoch
+                        .checked_add(1)
+                        .expect("store mutation epoch exhausted");
                     self.#validate_children(&node);
                     let __target = #root_name::#sn(id);
                     let mut __stack = Vec::new();
@@ -4751,6 +4827,7 @@ fn gen_zipper(
                     }
                     #prepare_node
                     self.#field_name[id.0] = node;
+                    self.__mutation_epoch = __next_mutation_epoch;
                 }
             }
         })
