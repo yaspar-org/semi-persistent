@@ -8,7 +8,6 @@ repository = "https://github.com/yaspar-org/semi-persistent"
 
 [dependencies]
 semi-persistent-traversals-derive = { path = "derive", version = "0.1.0" }
-winnow.workspace = true
 rustc-hash = "2"
 smallvec = "1"
 

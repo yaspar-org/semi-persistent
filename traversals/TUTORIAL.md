@@ -829,11 +829,12 @@ let args = s.alloc_stmt_expr(&[x, y, z]);
 let call = s.push_stmt(StmtNode::Call("f".into(), args));
 ```
 
-Storage is pool-backed to avoid heap allocations for small lists. Under
-the hood, a `Variadic` value is either a pair `(start, len)` pointing
-into a per-(owning-sort, child-sort) pool, or a short inline list for
-lists built during a traversal. The user never sees this distinction;
-all operations go through the typed helpers.
+Storage is pool-backed to avoid a separate heap allocation for every
+list. Allocators and smart constructors produce a `(start, len)` span
+into a per-(owning-sort, child-sort) pool. Generated traversals resolve
+that span and use a short inline list for mapped children passed to
+algebras and rewrite callbacks. Those generated operations hide the
+representation distinction.
 
 ### Variadic children in algebras
 
@@ -865,16 +866,25 @@ let result = s.fold(
 ```
 
 `.iter()` returns an iterator of `&A`; `.len()` gives the length;
-`IntoIterator` is implemented so you can consume a `Variadic<A>`
-directly if you own it. The length is inherent to the list, so
-algebras do not need a separate "arity" parameter.
+`IntoIterator` is implemented so you can consume a mapped
+`Variadic<A>` directly if you own it. The owning store resolves pooled
+spans before invoking an algebra, so algebras do not need a pool or a
+separate "arity" parameter.
+
+Raw nodes returned by `get_<sort>` retain their pool spans. Use
+`get_<sort>_resolved(id)` when inspecting a node directly, or
+`map_<sort>_children(id, ...)` to map its children with the owning
+store's pools. Context-free `Node::map_children` is available only for
+sorts with no variadic fields.
 
 ### Constraints
 
 Variadic children have the same typed-ID discipline as fixed-arity
 children. A `Variadic<Expr>` slot cannot be filled with `StmtId`s. The
 allocator helper's name encodes both sorts, and passing a slice of the
-wrong typed-ID produces a compile error.
+wrong typed-ID produces a compile error. Spans also carry their pool
+identity; inserting a span into a different owning sort or store is
+rejected instead of resolving the same offsets against unrelated data.
 
 A single variant can mix data, fixed-arity children, and variadic
 children in any order. `Call(String, Variadic<Expr>)` puts the name
@@ -885,14 +895,17 @@ ordering.
 Variadic children participate in hash-consing normally. A deduplicating
 store compares variadic child lists by value, so
 `Call("f", [a, b])` deduplicates with another `Call("f", [a, b])` that
-happens to use the same argument IDs.
+uses the same argument IDs even if the two lists occupy different pool
+spans or one node was built from an inline `Variadic::Resolved` value.
 
 ## 15. Hash-consing with `new_dedup`
 
 A plain store appends every pushed node, even if it is structurally
 identical to an existing one. `LangStore::new_dedup()` adds a per-sort
-hashmap: a push first checks whether the same node already exists, and
-if so returns the existing ID.
+semantic hash table: a push first checks whether the same node already
+exists, and if so returns the existing ID. Hash collisions are checked
+with structural equality, including value-based comparison of variadic
+children.
 
 ```rust
 let mut s = LangStore::new_dedup();
