@@ -90,6 +90,7 @@ pub enum CCommand<O, S, L> {
         right: CTerm<O, S, L>,
         playouts: u64,
         algorithm: String,
+        cycle_mode: String,
     },
     CheckAu {
         left: CTerm<O, S, L>,
@@ -97,6 +98,7 @@ pub enum CCommand<O, S, L> {
         max_size: u32,
         playouts: u64,
         algorithm: String,
+        cycle_mode: String,
     },
     Push(bool), // true = shrink on mark
     Pop,
@@ -978,6 +980,7 @@ where
             right,
             playouts,
             algorithm,
+            cycle_mode,
         } => {
             let cl = check_term(&left, None, eg.ops(), eg.sorts(), model, globals)?;
             let cr = check_term(&right, None, eg.ops(), eg.sorts(), model, globals)?;
@@ -986,6 +989,7 @@ where
                 right: cr,
                 playouts,
                 algorithm,
+                cycle_mode,
             })
         }
         Command::CheckAu {
@@ -994,6 +998,7 @@ where
             max_size,
             playouts,
             algorithm,
+            cycle_mode,
         } => {
             let cl = check_term(&left, None, eg.ops(), eg.sorts(), model, globals)?;
             let cr = check_term(&right, None, eg.ops(), eg.sorts(), model, globals)?;
@@ -1003,6 +1008,7 @@ where
                 max_size,
                 playouts,
                 algorithm,
+                cycle_mode,
             })
         }
         Command::Push(shrink) => Ok(CCommand::Push(shrink)),

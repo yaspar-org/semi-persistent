@@ -78,7 +78,7 @@ The oracle tests skip fixtures whose term set is too large to enumerate, and
 assert a floor on how many were checked, so they cannot pass by skipping
 everything.
 
-There is no reproduction command for `D = OPT`, because no current theorem
+There is no reproduction command for `D* = OPT`, because no current theorem
 states it. The missing proof steps are listed in `claims.md` section 4.
 
 ## Proof export

@@ -130,6 +130,47 @@ fn exact_and_uct_algorithms_are_accepted() {
 }
 
 #[test]
+fn all_cycle_modes_are_accepted_by_exact_and_uct() {
+    let source = r#"
+        (sort E)
+        (function a () E)
+        (function f (E) E)
+        (function h (E E) E)
+        (let c0 (a))
+        (let c3 (f c0))
+        (let c1 (h c3 c3))
+        (let c2 (h c0 c1))
+        (union c3 (h c0 c3))
+        (run 1)
+
+        (checkau c2 c3 :max_size 9 :algorithm exact :cycles sides)
+        (checkau c2 c3 :max_size 9 :algorithm exact :cycles sides-current)
+        (checkau c2 c3 :max_size 8 :algorithm exact :cycles pair)
+        (checkau c2 c3 :max_size 9 :algorithm uct :cycles sides :playouts 10000)
+        (checkau c2 c3 :max_size 9 :algorithm uct :cycles sides-current :playouts 10000)
+        (checkau c2 c3 :max_size 8 :algorithm uct :cycles pair :playouts 10000)
+    "#;
+    run_program(source).expect("both cycle policies must reach both public algorithms");
+}
+
+#[test]
+fn unknown_cycle_mode_names_supported_values() {
+    let source = r#"
+        (sort E)
+        (function a () E)
+        (antiunify (a) (a) :algorithm exact :cycles global)
+    "#;
+    let error = match run_program(source) {
+        Ok(_) => panic!("unknown cycle mode should be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error,
+        "run: check failed: unknown AU cycle mode 'global' (expected sides, sides-current, or pair)"
+    );
+}
+
+#[test]
 fn syntactic_algorithm_is_rejected_with_supported_values() {
     let source = r#"
         (sort E)

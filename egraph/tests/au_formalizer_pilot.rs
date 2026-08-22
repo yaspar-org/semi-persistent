@@ -39,6 +39,7 @@
 
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::interpret::Interpreter;
 use semi_persistent_egraph::literal::{NiraLitVal, NiraModel};
 use semi_persistent_egraph::nodes::DefaultConfig;
@@ -165,8 +166,8 @@ fn score(st: &Statement, laws: bool) -> Score {
         r,
         &AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             ..Default::default()
         },
     )

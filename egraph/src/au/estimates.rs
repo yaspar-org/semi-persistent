@@ -17,9 +17,9 @@ use super::egraph_api::{AuSnapshot, ClassOf};
 use super::transport::{Cell, TransportProblem, solve_transport};
 
 /// Exact quality of the terminal generalize action without interning its term.
-/// The MCGS initial rollout ranks actions with it, and the exact solver's
-/// best-first ordering ranks structural actions by the same lazy-completion
-/// estimate.
+/// MCGS initial rollout and contextual Exact's best-first ordering rank actions
+/// with the same lazy-completion estimate. Root Exact uses the achieved term,
+/// not this scalar helper, as each pair's initial value.
 pub(crate) fn static_generalize_quality<
     Cfg: EGraphConfig,
     L: LitVal,

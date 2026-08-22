@@ -5,8 +5,10 @@ an anti-unification result. Generic proof-path export exists today; the
 AU-specific projection certificate and checker described here do not.
 
 Optimality is deliberately separate. A projection certificate proves that the
-reported term generalizes both inputs. The exact solver's optimality boundary is
-documented in [`../design/19-anti-unification.md`](../design/19-anti-unification.md#96-target-optimum-theorem-and-current-proof-boundary).
+reported term generalizes both inputs. It does not turn contextual closure into
+a global proof or verify pair-mode root Exact's pair-relaxation optimum. The
+two optimality scopes and their current theorem boundary are documented in
+[`../design/19-anti-unification.md`](../design/19-anti-unification.md#96-target-optimum-theorem-and-current-proof-boundary).
 
 ## 1. Certificate statement
 
@@ -39,8 +41,8 @@ substitution, congruence, and the declared A/AC/ACI/unit/nilpotent/inverse laws.
 ## 2. Available proof data
 
 With `PROOFS = true`, every merge carries a `Justification`. The proof forest
-can explain equality as a sequence of steps and recursively expand ordinary
-congruence. `EGraph::dump_all_proofs`, exposed by
+can explain equality as a sequence of steps and iteratively expand ordinary
+congruence with an explicit work stack. `EGraph::dump_all_proofs`, exposed by
 `--proofs --dump-proofs FILE`, builds one Euler-tour LCA table and exports paths
 from every node to its representative.
 

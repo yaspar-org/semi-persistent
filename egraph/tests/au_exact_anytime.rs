@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Anytime behavior of the exact solver under `AuConfig::exact_deadline`.
 //!
-//! On a hard instance (the cyclic-class crossover family at cycles=8, whose
-//! exact state space dwarfs any tiny deadline), `Some(tiny)` must return
+//! On a broad cyclic-class crossover instance whose pair graph and action set
+//! exceed a tiny deadline, `Some(tiny)` must return
 //! quickly with `Completion::BudgetExhausted` and a feasible term — both
 //! projections materialize back into the source classes — while `None` (the
 //! default, what the differential gate runs) must certify
@@ -17,6 +17,7 @@ use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{
     AuAlgorithm, AuConfig, AuResult, Completion, anti_unify,
 };
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::au::terms::{TermId, TermOp, TermPool};
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::NiraLitVal;
@@ -28,9 +29,9 @@ type Eg = EGraph31<NiraLitVal, false, false>;
 // Instance: the cyclic-class family of au_scaling_crossover.rs
 // `build_instance` at depth 4, width cycles-1 (the sweep's shape), as
 // mirrored in au_differential.rs `build_crossover`. cycles=8 is past the
-// differential corpus ceiling (cycles<=6): reachable cycle-context pairs
-// grow combinatorially in `cycles`, so a completed exact solve does far
-// more work than a tiny deadline allows.
+// differential corpus ceiling (cycles<=6). Root Exact no longer constructs
+// cycle-context products, but pair discovery and the dense member-pair action
+// sets still do more work than the tiny deadline permits.
 // ---------------------------------------------------------------------------
 
 fn build_crossover(cycles: usize) -> (Eg, ENodeId, ENodeId) {
@@ -183,17 +184,16 @@ fn exact_deadline_returns_anytime_incumbent() {
             right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 exact_deadline: Some(Duration::from_millis(5)),
                 ..Default::default()
             },
         )
         .unwrap();
         let elapsed = started.elapsed();
-        // Overshoot is bounded by one 1024-entry polling window plus the
-        // return path (milliseconds even in debug); the 2 s bound absorbs
-        // CI noise while still cleanly separating "returned on the
-        // deadline" from "ran to completion" (about 10 s debug on this
-        // instance, measured 2026-08-15).
+        // The deadline is polled during graph discovery and each relaxation
+        // pass. The 2 s bound absorbs CI noise while still detecting a lost
+        // poll or an accidental run-to-completion fallback.
         assert!(
             elapsed < Duration::from_secs(2),
             "deadline of 5 ms overshot to {elapsed:?}"
@@ -219,6 +219,7 @@ fn exact_deadline_returns_anytime_incumbent() {
             right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 exact_deadline: None,
                 ..Default::default()
             },

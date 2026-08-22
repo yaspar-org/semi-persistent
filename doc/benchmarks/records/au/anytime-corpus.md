@@ -1,8 +1,17 @@
 # AU anytime and regret corpus
 
-Records what the anti-unification anytime/regret corpus measures, how to
-regenerate it, and what the curves show. Solver behavior is specified by
-`egraph/tests/au_differential.rs` and the rest of the AU suite.
+> **Historical predecessor record.** These campaigns predate
+> `egraph/src/au/exact_fixed.rs`; their root baseline is the contextual Exact
+> implementation and their timing, crossover, and delegation ratios are not
+> current evidence for pair-mode fixed-point Exact. Retain the raw record for
+> reproducibility, but rerun the current Criterion/corpus protocol before
+> citing a solver comparison.
+
+The data and harness state are pinned by source revision
+`37044cba18f6fee072d449abdbf224a308cc7f59`. The commands below reproduce this
+record only from that revision; at current HEAD they start a new campaign and
+must write to a scratch or newly named output. Current solver behavior is
+specified by `egraph/tests/au_differential.rs` and the rest of the AU suite.
 
 The corpus answers how far MCGS is from the optimum as a function of its
 budget, on both budget axes (playouts, and wall clock relative to the exact
@@ -24,7 +33,7 @@ whose ladder is 2^0 to 2^14; table (e) is the deep-ladder run; tables (f),
 only ones whose MCGS runs are not the default configuration. The exact solver runs with `exact_pruning` and
 `context_subsumption` on in all four.
 
-## Regenerating
+## Reproducing the Historical Campaign
 
 ```text
 AU_BENCH_DIR=doc/benchmarks/records/au AU_CORPUS_SECS=5400 \
@@ -484,7 +493,7 @@ At OR-node creation MCGS measures the node with `estimates::reachable_pairs`,
 the size of the class-pair rectangle its subgraph lives in
 (`|{l} ∪ reach(l)| * |{r} ∪ reach(r)|`, two array reads off the snapshot's
 per-SCC reachability popcounts); a node at or below `AuConfig::hybrid_threshold`
-is solved by `exact::run_exact_at` on its own `(l, r, ctxL, ctxR)` under the
+is solved by `exact::run_exact_at` on its own class pair and side contexts under the
 run's cycle mode, and the result is marked exact. A marked node is terminal at
 creation and a terminal node is closed at birth, so with the closed bit on the proof
 propagates upward as a closure. This run repeats the `dec` and `mixed` families

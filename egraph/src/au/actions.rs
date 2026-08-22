@@ -525,7 +525,8 @@ fn generate_seq_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bo
     generate_ordered_actions(snap, eg, op, l_nodes, r_nodes, actions);
 }
 
-/// Commutative binary operators (sorted pairs): two orientations per member pair (§3.4.2).
+/// Commutative binary operators (sorted pairs): up to two distinct orientations
+/// per member pair (§3.4.2), followed by whole-cache deduplication.
 fn generate_spair_actions<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     eg: &EGraph<Cfg, L, T, P>,
@@ -1279,8 +1280,9 @@ mod tests {
 
     /// Complete AC matrix enumeration: plus{a^2, b^2} vs plus{c^2, d^2}
     /// has margins [2,2] and [2,2]. The complete enumerator produces 3 valid
-    /// matrices (k=0,1,2 for the (a,c) cell), including the interior one.
-    /// The Exact solver is complete; it finds the optimum among all of them.
+    /// matrices (k=0,1,2 for the (a,c) cell), including the interior one. This
+    /// fixture establishes that finite enumeration only; solver optimality has
+    /// separate bounded oracles and an open universal proof obligation.
     #[test]
     fn ac_complete_enumeration_includes_all_matrices() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();

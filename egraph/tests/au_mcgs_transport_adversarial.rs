@@ -1,10 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Desired-contract regressions for confirmed MCGS transport-node defects.
-//!
-//! These tests are ignored while the defects remain. Run one directly with:
+//! Contract regressions for MCGS transport nodes. Run one directly with:
 //! `cargo test -p semi-persistent-egraph --test au_mcgs_transport_adversarial \
-//! <test-name> -- --ignored --exact --nocapture`.
+//! <test-name> -- --exact --nocapture`.
 
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
@@ -74,9 +72,9 @@ fn mcgs_transport_improvement_preserves_ordered_parent_positions() {
 }
 
 /// CurrentInclusive blocks every transport cell whose left child is the current
-/// left root. Exact therefore has no feasible structural transport and returns
-/// the terminal generalize action. MCGS must obey that same blocked-cell mask so
-/// both algorithms search the same action space under the same CycleMode.
+/// left root. Exact and UCT therefore have no feasible structural transport and
+/// return the terminal generalize action. Both must obey the same blocked-cell
+/// mask under the same requested policy.
 #[test]
 fn mcgs_transport_respects_current_inclusive_blocked_cells() {
     let mut eg = Eg::new();
@@ -123,12 +121,13 @@ fn mcgs_transport_respects_current_inclusive_blocked_cells() {
     assert_eq!(
         exact_quality,
         (8, 8),
-        "fixture must exercise the generalize action"
+        "CurrentInclusive Exact must reject every blocked transport cell"
     );
     assert_eq!(
         mcgs_quality, exact_quality,
-        "MCGS must obey the same cycle-filtered transport space as Exact"
+        "Exact and UCT must search the same CurrentInclusive transport domain"
     );
+    assert_eq!(mcgs.completion, Completion::Exact);
 }
 
 /// MCGS performs one mandatory action-aware initialization rollout even with a

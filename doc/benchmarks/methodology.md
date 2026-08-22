@@ -480,10 +480,13 @@ rules encoding, whose movement and cause are the widened entry in section 4.
 That exception is why this campaign exists, so it is a confirmation of the
 rule rather than a defect.
 
-**AU corpus, partially re-confirmed.** The committed curve tables regenerate
-exactly from the committed `au/corpus.csv` through `au/analyze.py`, so the doc
-is consistent with its data. Re-measuring the engine at the pin under a
-reduced wall budget (`AU_CORPUS_SECS=360`, writing to a scratch directory)
+**Historical AU corpus, partially re-confirmed on its predecessor
+implementation.** These observations predate pair-mode fixed-point Exact and are
+retained only to explain the committed data; they are not current solver
+comparisons. The committed curve tables regenerate exactly from the committed
+`au/corpus.csv` through `au/analyze.py`, so the historical record is consistent
+with its data. Re-measuring that engine pin under a reduced wall budget
+(`AU_CORPUS_SECS=360`, writing to a scratch directory)
 covered 152 of the 673 instances and 2 280 of the 10 095 rows, with no exact
 timeout, no MCGS timeout and no ladder cut, matching the committed run's
 conditions. Every quality field agrees with the committed corpus on all 2 280

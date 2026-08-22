@@ -44,6 +44,7 @@ use std::time::{Duration, Instant};
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::id::ENodeId;
 use semi_persistent_egraph::literal::NiraLitVal;
 
@@ -198,8 +199,8 @@ fn the_gadget_is_misranked_and_shallow() {
         inst.right,
         &AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             exact_deadline: Some(GUARD),
             ..Default::default()
         },

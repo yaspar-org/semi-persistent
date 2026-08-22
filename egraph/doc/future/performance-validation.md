@@ -153,53 +153,64 @@ arguments are current roots; the public total API remains unchanged.
 
 ### Current state
 
-The anti-unification solvers retain several allocation and recomputation paths
-whose cost is visible in the implementation but not isolated by a maintained
-Criterion benchmark:
+Pair-mode root Exact and the side- or pair-context MCGS/delegation paths retain
+several allocation and recomputation costs that are visible in code but not
+isolated by a maintained Criterion benchmark:
 
-- exact search clones and sorts the complete cached action slice for each new
-  frame;
-- transport-value recomputation clones row, column, and cell-map vectors,
-  rebuilds a cost matrix, and runs a fresh quantized transport solve;
-- transport result composition builds a second matrix and runs a separate
-  lexicographic transport solve;
+- pair-mode root Exact materializes the complete reachable pair graph and clones each
+  generated structural action into that graph;
+- every relaxation round clones the full quality and witness vectors;
+- AC/ACI root actions rebuild lower-bound and achieved-cost matrices and may
+  run two transport solves per action per round when pruning is enabled;
+- contextual MCGS transport recomputation rebuilds matrices for value and term
+  composition;
 - `TermPool::intern` and `ContextStore::intern` allocate owned vector keys
   before determining whether the key is already interned;
-- child-context derivation allocates and sorts temporary vectors; and
+- contextual child derivation allocates and sorts temporary vectors; and
 - snapshot best-term discovery scans every e-node until a full pass makes no
   change.
 
 The ignored AU timing harnesses and retained corpus records measure solver
-outcomes at selected inputs. They do not provide Criterion confidence intervals
-or attribute time and allocation to these mechanisms.
+outcomes at selected inputs. Records captured before `exact_fixed.rs` are
+historical evidence for the predecessor contextual root solver and cannot be
+used as current pair-mode root-Exact comparisons. None provide Criterion confidence
+intervals or attribute time and allocation to these mechanisms.
 
 ### Gap
 
-There is no stable evidence showing which path dominates exact, MCGS,
-context-heavy, or large-snapshot workloads. Consequently, caching, dirty-bit,
-scratch-buffer, interner, or worklist changes cannot be accepted on mechanism
-alone, and one optimization may merely move cost between the value and
-composition transport solves.
+There is no stable evidence showing which path dominates pair-graph discovery,
+relaxation, AC transport, MCGS, context-heavy delegation, or large-snapshot
+workloads. The AU quality-at-time and delegation numbers also have not been
+refreshed across one common implementation with cycle policy recorded.
+Consequently, caching,
+dirty-bit, scratch-buffer, interner, or worklist changes cannot be accepted on
+mechanism alone, and one optimization may merely move cost between phases.
 
 ### Task
 
-Add an AU Criterion suite with at least four fixture families:
+Add an AU Criterion suite with at least five fixture families:
 
-- a non-AC pair with many structural actions for exact action ordering;
-- an AC/ACI pair with repeated MCGS transport updates;
-- a cyclic, context-heavy pair with high context-interner reuse; and
+- a non-AC root pair with many reachable pairs and structural actions;
+- a long cyclic chain that requires many root-Exact relaxation rounds;
+- an AC/ACI root pair with large transport matrices;
+- a cyclic, context-heavy UCT/delegation pair with high context-interner reuse;
+  and
 - a large e-graph whose best-term fixpoint needs multiple passes.
 
-Record counters for action-list clones, elements sorted, context and term
-interner hits/misses and key bytes, child-context temporary bytes, transport
-solve calls and matrix cells, composition offers, best-term passes, and e-node
-visits. Keep snapshot construction and fixture generation outside a solver-only
-timed row, and also retain an end-to-end row that includes snapshot cost.
+Record counters for pair states/actions discovered, relaxation rounds, quality
+and witness-vector bytes copied, context and term interner hits/misses and key
+bytes, child-context temporary bytes, transport solve calls and matrix cells,
+composition offers, best-term passes, and e-node visits. Keep snapshot and
+fixture construction outside a solver-only timed row, and retain an end-to-end
+row that includes snapshot cost.
 
 Use the attribution before selecting an implementation:
 
-- cache an immutable deterministic action order or sort reusable indices if
-  action cloning and sorting dominate;
+- compact or lazily discover pair actions only if graph materialization
+  dominates and the change preserves complete deterministic enumeration;
+- use in-place double buffers or dirty worklists only if full-round copying or
+  unchanged-state scans dominate, preserving synchronous-round semantics or
+  proving an equivalent schedule;
 - use borrowed-key lookup or reusable owned scratch only if interner key
   allocation is material;
 - version transport children, skip unchanged value/composition solves, and
@@ -212,6 +223,10 @@ Use the attribution before selecting an implementation:
 
 - Criterion reports estimates and confidence intervals for solver-only and
   end-to-end rows, with allocation counters reported alongside time.
+- One campaign reruns root Exact, UCT, and delegation from the same source and
+  binaries, recording `CycleMode` for every row and comparing like policies,
+  before any AU timing or crossover number is promoted to
+  `doc/claims.md` or the future paper.
 - Every retained optimization moves its mechanism-specific counter and the
   corresponding workload estimate.
 - Exact result quality, projection validity, deterministic tie behavior,

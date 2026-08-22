@@ -881,6 +881,8 @@ command     = '(' , 'sort' , ident , ')'
             | '(' , 'extract' , term , ')'
             | '(' , 'print-size' , op? , ')'
             | '(' , 'print-stats' , ( ':file' , string_lit )? , ')'
+            | '(' , 'antiunify' , term , term , au_option* , ')'
+            | '(' , 'checkau' , term , term , checkau_option* , ')'
             | '(' , 'push' , ':shrink'? , ')'
             | '(' , 'pop' , ')'
             | '(' , op , term* , ')' ;                    (* sugar: ground term insertion *)
@@ -902,6 +904,12 @@ subsume     = ':subsume' ;                                (* not on birewrite *)
 ruleset_tag = ':ruleset' , ident ;
 
 until       = ':until' , '(' , ( '=' | '!=' ) , term , term , ')' ;
+
+au_option   = ':playouts' , int_lit
+            | ':algorithm' , ( 'exact' | 'uct' )
+            | ':cycles' , ( 'sides' | 'sides-current' | 'pair' ) ;
+
+checkau_option = au_option | ':max_size' , int_lit ;
 
 check_body  = '(' , '='  , term , term , ')'
             | '(' , '!=' , term , term , ')'

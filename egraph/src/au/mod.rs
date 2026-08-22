@@ -2,23 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Anti-unification over the frozen e-graph.
 //!
-//! Implements `doc/design/19-anti-unification.md`: an exact memoized
-//! solver and a Monte-Carlo graph search over the AND/OR graph of class-pair
-//! subproblems, sharing one search-space layer, term pool, and best-result table.
+//! Implements `doc/design/19-anti-unification.md`: cycle-policy-parameterized
+//! Exact and Monte-Carlo graph search, plus contextual Exact delegation.
+//! Pair-mode root Exact uses bounded relaxation over the finite ordered-pair
+//! graph; side-mode Exact and every MCGS mode use contextual graphs. A
+//! `SearchSession` shares terms and scoped result certificates between them.
 //!
 //! Both algorithms handle AC/ACI operators through min-cost transportation
-//! (`transport.rs`, `ac_repr.rs`): the exact solver solves each cell subproblem
-//! once and finds the optimal matching by flow; MCGS uses one transport-AND-node
-//! per feasible representation pair, with all legal cells as bandit arms and the
-//! flow recomputed from cell Q estimates on every backpropagation. Neither path
-//! enumerates matching matrices.
+//! (`transport.rs`, `ac_repr.rs`): pair-mode root Exact relaxes cell-pair
+//! values, contextual Exact solves cell states recursively, and both find each
+//! representation's optimal matching by flow; MCGS uses one
+//! transport-AND-node per feasible representation pair, with all legal cells as
+//! bandit arms and the flow recomputed from cell Q estimates on every
+//! backpropagation. Neither path enumerates matching permutations.
 //!
 //! Search state is semi-persistent (`SearchSession`/`SearchToken` in
 //! `session.rs`): the space, term pool, best-result table, action cache, and
-//! MCGS statistics all mark/restore together through bundled underlying container
-//! tokens. MCGS reports a structural completion certificate (`Completion::Exact` after a children-first closure
-//! pass, or `BudgetExhausted`). Interpreter commands `(antiunify)` and
-//! `(checkau)` expose the system from .egg programs.
+//! MCGS statistics all mark/restore together through bundled underlying
+//! container tokens. `Completion::Exact` is cycle-global for pair-mode root
+//! Exact over its supported action domain and policy-relative for contextual
+//! searches; otherwise a run reports `BudgetExhausted`.
+//! Interpreter commands `(antiunify)` and `(checkau)` expose the system from
+//! .egg programs.
 //!
 //! The implemented policies are UCT OR-selection and three AND-node effort
 //! selectors — `lct_and` (default), `uct_and`, and `round_robin` (§3.3.5)
@@ -40,6 +45,7 @@ mod dump;
 pub mod egraph_api;
 pub mod estimates;
 pub mod exact;
+mod exact_fixed;
 pub mod exact_memo;
 pub mod mcgs;
 pub mod pretty;
