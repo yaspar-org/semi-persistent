@@ -548,16 +548,18 @@ visited and rewrites to `Mul(5, 5)`. The final tree is
 rewrite would miss the inner rewrites, because the outer `Neg` would
 already have been consumed before its children were visited.
 
-## 7. `fold_short`: early exit
+## 7. `fold_short`: postorder early exit
 
 A fold normally visits every reachable node. Sometimes you want to
-stop as soon as a condition is met. `fold_short` gives each algebra
+stop once an algebra reports a result. `fold_short` gives each algebra
 an early-exit hatch: the return type is `Result<A, A>`, where `Ok(v)`
-continues the fold with result `v` and `Err(v)` ends it immediately
-and returns `v`.
+continues the fold with result `v` and `Err(v)` ends it immediately.
+Evaluation is postorder, so all children of a node are evaluated before
+that node's algebra runs. A parent-level `Err` can stop later work, but
+cannot prune that parent's already visited children.
 
-Here is a dead-code detector that exits as soon as it finds an
-`If(false, _, _)`:
+Here is a dead-code detector that exits when postorder evaluation
+reaches an `If(false, _, _)`:
 
 ```rust
 let found = s.fold_short(
@@ -579,15 +581,17 @@ literal false". The statement algebra sees that tag arrive as the
 first child of an `If`, and if so returns `Err(true)` to abort the
 traversal.
 
-## 8. `fold_with_history`: peek at grandchildren
+## 8. `fold_with_history`: inspect one generation of shape
 
 A plain fold gives each algebra only the direct children's results. If
 the decision at a node depends on what the grandchildren look like,
 you need a scheme that carries more context through the recursion.
-`fold_with_history` does exactly that: each algebra receives `Ann<A>`
-instead of `A`, where `Ann` bundles a child's result with that child's
-own children's raw IDs. You can look one level deeper without running
-a second traversal.
+`fold_with_history` provides limited shape metadata: each algebra
+receives `Ann<A>` instead of `A`, where `Ann` bundles a child's result
+with that child's own children's raw arena indices. This exposes one
+generation of grandchild arity without a second traversal. The indices
+are untyped across sorts and do not expose recursive annotations or
+the fold's memo tables; this operation is not a full histomorphism.
 
 A complexity score that penalizes deep nesting uses this:
 
@@ -612,8 +616,8 @@ let complexity = s.fold_with_history(
 
 Inside `Add(l, r)`, both `l` and `r` are `Ann<usize>` values. Reading
 `l.value` gives the child's fold result; reading `l.children` reveals
-the raw IDs of the grandchildren, which lets the algebra detect "this
-child is itself an operation, not a leaf".
+the untyped arena indices of the grandchildren, which lets the algebra
+detect "this child is itself an operation, not a leaf".
 
 ## 9. `fold_with_aux`: two folds in one pass
 
@@ -1000,10 +1004,15 @@ z.set_focus_expr(ExprNode::Lit(42));
 ```
 
 `LangStoreZipperCow` produces a new store containing the updated
-version of the tree, leaving the original untouched. Internally it
-rebuilds the spine from the focus up to the root and reuses everything
-else, so the cost is proportional to the tree size rather than the
-full store.
+version of the root-reachable DAG, leaving the original untouched. It
+copies each reachable node once into a fresh store and omits
+unreachable source nodes, so the cost is `O(V + E)` over that reachable
+DAG rather than over the full store. Stores do not share backing
+storage.
+
+The focus identifies a node ID, not one path occurrence. If that ID is
+shared, replacement affects every reachable reference to it in the new
+store.
 
 ```rust
 let z = LangStoreZipperCow::new(&s, root);
@@ -1012,7 +1021,7 @@ let (new_store, new_root) = z.set_focus_expr(ExprNode::Lit(3));
 
 The new store inherits the dedup mode of the source: calling
 `set_focus_*` on a `ZipperCow` wrapping a `LangStore<true>` produces a
-`LangStore<true>` with the rebuilt spine re-interned.
+`LangStore<true>` with the reachable graph re-interned.
 
 ## 18. The full chapter list
 

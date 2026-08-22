@@ -246,18 +246,18 @@ fn dedup_rewrite_down_preserves_dedup() {
 }
 
 // ---------------------------------------------------------------------------
-// 9. ZipperCow on dedup: edit a leaf in a DAG. Because the source is a DAG
-//    (shared nodes), the COW rebuilds the reachable tree. The focused node's
-//    id is shared, so the replacement propagates to all references.
+// 9. ZipperCow on dedup: copy only the reachable DAG and replace every
+//    occurrence of a shared focused ID.
 // ---------------------------------------------------------------------------
 #[test]
-fn dedup_zipper_cow_spine_rebuild() {
+fn dedup_zipper_cow_rebuilds_the_reachable_dag() {
     let mut s = LangStore::new_dedup();
+    let _unreachable = s.push_expr(ExprNode::Lit(-1));
     let shared = s.push_expr(ExprNode::Lit(99));
     let inner = s.push_expr(ExprNode::Add(shared, shared));
     // top = Add(inner, inner), but inner is shared (dedup).
     let top = s.push_expr(ExprNode::Add(inner, inner));
-    assert_eq!(s.len_expr(), 3);
+    assert_eq!(s.len_expr(), 4);
 
     let mut z = LangStoreZipperCow::new(&s, LangStoreRoot::Expr(top));
     z.down(0); // focus on inner Add
@@ -277,6 +277,12 @@ fn dedup_zipper_cow_spine_rebuild() {
     // source is a DAG, every reference to that id sees the replacement.
     // Result: Add(Add(0,0), Add(0,0)) = 0.
     assert_eq!(result.unwrap_expr(), 0);
+    assert_eq!(
+        s2.len_expr(),
+        3,
+        "the unreachable source node is not copied"
+    );
+    assert_eq!(s.len_expr(), 4, "the source store is unchanged");
 }
 
 // ---------------------------------------------------------------------------

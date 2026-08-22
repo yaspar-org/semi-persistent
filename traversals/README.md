@@ -56,12 +56,12 @@ let bind = s.push_stmt(StmtNode::Let("x".into(), sum));
 
 let result = s.fold(
     LangStoreRoot::Stmt(bind),
-    |stmt: StmtNodeMapped<String, i64>| match stmt {
+    |stmt: StmtNodeMapped<i64>| match stmt {
         StmtNodeMapped::Let(n, v) => format!("{n} = {v}"),
         StmtNodeMapped::Print(v)  => format!("print({v})"),
         StmtNodeMapped::Noop      => "noop".into(),
     },
-    |expr: ExprNodeMapped<String, i64>| match expr {
+    |expr: ExprNodeMapped<i64>| match expr {
         ExprNodeMapped::Lit(n)    => n,
         ExprNodeMapped::Var(_)    => 0,
         ExprNodeMapped::Add(l, r) => l + r,

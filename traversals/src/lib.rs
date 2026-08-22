@@ -466,8 +466,12 @@ impl<R: std::hash::Hash> std::hash::Hash for Variadic<R> {
 /// Annotated result for `fold_with_history`.
 ///
 /// - `value`: the folded result for this node
-/// - `children`: store indices of this node's direct children, enabling
-///   lookback into grandchildren via the memo tables at those indices.
+/// - `children`: untyped arena indices of this node's direct children
+///
+/// A parent receives this metadata for each direct child, so it can observe
+/// one generation of grandchild shape, such as arity or leaf/non-leaf status.
+/// The indices do not identify their sort and do not provide access to
+/// recursive annotations or the fold's private memo tables.
 pub struct Ann<A> {
     pub value: A,
     pub children: smallvec::SmallVec<[usize; 8]>,
