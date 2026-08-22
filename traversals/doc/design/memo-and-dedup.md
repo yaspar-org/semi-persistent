@@ -9,9 +9,14 @@ intermediate results during a single traversal; dedup controls whether
 the store deduplicates nodes as you push them. You can combine any memo
 strategy with either dedup mode.
 
-All numbers in this document come from `traversals/benches/fold_bench.rs`,
-which folds balanced binary `Add(Lit)` trees at depths 10, 14, and 18
-(containing 2,047 / 32,767 / 524,287 nodes).
+All numbers in this document come from Criterion benchmarks in
+`traversals/benches/fold_bench.rs`. The full-fold and construction groups
+use balanced binary `Add(Lit)` trees at depths 10, 14, and 18
+(containing 2,047 / 32,767 / 524,287 nodes). The focused-fold group
+visits a 2,047-node subtree in a store containing 1,000,000 nodes.
+Results below were collected on 2026-08-22 on an Apple M4 Pro with
+Rust 1.97.1. Each bracketed range is Criterion's 95% bootstrap
+confidence interval.
 
 ## Memo strategies
 
@@ -39,20 +44,28 @@ trees, not DAGs: a node reached through two parents will be folded
 twice, and any side-effecting algebra will fire twice. On trees the
 saved branch gives a small but consistent speedup.
 
-### Fold throughput
+### Full-fold time
 
 | Depth | dense | sparse | none |
 |-------|------:|-------:|-----:|
-| 10 | 189 M/s | 60 M/s | close to dense |
-| 14 | 188 M/s | 64 M/s | close to dense |
-| 18 | 186 M/s | 61 M/s | close to dense |
+| 10 | 12.76 us [12.68, 12.85] | 35.29 us [35.10, 35.50] | 11.40 us [11.26, 11.53] |
+| 14 | 213.95 us [212.67, 215.28] | 530.20 us [528.27, 532.66] | 186.60 us [183.60, 189.41] |
+| 18 | 3.455 ms [3.425, 3.486] | 9.383 ms [9.316, 9.455] | 3.031 ms [2.994, 3.067] |
 
-Sparse runs about 3× slower than dense on the benchmark. The benchmark
-folds the whole tree on each iteration, so sparse pays its hash cost on
-every node and gets no compensating memory win. In the opposite regime,
-a 1K-node subtree inside a 1M-node store, sparse allocates a hashmap of
-around 1K entries while dense still allocates 1M vector slots, and
-sparse wins on both time and space.
+Sparse is 2.5-2.8× slower than dense here. The benchmark folds the whole
+tree on each iteration, so sparse pays its hash cost on every node and
+gets no compensating memory win.
+
+The opposite regime reverses the result:
+
+| Focused fold | Time |
+|--------------|-----:|
+| dense | 221.51 us [220.13, 223.12] |
+| sparse | 34.50 us [34.42, 34.63] |
+
+For a 2,047-node subtree inside a 1,000,000-node store, sparse is 6.4×
+faster and allocates around 2,047 hashmap entries, while dense
+initializes 1,000,000 memo slots.
 
 The rule of thumb is simple. If the fold visits most of the store, use
 `Dense`. If it visits a small focused region of a large store, use
@@ -80,24 +93,26 @@ affect node identity.
 
 The two constructors return different types. `new()` gives back a
 `LangStore<false>` and `new_dedup()` gives back a `LangStore<true>`,
-where the boolean is a `const DEDUP: bool` parameter on the store. The
-generic impls fold `if DEDUP` branches into monomorphized code, so a
-`<false>` store has the same runtime shape as before the refactor and a
-`<true>` store pays the hashmap lookups unconditionally. The type
-distinction also gates in-place mutation: `set_*` methods and
+where the boolean is a `const DEDUP: bool` parameter on the store. Both
+instantiations have the same inline layout: there is one
+`Option<HashMap<...>>` field per sort, initialized to `None` in a plain
+store and `Some(empty_map)` in a deduplicating store. Thus disabling
+dedup retains the fixed-size empty option fields. Monomorphization does
+remove the `if DEDUP` lookup and maintenance branches, so those maps do
+not allocate or grow and plain pushes pay no dedup execution cost. The
+type distinction also gates in-place mutation: `set_*` methods and
 `ZipperMut::new` only exist on `LangStore<false>`, making mutation on a
 deduplicating store a compile error rather than a silent dedup-map
 corruption.
 
-Dedup costs roughly 2 to 3× more per push than plain construction,
-because each push now computes a hash and probes the hashmap. The cost
-is consistent across sizes:
+Dedup makes each push compute a hash and probe the hashmap. The cost is
+workload- and size-dependent:
 
-| Depth | Nodes   | plain    | dedup              |
-|-------|--------:|---------:|-------------------:|
-| 10    |   2,047 | 370 M/s  | 140 M/s (2.6× slower) |
-| 14    |  32,767 | 424 M/s  | 146 M/s (2.9× slower) |
-| 18    | 524,287 | 270 M/s  | 144 M/s (1.9× slower) |
+| Depth | Nodes | plain | dedup | slowdown |
+|-------|------:|------:|------:|---------:|
+| 10 | 2,047 | 3.497 us [3.482, 3.515] | 13.87 us [13.77, 13.98] | 4.0× |
+| 14 | 32,767 | 45.70 us [45.54, 45.91] | 215.00 us [212.96, 217.19] | 4.7× |
+| 18 | 524,287 | 1.435 ms [1.430, 1.441] | 3.382 ms [3.374, 3.391] | 2.4× |
 
 The reason to pay that cost is memory, not time. Consider the benchmark
 input: a balanced binary tree where every leaf is `Lit(1)` and every
@@ -132,7 +147,7 @@ When to turn dedup on:
 When to leave it off:
 
 - One-shot pipelines where the store is built, folded once, and
-  discarded. The 2-3× construction penalty dominates.
+  discarded. The extra hashing cost can dominate.
 - Inputs with no redundancy, such as a freshly parsed surface syntax
   tree before any canonicalization.
 
@@ -162,9 +177,10 @@ cargo bench -p semi-persistent-traversals --bench fold_bench
 
 Benchmark source lives in
 [`traversals/benches/fold_bench.rs`](../../benches/fold_bench.rs).
-Absolute throughput varies with hardware; the ratios (3× sparse
-overhead on full folds, 2.5× dedup construction cost) have been stable
-across runs.
+Criterion performs warmup, repeated sampling, outlier analysis, and
+bootstrap confidence estimation. Absolute timings and ratios still vary
+with hardware and workload; rerun the benchmark for deployment-specific
+decisions.
 
 ## Appendix: scheme signatures
 

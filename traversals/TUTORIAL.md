@@ -170,16 +170,14 @@ resolves it to `ExprId`, so `StmtNode::Let` holds a `String` and an
 `ExprId`. Passing a `StmtId` where an `ExprId` is expected is a compile
 error, which is what "typed IDs" really buys you.
 
-Both mapped enums take the same pair of generic parameters
-`<A_stmt, A_expr>`, in the order the sorts were declared. This is
-necessary because any sort can contain children of any other sort.
-`ExprNode::Block(Stmt, Expr)` has both a `Stmt` child and an `Expr`
-child, so `ExprNodeMapped` needs to know the result type for each. The
-parameter order is family-wide rather than per-sort so that a single
-pair of algebras can carry the same pair of result types through both
-enums consistently. The macro does prune a sort parameter when a sort
-is referenced nowhere in any variant, but that rarely matters for
-genuinely mutually recursive families.
+Both mapped enums in this example take the same pair of generic
+parameters `<A_stmt, A_expr>` because both sorts reference both child
+sorts. The parameter set is computed per mapped enum, then ordered by
+the family's sort declaration order. For example,
+`ExprNode::Block(Stmt, Expr)` makes `ExprNodeMapped` generic over both
+results. If `Expr` referenced only `Expr` children, its mapped enum
+would be `ExprNodeMapped<A_expr>` even if another sort referenced
+`Stmt`.
 
 The mapped enum mirrors the node enum variant by variant, replacing
 each child ID with the corresponding sort parameter. Compare
@@ -196,15 +194,14 @@ family Lang => LangStore;
 ```
 
 `family` is a keyword that opens the declaration. `Lang` is the family
-name; it shows up as a prefix on a small number of generated companion
-types used by the unfold schemes (`LangSeed`, `LangLayer`,
-`LangApoSeed`, `LangApoLayer`). You rarely write `Lang` directly. The
-`=>` separator is followed by `LangStore`, the store type you
+label; it names the declaration but does not prefix generated Rust
+types. The `=>` separator is followed by `LangStore`, the store type you
 instantiate with `LangStore::new()` or `LangStore::new_dedup()`.
-`LangStore` is also the prefix for `LangStoreRoot`,
-`LangStoreFoldResult`, `LangStoreMark`, `LangStoreZipper`,
-`LangStoreZipperMut`, and `LangStoreZipperCow`. Both names are
-arbitrary; pick something descriptive for your domain.
+`LangStore` prefixes the generated companion types, including
+`LangStoreSeed`, `LangStoreLayer`, `LangStoreApoSeed`,
+`LangStoreApoLayer`, `LangStoreRoot`, `LangStoreFoldResult`,
+`LangStoreMark`, and the zipper types. Both names are arbitrary; pick
+something descriptive for your domain.
 
 ### Declaring sorts and their variants
 
@@ -214,8 +211,8 @@ them:
 1. The declaration order of sorts is the argument order of every
    multi-algebra scheme. Because `enum Stmt` appears before `enum Expr`,
    the `Stmt` algebra comes first in `fold(..., alg_stmt, alg_expr)`.
-   That order also fixes the order of generic parameters on every
-   mapped enum (`<A_stmt, A_expr>`) and the variant order of
+   That order also fixes the relative order of the child-sort parameters
+   present on each mapped enum and the variant order of
    `LangStoreFoldResult`. Set it once and it cascades everywhere.
 
 2. A variant's fields are classified by matching their types against
@@ -410,10 +407,10 @@ determined by the variant declaration:
   parameter (the field was `Stmt`) and `e: String` to the second (the
   field was `Expr`).
 
-The parameter order is family-wide, not per-sort. The `Expr` algebra
-still sees `<A_stmt, A_expr>` as its mapped-enum parameters, in that
-order, because `Block` contains a `Stmt` child whose result type the
-algebra must know.
+The parameter set is per sort, while the order is family-wide. The
+`Expr` algebra sees `<A_stmt, A_expr>` in that order because `Block`
+contains both child sorts. A mapped enum that references only `Expr`
+would take only `<A_expr>`.
 
 If statements rendered as `Vec<u8>` bytecode and expressions rendered
 as `i64` values, the call would look like
@@ -945,7 +942,9 @@ calling them on a deduplicating store is a compile error rather than a
 silent corruption of the dedup map. The `const DEDUP: bool` parameter is
 elided by monomorphization: at runtime the `if DEDUP` branches in
 `push_*` and `restore` become unconditional code or dead code depending
-on which store you built.
+on which store you built. Both modes retain the same fixed-size
+`Option<HashMap<...>>` fields; a plain store keeps them at `None`, so
+they do not allocate or grow.
 
 Dedup operates per sort: pushing an `Expr` does not consult the `Stmt`
 table. A mark is a store-bound append checkpoint, not a copy of the

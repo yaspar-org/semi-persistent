@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Benchmarks across memo strategies and dedup modes.
 //!
-//! Two groups, both on a balanced Add(Lit) tree of varying depth:
+//! Four groups:
 //!
 //! - `fold`: cost to fold an already-built store.
 //!   • dense   — default memo strategy
@@ -12,8 +12,15 @@
 //! - `build`: cost to construct a tree with lots of structural redundancy,
 //!   comparing plain push vs hash-consed push (`new_dedup`). All leaves are
 //!   `Lit(1)`; with dedup the whole tree collapses to d+1 unique nodes.
+//!
+//! - `focused_fold`: cost to fold a 2,047-node subtree in a store with
+//!   1,000,000 nodes, comparing dense and sparse memo allocation.
+//!
+//! - `variadic_build`: cost of 256 pool-backed smart-constructor calls
+//!   for short inline-sized and wider child slices, split into plain
+//!   insertion, dedup hits, and dedup misses.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use semi_persistent_traversals::{Dense, Sparse, memo};
 use semi_persistent_traversals_derive::rec_family;
 use std::hint::black_box;
@@ -22,6 +29,13 @@ rec_family! {
     family Lang => LangStore;
     enum Stmt { Noop, Print(Expr) }
     enum Expr { Lit(i64), Add(Expr, Expr) }
+}
+
+rec_family! {
+    #[smart_constructors]
+    family VariadicLang => VariadicLangStore;
+    enum BenchRoot { Program(Variadic<BenchExpr>) }
+    enum BenchExpr { Lit(u64), Sum(Variadic<BenchExpr>) }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,5 +133,119 @@ fn bench_build(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_fold, bench_build);
+// ---------------------------------------------------------------------------
+// Variadic smart-constructor benchmarks
+// ---------------------------------------------------------------------------
+
+const VARIADIC_PUSHES: usize = 256;
+
+fn setup_variadic_plain(arity: usize) -> (VariadicLangStore, Vec<BenchExprId>) {
+    let mut store = VariadicLangStore::new();
+    let children = (0..arity).map(|value| store.lit(value as u64)).collect();
+    (store, children)
+}
+
+fn setup_variadic_dedup(arity: usize) -> (VariadicLangStore<true>, Vec<BenchExprId>) {
+    let mut store = VariadicLangStore::new_dedup();
+    let children: Vec<_> = (0..arity).map(|value| store.lit(value as u64)).collect();
+    store.sum(&children);
+    (store, children)
+}
+
+fn setup_variadic_dedup_misses(arity: usize) -> (VariadicLangStore<true>, Vec<Vec<BenchExprId>>) {
+    let mut store = VariadicLangStore::new_dedup();
+    let leaves: Vec<_> = (0..(VARIADIC_PUSHES + arity))
+        .map(|value| store.lit(value as u64))
+        .collect();
+    let candidates = (0..VARIADIC_PUSHES)
+        .map(|offset| leaves[offset..offset + arity].to_vec())
+        .collect();
+    (store, candidates)
+}
+
+fn bench_variadic_build(c: &mut Criterion) {
+    let mut group = c.benchmark_group("variadic_build");
+    group.throughput(Throughput::Elements(VARIADIC_PUSHES as u64));
+
+    for arity in [4usize, 16] {
+        group.bench_with_input(BenchmarkId::new("plain", arity), &arity, |b, &arity| {
+            b.iter_batched(
+                || setup_variadic_plain(arity),
+                |(mut store, children)| {
+                    for _ in 0..VARIADIC_PUSHES {
+                        black_box(store.sum(black_box(&children)));
+                    }
+                    black_box(store);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_with_input(BenchmarkId::new("dedup_hit", arity), &arity, |b, &arity| {
+            b.iter_batched(
+                || setup_variadic_dedup(arity),
+                |(mut store, children)| {
+                    for _ in 0..VARIADIC_PUSHES {
+                        black_box(store.sum(black_box(&children)));
+                    }
+                    black_box(store);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_with_input(
+            BenchmarkId::new("dedup_miss", arity),
+            &arity,
+            |b, &arity| {
+                b.iter_batched(
+                    || setup_variadic_dedup_misses(arity),
+                    |(mut store, candidates)| {
+                        for children in candidates {
+                            black_box(store.sum(black_box(&children)));
+                        }
+                        black_box(store);
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Focused fold: small reachable subtree in a much larger store
+// ---------------------------------------------------------------------------
+
+fn bench_focused_fold(c: &mut Criterion) {
+    const STORE_NODES: usize = 1_000_000;
+    const SUBTREE_DEPTH: u32 = 10;
+    const SUBTREE_NODES: usize = (1usize << (SUBTREE_DEPTH + 1)) - 1;
+
+    let mut store = LangStore::new();
+    for value in 0..(STORE_NODES - SUBTREE_NODES) {
+        store.push_expr(ExprNode::Lit(value as i64));
+    }
+    let root = LangStoreRoot::Expr(build(&mut store, SUBTREE_DEPTH));
+    assert_eq!(store.len_expr(), STORE_NODES);
+
+    let mut group = c.benchmark_group("focused_fold");
+    group.throughput(Throughput::Elements(SUBTREE_NODES as u64));
+    group.bench_function("dense", |b| {
+        b.iter(|| black_box(fold_with::<Dense>(black_box(&store), black_box(root))))
+    });
+    group.bench_function("sparse", |b| {
+        b.iter(|| black_box(fold_with::<Sparse>(black_box(&store), black_box(root))))
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_fold,
+    bench_build,
+    bench_variadic_build,
+    bench_focused_fold
+);
 criterion_main!(benches);
