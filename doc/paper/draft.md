@@ -21,20 +21,21 @@ at that position.
 
 We anti-unify over an e-graph after equality saturation, so the search ranges
 over everything the rewrite rules have proved equal rather than over the two
-terms as written. We give an exact branch-and-bound with admissible bounds and a
-Monte-Carlo graph search over the same space, with sound delegation between
-them. The exact solver agrees with exhaustive `OPT` enumeration on the finite
-fixtures. Verus checks objective-order, representation, and positional
-lower-bound lemmas; a theorem that the recurrence computes `OPT` remains open.
+terms as written. Every solver receives the same explicit cycle policy.
+Pair-mode root Exact performs bounded relaxation over the finite graph of
+ordered class pairs; side-mode Exact and Monte-Carlo graph search use
+cycle-filtered contextual graphs, and graph search can delegate subproblems
+without changing policy. Pair-mode Exact agrees with exhaustive `OPT`
+enumeration on the finite fixtures. Verus checks objective-order,
+representation, and positional lower-bound lemmas; a theorem that the bounded
+recurrence computes `OPT` remains open.
 
 On a synthetic policy corpus, saturating propositional laws reduces apparent
 disagreement between two renderings from 21 units to 8, and the 8 that remain are
-exactly the statement whose renderings say different things. On a family where
-the exact solver does not scale, the search returns the optimum in 109 ms where
-exact spends 61.9 s and finishes 33% above it. Delegating subproblems to the exact solver pays exactly when the rollout's error
-is locally correctable: on a family built to that condition it returns the
-best-known value 17x sooner in wall clock, and on families where the error is at
-the root it costs 3x to 8x for the same answer.
+exactly the statement whose renderings say different things. Solver timing and
+delegation ratios from the predecessor contextual-Exact implementation must be
+rerun across the current cycle-policy configurations before they return to the
+abstract.
 
 ## 1. The problem
 
@@ -48,14 +49,15 @@ position to none. From `au_formalization.rs`.]
 
 1. Anti-unification over an e-graph rather than over terms, with the search
    ranging over saturation's consequences (§3).
-2. Two algorithms over one search space: exact branch-and-bound with admissible
-   projection bounds, and a Monte-Carlo graph search whose edge visit counts and
-   idempotent updates follow the KataGo formulation (§4).
+2. Two algorithms over related action graphs under one explicit cycle policy:
+   pair-mode bounded-relaxation Exact with admissible projection bounds, and a
+   contextual Monte-Carlo graph search whose edge visit counts and idempotent
+   updates follow the KataGo formulation (§4).
 3. A machine-checked positional lower-bound argument and a precise roadmap from
-   those lemmas to a future `D = OPT` theorem (§5).
+   those lemmas to a future `D* = OPT` theorem (§5).
 4. An evaluation that separates what canonization absorbs, what saturation
-   recovers, and what is genuine disagreement, with a constructed oracle (§6),
-   and a negative result on delegation (§6.4).
+   recovers, and what is genuine disagreement, with a constructed oracle (§6).
+   Solver timing claims remain pending a same-revision cycle-complete rerun.
 
 ## 2. Background
 
@@ -66,10 +68,12 @@ both sides at once.]
 
 ## 3. Anti-unification over an e-graph
 
-[The AND/OR search space: an OR node is a state `(l, r)` with cycle contexts, an
-AND node is one action. Structural actions for matching operators; transport
-actions for AC and ACI, which are a min-cost flow over member matchings; the
-generalize action, priced at the mass it hides.]
+[The AND/OR spaces: pair-mode root Exact has one OR node per ordered pair
+`(l, r)`; side-mode Exact and MCGS have contextual nodes carrying either
+independent side contexts or an ordered-pair context. Side policies can exclude
+finite derivations. An AND node is one action. Structural actions match
+operators; AC and ACI actions are min-cost flows over member matchings; the
+generalize action is priced at the mass it hides.]
 
 **The objective.** For classes `A` and `B`, with `terms(C)` the terms a class
 represents and `q` the quality of Plotkin's generalization,
@@ -82,18 +86,21 @@ ordered lexicographically by `(size, variant_mass)`, where `size` counts
 concrete nodes and `variant_mass` those under a generalized position, so
 `size - variant_mass` is the shared backbone.
 
-## 4. Two algorithms, one space
+## 4. Two algorithms, shared semantics
 
-[Exact: branch-and-bound, admissible bound `lb_pair`, context subsumption,
-anytime incumbent. MCGS: edge visits not child visits, the idempotent value
-equation, path-only backprop, the closed bit for proved subtrees. The six fixes
-that make the search usable at scale (live-incumbent pruning, rollout
-delegation, two-part admission, the session memo, static seeding, interval
-bounds), each behind a flag with a differential check.]
+[Pair-mode root Exact: close the finite bare-pair graph, initialize achieved
+terminal witnesses, synchronously relax structural and transport actions, and
+stop at the `N`-pair bound justified by pair-cycle erasure; `lb_pair` supplies
+optional static pruning and a deadline returns an achieved incumbent. Side-mode
+Exact: solve the side-context graph. MCGS: contextual side- or pair-cycle
+filtering, edge visits not child visits, the idempotent value equation,
+path-only backprop, and the closed bit for policy-relative proved subtrees.
+Delegated Exact inherits the calling node's context, mode, and certificate
+scope.]
 
 ## 5. Correctness
 
-The target theorem is `D(A, B) = OPT(A, B)`, with `OPT` the lexicographic
+The target theorem is `D*(A, B) = OPT(A, B)`, with `OPT` the lexicographic
 minimum of Plotkin quality over every represented term pair. `OPT` itself is
 representative-independent by definition. The current evidence does not prove
 that the recurrence or Rust solver computes it.
@@ -108,18 +115,17 @@ the selected action already being no worse than every alternative.
 
 **The missing theorem.** The recurrence predicate contains inequalities only,
 so even the constant-zero function satisfies it. No theorem defines the
-intended least solution, proves that its value is attained, or states
-`D = OPT`. The structural representation lemma has no quality postcondition.
-Chapter 19 §9.6 records the required steps: define/select the minimum-action
-solution, strengthen the recursive witness theorem, prove attainability, and
-combine it with the existing lower-bound direction.
+depth-indexed `D_d`, proves that each round carries an attaining witness, proves
+pair-cycle erasure and the `N`-round bound, or states `D* = OPT`. The structural
+representation lemma has no quality postcondition. Chapter 19 §9.6 records the
+required proof and production-refinement steps.
 
 **Implementation evidence.** `au_oracle.rs` compares the Rust exact solver with
 `OPT` computed by brute force on enumerable finite instances. Separate suites
 check bounds, pruning, transport, flags, and representative independence at
 their recorded finite scales. A further refinement theorem would be needed to
-connect the positional model to AC/ACI transport, identity padding, cycle
-contexts, MCGS, and delegation.
+connect the positional model to bare-pair relaxation, AC/ACI transport,
+identity padding, contextual certificate scopes, MCGS, and delegation.
 
 ## 6. Evaluation
 
@@ -145,40 +151,21 @@ families are where the class product rather than the depth grows.]
 
 ### 6.3 Where the search wins
 
-On `sat-decoy` at k = 10 with four edits, the exact solver spends 61.9 s and
-returns a term 33% above the optimum without certifying; the search returns the
-optimum in 109 ms. The one-playout answer is 18% off and the sixteen-playout
-answer 17%, so the search rather than the rollout closes the gap, and the
-decoy-free control returns the optimum immediately, which attributes the error to
-the planted arm.
+No current quantitative result is claimed. Rerun each compared algorithm and
+cycle policy from the same source and binaries under the Criterion/corpus protocol in
+`egraph/doc/future/performance-validation.md`. The retained `sat-decoy` family
+must still show a nonzero one-playout gap, a later UCT improvement, and a
+decoy-free control before it can support a search-win claim.
 
 ### 6.4 When delegation pays, and when it does not
 
-Delegation was a negative result until the condition separating the two cases
-was made precise, and the two families now bracket it.
-
-**Where it does not pay.** On `sat-ite` and `sat-decoy` the full configuration
-returns bare search's answer for 3x to 8x the wall clock. At k = 12 it wins at
-equal playouts, 2.8% at 1 to 16 and 8.3% at 64, and loses once time is the axis.
-The rollout's error there is an *overestimate of the winner*, not an
-underestimate of a decoy, so correcting it means bounding the whole instance
-rather than a subproblem the exact solver can absorb.
-
-**Where it does.** The action estimate is exact for a child pair sharing no
-operator and pessimistic for one that factors through shared structure, so a
-gadget placing one of each side by side is misranked: estimate 9 against 8, truth
-7 against 8. The gadget is three nodes deep, so the exact solver settles it in
-microseconds. With eight such gadgets above a `sat-ite` core at k = 10,
-delegation returns the best-known value at its first playout in 1.0 ms while bare
-search needs sixty-four playouts and 17.1 ms, a 17x difference in time to equal
-quality. A zero-gadget control returns the same answer either way with delegation
-slower, so the win is the gadgets and not the machinery.
-
-**The claim, scoped.** Delegation is neither useless nor generally profitable. It
-pays when the rollout's error is concentrated in subproblems the exact solver can
-absorb, and costs when the error is at the root. What we do not have is a
-predicate a caller could evaluate on its own instance to decide which case it is
-in; the condition is characterized by two families bracketing it.
+No current timing ratio is claimed. The retained hypothesis is that delegation
+helps when rollout error is concentrated in small contextual subproblems and
+costs when correcting it requires solving the root. The shallow-misranking and
+root-error families still bracket that condition functionally, but both must be
+remeasured at equal wall time against the current root solver. A publishable
+claim additionally needs a caller-visible admission predicate validated on
+held-out families; the current local thresholds are not such a rule.
 
 ### 6.5 The application
 
@@ -218,12 +205,14 @@ and Maillard for merging similar states.]
 
 ## 9. Limitations
 
-1. The target `D = OPT` theorem is not yet machine-checked.
+1. The target `D* = OPT` theorem is not yet machine-checked.
 2. The positional verified model is not refined to the production AC/ACI
    implementation.
-3. The formalizer measurement is a pilot with one formalizer.
-4. The condition under which delegation pays is bracketed by two families, not
+3. Transport representation pairs with a margin above `u32::MAX` are outside
+   the shipping solver's certified action domain.
+4. The formalizer measurement is a pilot with one formalizer.
+5. The condition under which delegation pays is bracketed by two families, not
    expressed as a test a caller can run on an instance.
-5. The retained `final-r6` campaign predates the current implementation, ran
+6. The retained `final-r6` campaign predates the current implementation, ran
    under recorded background load, and has no bootstrap confidence intervals;
    current runtime claims require same-revision Criterion measurements.

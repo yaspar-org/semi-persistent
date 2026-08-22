@@ -8,8 +8,8 @@
 //! its value idempotently from its children (§2.6), composes its children's
 //! stored best results into a candidate term, and offers it to its parent's
 //! best-result entry (§3.3). That composition step is what lets the search
-//! improve past the initial rollout and converge to the exact optimum on
-//! exhausted graphs.
+//! improve past the initial rollout and converge to the configured
+//! cycle-filtered optimum on exhausted graphs.
 //!
 //! Implemented policies: UCT selection at OR nodes and three AND-node effort
 //! selectors (`lct_and` default, `uct_and`, `round_robin`; §3.3.5). PUCT and
@@ -32,7 +32,8 @@
 //! and the AND-node selectors skip closed children, the same gate the terminal
 //! skip applies. Certification reads the root bit instead of walking the graph.
 //!
-//! Soundness. A closed subtree's value and stored result are exact and final:
+//! Implementation argument. A closed subtree's value and stored result are
+//! treated as contextually exact and final:
 //! every action below it is realized, every descendant is closed, and the
 //! closure walk recomputes each AND's value and offers its composition to its
 //! parent *before* that parent can close, so an OR node's incumbent already
@@ -46,12 +47,16 @@
 //!
 //! The statistics arenas hold the propagation bookkeeping (the bits, the open
 //! counters, the reverse edges), but the durable record of a closure is in
-//! `BestResults`: a node that closes is marked exact there, the same
-//! write-once flag the exact solver sets, because closure asserts the same
-//! fact — the stored result is that node's optimum over the same action space
-//! under the same cycle mode. `ensure_or_stats` already makes a node with the
-//! flag terminal at creation, so the proof carries into later runs on the same
-//! session layers, and it rolls back with the results table's own token.
+//! `BestResults`: a node that closes is marked contextually exact there, the
+//! same scope delegated Exact sets, because closure asserts the same fact: the
+//! stored result is no worse than every result in that node's action space
+//! under the same cycle mode. Pair-mode root Exact has a separate stronger
+//! global bit.
+//! `ensure_or_stats` makes a node with a contextual certificate terminal at
+//! creation, so that proof carries into later UCT runs on the same session
+//! layers and rolls back with the results table's token. It deliberately
+//! ignores the global bit because its witness may use actions filtered out of
+//! this contextual graph.
 //!
 //! # Hybrid exact subproblems
 //!
@@ -60,31 +65,34 @@
 //! class-pair rectangle its subgraph lives in, two array reads off the
 //! snapshot's precomputed reachability popcounts. A node at or below
 //! `McgsConfig::hybrid_threshold` is handed to the exact solver instead of
-//! being enumerated by playouts: `exact::run_exact_at` on that node's own
-//! `(l, r, ctxL, ctxR)` under the run's cycle mode, with projection pruning
-//! and context subsumption on, which make a subproblem call cheap. The
+//! being enumerated by playouts: `exact::run_exact_at` on that node's own class
+//! pair and side-or-pair context under the run's cycle mode, with projection
+//! pruning on and side-context subsumption when supported. The
 //! result is offered and marked exact, which makes the node terminal through
 //! the condition that was already there, and terminal nodes are born closed,
 //! so under `closed_bit` the proof propagates upward as a closure with no
 //! extra machinery.
 //!
-//! Soundness. An exact run entered at `(l, r, ctxL, ctxR)` with the same cycle
+//! Soundness. An exact run entered at the same class pair, context, and cycle
 //! mode solves the identical subproblem the MCGS node stands for: the OR key
-//! *is* that 4-tuple, cycle blocking reads nothing else, and both solvers
+//! records that full policy state, cycle blocking reads nothing else, and both solvers
 //! generate actions from the same `generate_actions`/`transport_actions`. So
-//! its optimum is the quantity `mark_exact` claims, namely this node's optimum
-//! over the same action space under the same cycle mode, and the certificate's
-//! meaning is unchanged. The term is safe to offer regardless: term validity
+//! a completed call makes the same contextual exactness assertion that
+//! `mark_exact` records, namely no worse result in this node's action space
+//! under the same cycle mode. This is an implementation argument with finite
+//! differential evidence, not a machine-checked solver theorem. The term is
+//! safe to offer regardless: term validity
 //! is context-independent (contexts exist to terminate the search, not to
 //! restrict which terms are valid), so an exact-solved term projects into the
 //! two classes like any other. Afterwards the write-once exact flag,
 //! `offer`'s strict-improvement rule, and its finality assertion are what
 //! prevent degradation.
 //!
-//! Boundedness. The threshold is the guard: a node above it is never handed to
-//! exact, so no playout can trigger an unbounded solve, and the estimate
-//! itself is O(1). A call that comes back without a proof (only possible with
-//! a deadline configured) has its term offered but is not marked.
+//! Admission. The reachable-pair and entry-action thresholds are O(1) and
+//! local-workload estimates, respectively. They do not bound descendant
+//! contextual states or fan-out. Only `hybrid_node_budget` is a deterministic
+//! hard bound on one call. A call that exhausts that budget has its feasible
+//! incumbent offered but is not marked exact.
 //!
 //! Layer separation. The exact run creates its own search space, action cache,
 //! and result table, so it cannot read or write the MCGS overlay; the single
@@ -187,12 +195,12 @@ pub struct McgsConfig {
     /// `au_differential.rs::hybrid_exact_mcgs_is_sound` gates the flag-on
     /// behavior.
     pub hybrid_exact: bool,
-    /// Hardness ceiling for [`Self::hybrid_exact`]: the largest
+    /// Admission estimate for [`Self::hybrid_exact`]: the largest
     /// `estimates::reachable_pairs` value a subproblem may have and still be
-    /// handed to the exact solver. This is the guard that keeps exact calls
-    /// bounded: a node above it is searched by playouts as usual, so no
-    /// playout can trigger an unbounded exact run. Default 4096, from the
-    /// corpus sweep in doc/benchmarks/records/au/anytime-corpus.md section (g).
+    /// handed to the exact solver. It bounds a rectangle of bare class pairs,
+    /// not the number of contextual states or the work below each state.
+    /// Default 4096 as a historical compatibility value pending a current
+    /// Criterion calibration.
     pub hybrid_threshold: u64,
     /// Live-incumbent arm pruning:
     /// cache every arm's admissible size lower bound at stats creation and
@@ -211,34 +219,33 @@ pub struct McgsConfig {
     pub live_incumbent_pruning: bool,
     /// Hybrid exact calls from inside the initial rollout: at every rollout frame whose
     /// subproblem passes the same admission gate as [`Self::hybrid_exact`],
-    /// solve the frame exactly and use the result as the completed suffix, so
-    /// the first answer is greedy-prefix + exact-suffix and the node is
-    /// terminal at creation when expansion later reaches it. The soundness
-    /// argument is unchanged: same 4-tuple, same cycle mode, same action
-    /// generators. Requires `hybrid_exact`; `run_mcgs_in` refuses the flag
+    /// delegate the frame and use the result as the completed suffix. A call
+    /// that completes supplies a contextually certified exact suffix; a call
+    /// that exhausts `hybrid_node_budget` supplies only a feasible uncertified
+    /// suffix. The node is terminal at creation when expansion later reaches it
+    /// only in the completed case. The soundness
+    /// argument is unchanged: same class pair, same side-or-pair context, same
+    /// cycle mode, same action generators. Requires `hybrid_exact`; `run_mcgs_in` refuses the flag
     /// without it. Default `false`;
     /// `au_differential.rs::rollout_hybrid_mcgs_is_sound` gates the flag-on
     /// behavior.
     pub rollout_hybrid: bool,
     /// Session-level exact memo:
-    /// hybrid exact calls (`hybrid_exact`, `rollout_hybrid`) share one
-    /// bare-pair memo of context-clean solves that outlives the individual
+    /// side-context hybrid exact calls (`hybrid_exact`, `rollout_hybrid`) share
+    /// one bare-pair memo of context-clean solves that outlives the individual
     /// call, so consecutive calls over overlapping subgraphs reuse instead of
-    /// re-solving. The context-clean reuse rule is unchanged; the memo lives in the
-    /// session state and rolls back with its token. Requires `hybrid_exact`.
+    /// re-solving. Pair-context calls leave this memo unused until its support
+    /// proof preserves pair correlations. The memo lives in the session state
+    /// and rolls back with its token. Requires `hybrid_exact`.
     /// Default `false`;
     /// `au_differential.rs::persistent_memo_exact_is_sound` gates the flag-on
     /// behavior.
     pub session_exact_memo: bool,
-    /// Second admission gate for hybrid exact calls: the node's own action count must be
-    /// at or below this for the call to be admitted. The rectangle
-    /// (`hybrid_threshold`) bounds how many subproblems exist below the
-    /// node; this bounds the work per subproblem, and exact's cost is
-    /// roughly their product, so each gate catches the family the other is
-    /// blind to (a deep chain with 3 actions per node passes here and a
-    /// one-pair AC node with 576 representation pairs fails). Default
-    /// `u64::MAX`: admission by rectangle alone, the reference behavior;
-    /// the scaled corpus sweep calibrates the shipped value.
+    /// Second admission gate for hybrid exact calls: the node's own action
+    /// count must be at or below this for the call to be admitted. It
+    /// complements the bare-pair rectangle estimate, but neither gate bounds
+    /// descendant contextual states or fan-out. Default `u64::MAX`: admission
+    /// by rectangle alone, the reference behavior.
     pub hybrid_action_threshold: u64,
     /// In-call backstop for hybrid exact calls: a deterministic
     /// bound on solve work, in node entries. The admission gates read the
@@ -295,8 +302,8 @@ pub struct McgsConfig {
 pub struct HybridStats {
     /// Subproblems handed to the exact solver.
     pub calls: u64,
-    /// Of those, the ones that came back with a proof (all of them unless a
-    /// deadline is configured).
+    /// Of those, the ones that completed within the optional node budget and
+    /// therefore returned a contextual exactness certificate.
     pub proved: u64,
     /// Total wall time spent inside those calls.
     pub time: std::time::Duration,
@@ -325,10 +332,11 @@ impl Default for McgsConfig {
     }
 }
 
-/// Default [`McgsConfig::hybrid_threshold`]. Section (g) of
-/// doc/benchmarks/records/au/anytime-corpus.md sweeps it; 4096 reachable pairs is where
-/// the corpus's certification knee bottoms out without the exact calls
-/// starting to dominate wall time.
+/// Default [`McgsConfig::hybrid_threshold`].
+///
+/// This historical compatibility value predates the pair-mode fixed-point
+/// solver. It is not a current performance optimum; recalibration requires the
+/// maintained Criterion protocol.
 pub const DEFAULT_HYBRID_THRESHOLD: u64 = 4096;
 
 /// Builder payload for one OR-statistics node. The arena flattens edge state
@@ -1560,6 +1568,15 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
         self.hybrid
     }
 
+    /// Shared contextual-Exact memo used by side-mode warm Exact and hybrid
+    /// calls. Pair-context solves deliberately do not consume it until the
+    /// memo's support proof records ordered-pair correlations.
+    pub(crate) fn exact_memo_mut(
+        &mut self,
+    ) -> &mut super::exact_memo::ExactMemo<A::Term, A::Class, A::Index> {
+        &mut self.exact_memo
+    }
+
     pub(crate) fn mark(&mut self) -> McgsToken {
         McgsToken {
             or_stats: self.or_stats.mark(),
@@ -1644,14 +1661,6 @@ impl<A: AuIds, O: DenseId> McgsState<A, O> {
             }
         }
         id
-    }
-
-    /// The session exact memo, for session-level callers (the warm exact
-    /// entry point reads and writes it alongside the hybrid calls here).
-    pub(crate) fn exact_memo_mut(
-        &mut self,
-    ) -> &mut super::exact_memo::ExactMemo<A::Term, A::Class, A::Index> {
-        &mut self.exact_memo
     }
 
     #[inline]
@@ -1789,11 +1798,11 @@ where
          its exclusion test and reuse its closure accounting"
     );
 
-    let empty_ctx = space.contexts.empty();
+    let (empty_l, empty_r) = space.empty_contexts();
     let l_best = snap.best_size(l_root);
     let r_best = snap.best_size(r_root);
     let (root_or, _) =
-        space.get_or_insert_or_node(l_root, r_root, empty_ctx, empty_ctx, l_best, r_best);
+        space.get_or_insert_or_node(l_root, r_root, empty_l, empty_r, l_best, r_best);
 
     // Eagerly publish the shared terminal generalize action as a projection-valid
     // incumbent. The mandatory structural rollout below may immediately improve it.
@@ -2378,19 +2387,18 @@ fn sweep_arms<A: AuIds, O: DenseId>(
 
 /// The hybrid trigger: if this node's
 /// subproblem is at or below `config.hybrid_threshold` reachable class pairs,
-/// solve it exactly and record the proof.
+/// delegate it to contextual Exact and record completion when earned.
 ///
 /// The exact run is entered at this node's own state: the same `(l, r)`, the
-/// same two cycle contexts, the same cycle mode. What it returns is therefore
-/// the optimum of *this* node, which is exactly what `mark_exact` asserts and what
-/// the certificate is defined over (see the module documentation). The term
-/// is offered unconditionally, because term validity does not
-/// depend on contexts, and only a completed run is marked: a deadline expiry
-/// yields a feasible incumbent with no proof attached.
+/// same side or pair context, and the same cycle mode. A completed call therefore
+/// carries the implementation's exactness assertion for *this* node, which is
+/// what `mark_exact` records (see the module documentation). The term is offered
+/// unconditionally, because term validity does not
+/// depend on contexts, and only a completed run is marked: node-budget
+/// exhaustion yields a feasible incumbent with no proof attached.
 ///
-/// The threshold is the boundedness guard. A node above it is left to the
-/// playout search, so the work one hybrid call can do is bounded by the
-/// threshold rather than by the whole search graph.
+/// The two thresholds are admission estimates, not work bounds. Only
+/// `config.hybrid_node_budget` hard-bounds node entries in one call.
 #[allow(clippy::too_many_arguments)]
 fn solve_hybrid<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
@@ -2406,24 +2414,14 @@ fn solve_hybrid<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
 ) where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    // Two-part admission: the rectangle bounds the number of
-    // subproblems, the action count bounds the work per subproblem.
+    // Two-part admission: the rectangle and entry action count are
+    // complementary workload estimates, not hard bounds.
     if reachable_pairs(snap, l, r) > config.hybrid_threshold
         || num_actions as u64 > config.hybrid_action_threshold
     {
         return;
     }
-    // Copied out because the exact run interns them into its own context
-    // store; `ContextStore::get` already hands them back sorted and deduped,
-    // the form `run_exact_at` expects.
-    let ctx_l: Vec<ClassOf<Cfg>> = space
-        .contexts
-        .get(*space.or_arena.left_ctx.get(or_id.to_index()))
-        .to_vec();
-    let ctx_r: Vec<ClassOf<Cfg>> = space
-        .contexts
-        .get(*space.or_arena.right_ctx.get(or_id.to_index()))
-        .to_vec();
+    let context = space.cycle_context(or_id);
 
     let start = std::time::Instant::now();
     let run = super::exact::run_exact_at(
@@ -2431,8 +2429,7 @@ fn solve_hybrid<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
         pool,
         l,
         r,
-        &ctx_l,
-        &ctx_r,
+        &context,
         space.cycle_mode,
         None,
         // Projection pruning and context subsumption make a subproblem call
@@ -3233,8 +3230,6 @@ where
     let or_id = state.or_id(or_idx);
     let l = *space.or_arena.left.get(or_id.to_index());
     let r = *space.or_arena.right.get(or_id.to_index());
-    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_index());
-    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_index());
 
     generate_actions(snap, action_cache, l, r);
 
@@ -3270,11 +3265,13 @@ where
         let mut child_or_stats = Vec::with_capacity(action.pairs.len());
         let mut child_counts: Vec<u64> = Vec::with_capacity(action.pairs.len());
         for pair in &action.pairs {
-            let child_ctx_l = space
-                .derive_child_context(ctx_l, l, |c| snap.reachability().is_reachable(pair.left, c));
-            let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                snap.reachability().is_reachable(pair.right, c)
-            });
+            let (child_ctx_l, child_ctx_r) = space.derive_child_contexts(
+                or_id,
+                pair.left,
+                pair.right,
+                |c| snap.reachability().is_reachable(pair.left, c),
+                |c| snap.reachability().is_reachable(pair.right, c),
+            );
             let (child_or, _) = space.get_or_insert_or_node(
                 pair.left,
                 pair.right,
@@ -3342,10 +3339,13 @@ where
                     cell_map.push(None);
                     continue;
                 }
-                let child_ctx_l = space
-                    .derive_child_context(ctx_l, l, |c| snap.reachability().is_reachable(*lc, c));
-                let child_ctx_r = space
-                    .derive_child_context(ctx_r, r, |c| snap.reachability().is_reachable(*rc, c));
+                let (child_ctx_l, child_ctx_r) = space.derive_child_contexts(
+                    or_id,
+                    *lc,
+                    *rc,
+                    |c| snap.reachability().is_reachable(*lc, c),
+                    |c| snap.reachability().is_reachable(*rc, c),
+                );
                 let (child_or, _) = space.get_or_insert_or_node(
                     *lc,
                     *rc,
@@ -3438,10 +3438,9 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     struct Frame<Cfg: EGraphConfig> {
+        or_id: <Cfg::Au as AuIds>::Or,
         l: ClassOf<Cfg>,
         r: ClassOf<Cfg>,
-        ctx_l: <Cfg::Au as AuIds>::Context,
-        ctx_r: <Cfg::Au as AuIds>::Context,
         op: Cfg::O,
         /// Transport frames compose commutatively and fall back to the
         /// generalize action when no cell carries flow.
@@ -3470,12 +3469,12 @@ where
         }
         if done.is_none() && l != r {
             generate_actions(snap, action_cache, l, r);
-            // Rollout hybridization with two-part admission: the trigger fires after
-            // enumeration so the node's own action count is known (the
-            // rectangle bounds the number of subproblems, the action count
-            // the work per subproblem). The frame's own state (same pair,
-            // same cycle contexts, same cycle mode) is solved exactly and
-            // its term becomes the completed suffix; a completed run is
+            // Rollout hybridization with two-part admission: the trigger fires
+            // after enumeration so the node's own action count is known. The
+            // rectangle and entry action count are complementary workload
+            // estimates, not hard bounds. The frame's own state (same pair,
+            // same cycle contexts, same cycle mode) is delegated and its term
+            // becomes the completed suffix; a completed run is
             // marked exact, so when expansion later reaches this node it is
             // terminal at creation (and, under `closed_bit`, born closed).
             if config.rollout_hybrid && reachable_pairs(snap, l, r) <= config.hybrid_threshold {
@@ -3493,22 +3492,14 @@ where
                 let transport_count = transport_actions(snap, space, current, l, r).len();
                 if (non_ac + transport_count) as u64 <= config.hybrid_action_threshold {
                     results.ensure_capacity(current);
-                    let ctx_l: Vec<ClassOf<Cfg>> = space
-                        .contexts
-                        .get(*space.or_arena.left_ctx.get(current.to_index()))
-                        .to_vec();
-                    let ctx_r: Vec<ClassOf<Cfg>> = space
-                        .contexts
-                        .get(*space.or_arena.right_ctx.get(current.to_index()))
-                        .to_vec();
+                    let context = space.cycle_context(current);
                     let start = std::time::Instant::now();
                     let run = super::exact::run_exact_at(
                         snap,
                         pool,
                         l,
                         r,
-                        &ctx_l,
-                        &ctx_r,
+                        &context,
                         space.cycle_mode,
                         None,
                         true,
@@ -3538,7 +3529,7 @@ where
         } else if config.rollout_hybrid && reachable_pairs(snap, l, r) <= config.hybrid_threshold {
             // Rollout hybridization, fired on the rollout path. The frame's
             // own state (same pair, same cycle contexts, same cycle mode) is
-            // solved exactly and its term becomes the completed suffix; a
+            // delegated and its term becomes the completed suffix; a
             // completed run is marked exact, so when expansion later reaches
             // this node it is terminal at creation (and, under `closed_bit`,
             // born closed).
@@ -3547,22 +3538,14 @@ where
                 done = results.best_term(current);
             }
             if done.is_none() {
-                let ctx_l: Vec<ClassOf<Cfg>> = space
-                    .contexts
-                    .get(*space.or_arena.left_ctx.get(current.to_index()))
-                    .to_vec();
-                let ctx_r: Vec<ClassOf<Cfg>> = space
-                    .contexts
-                    .get(*space.or_arena.right_ctx.get(current.to_index()))
-                    .to_vec();
+                let context = space.cycle_context(current);
                 let start = std::time::Instant::now();
                 let run = super::exact::run_exact_at(
                     snap,
                     pool,
                     l,
                     r,
-                    &ctx_l,
-                    &ctx_r,
+                    &context,
                     space.cycle_mode,
                     None,
                     true,
@@ -3590,8 +3573,6 @@ where
             // `generate_actions`.
             let actions = action_cache.get(l, r).unwrap();
             let transport = transport_actions(snap, space, current, l, r);
-            let ctx_l = *space.or_arena.left_ctx.get(current.to_index());
-            let ctx_r = *space.or_arena.right_ctx.get(current.to_index());
 
             // Eager generalization is an explicit action and wins ties, so the
             // initializer can never return a result worse than this valid incumbent.
@@ -3675,10 +3656,9 @@ where
                         .collect();
                     let capacity = items.len();
                     stack.push(Frame {
+                        or_id: current,
                         l,
                         r,
-                        ctx_l,
-                        ctx_r,
                         op: action.op,
                         transport: false,
                         items,
@@ -3706,10 +3686,9 @@ where
                         }
                     }
                     stack.push(Frame {
+                        or_id: current,
                         l,
                         r,
-                        ctx_l,
-                        ctx_r,
                         op: desc.op,
                         transport: true,
                         items,
@@ -3736,11 +3715,13 @@ where
             if top.cursor < top.items.len() {
                 // Create the child OR node now, exactly when the recursion would.
                 let (cl, cr, _) = top.items[top.cursor];
-                let (pl, pr, pctx_l, pctx_r) = (top.l, top.r, top.ctx_l, top.ctx_r);
-                let child_ctx_l = space
-                    .derive_child_context(pctx_l, pl, |c| snap.reachability().is_reachable(cl, c));
-                let child_ctx_r = space
-                    .derive_child_context(pctx_r, pr, |c| snap.reachability().is_reachable(cr, c));
+                let (child_ctx_l, child_ctx_r) = space.derive_child_contexts(
+                    top.or_id,
+                    cl,
+                    cr,
+                    |c| snap.reachability().is_reachable(cl, c),
+                    |c| snap.reachability().is_reachable(cr, c),
+                );
                 let (child_or, _) = space.get_or_insert_or_node(
                     cl,
                     cr,

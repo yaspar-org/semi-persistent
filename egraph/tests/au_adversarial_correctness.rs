@@ -561,7 +561,7 @@ fn projections_materialize_into_source_classes_for_all_operator_families() {
 }
 
 #[test]
-fn cycles_with_finite_members_project_soundly_under_both_cycle_modes() {
+fn cycles_with_finite_members_project_soundly_under_all_cycle_modes() {
     let mut eg = Eg::new();
     let sort = eg.intern_sort("E");
     let a_op = eg.register_op0("a", sort);
@@ -575,7 +575,11 @@ fn cycles_with_finite_members_project_soundly_under_both_cycle_modes() {
     eg.merge(b, fb);
     eg.rebuild();
 
-    for cycle_mode in [CycleMode::AncestorOnly, CycleMode::CurrentInclusive] {
+    for cycle_mode in [
+        CycleMode::AncestorOnly,
+        CycleMode::CurrentInclusive,
+        CycleMode::Pair,
+    ] {
         let projections = {
             let snapshot = AuSnapshot::new(&eg).unwrap();
             let result = anti_unify(
@@ -596,6 +600,235 @@ fn cycles_with_finite_members_project_soundly_under_both_cycle_modes() {
         eg.rebuild();
         assert_eq!(eg.find_const(left), eg.find_const(a));
         assert_eq!(eg.find_const(right), eg.find_const(b));
+    }
+}
+
+/// Every cycle-breaking policy is honored by root Exact, UCT, expansion-time
+/// hybrid Exact, and rollout-time hybrid Exact.
+///
+/// The smaller witness revisits C3 on the right but then exits through the
+/// trivial pair (C3, C3), so its output term is finite. Side filtering removes
+/// that route; pair filtering retains it because no ordered pair repeats.
+#[test]
+fn cycle_modes_apply_to_exact_uct_and_both_hybrid_paths() {
+    const SIDE_QUALITY: (u32, u32) = (9, 7);
+    const SIDE_CURRENT_QUALITY: (u32, u32) = (9, 9);
+    const PAIR_QUALITY: (u32, u32) = (8, 3);
+    const SIDE_TERM: &str = "(h a (Variants (h (f a) (f a)) (f a)))";
+    const SIDE_CURRENT_TERM: &str = "(Variants (h a (h (f a) (f a))) (f a))";
+    const PAIR_TERM: &str = "(h a (h (Variants (f a) a) (f a)))";
+    const HYBRID_SIDE_QUALITY: (u32, u32) = (10, 7);
+    const HYBRID_SIDE_CURRENT_QUALITY: (u32, u32) = (10, 9);
+    const HYBRID_PAIR_QUALITY: (u32, u32) = (9, 3);
+    const HYBRID_SIDE_TERM: &str = "(g (h a (Variants (h (f a) (f a)) (f a))))";
+    const HYBRID_SIDE_CURRENT_TERM: &str = "(g (Variants (h a (h (f a) (f a))) (f a)))";
+    const HYBRID_PAIR_TERM: &str = "(g (h a (h (Variants (f a) a) (f a))))";
+
+    let mut eg = Eg::new();
+    let sort = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", sort);
+    let f = eg.register_op1("f", sort, sort);
+    let g = eg.register_op1("g", sort, sort);
+    let h = eg.register_op2("h", sort, sort, sort);
+
+    // Every node is an ordinary finite DAG before the merge.
+    let c0 = eg.add(a_op, &[]);
+    let c3 = eg.add(f, &[c0]);
+    let c1 = eg.add(h, &[c3, c3]);
+    let c2 = eg.add(h, &[c0, c1]);
+
+    // The equality h(a, f(a)) = f(a) turns C3 into
+    // C3 = {f(C0), h(C0,C3)}.
+    let c3_h = eg.add(h, &[c0, c3]);
+    eg.merge(c3, c3_h);
+    eg.rebuild();
+
+    // A finite pair represented by (C2, C3):
+    //   left  = h(a, h(f(a), f(a)))
+    //   right = h(a, h(a,    f(a)))
+    let a = eg.add(a_op, &[]);
+    let fa = eg.add(f, &[a]);
+    let left_inner = eg.add(h, &[fa, fa]);
+    let left = eg.add(h, &[a, left_inner]);
+    let right_inner = eg.add(h, &[a, fa]);
+    let right = eg.add(h, &[a, right_inner]);
+    eg.rebuild();
+    assert_eq!(eg.find_const(left), eg.find_const(c2));
+    assert_eq!(eg.find_const(right), eg.find_const(c3));
+    // Expansion hybrid runs at this wrapper. The policy-sensitive cyclic pair
+    // remains its child, so a silently substituted policy still changes the
+    // asserted result.
+    let hybrid_left = eg.add(g, &[c2]);
+    let hybrid_right = eg.add(g, &[c3]);
+    eg.rebuild();
+
+    // Their finite AU is h(a, h(Variants(f(a), a), f(a))).
+    let mut witness = TermPool::<OpId, LitValId>::new();
+    let ta = witness.intern(TermOp::EGraph(a_op), &[]);
+    let tfa = witness.intern(TermOp::EGraph(f), &[ta]);
+    let differing = witness.intern(TermOp::Variants, &[tfa, ta]);
+    let inner = witness.intern(TermOp::EGraph(h), &[differing, tfa]);
+    let unrestricted = witness.intern(TermOp::EGraph(h), &[ta, inner]);
+    assert_eq!(witness.quality(unrestricted), PAIR_QUALITY);
+
+    let cases = [
+        (
+            "exact sides",
+            AuAlgorithm::Exact,
+            CycleMode::AncestorOnly,
+            false,
+            SIDE_QUALITY,
+            SIDE_TERM,
+        ),
+        (
+            "exact sides-current",
+            AuAlgorithm::Exact,
+            CycleMode::CurrentInclusive,
+            false,
+            SIDE_CURRENT_QUALITY,
+            SIDE_CURRENT_TERM,
+        ),
+        (
+            "exact pair",
+            AuAlgorithm::Exact,
+            CycleMode::Pair,
+            false,
+            PAIR_QUALITY,
+            PAIR_TERM,
+        ),
+        (
+            "uct sides",
+            AuAlgorithm::Uct,
+            CycleMode::AncestorOnly,
+            false,
+            SIDE_QUALITY,
+            SIDE_TERM,
+        ),
+        (
+            "uct sides-current",
+            AuAlgorithm::Uct,
+            CycleMode::CurrentInclusive,
+            false,
+            SIDE_CURRENT_QUALITY,
+            SIDE_CURRENT_TERM,
+        ),
+        (
+            "uct pair",
+            AuAlgorithm::Uct,
+            CycleMode::Pair,
+            false,
+            PAIR_QUALITY,
+            PAIR_TERM,
+        ),
+        (
+            "hybrid sides",
+            AuAlgorithm::Uct,
+            CycleMode::AncestorOnly,
+            true,
+            HYBRID_SIDE_QUALITY,
+            HYBRID_SIDE_TERM,
+        ),
+        (
+            "hybrid sides-current",
+            AuAlgorithm::Uct,
+            CycleMode::CurrentInclusive,
+            true,
+            HYBRID_SIDE_CURRENT_QUALITY,
+            HYBRID_SIDE_CURRENT_TERM,
+        ),
+        (
+            "hybrid pair",
+            AuAlgorithm::Uct,
+            CycleMode::Pair,
+            true,
+            HYBRID_PAIR_QUALITY,
+            HYBRID_PAIR_TERM,
+        ),
+    ];
+    for (label, algorithm, cycle_mode, hybrid, expected_quality, expected_term) in cases {
+        let snapshot = AuSnapshot::new(&eg).unwrap();
+        let (left_root, right_root) = if hybrid {
+            (hybrid_left, hybrid_right)
+        } else {
+            (c2, c3)
+        };
+        let result = anti_unify(
+            &snapshot,
+            left_root,
+            right_root,
+            &AuConfig {
+                algorithm,
+                cycle_mode,
+                playouts: 10_000,
+                closed_bit: true,
+                hybrid_exact: hybrid,
+                hybrid_threshold: u64::MAX,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let quality = result.pool.quality(result.term_id);
+        let rendered = result.to_string_with(|op| match op {
+            TermOp::EGraph(op) => eg.ops().info(*op).name.clone(),
+            TermOp::Literal(_, value) => format!("{value:?}"),
+            TermOp::Variants => "Variants".to_string(),
+        });
+
+        assert_eq!(result.completion, Completion::Exact);
+        assert_eq!(quality, expected_quality, "{label}: {rendered}");
+        assert_eq!(rendered, expected_term, "{label}");
+        assert_eq!(result.hybrid.calls > 0, hybrid, "{label}");
+    }
+
+    // Exclude the root from hybrid admission and give UCT no playouts. Any
+    // exact call must therefore come from the initial-rollout delegation
+    // path, before expansion can create child statistics.
+    for (cycle_mode, expected_quality, expected_term) in [
+        (
+            CycleMode::AncestorOnly,
+            HYBRID_SIDE_QUALITY,
+            HYBRID_SIDE_TERM,
+        ),
+        (
+            CycleMode::CurrentInclusive,
+            HYBRID_SIDE_CURRENT_QUALITY,
+            HYBRID_SIDE_CURRENT_TERM,
+        ),
+        (CycleMode::Pair, HYBRID_PAIR_QUALITY, HYBRID_PAIR_TERM),
+    ] {
+        let snapshot = AuSnapshot::new(&eg).unwrap();
+        let root_pairs = semi_persistent_egraph::au::estimates::reachable_pairs(
+            &snapshot,
+            snapshot.class_of(hybrid_left).unwrap(),
+            snapshot.class_of(hybrid_right).unwrap(),
+        );
+        let result = anti_unify(
+            &snapshot,
+            hybrid_left,
+            hybrid_right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Uct,
+                cycle_mode,
+                playouts: 0,
+                hybrid_exact: true,
+                rollout_hybrid: true,
+                hybrid_threshold: root_pairs - 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rendered = result.to_string_with(|op| match op {
+            TermOp::EGraph(op) => eg.ops().info(*op).name.clone(),
+            TermOp::Literal(_, value) => format!("{value:?}"),
+            TermOp::Variants => "Variants".to_string(),
+        });
+        assert!(result.hybrid.calls > 0, "{cycle_mode:?}");
+        assert_eq!(
+            result.pool.quality(result.term_id),
+            expected_quality,
+            "{cycle_mode:?}: {rendered}"
+        );
+        assert_eq!(rendered, expected_term, "{cycle_mode:?}");
     }
 }
 

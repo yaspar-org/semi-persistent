@@ -3,8 +3,10 @@
 //! Search-space layer: OR/AND arenas, context interner, node/edge caches (§4.2).
 //!
 //! The search space is an AND/OR graph where OR nodes are subproblems `AU(l, r)`
-//! keyed by `(l, r, ctxL, ctxR)`, and AND nodes are chosen factorings (operator +
-//! paired children). Everything here is immutable once pushed (hash-cons semantics).
+//! keyed by the class pair plus two opaque context-id slots. Side modes use one
+//! class context per slot; pair mode stores an ordered-pair context in the first.
+//! AND nodes are chosen factorings (operator + paired children). Everything here
+//! is immutable once pushed (hash-cons semantics).
 //! All storage uses semi-persistent containers (AppendOnlyVec for structural fields,
 //! SpMap for deduplication caches); mark/restore truncates them as one unit.
 
@@ -38,51 +40,68 @@ crate::containers::define_id31! {
 // CycleMode
 // ---------------------------------------------------------------------------
 
-/// How aggressively cycle paths are pruned (§2.3). Both modes produce finite graphs.
+/// Which path component breaks cycles (§2.3).
+///
+/// The two legacy modes track the left and right class paths separately.
+/// [`CycleMode::Pair`] tracks ordered class pairs instead, so revisiting one
+/// side is allowed when the other side has changed. Every AU algorithm
+/// consumes this same policy: root Exact, UCT, and Exact calls delegated by
+/// UCT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CycleMode {
-    /// Filter actions against ancestor contexts only. A class can occur at most
-    /// twice per side on a path (once as the current node, once as a child).
+    /// Side-based filtering against ancestor contexts only. A class can occur
+    /// at most twice per side on a path (once as the current node, once as a
+    /// child).
     #[default]
     AncestorOnly,
-    /// Also filter against the current (l, r). A class occurs at most once per
-    /// side on a path.
+    /// Side-based filtering against ancestors and the current `(l, r)`. A
+    /// class occurs at most once per side on a path.
     CurrentInclusive,
+    /// Pair-based filtering against ancestors and the current ordered pair.
+    /// A left or right class may repeat by itself; only an already-active
+    /// `(left, right)` pair is blocked.
+    Pair,
 }
 
 // ---------------------------------------------------------------------------
 // Context interner (semi-persistent: AppendOnlyVec + SpMap)
 // ---------------------------------------------------------------------------
 
-/// Interns sorted class-id vectors as context ids. Two equal vectors get the
-/// same context id; comparison is then a single integer compare.
+/// Interns sorted context-item vectors as context ids. Two equal vectors get
+/// the same context id; comparison is then a single integer compare.
 ///
 /// Both pools and the dedup map are addressed by ids whose `Index` is `A::Index`
-/// (`A::Context` for `spans`, `A::ContextElem` for `classes`, and `index`'s log
+/// (`A::Context` for `spans`, `A::ContextElem` for `items`, and `index`'s log
 /// positions are what `A::Context`s are minted from), so that word is the index type
 /// rather than `usize`.
-pub struct ContextStore<A: AuIds = AuIds31> {
-    /// Each interned context's data as a typed span into `classes`.
+pub struct ContextStore<A: AuIds = AuIds31, T = <A as AuIds>::Class>
+where
+    T: Copy + Ord + core::hash::Hash,
+{
+    /// Each interned context's data as a typed span into `items`.
     spans: AppendOnlyVec<Span<A::ContextElem>, A::Index>,
-    /// Pool of class ids (all interned contexts concatenated).
-    classes: AppendOnlyVec<A::Class, A::Index>,
-    /// Deduplication map: sorted class vector -> context id.
-    index: SpMap<Vec<A::Class>, A::Context, A::Index>,
+    /// Pool of items (all interned contexts concatenated).
+    items: AppendOnlyVec<T, A::Index>,
+    /// Deduplication map: sorted item vector -> context id.
+    index: SpMap<Vec<T>, A::Context, A::Index>,
 }
 
 /// Token for restoring a `ContextStore` to a previous state.
 #[derive(Clone, Copy, Debug)]
 pub struct ContextStoreToken {
     spans: VecToken,
-    classes: VecToken,
+    items: VecToken,
     index: MapToken,
 }
 
-impl<A: AuIds> ContextStore<A> {
+impl<A: AuIds, T> ContextStore<A, T>
+where
+    T: Copy + Ord + core::hash::Hash,
+{
     pub fn new() -> Self {
         let mut store = ContextStore {
             spans: AppendOnlyVec::new(),
-            classes: AppendOnlyVec::new(),
+            items: AppendOnlyVec::new(),
             index: SpMap::new(),
         };
         store.intern(&[]);
@@ -95,28 +114,28 @@ impl<A: AuIds> ContextStore<A> {
         A::Context::from_usize(0)
     }
 
-    pub fn intern(&mut self, sorted_classes: &[A::Class]) -> A::Context {
-        if let Some(log_idx) = self.index.id_of(&sorted_classes.to_vec()) {
+    pub fn intern(&mut self, sorted_items: &[T]) -> A::Context {
+        if let Some(log_idx) = self.index.id_of(&sorted_items.to_vec()) {
             return *self.index.get_val(log_idx);
         }
         let id: A::Context = crate::id::id_at_index(self.spans.len());
-        let start = self.classes.len().as_usize();
-        for &c in sorted_classes {
-            self.classes
-                .try_push(c)
+        let start = self.items.len().as_usize();
+        for &item in sorted_items {
+            self.items
+                .try_push(item)
                 .expect("AU arena sized by its index word");
         }
         self.spans
-            .try_push(Span::new(start, sorted_classes.len()))
+            .try_push(Span::new(start, sorted_items.len()))
             .expect("AU arena sized by its index word");
         self.index
-            .try_insert(sorted_classes.to_vec(), id)
+            .try_insert(sorted_items.to_vec(), id)
             .expect("AU arena sized by its index word");
         id
     }
 
     #[inline]
-    pub fn get(&self, id: A::Context) -> &[A::Class] {
+    pub fn get(&self, id: A::Context) -> &[T] {
         let span = *self.spans.get(id.to_index());
         let start = span.start_usize();
         let len = span.len_usize();
@@ -126,12 +145,12 @@ impl<A: AuIds> ContextStore<A> {
         // discharges. The span was built by `intern`, which pushes the elements
         // consecutively, so `[start, start + len)` is in bounds — and if it ever
         // were not, this panics instead of reading out of bounds.
-        &self.classes.as_slice()[start..start + len]
+        &self.items.as_slice()[start..start + len]
     }
 
     #[inline]
-    pub fn contains(&self, id: A::Context, class: A::Class) -> bool {
-        self.get(id).binary_search(&class).is_ok()
+    pub fn contains(&self, id: A::Context, item: T) -> bool {
+        self.get(id).binary_search(&item).is_ok()
     }
 
     /// Number of interned contexts, in the configured index word (a context count is
@@ -150,8 +169,8 @@ impl<A: AuIds> ContextStore<A> {
                 .spans
                 .try_mark(ShrinkPolicy::Never)
                 .expect("mark: depth bounded by the search driver"),
-            classes: self
-                .classes
+            items: self
+                .items
                 .try_mark(ShrinkPolicy::Never)
                 .expect("mark: depth bounded by the search driver"),
             index: self
@@ -163,7 +182,7 @@ impl<A: AuIds> ContextStore<A> {
 
     pub fn is_valid_token(&self, token: &ContextStoreToken) -> bool {
         self.spans.is_valid_token(&token.spans)
-            && self.classes.is_valid_token(&token.classes)
+            && self.items.is_valid_token(&token.items)
             && self.index.is_valid_token(&token.index)
     }
 
@@ -171,8 +190,8 @@ impl<A: AuIds> ContextStore<A> {
         self.index
             .try_restore(token.index)
             .expect("restore: token minted by this container's own mark");
-        self.classes
-            .try_restore(token.classes)
+        self.items
+            .try_restore(token.items)
             .expect("restore: token minted by this container's own mark");
         self.spans
             .try_restore(token.spans)
@@ -180,10 +199,21 @@ impl<A: AuIds> ContextStore<A> {
     }
 }
 
-impl<A: AuIds> Default for ContextStore<A> {
+impl<A: AuIds, T> Default for ContextStore<A, T>
+where
+    T: Copy + Ord + core::hash::Hash,
+{
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// One contextual Exact/UCT entry context in a representation independent of
+/// the interner ids used by a particular [`SearchSpace`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CycleContext<C> {
+    Sides { left: Vec<C>, right: Vec<C> },
+    Pairs(Vec<(C, C)>),
 }
 
 // ---------------------------------------------------------------------------
@@ -326,12 +356,14 @@ impl<A: AuIds> Default for OrArena<A> {
 pub struct SpaceToken {
     or_arena: OrArenaToken,
     contexts: ContextStoreToken,
+    pair_contexts: ContextStoreToken,
 }
 
 /// The complete search-space layer shared by all algorithms in a session.
 pub struct SearchSpace<A: AuIds = AuIds31> {
     pub or_arena: OrArena<A>,
     pub contexts: ContextStore<A>,
+    pub pair_contexts: ContextStore<A, (A::Class, A::Class)>,
     pub cycle_mode: CycleMode,
 }
 
@@ -340,7 +372,53 @@ impl<A: AuIds> SearchSpace<A> {
         SearchSpace {
             or_arena: OrArena::new(),
             contexts: ContextStore::new(),
+            pair_contexts: ContextStore::new(),
             cycle_mode,
+        }
+    }
+
+    /// The two opaque context ids used for a root state.
+    ///
+    /// Pair mode stores its ordered-pair context in the left slot and keeps
+    /// the right slot empty. Side modes use both slots as before.
+    pub fn empty_contexts(&self) -> (A::Context, A::Context) {
+        match self.cycle_mode {
+            CycleMode::Pair => (self.pair_contexts.empty(), self.pair_contexts.empty()),
+            CycleMode::AncestorOnly | CycleMode::CurrentInclusive => {
+                (self.contexts.empty(), self.contexts.empty())
+            }
+        }
+    }
+
+    /// Copy one OR node's context into a representation another search space
+    /// can intern. Hybrid Exact uses this to enter the exact state represented
+    /// by a UCT node rather than silently changing cycle policy.
+    pub(crate) fn cycle_context(&self, or_id: A::Or) -> CycleContext<A::Class> {
+        let ctx_l = *self.or_arena.left_ctx.get(or_id.to_index());
+        let ctx_r = *self.or_arena.right_ctx.get(or_id.to_index());
+        match self.cycle_mode {
+            CycleMode::Pair => CycleContext::Pairs(self.pair_contexts.get(ctx_l).to_vec()),
+            CycleMode::AncestorOnly | CycleMode::CurrentInclusive => CycleContext::Sides {
+                left: self.contexts.get(ctx_l).to_vec(),
+                right: self.contexts.get(ctx_r).to_vec(),
+            },
+        }
+    }
+
+    /// Intern an external context under this space's configured policy.
+    pub(crate) fn intern_cycle_context(
+        &mut self,
+        context: &CycleContext<A::Class>,
+    ) -> (A::Context, A::Context) {
+        match (self.cycle_mode, context) {
+            (
+                CycleMode::AncestorOnly | CycleMode::CurrentInclusive,
+                CycleContext::Sides { left, right },
+            ) => (self.contexts.intern(left), self.contexts.intern(right)),
+            (CycleMode::Pair, CycleContext::Pairs(pairs)) => {
+                (self.pair_contexts.intern(pairs), self.pair_contexts.empty())
+            }
+            _ => panic!("cycle context does not match the search space's cycle mode"),
         }
     }
 
@@ -417,13 +495,57 @@ impl<A: AuIds> SearchSpace<A> {
         self.contexts.intern(&result)
     }
 
+    /// Derive both child-context ids under the configured cycle policy.
+    pub fn derive_child_contexts(
+        &mut self,
+        parent_or: A::Or,
+        _child_l: A::Class,
+        _child_r: A::Class,
+        is_left_reachable: impl Fn(A::Class) -> bool,
+        is_right_reachable: impl Fn(A::Class) -> bool,
+    ) -> (A::Context, A::Context) {
+        let index = parent_or.to_index();
+        let parent_l = *self.or_arena.left.get(index);
+        let parent_r = *self.or_arena.right.get(index);
+        let ctx_l = *self.or_arena.left_ctx.get(index);
+        let ctx_r = *self.or_arena.right_ctx.get(index);
+
+        match self.cycle_mode {
+            CycleMode::AncestorOnly | CycleMode::CurrentInclusive => (
+                self.derive_child_context(ctx_l, parent_l, is_left_reachable),
+                self.derive_child_context(ctx_r, parent_r, is_right_reachable),
+            ),
+            CycleMode::Pair => {
+                let mut result: Vec<(A::Class, A::Class)> = self
+                    .pair_contexts
+                    .get(ctx_l)
+                    .iter()
+                    .copied()
+                    .filter(|(left, right)| is_left_reachable(*left) && is_right_reachable(*right))
+                    .collect();
+                let parent = (parent_l, parent_r);
+                if is_left_reachable(parent_l)
+                    && is_right_reachable(parent_r)
+                    && result.binary_search(&parent).is_err()
+                {
+                    result.push(parent);
+                    result.sort_unstable();
+                }
+                (
+                    self.pair_contexts.intern(&result),
+                    self.pair_contexts.empty(),
+                )
+            }
+        }
+    }
+
     /// Intern `ctx` extended with `class` (no-op when already present).
     ///
     /// Identity padding needs this: the injected identity class is not a
     /// structural child of any member, so [`Self::derive_child_context`]'s
     /// reachability filter records nothing for it, and without the extension
-    /// a padding-created cell can repeat its ancestor's OR key
-    /// `(l, r, ctxL, ctxR)` exactly. Extending the padded cell's contexts
+    /// a padding-created cell can repeat its ancestor's full OR key exactly.
+    /// Extending the padded cell's side contexts
     /// restores the rank argument's "context grows" disjunct (§3.2):
     /// contexts are bounded by the class count, so the recursion terminates.
     pub fn extend_context(&mut self, ctx: A::Context, class: A::Class) -> A::Context {
@@ -436,33 +558,58 @@ impl<A: AuIds> SearchSpace<A> {
         self.contexts.intern(&classes)
     }
 
+    /// Apply the identity-padding rank guard to side contexts. Pair mode
+    /// already blocks an exact child-pair recurrence, so no synthetic pair is
+    /// needed for padding.
+    pub fn extend_child_contexts(
+        &mut self,
+        ctx_l: A::Context,
+        ctx_r: A::Context,
+        class: A::Class,
+    ) -> (A::Context, A::Context) {
+        match self.cycle_mode {
+            CycleMode::Pair => (ctx_l, ctx_r),
+            CycleMode::AncestorOnly | CycleMode::CurrentInclusive => (
+                self.extend_context(ctx_l, class),
+                self.extend_context(ctx_r, class),
+            ),
+        }
+    }
+
     /// Check if an action's child pair is blocked by the cycle mode filter.
     pub fn is_cycle_blocked(&self, or_id: A::Or, child_l: A::Class, child_r: A::Class) -> bool {
         let ctx_l = *self.or_arena.left_ctx.get(or_id.to_index());
         let ctx_r = *self.or_arena.right_ctx.get(or_id.to_index());
 
-        if self.contexts.contains(ctx_l, child_l) {
-            return true;
-        }
-        if self.contexts.contains(ctx_r, child_r) {
-            return true;
-        }
-
-        if self.cycle_mode == CycleMode::CurrentInclusive {
-            let l = *self.or_arena.left.get(or_id.to_index());
-            let r = *self.or_arena.right.get(or_id.to_index());
-            if child_l == l || child_r == r {
-                return true;
+        match self.cycle_mode {
+            CycleMode::AncestorOnly => {
+                self.contexts.contains(ctx_l, child_l) || self.contexts.contains(ctx_r, child_r)
+            }
+            CycleMode::CurrentInclusive => {
+                if self.contexts.contains(ctx_l, child_l) || self.contexts.contains(ctx_r, child_r)
+                {
+                    return true;
+                }
+                let l = *self.or_arena.left.get(or_id.to_index());
+                let r = *self.or_arena.right.get(or_id.to_index());
+                child_l == l || child_r == r
+            }
+            CycleMode::Pair => {
+                if self.pair_contexts.contains(ctx_l, (child_l, child_r)) {
+                    return true;
+                }
+                let l = *self.or_arena.left.get(or_id.to_index());
+                let r = *self.or_arena.right.get(or_id.to_index());
+                child_l == l && child_r == r
             }
         }
-
-        false
     }
 
     pub fn mark(&mut self) -> SpaceToken {
         SpaceToken {
             or_arena: self.or_arena.mark(),
             contexts: self.contexts.mark(),
+            pair_contexts: self.pair_contexts.mark(),
         }
     }
 
@@ -471,11 +618,13 @@ impl<A: AuIds> SearchSpace<A> {
     pub fn is_valid_token(&self, token: &SpaceToken) -> bool {
         self.or_arena.is_valid_token(&token.or_arena)
             && self.contexts.is_valid_token(&token.contexts)
+            && self.pair_contexts.is_valid_token(&token.pair_contexts)
     }
 
     pub fn restore(&mut self, token: SpaceToken) {
         self.or_arena.restore(token.or_arena);
         self.contexts.restore(token.contexts);
+        self.pair_contexts.restore(token.pair_contexts);
     }
 }
 
@@ -590,6 +739,29 @@ mod tests {
     }
 
     #[test]
+    fn cycle_blocking_pair_preserves_one_sided_revisits() {
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::Pair);
+        let c0 = AuClassId::from_usize(0);
+        let c1 = AuClassId::from_usize(1);
+        let c2 = AuClassId::from_usize(2);
+        let (empty_l, empty_r) = space.empty_contexts();
+        let (root, _) = space.get_or_insert_or_node(c1, c2, empty_l, empty_r, 1, 1);
+
+        assert!(space.is_cycle_blocked(root, c1, c2));
+        assert!(!space.is_cycle_blocked(root, c1, c0));
+        assert!(!space.is_cycle_blocked(root, c0, c2));
+
+        let (child_l, child_r) = space.derive_child_contexts(root, c1, c0, |_| true, |_| true);
+        let (child, _) = space.get_or_insert_or_node(c1, c0, child_l, child_r, 1, 1);
+        assert!(space.is_cycle_blocked(child, c1, c2));
+        assert!(!space.is_cycle_blocked(child, c1, c1));
+        assert_eq!(
+            space.cycle_context(child),
+            CycleContext::Pairs(vec![(c1, c2)])
+        );
+    }
+
+    #[test]
     fn terminal_when_l_eq_r() {
         let mut space: SearchSpace = SearchSpace::new(CycleMode::AncestorOnly);
         let c0 = AuClassId::from_usize(0);
@@ -623,6 +795,34 @@ mod tests {
 
         // The second node was rolled back; re-inserting it is new.
         let (_, new) = space.get_or_insert_or_node(c1, c2, ctx, ctx, 1, 1);
+        assert!(new);
+    }
+
+    #[test]
+    fn mark_restore_truncates_pair_contexts() {
+        let mut space: SearchSpace = SearchSpace::new(CycleMode::Pair);
+        let c0 = AuClassId::from_usize(0);
+        let c1 = AuClassId::from_usize(1);
+        let c2 = AuClassId::from_usize(2);
+        let (empty_l, empty_r) = space.empty_contexts();
+        let (root, _) = space.get_or_insert_or_node(c0, c1, empty_l, empty_r, 1, 1);
+        let token = space.mark();
+
+        let (child_l, child_r) = space.derive_child_contexts(root, c1, c2, |_| true, |_| true);
+        let (child, _) = space.get_or_insert_or_node(c1, c2, child_l, child_r, 1, 1);
+        assert_eq!(
+            space.cycle_context(child),
+            CycleContext::Pairs(vec![(c0, c1)])
+        );
+        assert_eq!(space.pair_contexts.len().as_usize(), 2);
+
+        space.restore(token);
+        assert_eq!(space.or_arena.len(), 1);
+        assert_eq!(space.pair_contexts.len().as_usize(), 1);
+        assert_eq!(space.cycle_context(root), CycleContext::Pairs(Vec::new()));
+
+        let (child_l, child_r) = space.derive_child_contexts(root, c1, c2, |_| true, |_| true);
+        let (_, new) = space.get_or_insert_or_node(c1, c2, child_l, child_r, 1, 1);
         assert!(new);
     }
 }

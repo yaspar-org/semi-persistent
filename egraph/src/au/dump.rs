@@ -33,7 +33,7 @@ use super::actions::ActionCache;
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::exact::ExactRun;
 use super::results::BestResults;
-use super::space::SearchSpace;
+use super::space::{CycleContext, SearchSpace};
 use super::terms::{TermOp, TermPool, evaluate_generalize_action};
 
 /// One serialized search graph plus the counts the caller reports.
@@ -109,8 +109,6 @@ where
     let idx = or_id.to_index();
     let l = *space.or_arena.left.get(idx);
     let r = *space.or_arena.right.get(idx);
-    let ctx_l = *space.or_arena.left_ctx.get(idx);
-    let ctx_r = *space.or_arena.right_ctx.get(idx);
     let eg = snap.egraph();
 
     let generalize = evaluate_generalize_action(snap, pool, l, r);
@@ -130,13 +128,16 @@ where
                     cr: ClassOf<Cfg>,
                     pad: Option<ClassOf<Cfg>>|
      -> <Cfg::Au as AuIds>::Or {
-        let mut child_ctx_l =
-            space.derive_child_context(ctx_l, l, |c| snap.reachability().is_reachable(cl, c));
-        let mut child_ctx_r =
-            space.derive_child_context(ctx_r, r, |c| snap.reachability().is_reachable(cr, c));
+        let (mut child_ctx_l, mut child_ctx_r) = space.derive_child_contexts(
+            or_id,
+            cl,
+            cr,
+            |c| snap.reachability().is_reachable(cl, c),
+            |c| snap.reachability().is_reachable(cr, c),
+        );
         if let Some(id_class) = pad {
-            child_ctx_l = space.extend_context(child_ctx_l, id_class);
-            child_ctx_r = space.extend_context(child_ctx_r, id_class);
+            (child_ctx_l, child_ctx_r) =
+                space.extend_child_contexts(child_ctx_l, child_ctx_r, id_class);
         }
         let (or, is_new) = space.get_or_insert_or_node(
             cl,
@@ -298,20 +299,16 @@ where
         let idx = or.to_index();
         let l = *space.or_arena.left.get(idx);
         let r = *space.or_arena.right.get(idx);
-        let ctx_l = *space.or_arena.left_ctx.get(idx);
-        let ctx_r = *space.or_arena.right_ctx.get(idx);
-        let ctx_l: Vec<usize> = space
-            .contexts
-            .get(ctx_l)
-            .iter()
-            .map(|c| c.to_usize())
-            .collect();
-        let ctx_r: Vec<usize> = space
-            .contexts
-            .get(ctx_r)
-            .iter()
-            .map(|c| c.to_usize())
-            .collect();
+        let (ctx_l, ctx_r): (Vec<usize>, Vec<usize>) = match space.cycle_context(or) {
+            CycleContext::Sides { left, right } => (
+                left.iter().map(|c| c.to_usize()).collect(),
+                right.iter().map(|c| c.to_usize()).collect(),
+            ),
+            CycleContext::Pairs(pairs) => (
+                pairs.iter().map(|(left, _)| left.to_usize()).collect(),
+                pairs.iter().map(|(_, right)| right.to_usize()).collect(),
+            ),
+        };
         for &c in ctx_l.iter().chain(ctx_r.iter()) {
             names
                 .entry(c)

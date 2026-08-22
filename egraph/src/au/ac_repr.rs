@@ -126,8 +126,9 @@ pub fn total<C: DenseId>(m: &Monomial<C>) -> u64 {
 /// already equal. Consumers deriving cycle contexts need the provenance: the
 /// injected identity class is not a structural child of any member, so
 /// reachability-based context derivation records nothing for it, and only
-/// this annotation lets the exact solver keep its rank invariant (the OR key
-/// of a padding-created cell must differ from its ancestors').
+/// this annotation lets contextual Exact keep its rank invariant (the OR key
+/// of a padding-created cell must differ from its ancestors'). Root Exact has
+/// bare-pair states and does not need the annotation for termination.
 pub type PaddedPair<C> = (Monomial<C>, Monomial<C>, Option<C>);
 
 /// Pad the smaller of two monomials with identity copies so totals are equal.

@@ -3,23 +3,29 @@
 [Anti-Unification design](../design/19-anti-unification.md) |
 [Proof certificates](au-proof-certificates.md)
 
-The production exact solver has extensive finite differential and property
-evidence. The current Verus model proves objective-order, representation, and
-positional lower-bound lemmas. It does not prove the target theorem
-`D(A, B) = OPT(A, B)`, and it does not model the production AC/ACI and search
-machinery.
+The production pair-mode root-Exact solver performs bounded relaxation over
+the finite graph of reachable ordered class pairs and carries an achieved term
+with every value. Side-mode root Exact, UCT, and hybrid delegation instead use
+their configured contextual graph. All receive one explicit cycle policy. They
+have extensive finite differential and property evidence. The current Verus
+model proves objective-order, representation, and positional lower-bound
+lemmas. It does not prove the target theorem
+`D*(A, B) = OPT(A, B)`, the pair-cycle-erasure bound, or refinement of the Rust
+relaxation loop, and it does not model production AC/ACI and search machinery.
 
 This document separates the theorem work from validation and calibration of the
 shipping implementation.
 
-## 1. Positional `D = OPT`
+## 1. Positional `D* = OPT`
 
 ### Current state
 
 The Verus recurrence predicate requires its value to be no greater than each
 available action. The lower-bound induction proves that such a value is below
-every represented positional term pair. It does not require equality with the
-least action, and the constant-zero function satisfies the current predicate.
+every represented positional term pair. It does not define the production
+solver's depth-indexed values `D_d`, require equality with a least action, or
+connect a fixed-point iteration to an achieved witness. The constant-zero
+function satisfies the current predicate.
 
 Representation lemmas establish that structurally assembled terms exist, but
 their postconditions do not yet connect an assembled witness's quality to the
@@ -27,21 +33,28 @@ chosen recursive action.
 
 ### Gap
 
-No exported theorem states that the recurrence value is attained or equals the
-minimum represented anti-unifier quality.
+No exported theorem states that a relaxation round computes the minimum
+depth-bounded derivation, that `N` pair states suffice, or that the stabilized
+value is attained and equals the minimum represented anti-unifier quality.
 
 ### Task
 
-1. Define the recurrence by equality with the minimum action value, or construct
-   its least solution explicitly.
-2. Prove every state has a nonempty finite action set and that its minimum can
-   be selected.
-3. Strengthen the structural witness lemma with recursive witness-quality
-   premises and an assembled-quality postcondition.
-4. Prove the selected value is attained by represented terms, including the
-   treatment of cyclic e-classes.
-5. Combine attainability with the existing lower-bound induction in one
-   exported equality theorem.
+1. Define the finite root-reachable ordered-pair graph and prove every state has
+   a nonempty finite action set because generalization is always available.
+2. Define `D_0` from achieved terminal witnesses and `D_{d+1}` as the minimum
+   of `D_d` and actions composed from `D_d` children.
+3. Prove by induction that `D_d` is exactly the minimum quality of finite
+   derivations of depth at most `d`, and construct an attaining represented
+   term pair.
+4. Prove **pair-cycle erasure**: if one root-to-leaf derivation path repeats the
+   same ordered pair, replacing the ancestor occurrence by the descendant
+   preserves both projections and strictly reduces size.
+5. Derive stabilization within the number `N` of reachable pair states and
+   refine the synchronous Rust loop, including its changed/no-change test, to
+   `D_d`.
+6. Prove every represented positional term pair induces a finite action-graph
+   derivation, then combine attainability with the existing lower-bound
+   induction in one exported `D* = OPT` theorem.
 
 ### Acceptance criteria
 
@@ -50,6 +63,8 @@ minimum represented anti-unifier quality.
 - A zero recurrence cannot satisfy the strengthened recurrence except when zero
   is the actual optimum.
 - The proof constructs or identifies an attaining represented witness.
+- The theorem states the finite `N`-round bound used by `exact_fixed.rs`; no
+  arbitrary unrolling depth appears.
 - Verification passes without `admit`, `assume`, or a new trusted axiom.
 
 ## 2. Refinement to the Production Solver
@@ -61,7 +76,9 @@ uses:
 
 - AC/ACI transportation with multiplicities;
 - identity padding and canonical representatives;
-- cycle contexts and context subsumption;
+- pair-mode bare-pair bounded relaxation;
+- side- and pair-context search, including intentionally incomplete side
+  filters and side-context subsumption;
 - projection bounds and incumbent pruning;
 - Monte-Carlo graph search; and
 - exact/MCGS delegation with a shared semi-persistent session.
@@ -71,7 +88,7 @@ not refinements of the Verus recurrence yet.
 
 ### Gap
 
-Even a completed positional `D = OPT` theorem would not by itself establish
+Even a completed positional `D* = OPT` theorem would not by itself establish
 optimality or correctness of the shipping AC/ACI solver and search
 optimizations.
 
@@ -81,12 +98,21 @@ Define one refinement boundary per mechanism. Each theorem must relate a
 production action or pruning decision to the abstract action graph:
 
 - transport actions denote exactly their multiplicity-preserving projections;
+- the transport capacity boundary is either removed or represented explicitly
+  in the theorem and certificate domain;
 - identity padding and canonicalization preserve both source classes;
-- cycle filters remove only invalid cyclic derivations;
+- bare-pair action discovery includes every finite derivation needed by `OPT`;
+- pair-cycle erasure justifies the pair-mode root-Exact round bound;
+- side cycle filters preserve validity but may remove valid finite derivations,
+  so their closure theorem is scoped to the surviving contextual graph;
+- pair-context filtering preserves the pair-simple derivations admitted by the
+  pair-cycle-erasure theorem;
 - every lower bound is admissible;
 - pruning removes no action below the live incumbent;
 - context subsumption preserves the feasible result set; and
-- delegated exact results compose with MCGS bounds and certificates.
+- delegated exact results compose with MCGS bounds and contextual certificates;
+- a contextual certificate can be upgraded, but not confused, with the global
+  certificate produced by pair-mode root Exact.
 
 Porting the full solver to Verus is an alternative, larger implementation
 strategy. Until a refinement is proved, keep its claim finite and test-scoped.
@@ -95,9 +121,13 @@ strategy. Until a refinement is proved, keep its claim finite and test-scoped.
 
 - Every production-only mechanism is either covered by a refinement theorem or
   explicitly listed as tested-only.
+- No action silently omitted by an implementation capacity is covered by a
+  broader optimality theorem or certificate.
 - Refinement tests include a mutation that violates the corresponding theorem's
   premise or conclusion.
 - The exact and MCGS implementations consume one specified action semantics.
+- The certificate type or theorem statement makes the global/contextual scope
+  observable; a filtered closure is never used as a global `OPT` proof.
 - Public optimality claims name the exact theorem boundary they rely on.
 
 ## 3. Universal Optimization Lemmas
@@ -177,8 +207,10 @@ invalid projection rates separately.
 ### Current state
 
 Before a playout, an AC root enumerates representation pairs and runs transport
-feasibility for each pair. Scaling fixtures show startup cost can exceed exact
-solve time even when `hybrid_ms` is zero, so the cost is not delegated work.
+feasibility for each pair. Historical ad hoc timing of scaling fixtures observed
+startup cost exceeding exact solve time even when `hybrid_ms` was zero, so the
+cost appeared not to be delegated work. This observation is motivation, not
+current statistically controlled performance evidence.
 
 ### Gap
 
@@ -188,10 +220,10 @@ stated completeness condition.
 ### Task
 
 Attribute startup work by pair count, transport cells, feasibility failures,
-and retained actions. Evaluate sound prefilters and lazy enumeration under
-Criterion or a statistically equivalent harness. Any lazy order must retain
-fairness or provide a certificate that all potentially better pairs were
-considered.
+and retained actions. Evaluate sound prefilters and lazy enumeration with
+Criterion and retain its bootstrap confidence intervals. Any lazy order must
+retain fairness or provide a certificate that all potentially better pairs
+were considered.
 
 ### Acceptance criteria
 
@@ -269,13 +301,14 @@ When a later playout reaches a subframe that exact already solved internally,
 MCGS may reconstruct and expand the corresponding overlay state before the
 root-only bridge can benefit it. Publishing every safe completed frame could
 turn those states into terminal nodes immediately, but the state keys include
-cycle contexts and mode while the reusable session memo intentionally erases
-contexts only under a support-disjointness condition.
+side or pair contexts and the mode. The reusable session memo erases side
+contexts only under a support-disjointness condition and is disabled for pair
+contexts until its support proof preserves pair correlations.
 
 ### Task
 
 Define a publication record that maps a completed exact frame to the identical
-MCGS `(left, right, left-context, right-context, cycle-mode)` state. Publish a
+MCGS class pair, side-or-pair context, and cycle-mode state. Publish a
 term and exact marker only when completion is proved for that state. A
 context-clean bare-pair entry may serve another context only after the existing
 support-disjointness check; budget-exhausted, cycle-tainted, or merely

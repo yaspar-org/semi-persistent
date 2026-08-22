@@ -89,7 +89,11 @@ bootstrap confidence intervals.
 
 | claim | evidence | scope |
 | --- | --- | --- |
-| The Rust exact solver agrees with the definition of `OPT` on enumerable fixtures | **measured** | `au_oracle.rs`; finite instances only |
+| Pair-mode root Exact agrees with the definition of `OPT` on enumerable fixtures | **measured** | `au_oracle.rs`; small finite acyclic instances only |
+| Pair-mode search admits finite derivations through e-class cycles that side-based filters reject | code + **measured** | `(8, 3)` reproducer covers root Exact, UCT, expansion hybrid, and rollout hybrid; depth-128 cyclic-chain regression covers Exact and UCT |
+| Pair-mode root Exact stabilizes by bounded synchronous relaxation over reachable ordered class pairs | **argued** + measured | pair-cycle-erasure argument and runtime assertion; the `N`-state bound is not machine-checked |
+| One `cycle_mode` parameter is honored by root Exact, UCT, expansion hybrid, and rollout hybrid | code + **measured** | cross-mode reproducer checks distinct side/pair terms and qualities; sessions reject a mismatched UCT mode |
+| Contextual `Completion::Exact` is policy-relative, not a global-certificate bit | code + **measured** | side-mode Exact and every UCT mode close their configured contextual graph; side-mode regressions are worse than pair mode |
 | The lexicographic objective order and additive monotonicity lemmas hold | **proved** | `au-verus::objective` |
 | A preselected action that is in the action set and no worse than every action is a set minimum | **proved, conditional** | `lemma_preselected_action_is_min`; minimality is a precondition, not a conclusion about the solver |
 | Any function satisfying the current recurrence lower-bound inequalities is below every represented positional term pair | **proved** | `lemma_recurrence_below_every_pair`, induction on combined term height |
@@ -99,38 +103,40 @@ bootstrap confidence intervals.
 | Saturation separates the tested paraphrases from the planted disagreements | **measured, pilot** | `au_formalization.rs` and `au_formalizer_pilot.rs`; not a population study |
 
 The current Verus model is positional Plotkin anti-unification. It does not
-model production AC/ACI transport, identity padding, cycle contexts, pruning,
-MCGS, or exact/MCGS delegation.
+model the finite ordered-pair graph, depth-indexed relaxation,
+pair-cycle-erasure, production AC/ACI transport, identity padding, cycle
+contexts, pruning, MCGS, or exact/MCGS delegation.
 
 ### Claim not established
 
-No current theorem states or implies `D(A, B) = OPT(A, B)`. In particular,
+No current theorem states or implies `D*(A, B) = OPT(A, B)`. In particular,
 `satisfies_recurrence_lower_bounds` contains inequalities only. The
 constant-zero quality function satisfies them but generally is not attainable.
 The structural representation lemma has no quality postcondition, and the
 action-minimum lemma assumes that the chosen action is already least.
 
-The prose `D = OPT` argument in chapter 19 is therefore an unmechanized target
-theorem. The Rust exact solver's optimality is finite-test evidence, not a
-universal proved claim.
+The prose `D* = OPT` argument in chapter 19 is therefore an unmechanized target
+theorem. The Rust pair-mode exact solver's cycle-global optimality within its
+supported action domain is supported by the pair-cycle-erasure argument and
+finite tests, not a universal proved claim. Side-mode Exact makes only a
+policy-relative contextual claim.
 
-### Roadmap to `D = OPT`
+### Roadmap to `D* = OPT`
 
-1. Define the intended recurrence by equality with the minimum action cost, or
-   construct its least solution explicitly. Lower-bound inequalities alone are
-   insufficient.
-2. Prove that the action set is nonempty and that a minimum exists and can be
-   selected at each state.
-3. Strengthen the structural witness lemma with recursive child-witness
-   premises and a Plotkin-quality postcondition.
-4. Prove that the selected recurrence value is attained by represented terms,
-   including cyclic classes through an appropriate finite-term or least-solution
-   construction.
-5. Combine attainability (`OPT <= D`) with the existing lower-bound direction
-   (`D <= OPT`) in one exported theorem whose postcondition states equality.
-6. Separately refine the positional theorem to the Rust search space: AC/ACI
-   transport and multiplicities, units, cycles, pruning/bounds, MCGS, and
-   delegation. Until each refinement is proved, retain its finite-test claim.
+1. Define the finite reachable ordered-pair action graph and the constructive
+   depth-indexed recurrence `D_d`.
+2. Prove that each round computes and attains the minimum over derivations of
+   depth at most `d`.
+3. Prove pair-cycle erasure and derive stabilization within `N` reachable pair
+   states, matching `exact_fixed.rs`.
+4. Strengthen structural assembly with recursive child-witness premises and a
+   Plotkin-quality postcondition, and map every represented term pair to an
+   action-graph derivation.
+5. Combine attainability (`OPT <= D*`) with the existing lower-bound direction
+   (`D* <= OPT`) in one exported theorem whose postcondition states equality.
+6. Separately refine the positional theorem to AC/ACI transport and
+   multiplicities, units, bounds, and certificate scopes. Side-based cycle
+   filtering remains an explicitly smaller optimization domain.
 
 The maintained theorem, refinement, and validation acceptance criteria are in
 [`egraph/doc/future/au-correctness-and-validation.md`](../egraph/doc/future/au-correctness-and-validation.md).
@@ -145,6 +151,12 @@ The maintained theorem, refinement, and validation acceptance criteria are in
   [`ac-completion-limitations.md`](../egraph/doc/future/ac-completion-limitations.md).
 - `lb_pair` admissibility and edge-count sharing are exhaustively tested only
   on the recorded small instances.
+- Pair-cycle erasure and the `N`-round pair-mode Exact bound are prose arguments
+  with regressions, not verified theorems.
+- Transport representation pairs with a margin above `u32::MAX` are omitted
+  from the certified action domain.
+- Contextual closure is exact only for its configured action graph; side modes
+  may be worse than the global finite-term optimum.
 - The formalizer measurement is a pilot from one system under fixed policies.
 - Delegation is not generally profitable. It helps when rollout error is
   concentrated in exact-solvable subproblems and loses when the error is at the

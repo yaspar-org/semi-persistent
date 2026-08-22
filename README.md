@@ -29,13 +29,16 @@ Four contributions:
    performs O(1) LCA queries, and writes one deterministic proof-path record per
    e-node. These records are not yet independently replay-checked certificates.
 
-4. **Anti-unification over the shared e-graph**: exact branch-and-bound and
-   Monte-Carlo graph search operate over everything saturation has proved
-   equal, so differently written rewrites can become shared structure.
-   Exact-solver optimality, bounds, transport, and delegation have finite
-   oracle/property evidence. The Verus crate proves objective and positional
-   lower-bound lemmas; it does not yet prove `D = OPT` or refine the Rust
-   AC/ACI solver. ([chapter 19](egraph/doc/design/19-anti-unification.md))
+4. **Anti-unification over the shared e-graph**: Exact, Monte-Carlo graph
+   search, and both hybrid paths share an explicit side- or ordered-pair cycle
+   policy. Pair-mode Exact uses bounded relaxation over the finite ordered-pair
+   graph; the side modes solve their filtered contextual graphs. All modes
+   operate over everything saturation has proved equal, so differently written
+   rewrites can become shared structure. Optimality, bounds, transport, and
+   delegation have finite oracle/property evidence. The Verus crate proves
+   objective and positional lower-bound lemmas; it does not yet prove
+   `D* = OPT` or refine the Rust AC/ACI solver.
+   ([chapter 19](egraph/doc/design/19-anti-unification.md))
 
 `TRACK=false` and `PROOFS=false` eliminate work guarded by those const
 generics. The generic structs still retain empty diff/frame/fork fields and

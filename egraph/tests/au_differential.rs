@@ -26,8 +26,10 @@
 //! `size` and `vmass` (the lexicographic key the solvers minimize), plus
 //! `certified` for MCGS. The harness additionally asserts, per instance:
 //! the exact term's two projections materialize back into the source
-//! classes; MCGS never beats the exact size; a `Completion::Exact`
-//! certificate implies the exact quality tuple.
+//! classes; MCGS never beats the exact size on this corpus; and a
+//! `Completion::Exact` certificate implies the exact quality tuple on this
+//! corpus. The last property is not the general UCT contract: its cycle filter
+//! can exclude finite derivations, as the dedicated cyclic regressions show.
 //!
 //! Modes:
 //!
@@ -48,10 +50,10 @@
 //!   — the exact value is a min, and a min is order-invariant; changed `mcgs`
 //!   lines indicate a heuristic-output change and require an
 //!   intentional fixture regeneration.
-//! * Projection pruning, dominance pruning, and context subsumption
-//!   additionally run flag-off vs flag-on in their own suites and assert
-//!   equal exact quality tuples; this fixture
-//!   then pins the flag-on outputs.
+//! * Projection and dominance pruning additionally run flag-off vs flag-on in
+//!   their own suites and assert equal quality tuples. The retained root
+//!   `context_subsumption` flag has a separate compatibility-no-op check;
+//!   contextual subsumption is exercised by delegated-Exact tests.
 //!
 //! `determinism_self_check` builds the corpus twice in-process and asserts
 //! the generated fixture text is identical; the write path performs the
@@ -67,6 +69,7 @@ use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{
     AuAlgorithm, AuConfig, AuResult, Completion, anti_unify,
 };
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::au::terms::{TermId, TermOp, TermPool};
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::NiraLitVal;
@@ -720,6 +723,7 @@ fn run_spec(spec: Spec) -> Vec<(String, String)> {
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 ..Default::default()
             },
         )
@@ -914,6 +918,7 @@ fn pruned_exact_matches_reference() {
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 ..Default::default()
             },
         )
@@ -927,6 +932,7 @@ fn pruned_exact_matches_reference() {
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 exact_pruning: true,
                 ..Default::default()
             },
@@ -965,23 +971,13 @@ fn pruned_exact_matches_reference() {
     );
 }
 
-/// Context-subsumption flag-on check: the
-/// exact solver with `context_subsumption: true` must report, on every
-/// corpus instance, the same quality tuple the committed fixture's `exact`
-/// line pins. The fixture was captured with the flag off, so equality here
-/// is the claim that bare-pair reuse of context-clean results returns the
-/// exact optimum of every reusing state. Runs twice per instance: the flag
-/// alone with `exact_pruning` off, to isolate the reuse rule, and both
-/// flags on, the combination production uses. Prints the exact-only corpus
-/// wall time for the reference and both flag-on configurations (visible
-/// under `--nocapture`).
+/// Pair-mode root Exact is keyed by bare pair, so sharing is inherent and
+/// `context_subsumption` must have no effect there. Side-mode and delegated
+/// Exact retain their support-checked reuse and separate tests.
 #[test]
-fn subsumed_exact_matches_reference() {
+fn root_exact_context_subsumption_flag_is_a_noop() {
     let golden = read_golden();
     let mut checked = 0usize;
-    let mut reference_total = Duration::ZERO;
-    let mut subsumed_total = Duration::ZERO;
-    let mut combined_total = Duration::ZERO;
     for spec in full_specs() {
         let id = spec.id();
         let inst = spec.build();
@@ -993,54 +989,52 @@ fn subsumed_exact_matches_reference() {
             .find_map(|line| line.strip_prefix(&format!("{key} :: ")))
             .unwrap_or_else(|| panic!("{key}: no exact line in the golden fixture; {REGEN_HINT}"));
 
-        let start = Instant::now();
-        anti_unify(
+        let reference = anti_unify(
             &snap,
             inst.left,
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 ..Default::default()
             },
         )
         .unwrap();
-        reference_total += start.elapsed();
 
-        for (exact_pruning, total) in [(false, &mut subsumed_total), (true, &mut combined_total)] {
-            let start = Instant::now();
-            let subsumed = anti_unify(
+        for exact_pruning in [false, true] {
+            let flagged = anti_unify(
                 &snap,
                 inst.left,
                 inst.right,
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     context_subsumption: true,
                     exact_pruning,
                     ..Default::default()
                 },
             )
             .unwrap();
-            *total += start.elapsed();
 
             let got = format!(
                 "size={} vmass={}",
-                subsumed.size,
-                subsumed.pool.variant_mass(subsumed.term_id)
+                flagged.size,
+                flagged.pool.variant_mass(flagged.term_id)
             );
-            assert_eq!(
-                got, want,
-                "{id} (exact_pruning={exact_pruning}): subsumed exact quality diverges from \
-                 the fixture's exact line; context_subsumption reused a result that is not \
-                 the exact optimum of the reusing state"
-            );
+            let expected = if exact_pruning {
+                want.to_owned()
+            } else {
+                format!(
+                    "size={} vmass={}",
+                    reference.size,
+                    reference.pool.variant_mass(reference.term_id)
+                )
+            };
+            assert_eq!(got, expected, "{id}: compatibility flag changed root Exact");
             checked += 1;
         }
     }
-    println!(
-        "subsumed_exact_matches_reference: {checked} runs, exact corpus wall time reference \
-         {reference_total:.2?} -> subsumption {subsumed_total:.2?} -> subsumption+pruning \
-         {combined_total:.2?}"
-    );
+    println!("root_exact_context_subsumption_flag_is_a_noop: {checked} compatibility runs");
 }
 
 /// Dominance-pruning flag-on check: MCGS

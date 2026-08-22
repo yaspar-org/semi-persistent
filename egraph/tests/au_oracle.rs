@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! An independent oracle for the exact anti-unification solver.
 //!
-//! Every optimality claim the solver makes rests on three properties that are
-//! argued in prose and not otherwise checked: that the objective is a function
+//! Three production claims exercised here are that the objective is a function
 //! of the two e-classes rather than of which members the search happened to
-//! enumerate, that the admissible bounds never overestimate, and that counting
-//! shared children by edge rather than by node leaves the optimum unchanged.
+//! enumerate, that the checked admissible bounds never overestimate, and that
+//! counting shared children by edge rather than by node leaves the optimum
+//! unchanged on this finite domain. Pair-cycle erasure, AC/ACI semantics, and
+//! refinement of the production relaxation loop are separate obligations.
 //!
 //! This file checks all three at once, on instances small enough to settle by
 //! brute force, and it does so without reusing any of the solver's machinery.
@@ -17,10 +18,12 @@
 //! ```
 //!
 //! under the lexicographic key `(size, variant_mass)`. So the oracle enumerates
-//! every ground term of each class, runs the textbook first-order
-//! anti-unification of Plotkin on every pair, and takes the minimum. A
-//! disagreement with the solver is a defect in the solver, in the cost model, or
-//! in this specification, and all three are worth knowing about.
+//! every ground term of each class, runs a certificate-carrying extension of
+//! Plotkin's structural recurrence on every pair, and takes the minimum. A
+//! mismatch becomes `Variants(left, right)` and costs the complete hidden mass,
+//! not one syntactic variable node. A disagreement with the solver is a defect
+//! in the solver, in the cost model, or in this specification, and all three are
+//! worth knowing about.
 //!
 //! Scope, stated rather than implied. The oracle enumerates terms, so it needs
 //! the reachable term set to be finite and small: the instances here are acyclic
@@ -33,6 +36,7 @@ use std::collections::HashMap;
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::NiraLitVal;
 use semi_persistent_egraph::multiplicity::MultiplicityLike;
@@ -140,14 +144,15 @@ fn terms_of(
     Some(out)
 }
 
-/// Plotkin's first-order anti-unification of two ground terms, returning the
-/// lexicographic quality key `(size, variant_mass)`.
+/// Plotkin's structural recurrence extended with projection-carrying mismatch
+/// nodes, returning the production lexicographic quality key
+/// `(size, variant_mass)`.
 ///
 /// Same operator and arity recurses. Anything else is a generalized position,
-/// and the cost model is the one the solver documents: `size` counts CONCRETE
-/// nodes, so a variable costs the mass it hides, `size(a) + size(b)`, rather
-/// than one node for the variable itself. `variant_mass` is that same hidden
-/// mass, which makes `size - variant_mass` the shared backbone.
+/// represented here as `Variants(a, b)`. The cost model is the one the solver
+/// documents: `size` counts the hidden projection mass `size(a) + size(b)`,
+/// rather than assigning a standard lgg variable size one. `variant_mass` is
+/// that same hidden mass, which makes `size - variant_mass` the shared backbone.
 ///
 /// Getting this wrong is what the first run of this oracle caught, in the
 /// oracle rather than in the solver: pricing a variable at one node made the
@@ -156,8 +161,8 @@ fn plotkin(a: &Term, b: &Term) -> (u32, u32) {
     plotkin_mod(a, b, &[])
 }
 
-/// Plotkin, extended to operators in `comm` whose children are a multiset
-/// rather than a sequence.
+/// The projection-carrying recurrence, further extended to operators in `comm`
+/// whose children are a multiset rather than a sequence.
 ///
 /// For a commutative operator the positional zip is not the anti-unifier: any
 /// bijection between the two member lists is admissible and the best one wins.
@@ -253,8 +258,8 @@ fn solver(eg: &Eg, l: ENodeId, r: ENodeId) -> (u32, u32) {
         r,
         &AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             ..Default::default()
         },
     )
@@ -360,8 +365,8 @@ fn reported_size_matches_the_returned_term() {
                 r,
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     exact_pruning: true,
-                    context_subsumption: true,
                     ..Default::default()
                 },
             )
@@ -386,15 +391,15 @@ fn pruning_does_not_change_the_optimum() {
         for merges in 0..=4 {
             let (eg, l, r) = fixture(depth, merges);
             let snap = AuSnapshot::new(&eg).unwrap();
-            let run = |pruning: bool, subsumption: bool| {
+            let run = |pruning: bool| {
                 let res = anti_unify(
                     &snap,
                     l,
                     r,
                     &AuConfig {
                         algorithm: AuAlgorithm::Exact,
+                        cycle_mode: CycleMode::Pair,
                         exact_pruning: pruning,
-                        context_subsumption: subsumption,
                         ..Default::default()
                     },
                 )
@@ -402,16 +407,11 @@ fn pruning_does_not_change_the_optimum() {
                 assert_eq!(res.completion, Completion::Exact);
                 (res.size, res.pool.variant_mass(res.term_id))
             };
-            let bare = run(false, false);
+            let bare = run(false);
             assert_eq!(
-                run(true, false),
+                run(true),
                 bare,
                 "depth={depth} merges={merges}: bounds pruning moved the optimum"
-            );
-            assert_eq!(
-                run(true, true),
-                bare,
-                "depth={depth} merges={merges}: subsumption moved the optimum"
             );
         }
     }

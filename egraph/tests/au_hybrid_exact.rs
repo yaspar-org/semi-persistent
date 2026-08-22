@@ -108,8 +108,8 @@ fn exact(inst: &Instance) -> (u32, u32) {
         inst.right,
         &AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             ..Default::default()
         },
     )

@@ -1023,6 +1023,7 @@ fn parse_command(
             let mut max_size = u32::MAX;
             let mut playouts = 1000u64;
             let mut algorithm = "uct".to_string();
+            let mut cycle_mode = "sides".to_string();
             loop {
                 ws(input)?;
                 if input.starts_with(')') {
@@ -1044,6 +1045,9 @@ fn parse_command(
                 } else if input.starts_with(":algorithm") {
                     *input = &input[":algorithm".len()..];
                     algorithm = ident(input)?.to_string();
+                } else if input.starts_with(":cycles") {
+                    *input = &input[":cycles".len()..];
+                    cycle_mode = kw_token(input)?.to_string();
                 } else {
                     break;
                 }
@@ -1054,6 +1058,7 @@ fn parse_command(
                 max_size,
                 playouts,
                 algorithm,
+                cycle_mode,
             })
         }
         "antiunify" => {
@@ -1063,6 +1068,7 @@ fn parse_command(
             let right = parse_term_inner(input, base)?;
             let mut playouts = 1000u64;
             let mut algorithm = "uct".to_string();
+            let mut cycle_mode = "sides".to_string();
             loop {
                 ws(input)?;
                 if input.starts_with(')') {
@@ -1074,6 +1080,9 @@ fn parse_command(
                 } else if input.starts_with(":algorithm") {
                     *input = &input[":algorithm".len()..];
                     algorithm = ident(input)?.to_string();
+                } else if input.starts_with(":cycles") {
+                    *input = &input[":cycles".len()..];
+                    cycle_mode = kw_token(input)?.to_string();
                 } else {
                     break;
                 }
@@ -1083,6 +1092,7 @@ fn parse_command(
                 right,
                 playouts,
                 algorithm,
+                cycle_mode,
             })
         }
         _ => {

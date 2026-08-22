@@ -9,6 +9,7 @@
 use semi_persistent_egraph::EGraph63;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::literal::NiraLitVal;
 
 type Eg64 = EGraph63<NiraLitVal, false, false>;
@@ -94,6 +95,55 @@ fn config64_cycle_filtering_terminates() {
     )
     .unwrap();
     assert!(result.size > 0);
+}
+
+/// Config64 must route the requested cycle policy through both public
+/// algorithms. This cyclic input gives each policy a distinct optimum, so a
+/// silently hardcoded policy cannot pass.
+#[test]
+fn config64_exact_and_uct_honor_all_cycle_modes() {
+    let mut eg = Eg64::new();
+    let sort = eg.intern_sort("E");
+    let a_op = eg.register_op0("a", sort);
+    let f = eg.register_op1("f", sort, sort);
+    let h = eg.register_op2("h", sort, sort, sort);
+
+    let c0 = eg.add(a_op, &[]);
+    let c3 = eg.add(f, &[c0]);
+    let c1 = eg.add(h, &[c3, c3]);
+    let c2 = eg.add(h, &[c0, c1]);
+    let c3_h = eg.add(h, &[c0, c3]);
+    eg.merge(c3, c3_h);
+    eg.rebuild();
+
+    let snap = AuSnapshot::new(&eg).unwrap();
+    for (cycle_mode, expected) in [
+        (CycleMode::AncestorOnly, (9, 7)),
+        (CycleMode::CurrentInclusive, (9, 9)),
+        (CycleMode::Pair, (8, 3)),
+    ] {
+        for algorithm in [AuAlgorithm::Exact, AuAlgorithm::Uct] {
+            let result = anti_unify(
+                &snap,
+                c2,
+                c3,
+                &AuConfig {
+                    algorithm,
+                    cycle_mode,
+                    playouts: 10_000,
+                    closed_bit: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(result.completion, Completion::Exact);
+            assert_eq!(
+                result.pool.quality(result.term_id),
+                expected,
+                "{algorithm:?} ignored {cycle_mode:?}"
+            );
+        }
+    }
 }
 
 /// Identical lexicographic result at both widths on the same problem.

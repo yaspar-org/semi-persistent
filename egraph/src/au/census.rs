@@ -17,9 +17,10 @@
 //! actions plus feasible transport descriptors (one per AC/ACI representation
 //! pair), `l == r` nodes are terminal with `A(v) = 0`, and child contexts are
 //! derived without the exact solver's identity-padding extension. On an
-//! instance with no AC operator the two conventions coincide and the state
-//! count equals the unpruned exact solver's OR arena size, which
-//! `census_matches_exact_arena` pins.
+//! instance with no AC operator the MCGS conventions coincide with side-mode
+//! contextual Exact, and their state counts agree; the
+//! `census_matches_exact_arena` test pins that internal correspondence. This is
+//! not a comparison with pair-mode root Exact's bare-pair graph.
 //!
 //! Both flavors of pruning shrink the real budget below this number:
 //! `dominance_pruning` drops provably non-optimal actions before they are
@@ -76,12 +77,12 @@ where
     let mut space: SearchSpace<Cfg::Au> = SearchSpace::new(cycle_mode);
     let mut cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M> =
         ActionCache::without_ac_actions(usize::MAX);
-    let empty_ctx = space.contexts.empty();
+    let (empty_l, empty_r) = space.empty_contexts();
     let (root_or, _) = space.get_or_insert_or_node(
         l_root,
         r_root,
-        empty_ctx,
-        empty_ctx,
+        empty_l,
+        empty_r,
         snap.best_size(l_root),
         snap.best_size(r_root),
     );
@@ -127,9 +128,6 @@ where
         if l == r {
             continue;
         }
-        let ctx_l = *space.or_arena.left_ctx.get(arena_idx);
-        let ctx_r = *space.or_arena.right_ctx.get(arena_idx);
-
         let mut n_actions = 0u64;
         generate_actions(snap, &mut cache, l, r);
         let structural: Vec<(Vec<(ClassOf<Cfg>, ClassOf<Cfg>)>, bool)> = cache
@@ -151,7 +149,7 @@ where
             }
             n_actions += 1;
             for &(cl, cr) in pairs {
-                let child = child_or(snap, &mut space, l, r, ctx_l, ctx_r, cl, cr);
+                let child = child_or(snap, &mut space, or_id, cl, cr);
                 push_unvisited(&mut stack, &visited, child);
             }
         }
@@ -165,7 +163,7 @@ where
                     if !desc.legal_cells[i * n_cols + j] {
                         continue;
                     }
-                    let child = child_or(snap, &mut space, l, r, ctx_l, ctx_r, lc, rc);
+                    let child = child_or(snap, &mut space, or_id, lc, rc);
                     push_unvisited(&mut stack, &visited, child);
                 }
             }
@@ -179,24 +177,23 @@ where
 }
 
 /// The OR node one child pair lands in, derived as MCGS derives it.
-#[allow(clippy::too_many_arguments)]
 fn child_or<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     space: &mut SearchSpace<Cfg::Au>,
-    l: ClassOf<Cfg>,
-    r: ClassOf<Cfg>,
-    ctx_l: <Cfg::Au as AuIds>::Context,
-    ctx_r: <Cfg::Au as AuIds>::Context,
+    parent_or: <Cfg::Au as AuIds>::Or,
     cl: ClassOf<Cfg>,
     cr: ClassOf<Cfg>,
 ) -> <Cfg::Au as AuIds>::Or
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    let child_ctx_l =
-        space.derive_child_context(ctx_l, l, |c| snap.reachability().is_reachable(cl, c));
-    let child_ctx_r =
-        space.derive_child_context(ctx_r, r, |c| snap.reachability().is_reachable(cr, c));
+    let (child_ctx_l, child_ctx_r) = space.derive_child_contexts(
+        parent_or,
+        cl,
+        cr,
+        |c| snap.reachability().is_reachable(cl, c),
+        |c| snap.reachability().is_reachable(cr, c),
+    );
     let (or, _) = space.get_or_insert_or_node(
         cl,
         cr,
@@ -267,8 +264,8 @@ mod tests {
         (eg, left, right)
     }
 
-    /// Without AC the census walks the same states the unpruned exact solver
-    /// creates, so the state counts must agree exactly.
+    /// Without AC the census walks the same states the unpruned contextual
+    /// Exact solver creates, so the state counts must agree exactly.
     #[test]
     fn census_matches_exact_arena() {
         for (cycles, depth) in [(2usize, 1usize), (3, 2), (4, 2), (5, 3)] {

@@ -54,6 +54,17 @@ impl std::fmt::Display for InterpError {
     }
 }
 
+fn parse_au_cycle_mode(value: &str) -> Result<crate::au::space::CycleMode, InterpError> {
+    match value {
+        "sides" => Ok(crate::au::space::CycleMode::AncestorOnly),
+        "sides-current" => Ok(crate::au::space::CycleMode::CurrentInclusive),
+        "pair" => Ok(crate::au::space::CycleMode::Pair),
+        other => Err(InterpError::CheckFailed(format!(
+            "unknown AU cycle mode '{other}' (expected sides, sides-current, or pair)"
+        ))),
+    }
+}
+
 struct Mark<Cfg: EGraphConfig, O> {
     token: EGraphToken,
     rules_len: usize,
@@ -625,6 +636,7 @@ where
                 right,
                 playouts,
                 algorithm,
+                cycle_mode,
             } => {
                 let before = self.eg.node_count();
                 let (l_id, _) = self.build_cterm(left);
@@ -648,6 +660,7 @@ where
 
                 let config = crate::au::session::AuConfig {
                     algorithm: alg,
+                    cycle_mode: parse_au_cycle_mode(cycle_mode)?,
                     playouts: *playouts,
                     ..Default::default()
                 };
@@ -688,6 +701,7 @@ where
                 max_size,
                 playouts,
                 algorithm,
+                cycle_mode,
             } => {
                 let before = self.eg.node_count();
                 let (l_id, _) = self.build_cterm(left);
@@ -711,6 +725,7 @@ where
 
                 let config = crate::au::session::AuConfig {
                     algorithm: alg,
+                    cycle_mode: parse_au_cycle_mode(cycle_mode)?,
                     playouts: *playouts,
                     ..Default::default()
                 };

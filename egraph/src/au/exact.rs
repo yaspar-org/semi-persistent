@@ -1,11 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Memoized exact solver: `eager_with_memo` (§3.2).
+//! Exact dispatch plus the contextual exact solver.
 //!
-//! Dynamic programming over cycle-context states. For non-AC operators: enumerates
-//! every surviving action and takes the minimum. For AC/ACI: solves each cell
-//! subproblem once, then finds the optimal matching via min-cost transportation.
-//! Memoization on states = node sharing: each distinct subproblem is solved once.
+//! Root [`eager_with_memo`] obeys its [`CycleMode`]: pair mode delegates to the
+//! bounded bare-pair fixed point in `exact_fixed`, while the two side modes run
+//! the contextual solver below from an empty side context. MCGS delegates both
+//! side- and pair-context states here. For non-AC operators the contextual
+//! solver enumerates every surviving action; for AC/ACI it solves min-cost
+//! transportation. Its optimum is relative to that contextual action graph.
 
 use std::collections::HashMap;
 
@@ -20,7 +22,7 @@ use super::actions::{ActionCache, ActionPair, generate_actions};
 use super::egraph_api::{AuSnapshot, ClassOf};
 use super::estimates::{lb_pair, static_generalize_quality, transport_pair_lb};
 use super::results::BestResults;
-use super::space::{CycleMode, SearchSpace};
+use super::space::{CycleContext, CycleMode, SearchSpace};
 use super::terms::{TermOp, TermPool, build_best_term, evaluate_generalize_action};
 use super::transport::{Cell, TransportProblem, solve_transport};
 
@@ -127,14 +129,15 @@ fn sorted_disjoint<C: Ord>(a: &[C], b: &[C]) -> bool {
     true
 }
 
-/// Run the exact solver from a root class pair, returning the optimal anti-unifier.
+/// Run Exact from a root class pair under the requested cycle policy.
 ///
 /// Errors with `AuError::NoFiniteRepresentative` if either root (or any class
 /// reachable from one) has no admissible finite member (§4.1).
 ///
-/// AC/ACI operators are solved via min-cost transportation (§3.4.4): each cell
-/// subproblem is solved once and the optimal matching is found by flow, so no
-/// matrix is ever materialized. Non-AC actions use the cached action list.
+/// Pair mode uses bounded relaxation over the finite ordered-pair graph. The
+/// two side modes use the contextual solver below. AC/ACI operators are
+/// solved via min-cost transportation (§3.4.4); matching permutations are not
+/// enumerated.
 pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l_root: ClassOf<Cfg>,
@@ -144,17 +147,18 @@ pub fn eager_with_memo<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: boo
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    // No deadline, no pruning, no subsumption: this entry point is the
-    // reference search the differential fixture pins; `AuConfig`'s
-    // `exact_pruning` and `context_subsumption` opt in via `run_exact`.
-    let run = run_exact(snap, l_root, r_root, cycle_mode, None, false, false)?;
-    Ok((run.term, run.pool))
+    if cycle_mode == CycleMode::Pair {
+        let (run, pool) = super::exact_fixed::run(snap, l_root, r_root, None, false)?;
+        Ok((run.term, pool))
+    } else {
+        let run = run_exact(snap, l_root, r_root, cycle_mode, None, false, false)?;
+        Ok((run.term, run.pool))
+    }
 }
 
-/// Everything one exact solve builds: the optimal term plus the search space,
-/// action cache, and best-result table it was derived from. `eager_with_memo`
-/// exposes the term and pool; the test-only search-graph dump (`au::dump`)
-/// reads the rest, so the extra fields are unused outside `cfg(test)`.
+/// Everything one contextual exact solve builds: the term plus the search
+/// space, action cache, and best-result table it was derived from. The
+/// test-only search-graph dump (`au::dump`) reads these fields.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ExactRun<Cfg: EGraphConfig> {
     pub(crate) term: <Cfg::Au as AuIds>::Term,
@@ -163,14 +167,16 @@ pub(crate) struct ExactRun<Cfg: EGraphConfig> {
     pub(crate) cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M>,
     pub(crate) results: BestResults<Cfg::Au>,
     pub(crate) root_or: <Cfg::Au as AuIds>::Or,
-    /// True when the solve ran to completion (the term is the proven
-    /// optimum); false when a deadline expired and `term` is the root
-    /// frame's incumbent — feasible by construction, optimal only if the
-    /// completed actions happened to include the optimum.
+    /// True when the solve ran to completion (the term carries the
+    /// implementation's contextual exactness assertion); false when a deadline
+    /// expired and `term` is the root frame's incumbent -- feasible by
+    /// construction, optimal only if the completed actions happened to include
+    /// the optimum.
+    #[allow(dead_code)]
     pub(crate) complete: bool,
 }
 
-/// [`eager_with_memo`] with the full solver state returned instead of dropped.
+/// Run the contextual solver from an empty context and return its full state.
 ///
 /// `deadline`: `None` runs to completion (today's behavior). `Some(d)` makes
 /// the solve anytime: on expiry the loop unwinds and returns the root frame's
@@ -184,6 +190,7 @@ pub(crate) struct ExactRun<Cfg: EGraphConfig> {
 /// `subsumption`: bare-pair reuse of context-clean results;
 /// see [`SubsumptionState`] and [`solve_iterative`]. `false` is the
 /// reference search.
+#[allow(dead_code)]
 pub(crate) fn run_exact<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
     l_root: ClassOf<Cfg>,
@@ -207,6 +214,13 @@ where
         ActionCache::without_ac_actions(usize::MAX);
     let mut results: BestResults<Cfg::Au> = BestResults::new();
 
+    let root_context = match cycle_mode {
+        CycleMode::Pair => CycleContext::Pairs(Vec::new()),
+        CycleMode::AncestorOnly | CycleMode::CurrentInclusive => CycleContext::Sides {
+            left: Vec::new(),
+            right: Vec::new(),
+        },
+    };
     let (root_or, term, complete) = solve_entry(
         snap,
         &mut space,
@@ -215,11 +229,10 @@ where
         &mut results,
         l_root,
         r_root,
-        &[],
-        &[],
+        &root_context,
         deadline,
         pruning,
-        subsumption,
+        subsumption && cycle_mode != CycleMode::Pair,
         None,
         None,
     );
@@ -235,10 +248,8 @@ where
     })
 }
 
-/// Solve one entry state on caller-owned layers: intern the two entry
-/// contexts, create the OR node for `(l, r, ctxL, ctxR)`, and run the memoized
-/// search from it. `run_exact` calls it with empty contexts (the root entry);
-/// `run_exact_at` calls it with a subproblem's own contexts.
+/// Solve one entry state on caller-owned layers: intern its side or pair
+/// context, create the OR node, and run the memoized search from it.
 #[allow(clippy::too_many_arguments)]
 fn solve_entry<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     snap: &AuSnapshot<Cfg, L, T, P>,
@@ -248,8 +259,7 @@ fn solve_entry<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
     results: &mut BestResults<Cfg::Au>,
     l_root: ClassOf<Cfg>,
     r_root: ClassOf<Cfg>,
-    ctx_l: &[ClassOf<Cfg>],
-    ctx_r: &[ClassOf<Cfg>],
+    context: &CycleContext<ClassOf<Cfg>>,
     deadline: Option<std::time::Duration>,
     pruning: bool,
     subsumption: bool,
@@ -259,12 +269,12 @@ fn solve_entry<Cfg: EGraphConfig, L: LitVal, const T: bool, const P: bool>(
 where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    debug_assert!(
-        ctx_l.windows(2).all(|w| w[0] < w[1]) && ctx_r.windows(2).all(|w| w[0] < w[1]),
-        "the context interner stores contexts sorted and deduplicated"
-    );
-    let ctx_l = space.contexts.intern(ctx_l);
-    let ctx_r = space.contexts.intern(ctx_r);
+    debug_assert!(match context {
+        CycleContext::Sides { left, right } =>
+            left.windows(2).all(|w| w[0] < w[1]) && right.windows(2).all(|w| w[0] < w[1]),
+        CycleContext::Pairs(pairs) => pairs.windows(2).all(|w| w[0] < w[1]),
+    });
+    let (ctx_l, ctx_r) = space.intern_cycle_context(context);
     let l_best = snap.best_size(l_root);
     let r_best = snap.best_size(r_root);
     let (root_or, _) = space.get_or_insert_or_node(l_root, r_root, ctx_l, ctx_r, l_best, r_best);
@@ -287,25 +297,24 @@ where
     (root_or, term, complete)
 }
 
-/// The optimum of one exact solve entered at an arbitrary OR state.
+/// The result of one contextual exact solve entered at an arbitrary OR state.
 pub(crate) struct ExactAt<T> {
     /// The winning term, interned in the pool the caller passed in.
     pub(crate) term: T,
-    /// True when the search ran to completion, so `term` is the proven optimum
-    /// of the entry state; false when a deadline expired and `term` is only the
-    /// entry frame's incumbent (feasible, not certified).
+    /// True when the search ran to completion, so `term` carries the
+    /// implementation's exactness assertion for the entry state; false when a
+    /// deadline or node budget expired and `term` is only the entry frame's
+    /// incumbent (feasible, not certified).
     pub(crate) complete: bool,
 }
 
-/// Run the exact solver from an arbitrary OR state `(l, r, ctxL, ctxR)`
-/// instead of the root's empty contexts, interning its terms into a
+/// Run the exact solver from an arbitrary side-context or pair-context OR
+/// state instead of the root's empty context, interning its terms into a
 /// caller-owned pool.
 ///
-/// `ctx_l`/`ctx_r` are ascending-sorted, deduplicated class lists, the form
-/// `ContextStore` stores, so a caller passes `contexts.get(id)` straight
-/// through. Together with `cycle_mode` they define exactly the subproblem the
-/// caller's own OR node stands for, so the returned optimum is the optimum of
-/// that node.
+/// `context` is copied from the caller's [`SearchSpace`]. Together with
+/// `cycle_mode` it defines the same subproblem the caller's own OR node stands
+/// for, so a completed call carries that node's contextual exactness assertion.
 ///
 /// The search runs on layers created here (its own search space, action cache,
 /// and result table), so it cannot observe or disturb a caller's search state.
@@ -329,8 +338,7 @@ pub(crate) fn run_exact_at<Cfg: EGraphConfig, L: LitVal, const T: bool, const P:
     pool: &mut TermPool<Cfg::O, Cfg::V, Cfg::Au>,
     l_root: ClassOf<Cfg>,
     r_root: ClassOf<Cfg>,
-    ctx_l: &[ClassOf<Cfg>],
-    ctx_r: &[ClassOf<Cfg>],
+    context: &CycleContext<ClassOf<Cfg>>,
     cycle_mode: CycleMode,
     deadline: Option<std::time::Duration>,
     pruning: bool,
@@ -346,9 +354,8 @@ where
     let mut cache: ActionCache<Cfg::O, Cfg::Au, Cfg::M> =
         ActionCache::without_ac_actions(usize::MAX);
     let mut results: BestResults<Cfg::Au> = BestResults::new();
+    let (ctx_li, ctx_ri) = space.intern_cycle_context(context);
     if let Some(term) = warm_incumbent {
-        let ctx_li = space.contexts.intern(ctx_l);
-        let ctx_ri = space.contexts.intern(ctx_r);
         let (root_or, _) = space.get_or_insert_or_node(
             l_root,
             r_root,
@@ -360,6 +367,12 @@ where
         results.ensure_capacity(root_or);
         results.offer(root_or, term, pool.quality(term));
     }
+    // The existing context-subsumption proof records independent left/right
+    // support. Pair contexts preserve correlations, so that optimization is
+    // deliberately disabled until it has a pair-support proof. This changes
+    // reuse only, never the searched action graph.
+    let subsumption = subsumption && cycle_mode != CycleMode::Pair;
+    let session_memo = if subsumption { session_memo } else { None };
     let (_, term, complete) = solve_entry(
         snap,
         &mut space,
@@ -368,8 +381,7 @@ where
         &mut results,
         l_root,
         r_root,
-        ctx_l,
-        ctx_r,
+        context,
         deadline,
         pruning,
         subsumption,
@@ -476,8 +488,6 @@ struct SolveFrame<Cfg: EGraphConfig> {
     or_id: <Cfg::Au as AuIds>::Or,
     l: ClassOf<Cfg>,
     r: ClassOf<Cfg>,
-    ctx_l: <Cfg::Au as AuIds>::Context,
-    ctx_r: <Cfg::Au as AuIds>::Context,
     actions: Vec<super::actions::Action<Cfg::O, Cfg::Au, Cfg::M>>,
     best: <Cfg::Au as AuIds>::Term,
     best_quality: (u32, u32),
@@ -726,15 +736,10 @@ where
                         (size, vmass)
                     });
 
-                    let ctx_l = *space.or_arena.left_ctx.get(or_id.to_index());
-                    let ctx_r = *space.or_arena.right_ctx.get(or_id.to_index());
-
                     stack.push(SolveFrame {
                         or_id,
                         l,
                         r,
-                        ctx_l,
-                        ctx_r,
                         actions,
                         best: generalize,
                         best_quality,
@@ -901,13 +906,13 @@ where
                             // Solve the next child pair: derive child contexts
                             // and create the child OR node at descent time.
                             let pair = action.pairs[*pair_idx];
-                            let (l, r, ctx_l, ctx_r) = (frame.l, frame.r, frame.ctx_l, frame.ctx_r);
-                            let child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
-                                snap.reachability().is_reachable(pair.left, c)
-                            });
-                            let child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                                snap.reachability().is_reachable(pair.right, c)
-                            });
+                            let (child_ctx_l, child_ctx_r) = space.derive_child_contexts(
+                                frame.or_id,
+                                pair.left,
+                                pair.right,
+                                |c| snap.reachability().is_reachable(pair.left, c),
+                                |c| snap.reachability().is_reachable(pair.right, c),
+                            );
                             let l_best_sz = snap.best_size(pair.left);
                             let r_best_sz = snap.best_size(pair.right);
                             let (child_or, _) = space.get_or_insert_or_node(
@@ -976,19 +981,22 @@ where
                                     cell.j += 1;
                                     continue;
                                 }
-                                let (l, r, ctx_l, ctx_r) =
-                                    (frame.l, frame.r, frame.ctx_l, frame.ctx_r);
-                                let mut child_ctx_l = space.derive_child_context(ctx_l, l, |c| {
-                                    snap.reachability().is_reachable(lc, c)
-                                });
-                                let mut child_ctx_r = space.derive_child_context(ctx_r, r, |c| {
-                                    snap.reachability().is_reachable(rc, c)
-                                });
+                                let (mut child_ctx_l, mut child_ctx_r) = space
+                                    .derive_child_contexts(
+                                        frame.or_id,
+                                        lc,
+                                        rc,
+                                        |c| snap.reachability().is_reachable(lc, c),
+                                        |c| snap.reachability().is_reachable(rc, c),
+                                    );
                                 // Padded pair: extend both child contexts with
                                 // the injected identity class (see CellState).
                                 if let Some(id_class) = cell.pad_identity {
-                                    child_ctx_l = space.extend_context(child_ctx_l, id_class);
-                                    child_ctx_r = space.extend_context(child_ctx_r, id_class);
+                                    (child_ctx_l, child_ctx_r) = space.extend_child_contexts(
+                                        child_ctx_l,
+                                        child_ctx_r,
+                                        id_class,
+                                    );
                                 }
                                 let (child_or, _) = space.get_or_insert_or_node(
                                     lc,
@@ -1274,9 +1282,9 @@ mod tests {
         assert!(pool.size(term) < 100);
     }
 
-    /// Both cycle modes produce valid (finite) results.
+    /// All cycle policies agree on an acyclic input.
     #[test]
-    fn exact_both_cycle_modes() {
+    fn root_exact_cycle_modes_agree_without_cycles() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
         let int = eg.intern_sort("Int");
         let a_op = eg.register_op0("a", int);
@@ -1295,10 +1303,14 @@ mod tests {
 
         let (t1, p1) = eager_with_memo(&snap, lc, rc, CycleMode::AncestorOnly).unwrap();
         let (t2, p2) = eager_with_memo(&snap, lc, rc, CycleMode::CurrentInclusive).unwrap();
+        let (t3, p3) = eager_with_memo(&snap, lc, rc, CycleMode::Pair).unwrap();
 
         // Both should find f(Variants(a,b)): size 3.
         assert_eq!(p1.size(t1), 3);
         assert_eq!(p2.size(t2), 3);
+        assert_eq!(p3.size(t3), 3);
+        assert_eq!(p1.quality(t1), p2.quality(t2));
+        assert_eq!(p1.quality(t1), p3.quality(t3));
     }
 
     /// P0 regression (ordered reorder): AU(f(a,b), f(c,b)) must be

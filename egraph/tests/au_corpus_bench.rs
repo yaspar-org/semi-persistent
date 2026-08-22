@@ -22,7 +22,7 @@
 //! * `mixed`: deceptive gadgets planted at disjoint positions of a random
 //!   backbone that also carries the crossover family's cyclic classes: the
 //!   gadget supplies the misranking, the cyclic classes supply the exact
-//!   solver's context product.
+//!   solver's reachable pair/action graph.
 //! * `rand`: the same random backbone with no gadget (the control stratum).
 //! * `xover`: the crossover family: `cycles` mutually reachable cyclic
 //!   classes under a binary backbone with hot/shared/diff leaves.
@@ -32,16 +32,16 @@
 //!   solvers enumerate the `members^2` representation-pair product.
 //!
 //! * `wide`: a deceptive gadget under a width-family spine: hard for exact
-//!   (the spine's actions all sit under the generalize value, so neither the
-//!   projection bound nor context subsumption removes them) and deceptive for
+//!   (the spine's actions all sit under the generalize value, so the
+//!   projection bound does not remove them) and deceptive for
 //!   MCGS (the gadget at the base is what the estimate misranks).
 //!
 //! Selection rule, stated because the curves are conditional on it. Ground
-//! truth is the exact solver with `exact_pruning` and `context_subsumption`
-//! on, under `EXACT_GUARD`; an instance that does not finish is dropped. The
+//! truth is explicitly pair-mode root Exact with `exact_pruning` on, under
+//! `EXACT_GUARD`; an instance that does not finish is dropped. The
 //! plan called for a 10 ms hardness floor as well, and the calibration sweep
 //! (`calibrate_hardness`) shows why this harness does not apply one by
-//! default: with projection pruning and context subsumption on, the cyclic
+//! default: in the predecessor campaign the cyclic
 //! families are microseconds wide open
 //! (crossover at `cycles=20` is 0.3 ms, mixed at `cycles=24` is 0.4 ms), so a
 //! 10 ms floor would have selected the `width` and `ac` families and nothing
@@ -50,6 +50,8 @@
 //! marks the hard subset the wall-clock-normalized tables are computed on, and
 //! `$AU_MIN_EXACT_MS` reinstates a hard floor for anyone who wants the
 //! selected corpus instead.
+//! Those timing numbers predate `exact_fixed.rs`; rerun the complete corpus on
+//! one current build before treating them as current evidence.
 //!
 //! Determinism: MCGS carries no random number generator, so one run per
 //! (instance, budget) is the complete picture; per-instance variation comes
@@ -342,8 +344,8 @@ fn run_exact(label: &str, build: Builder) -> Option<ExactMeasurement> {
         let snap = AuSnapshot::new(&inst.eg).unwrap();
         let cfg = AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             ..Default::default()
         };
         let start = Instant::now();
@@ -1146,8 +1148,8 @@ fn warm_start_control() {
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 exact_pruning: true,
-                context_subsumption: true,
                 exact_deadline: Some(EXACT_GUARD),
                 ..Default::default()
             },
@@ -1338,8 +1340,8 @@ fn crossover_study() {
                 let start = Instant::now();
                 let (exact_size, exact_completion) = solve!(AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     exact_pruning: true,
-                    context_subsumption: true,
                     exact_deadline: Some(EXACT_GUARD),
                     ..Default::default()
                 });
@@ -1438,8 +1440,8 @@ fn sat_ite_planted_vs_exact() {
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 exact_pruning: true,
-                context_subsumption: true,
                 exact_deadline: Some(EXACT_GUARD),
                 ..Default::default()
             },
@@ -1482,8 +1484,8 @@ fn sat_ite_planted_vs_exact_64() {
             inst.right,
             &AuConfig {
                 algorithm: AuAlgorithm::Exact,
+                cycle_mode: CycleMode::Pair,
                 exact_pruning: true,
-                context_subsumption: true,
                 exact_deadline: Some(EXACT_GUARD),
                 ..Default::default()
             },
@@ -1627,8 +1629,8 @@ fn sat_decoy_probe() {
                 inst.right,
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     exact_pruning: true,
-                    context_subsumption: true,
                     exact_deadline: Some(EXACT_GUARD),
                     ..Default::default()
                 },
@@ -1703,8 +1705,8 @@ fn sat_decoy_ladder() {
                 inst.right,
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     exact_pruning: true,
-                    context_subsumption: true,
                     exact_deadline: Some(EXACT_GUARD),
                     ..Default::default()
                 },
@@ -1841,8 +1843,8 @@ fn sat_ite_planted_optimum_matches_exact() {
         let snap = AuSnapshot::new(&inst.eg).unwrap();
         let cfg = AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             ..Default::default()
         };
         let result = anti_unify(&snap, inst.left, inst.right, &cfg).unwrap();

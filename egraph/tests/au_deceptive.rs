@@ -66,8 +66,8 @@
 //! random backbone that also carries the cyclic shared-operator amplification
 //! of the crossover family (`au_anytime_bench.rs`'s `rand` stratum): the
 //! gadget supplies the misranking, the cyclic classes supply the exact
-//! solver's context product, so exact stays slow enough to be worth measuring
-//! against.
+//! solver's reachable pair/action product. Performance measurements predating
+//! pair-mode fixed-point Exact are historical and require remeasurement.
 //!
 //! Tests: `deceptive_family_smoke` runs in the default suite (20 ms release);
 //! `deceptive_family_grid` is `#[ignore]`d and sweeps the full knob grid
@@ -80,6 +80,7 @@ use std::time::{Duration, Instant};
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::id::{ENodeId, OpId, SortId};
 use semi_persistent_egraph::literal::NiraLitVal;
 
@@ -720,15 +721,14 @@ pub struct Quality {
     pub certified: bool,
 }
 
-/// Exact ground truth. `pruned` turns on both accelerations (branch and
-/// bound, context subsumption); their differential tests pin that the
-/// qualities are the unpruned solver's.
+/// Exact ground truth. `pruned` turns on root projection pruning; the
+/// differential tests pin that its qualities equal the unpruned solver's.
 pub fn exact_quality(inst: &Instance, pruned: bool, deadline: Option<Duration>) -> Quality {
     let snap = AuSnapshot::new(&inst.eg).unwrap();
     let cfg = AuConfig {
         algorithm: AuAlgorithm::Exact,
+        cycle_mode: CycleMode::Pair,
         exact_pruning: pruned,
-        context_subsumption: pruned,
         exact_deadline: deadline,
         ..Default::default()
     };

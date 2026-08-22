@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 
 #[path = "au_deceptive.rs"]
 #[allow(dead_code)]
@@ -98,8 +99,8 @@ fn measure(burial_depth: usize, decoys: usize) -> Option<Cell> {
         inst.right,
         &AuConfig {
             algorithm: AuAlgorithm::Exact,
+            cycle_mode: CycleMode::Pair,
             exact_pruning: true,
-            context_subsumption: true,
             exact_deadline: Some(GUARD),
             ..Default::default()
         },

@@ -5,7 +5,8 @@
 //! Covers: linear unary chains at depth 100 / 1000 / 6000, deep alternating
 //! binary trees, wide AC multisets (many distinct children and high
 //! multiplicities) exercising transport at scale, deep Seq nesting, a
-//! cyclic-class chain versus a deep concrete chain under both `CycleMode`s,
+//! cyclic-class chain versus a deep concrete chain under all three cycle
+//! policies in Exact and UCT,
 //! and one runtime-bounded case documenting the practical depth limit.
 //!
 //! Stack budget: none needed. The exact solver, the UCT rollout and
@@ -773,7 +774,11 @@ fn deep_seq_nesting() {
 // ═══════════ Cyclic class vs deep concrete chain (both modes) ═════════
 
 /// Left class X = {x, f(X)} (a cycle created by merging x with f(x)); right
-/// is the concrete chain f^128(b). Cycle contexts bound the unfolding:
+/// is the concrete chain f^128(b). Pair-mode Exact and UCT follow the finite
+/// sequence of distinct pairs `(X, f^k(b))` and obtain
+/// `f^128(Variants(x,b))`: quality `(130, 2)`.
+///
+/// UCT cycle contexts instead bound the unfolding:
 ///
 /// * `AncestorOnly`: a class may appear twice per side on a path (current +
 ///   child), so X unfolds exactly ONE f level before the (X, f^127(b)) child
@@ -784,14 +789,16 @@ fn deep_seq_nesting() {
 ///   only the root generalize survives: Variants(x, f^128(b)) has
 ///   size = 1 + 129 = 130, vmass = 130 → (130, 130).
 ///
-/// Both modes tie on size (130); they differ in the variant-mass tie-break.
+/// The side modes tie with pair mode on size (130), but retain more variant
+/// mass because their configured action spaces exclude the deeper witness.
 #[test]
 #[cfg_attr(miri, ignore)]
-fn cyclic_class_vs_deep_chain_under_both_cycle_modes() {
+fn cyclic_class_vs_deep_chain_distinguishes_side_and_pair_modes() {
     const DEPTH: usize = 128;
     for (cycle_mode, expected) in [
         (CycleMode::AncestorOnly, (130, 129)),
         (CycleMode::CurrentInclusive, (130, 130)),
+        (CycleMode::Pair, (130, 2)),
     ] {
         let mut eg = Eg::new();
         let sort = eg.intern_sort("E");
@@ -805,22 +812,34 @@ fn cyclic_class_vs_deep_chain_under_both_cycle_modes() {
         let right = build_chain(&mut eg, f, b, DEPTH);
         eg.rebuild();
 
-        for (algorithm, playouts) in [(AuAlgorithm::Exact, 0), (AuAlgorithm::Uct, 2_000)] {
-            check_pair(
-                &mut eg,
-                x,
-                right,
-                &AuConfig {
-                    algorithm,
-                    cycle_mode,
-                    playouts,
-                    ..Default::default()
-                },
-                expected,
-                true,
-                true,
-                &format!("cyclic vs chain {cycle_mode:?} {algorithm:?}"),
-            );
-        }
+        check_pair(
+            &mut eg,
+            x,
+            right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Exact,
+                cycle_mode,
+                ..Default::default()
+            },
+            expected,
+            true,
+            true,
+            &format!("cyclic vs chain {cycle_mode:?} Exact"),
+        );
+        check_pair(
+            &mut eg,
+            x,
+            right,
+            &AuConfig {
+                algorithm: AuAlgorithm::Uct,
+                cycle_mode,
+                playouts: 2_000,
+                ..Default::default()
+            },
+            expected,
+            true,
+            true,
+            &format!("cyclic vs chain {cycle_mode:?} UCT"),
+        );
     }
 }

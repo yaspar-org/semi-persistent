@@ -33,7 +33,7 @@
 //!   side-local fresh constants. The W classes are the crossover family's
 //!   shared-operator machinery (`merge(h(W_i), W_i)` self-wraps plus
 //!   `merge(b(W_j, t_i), W_i)` cross links), so hot pairings ignite the
-//!   cycle-context state space of the exact solver and give MCGS genuinely
+//!   dense reachable pair/action graph of root Exact and give MCGS genuinely
 //!   competitive same-operator pairings. Amplification is MIXED: those
 //!   shared-op merges, plus metamorphic-style merges through per-merge
 //!   fresh (rule-inert) unary operators — one self-wrap, two leaf merges.
@@ -64,10 +64,12 @@
 //! entirely from instance generation (the `rand` stratum's seeds).
 //!
 //! Ground truth is the full lexicographic quality (size, variant_mass) from
-//! `pool.quality`. The harness asserts MCGS never beats exact on that order
-//! and that a `Completion::Exact` certificate implies quality equality.
+//! `pool.quality`. The harness asserts MCGS never beats exact on that order.
+//! Certificate equality is checked for this corpus but is not UCT's global
+//! contract on arbitrary cyclic instances.
 //!
-//! Measured 2026-08-15 (release, Apple Silicon), 206 s wall: 38 of 48
+//! Historical predecessor measurement, 2026-08-15 (release, Apple Silicon),
+//! 206 s wall: 38 of 48
 //! instances kept (width 4, ac 4, rand 30), 10 skipped as too easy, no
 //! exact timeouts, no deadline cuts. MCGS returned the exact optimal
 //! quality at EVERY budget on every kept instance — including a single
@@ -90,6 +92,7 @@ use std::time::{Duration, Instant};
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{AuAlgorithm, AuConfig, Completion, anti_unify};
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::NiraLitVal;
 
@@ -457,7 +460,7 @@ fn build_random_instance(seed: u64) -> (Instance, RandDescr) {
     // Shared-op amplification: the crossover family's cyclic W classes.
     // `b(W_target, t_i)` is unique per (target, i), so congruence keeps the
     // classes distinct; every W reaches every other, so hot pairings drive
-    // the exact solver's cycle-context product.
+    // the root solver's pair/action graph.
     let cycles = 8 + rng.below(2); // 8 or 9
     let b = eg.register_op2("b", sort, sort, sort);
     let h = eg.register_op1("h", sort, sort);
@@ -594,6 +597,7 @@ where
                 inst.right,
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     ..Default::default()
                 },
             )

@@ -1,8 +1,8 @@
 # Anti-Unification: Associative (Seq) Operators, and Other Remaining Work
 
-**Status**: design for future work. Except where explicitly marked as delivered
-(§5), nothing in this document is implemented. The implemented anti-unification
-system is documented in
+**Status**: design for future work. Section 1 records implemented behavior, and
+§5 explicitly marks one delivered refinement; the remaining designs are not
+implemented. The implemented anti-unification system is documented in
 [`doc/design/19-anti-unification.md`](../design/19-anti-unification.md); section
 references of the form §N below point into that chapter.
 
@@ -14,11 +14,12 @@ anti-unification work items so they live in one place.
 
 Associative operators are stored as variadic ordered sequences (`Seq` canon kind).
 Action generation for a Seq member pair (§3.4.3) is the equal-length positional zip
-only: for members `seq(a₁…aₖ)` and `seq(b₁…bₖ)` of equal length, one action pairing
-`(aᵢ, bᵢ)` positionally; member pairs of unequal length contribute **no** structural
-action. The terminal generalize action (§A.3) covers those pairs, so results remain
-valid; they just cannot factor the `seq` constructor into the backbone. This behavior
-is pinned by `seq_equal_length_zips_positionally` and
+only: for members `seq(a₁…aₖ)` and `seq(b₁…bₖ)` of equal length, one candidate pairs
+`(aᵢ, bᵢ)` positionally before equivalent candidates are deduplicated; member pairs
+of unequal length contribute **no** structural candidate. The terminal generalize
+action (§A.3) covers those pairs, so results remain valid; they just cannot factor
+the `seq` constructor into the backbone. This behavior is pinned by
+`seq_equal_length_zips_positionally` and
 `seq_unequal_length_has_no_structural_action` in `egraph/src/au/actions.rs`.
 
 Contrast with AC/ACI (§3.4.4–3.4.5), where unequal totals are already handled by
@@ -172,15 +173,19 @@ diverges for every neglected non-terminal child.
 - **Ancestor-subgraph backpropagation.** Reverse-parent adjacency lists on shared
   statistics nodes and immediate recomputation of every incoming parent (children
   before parents by in-degree counting), replacing path-only updates plus the
-  completion-time closure pass (§3.3.3). Sound today; a freshness/cost trade.
-- **Incremental completion counter and richer reporting.** A counter of unsolved,
-  not-fully-expanded statistics nodes for O(1) completion detection (§3.3.7); periodic
-  reporting every K playouts; the exploitation ratio (fraction of selection steps
-  where the exploration term did not change the choice); exporting the root edge-visit
-  distribution (§3.3.8).
+  completion-time closure pass (§3.3.3). The current path-only scheme has an
+  implementation argument and finite tests; this alternative trades update cost
+  for fresher values and still needs equivalent validation.
+- **Richer reporting.** With `closed_bit`, incremental open-child accounting
+  already makes root-completion lookup constant-time after each closure update;
+  without it, final certification walks the realized graph. Deferred reporting
+  work is periodic output every K playouts; the exploitation ratio (fraction of
+  selection steps where the exploration term did not change the choice); and
+  export of the root edge-visit distribution (§3.3.8).
 - **Golden traces.** Bit-stable pinned traces for the named configurations,
-  generated from the Appendix A reference definitions (§5.7 already guarantees the
-  needed determinism).
+  generated from the Appendix A reference definitions. Section 5.7 specifies
+  deterministic implementation order and finite tests exercise it; a golden
+  trace would pin the complete observable sequence.
 - **JSON export** of the e-graph and search layers for external analysis and
   visualization.
 - **Direct model-generation baseline.** Prompt a model for the anti-unifier and

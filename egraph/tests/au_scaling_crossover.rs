@@ -81,6 +81,7 @@ use semi_persistent_egraph::au::egraph_api::AuSnapshot;
 use semi_persistent_egraph::au::session::{
     AuAlgorithm, AuConfig, AuResult, Completion, anti_unify,
 };
+use semi_persistent_egraph::au::space::CycleMode;
 use semi_persistent_egraph::au::terms::{TermId, TermOp, TermPool};
 use semi_persistent_egraph::id::{ENodeId, OpId};
 use semi_persistent_egraph::literal::NiraLitVal;
@@ -98,8 +99,8 @@ struct Params {
     depth: usize,
     /// Same-op `b` members per cyclic class: width^2 actions per OR state.
     width: usize,
-    /// Cyclic, mutually reachable classes: cycle-context pairs grow
-    /// combinatorially in this knob.
+    /// Cyclic, mutually reachable classes: pair actions and member
+    /// combinations grow in this knob.
     cycles: usize,
 }
 
@@ -512,21 +513,18 @@ fn run_exact_guarded(p: Params, timeout: Duration) -> ExactOutcome {
         move || build_instance(p),
         timeout,
         false,
-        false,
     )
 }
 
 /// Generic form of the guard for the other instance families: the builder
 /// runs on the worker thread so a timeout abandons the build too. `pruning`
-/// sets `AuConfig::exact_pruning` (branch-and-bound), `subsumption`
-/// sets `AuConfig::context_subsumption` (bare-pair reuse); the sweeps
-/// pass false for both to keep measuring the reference search.
+/// sets `AuConfig::exact_pruning`; the sweeps pass false to measure the
+/// unpruned cycle-complete reference search.
 fn run_exact_guarded_with<F>(
     label: &str,
     build: F,
     timeout: Duration,
     pruning: bool,
-    subsumption: bool,
 ) -> ExactOutcome
 where
     F: FnOnce() -> Instance + Send + 'static,
@@ -544,8 +542,8 @@ where
                 inst.right,
                 &AuConfig {
                     algorithm: AuAlgorithm::Exact,
+                    cycle_mode: CycleMode::Pair,
                     exact_pruning: pruning,
-                    context_subsumption: subsumption,
                     ..Default::default()
                 },
             )
@@ -732,88 +730,46 @@ fn scaling_sweep_exact_vs_mcgs() {
     }
 }
 
-/// Projection-pruning acceptance: the exact solver with `exact_pruning: true` on the level
-/// the unpruned solver cannot reach — cycles=10, depth 4, width 9, measured
-/// 49.2 s unpruned (release, Apple Silicon, 2026-08-15; sweep doc above).
-/// Asserts completion within the 30 s guard and the optimum size 39, the
-/// value the sweep measured at every solved level of this family (exact
-/// through cycles=9, unguarded exact at cycles=10, MCGS throughout). Run
+/// Cycle-complete root-Exact parity at cycles=10. Both the reference and
+/// projection-pruned runs must complete at the same quality; predecessor
+/// contextual-Exact timing and timeout thresholds are intentionally not part
+/// of this contract. Run
 /// with:
-/// `cargo test -p semi-persistent-egraph --release --test au_scaling_crossover -- --ignored --nocapture pruned_exact_crossover_c10`
+/// `cargo test -p semi-persistent-egraph --release --test au_scaling_crossover -- --ignored --nocapture root_exact_crossover_c10_pruning_parity`
 #[test]
 #[ignore = "manual acceptance measurement: run in release"]
-fn pruned_exact_crossover_c10() {
+fn root_exact_crossover_c10_pruning_parity() {
     let p = Params {
         depth: 4,
         width: 9,
         cycles: 10,
     };
-    // Pruned first, on an otherwise idle process: the unpruned contrast run
-    // below leaks a spinning worker on timeout, which must not share the
-    // machine with the measurement.
+    let reference = run_exact_guarded(p, EXACT_TIMEOUT);
     let pruned = run_exact_guarded_with(
         &format!("pruned-c{}k{}d{}", p.cycles, p.width, p.depth),
         move || build_instance(p),
         EXACT_TIMEOUT,
         true,
-        false,
     );
-    match pruned {
-        ExactOutcome::Done { size, elapsed } => {
-            println!("pruned exact c10: size={size} elapsed={elapsed:.2?}");
-            assert_eq!(size, 39, "pruned exact diverges from the measured optimum");
-        }
-        ExactOutcome::Timeout => panic!("pruned exact exceeded the {EXACT_TIMEOUT:?} guard"),
-    }
-    match run_exact_guarded(p, EXACT_TIMEOUT) {
-        ExactOutcome::Done { size, elapsed } => panic!(
-            "unpruned exact finished cycles=10 in {elapsed:.2?} at size {size}: the family no \
-             longer exceeds the guard, re-baseline this acceptance test"
-        ),
-        ExactOutcome::Timeout => {}
-    }
-}
-
-/// Context-subsumption measurement: exact times on the cyclic family at cycles 8..=10
-/// (depth 4, width cycles-1) for context subsumption alone, subsumption
-/// combined with projection pruning, and the reference search. The reference runs
-/// last because its cycles=10 level exceeds the 30 s guard and leaks a
-/// spinning worker, which must not share the machine with the measurements.
-/// Run with:
-/// `cargo test -p semi-persistent-egraph --release --test au_scaling_crossover -- --ignored --nocapture subsumed_exact_crossover_c8_c10`
-#[test]
-#[ignore = "manual measurement: run in release"]
-fn subsumed_exact_crossover_c8_c10() {
-    let levels: Vec<Params> = (8..=10)
-        .map(|c| Params {
-            depth: 4,
-            width: c - 1,
-            cycles: c,
-        })
-        .collect();
-    for (label, pruning, subsumption) in [
-        ("subsumption", false, true),
-        ("subsumption+pruning", true, true),
-        ("reference", false, false),
-    ] {
-        for &p in &levels {
-            let outcome = run_exact_guarded_with(
-                &format!("{label}-c{}k{}d{}", p.cycles, p.width, p.depth),
-                move || build_instance(p),
-                EXACT_TIMEOUT,
-                pruning,
-                subsumption,
-            );
-            match outcome {
-                ExactOutcome::Done { size, elapsed } => {
-                    println!("{label} c{}: size={size} elapsed={elapsed:.2?}", p.cycles);
-                }
-                ExactOutcome::Timeout => {
-                    println!("{label} c{}: TIMEOUT({EXACT_TIMEOUT:?})", p.cycles);
-                }
-            }
-        }
-    }
+    let ExactOutcome::Done {
+        size: reference_size,
+        elapsed: reference_elapsed,
+    } = reference
+    else {
+        panic!("reference root Exact exceeded the {EXACT_TIMEOUT:?} guard");
+    };
+    let ExactOutcome::Done {
+        size: pruned_size,
+        elapsed: pruned_elapsed,
+    } = pruned
+    else {
+        panic!("pruned root Exact exceeded the {EXACT_TIMEOUT:?} guard");
+    };
+    println!(
+        "root Exact c10: reference size={reference_size} elapsed={reference_elapsed:.2?}; \
+         pruned size={pruned_size} elapsed={pruned_elapsed:.2?}"
+    );
+    assert_eq!(pruned_size, reference_size);
 }
 
 /// Shared table columns for an exact outcome: (elapsed-or-TIMEOUT, size, timed_out).
@@ -953,7 +909,6 @@ fn sweep_width_only() {
             move || build_width_instance(p),
             EXACT_TIMEOUT,
             false,
-            false,
         );
         let mut inst = build_width_instance(p);
         let mcgs = run_mcgs(&inst, MCGS_PLAYOUTS);
@@ -1027,7 +982,6 @@ fn sweep_ac_members() {
             &format!("ac-m{}c{}", p.members, p.children),
             move || build_ac_instance(p),
             EXACT_TIMEOUT,
-            false,
             false,
         );
         let mut inst = build_ac_instance(p);

@@ -375,6 +375,7 @@ pub enum Command {
         right: Term,
         playouts: u64,
         algorithm: String,
+        cycle_mode: String,
     },
     CheckAu {
         left: Term,
@@ -382,6 +383,7 @@ pub enum Command {
         max_size: u32,
         playouts: u64,
         algorithm: String,
+        cycle_mode: String,
     },
     Push(bool), // true = shrink on mark
     Pop,

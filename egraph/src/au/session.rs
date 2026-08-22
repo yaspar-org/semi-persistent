@@ -11,7 +11,6 @@ use crate::literal::LitVal;
 
 use super::actions::{ActionCache, ActionCacheToken};
 use super::egraph_api::{AuSnapshot, ClassOf};
-use super::exact;
 use super::mcgs::{self, AndSelector, HybridStats, McgsConfig};
 use super::results::{BestResults, BestResultsToken};
 use super::space::{CycleMode, SearchSpace, SpaceToken};
@@ -35,6 +34,9 @@ pub enum AuAlgorithm {
 #[derive(Debug, Clone)]
 pub struct AuConfig {
     pub algorithm: AuAlgorithm,
+    /// Cycle breaking for every algorithm. The side modes track left and
+    /// right classes independently; [`CycleMode::Pair`] tracks ordered class
+    /// pairs and selects bounded pair relaxation for root Exact.
     pub cycle_mode: CycleMode,
     pub playouts: u64,
     pub exploration_constant: f64,
@@ -48,34 +50,20 @@ pub struct AuConfig {
     /// `Completion::BudgetExhausted`, never claiming optimality. Ignored by
     /// the UCT algorithm, whose budget is `playouts`.
     pub exact_deadline: Option<std::time::Duration>,
-    /// Branch-and-bound in the exact solver: skip a structural action or an AC
+    /// Branch-and-bound in Exact: skip a structural action or AC
     /// representation pair when its projection lower bound
-    /// (`estimates::lb_pair`) strictly exceeds the node's own incumbent
-    /// size, and re-check with partial sums as child values return. The
-    /// comparison is size-only and strict because an equal size can still
-    /// win on variant mass, and it is always against the node's own
-    /// incumbent, never an ancestor's, so every memo entry stays the exact
-    /// optimum of its state. Default `false`: the unpruned search is the
-    /// reference the differential fixture was captured against;
+    /// (`estimates::lb_pair`) strictly exceeds the pair's achieved incumbent.
+    /// The comparison is size-only and strict because equal size can still
+    /// improve variant mass. Contextual exact calls delegated by UCT also
+    /// tighten this bound with completed children. Default `false`;
     /// `au_differential.rs::pruned_exact_matches_reference` asserts the
-    /// flag-on qualities equal that fixture. Ignored by the UCT algorithm.
+    /// flag-on qualities equal the unpruned reference. Ignored by UCT
+    /// selection itself.
     pub exact_pruning: bool,
-    /// Context subsumption in the exact solver: a solve on which the entry
-    /// contexts removed
-    /// no candidate that could have mattered (every cycle-blocked candidate
-    /// was provably non-optimal under every context, transitively through
-    /// every child it solved) computes the context-free optimum, and
-    /// its result is memoized on the bare class pair together with the
-    /// support of its winning derivation (the classes it descends through).
-    /// A later state on the same pair reuses the stored term without
-    /// expanding when the support is disjoint from both of its entry
-    /// contexts: the stored derivation then re-executes unblocked (upper
-    /// bound) and contexts only remove candidates (lower bound), so reuse is
-    /// equality; the argument is on `exact::SubsumptionState`. Default
-    /// `false`: the reference search the differential fixture was captured
-    /// against; `au_differential.rs::subsumed_exact_matches_reference`
-    /// asserts the flag-on qualities equal that fixture, alone and combined
-    /// with `exact_pruning`. Ignored by the UCT algorithm.
+    /// Context-subsumption reuse for side-context Exact. Pair-mode root Exact
+    /// already has one state per bare ordered pair, so reuse is inherent
+    /// there. Pair-context hybrid calls currently leave this optimization off
+    /// because their support proof must preserve pair correlations.
     pub context_subsumption: bool,
     /// Dominance pruning in the UCT/MCGS solver: at OR-stats creation, drop
     /// every action whose
@@ -111,20 +99,23 @@ pub struct AuConfig {
     /// reachable-pair estimate is
     /// at or below [`Self::hybrid_threshold`], the exact solver (with
     /// `exact_pruning` and `context_subsumption` on) solves that node's own
-    /// state (same class pair, same cycle contexts, same cycle mode), and its
-    /// optimum is offered and marked exact in the session's result table.
+    /// state (same class pair, same cycle contexts, same cycle mode). Its term
+    /// is offered, and a completed call is marked contextually exact in the
+    /// session's result table.
     /// Since an exact-marked node is terminal at creation, and terminal nodes
     /// are born closed, the proof is a closed subtree the search never enters:
     /// what would have cost `sum A(v)` playouts below that node costs one
-    /// exact call. The threshold is what bounds the call, so no playout can
-    /// trigger an unbounded solve. Default `false`: the pure playout search is
-    /// the reference the differential fixture was captured against;
+    /// exact call. The admission thresholds estimate workload but do not bound
+    /// descendant contextual states or fan-out; only `hybrid_node_budget`
+    /// hard-bounds one call. Default `false`: the pure playout search is the
+    /// reference the differential fixture was captured against;
     /// `au_differential.rs::hybrid_exact_mcgs_is_sound` gates the flag-on
     /// behavior. Ignored by the exact algorithm.
     pub hybrid_exact: bool,
-    /// Hardness ceiling for [`Self::hybrid_exact`], in reachable class pairs
-    /// (`estimates::reachable_pairs`). Default from the corpus sweep in
-    /// doc/benchmarks/records/au/anytime-corpus.md section (g).
+    /// Admission estimate for [`Self::hybrid_exact`], in reachable bare class
+    /// pairs (`estimates::reachable_pairs`). This can undercount contextual
+    /// states and is not a hard work bound. The default is a historical
+    /// compatibility value pending a current Criterion calibration.
     pub hybrid_threshold: u64,
     /// Live-incumbent arm pruning in the UCT/MCGS solver: every arm carries
     /// its admissible size
@@ -140,32 +131,32 @@ pub struct AuConfig {
     /// flag-on behavior. Ignored by the exact algorithm.
     pub live_incumbent_pruning: bool,
     /// Hybrid exact calls fired from inside the initial rollout: every rollout
-    /// frame whose subproblem
-    /// passes [`Self::hybrid_exact`]'s admission gate is solved exactly and
-    /// becomes the completed suffix of that rollout, so the first answer is
-    /// greedy-prefix + exact-suffix and the solved frames are terminal (and
-    /// certified) when expansion reaches them. Same soundness argument as
-    /// `hybrid_exact` (same 4-tuple, same cycle mode). Requires
+    /// frame whose subproblem passes [`Self::hybrid_exact`]'s admission gate is
+    /// delegated and becomes the completed suffix of that rollout. A completed
+    /// call supplies a contextually certified exact suffix; a call that
+    /// exhausts `hybrid_node_budget` supplies only a feasible uncertified
+    /// suffix. Only completed frames are terminal and certified when expansion
+    /// reaches them. Same soundness argument as
+    /// `hybrid_exact` (same class pair, context, and cycle mode). Requires
     /// `hybrid_exact`; the run refuses the flag without it. Default `false`;
     /// `au_differential.rs::rollout_hybrid_mcgs_is_sound` gates the flag-on
     /// behavior. Ignored by the exact algorithm.
     pub rollout_hybrid: bool,
     /// Session-level exact memo:
-    /// hybrid exact calls share one bare-pair memo of context-clean solves
-    /// across the whole session, so calls over overlapping subgraphs reuse
-    /// instead of re-solving (the context-clean entry merely outlives the
-    /// call). The memo rolls back with the session token. Requires
+    /// side-context hybrid exact calls share one bare-pair memo of
+    /// context-clean solves across the whole session, so calls over overlapping
+    /// subgraphs reuse instead of re-solving (the context-clean entry merely
+    /// outlives the call). Pair-context calls leave it unused until support
+    /// records preserve pair correlations. The memo rolls back with the session token. Requires
     /// `hybrid_exact`. Default `false`;
     /// `au_differential.rs::persistent_memo_exact_is_sound` gates the
     /// flag-on behavior. Ignored by the exact algorithm.
     pub session_exact_memo: bool,
     /// Second admission gate for hybrid exact calls: the node's own
-    /// action count must be at or below this. The rectangle
-    /// (`hybrid_threshold`) bounds how many subproblems exist below the
-    /// node; this bounds the work per subproblem; each catches what the
-    /// other is blind to. Default `u64::MAX` (admission by rectangle alone,
-    /// the reference behavior); the scaled corpus sweep calibrates the shipped
-    /// value.
+    /// action count must be at or below this. It complements the bare-pair
+    /// rectangle estimate, but neither estimate bounds descendant contextual
+    /// states or fan-out. Default `u64::MAX` (admission by rectangle alone,
+    /// the reference behavior).
     /// Ignored by the exact algorithm.
     pub hybrid_action_threshold: u64,
     /// Deterministic in-call backstop for hybrid exact calls, in
@@ -225,10 +216,14 @@ impl Default for AuConfig {
     }
 }
 
-/// Whether the returned result is provably optimal.
+/// Whether the solver structurally completed its declared action space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Completion {
-    /// Every reachable subproblem was solved (structurally certified optimal).
+    /// Every reachable subproblem in the configured action space was solved.
+    /// Pair-mode root Exact covers the finite class-pair graph. Side-mode
+    /// Exact and every UCT mode certify their configured contextual graph. Transport
+    /// representation pairs whose margins exceed the solver's `u32` capacity
+    /// are outside every mode's supported domain.
     Exact,
     /// The playout budget expired before the search graph was fully resolved.
     BudgetExhausted { playouts_used: u64 },
@@ -313,27 +308,39 @@ where
 
     match config.algorithm {
         AuAlgorithm::Exact => {
-            let run = exact::run_exact(
-                snap,
-                l,
-                r,
-                config.cycle_mode,
-                config.exact_deadline,
-                config.exact_pruning,
-                config.context_subsumption,
-            )?;
-            let size = run.pool.size(run.term);
+            let (term, pool, complete) = if config.cycle_mode == CycleMode::Pair {
+                let (run, pool) = super::exact_fixed::run(
+                    snap,
+                    l,
+                    r,
+                    config.exact_deadline,
+                    config.exact_pruning,
+                )?;
+                (run.term, pool, run.complete)
+            } else {
+                let run = super::exact::run_exact(
+                    snap,
+                    l,
+                    r,
+                    config.cycle_mode,
+                    config.exact_deadline,
+                    config.exact_pruning,
+                    config.context_subsumption,
+                )?;
+                (run.term, run.pool, run.complete)
+            };
+            let size = pool.size(term);
             // A deadline expiry surfaces the root incumbent uncertified:
             // feasible by construction, optimal only on completion. The
             // budget the exact solver exhausts is wall clock, not playouts.
-            let completion = if run.complete {
+            let completion = if complete {
                 Completion::Exact
             } else {
                 Completion::BudgetExhausted { playouts_used: 0 }
             };
             Ok(AuResult {
-                term_id: run.term,
-                pool: run.pool,
+                term_id: term,
+                pool,
                 size,
                 algorithm: AuAlgorithm::Exact,
                 completion,
@@ -494,12 +501,10 @@ where
     }
 
     /// Exact solve of the root pair on this session's persistent layers:
-    /// terms intern into the session pool, the session
-    /// exact memo is read and written, so earlier
-    /// hybrid calls' clean solves are reused and this call's solves are
-    /// kept), and the solve warm-starts from the session's stored incumbent
-    /// for the pair when one exists, so branch-and-bound prunes against it
-    /// from the first frame. `deadline` makes the solve anytime.
+    /// terms intern into the session pool, and the solve warm-starts from the
+    /// session's stored incumbent for the pair. The session's cycle mode
+    /// chooses side-context Exact or ordered-pair fixed-point Exact.
+    /// `deadline` makes the solve anytime.
     pub fn run_exact_warm(
         &mut self,
         left: Cfg::G,
@@ -518,36 +523,79 @@ where
             .ok_or(super::AuError::NoFiniteRepresentative(0))?;
         self.snap.validate_finite_from(l)?;
         self.snap.validate_finite_from(r)?;
-        let empty = self.space.contexts.empty();
+        let (empty_l, empty_r) = self.space.empty_contexts();
         let (root_or, _) = self.space.get_or_insert_or_node(
             l,
             r,
-            empty,
-            empty,
+            empty_l,
+            empty_r,
             self.snap.best_size(l),
             self.snap.best_size(r),
         );
         self.results.ensure_capacity(root_or);
-        let warm = self.results.best_term(root_or);
-        let run = super::exact::run_exact_at(
-            self.snap,
-            &mut self.pool,
-            l,
-            r,
-            &[],
-            &[],
-            self.space.cycle_mode,
-            deadline,
-            pruning,
-            subsumption,
-            Some(self.mcgs.exact_memo_mut()),
-            None,
-            warm,
-        );
+        if self.space.cycle_mode != CycleMode::Pair {
+            if self.results.is_exact(root_or) {
+                let term = self
+                    .results
+                    .best_term(root_or)
+                    .expect("an exact result has an achieved term");
+                return Ok((term, Completion::Exact));
+            }
+            let context = self.space.cycle_context(root_or);
+            let warm = self.results.best_term(root_or);
+            let run = super::exact::run_exact_at(
+                self.snap,
+                &mut self.pool,
+                l,
+                r,
+                &context,
+                self.space.cycle_mode,
+                deadline,
+                pruning,
+                subsumption,
+                Some(self.mcgs.exact_memo_mut()),
+                None,
+                warm,
+            );
+            self.results
+                .offer(root_or, run.term, self.pool.quality(run.term));
+            if run.complete {
+                self.results.mark_exact(root_or);
+            }
+            let completion = if run.complete {
+                Completion::Exact
+            } else {
+                Completion::BudgetExhausted { playouts_used: 0 }
+            };
+            return Ok((run.term, completion));
+        }
+        if self.results.is_global_exact(root_or) {
+            let term = self
+                .results
+                .best_global_term(root_or)
+                .expect("a globally exact result has an achieved term");
+            return Ok((term, Completion::Exact));
+        }
+        let contextual = self.results.best_term(root_or);
+        let global = self.results.best_global_term(root_or);
+        let warm = match (contextual, global) {
+            (Some(contextual), Some(global)) => {
+                if self.results.best_global_quality(root_or) < self.results.best_quality(root_or) {
+                    Some(global)
+                } else {
+                    Some(contextual)
+                }
+            }
+            (contextual @ Some(_), None) => contextual,
+            (None, global @ Some(_)) => global,
+            (None, None) => None,
+        };
+        let run =
+            super::exact_fixed::run_in(self.snap, &mut self.pool, l, r, deadline, pruning, warm)?;
         self.results
-            .offer(root_or, run.term, self.pool.quality(run.term));
+            .offer_global(root_or, run.term, self.pool.quality(run.term));
         if run.complete {
-            self.results.mark_exact(root_or);
+            self.results.mark_global_exact(root_or);
         }
         let completion = if run.complete {
             Completion::Exact
@@ -716,6 +764,67 @@ mod tests {
         );
     }
 
+    /// A session uses the same cycle policy for UCT and warm Exact. Side mode
+    /// writes a contextual certificate; pair mode additionally writes the
+    /// cycle-global certificate produced by bounded pair relaxation.
+    #[test]
+    fn warm_exact_honors_the_session_cycle_mode() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let sort = eg.intern_sort("E");
+        let a_op = eg.register_op0("a", sort);
+        let f = eg.register_op1("f", sort, sort);
+        let h = eg.register_op2("h", sort, sort, sort);
+
+        let c0 = eg.add(a_op, &[]);
+        let c3 = eg.add(f, &[c0]);
+        let c1 = eg.add(h, &[c3, c3]);
+        let c2 = eg.add(h, &[c0, c1]);
+        let c3_h = eg.add(h, &[c0, c3]);
+        eg.merge(c3, c3_h);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let l = snap.class_of(c2).unwrap();
+        let r = snap.class_of(c3).unwrap();
+        for (cycle_mode, expected) in [
+            (CycleMode::AncestorOnly, (9, 7)),
+            (CycleMode::CurrentInclusive, (9, 9)),
+            (CycleMode::Pair, (8, 3)),
+        ] {
+            let mut session = SearchSession::new(&snap, cycle_mode);
+            let config = McgsConfig {
+                playouts: 10_000,
+                cycle_mode,
+                closed_bit: true,
+                ..Default::default()
+            };
+
+            let (uct, uct_completion) = session.run_uct(c2, c3, &config).unwrap();
+            assert_eq!(uct_completion, Completion::Exact);
+            assert_eq!(session.pool_quality(uct), expected);
+
+            let (exact, exact_completion) =
+                session.run_exact_warm(c2, c3, false, false, None).unwrap();
+            assert_eq!(exact_completion, Completion::Exact);
+            assert_eq!(session.pool_quality(exact), expected);
+
+            let (empty_l, empty_r) = session.space.empty_contexts();
+            let (root_or, _) = session.space.get_or_insert_or_node(
+                l,
+                r,
+                empty_l,
+                empty_r,
+                snap.best_size(l),
+                snap.best_size(r),
+            );
+            assert!(session.results.is_exact(root_or));
+            assert_eq!(
+                session.results.is_global_exact(root_or),
+                cycle_mode == CycleMode::Pair
+            );
+        }
+    }
+
     #[test]
     fn session_identical_returns_size_1() {
         let mut eg = EGraph31::<NiraLitVal, false, false>::new();
@@ -854,7 +963,7 @@ mod tests {
         let lc = snap.class_of(fab).unwrap();
         let rc = snap.class_of(fac).unwrap();
         let ctx = session.space.contexts.empty();
-        let (_or_id, _) = session.space.get_or_insert_or_node(
+        let (or_id, _) = session.space.get_or_insert_or_node(
             lc,
             rc,
             ctx,
@@ -866,13 +975,23 @@ mod tests {
         assert_eq!(session.pool.len(), 0);
 
         // Intern a term.
-        let _t = session.pool.intern(TermOp::EGraph(a_op), &[]);
+        let term = session.pool.intern(TermOp::EGraph(a_op), &[]);
         assert_eq!(session.pool.len(), 1);
+        assert!(
+            session
+                .results
+                .offer_global(or_id, term, session.pool.quality(term))
+        );
+        session.results.mark_global_exact(or_id);
+        assert_eq!(session.results.best_global_term(or_id), Some(term));
+        assert!(session.results.is_global_exact(or_id));
 
         // Restore: all state rolled back to empty.
         session.restore(token);
         assert_eq!(session.space.or_arena.len(), 0);
         assert_eq!(session.pool.len(), 0);
+        assert_eq!(session.results.best_global_term(or_id), None);
+        assert!(!session.results.is_global_exact(or_id));
     }
 
     #[test]
