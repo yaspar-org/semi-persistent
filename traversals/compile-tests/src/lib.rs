@@ -26,6 +26,33 @@ fn macro_expansion_needs_only_the_public_crate() {
 }
 
 rec_family! {
+    #[smart_constructors]
+    family TraitMethodCollision => TraitMethodCollisionStore;
+    enum Item { Clone, CloneFrom, Drop }
+    enum Root { Item(Item) }
+}
+
+#[test]
+fn smart_constructors_do_not_shadow_standard_methods() {
+    let mut store = TraitMethodCollisionStore::new();
+    let cloned = store.clone();
+    let mut assigned = TraitMethodCollisionStore::new();
+    assigned.clone_from(&cloned);
+
+    assert_eq!(
+        std::any::type_name_of_val(&cloned),
+        std::any::type_name::<TraitMethodCollisionStore>()
+    );
+    assert_eq!(
+        std::any::type_name_of_val(&assigned),
+        std::any::type_name::<TraitMethodCollisionStore>()
+    );
+    assert_eq!(store.clone_(), ItemId(0));
+    assert_eq!(store.clone_from_(), ItemId(1));
+    assert_eq!(store.drop_(), ItemId(2));
+}
+
+rec_family! {
     family FloatData => FloatDataStore;
     enum FloatExpr {
         F64(f64),

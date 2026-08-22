@@ -275,7 +275,8 @@ With that attribute, the store gains methods like `s.lit(1)`,
 `s.add(l, r)`, `s.let_("x", sum)`, and so on. The method name is the
 variant name lowercased, with a trailing underscore when the result
 would collide with a Rust keyword or generated store method (`let_`,
-`if_`, `mark_`, `fold_`). The sample builder becomes:
+`if_`, `mark_`, `fold_`). Standard method names are reserved the same
+way (`clone_`, `clone_from_`, `drop_`). The sample builder becomes:
 
 ```rust
 fn sample() -> (LangStore, LangStoreRoot) {
@@ -729,7 +730,9 @@ A fold consumes a tree. An unfold produces one, top-down from a seed
 value. The *coalgebra* takes a seed and returns a node layer: a node
 shape plus one child *seed* for each hole in the node. The library
 recurses on each child seed, expanding until a coalgebra returns a
-layer with no seeds (a leaf).
+layer with no seeds (a leaf). The number of seeds must exactly equal the
+number of fixed and variadic child positions in the returned node;
+`unfold`, `unfold_short`, and `postunfold` reject mismatched layers.
 
 A generator for balanced expression trees:
 
@@ -987,8 +990,10 @@ stack of breadcrumbs for the path back to the root.
 The crate ships three zipper flavors.
 
 `LangStoreZipper` is read-only. Move the focus down into a child with
-`down(i)`, back up with `up()`, to a sibling with `down` after `up`.
-Read the current node via `focus()`.
+`down(i)`, back up with `up()`, or directly to a sibling with
+`sibling(i)`. Read the current node via `focus()`. Navigation methods
+return `false` when the requested move does not exist and leave the
+focus and breadcrumb path unchanged on failure.
 
 ```rust
 let mut z = LangStoreZipper::new(&s, root);
