@@ -315,6 +315,180 @@ impl<R: Clone> VariadicPool<R> {
     }
 }
 
+/// An owned, fully resolved variable-length child list.
+///
+/// Generated algebras, rewrite callbacks, and `get_<sort>_resolved` methods
+/// use this type. Unlike [`Variadic`], it never contains a pool span, so all
+/// collection operations are total.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ResolvedVariadic<R>(smallvec::SmallVec<[R; 4]>);
+
+impl<R> ResolvedVariadic<R> {
+    /// Return the resolved children as a slice.
+    #[inline]
+    pub fn as_slice(&self) -> &[R] {
+        self.0.as_slice()
+    }
+
+    /// Iterate over the resolved children.
+    #[inline]
+    pub fn iter(&self) -> std::slice::Iter<'_, R> {
+        self.0.iter()
+    }
+
+    /// Return the number of resolved children.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Return whether this child list is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Map every resolved child into another resolved list.
+    pub fn map_all<S>(self, f: &mut impl FnMut(R) -> S) -> ResolvedVariadic<S> {
+        self.0.into_iter().map(f).collect()
+    }
+
+    /// Consume this list into a vector.
+    pub fn into_vec(self) -> Vec<R> {
+        self.0.into_vec()
+    }
+
+    #[doc(hidden)]
+    pub fn into_smallvec(self) -> smallvec::SmallVec<[R; 4]> {
+        self.0
+    }
+}
+
+impl<R> std::ops::Deref for ResolvedVariadic<R> {
+    type Target = [R];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<R> AsRef<[R]> for ResolvedVariadic<R> {
+    fn as_ref(&self) -> &[R] {
+        self.as_slice()
+    }
+}
+
+impl<R> FromIterator<R> for ResolvedVariadic<R> {
+    fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl<R> From<Vec<R>> for ResolvedVariadic<R> {
+    fn from(values: Vec<R>) -> Self {
+        values.into_iter().collect()
+    }
+}
+
+impl<R> From<smallvec::SmallVec<[R; 4]>> for ResolvedVariadic<R> {
+    fn from(values: smallvec::SmallVec<[R; 4]>) -> Self {
+        Self(values)
+    }
+}
+
+impl<R> IntoIterator for ResolvedVariadic<R> {
+    type Item = R;
+    type IntoIter = smallvec::IntoIter<[R; 4]>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, R> IntoIterator for &'a ResolvedVariadic<R> {
+    type Item = &'a R;
+    type IntoIter = std::slice::Iter<'a, R>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, R> IntoIterator for &'a mut ResolvedVariadic<R> {
+    type Item = &'a mut R;
+    type IntoIter = std::slice::IterMut<'a, R>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+/// Storage representation for a variable-length child list.
+///
+/// Stored spans require their owning generated store for resolution. Use the
+/// generated `get_<sort>_resolved` and `map_<sort>_children` methods when
+/// inspecting stored nodes directly. Traversal and rewrite callbacks receive
+/// [`ResolvedVariadic`] values instead.
+///
+/// Pool-free iteration is deliberately unavailable:
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn cannot_iter_without_an_owner(children: &Variadic<u32>) {
+///     let _ = children.iter();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn cannot_index_without_an_owner(children: &Variadic<u32>) {
+///     let _ = children[0];
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn cannot_consume_without_an_owner(children: Variadic<u32>) {
+///     let _: Vec<_> = children.into_iter().collect();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn cannot_map_without_an_owner(children: Variadic<u32>) {
+///     let _ = children.map_all(&mut |child| child + 1);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn cannot_collect_without_an_owner(children: Variadic<u32>) {
+///     let _ = children.into_vec();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn cannot_compare_storage_offsets(left: &Variadic<u32>, right: &Variadic<u32>) {
+///     let _ = left == right;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use semi_persistent_traversals::Variadic;
+///
+/// fn require_hash<T: core::hash::Hash>(_: &T) {}
+///
+/// fn cannot_hash_storage_offsets(children: &Variadic<u32>) {
+///     require_hash(children);
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub enum Variadic<R> {
     /// `usize` offsets, not an id-family word: the pool a span indexes holds
@@ -394,19 +568,6 @@ impl<R> Variadic<R> {
         }
     }
 
-    /// Iterate an inline, traversal-produced value.
-    ///
-    /// Pool-backed values need their owning store and must be accessed with
-    /// [`Variadic::as_slice`]. Generated traversals perform that resolution
-    /// automatically before invoking user code.
-    pub fn iter(&self) -> std::slice::Iter<'_, R> {
-        match self {
-            Variadic::Resolved(v) => v.iter(),
-            Variadic::Span { .. } => {
-                panic!("pool-backed Variadic requires its owning store")
-            }
-        }
-    }
     pub fn len(&self) -> usize {
         match self {
             Variadic::Resolved(v) => v.len(),
@@ -416,75 +577,25 @@ impl<R> Variadic<R> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    pub fn map_all<S>(self, f: &mut impl FnMut(R) -> S) -> Variadic<S> {
-        match self {
-            Variadic::Resolved(v) => Variadic::Resolved(v.into_iter().map(f).collect()),
-            _ => panic!("unresolved"),
-        }
-    }
-    pub fn into_vec(self) -> Vec<R> {
-        match self {
-            Variadic::Resolved(v) => v.into_vec(),
-            _ => panic!("unresolved"),
-        }
-    }
-}
 
-impl<R> IntoIterator for Variadic<R> {
-    type Item = R;
-    type IntoIter = std::vec::IntoIter<R>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.into_vec().into_iter()
-    }
-}
-
-impl<R> std::ops::Index<usize> for Variadic<R> {
-    type Output = R;
-    fn index(&self, i: usize) -> &R {
+    /// Borrow inline children when this value is already resolved.
+    ///
+    /// A pooled span returns `None`; resolve it through its owning generated
+    /// store instead.
+    pub fn as_resolved_slice(&self) -> Option<&[R]> {
         match self {
-            Variadic::Resolved(v) => &v[i],
-            _ => panic!("unresolved"),
+            Variadic::Resolved(values) => Some(values.as_slice()),
+            Variadic::Span { .. } => None,
         }
     }
-}
 
-// A Span cannot compare or hash its children without its owning pool. These
-// impls therefore describe the representation; generated store dedup uses
-// pool-aware semantic hashing and equality instead.
-impl<R: PartialEq> PartialEq for Variadic<R> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Variadic::Resolved(a), Variadic::Resolved(b)) => a == b,
-            (
-                Variadic::Span {
-                    pool: p1,
-                    start: s1,
-                    len: l1,
-                },
-                Variadic::Span {
-                    pool: p2,
-                    start: s2,
-                    len: l2,
-                },
-            ) => p1 == p2 && s1 == s2 && l1 == l2,
-            _ => false,
-        }
-    }
-}
-impl<R: Eq> Eq for Variadic<R> {}
-impl<R: std::hash::Hash> std::hash::Hash for Variadic<R> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    /// Consume inline children when this value is already resolved.
+    ///
+    /// On a pooled span, return the original value unchanged.
+    pub fn try_into_resolved(self) -> Result<ResolvedVariadic<R>, Self> {
         match self {
-            Variadic::Resolved(v) => {
-                0u8.hash(state);
-                v.hash(state);
-            }
-            Variadic::Span { pool, start, len } => {
-                1u8.hash(state);
-                pool.hash(state);
-                start.hash(state);
-                len.hash(state);
-            }
+            Variadic::Resolved(values) => Ok(values.into()),
+            span @ Variadic::Span { .. } => Err(span),
         }
     }
 }

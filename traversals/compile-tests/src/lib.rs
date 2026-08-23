@@ -87,6 +87,10 @@ fn bare_float_data_has_bitwise_structural_identity() {
     assert_ne!(positive_zero, negative_zero);
     assert_eq!(f32_value, f32_duplicate);
     assert_eq!(first_series, second_series);
+    assert_eq!(
+        dedup.get_floatexpr_resolved(first_series),
+        dedup.get_floatexpr_resolved(second_series)
+    );
 }
 
 rec_family! {

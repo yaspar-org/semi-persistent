@@ -393,7 +393,7 @@ fn smart_constructors_basic_and_typed() {
 }
 
 // A family with Variadic to confirm smart constructors accept &[SortId] and
-// internally call alloc_*.
+// store the children in typed pools.
 rec_family! {
     #[smart_constructors]
     family ScV => ScVStore;

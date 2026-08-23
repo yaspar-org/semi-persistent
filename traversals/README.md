@@ -104,10 +104,15 @@ is which.
 Use `Variadic<Sort>` in a variant to declare a variable-length list of
 children of that sort. Allocators and smart constructors store each
 list as a span in a typed pool. Generated traversals resolve that span;
-in algebras the mapped list appears as an inline `Variadic<A>` and
-iterates with `.iter()`. For direct inspection,
-`get_<sort>_resolved(id)` returns an owned node with inline lists, while
-`map_<sort>_children(id, ...)` performs store-aware child mapping.
+in algebras the mapped list appears as an inline
+`ResolvedVariadic<A>` and iterates with `.iter()`. For direct
+inspection, `get_<sort>_resolved(id)` returns an owned
+`<Sort>NodeResolved`, while `map_<sort>_children(id, ...)` performs
+store-aware child mapping. Raw `Variadic` storage values do not
+implement iteration, indexing, or consuming iteration because a pool
+span cannot resolve without its owning store. They likewise do not
+implement equality or hashing; compare the corresponding resolved nodes
+when structural semantics are required.
 
 ```rust
 rec_family! {

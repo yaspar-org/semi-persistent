@@ -91,6 +91,14 @@ candidates are checked for structural equality. Variadic children are
 hashed and compared through their pool slices, so span offsets do not
 affect node identity.
 
+Variadic smart constructors probe those buckets directly from their
+borrowed `&[SortId]` arguments. A hit returns before touching the pool;
+a miss copies each child slice once into its typed pool and stores the
+resulting span. This preserves the pool-backed representation without
+materializing a temporary owned child list. Explicit `alloc_*` calls
+remain eager by contract: once a caller has allocated a span, a later
+dedup hit from `push_*` cannot undo that already-requested pool growth.
+
 The two constructors return different types. `new()` gives back a
 `LangStore<false>` and `new_dedup()` gives back a `LangStore<true>`,
 where the boolean is a `const DEDUP: bool` parameter on the store. Both
