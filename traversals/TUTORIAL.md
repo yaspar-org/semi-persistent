@@ -850,15 +850,23 @@ let call = s.push_stmt(StmtNode::Call("f".into(), args));
 
 Storage is pool-backed to avoid a separate heap allocation for every
 list. Allocators and smart constructors produce a `(start, len)` span
-into a per-(owning-sort, child-sort) pool. Generated traversals resolve
-that span and use a short inline list for mapped children passed to
-algebras and rewrite callbacks. Those generated operations hide the
-representation distinction.
+into a per-(owning-sort, child-sort) pool. `Variadic<SortId>` is this
+storage/input representation. It provides length queries, but not
+pool-free iteration, indexing, mapping, consuming iteration, equality,
+or hashing. Those operations cannot be structural without the pool.
+
+Generated traversals resolve spans through the owning store and use a
+short inline `ResolvedVariadic<A>` for mapped children passed to
+algebras. Rewrite, transform, and original-node callbacks for a sort
+with variadic fields receive `<Sort>NodeResolved`; its variadic fields
+are also `ResolvedVariadic<SortId>`. These resolved values have ordinary
+slice semantics and cannot contain a span.
 
 ### Variadic children in algebras
 
-Inside a fold, a variadic child list appears as `Variadic<A>` where `A`
-is the child sort's result type. Iterate with `.iter()`:
+Inside a fold, a variadic child list appears as
+`ResolvedVariadic<A>` where `A` is the child sort's result type. Iterate
+with `.iter()`:
 
 ```rust
 let result = s.fold(
@@ -886,15 +894,18 @@ let result = s.fold(
 
 `.iter()` returns an iterator of `&A`; `.len()` gives the length;
 `IntoIterator` is implemented so you can consume a mapped
-`Variadic<A>` directly if you own it. The owning store resolves pooled
-spans before invoking an algebra, so algebras do not need a pool or a
-separate "arity" parameter.
+`ResolvedVariadic<A>` directly if you own it. Indexing, `map_all`, and
+`into_vec` are total as well. The owning store resolves pooled spans
+before invoking an algebra, so algebras do not need a pool or a separate
+"arity" parameter.
 
 Raw nodes returned by `get_<sort>` retain their pool spans. Use
-`get_<sort>_resolved(id)` when inspecting a node directly, or
-`map_<sort>_children(id, ...)` to map its children with the owning
-store's pools. Context-free `Node::map_children` is available only for
-sorts with no variadic fields.
+`get_<sort>_resolved(id)` to obtain a `<Sort>NodeResolved` when
+inspecting a node directly, or `map_<sort>_children(id, ...)` to map its
+children with the owning store's pools. Resolved nodes are accepted by
+`push_<sort>` and, on non-deduplicating stores, `set_<sort>`.
+Context-free `Node::map_children` is available only for sorts with no
+variadic fields.
 
 ### Constraints
 
@@ -908,14 +919,21 @@ rejected instead of resolving the same offsets against unrelated data.
 A single variant can mix data, fixed-arity children, and variadic
 children in any order. `Call(String, Variadic<Expr>)` puts the name
 first and the arguments second; the generated
-`StmtNodeMapped::Call(String, Variadic<A_expr>)` preserves that
-ordering.
+`StmtNodeMapped::Call(String, ResolvedVariadic<A_expr>)` preserves that
+ordering. `StmtNodeResolved::Call(String,
+ResolvedVariadic<ExprId>)` is the corresponding direct-inspection and
+rewrite-callback type.
 
 Variadic children participate in hash-consing normally. A deduplicating
 store compares variadic child lists by value, so
 `Call("f", [a, b])` deduplicates with another `Call("f", [a, b])` that
 uses the same argument IDs even if the two lists occupy different pool
 spans or one node was built from an inline `Variadic::Resolved` value.
+Smart constructors perform this lookup against the borrowed input
+slice before allocating a span, so a hit does not grow the pool and a
+miss copies the children into the pool exactly once. Calling `alloc_*`
+explicitly remains an eager allocation; `push_*` cannot reclaim that
+span if it subsequently finds a duplicate node.
 
 ## 15. Hash-consing with `new_dedup`
 

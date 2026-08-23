@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use proptest::prelude::*;
 use semi_persistent_traversals::*;
 use semi_persistent_traversals_derive::rec_family;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -26,6 +27,13 @@ fn eval<const DEDUP: bool>(store: &VStore<DEDUP>, root: ExprId) -> i64 {
             },
         )
         .unwrap_expr()
+}
+
+fn unwrap_expr(root: VStoreRoot) -> ExprId {
+    match root {
+        VStoreRoot::Expr(id) => id,
+        VStoreRoot::Root(_) => panic!("unexpected root sort"),
+    }
 }
 
 #[test]
@@ -85,6 +93,21 @@ fn dedup_compares_variadic_children_by_value() {
         store.get_expr(first),
         ExprNode::Add(Variadic::Span { start, len: 2, .. }) if *start == first_start
     ));
+}
+
+#[test]
+fn resolved_nodes_compare_variadic_children_by_value() {
+    let mut store = VStore::new();
+    let one = store.lit(1);
+    let two = store.lit(2);
+    let first = store.add(&[one, two]);
+    let second = store.add(&[one, two]);
+
+    assert_ne!(first, second);
+    assert_eq!(
+        store.get_expr_resolved(first),
+        store.get_expr_resolved(second)
+    );
 }
 
 rec_family! {
@@ -207,6 +230,163 @@ fn deduplicating_smart_constructors_do_not_grow_the_pool() {
 }
 
 #[test]
+fn smart_constructor_deduplicates_against_generic_push_without_growing_the_pool() {
+    let mut store = VStore::new_dedup();
+    let one = store.lit(1);
+    let two = store.lit(2);
+    let children = store.alloc_expr_expr(&[one, two]);
+    let generic = store.push_expr(ExprNode::Add(children));
+
+    assert_eq!(store.add(&[one, two]), generic);
+    assert!(matches!(
+        store.alloc_expr_expr(&[]),
+        Variadic::Span {
+            start: 2,
+            len: 0,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn smart_constructor_validates_all_children_before_growing_the_pool() {
+    let mut store = VStore::new();
+    let one = store.lit(1);
+
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            store.add(&[one, ExprId(usize::MAX)]);
+        }))
+        .is_err()
+    );
+    assert!(matches!(
+        store.alloc_expr_expr(&[]),
+        Variadic::Span {
+            start: 0,
+            len: 0,
+            ..
+        }
+    ));
+
+    let mut dedup = VStore::new_dedup();
+    let one = dedup.lit(1);
+    dedup.add(&[one]);
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            dedup.add(&[one, ExprId(usize::MAX)]);
+        }))
+        .is_err()
+    );
+    assert!(matches!(
+        dedup.alloc_expr_expr(&[]),
+        Variadic::Span {
+            start: 1,
+            len: 0,
+            ..
+        }
+    ));
+}
+
+proptest! {
+    #[test]
+    fn wide_smart_constructor_dedup_is_content_based(
+        indices in prop::collection::vec(0usize..16, 0..64),
+    ) {
+        let mut store = VStore::new_dedup();
+        let leaves: Vec<_> = (0..16).map(|value| store.lit(value)).collect();
+        let children: Vec<_> = indices.iter().map(|&index| leaves[index]).collect();
+
+        let first = store.add(&children);
+        let duplicate = store.add(&children);
+
+        prop_assert_eq!(first, duplicate);
+        let pool_end = match store.alloc_expr_expr(&[]) {
+            Variadic::Span { start, len: 0, .. } => start,
+            _ => unreachable!("allocator must return an empty pool span"),
+        };
+        prop_assert_eq!(pool_end, children.len());
+        let stored = match store.get_expr_resolved(first) {
+            ExprNodeResolved::Add(stored) => stored,
+            _ => unreachable!("smart constructor must build an Add node"),
+        };
+        prop_assert_eq!(stored.as_slice(), children);
+    }
+}
+
+rec_family! {
+    #[smart_constructors]
+    family Composite => CompositeStore;
+    enum CompositeRoot {
+        Bundle(
+            String,
+            CompositeItem,
+            Variadic<CompositeItem>,
+            f64,
+            Variadic<CompositeItem>,
+        ),
+    }
+    enum CompositeItem { Atom(u32) }
+}
+
+#[test]
+fn borrowed_candidate_matches_generic_hash_and_all_field_kinds() {
+    let mut store = CompositeStore::new_dedup();
+    let one = store.atom(1);
+    let two = store.atom(2);
+    let three = store.atom(3);
+    let nan = f64::from_bits(0x7ff8_0000_0000_0001);
+    let left = store.alloc_compositeroot_compositeitem(&[one, two]);
+    let right = store.alloc_compositeroot_compositeitem(&[three]);
+    let generic = store.push_compositeroot(CompositeRootNode::Bundle(
+        "bundle".into(),
+        one,
+        left,
+        nan,
+        right,
+    ));
+
+    let smart = store.bundle("bundle", one, &[one, two], nan, &[three]);
+    assert_eq!(smart, generic);
+    assert!(matches!(
+        store.alloc_compositeroot_compositeitem(&[]),
+        Variadic::Span {
+            start: 3,
+            len: 0,
+            ..
+        }
+    ));
+
+    let other_nan = f64::from_bits(0x7ff8_0000_0000_0002);
+    let distinct = store.bundle("bundle", one, &[one, two], other_nan, &[three]);
+    assert_ne!(distinct, generic);
+    assert_eq!(
+        distinct,
+        store.bundle("bundle", one, &[one, two], other_nan, &[three])
+    );
+}
+
+#[test]
+fn mixed_constructor_validates_every_slice_before_allocating_any_span() {
+    let mut store = CompositeStore::new();
+    let one = store.atom(1);
+
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            store.bundle("bundle", one, &[one], 0.0, &[CompositeItemId(usize::MAX)]);
+        }))
+        .is_err()
+    );
+    assert!(matches!(
+        store.alloc_compositeroot_compositeitem(&[]),
+        Variadic::Span {
+            start: 0,
+            len: 0,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn insertion_and_transform_canonicalize_resolved_variadics() {
     let mut store = VStore::new();
     let one = store.lit(1);
@@ -222,13 +402,13 @@ fn insertion_and_transform_canonicalize_resolved_variadics() {
     let resolved = store.get_expr_resolved(sum);
     assert!(matches!(
         &resolved,
-        ExprNode::Add(Variadic::Resolved(values))
+        ExprNodeResolved::Add(values)
             if values.as_slice() == [one, two]
     ));
     let mapped = store.map_expr_children(sum, &mut |id: &ExprId| id.0);
     assert!(matches!(
         mapped,
-        ExprNodeMapped::Add(Variadic::Resolved(values))
+        ExprNodeMapped::Add(values)
             if values.as_slice() == [one.0, two.0]
     ));
 
@@ -247,6 +427,93 @@ fn insertion_and_transform_canonicalize_resolved_variadics() {
         transformed.get_expr_resolved(transformed_sum)
     );
     assert_eq!(eval(&transformed, transformed_sum), 3);
+}
+
+#[test]
+fn resolved_getters_expose_only_total_variadic_operations() {
+    let mut store = VStore::new();
+    let one = store.lit(1);
+    let two = store.lit(2);
+    let sum = store.add(&[one, two]);
+
+    let resolved: ExprNodeResolved = store.get_expr_resolved(sum);
+    let children = match resolved {
+        ExprNodeResolved::Add(children) => children,
+        _ => panic!("expected an add node"),
+    };
+
+    assert_eq!(children.as_slice(), [one, two]);
+    assert_eq!(children[0], one);
+    assert_eq!(children.iter().copied().collect::<Vec<_>>(), [one, two]);
+    assert_eq!(children.clone().into_iter().collect::<Vec<_>>(), [one, two]);
+    assert_eq!(
+        children.clone().map_all(&mut |child| child.0).into_vec(),
+        [one.0, two.0]
+    );
+
+    store.set_expr(sum, ExprNodeResolved::Add(children));
+    assert_eq!(eval(&store, sum), 3);
+}
+
+#[test]
+fn variadic_rewrite_callbacks_receive_total_resolved_nodes() {
+    let mut store = VStore::new();
+    let one = store.lit(1);
+    let two = store.lit(2);
+    let sum = store.add(&[one, two]);
+    let root = VStoreRoot::Expr(sum);
+
+    let (transformed, transformed_root) = store.transform(
+        root,
+        |node: RootNodeResolved| node,
+        |node: ExprNodeResolved| {
+            if let ExprNodeResolved::Add(children) = &node {
+                assert_eq!(children[1], two);
+            }
+            node
+        },
+    );
+    assert_eq!(
+        eval(&transformed, unwrap_expr(transformed_root)),
+        eval(&store, sum)
+    );
+
+    let (rewritten, rewritten_root) = store.rewrite(
+        root,
+        |node: RootNodeResolved, out| out.push_root(node),
+        |node: ExprNodeResolved, out| out.push_expr(node),
+    );
+    assert_eq!(
+        eval(&rewritten, unwrap_expr(rewritten_root)),
+        eval(&store, sum)
+    );
+
+    let (top_down, top_down_root) = store.rewrite_down(
+        root,
+        |node: RootNodeResolved| node,
+        |node: ExprNodeResolved| {
+            if let ExprNodeResolved::Add(children) = &node {
+                assert_eq!(children.iter().count(), 2);
+            }
+            node
+        },
+    );
+    assert_eq!(
+        eval(&top_down, unwrap_expr(top_down_root)),
+        eval(&store, sum)
+    );
+
+    let observed = store
+        .fold_with_original(
+            root,
+            |_: &RootNodeResolved, _: RootNodeMapped<usize>| 0,
+            |original: &ExprNodeResolved, _: ExprNodeMapped<usize>| match original {
+                ExprNodeResolved::Add(children) => children.len(),
+                _ => 0,
+            },
+        )
+        .unwrap_expr();
+    assert_eq!(observed, 2);
 }
 
 #[test]
@@ -280,10 +547,10 @@ fn pool_backed_variadics_work_in_rewrites_and_zippers() {
         .fold_with_original(
             root,
             |original, _: RootNodeMapped<usize>| match original {
-                RootNode::Program(xs) => xs.iter().count(),
+                RootNodeResolved::Program(xs) => xs.iter().count(),
             },
             |original, mapped: ExprNodeMapped<usize>| match (original, mapped) {
-                (ExprNode::Add(xs), ExprNodeMapped::Add(_)) => xs.iter().count(),
+                (ExprNodeResolved::Add(xs), ExprNodeMapped::Add(_)) => xs.iter().count(),
                 _ => 0,
             },
         )
@@ -294,7 +561,7 @@ fn pool_backed_variadics_work_in_rewrites_and_zippers() {
         root,
         |node, out| out.push_root(node),
         |node, out| match node {
-            ExprNode::Lit(n) => out.push_expr(ExprNode::Lit(n * 2)),
+            ExprNodeResolved::Lit(n) => out.push_expr(ExprNodeResolved::Lit(n * 2)),
             other => out.push_expr(other),
         },
     );
@@ -308,7 +575,7 @@ fn pool_backed_variadics_work_in_rewrites_and_zippers() {
         root,
         |node| node,
         |node| match node {
-            ExprNode::Lit(n) => ExprNode::Lit(n + 1),
+            ExprNodeResolved::Lit(n) => ExprNodeResolved::Lit(n + 1),
             other => other,
         },
     );
@@ -322,7 +589,7 @@ fn pool_backed_variadics_work_in_rewrites_and_zippers() {
         root,
         |node| node,
         |node| {
-            if let ExprNode::Add(xs) = &node {
+            if let ExprNodeResolved::Add(xs) = &node {
                 assert_eq!(xs.iter().count(), 3);
             }
             node
