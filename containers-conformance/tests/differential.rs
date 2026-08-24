@@ -901,11 +901,11 @@ fn differential_bytes() {
 // ---------------------------------------------------------------------------
 // Class-ring byte-accounting differential.
 //
-// `tests/layout_parity.rs` asserts the two ring cells are the same 12 bytes;
+// `tests/layout_parity.rs` asserts the two ring cells are the same two words;
 // that is the *static* half of the memory claim. This is the dynamic half: over
 // a randomized merge/mark/restore trace, the verified ring's retained history
 // must cost exactly what the reference ring costs. Both log `(cell, u32)` per
-// captured write — 16 bytes at 31-bit ids, not the 24 a `usize`-indexed store
+// captured write — 12 bytes at 31-bit ids, not a `usize`-indexed form
 // would spend — so `tracking_bytes()` has to agree EXACTLY, not approximately.
 //
 // It is a separate trace from `bytes_trace` because the shapes differ in the way
@@ -918,18 +918,14 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
     use containers_conformance::prod_class_ring::{self as pring, PNodeId};
     use verus::opt::DenseId as _;
     verus::define_id31! { pub struct VNodeId / SVNodeId, "n"; }
+    verus::define_id31! { pub struct VClassKey / SVClassKey, "k"; }
 
     const N: usize = 4_000;
     let mut p = pring::build::<true>(N);
-    // Payload type derived from the id (`Opt<VNodeId::Index>`), matching
-    // `ClassRing<T, TRACK>` rather than spelling out `Opt<u32>`.
-    let mut v: verus::CircularList<
-        verus::Opt<<VNodeId as verus::opt::DenseId>::Index>,
-        VNodeId,
-        true,
-    > = verus::CircularList::new();
+    let mut v: verus::CircularList<verus::Opt<VClassKey>, VNodeId, true> =
+        verus::CircularList::new();
     for i in 0..N {
-        v.try_add_singleton(verus::Opt::some(VNodeId::from_usize(i).to_index()))
+        v.try_add_singleton(verus::Opt::some(VClassKey::from_usize(i)))
             .expect("within id space");
     }
 
@@ -1008,8 +1004,8 @@ fn class_ring_bytes_trace(seed: u64, steps: usize) {
         );
     }
 
-    // Whole-container footprint: same 12-byte cell, same capacity growth history,
-    // same 16-byte diff entries, so the ONLY permitted difference is the struct
+    // Whole-container footprint: same two-word cell and capacity growth history,
+    // same 12-byte diff entries, so the ONLY permitted difference is the struct
     // header — the verus ContainerId is u64 vs production's u32 (the
     // checked-allocation fix noted in `bytes_trace`'s header), which measures as
     // exactly 8 bytes on a ~52 KB container. The ghost `model`/`model_snapshots`

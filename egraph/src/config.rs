@@ -25,6 +25,9 @@ pub trait EGraphConfig: 'static {
 
     /// Global e-node id (e.g. 31-bit `ENodeId`).
     type G: DenseId<Index = Self::Index> + Hash;
+    /// Recycled key into the packed e-class data store. It has the same
+    /// payload width as `G`, because the worst case has one class per node.
+    type ClassKey: DenseId<Index = Self::Index>;
     /// Operator id.
     type O: DenseId<Index = Self::Index> + Hash;
     /// Sort id.

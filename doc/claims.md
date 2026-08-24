@@ -25,7 +25,7 @@ Evidence labels:
 
 | claim | evidence | scope |
 | --- | --- | --- |
-| Restore reproduces the marked abstract state | **proved** | `containers-verus`, 1,701 verified conditions, 0 errors; trust boundary in `containers-verus/doc/design/02-trust-boundary.md` |
+| Restore reproduces the marked abstract state | **proved** | `containers-verus`, 1,703 verified conditions, 0 errors; trust boundary in `containers-verus/doc/design/02-trust-boundary.md` |
 | The executable snapshot representation uses frame metadata plus sparse negative diffs rather than a deep copy | code + **proved protocol** | the proof models deep-copy snapshots in ghost state and proves replay equivalence; it does not prove allocator byte counts |
 | `InlineStore::mark` is O(p), where p is the number of cells captured by the previous frame | code + **measured** | `prepare_mark` clears exactly the tags named by that frame's diff |
 | `ParallelStore::mark` is O(w), where w is the number of materialized capture words | code + **measured** | includes high-water words retained after shrink; it is not unconditionally O(1) |
@@ -35,6 +35,8 @@ Evidence labels:
 | The project-local verified sources contain no executable `admit()` or `assume()` calls | **proved by gate** | all three verified crates are scanned in CI; source scanning and ordinary Verus verification are separate |
 | The container trust boundary is 27 `external_body` items by default and 32 with `literal-types` | **proved by gate** | every item is enumerated in the trust ledger |
 | 33 public partial functions remain and all are allowlisted | **proved by gate** | `check_partial_api.py` |
+| The e-class ring cell is two configured-width words: 8 bytes at 31-bit IDs and 16 at 63-bit | **proved by gate** | `containers-conformance/tests/eclasses_conformance.rs` pins both literals; `tests/layout_parity.rs` pins retained-vs-verified equality at each width. The cell is what multiplies by node count and what each captured write copies into the diff log |
+| Packing the class key into the ring cell preserves the full 2^31 / 2^63 class capacity | code + **proved by gate** | a key names every class but cannot encode the resulting collection *length*, so the sparse set keeps the full backing word for keys and counts. The verified `wf` invariant derives `T::id_bound() == K::id_bound()` from the shared index word rather than assuming it, and `containers/src/eclasses.rs` fills a 7-bit configuration's whole ID range, where a key-typed count would have overflowed |
 | The verified and legacy reference containers agree on the tested shared traces and selected layouts | **measured** | `containers-conformance`, including direct randomized `UnionFind`/`EClasses` differentials and proof-path reconstruction; scope and known differences are documented in `containers-conformance/BASELINE.md` and `containers-verus/doc/design/egraph-class-layer.md` |
 | The e-graph runs on `containers-verus` | compiler-enforced | Cargo aliases it as `semi-persistent-containers`; the legacy `containers` crate is only a conformance/performance reference |
 

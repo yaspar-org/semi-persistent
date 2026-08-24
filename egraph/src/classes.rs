@@ -6,10 +6,10 @@
 //!
 //! `EClasses` here is a type alias of `containers::eclasses::EClasses` with
 //! this crate's [`Justification`] as the proof payload: same parameters
-//! (`T, L, N, TRACK, PROOFS`), same method surface (including
+//! (`T, K, L, N, TRACK, PROOFS`), same method surface (including
 //! `add_singleton(id)`, the justified merge family, and `explain`), same
-//! panic messages, same 12-byte ring cell and class slot (asserted below).
-//! The class-layer invariants W1-W6
+//! panic messages, and the same packed layouts (asserted below).
+//! The class-layer invariants W1-W7
 //! (`containers-verus/doc/future/egraph-wf.md`) are machine-checked: every
 //! mutation carries `requires wf, ensures wf`, and the build fails if a
 //! change breaks preservation. Under `PROOFS` the kernel's union-find
@@ -18,10 +18,10 @@
 //! the kernel's trusted glue over verified columns
 //! (`containers-verus/doc/design/egraph-class-layer.md`).
 
-use crate::containers::{self, DenseId, Opt, Tagged};
+use crate::containers::{self, Opt, Tagged};
 use crate::union_find::Justification;
 
-/// Per-class data (the verified kernel's; same fields, same 12-byte repr).
+/// Per-class data from the verified kernel.
 pub use crate::containers::eclasses::ClassData;
 /// Opaque token for [`EClasses::mark`] / [`EClasses::restore`].
 pub use crate::containers::eclasses::EClassesToken;
@@ -30,27 +30,22 @@ pub use crate::containers::eclasses::MergeInfo;
 
 /// Equivalence classes with integrated union-find and parent use-lists
 /// (the verified aggregate).
-pub type EClasses<T, L, N, const TRACK: bool, const PROOFS: bool> =
-    containers::eclasses::EClasses<T, L, N, Justification<T>, TRACK, PROOFS>;
+pub type EClasses<T, K, L, N, const TRACK: bool, const PROOFS: bool> =
+    containers::eclasses::EClasses<T, K, L, N, Justification<T>, TRACK, PROOFS>;
 
 /// Class-ring iterator: the verified `RingIter`, yielding `T` node ids in
 /// ring order.
-pub type ClassIter<'a, T, const TRACK: bool> =
-    containers::circular_list::RingIter<'a, Opt<<T as DenseId>::Index>, T, TRACK>;
+pub type ClassIter<'a, T, K, const TRACK: bool> =
+    containers::circular_list::RingIter<'a, Opt<K>, T, TRACK>;
 
-// The ring cell must stay at production's 12 bytes at 31-bit ids: a 4-byte
-// `next` word (capture bit in its spare MSB) plus an 8-byte `BoolTagged<u32>`
-// payload (repr key + presence bit). The verified kernel instantiates the
-// same `CircularList<Opt<T::Index>, T>`, so the assertion is unchanged.
+// The ring cell is two configured-width words: `next` uses its spare MSB for
+// capture, and the independent class key uses its spare MSB for `None`.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(
     core::mem::size_of::<
-        containers::circular_list::CircularNodeRepr<
-            Opt<<crate::id::ENodeId as DenseId>::Index>,
-            crate::id::ENodeId,
-        >,
-    >() == 12,
-    "e-class ring cell must stay 12 bytes at 31-bit ids"
+        containers::circular_list::CircularNodeRepr<Opt<crate::id::EClassKey>, crate::id::ENodeId>,
+    >() == 8,
+    "e-class ring cell must stay two words at 31-bit ids"
 );
 
 // The per-class slot: a use-list head, `min_row`, the member-count word (the
@@ -76,9 +71,28 @@ const _: () = assert!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::id::{ENodeId, UseListId, UseNodeId};
+    use crate::containers::DenseId;
+    use crate::id::{EClassKey, ENodeId, UseListId, UseNodeId};
 
-    type EC = EClasses<ENodeId, UseListId, UseNodeId, false, false>;
+    type EC = EClasses<ENodeId, EClassKey, UseListId, UseNodeId, false, false>;
+
+    #[test]
+    fn class_key_payload_width_matches_each_egraph_configuration() {
+        fn assert_u32_id<T: DenseId<Index = u32>>() {}
+        fn assert_u64_id<T: DenseId<Index = u64>>() {}
+
+        assert_u32_id::<EClassKey>();
+        assert_u64_id::<crate::nodes::EClassKey64>();
+
+        let max31 = EClassKey::try_new(0x7fff_ffff).expect("31-bit maximum class key");
+        assert_eq!(max31.to_usize(), 0x7fff_ffff);
+        assert!(EClassKey::try_new(0x8000_0000).is_none());
+
+        let max63 = crate::nodes::EClassKey64::try_new(0x7fff_ffff_ffff_ffff)
+            .expect("63-bit maximum class key");
+        assert_eq!(max63.to_usize(), 0x7fff_ffff_ffff_ffff);
+        assert!(crate::nodes::EClassKey64::try_new(0x8000_0000_0000_0000).is_none());
+    }
 
     #[test]
     fn eclasses_with_use_lists() {

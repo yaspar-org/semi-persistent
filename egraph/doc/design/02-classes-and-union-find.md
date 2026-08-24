@@ -118,13 +118,13 @@ The e-graph's `EClasses` is a type alias over the verified aggregate in
 
 ```rust
 // egraph/src/classes.rs
-pub type EClasses<T, L, N, const TRACK: bool, const PROOFS: bool> =
-    containers::eclasses::EClasses<T, L, N, Justification<T>, TRACK, PROOFS>;
+pub type EClasses<T, K, L, N, const TRACK: bool, const PROOFS: bool> =
+    containers::eclasses::EClasses<T, K, L, N, Justification<T>, TRACK, PROOFS>;
 
 // containers-verus/src/eclasses.rs
-pub struct EClasses<T: DenseId, L: DenseId, N: DenseId, J, const TRACK: bool, const PROOFS: bool> {
-    entries: CircularList<Opt<T::Index>, T, TRACK>,   // class rings
-    reprs: SparseSet<ClassData<L, T>, T::Index, ..., TRACK>,  // per-class data, keyed by repr id
+pub struct EClasses<T: DenseId, K: DenseId<Index = T::Index>, L: DenseId, N: DenseId, J, const TRACK: bool, const PROOFS: bool> {
+    entries: CircularList<Opt<K>, T, TRACK>,   // class rings
+    reprs: SparseSet<ClassData<L, T>, T::Index, ..., TRACK>, // per-class data
     uf: UnionFind<T, J, TRACK, PROOFS>,
     uses: ListArena<T, L, N, TRACK>,                  // per-class parent lists
     min_pool: SpVec<Opt<T>, usize, ParallelStore<Opt<T>, usize>, TRACK>,  // min-monomial pool
@@ -139,17 +139,32 @@ pub struct ClassData<L: DenseId, T: DenseId> {
 }
 ```
 
-`T` is the global e-node id type, `L` is the use-list id type, `N`
-is the use-list node id type. There is no sort parameter; sort
-information lives in the `OpRegistry`, not in `EClasses`.
+`T` is the global e-node id type, `K` is a distinct recycled class-data key,
+`L` is the use-list id type, and `N` is the use-list node id type. `K` uses
+the same configured payload width as `T`: 31 bits in the default configuration
+and 63 bits in the wide configuration. This preserves the worst-case
+one-class-per-node capacity while letting `Opt<K>` encode absence in `K`'s
+spare MSB. The successor/capture word and optional-key word are therefore 8
+bytes total at 31-bit IDs and 16 bytes at 63-bit IDs. There is no sort
+parameter; sort information lives in the `OpRegistry`, not in `EClasses`.
+
+The ring and public API use `K`, while `reprs` uses the same numeric key in the
+full backing word `T::Index`. This distinction preserves the complete ID
+cardinality. A 31-bit key can name all `2^31` classes (`0..2^31-1`), but it
+cannot encode the resulting collection length `2^31`; the sparse-set
+implementation uses its index type for both keys and lengths. The full `u32`
+backing word can encode that count. The same argument applies to the 63-bit
+configuration and `u64`. Conversions at the aggregate boundary preserve the
+numeric key, and the verified invariant proves that `T` and `K` have equal
+payload capacities.
 
 ### `reprs: SparseSet`
 
 The `reprs` sparse set supports direct enumeration of all current
-e-class representatives. Each entry stores a `ClassData`; its
+e-class data keys. Each entry stores a `ClassData`; its
 `use_list` field is the head of the class's parent use-list. When
 classes merge, the absorbed
-class's representative is removed from the set. This avoids scanning
+class's key is removed from the set. This avoids scanning
 all entries to find roots.
 
 ### Use-Lists

@@ -76,7 +76,7 @@ Layer 6: union_find.rs / eclasses.rs     -- the verified class layer (aggregate)
 
 ## Verification status
 
-`cargo verus verify` prints **1701 facts verified, 0 errors**; add
+`cargo verus verify` prints **1703 facts verified, 0 errors**; add
 `-- --time-expanded` for the per-module tally. What each proof covers is
 chapter 1's subject; the trust framing is chapter 2's. The verified set:
 

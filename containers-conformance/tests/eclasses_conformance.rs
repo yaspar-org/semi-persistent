@@ -20,15 +20,17 @@ use verus::opt::DenseId;
 use verus::vec::ShrinkPolicy;
 
 verus::define_id31! { pub struct CE / StoredCE, "e"; }
+verus::define_id31! { pub struct CK / StoredCK, "ec"; }
 verus::define_id31! { pub struct CL / StoredCL, "l"; }
 verus::define_id31! { pub struct CN / StoredCN, "n"; }
 
 use semi_persistent_containers_verus::union_find::NoJust;
 verus::define_id63! { pub struct CE64 / StoredCE64, "e64"; }
+verus::define_id63! { pub struct CK64 / StoredCK64, "ec64"; }
 verus::define_id63! { pub struct CL64 / StoredCL64, "l64"; }
 verus::define_id63! { pub struct CN64 / StoredCN64, "n64"; }
-type EC = EClasses<CE, CL, CN, NoJust, true, false>;
-type EC64 = EClasses<CE64, CL64, CN64, NoJust, true, false>;
+type EC = EClasses<CE, CK, CL, CN, NoJust, true, false>;
+type EC64 = EClasses<CE64, CK64, CL64, CN64, NoJust, true, false>;
 
 // ---------------------------------------------------------------------------
 // Layout pins
@@ -36,13 +38,16 @@ type EC64 = EClasses<CE64, CL64, CN64, NoJust, true, false>;
 
 #[cfg(target_pointer_width = "64")]
 #[test]
-fn ring_cell_is_12_bytes_at_31_bit_ids() {
+fn ring_cell_is_two_words_at_both_id_widths() {
     assert_eq!(
-        core::mem::size_of::<
-            verus::circular_list::CircularNodeRepr<verus::Opt<<CE as DenseId>::Index>, CE>,
-        >(),
-        12,
-        "e-class ring cell: next word (4) + BoolTagged key payload (8)"
+        core::mem::size_of::<verus::circular_list::CircularNodeRepr<verus::Opt<CK>, CE>>(),
+        8,
+        "31-bit e-class ring cell: one successor word + one optional-key word"
+    );
+    assert_eq!(
+        core::mem::size_of::<verus::circular_list::CircularNodeRepr<verus::Opt<CK64>, CE64>>(),
+        16,
+        "63-bit e-class ring cell: one successor word + one optional-key word"
     );
 }
 

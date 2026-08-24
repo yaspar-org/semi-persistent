@@ -4,10 +4,10 @@ use proptest::prelude::*;
 use semi_persistent_egraph::ENodeId;
 use semi_persistent_egraph::classes::EClasses;
 use semi_persistent_egraph::containers::ShrinkPolicy;
-use semi_persistent_egraph::id::{UseListId, UseNodeId};
+use semi_persistent_egraph::id::{EClassKey, UseListId, UseNodeId};
 use std::collections::HashMap;
 
-type EC = EClasses<ENodeId, UseListId, UseNodeId, true, false>;
+type EC = EClasses<ENodeId, EClassKey, UseListId, UseNodeId, true, false>;
 
 #[derive(Clone, Debug)]
 struct Oracle {

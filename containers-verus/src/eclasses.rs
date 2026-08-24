@@ -32,8 +32,9 @@
 //! Terminology: a "class key" is the `SparseSet` id a root's ring payload
 //! carries; "live" is the key's state while its class exists. The prose
 //! word "frame" and the API word "snapshot" (`*_snapshots_view`) name the
-//! same thing: one archived mark level. The key stored in a ring payload is
-//! `Opt<T::Index>`, an index-typed cell, 12 bytes at a bit-stealing family;
+//! same thing: one archived mark level. The key stored in a ring payload is a
+//! configured bit-stealing `DenseId`, so the key and successor occupy one word
+//! each;
 //! the 16-byte class payload (`ClassData`) is pinned by the consumer's
 //! compile-time asserts. This kernel is the production e-graph class layer:
 //! `egraph::EClasses` and `egraph::UnionFind` are type aliases of it.
@@ -207,9 +208,14 @@ pub open(crate) spec fn ss_value<V, Idx: IndexLike>(
 /// `SparseSet` columns (`live` its element count); `uses_model`/`uses_nodes`
 /// are the `ListArena`'s ghost lists and node cells; `pool_len`/`min_width`
 /// the pool geometry.
-pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>(
+pub open(crate) spec fn eg_model_wf<
+    T: DenseId,
+    K: DenseId<Index = T::Index>,
+    L: DenseId,
+    N: DenseId + Tagged,
+>(
     ring_model: Seq<Seq<usize>>,
-    payloads: Seq<Opt<<T as DenseId>::Index>>,
+    payloads: Seq<Opt<K>>,
     roots: Seq<usize>,
     reprs_dense: Seq<ClassData<L, T>>,
     reprs_sparse: Seq<<T as DenseId>::Index>,
@@ -222,6 +228,7 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
     let n = payloads.len();
     let live = reprs_dense.len();
     let pool_len = pool.len();
+    &&& T::id_bound() == K::id_bound()
     &&& roots.len() == n
     // the repr capacity never outgrows the node count (one live class key per
     // root, keys minted at most one per node)
@@ -304,9 +311,9 @@ pub open(crate) spec fn eg_model_wf<T: DenseId, L: DenseId, N: DenseId + Tagged>
 
 
 /// The payload column of a ring snapshot.
-pub open(crate) spec fn ring_payloads<T: DenseId>(
-    cells: Seq<CircularListNode<Opt<<T as DenseId>::Index>, T>>,
-) -> Seq<Opt<<T as DenseId>::Index>> {
+pub open(crate) spec fn ring_payloads<T: DenseId, K: DenseId<Index = T::Index>>(
+    cells: Seq<CircularListNode<Opt<K>, T>>,
+) -> Seq<Opt<K>> {
     Seq::new(cells.len(), |i: int| cells[i].payload)
 }
 
@@ -319,9 +326,14 @@ pub open(crate) spec fn ring_payloads<T: DenseId>(
 /// Opaque for the standard reason; only mark/restore (and `set_min_width`,
 /// which re-checks W6 vacuity over empty archived pools) reveal it.
 #[verifier::opaque]
-pub open(crate) spec fn eg_archive_agrees<T: DenseId, L: DenseId, N: DenseId + Tagged>(
+pub open(crate) spec fn eg_archive_agrees<
+    T: DenseId,
+    K: DenseId<Index = T::Index>,
+    L: DenseId,
+    N: DenseId + Tagged,
+>(
     ring_models: Seq<Seq<Seq<usize>>>,
-    ring_cells: Seq<Seq<CircularListNode<Opt<<T as DenseId>::Index>, T>>>,
+    ring_cells: Seq<Seq<CircularListNode<Opt<K>, T>>>,
     roots_arch: Seq<Seq<usize>>,
     dense_snaps: Seq<Seq<ClassData<L, T>>>,
     sparse_snaps: Seq<Seq<<T as DenseId>::Index>>,
@@ -340,7 +352,7 @@ pub open(crate) spec fn eg_archive_agrees<T: DenseId, L: DenseId, N: DenseId + T
     &&& uses_models.len() == f
     &&& uses_nodes_snaps.len() == f
     &&& pool_snaps.len() == f
-    &&& (forall|k: int| 0 <= k < f ==> eg_model_wf::<T, L, N>(
+    &&& (forall|k: int| 0 <= k < f ==> eg_model_wf::<T, K, L, N>(
             ring_models[k], ring_payloads(#[trigger] ring_cells[k]), roots_arch[k],
             dense_snaps[k], sparse_snaps[k], indices_snaps[k],
             uses_models[k], uses_nodes_snaps[k], pool_snaps[k], min_width))
@@ -356,17 +368,20 @@ pub open(crate) spec fn eg_archive_agrees<T: DenseId, L: DenseId, N: DenseId + T
 
 /// Verified equivalence classes: ring + union-find + repr set + use-lists +
 /// min-monomial pool, with the agreement clauses as `wf`.
-pub struct EClasses<T, L, N, J, const TRACK: bool, const PROOFS: bool>
+pub struct EClasses<T, K, L, N, J, const TRACK: bool, const PROOFS: bool>
 where
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,
 {
-    /// The class ring; each cell carries the class's key (as a
-    /// node-typed dense id) while the class is live, absent once absorbed.
-    pub(crate) entries: CircularList<Opt<<T as DenseId>::Index>, T, TRACK>,
-    /// Per-class data, keyed by repr id.
+    /// The class ring; a root cell carries the class's configured-width key
+    /// while the class is live, absent once absorbed.
+    pub(crate) entries: CircularList<Opt<K>, T, TRACK>,
+    /// Per-class data. The sparse set uses the full index word internally so
+    /// its length can represent the complete bit-stealing ID cardinality; its
+    /// numeric keys convert losslessly to the packed `K` stored in the ring.
     pub(crate) reprs: SparseSet<ClassData<L, T>, <T as DenseId>::Index,
         InlineStore<ClassData<L, T>, <T as DenseId>::Index>, TRACK>,
     /// Verified canonical-representative lookup.
@@ -381,13 +396,45 @@ where
     pub(crate) min_width: usize,
 }
 
-impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool>
+    EClasses<T, K, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,
 {
+    /// Convert the public, packed class-key type to the sparse set's full-word
+    /// internal key. The numeric identity is unchanged.
+    fn key_index(key: K) -> (raw: <T as DenseId>::Index)
+        ensures raw.as_nat() == key.as_nat(),
+    {
+        let raw = key.to_index();
+        proof { key.lemma_as_nat_is_id_nat(); }
+        raw
+    }
+
+    /// Convert an internal sparse-set key back to the configured packed key.
+    /// `wf` ties the two ID families' capacities, so every key minted while a
+    /// node ID remains available satisfies this precondition.
+    fn class_key(raw: <T as DenseId>::Index) -> (key: K)
+        requires raw.as_nat() < K::id_bound(),
+        ensures key.as_nat() == raw.as_nat(),
+    {
+        let n = raw.as_usize();
+        let key = match K::try_new(n) {
+            Some(key) => key,
+            None => {
+                proof { assert(false); }
+                crate::guard::refuse(
+                    "EClasses class-key width must match the node-id width")
+            }
+        };
+        proof { key.lemma_as_nat_is_id_nat(); }
+        key
+    }
+
     /// Node count (spec).
     pub open(crate) spec fn n_spec(&self) -> nat {
         self.entries.n_spec()
@@ -418,13 +465,18 @@ where
     }
 
     /// Key liveness (spec counterpart of the repr set's membership).
-    pub open(crate) spec fn contains_key_spec(&self, key: <T as DenseId>::Index) -> bool {
-        self.reprs.contains_spec(key)
+    pub open(crate) spec fn contains_key_spec(&self, key: K) -> bool {
+        ss_contains(
+            self.reprs.sparse_view(),
+            self.reprs.indices_view(),
+            self.reprs.n_spec(),
+            key.as_nat(),
+        )
     }
 
     /// The ring component (spec ref, for iterator ensures).
     pub open(crate) spec fn entries_ref(&self)
-        -> &CircularList<Opt<<T as DenseId>::Index>, T, TRACK> {
+        -> &CircularList<Opt<K>, T, TRACK> {
         &self.entries
     }
 
@@ -459,7 +511,7 @@ where
         &&& self.uses.wf()
         &&& self.min_pool.wf()
         &&& self.uf.n_spec() == self.n_spec()
-        &&& eg_model_wf::<T, L, N>(
+        &&& eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(),
                 self.entries.payload_seq(),
                 self.uf.roots_view(),
@@ -471,7 +523,7 @@ where
                 self.min_pool.view(),
                 self.min_width as nat)
         // Joint archive over the component snapshot stacks.
-        &&& eg_archive_agrees::<T, L, N>(
+        &&& eg_archive_agrees::<T, K, L, N>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -494,6 +546,12 @@ where
         ensures e.wf(), e.n_spec() == 0, e.num_classes_spec() == 0,
             e.min_width_spec() == 0,
     {
+        let t_steals = T::bit_stealing();
+        let k_steals = K::bit_stealing();
+        if !(t_steals && k_steals) {
+            crate::guard::refuse(
+                "EClasses requires node IDs and class keys with matching bit-stealing widths");
+        }
         let e = EClasses {
             entries: CircularList::new(),
             reprs: SparseSet::new_inline(),
@@ -502,7 +560,17 @@ where
             min_pool: SpVec::<Opt<T>, usize, ParallelStore<Opt<T>, usize>, TRACK>::new(),
             min_width: 0,
         };
-        proof { reveal(eg_archive_agrees); }
+        proof {
+            T::lemma_id_bound_word_relation();
+            K::lemma_id_bound_word_relation();
+            assert(T::id_bound() * 2
+                == <T::Index as IndexLike>::max_nat());
+            assert(K::id_bound() * 2
+                == <T::Index as IndexLike>::max_nat());
+            assert(T::id_bound() * 2 == K::id_bound() * 2);
+            assert(T::id_bound() == K::id_bound());
+            reveal(eg_archive_agrees);
+        }
         e
     }
 
@@ -568,7 +636,7 @@ where
     /// The class key of node `idx`'s ring cell, `None` once its class was
     /// absorbed (production's `repr_id`). For a CANONICAL id (a root), `Some`
     /// is guaranteed by W2.
-    pub fn repr_id(&self, idx: T) -> (r: Option<<T as DenseId>::Index>)
+    pub fn repr_id(&self, idx: T) -> (r: Option<K>)
         requires self.wf(),
         ensures
             idx.id_nat() < self.n_spec() ==> {
@@ -592,7 +660,7 @@ where
     /// (production's surface: the caller supplies the next dense id; the
     /// sequential contract refuses with production's message, which
     /// historically came from `UnionFind::make_set`).
-    pub fn add_singleton(&mut self, id: T) -> (key: <T as DenseId>::Index)
+    pub fn add_singleton(&mut self, id: T) -> (key: K)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -620,7 +688,7 @@ where
     /// minted node id and its class key. Total-with-documented-panic at the
     /// capacity ceilings (production allocates through `expect` at the same
     /// points).
-    pub fn try_add_singleton(&mut self) -> (r: (T, <T as DenseId>::Index))
+    pub fn try_add_singleton(&mut self) -> (r: (T, K))
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -649,7 +717,7 @@ where
             Some(o) => o,
             None => crate::guard::refuse("EClasses::add_singleton: index width below 1"),
         };
-        let key = match self.reprs.try_add(ClassData {
+        let raw_key = match self.reprs.try_add(ClassData {
             use_list: list_id, min_row: None, atomic: false, size: one,
         }) {
             Ok(k) => k,
@@ -658,9 +726,12 @@ where
         proof {
             crate::opt::lemma_id_nat_fits_usize(id);
             id.lemma_id_nat_bounded();
-            assert(key.as_nat() <= old(self).reprs.cap_spec());
+            assert(raw_key.as_nat() <= old(self).reprs.cap_spec());
             assert(old(self).reprs.cap_spec() <= n0);
+            assert(T::id_bound() == K::id_bound());
+            assert(raw_key.as_nat() < K::id_bound());
         }
+        let key = Self::class_key(raw_key);
         // 4. ring cell: the key word is the payload, as production stores it.
         let opt_key = Opt::some(key);
         let ring_id = match self.entries.try_add_singleton(opt_key) {
@@ -703,7 +774,7 @@ where
             crate::opt::lemma_id_nat_fits_usize(id);
 
             // the new key is live, with the fresh ClassData
-            assert(self.reprs.contains_spec(key));
+            assert(self.reprs.contains_spec(raw_key));
             assert(ss_contains(sparse, indices, live, kn));
             assert(ss_value(dense, sparse, kn)
                 == ClassData::<L, T> { use_list: list_id, min_row: None, atomic: false, size: one });
@@ -892,11 +963,11 @@ where
                 assert(ss_value(dense, sparse, k1) == ss_value(odense, osparse, k1));
                 assert(ss_value(dense, sparse, k2) == ss_value(odense, osparse, k2));
             }
-            assert(eg_model_wf::<T, L, N>(rm, pay, roots, dense, sparse, indices,
+            assert(eg_model_wf::<T, K, L, N>(rm, pay, roots, dense, sparse, indices,
                 um, un, self.min_pool.view(), self.min_width as nat));
             // the archive transfers by congruence: every snapshot stack is
             // framed by the component contracts.
-            assert(eg_archive_agrees::<T, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -990,9 +1061,11 @@ pub struct MergeInfo<T: DenseId, L: DenseId> {
     pub absorbed_atomic: bool,
 }
 
-impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool>
+    EClasses<T, K, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,
@@ -1003,7 +1076,7 @@ where
     /// reason as `lemma_splice_disjoint` (list.rs): proved inline, the ring
     /// and root quantifiers e-match against both states' full `wf`.
     proof fn lemma_merge_wf(&self, o: Self, s: T, ab: T, key_ab: nat, skey: nat,
-        ab_pay: Opt<<T as DenseId>::Index>, cs: int, ps: int, ca: int, pa: int)
+        ab_pay: Opt<K>, cs: int, ps: int, ca: int, pa: int)
         requires
             o.wf(),
             self.uf.wf(),
@@ -1076,7 +1149,7 @@ where
             self.min_pool.view() == o.min_pool.view(),
             self.min_width == o.min_width,
         ensures
-            eg_model_wf::<T, L, N>(
+            eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
@@ -1426,7 +1499,7 @@ where
                 assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
             }
         }
-        assert(eg_model_wf::<T, L, N>(rm, pay, roots, dense, sparse, indices,
+        assert(eg_model_wf::<T, K, L, N>(rm, pay, roots, dense, sparse, indices,
             um, un, self.min_pool.view(), self.min_width as nat));
     }
 
@@ -1504,13 +1577,14 @@ where
             assert(pay_ab.get_spec() is Some);
         }
         let key = pay_ab.get();
+        let raw_key = Self::key_index(key);
         proof {
             assert(key.as_nat() == o.key_of(ab.id_nat() as int));
             assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
                 o.reprs.n_spec(), key.as_nat()));
-            assert(self.reprs.contains_spec(key));
+            assert(self.reprs.contains_spec(raw_key));
         }
-        let data = self.reprs.get_live(key);
+        let data = self.reprs.get_live(raw_key);
         proof {
             assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                 key.as_nat()));
@@ -1526,15 +1600,16 @@ where
             assert(pay_s.get_spec() is Some);
         }
         let skey = pay_s.get();
+        let raw_skey = Self::key_index(skey);
         proof {
             assert(skey.as_nat() == o.key_of(s.id_nat() as int));
             assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
                 o.reprs.n_spec(), skey.as_nat()));
-            assert(self.reprs.contains_spec(skey));
+            assert(self.reprs.contains_spec(raw_skey));
             // distinct roots carry distinct keys (W2c).
             assert(skey.as_nat() != key.as_nat());
         }
-        let mut sdata = self.reprs.get_live(skey);
+        let mut sdata = self.reprs.get_live(raw_skey);
         proof {
             assert(sdata == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                 skey.as_nat()));
@@ -1544,7 +1619,7 @@ where
             None => crate::guard::refuse(
                 "EClasses::merge: class size overflows the index width"),
         };
-        self.reprs.set_live(skey, sdata);
+        self.reprs.set_live(raw_skey, sdata);
         let ghost m1 = *self;
         // distinct rings, from W3a: were s and ab on one ring, they would
         // share a root, and they are distinct roots.
@@ -1567,9 +1642,9 @@ where
                 assert(false);
             }
         }
-        let none_pay = Opt::<<T as DenseId>::Index>::none();
+        let none_pay = Opt::<K>::none();
         self.entries.splice_absorb(s, ab, none_pay);
-        self.reprs.remove(key);
+        self.reprs.remove(raw_key);
         proof {
             // assemble the pointwise splice ensures into the update form.
             assert(self.entries.model_view() =~= o.entries.model_view()
@@ -1601,12 +1676,12 @@ where
                     == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
                         k.as_nat()));
             }
-            assert(m1.reprs.contains_spec(skey));
+            assert(m1.reprs.contains_spec(raw_skey));
             assert(ss_contains(m1.reprs.sparse_view(), m1.reprs.indices_view(),
                 m1.reprs.n_spec(), skey.as_nat()));
             assert(ss_value(m1.reprs.dense_view(), m1.reprs.sparse_view(),
                 skey.as_nat()) == sdata);
-            assert(self.reprs.contains_spec(skey));
+            assert(self.reprs.contains_spec(raw_skey));
             assert(ss_value(self.reprs.dense_view(), self.reprs.sparse_view(),
                 skey.as_nat()) == sdata);
             self.lemma_merge_wf(o, s, ab, key.as_nat(), skey.as_nat(),
@@ -1631,7 +1706,7 @@ where
     /// independently, and critical-pair partner discovery sorts and dedups what
     /// it collects. Prepending touches one memory location (the list head)
     /// where appending touches two (the head and the old tail node).
-    pub fn add_use(&mut self, child_key: <T as DenseId>::Index, parent_node: T)
+    pub fn add_use(&mut self, child_key: K, parent_node: T)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -1642,11 +1717,12 @@ where
         if !(parent_node.to_usize() < self.uf.len().as_usize()) {
             crate::guard::refuse("EClasses::add_use: parent node id out of range");
         }
-        if !self.reprs.contains(child_key) {
+        let raw_key = Self::key_index(child_key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::add_use: class key is not live");
         }
         let ghost o = *old(self);
-        let mut data = self.reprs.get_live(child_key);
+        let mut data = self.reprs.get_live(raw_key);
         proof {
             crate::opt::lemma_id_nat_fits_usize(parent_node);
             assert(data == ss_value(o.reprs.dense_view(), o.reprs.sparse_view(),
@@ -1664,7 +1740,7 @@ where
         let ghost mid_un = self.uses.nodes_view();
         if !data.atomic {
             data.atomic = true;
-            self.reprs.set_live(child_key, data);
+            self.reprs.set_live(raw_key, data);
         }
         proof {
             let n = o.n_spec();
@@ -1728,7 +1804,7 @@ where
                     assert(un[um[l][p] as int].payload == oun[oum[l][p] as int].payload);
                 }
             }
-            assert(eg_model_wf::<T, L, N>(
+            assert(eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices, um, un,
                 self.min_pool.view(), self.min_width as nat));
@@ -1766,7 +1842,7 @@ where
                 let si = absorbed_list.id_nat() as int;
                 assert(um == oum.update(di, oum[di] + oum[si]).update(si, Seq::<usize>::empty()));
                 lemma_splice_uses_w5::<T, N>(oum, um, oun, un, di, si, n);
-                assert(eg_model_wf::<T, L, N>(
+                assert(eg_model_wf::<T, K, L, N>(
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
@@ -1776,7 +1852,7 @@ where
                 // before mutation) or the ensures' conditional guards fired;
                 // in every returning case the views are unchanged.
                 assert(um == oum && un == oun);
-                assert(eg_model_wf::<T, L, N>(
+                assert(eg_model_wf::<T, K, L, N>(
                     self.entries.model_view(), self.entries.payload_seq(),
                     self.uf.roots_view(), self.reprs.dense_view(),
                     self.reprs.sparse_view(), self.reprs.indices_view(),
@@ -1833,7 +1909,7 @@ where
                     assert((0 as nat) % (width as nat) == 0);
                 }
             }
-            assert(eg_model_wf::<T, L, N>(
+            assert(eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
@@ -1843,7 +1919,7 @@ where
             // frame's pool is empty, W6 is vacuous at any width, and no
             // other clause reads the width.
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -1855,7 +1931,7 @@ where
                 o.min_pool.snapshots_view(),
                 o.min_width as nat));
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, L, N>(
+                implies eg_model_wf::<T, K, L, N>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -1873,7 +1949,7 @@ where
                 let ix_k = self.reprs.indices_snapshots_view()[k];
                 let de_k = self.reprs.dense_snapshots_view()[k];
                 // old-width frame invariant
-                assert(eg_model_wf::<T, L, N>(
+                assert(eg_model_wf::<T, K, L, N>(
                     self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -1897,7 +1973,7 @@ where
                     assert((pool_k.len() as nat) % (width as nat) == 0);
                 }
             }
-            assert(eg_archive_agrees::<T, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N>(
                 self.entries.model_snapshots_view(),
                 self.entries.entries_snapshots_view(),
                 self.uf.roots_snapshots_view(),
@@ -1921,16 +1997,17 @@ where
     /// Read class `key`'s min-monomial for completion column `col`
     /// (`None` when the class has no row or the cell is empty). Refuses a
     /// dead key or an out-of-range column.
-    pub fn min_monomial(&self, key: <T as DenseId>::Index, col: usize) -> (r: Option<T>)
+    pub fn min_monomial(&self, key: K, col: usize) -> (r: Option<T>)
         requires self.wf(),
     {
         if !(col < self.min_width) {
             crate::guard::refuse("EClasses::min_monomial: completion column out of range");
         }
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::min_monomial: class key is not live");
         }
-        let data = self.reprs.get_live(key);
+        let data = self.reprs.get_live(raw_key);
         match data.min_row {
             None => None,
             Some(row) => {
@@ -1961,7 +2038,7 @@ where
     /// zero width, or pool exhaustion.
     #[verifier::spinoff_prover]
     #[verifier::rlimit(120)]
-    pub fn set_min_monomial(&mut self, key: <T as DenseId>::Index, col: usize, node: T)
+    pub fn set_min_monomial(&mut self, key: K, col: usize, node: T)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -1973,12 +2050,13 @@ where
         if !(self.min_width > 0 && col < self.min_width) {
             crate::guard::refuse("EClasses::set_min_monomial: completion column out of range");
         }
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::set_min_monomial: class key is not live");
         }
         let ghost o = *old(self);
         let ghost w = o.min_width as nat;
-        let mut data = self.reprs.get_live(key);
+        let mut data = self.reprs.get_live(raw_key);
         proof {
             assert(ss_contains(o.reprs.sparse_view(), o.reprs.indices_view(),
                 o.reprs.n_spec(), key.as_nat()));
@@ -2040,7 +2118,7 @@ where
                     i = i + 1;
                 }
                 data.min_row = Some(row);
-                self.reprs.set_live(key, data);
+                self.reprs.set_live(raw_key, data);
                 proof {
                     let len1 = self.min_pool.view().len();
                     let dense = self.reprs.dense_view();
@@ -2119,7 +2197,7 @@ where
         self.min_pool.set_index(base + col, cell);
         proof {
             assert(self.min_pool.view().len() == mid.min_pool.view().len());
-            assert(eg_model_wf::<T, L, N>(
+            assert(eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
@@ -2141,7 +2219,7 @@ where
     /// already allocated (either from the old state or freshly grown), the
     /// full joint invariant holds. Extracted so the two arms discharge one
     /// obligation each instead of the final assert re-deriving both.
-    proof fn lemma_mid_pool_wf(&self, o: Self, key: <T as DenseId>::Index,
+    proof fn lemma_mid_pool_wf(&self, o: Self, key: K,
         row: <T as DenseId>::Index)
         requires
             o.wf(),
@@ -2195,7 +2273,7 @@ where
                         .min_row->Some_0.as_nat() + 1) * (o.min_width as nat)
                         <= self.min_pool.view().len(),
         ensures
-            eg_model_wf::<T, L, N>(
+            eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
@@ -2223,7 +2301,7 @@ where
         assert forall|kk: nat| #[trigger] ss_contains(sparse, indices, live, kk)
             && kk != key.as_nat()
             implies ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk) by {}
-        assert(eg_model_wf::<T, L, N>(
+        assert(eg_model_wf::<T, K, L, N>(
             self.entries.model_view(), self.entries.payload_seq(),
             self.uf.roots_view(), dense, sparse, indices,
             self.uses.model_view(), self.uses.nodes_view(),
@@ -2232,31 +2310,33 @@ where
 
     /// Whether class `key` is atomic (referenced as a child). Refuses a
     /// dead key.
-    pub fn atomic(&self, key: <T as DenseId>::Index) -> (b: bool)
+    pub fn atomic(&self, key: K) -> (b: bool)
         requires self.wf(),
     {
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::atomic: class key is not live");
         }
-        self.reprs.get_live(key).atomic
+        self.reprs.get_live(raw_key).atomic
     }
 
     /// The use-list id of class `key`. Refuses a dead key.
-    pub fn use_list_id(&self, key: <T as DenseId>::Index) -> (l: L)
+    pub fn use_list_id(&self, key: K) -> (l: L)
         requires self.wf(),
         ensures self.contains_key_spec(key)
             ==> l == self.class_data_spec(key.as_nat()).use_list,
     {
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::use_list_id: class key is not live");
         }
-        self.reprs.get_live(key).use_list
+        self.reprs.get_live(raw_key).use_list
     }
 
 
     /// Mark class `key` atomic (production's `set_atomic`; `EGraph` calls it
     /// when a class gains a non-completion node). Refuses a dead key.
-    pub fn set_atomic(&mut self, key: <T as DenseId>::Index)
+    pub fn set_atomic(&mut self, key: K)
         requires old(self).wf(),
         ensures
             final(self).wf(),
@@ -2264,16 +2344,17 @@ where
             final(self).roots_view() == old(self).roots_view(),
             final(self).num_classes_spec() == old(self).num_classes_spec(),
     {
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::set_atomic: class key is not live");
         }
         let ghost o = *old(self);
-        let mut data = self.reprs.get_live(key);
+        let mut data = self.reprs.get_live(raw_key);
         if data.atomic {
             return;
         }
         data.atomic = true;
-        self.reprs.set_live(key, data);
+        self.reprs.set_live(raw_key, data);
         proof {
             let dense = self.reprs.dense_view();
             let sparse = self.reprs.sparse_view();
@@ -2300,7 +2381,7 @@ where
                     assert(ss_value(dense, sparse, kk) == ss_value(odense, osparse, kk));
                 }
             }
-            assert(eg_model_wf::<T, L, N>(
+            assert(eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), dense, sparse, indices,
                 self.uses.model_view(), self.uses.nodes_view(),
@@ -2311,7 +2392,7 @@ where
     /// Iterate `start`'s class ring (the verified `RingIter`: exactly the
     /// ring's nodes, each once, in successor order).
     pub fn iter_class(&self, start: T)
-        -> (it: crate::circular_list::RingIter<'_, Opt<<T as DenseId>::Index>, T, TRACK>)
+        -> (it: crate::circular_list::RingIter<'_, Opt<K>, T, TRACK>)
         requires self.wf(),
         ensures start.id_nat() < self.n_spec() ==> ({
             &&& it.list_ref() == self.entries_ref()
@@ -2327,7 +2408,7 @@ where
 
     /// Iterate class `key`'s use-list (the verified `ListIter`). Refuses a
     /// dead key.
-    pub fn iter_uses(&self, key: <T as DenseId>::Index)
+    pub fn iter_uses(&self, key: K)
         -> (it: crate::list::ListIter<'_, T, L, N, TRACK>)
         requires self.wf(),
         ensures self.contains_key_spec(key) ==> ({
@@ -2337,10 +2418,11 @@ where
             &&& it.cursor_ok()
         }),
     {
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::iter_uses: class key is not live");
         }
-        let l = self.reprs.get_live(key).use_list;
+        let l = self.reprs.get_live(raw_key).use_list;
         proof {
             assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.reprs.n_spec(), key.as_nat()));
@@ -2352,13 +2434,14 @@ where
 
     /// O(1) length of class `key`'s use-list, widened to `usize` at the
     /// boundary (production's `use_list_len`). Refuses a dead key.
-    pub fn use_list_len(&self, key: <T as DenseId>::Index) -> (n: usize)
+    pub fn use_list_len(&self, key: K) -> (n: usize)
         requires self.wf(),
     {
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::use_list_len: class key is not live");
         }
-        let l = self.reprs.get_live(key).use_list;
+        let l = self.reprs.get_live(raw_key).use_list;
         proof {
             assert(ss_contains(self.reprs.sparse_view(), self.reprs.indices_view(),
                 self.reprs.n_spec(), key.as_nat()));
@@ -2371,13 +2454,14 @@ where
     /// boundary like `use_list_len` (the stored counter is `T::Index`-wide,
     /// so the width follows the configuration). Refuses a dead key. Feeds the
     /// `--union-by size`/`sum` survivor policy.
-    pub fn class_size(&self, key: <T as DenseId>::Index) -> (n: usize)
+    pub fn class_size(&self, key: K) -> (n: usize)
         requires self.wf(),
     {
-        if !self.reprs.contains(key) {
+        let raw_key = Self::key_index(key);
+        if !self.reprs.contains(raw_key) {
             crate::guard::refuse("EClasses::class_size: class key is not live");
         }
-        self.reprs.get_live(key).size.as_usize()
+        self.reprs.get_live(raw_key).size.as_usize()
     }
 
     /// Read completion column `col` of a pool row number carried in
@@ -2555,9 +2639,11 @@ impl EClassesToken {
     }
 }
 
-impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool>
+    EClasses<T, K, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,
@@ -2602,7 +2688,7 @@ where
         };
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -2619,7 +2705,7 @@ where
             // the pushed cell snapshot is the live payload_seq.
             assert(ring_payloads(self.entries.entries_snapshots_view()[k_new])
                 =~= o.entries.payload_seq());
-            assert(eg_model_wf::<T, L, N>(
+            assert(eg_model_wf::<T, K, L, N>(
                 self.entries.model_snapshots_view()[k_new],
                 ring_payloads(self.entries.entries_snapshots_view()[k_new]),
                 self.uf.roots_snapshots_view()[k_new],
@@ -2635,7 +2721,7 @@ where
                 self.reprs.sparse_snapshots_view()[k_new],
                 self.reprs.indices_snapshots_view()[k_new]));
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, L, N>(
+                implies eg_model_wf::<T, K, L, N>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -2766,7 +2852,7 @@ where
         let ghost f = token.pool.frame_idx as int;
         proof {
             reveal(eg_archive_agrees);
-            assert(eg_archive_agrees::<T, L, N>(
+            assert(eg_archive_agrees::<T, K, L, N>(
                 o.entries.model_snapshots_view(),
                 o.entries.entries_snapshots_view(),
                 o.uf.roots_snapshots_view(),
@@ -2797,7 +2883,7 @@ where
             assert(self.entries.payload_seq()
                 =~= ring_payloads(o.entries.entries_snapshots_view()[f]));
             assert(self.uf.roots_view() == o.uf.roots_snapshots_view()[f]);
-            assert(eg_model_wf::<T, L, N>(
+            assert(eg_model_wf::<T, K, L, N>(
                 self.entries.model_view(), self.entries.payload_seq(),
                 self.uf.roots_view(), self.reprs.dense_view(),
                 self.reprs.sparse_view(), self.reprs.indices_view(),
@@ -2805,7 +2891,7 @@ where
                 self.min_pool.view(), self.min_width as nat));
             // truncated stacks agree per frame below f.
             assert forall|k: int| 0 <= k < self.entries.model_snapshots_view().len()
-                implies eg_model_wf::<T, L, N>(
+                implies eg_model_wf::<T, K, L, N>(
                     #[trigger] self.entries.model_snapshots_view()[k],
                     ring_payloads(self.entries.entries_snapshots_view()[k]),
                     self.uf.roots_snapshots_view()[k],
@@ -2909,9 +2995,10 @@ where
 // the union-find's glue — doc/design/egraph-class-layer.md).
 // ---------------------------------------------------------------------------
 
-impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, L, N, J, TRACK, PROOFS>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool> EClasses<T, K, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,
@@ -2988,10 +3075,11 @@ impl core::fmt::Debug for EClassesToken {
 }
 
 // Production-surface parity (the pre-swap class layer shipped Default).
-impl<T, L, N, J, const TRACK: bool, const PROOFS: bool> Default
-    for EClasses<T, L, N, J, TRACK, PROOFS>
+impl<T, K, L, N, J, const TRACK: bool, const PROOFS: bool> Default
+    for EClasses<T, K, L, N, J, TRACK, PROOFS>
 where
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId + Tagged + core::default::Default,
     J: Tagged + Copy + core::default::Default,

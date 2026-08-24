@@ -13,9 +13,16 @@ use semi_persistent_containers_verus::opt::DenseId;
 use semi_persistent_containers_verus::union_find::NoJust;
 use semi_persistent_containers_verus::vec::ShrinkPolicy;
 
-type EC = EClasses<DenseId31, DenseId31, DenseId31, NoJust, true, false>;
-type EC64 = EClasses<DenseId63, DenseId63, DenseId63, NoJust, true, false>;
-type EcProofs = EClasses<DenseId31, DenseId31, DenseId31, NoJust, true, true>;
+semi_persistent_containers_verus::define_id31! {
+    pub struct EClassKey31 / StoredEClassKey31, "ec";
+}
+semi_persistent_containers_verus::define_id63! {
+    pub struct EClassKey63 / StoredEClassKey63, "ec64";
+}
+
+type EC = EClasses<DenseId31, EClassKey31, DenseId31, DenseId31, NoJust, true, false>;
+type EC64 = EClasses<DenseId63, EClassKey63, DenseId63, DenseId63, NoJust, true, false>;
+type EcProofs = EClasses<DenseId31, EClassKey31, DenseId31, DenseId31, NoJust, true, true>;
 
 fn id(n: usize) -> DenseId31 {
     DenseId31::try_new(n).expect("test id in range")
@@ -72,7 +79,7 @@ trait CollectIndices {
 impl<'a, const TRACK: bool> CollectIndices
     for semi_persistent_containers_verus::circular_list::RingIter<
         'a,
-        semi_persistent_containers_verus::opt::Opt<u32>,
+        semi_persistent_containers_verus::opt::Opt<EClassKey31>,
         DenseId31,
         TRACK,
     >
@@ -292,8 +299,11 @@ fn proofs_merge_unjustified_panics() {
 }
 
 semi_persistent_containers_verus::define_id7! { pub struct TinyId / StoredTinyId, "t"; }
+semi_persistent_containers_verus::define_id7! {
+    pub struct TinyClassKey / StoredTinyClassKey, "tc";
+}
 
-type EcTiny = EClasses<TinyId, DenseId31, DenseId31, NoJust, true, false>;
+type EcTiny = EClasses<TinyId, TinyClassKey, DenseId31, DenseId31, NoJust, true, false>;
 
 /// The aggregate holds the FULL 7-bit node-id range: every component ceiling
 /// (union-find, ring, repr set, use-list arena) admits all 128 ids, matching

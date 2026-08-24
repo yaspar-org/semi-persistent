@@ -63,6 +63,7 @@ pub struct DefaultConfig;
 impl crate::config::EGraphConfig for DefaultConfig {
     type Index = u32;
     type G = crate::id::ENodeId;
+    type ClassKey = crate::id::EClassKey;
     type O = crate::id::OpId;
     type S = crate::id::SortId;
     type V = LitValId;
@@ -81,6 +82,7 @@ impl crate::config::EGraphConfig for DefaultConfig {
 // ---------------------------------------------------------------------------
 
 semi_persistent_containers::define_id63! { pub struct ENodeId64 / StoredENodeId64, "e64"; }
+semi_persistent_containers::define_id63! { pub struct EClassKey64 / StoredEClassKey64, "ec64"; }
 semi_persistent_containers::define_id63! { pub struct OpId64 / StoredOpId64, "op64"; }
 semi_persistent_containers::define_id63! { pub struct SortId64 / StoredSortId64, "s64"; }
 semi_persistent_containers::define_id63! { pub struct UseListId64 / StoredUseListId64, "ul64"; }
@@ -117,6 +119,7 @@ pub struct Config64;
 impl crate::config::EGraphConfig for Config64 {
     type Index = u64;
     type G = ENodeId64;
+    type ClassKey = EClassKey64;
     type O = OpId64;
     type S = SortId64;
     type V = LitValId64;
@@ -153,6 +156,7 @@ pub struct ConfigM16;
 impl crate::config::EGraphConfig for ConfigM16 {
     type Index = u32;
     type G = crate::id::ENodeId;
+    type ClassKey = crate::id::EClassKey;
     type O = crate::id::OpId;
     type S = crate::id::SortId;
     type V = LitValId;

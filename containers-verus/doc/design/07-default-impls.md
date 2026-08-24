@@ -128,7 +128,7 @@ each needs:
 | `FixedArityNode<G,O,K>` | composite `Tagged` value | explicit `Default` calls `new(default ids, default children)` |
 | `VariableArityNode<G,O>` | composite `Tagged` value | explicit `Default` calls `make(default ids, 0, 0)` |
 | `LitNode<G,O,V>` | composite `Tagged` value | explicit `Default` calls `new(default ids)` |
-| `EClassEntry<T>` | `{next: T, repr_stored}` | `Default { next: T::default(), repr_stored: T::Index::default().into_repr() }` (route the id through `into_repr`, per §4) |
+| `EClassEntry<T,K>` | `{next: T, class_key: Opt<K>}` | `Default { next: T::default(), class_key: Opt::some(K::default()) }`; both IDs are converted through their `Tagged` implementations when stored |
 | `PoolDirector` | newtype `(u64)` | explicit `Default` calls `PoolDirector::new(0)` |
 | `Justification<G>` | enum | `#[derive(Default)]` with explicit `#[default] Filler`; never observed as proof data (§1) |
 | `BPlusNode` | `Tagged`, bit-steal `FLAG_TAG` | production's explicit all-zero default is a degenerate internal node; the verified value-side default is an empty leaf. Both are restore-only fillers and are overwritten |
@@ -139,7 +139,8 @@ each needs:
 
 Notes:
 - Types parameterized by a `DenseId`/`Tagged` `T` must add `T: Default` to
-  their `Default` impl bound (e.g. `EClassEntry<T> where T: DenseId + Default`).
+  their `Default` impl bound (e.g. `EClassEntry<T, K>` requires both IDs'
+  `DenseId` bounds, which include `Default`).
   Since the `define_id*!` ids are already `Default`, every concrete
   instantiation in the egraph satisfies this.
 - `Justification<G>` is the only enum among stored payloads, the only one

@@ -4,7 +4,7 @@ use proptest::prelude::*;
 use semi_persistent_egraph::classes::EClasses;
 use semi_persistent_egraph::classes::EClassesToken;
 use semi_persistent_egraph::containers::ShrinkPolicy;
-use semi_persistent_egraph::id::{UseListId, UseNodeId};
+use semi_persistent_egraph::id::{EClassKey, UseListId, UseNodeId};
 use semi_persistent_egraph::{DenseId, ENodeId};
 use std::collections::{HashMap, HashSet};
 
@@ -87,7 +87,7 @@ impl Oracle {
 }
 
 fn run_ops(ops: Vec<Op>) {
-    let mut ec = EClasses::<ENodeId, UseListId, UseNodeId, true, false>::new();
+    let mut ec = EClasses::<ENodeId, EClassKey, UseListId, UseNodeId, true, false>::new();
     let mut oracle = Oracle::new();
     let mut ids: Vec<u32> = Vec::new();
     let mut snapshots: Vec<(EClassesToken, Oracle, Vec<u32>)> = Vec::new();
