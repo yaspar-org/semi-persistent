@@ -200,9 +200,9 @@ big enough" without an argument.
 | `Cfg::M` / `Multiplicity64` | u64 | Widest supported count domain. It accepts the full surface `u64` range, but sums can still overflow and panic. With 31-bit ids an MSet child is 16 bytes because of alignment. |
 | `multiset_size` | u64 accumulator | Degree comparison sums multiplicities with `checked_add`; an unrepresentable total panics. This is an implementation limit, not a proof that every configured graph fits. |
 | `Clamp::Nilpotent.order` | u8 | previous section; widen to u32 only for the postponed `bvadd` 2^N torsion encoding. |
-| `GUARD_MAX_REWRITES` | usize = 1 000 000 | Legacy release backstop, not a proved upper bound. Debug builds panic on exhaustion; release builds stop and can return a partial normal form. |
+| `GUARD_MAX_REWRITES` | usize = 1 000 000 | defensive implementation backstop, not a proved upper bound. Exhaustion panics in every build rather than returning a partial normal form. The paper termination argument applies only when all generated rules satisfy its orientation and representation hypotheses; that implementation correspondence remains a proof obligation. |
 | `DEFAULT_COMPLETION_NODE_BUDGET` | usize = 50 000 | policy: resource bail (sound-but-incomplete, reported via `CompletionOutcome::AbortedGrowthLimit`); configurable per e-graph (`set_completion_node_budget`); limits and open work are in `../future/ac-completion-limitations.md`. |
-| flatten cap `seed_children + 1 + 64·node_count` (unchecked `usize`) | Legacy debug-only output guard, not a semantic theorem | It counts emitted output rather than recursive expansion work, so malformed nonprogressing cycles are not refused reliably. |
+| flatten cap `seed_children + 1 + 64·node_count` (saturating `usize`) | operational refusal bound, not a semantic theorem | The seed term permits legitimately wide inputs. Saturating arithmetic prevents the guard calculation itself from wrapping; the cap counts recursive splice expansions and output. Exhaustion panics in every build rather than returning a partial normal form. |
 
 ## Where the algebra lives: ENodeKind (routing) vs OpKind (algebra)
 

@@ -544,12 +544,10 @@ impl<G: Copy + Ord> NfIndex<G> {
     }
 }
 
-/// Release-mode backstop for the normalize loops. With every rule oriented `lhs ≫ rhs`
-/// in the admissible order, each rewrite strictly lowers the host monomial, so the loop
-/// terminates unconditionally; legitimate chains are short in practice but have no small
-/// closed-form bound (a chain of equal-size rules can lex-descend many times), so the cap
-/// must be generous enough to never truncate a real normalization. Reaching it means a
-/// mis-oriented rule got in — debug builds assert instead of truncating silently.
+/// Hard backstop for the normalize loops. The paper termination argument requires every
+/// rule to be oriented `lhs ≫ rhs`; this finite guard additionally prevents a bad caller
+/// from looping forever. Exhaustion is a panic in every build, never a partially normalized
+/// return value.
 const GUARD_MAX_REWRITES: usize = 1_000_000;
 
 /// Normalize a monomial to a fixpoint by AC rewriting (Kapur Def. 3): while some rule
@@ -569,15 +567,25 @@ pub fn normalize_ms_into<G: Copy + Ord, M: MultiplicityLike>(
     ms: &[Pair<G, M>],
     rules: NfRules<'_, '_, G, M>,
 ) {
+    normalize_ms_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES);
+}
+
+fn normalize_ms_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
+    max_rewrites: usize,
+) {
     out.clear();
     out.extend_from_slice(ms);
-    // Termination is a theorem, not a hope: every rule is oriented `lhs ≫ rhs` in the
-    // admissible [`monomial_cmp`] order, so each step strictly lowers `out` (compatibility)
-    // in a well-founded order. The guard is a release-mode backstop against a caller
-    // passing a mis-oriented rule; hitting it is always a bug (debug builds assert).
     let mut cands = CandVec::new();
-    let mut guard = GUARD_MAX_REWRITES;
+    let mut rewrites = 0usize;
     while let Some(rule) = rules.find_applicable(out, &mut cands) {
+        assert!(
+            rewrites < max_rewrites,
+            "normalize_ms_into exceeded its rewrite guard before reaching a normal form"
+        );
         #[cfg(debug_assertions)]
         let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
@@ -588,15 +596,7 @@ pub fn normalize_ms_into<G: Copy + Ord, M: MultiplicityLike>(
             monomial_cmp(out, &before) == std::cmp::Ordering::Less,
             "rewrite step failed to lower the host monomial (order not admissible?)"
         );
-        guard -= 1;
-        if guard == 0 {
-            debug_assert!(
-                false,
-                "normalize_ms_into hit the rewrite guard: a rule set \
-                 oriented by monomial_cmp cannot loop, so a mis-oriented rule slipped in"
-            );
-            break;
-        }
+        rewrites += 1;
     }
 }
 
@@ -635,12 +635,26 @@ pub fn normalize_set_into<G: Copy + Ord, M: MultiplicityLike>(
     ms: &[Pair<G, M>],
     rules: NfRules<'_, '_, G, M>,
 ) {
+    normalize_set_into_with_limit(out, scratch, ms, rules, GUARD_MAX_REWRITES);
+}
+
+fn normalize_set_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
+    max_rewrites: usize,
+) {
     out.clear();
     out.extend_from_slice(ms);
     clamp_idempotent(out);
     let mut cands = CandVec::new();
-    let mut guard = GUARD_MAX_REWRITES;
+    let mut rewrites = 0usize;
     while let Some(rule) = rules.find_applicable(out, &mut cands) {
+        assert!(
+            rewrites < max_rewrites,
+            "normalize_set_into exceeded its rewrite guard before reaching a normal form"
+        );
         #[cfg(debug_assertions)]
         let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
@@ -654,11 +668,7 @@ pub fn normalize_set_into<G: Copy + Ord, M: MultiplicityLike>(
             monomial_cmp(out, &before) == std::cmp::Ordering::Less,
             "idempotent rewrite step failed to lower the host monomial"
         );
-        guard -= 1;
-        if guard == 0 {
-            debug_assert!(false, "normalize_set_into hit the rewrite guard");
-            break;
-        }
+        rewrites += 1;
     }
 }
 
@@ -702,12 +712,27 @@ pub fn normalize_nilpotent_into<G: Copy + Ord, M: MultiplicityLike>(
     rules: NfRules<'_, '_, G, M>,
     order: u8,
 ) {
+    normalize_nilpotent_into_with_limit(out, scratch, ms, rules, order, GUARD_MAX_REWRITES);
+}
+
+fn normalize_nilpotent_into_with_limit<G: Copy + Ord, M: MultiplicityLike>(
+    out: &mut Vec<Pair<G, M>>,
+    scratch: &mut Vec<Pair<G, M>>,
+    ms: &[Pair<G, M>],
+    rules: NfRules<'_, '_, G, M>,
+    order: u8,
+    max_rewrites: usize,
+) {
     out.clear();
     out.extend_from_slice(ms);
     clamp_nilpotent(out, order);
     let mut cands = CandVec::new();
-    let mut guard = GUARD_MAX_REWRITES;
+    let mut rewrites = 0usize;
     while let Some(rule) = rules.find_applicable(out, &mut cands) {
+        assert!(
+            rewrites < max_rewrites,
+            "normalize_nilpotent_into exceeded its rewrite guard before reaching a normal form"
+        );
         #[cfg(debug_assertions)]
         let before = out.clone();
         // out := (out − lhs) ⊎ rhs, ping-ponging through `scratch`.
@@ -721,11 +746,7 @@ pub fn normalize_nilpotent_into<G: Copy + Ord, M: MultiplicityLike>(
             monomial_cmp(out, &before) == std::cmp::Ordering::Less,
             "nilpotent rewrite step failed to lower the host monomial"
         );
-        guard -= 1;
-        if guard == 0 {
-            debug_assert!(false, "normalize_nilpotent_into hit the rewrite guard");
-            break;
-        }
+        rewrites += 1;
     }
 }
 
@@ -940,6 +961,31 @@ mod tests {
         normalize_ms_into(&mut out, &mut scratch, &input, NfRules::linear(&refs));
         assert_eq!(out, ms(&[(5, 1)]));
         assert_eq!(out, normalize_ms(&input, &rules));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "normalize_ms_into exceeded its rewrite guard before reaching a normal form"
+    )]
+    fn rewrite_guard_never_returns_a_partial_normal_form() {
+        let rules = [NfRule {
+            lhs: ms(&[(1, 1)]),
+            rhs: Vec::new(),
+        }];
+        let refs: Vec<NfRuleRef<'_, ENodeId, Multiplicity>> =
+            rules.iter().map(NfRuleRef::from).collect();
+        let mut out = Vec::new();
+        let mut scratch = Vec::new();
+
+        // One rewrite leaves one copy of class 1, so a budget of one is
+        // deliberately exhausted before the input reaches its empty normal form.
+        normalize_ms_into_with_limit(
+            &mut out,
+            &mut scratch,
+            &ms(&[(1, 2)]),
+            NfRules::linear(&refs),
+            1,
+        );
     }
 
     /// The indexed path must pick the same rule the linear scan would, not merely *a*
