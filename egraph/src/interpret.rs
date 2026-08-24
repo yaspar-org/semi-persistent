@@ -79,10 +79,13 @@ struct Mark<Cfg: EGraphConfig, O> {
 ///   intermediate sums are not derived (the documented completeness gap,
 ///   `ac-congruence-completeness.md` Part I).
 /// - `Eager`: every rebuild attempts completion (the `--derive-ac-eqs`
-///   behavior). `CompletionOutcome::Converged` reports the fixpoint; the
-///   growth budget can stop earlier with `AbortedGrowthLimit`. Interleaving
+///   behavior). `CompletionOutcome::Converged` reports an unchanged full
+///   implementation round, not a semantic-completeness certificate; the growth
+///   budget can stop earlier with `AbortedGrowthLimit`. Interleaving
 ///   completion with saturation rules re-runs it on a growing atom pool every
-///   round, which diverges on rule-sets that keep minting new atoms.
+///   round. A rule set that continually mints new atoms can prevent the
+///   combined loop from reaching a fixpoint; the node-growth budget may stop an
+///   individual completion rebuild first.
 /// - `Lazy`: saturation runs with completion off; an equality check that plain
 ///   congruence cannot decide runs goal-directed completion inside a
 ///   semi-persistent transaction shared across consecutive equality checks.
@@ -91,9 +94,12 @@ struct Mark<Cfg: EGraphConfig, O> {
 ///   alternates default-ruleset rule rounds with completion passes when the
 ///   graph's own closure does not decide the pair, and the node-growth budget
 ///   is checked inside a round's apply loops. The first non-equality-check
-///   command restores the mark, so the O(touched) restore discards everything
-///   the checks derived. Same decision procedure as `Eager` per query, paid
-///   only when a query needs it.
+///   command restores the mark, discarding everything the checks derived.
+///   Restore work includes container diff replay/capture-state reconstruction
+///   and incremental or full hash-index repair. Lazy and eager share the
+///   completion implementation, but different stopping points and lazy's
+///   bounded rule/completion alternation mean they are not claimed to be
+///   equivalent decision procedures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum AcMode {
     #[default]
@@ -240,7 +246,10 @@ where
     /// the graph, then enable completion. Consecutive equality checks keep it
     /// open and accumulate completion/alternation state; the first non-check
     /// command (or the end of the program) closes it via `lazy_txn_close`,
-    /// and the O(touched) restore discards everything the checks derived.
+    /// and restore discards everything the checks derived. Restore cost is the
+    /// sum of fork-history walks, diff replay, truncation/regrowth, capture-state
+    /// reconstruction (including bitmap clearing where applicable), and
+    /// incremental or full transient-index repair.
     fn lazy_txn_open(&mut self) {
         if self.lazy_txn.is_none() {
             self.lazy_txn = Some(self.eg.mark(self.shrink_policy));
@@ -266,19 +275,19 @@ where
     /// completion goal (`set_cc_goal`), so every completion pass — including
     /// the ones inside the alternation — stops mid-closure the moment the
     /// pair joins. First, one completion rebuild on the current graph — with
-    /// no rules interleaving, the case the termination argument (Dickson
-    /// antichain over a fixed atom pool) covers — decides pure AC congruence
-    /// consequences. Second, if the pair is still apart and the program has
+    /// no rules interleaving, the case the conditional termination argument
+    /// (Dickson antichain over a fixed atom pool) targets — searches for pure AC
+    /// congruence consequences. Second, if the pair is still apart and the program has
     /// rules, the saturation driver runs the default ruleset with the pair as
     /// its `:until` goal and completion on, so rounds alternate rule matching
     /// with completion passes, bounded by `lazy_ac_rounds` and by the
     /// node-growth budget (checked in-round, not only between rounds).
     ///
     /// Returns `(equal, inconclusive)`. `inconclusive` means a budget stopped
-    /// the search first; a `false` verdict with `inconclusive == false` is a
-    /// joint fixpoint of rules and completion that never joined the pair, so
-    /// the equality is not derivable by this program's rules plus ground AC
-    /// congruence.
+    /// the search first. A `false` verdict with `inconclusive == false` reached
+    /// this driver's operational joint fixpoint without joining the pair. It is
+    /// not a semantic non-derivability theorem: matching is over materialized
+    /// nodes, and AC scalar-subterm matching remains incomplete.
     fn lazy_ac_decide(&mut self, a: Cfg::G, b: Cfg::G) -> (bool, bool) {
         self.lazy_txn_open();
         self.eg.set_cc_goal(Some((a, b)));
@@ -422,7 +431,6 @@ where
                 self.build_cterm(ct);
             }
             CCommand::CheckEq(a, b) => {
-                let before = self.eg.node_count();
                 let (a_id, _) = self.build_cterm(a);
                 let (b_id, _) = self.build_cterm(b);
                 // Install the goal before any rebuild: with the shared
@@ -431,9 +439,11 @@ where
                 if self.ac_mode == AcMode::Lazy {
                     self.eg.set_cc_goal(Some((a_id, b_id)));
                 }
-                if self.eg.node_count() > before {
-                    self.eg.rebuild();
-                }
+                // A budget-limited run can leave congruence work pending even
+                // when both queried terms already hash-cons. Equality commands
+                // are closure boundaries, so node growth is not a sufficient
+                // reason to decide whether to rebuild.
+                self.eg.rebuild();
                 if self.eg.find(a_id) != self.eg.find(b_id) {
                     if self.ac_mode == AcMode::Lazy {
                         match self.lazy_ac_decide(a_id, b_id) {
@@ -444,7 +454,9 @@ where
                                      budget before deciding; inconclusive)"
                                         .into()
                                 } else {
-                                    "terms are not equal (lazy AC completion converged)".into()
+                                    "equality was not derived at the lazy AC operational \
+                                     fixpoint"
+                                        .into()
                                 }));
                             }
                         }
@@ -454,34 +466,43 @@ where
                 self.eg.set_cc_goal(None);
             }
             CCommand::CheckNeq(a, b) => {
-                let before = self.eg.node_count();
                 let (a_id, _) = self.build_cterm(a);
                 let (b_id, _) = self.build_cterm(b);
                 if self.ac_mode == AcMode::Lazy {
                     self.eg.set_cc_goal(Some((a_id, b_id)));
                 }
-                if self.eg.node_count() > before {
-                    self.eg.rebuild();
-                }
+                self.eg.rebuild();
                 if self.eg.find(a_id) == self.eg.find(b_id) {
                     self.eg.set_cc_goal(None);
                     return Err(InterpError::CheckFailed("terms are equal".into()));
                 }
-                // Lazy mode makes `!=` stronger, not weaker: distinct classes may
-                // still be AC-entailed equal through erased intermediate sums, so
-                // the disequality is confirmed under completion before it passes.
-                if self.ac_mode == AcMode::Lazy && self.lazy_ac_decide(a_id, b_id).0 {
-                    return Err(InterpError::CheckFailed(
-                        "terms are equal (derived by lazy AC completion)".into(),
-                    ));
+                // Lazy mode searches beyond plain congruence before accepting `!=`:
+                // distinct classes may still join through completion. Reaching the
+                // implemented operational fixpoint without a join is the command's
+                // acceptance criterion, not a semantic non-disequality theorem.
+                if self.ac_mode == AcMode::Lazy {
+                    match self.lazy_ac_decide(a_id, b_id) {
+                        (true, _) => {
+                            return Err(InterpError::CheckFailed(
+                                "terms are equal (derived by lazy AC completion)".into(),
+                            ));
+                        }
+                        (false, true) => {
+                            return Err(InterpError::CheckFailed(
+                                "disequality is inconclusive (lazy AC completion hit its \
+                                 growth or alternation budget before deciding)"
+                                    .into(),
+                            ));
+                        }
+                        (false, false) => {}
+                    }
                 }
             }
             CCommand::Extract(ct) => {
-                let before = self.eg.node_count();
                 let (id, _) = self.build_cterm(ct);
-                if self.eg.node_count() > before {
-                    self.eg.rebuild();
-                }
+                // Extraction must see pending congruence from a preceding
+                // budget-limited run even when `ct` was already materialized.
+                self.eg.rebuild();
                 // An extract that cannot produce a term is a program error, not a printed
                 // remark: the class is named and the reason distinguished (every node
                 // `:unextractable`, versus no grounded node at all).
@@ -638,12 +659,9 @@ where
                 algorithm,
                 cycle_mode,
             } => {
-                let before = self.eg.node_count();
                 let (l_id, _) = self.build_cterm(left);
                 let (r_id, _) = self.build_cterm(right);
-                if self.eg.node_count() > before {
-                    self.eg.rebuild();
-                }
+                self.eg.rebuild();
 
                 let alg = match algorithm.as_str() {
                     "exact" => crate::au::session::AuAlgorithm::Exact,
@@ -703,12 +721,9 @@ where
                 algorithm,
                 cycle_mode,
             } => {
-                let before = self.eg.node_count();
                 let (l_id, _) = self.build_cterm(left);
                 let (r_id, _) = self.build_cterm(right);
-                if self.eg.node_count() > before {
-                    self.eg.rebuild();
-                }
+                self.eg.rebuild();
 
                 let alg = match algorithm.as_str() {
                     "exact" => crate::au::session::AuAlgorithm::Exact,

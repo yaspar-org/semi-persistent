@@ -5,7 +5,13 @@
 
 use semi_persistent_egraph::EGraph31;
 use semi_persistent_egraph::cc::CcSnapshot;
+use semi_persistent_egraph::interpret::{AcMode, InterpError, Interpreter};
 use semi_persistent_egraph::literal::NiraLitVal;
+use semi_persistent_egraph::model::{MachineLit, MachineModel};
+use semi_persistent_egraph::nodes::DefaultConfig;
+use semi_persistent_egraph::parser::parse_program_v2;
+use semi_persistent_egraph::resolve::GlobalCtx;
+use semi_persistent_egraph::sortcheck::sortcheck_program;
 
 fn set_fixture() -> (
     EGraph31<NiraLitVal, false, false>,
@@ -47,4 +53,38 @@ fn cc_snapshot_counts_set_completion_nodes_if_kept() {
         "CcSnapshot must agree with completion_node_ids semantics for Set/ACI \
          (regression: it was once MSet-only)"
     );
+}
+
+#[test]
+fn lazy_disequality_is_inconclusive_when_completion_hits_its_budget() {
+    let source = r#"
+        (sort E)
+        (function Add (E) E :assoc-comm)
+        (function a () E)
+        (function b () E)
+        (function c () E)
+        (function d () E)
+        (function e () E)
+        (union (Add (a) (b)) (c))
+        (union (Add (b) (d)) (e))
+        (check (!= (a) (b)))
+    "#;
+    let commands = parse_program_v2(source).expect("program parses");
+    let mut interp =
+        Interpreter::<DefaultConfig, MachineLit, MachineModel, true, false>::new(MachineModel);
+    interp.set_ac_mode(AcMode::Lazy);
+    interp.eg.set_completion_node_budget(0);
+    let mut globals = GlobalCtx::new();
+    let checked = sortcheck_program(commands, &mut interp.eg, &interp.model, &mut globals)
+        .expect("program sortchecks");
+
+    match interp.run_checked(&checked) {
+        Err(InterpError::CheckFailed(message)) => {
+            assert!(
+                message.contains("inconclusive"),
+                "budget exhaustion must not become a disequality verdict: {message}"
+            );
+        }
+        other => panic!("expected an inconclusive failed check, got {other:?}"),
+    }
 }

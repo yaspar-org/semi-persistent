@@ -66,16 +66,18 @@ declaration has already been registered before any interpreted `Push`.
 | `Insert(ct)` | Build CTerm |
 | `Union(a, b)` | Build both → merge → rebuild |
 | `Check(ct)` | Build CTerm (assert exists) |
-| `CheckEq(a, b)` | Build both → verify find(a) == find(b) |
-| `CheckNeq(a, b)` | Build both → verify find(a) != find(b) |
-| `Extract(ct)` | Build → extract_best → print |
+| `CheckEq(a, b)` | Build both → rebuild → check equality; Lazy may run goal-directed completion |
+| `CheckNeq(a, b)` | Build both → rebuild → check current non-membership; Lazy searches before accepting |
+| `Extract(ct)` | Build → rebuild → extract_best → print |
 | `Rewrite { query, rhs, .. }` | Compile RHS → push to rules (with its ruleset) |
 | `Rule { query, actions, .. }` | Compile actions → push to rules (with its ruleset) |
 | `Run { ruleset, limit, until }` | Build the goal terms → saturate under a `RunSpec` |
 | `PrintSize(op)` | Per-op node counts and total, or one op's count |
 | `PrintStats(file)` | Last run's counters, as text or JSON |
-| `Push(shrink)` | Snapshot e-graph + rules count (`:shrink` reclaims capacity) |
-| `Pop` | Restore e-graph + truncate rules |
+| `AntiUnify { .. }` | Build both → rebuild → construct `AuSnapshot` → run Exact or UCT |
+| `CheckAu { .. }` | Build both → rebuild → construct `AuSnapshot` → run AU and assert the returned size bound |
+| `Push(shrink)` | With `TRACK = true`, snapshot e-graph + rule/global counts (`:shrink` reclaims capacity) |
+| `Pop` | Restore e-graph + truncate rules and runtime globals |
 
 ## Building a `CTerm`
 

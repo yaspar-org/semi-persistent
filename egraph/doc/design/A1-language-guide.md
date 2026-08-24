@@ -109,14 +109,19 @@ and `extract` commands:
 (extract a)                   ;; print cheapest term in a's class
 ```
 
-Checks compare canonical forms under plain congruence. AC-entailed
-equalities that flattening erases (see the AC completion docs) are
-decided by the completion pass, in one of two opt-in modes:
+Checks compare canonical forms under plain congruence. The completion pass can
+derive additional AC-entailed equalities that flattening erases (see the AC
+completion docs), in one of two opt-in modes:
 `--derive-ac-eqs` runs it eagerly on every rebuild, and
 `--lazy-ac-eqs` runs it only inside a failing check, in a
-mark/complete/restore transaction that leaves the graph untouched.
-Under the lazy mode `(check (!= …))` is confirmed under completion
-before it passes. The two flags are mutually exclusive;
+mark/complete/restore transaction. Consecutive equality checks share that
+temporary transaction; it is restored before the next non-equality command or
+at the end of the checked program, so its derived nodes and merges do not
+persist in the program state.
+Under lazy mode, `(check (!= ...))` passes only when the implemented bounded
+completion/rule search reaches its operational fixpoint without deriving the
+equality. That is the command's operational criterion, not a proved statement
+of semantic non-equality in the abstract AC theory. The two flags are mutually exclusive;
 `ac-congruence-completeness.md` §13 has the trade-offs.
 
 A bare S-expression at the top level is an insertion; there is no

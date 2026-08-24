@@ -43,9 +43,10 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     use_naive: bool,
 
-    /// Derive all AC congruence consequences (superposition + inter-reduction) during
-    /// rebuild. Off by default: when off, leapfrog matching still enumerates sub-multisets
-    /// of AC nodes, but rebuild does not complete the AC rule set. See AC completion docs.
+    /// Enable AC completion rounds (superposition + inter-reduction) during rebuild.
+    /// Off by default: when off, leapfrog matching still enumerates sub-multisets of AC
+    /// nodes, but rebuild does not run the completion procedure. A converged implemented
+    /// fixpoint is not an unconditional completeness theorem. See the AC completion docs.
     #[arg(long, default_value_t = false, conflicts_with = "lazy_ac_eqs")]
     derive_ac_eqs: bool,
 
@@ -53,8 +54,9 @@ struct Cli {
     /// plain congruence cannot decide runs goal-directed completion inside a
     /// semi-persistent transaction shared across consecutive equality checks, with rule
     /// alternation as its second phase; the restore discards everything the checks
-    /// derived. `!=` checks are confirmed under completion before they pass. Mutually
-    /// exclusive with --derive-ac-eqs.
+    /// derived. A `!=` check passes only if that implemented search reaches its
+    /// operational fixpoint without deriving equality; this is not a theorem of semantic
+    /// disequality. Mutually exclusive with --derive-ac-eqs.
     #[arg(long, default_value_t = false)]
     lazy_ac_eqs: bool,
 
