@@ -3177,8 +3177,10 @@ where
     ///   single atom `{class}` is its canonical summand form, so keep the child as a summand.
     ///
     /// `g_buf` already holds `find`'d ids. Preserves §5b: `+{a,b}` used as `neg`'s child is
-    /// `atomic`, so it is kept, not flattened. Bounded: a spliced class's `min_monomial` is a
-    /// strictly smaller monomial over the existing constants, so the worklist drains.
+    /// `atomic`, so it is kept, not flattened. The semantic invariants make recursive
+    /// expansion well-founded; a work/output budget is nevertheless enforced in every build
+    /// profile so corrupted cyclic state is refused instead of looping or returning a
+    /// partially flattened node.
     fn flatten_ac_children(&mut self, op: Cfg::O) {
         // Move the buffers out to satisfy the borrow checker while reading `self`.
         let mut work = std::mem::take(&mut self.flatten_buf);
@@ -3199,8 +3201,12 @@ where
         // graph is deep. Anchoring at zero made a plain `f(a, a, …)` with more children
         // than `1 + 64 * node_count()` trip the assertion below — a large-but-well-formed
         // input diagnosed as a cyclic class.
-        let cap = work.len() + 1 + 64 * self.node_count();
+        let cap = work
+            .len()
+            .saturating_add(1)
+            .saturating_add(64usize.saturating_mul(self.node_count()));
         let op_col = self.ops.completion_column(op);
+        let mut expansions = 0usize;
         while let Some(g) = work.pop() {
             let cls = self.classes.find_const(g);
             // A child is a pure `op`-sum to splice iff its class is non-atomic AND its
@@ -3208,14 +3214,18 @@ where
             // `op`. Both reads are representative-independent (per-class pool), never
             // `find`-keyed.
             let mut spliced = false;
-            if out.len() <= cap
-                && let Some(col) = op_col
+            if let Some(col) = op_col
                 && let Some(repr) = self.classes.repr_id(cls)
                 && !self.classes.atomic(repr)
                 && let Some(min_node) = self.classes.min_monomial(repr, col)
                 && self.node_op(min_node) == op
                 && matches!(self.node_ref(min_node), NodeRef::MSet(_) | NodeRef::Set(_))
             {
+                assert!(
+                    expansions < cap && out.len() <= cap,
+                    "flatten_ac_children exceeded work cap (degenerate cyclic AC class?)"
+                );
+                expansions += 1;
                 // Expand the canonical summand form; `for_each_child` yields (class, count)
                 // for either representation (a Set member counts once).
                 self.for_each_child(min_node, |cg, times| {
@@ -3229,7 +3239,7 @@ where
                 out.push(g);
             }
         }
-        debug_assert!(
+        assert!(
             out.len() <= cap,
             "flatten_ac_children exceeded cap (degenerate cyclic AC class?)"
         );
@@ -3288,10 +3298,10 @@ where
     /// spliced sequence's own elements may since have been merged into pure `op`-sequence
     /// classes.
     ///
-    /// `g_buf` already holds `find`'d ids. Bounded by the same cap `flatten_ac_children` uses,
-    /// and for the same reason: each splice replaces one element by a strictly shorter
-    /// sequence, so a well-formed graph drains far below the bound and the cap only stops a
-    /// degenerate cyclic class (`X = {seq(X, a)}`) from looping.
+    /// `g_buf` already holds `find`'d ids. The least-node choice makes expansion
+    /// well-founded for a valid append-only graph. The same work/output budget as
+    /// `flatten_ac_children` is still enforced in every build profile: malformed state such
+    /// as `X = {seq(X)}` is refused rather than looping or producing a partial normal form.
     fn flatten_seq_children(&mut self, op: Cfg::O) {
         // Move the buffers out to satisfy the borrow checker while reading `self`.
         let mut work = std::mem::take(&mut self.flatten_buf);
@@ -3301,13 +3311,21 @@ where
         work.clear();
         work.extend(out.iter().rev().copied());
         out.clear();
-        let cap = work.len() + 1 + 64 * self.node_count();
+        let cap = work
+            .len()
+            .saturating_add(1)
+            .saturating_add(64usize.saturating_mul(self.node_count()));
+        let mut expansions = 0usize;
         while let Some(g) = work.pop() {
             let mut spliced = false;
-            if out.len() <= cap
-                && let Some(inner) = self.pure_seq_node(g, op)
+            if let Some(inner) = self.pure_seq_node(g, op)
                 && let NodeRef::Seq(l) = self.node_ref(inner)
             {
+                assert!(
+                    expansions < cap && out.len() <= cap,
+                    "flatten_seq_children exceeded work cap (degenerate cyclic A class?)"
+                );
+                expansions += 1;
                 let (s, e) = self.nodes.seq.get(l).span();
                 // Reversed again, so the elements pop back in their stored order.
                 for i in (s..e).rev() {
@@ -3319,7 +3337,7 @@ where
                 out.push(g);
             }
         }
-        debug_assert!(
+        assert!(
             out.len() <= cap,
             "flatten_seq_children exceeded cap (degenerate cyclic A class?)"
         );
@@ -4138,6 +4156,30 @@ mod tests {
         eg.merge(b, c);
         eg.rebuild();
         assert_eq!(eg.find(n1), eg.find(n2));
+    }
+
+    /// The flattening guard must count expansion work, not only emitted output.
+    /// A malformed self-expansion emits nothing, so the former `out.len()` guard
+    /// never advanced and this call looped forever. Production construction cannot
+    /// create this state; mutating the private child pool models defensive handling
+    /// of corrupted data at the exact boundary the guard protects.
+    #[test]
+    #[should_panic(expected = "flatten_seq_children exceeded work cap")]
+    fn associative_flatten_refuses_nonprogressing_cycle() {
+        let (ref mut eg, th) = eg::<false, false>();
+        let a = eg.add(th.x, &[]);
+        let seq = eg.add(th.sub, &[a, a]);
+        let NodeRef::Seq(local) = eg.node_ref(seq) else {
+            panic!("associative node must use the Seq partition");
+        };
+        let (start, end) = eg.nodes.seq.get(local).span();
+        assert_eq!(end - start, 2);
+        eg.nodes.seq.pool_set(start, seq);
+        eg.nodes.seq.pool_set(start + 1, seq);
+
+        eg.g_buf.clear();
+        eg.g_buf.push(seq);
+        eg.flatten_seq_children(th.sub);
     }
 
     /// AC: different multiplicities after merge → no false collision
