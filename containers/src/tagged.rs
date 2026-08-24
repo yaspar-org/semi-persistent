@@ -11,7 +11,7 @@
 ///
 /// Implementors choose how to represent the tag:
 /// - **Bit-stealing:** `Repr` reuses a bit from the value (e.g. DenseId MSB).
-/// - **Bool pair:** `Repr = (bool, T)`.
+/// - **Bool pair:** `Repr = BoolTagged<T>`.
 ///
 /// # Copy discipline
 ///
@@ -83,6 +83,11 @@ impl<T: Tagged> Opt<T> {
         }
     }
 
+    /// The explicit `Option` spelling shared with the verified crate.
+    pub fn to_option(&self) -> Option<T> {
+        self.get()
+    }
+
     pub fn is_none(&self) -> bool {
         T::tag(&self.0)
     }
@@ -100,6 +105,16 @@ impl<T: Tagged> Opt<T> {
     pub fn from_raw(r: T::Repr) -> Self {
         Opt(r)
     }
+
+    /// Return the embedded value even when the option tag is set.
+    pub fn get_unchecked(&self) -> T {
+        T::from_repr(&self.0)
+    }
+
+    /// Set the option tag while preserving the embedded value.
+    pub fn set_none(&mut self) {
+        T::set_tag(&mut self.0);
+    }
 }
 
 impl<T: Tagged + core::fmt::Debug> core::fmt::Debug for Opt<T> {
@@ -112,33 +127,54 @@ impl<T: Tagged + core::fmt::Debug> core::fmt::Debug for Opt<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Primitive impls — use (bool, T) pair
+// BoolTagged<T> — fallback for types without a spare bit
+// ---------------------------------------------------------------------------
+
+/// A named `(bool, T)` storage form, matching the verified crate's runtime
+/// representation.
+#[derive(Clone, Copy, Debug)]
+pub struct BoolTagged<T> {
+    pub tagged: bool,
+    pub value: T,
+}
+
+impl<T: Copy> BoolTagged<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            tagged: false,
+            value,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Primitive impls — use the named BoolTagged<T> pair
 // ---------------------------------------------------------------------------
 
 macro_rules! impl_tagged_pair {
     ($T:ty) => {
         impl Tagged for $T {
-            type Repr = (bool, $T);
+            type Repr = BoolTagged<$T>;
 
             #[inline(always)]
             fn into_repr(self) -> Self::Repr {
-                (false, self)
+                BoolTagged::new(self)
             }
             #[inline(always)]
             fn from_repr(r: &Self::Repr) -> Self {
-                r.1
+                r.value
             }
             #[inline(always)]
             fn tag(r: &Self::Repr) -> bool {
-                r.0
+                r.tagged
             }
             #[inline(always)]
             fn set_tag(r: &mut Self::Repr) {
-                r.0 = true;
+                r.tagged = true;
             }
             #[inline(always)]
             fn clear_tag(r: &mut Self::Repr) {
-                r.0 = false;
+                r.tagged = false;
             }
         }
     };
@@ -154,6 +190,50 @@ impl_tagged_pair!(usize);
 // Pair: tag lives in first element's Repr
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub struct Pair<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+#[derive(Clone, Copy)]
+pub struct PairRepr<AR, B> {
+    pub a: AR,
+    pub b: B,
+}
+
+impl<A: Tagged, B: Copy + Default> Tagged for Pair<A, B> {
+    type Repr = PairRepr<A::Repr, B>;
+
+    #[inline(always)]
+    fn into_repr(self) -> Self::Repr {
+        PairRepr {
+            a: self.a.into_repr(),
+            b: self.b,
+        }
+    }
+    #[inline(always)]
+    fn from_repr(r: &Self::Repr) -> Self {
+        Pair {
+            a: A::from_repr(&r.a),
+            b: r.b,
+        }
+    }
+    #[inline(always)]
+    fn tag(r: &Self::Repr) -> bool {
+        A::tag(&r.a)
+    }
+    #[inline(always)]
+    fn set_tag(r: &mut Self::Repr) {
+        A::set_tag(&mut r.a);
+    }
+    #[inline(always)]
+    fn clear_tag(r: &mut Self::Repr) {
+        A::clear_tag(&mut r.a);
+    }
+}
+
+/// Historical tuple support retained for existing plain-Rust users.
 impl<A: Tagged, B: Copy + Default> Tagged for (A, B) {
     type Repr = (A::Repr, B);
 
@@ -176,25 +256,5 @@ impl<A: Tagged, B: Copy + Default> Tagged for (A, B) {
     #[inline(always)]
     fn clear_tag(r: &mut Self::Repr) {
         A::clear_tag(&mut r.0);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BoolTagged<T> — fallback for types without a spare bit
-// ---------------------------------------------------------------------------
-
-/// A `(bool, T)` storage form for types that cannot bit-pack.
-#[derive(Clone, Debug)]
-pub struct BoolTagged<T> {
-    pub tagged: bool,
-    pub value: T,
-}
-
-impl<T: Clone> BoolTagged<T> {
-    pub fn new(value: T) -> Self {
-        Self {
-            tagged: false,
-            value,
-        }
     }
 }

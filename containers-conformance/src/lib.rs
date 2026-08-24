@@ -9,6 +9,9 @@
 //!
 //! Layout parity (same struct sizes, same niche bit-stealing) is asserted by
 //! `tests/layout_parity.rs`; behavioral parity by `tests/differential.rs`.
+//! `tests/id_macro_parity.rs` separately pins the source-facing runtime
+//! contract of every generated DenseId width. These scoped checks do not imply
+//! that every module in the two crates is dependency-swappable.
 //! `benches/retained_containers_bench.rs` is a Criterion comparison against
 //! the reference implementation. It reports estimates and confidence intervals;
 //! it is not a CI gate or a proof of current production parity.
