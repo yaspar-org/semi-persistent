@@ -10,7 +10,11 @@ together. It processes a sequence of `CCommand`s (the output of
 sortcheck, Chapter 11) against a live e-graph. Declaration commands
 register sorts and operators. Ground terms are built bottom-up.
 Rules are compiled and stored. `(run N)` triggers the saturation
-loop. `(push)`/`(pop)` snapshot and restore the entire state.
+loop. `(push)`/`(pop)` snapshot and restore the mutable logical state:
+the e-graph, runtime globals, and rules added after the mark. Static
+registries, configuration, scratch capacity, and last-run diagnostics are
+not rolled back. This path requires `TRACK = true` (as used by the CLI);
+untracked containers reject `mark`/`restore`.
 
 The saturation loop itself is the classic equality saturation
 algorithm: rebuild, index, schedule, match, apply, repeated until
@@ -176,8 +180,10 @@ are assigned by sortcheck in declaration order and stored on the
 `PreparedRule`, so the driver's filter is one integer comparison per
 rule per round.
 
-Rulesets are static: they are not scoped by `(push)`/`(pop)`, and the
-name table lives for one `sortcheck_program` call.
+Ruleset names and ids are static: their name table lives for one
+`sortcheck_program` call and is not rolled back. Rule entries themselves
+are runtime state, so a rule command interpreted after `(push)` is removed
+by the matching `(pop)`.
 
 `(run [ruleset] N :until (= a b))`, or `(!= a b)`, stops the run as
 soon as the goal holds. The goal's terms are ground, so they are built
@@ -261,16 +267,23 @@ Restore takes no policy; it just undoes. Shrinking at restore time
 would cause unnecessary reallocations when the next branch grows back
 to a similar size (see Chapter 2).
 
+`EGraph::mark` delegates to tracked containers, so executing `Push` or
+`Pop` on `Interpreter<..., TRACK = false, ...>` is unsupported. The generic
+type remains useful for programs that do not use snapshots.
+
 ## `GlobalCtx` Synchronization
 
 During sortcheck, `GlobalCtx<S, ()>` tracks global names and sorts
 (no runtime bindings). During interpretation, `GlobalCtx<S, G>` tracks
 names, sorts, and actual e-class bindings.
 
-Both process `Let` commands in the same order, so `GlobalVarId`
-indices assigned during sortcheck match those assigned at runtime.
-Patterns reference globals via `PatVar::Global(GlobalVarId)`, which
-indexes directly into the interpreter's `GlobalCtx`.
+Both process `Let` commands in the same order and truncate at the same
+`Push`/`Pop` boundaries, so `GlobalVarId` indices assigned during sortcheck
+match those assigned at runtime. `GlobalCtx::truncate` also restores an outer
+name when a discarded inner `let` shadowed it; names first introduced in the
+discarded suffix are removed. Patterns reference globals via
+`PatVar::Global(GlobalVarId)`, which indexes directly into the interpreter's
+`GlobalCtx`.
 
 ---
 [← Ch 16: Extraction](16-extraction.md) · [Table of Contents](00-table-of-contents.md)

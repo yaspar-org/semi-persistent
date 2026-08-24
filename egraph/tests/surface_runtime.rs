@@ -127,6 +127,79 @@ fn a_named_run_leaves_the_default_ruleset_alone() {
     );
 }
 
+#[test]
+fn pop_removes_rules_installed_after_push() {
+    // Sortcheck resolves the ruleset name across the whole program. At execution time,
+    // however, `push` records the installed-rule length and `pop` truncates back to it.
+    let mut interp = run("
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(ruleset temporary)
+(let x (a))
+(let y (b))
+(push)
+(rewrite (a) (b) :ruleset temporary)
+(pop)
+(run temporary 2)
+");
+    let (x, _) = interp.global("x").expect("x");
+    let (y, _) = interp.global("y").expect("y");
+    assert_ne!(
+        interp.eg.find(x),
+        interp.eg.find(y),
+        "a rule installed after push survived pop"
+    );
+}
+
+#[test]
+fn pop_reuses_global_ids_for_later_rules() {
+    // The checked GlobalCtx and runtime GlobalCtx must truncate at the same
+    // point. Otherwise `live` resolves to gid 2 while runtime reuses gid 1,
+    // and matching the rule indexes a nonexistent binding.
+    run("
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+(constructor f (E) E)
+(constructor hit () E)
+(let base (a))
+(push)
+(let scoped (b))
+(pop)
+(let live (c))
+(f (c))
+(rewrite (f live) (hit))
+(run 2)
+(check (= (f (c)) (hit)))
+");
+}
+
+#[test]
+fn pop_restores_a_shadowed_global_name() {
+    // Truncation must restore the outer name->id mapping, not merely remove
+    // the inner mapping. If `chosen` became a fresh pattern variable here,
+    // both f-nodes would match and the final disequality would fail.
+    run("
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor f (E) E)
+(constructor hit () E)
+(let chosen (a))
+(push)
+(let chosen (b))
+(pop)
+(f (a))
+(f (b))
+(rewrite (f chosen) (hit))
+(run 2)
+(check (= (f (a)) (hit)))
+(check (!= (f (b)) (hit)))
+");
+}
+
 // ── Stats ──────────────────────────────────────────────────────────────────
 
 const STATS_PROGRAM: &str = "
