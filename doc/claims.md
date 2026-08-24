@@ -35,7 +35,7 @@ Evidence labels:
 | The project-local verified sources contain no executable `admit()` or `assume()` calls | **proved by gate** | all three verified crates are scanned in CI; source scanning and ordinary Verus verification are separate |
 | The container trust boundary is 27 `external_body` items by default and 32 with `literal-types` | **proved by gate** | every item is enumerated in the trust ledger |
 | 33 public partial functions remain and all are allowlisted | **proved by gate** | `check_partial_api.py` |
-| The verified and legacy reference containers agree on the tested shared traces and selected layouts | **measured** | `containers-conformance`; scope and known differences are documented in `containers-conformance/BASELINE.md` and `containers-verus/doc/design/egraph-class-layer.md` |
+| The verified and legacy reference containers agree on the tested shared traces and selected layouts | **measured** | `containers-conformance`, including direct randomized `UnionFind`/`EClasses` differentials and proof-path reconstruction; scope and known differences are documented in `containers-conformance/BASELINE.md` and `containers-verus/doc/design/egraph-class-layer.md` |
 | The e-graph runs on `containers-verus` | compiler-enforced | Cargo aliases it as `semi-persistent-containers`; the legacy `containers` crate is only a conformance/performance reference |
 
 The semi-persistent source-of-truth structures compose from the shared vector
