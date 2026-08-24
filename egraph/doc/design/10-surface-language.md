@@ -89,7 +89,7 @@ enum Term {
 (ruleset name)
 (rewrite lhs rhs [:when (guard...)] [:subsume] [:ruleset name])
 (birewrite lhs rhs [:when (guard...)] [:ruleset name])
-(rule ((pattern...) [:when (guard...)]) ((action...)) [:ruleset name])
+(rule (pattern... guard...) (action...) [:ruleset name])
 (run [ruleset] N [:until (= a b) | :until (!= a b)])
 (push) (push :shrink) (pop)
 (check term) (check (= a b)) (check (!= a b))
@@ -128,6 +128,11 @@ Rulesets scope which rules a run fires: an untagged rule is in the
 default ruleset that `(run N)` runs, and `:ruleset name` puts a rule in
 the ruleset that `(run name N)` runs. See Chapter 17 for the run
 semantics, the `:until` goal, and the statistics commands.
+
+`:when` and `:subsume` are rewrite tags. A multi-pattern `(rule ...)` places
+primitive guard conjuncts directly in its body; after the head, only
+`:ruleset` is accepted. The parser rejects `:when` or `:subsume` there rather
+than silently ignoring either tag.
 
 ## Functions and Constructors
 

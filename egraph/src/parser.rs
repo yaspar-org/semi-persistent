@@ -666,8 +666,8 @@ fn parse_action(input: &mut &str, base: usize) -> ModalResult<Action> {
 
 // ── Commands ──
 
-/// Trailing tags shared by `(rewrite …)`, `(birewrite …)` and `(rule …)`. Parsed as a loop,
-/// so they may appear in any order.
+/// Trailing tags recognized after rewrite-like forms. Parsed as a loop, so they may appear
+/// in any order. Each command validates the subset it supports after parsing.
 struct RuleTags {
     when: Vec<SurfacePattern>,
     subsume: bool,
@@ -848,6 +848,20 @@ fn parse_command(
             }
             cut_char(input, ')')?;
             let t = parse_rule_tags(input, base)?;
+            if !t.when.is_empty() {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(
+                    "rule cannot use :when; put guard patterns in the rule body",
+                ));
+                return Err(ErrMode::Cut(e));
+            }
+            if t.subsume {
+                let mut e = ContextError::new();
+                e.push(StrContext::Label(
+                    "rule cannot use :subsume; :subsume applies only to rewrite",
+                ));
+                return Err(ErrMode::Cut(e));
+            }
             SurfaceCommand::Rule {
                 body,
                 head,
