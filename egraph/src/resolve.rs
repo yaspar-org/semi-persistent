@@ -24,6 +24,10 @@ pub struct GlobalCtx<S, G = ()> {
     index: HashMap<String, GlobalVarId>,
     sorts: Vec<S>,
     bindings: Vec<G>,
+    /// Overwritten name bindings, keyed by the id that shadowed them. This is
+    /// normally empty; it lets `truncate` restore an outer binding without
+    /// duplicating every global name in a second vector.
+    shadows: Vec<(GlobalVarId, String, GlobalVarId)>,
 }
 
 impl<S: Copy, G: Copy> Default for GlobalCtx<S, G> {
@@ -38,6 +42,7 @@ impl<S: Copy, G: Copy> GlobalCtx<S, G> {
             index: HashMap::new(),
             sorts: Vec::new(),
             bindings: Vec::new(),
+            shadows: Vec::new(),
         }
     }
 
@@ -52,7 +57,17 @@ impl<S: Copy, G: Copy> GlobalCtx<S, G> {
         let gid = GlobalVarId::new(raw);
         self.sorts.push(sort);
         self.bindings.push(eclass);
-        self.index.insert(name, gid);
+        match self.index.entry(name) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(gid);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let previous = *e.get();
+                let name = e.key().clone();
+                e.insert(gid);
+                self.shadows.push((gid, name, previous));
+            }
+        }
         gid
     }
 
@@ -82,9 +97,19 @@ impl<S: Copy, G: Copy> GlobalCtx<S, G> {
     }
 
     pub fn truncate(&mut self, n: usize) {
+        while self
+            .shadows
+            .last()
+            .is_some_and(|(shadowing, _, _)| shadowing.idx() >= n)
+        {
+            let (_, name, previous) = self.shadows.pop().unwrap();
+            self.index.insert(name, previous);
+        }
+        // A name first introduced in the truncated suffix has no shadow entry.
+        // Remove it after restoring overwritten outer bindings.
+        self.index.retain(|_, gid| gid.idx() < n);
         self.sorts.truncate(n);
         self.bindings.truncate(n);
-        self.index.retain(|_, gid| gid.idx() < n);
     }
 }
 

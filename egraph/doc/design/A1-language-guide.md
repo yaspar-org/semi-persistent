@@ -648,7 +648,12 @@ ruleset, which only `(run name N)` runs:
 (run expensive 2)   ;; distribution only
 ```
 
-Rulesets are static: they are not scoped by `(push)`/`(pop)`.
+Ruleset declarations and their numeric ids are resolved statically across the
+whole program before interpretation. Installed rules are scoped: `(push)`
+records the current rule-vector length, and `(pop)` removes rules installed
+after that push. Once a ruleset has been declared at an earlier source
+position, later commands can still resolve its name across `push`/`pop`; a rule
+added to it inside a pushed scope does not survive the matching pop.
 
 ### Run Goals
 

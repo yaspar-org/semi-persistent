@@ -787,8 +787,19 @@ where
 {
     let mut out = Vec::with_capacity(cmds.len());
     let mut rulesets = RulesetTable::default();
+    // Runtime push/pop truncates global bindings. Mirror only that part here
+    // so GlobalVarId assignment remains identical in the checked and runtime
+    // contexts. Declarations and ruleset names intentionally remain static.
+    let mut global_marks: Vec<usize> = Vec::new();
     for cmd in cmds {
+        let is_push = matches!(&cmd, SurfaceCommand::Pass(Command::Push(_)));
+        let is_pop = matches!(&cmd, SurfaceCommand::Pass(Command::Pop));
         out.push(sortcheck_one(cmd, eg, model, globals, &mut rulesets)?);
+        if is_push {
+            global_marks.push(globals.len());
+        } else if is_pop && let Some(n) = global_marks.pop() {
+            globals.truncate(n);
+        }
     }
     Ok(out)
 }
