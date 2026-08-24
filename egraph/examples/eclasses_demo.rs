@@ -1,11 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use semi_persistent_egraph::classes::EClasses;
-use semi_persistent_egraph::id::{UseListId, UseNodeId};
+use semi_persistent_egraph::id::{EClassKey, UseListId, UseNodeId};
 use semi_persistent_egraph::{ENodeId, IdFactory, IndexLike};
 
 fn main() {
-    let mut ec = EClasses::<ENodeId, UseListId, UseNodeId, true, false>::new();
+    let mut ec = EClasses::<ENodeId, EClassKey, UseListId, UseNodeId, true, false>::new();
     let mut factory = IdFactory::<ENodeId>::new();
 
     let ids: Vec<ENodeId> = (0..50)

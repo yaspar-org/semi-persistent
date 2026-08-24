@@ -58,7 +58,7 @@ pub struct EGraph<
     rules: RuleRegistry<TRACK>,
     axioms: AxiomRegistry<Cfg::G, TRACK>,
     lits: LitValStore<L, Cfg::V, TRACK>,
-    classes: EClasses<Cfg::G, Cfg::UL, Cfg::UN, TRACK, PROOFS>,
+    classes: EClasses<Cfg::G, Cfg::ClassKey, Cfg::UL, Cfg::UN, TRACK, PROOFS>,
     nodes: NodeStore<Cfg::G, Cfg::O, Cfg::V, Cfg::C, Cfg::Ids, TRACK, PROOFS>,
     worklist: Vec<(Cfg::UL, Cfg::G)>,
     collisions: Vec<(Cfg::G, Cfg::G)>,

@@ -1,62 +1,92 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Aggregate-level benchmark of the verified `EClasses` kernel: the
-//! merge/find/mark-restore workloads the e-graph's saturation loop is made
-//! of, isolated from e-matching and instantiation.
+//! Aggregate-level comparison of the retained former-production `EClasses`
+//! and the verified kernel used by the engine. The workloads isolate the
+//! merge/find/mark-restore operations from e-matching and instantiation.
 //!
-//! Revision-to-revision comparison uses Criterion baselines, the same protocol
-//! as the e-graph's `saturate_bench`:
+//! Criterion samples both implementations in the same executable. Historical
+//! revision-to-revision comparison can additionally use baselines:
 //!
 //! ```text
-//! cargo bench --bench eclasses_bench -- --save-baseline before
+//! cargo bench -p containers-conformance --bench eclasses_bench -- --save-baseline before
 //! # ... apply the change ...
-//! cargo bench --bench eclasses_bench -- --baseline before
+//! cargo bench -p containers-conformance --bench eclasses_bench -- --baseline before
 //! ```
 //!
-use criterion::{Criterion, criterion_group, criterion_main};
-use semi_persistent_containers_verus as verus;
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use semi_persistent_containers as retained;
+use semi_persistent_containers_verus as verified;
 use std::hint::black_box;
-use verus::eclasses::EClasses;
-use verus::opt::DenseId;
-use verus::vec::ShrinkPolicy;
 
-verus::define_id31! { pub struct BE / StoredBE, "e"; }
-verus::define_id31! { pub struct BL / StoredBL, "l"; }
-verus::define_id31! { pub struct BN / StoredBN, "n"; }
+retained::define_id31! { pub struct RetainedE / StoredRetainedE, "re"; }
+retained::define_id31! { pub struct RetainedK / StoredRetainedK, "rk"; }
+retained::define_id31! { pub struct RetainedL / StoredRetainedL, "rl"; }
+retained::define_id31! { pub struct RetainedN / StoredRetainedN, "rn"; }
+verified::define_id31! { pub struct VerifiedE / StoredVerifiedE, "ve"; }
+verified::define_id31! { pub struct VerifiedK / StoredVerifiedK, "vk"; }
+verified::define_id31! { pub struct VerifiedL / StoredVerifiedL, "vl"; }
+verified::define_id31! { pub struct VerifiedN / StoredVerifiedN, "vn"; }
 
-use semi_persistent_containers_verus::union_find::NoJust;
-type EC = EClasses<BE, BL, BN, NoJust, true, false>;
-
-fn be(n: usize) -> BE {
-    BE::try_new(n).expect("bench id in range")
-}
+type RetainedEC = retained::eclasses::EClasses<
+    RetainedE,
+    RetainedK,
+    RetainedL,
+    RetainedN,
+    retained::union_find::NoJust,
+    true,
+    false,
+>;
+type VerifiedEC = verified::eclasses::EClasses<
+    VerifiedE,
+    VerifiedK,
+    VerifiedL,
+    VerifiedN,
+    verified::union_find::NoJust,
+    true,
+    false,
+>;
 
 const N: usize = 4096;
+const FIND_PASSES: usize = 64;
 
-/// Fresh aggregate with N singleton classes and one use each.
-fn build() -> EC {
-    let mut ec = EC::new();
+/// Fresh retained aggregate with `N` singleton classes and one use each.
+fn build_retained() -> (RetainedEC, Vec<RetainedE>) {
+    let mut ec = RetainedEC::new();
+    let mut ids = Vec::with_capacity(N);
     for i in 0..N {
-        let (_, key) = ec.try_add_singleton();
-        ec.add_use(key, be(i));
+        let id = <RetainedE as retained::DenseId>::from_usize(i);
+        let key = ec.add_singleton(id);
+        ec.add_use(key, id);
+        ids.push(id);
     }
-    ec
+    (ec, ids)
 }
 
-fn bench(c: &mut Criterion) {
-    let mut g = c.benchmark_group("eclasses");
+/// Fresh verified aggregate with the same classes and uses.
+fn build_verified() -> (VerifiedEC, Vec<VerifiedE>) {
+    let mut ec = VerifiedEC::new();
+    let mut ids = Vec::with_capacity(N);
+    for _ in 0..N {
+        let (id, key) = ec.try_add_singleton();
+        ec.add_use(key, id);
+        ids.push(id);
+    }
+    (ec, ids)
+}
 
-    // pairwise merge cascade: N classes down to 1, splicing use-lists as the
-    // rebuild loop does.
-    g.bench_function("merge_cascade/4096", |b| {
+fn bench_merge_cascade(c: &mut Criterion) {
+    let mut g = c.benchmark_group("eclasses/merge_cascade");
+    g.throughput(Throughput::Elements(N as u64));
+
+    g.bench_function(BenchmarkId::new("retained", N), |b| {
         b.iter_batched(
-            build,
-            |mut ec| {
+            build_retained,
+            |(mut ec, ids)| {
                 let mut stride = 1;
                 while stride < N {
                     let mut i = 0;
                     while i + stride < N {
-                        if let Some(mi) = ec.merge(be(i), be(i + stride)) {
+                        if let Some(mi) = ec.merge(ids[i], ids[i + stride]) {
                             let sk = ec.repr_id(mi.survivor).unwrap();
                             ec.splice_uses(ec.use_list_id(sk), mi.absorbed_uses);
                         }
@@ -66,44 +96,125 @@ fn bench(c: &mut Criterion) {
                 }
                 black_box(ec.num_classes())
             },
-            criterion::BatchSize::LargeInput,
+            BatchSize::LargeInput,
         )
     });
 
-    // find-heavy: canonicalization sweeps over a merged structure (the
-    // rebuild loop's dominant read pattern).
-    g.bench_function("find_sweep/4096", |b| {
-        let mut ec = build();
-        for i in 1..N {
-            ec.merge(be(0), be(i));
-        }
-        b.iter(|| {
-            let mut acc = 0usize;
-            for i in 0..N {
-                acc ^= ec.find_const(be(i)).to_usize();
-            }
-            black_box(acc)
-        })
-    });
-
-    // mark, a burst of merges, restore: the saturation driver's backtrack.
-    g.bench_function("mark_merge_restore/4096", |b| {
+    g.bench_function(BenchmarkId::new("verified", N), |b| {
         b.iter_batched(
-            build,
-            |mut ec| {
-                let tok = ec.mark(ShrinkPolicy::Never);
-                for i in 1..256 {
-                    ec.merge(be(0), be(i));
+            build_verified,
+            |(mut ec, ids)| {
+                let mut stride = 1;
+                while stride < N {
+                    let mut i = 0;
+                    while i + stride < N {
+                        if let Some(mi) = ec.merge(ids[i], ids[i + stride]) {
+                            let sk = ec.repr_id(mi.survivor).unwrap();
+                            ec.splice_uses(ec.use_list_id(sk), mi.absorbed_uses);
+                        }
+                        i += stride * 2;
+                    }
+                    stride *= 2;
                 }
-                ec.try_restore(tok).expect("own token");
                 black_box(ec.num_classes())
             },
-            criterion::BatchSize::LargeInput,
+            BatchSize::LargeInput,
         )
     });
 
     g.finish();
 }
 
-criterion_group!(benches, bench);
+fn merged_retained() -> (RetainedEC, Vec<RetainedE>) {
+    let (mut ec, ids) = build_retained();
+    for i in 1..N {
+        ec.merge(ids[0], ids[i]);
+    }
+    (ec, ids)
+}
+
+fn merged_verified() -> (VerifiedEC, Vec<VerifiedE>) {
+    let (mut ec, ids) = build_verified();
+    for i in 1..N {
+        ec.merge(ids[0], ids[i]);
+    }
+    (ec, ids)
+}
+
+fn bench_find_sweep(c: &mut Criterion) {
+    let mut g = c.benchmark_group("eclasses/find_sweep");
+    g.throughput(Throughput::Elements((N * FIND_PASSES) as u64));
+
+    g.bench_function(BenchmarkId::new("retained", N), |b| {
+        let (ec, ids) = merged_retained();
+        b.iter(|| {
+            let mut acc = 0usize;
+            for _ in 0..FIND_PASSES {
+                for &id in &ids {
+                    acc ^= black_box(retained::DenseId::to_usize(ec.find_const(id)));
+                }
+            }
+            black_box(acc)
+        })
+    });
+
+    g.bench_function(BenchmarkId::new("verified", N), |b| {
+        let (ec, ids) = merged_verified();
+        b.iter(|| {
+            let mut acc = 0usize;
+            for _ in 0..FIND_PASSES {
+                for &id in &ids {
+                    acc ^= black_box(verified::DenseId::to_usize(ec.find_const(id)));
+                }
+            }
+            black_box(acc)
+        })
+    });
+
+    g.finish();
+}
+
+fn bench_mark_merge_restore(c: &mut Criterion) {
+    let mut g = c.benchmark_group("eclasses/mark_merge_restore");
+    g.throughput(Throughput::Elements(255));
+
+    g.bench_function(BenchmarkId::new("retained", N), |b| {
+        b.iter_batched(
+            build_retained,
+            |(mut ec, ids)| {
+                let tok = ec.mark(retained::ShrinkPolicy::Never);
+                for i in 1..256 {
+                    ec.merge(ids[0], ids[i]);
+                }
+                ec.restore(tok);
+                black_box(ec.num_classes())
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    g.bench_function(BenchmarkId::new("verified", N), |b| {
+        b.iter_batched(
+            build_verified,
+            |(mut ec, ids)| {
+                let tok = ec.mark(verified::ShrinkPolicy::Never);
+                for i in 1..256 {
+                    ec.merge(ids[0], ids[i]);
+                }
+                ec.try_restore(tok).expect("own token");
+                black_box(ec.num_classes())
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    g.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_merge_cascade,
+    bench_find_sweep,
+    bench_mark_merge_restore,
+);
 criterion_main!(benches);

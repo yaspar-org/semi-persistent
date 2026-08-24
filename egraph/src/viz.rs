@@ -20,8 +20,8 @@ where
         let mut out = String::from("digraph egraph {\n  compound=true\n  clusterrank=local\n\n");
 
         // Typed ids on both sides of the grouping. Holding raw `usize` copies here meant
-        // re-minting each member with the masking `DenseId::from_usize` twice below — once
-        // per pass — to recover an id the scan had already produced.
+        // re-minting each member twice below — once per pass — to recover an id the scan
+        // had already produced.
         let mut classes: std::collections::BTreeMap<Cfg::G, Vec<Cfg::G>> =
             std::collections::BTreeMap::new();
         for gid in self.node_ids() {

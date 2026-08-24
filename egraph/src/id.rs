@@ -10,6 +10,11 @@ semi_persistent_containers::define_id31! {
 }
 
 semi_persistent_containers::define_id31! {
+    /// A 31-bit recycled key into the packed e-class data store.
+    pub struct EClassKey / StoredEClassKey, "ec";
+}
+
+semi_persistent_containers::define_id31! {
     /// A 31-bit sort identifier (Bool, Int, Real, …).
     pub struct SortId / StoredSortId, "sort";
 }

@@ -18,58 +18,54 @@ use crate::union_find::{ProofBuf, UnionFind, UnionFindToken};
 use crate::{DenseId, IndexLike, Opt, ShrinkPolicy, Tagged, VecToken};
 
 // ---------------------------------------------------------------------------
-// EClassEntry — per-node: next pointer in circular list + sparse set key
+// EClassEntry — ring successor + packed sparse-set key
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-pub struct EClassEntry<T: DenseId> {
+pub struct EClassEntry<T: DenseId, K: DenseId<Index = T::Index>> {
     pub next: T,
-    repr_stored: <T::Index as Tagged>::Repr,
+    class_key: Opt<K>,
 }
 
 // Filler for `resize_default` during restore; never observed. Routes the id
 // through `new`/`into_repr` rather than fabricating a raw `Repr`.
-impl<T: DenseId> Default for EClassEntry<T> {
+impl<T: DenseId, K: DenseId<Index = T::Index>> Default for EClassEntry<T, K> {
     fn default() -> Self {
-        Self::new(T::default(), T::Index::default())
+        Self::new(T::default(), K::default())
     }
 }
 
-impl<T: DenseId> EClassEntry<T> {
-    fn new(next: T, repr_id: T::Index) -> Self {
+impl<T: DenseId, K: DenseId<Index = T::Index>> EClassEntry<T, K> {
+    fn new(next: T, repr_id: K) -> Self {
         Self {
             next,
-            repr_stored: repr_id.into_repr(),
+            class_key: Opt::some(repr_id),
         }
     }
 
-    pub fn repr_id(&self) -> Option<T::Index> {
-        if T::Index::tag(&self.repr_stored) {
-            None
-        } else {
-            Some(T::Index::from_repr(&self.repr_stored))
-        }
+    pub fn repr_id(&self) -> Option<K> {
+        self.class_key.get()
     }
 
-    fn repr_id_unchecked(&self) -> T::Index {
-        T::Index::from_repr(&self.repr_stored)
+    fn repr_id_unchecked(&self) -> K {
+        self.class_key.get_unchecked()
     }
 
     fn set_absent(&mut self) {
-        T::Index::set_tag(&mut self.repr_stored);
+        self.class_key.set_none();
     }
 }
 
-impl<T: DenseId> Tagged for EClassEntry<T> {
-    type Repr = (T::Repr, <T::Index as Tagged>::Repr);
+impl<T: DenseId, K: DenseId<Index = T::Index>> Tagged for EClassEntry<T, K> {
+    type Repr = (T::Repr, K::Repr);
 
     fn into_repr(self) -> Self::Repr {
-        (self.next.into_repr(), self.repr_stored)
+        (self.next.into_repr(), self.class_key.into_raw())
     }
     fn from_repr(s: &Self::Repr) -> Self {
         Self {
             next: T::from_repr(&s.0),
-            repr_stored: s.1,
+            class_key: Opt::from_raw(s.1),
         }
     }
     fn tag(s: &Self::Repr) -> bool {
@@ -187,6 +183,7 @@ pub struct MergeInfo<T, L> {
 /// Equivalence classes with integrated union-find and parent use-lists.
 ///
 /// - `T: DenseId` — node type (e.g. `ENodeId`)
+/// - `K: DenseId<Index = T::Index>` — recycled class-data key
 /// - `L: DenseId` — use-list id type (e.g. `UseListId`)
 /// - `N: DenseId` — use-list node id type (e.g. `UseNodeId`)
 /// - `J: Tagged` — proof-edge justification payload
@@ -194,13 +191,16 @@ pub struct MergeInfo<T, L> {
 /// - `PROOFS` — enable proof tracking in union-find
 pub struct EClasses<
     T: DenseId,
+    K: DenseId<Index = T::Index>,
     L: DenseId,
     N: DenseId,
     J: Tagged,
     const TRACK: bool,
     const PROOFS: bool,
 > {
-    entries: containers::VecI<EClassEntry<T>, T::Index, TRACK>,
+    entries: containers::VecI<EClassEntry<T, K>, T::Index, TRACK>,
+    // Keep the sparse set's physical key/count type full-width. `K` can name
+    // all 2^(w-1) classes, but cannot encode the resulting length 2^(w-1).
     reprs: SparseSet<
         ClassData<L, T>,
         T::Index,
@@ -223,18 +223,36 @@ pub struct EClasses<
     min_width: usize,
 }
 
-impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PROOFS: bool> Default
-    for EClasses<T, L, N, J, TRACK, PROOFS>
+impl<
+    T: DenseId,
+    K: DenseId<Index = T::Index>,
+    L: DenseId,
+    N: DenseId,
+    J: Tagged,
+    const TRACK: bool,
+    const PROOFS: bool,
+> Default for EClasses<T, K, L, N, J, TRACK, PROOFS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PROOFS: bool>
-    EClasses<T, L, N, J, TRACK, PROOFS>
+impl<
+    T: DenseId,
+    K: DenseId<Index = T::Index>,
+    L: DenseId,
+    N: DenseId,
+    J: Tagged,
+    const TRACK: bool,
+    const PROOFS: bool,
+> EClasses<T, K, L, N, J, TRACK, PROOFS>
 {
     pub fn new() -> Self {
+        assert!(
+            T::bit_stealing() && K::bit_stealing(),
+            "EClasses requires node IDs and class keys with matching bit-stealing widths"
+        );
         Self {
             entries: containers::VecI::new(),
             reprs: SparseSet::new_inline(),
@@ -269,8 +287,9 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
     /// Ensure this class has a pool row, allocating one (all-`Opt::none()` cells) on first use.
     /// Returns the row's base pool offset (a plain `usize`; `min_row` stores it as
     /// `Some(offset)`).
-    fn ensure_min_row(&mut self, repr_id: T::Index) -> usize {
-        let mut data = self.reprs.get(repr_id);
+    fn ensure_min_row(&mut self, repr_id: K) -> usize {
+        let raw_id = repr_id.to_index();
+        let mut data = self.reprs.get(raw_id);
         if let Some(off) = data.min_row {
             return off;
         }
@@ -283,7 +302,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
             self.min_pool.push(Opt::none());
         }
         data.min_row = Some(off);
-        self.reprs.set(repr_id, data);
+        self.reprs.set(raw_id, data);
         off
     }
 
@@ -299,18 +318,20 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
         self.reprs.len()
     }
 
-    pub fn add_singleton(&mut self, id: T) -> T::Index {
+    pub fn add_singleton(&mut self, id: T) -> K {
         self.uf.make_set(id);
         let list_id = self.uses.new_list();
         // No pool row yet (`min_row` is `Opt::none()`): a fresh class holds no completion
         // monomial until its op's column is seeded by `EGraph` (which knows the node's op).
         // Not yet referenced as a child, so not atomic (§9a).
-        let repr_id = self.reprs.add(ClassData {
+        let raw_repr_id = self.reprs.add(ClassData {
             use_list: list_id,
             min_row: None,
             atomic: false,
             _t: core::marker::PhantomData,
         });
+        let repr_id = K::try_new(raw_repr_id.as_usize())
+            .expect("EClasses class-key width must match the node-id width");
         self.entries.push(EClassEntry::new(id, repr_id));
         repr_id
     }
@@ -320,47 +341,50 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
     /// Record that `parent_node` uses the class at `child_repr` as a child. Any such
     /// reference makes the size-1 monomial `{child_repr}` a real term, so the class
     /// becomes `atomic` (its completion rule RHS, §9a).
-    pub fn add_use(&mut self, child_repr: T::Index, parent_node: T) {
-        let mut data = self.reprs.get(child_repr);
+    pub fn add_use(&mut self, child_repr: K, parent_node: T) {
+        let raw_id = child_repr.to_index();
+        let mut data = self.reprs.get(raw_id);
         self.uses.append(data.use_list, parent_node);
         if !data.atomic {
             data.atomic = true;
-            self.reprs.set(child_repr, data);
+            self.reprs.set(raw_id, data);
         }
     }
 
     /// Get the use-list id for a representative (for saving before merge).
-    pub fn use_list_id(&self, repr_id: T::Index) -> L {
-        self.reprs.get(repr_id).use_list
+    pub fn use_list_id(&self, repr_id: K) -> L {
+        self.reprs.get(repr_id.to_index()).use_list
     }
 
     /// Number of parents in a representative's use-list, O(1) (cached in the list header).
     /// Used to choose the merge survivor by parent count (the larger list survives, so the
     /// smaller absorbed set is what gets recanonicalized).
-    pub fn use_list_len(&self, repr_id: T::Index) -> usize {
-        self.uses.len(self.reprs.get(repr_id).use_list).as_usize()
+    pub fn use_list_len(&self, repr_id: K) -> usize {
+        self.uses
+            .len(self.reprs.get(repr_id.to_index()).use_list)
+            .as_usize()
     }
 
     /// The class's current minimum-monomial node for completion column `col` (the completion
     /// rule RHS for that op when the class is not `atomic`, §9a), or `None` if the class holds
     /// no monomial of that op. `col` is the op's completion column (`EGraph` supplies it via
     /// the registry `completion_column`).
-    pub fn min_monomial(&self, repr_id: T::Index, col: usize) -> Option<T> {
-        let row = self.reprs.get(repr_id).min_row?;
+    pub fn min_monomial(&self, repr_id: K, col: usize) -> Option<T> {
+        let row = self.reprs.get(repr_id.to_index()).min_row?;
         debug_assert!(col < self.min_width, "completion column out of range");
         self.min_pool.get(row + col).get()
     }
 
     /// Whether the class is referenced as a child of some node, making `{classid}` its
     /// normal-form representative (§9a).
-    pub fn atomic(&self, repr_id: T::Index) -> bool {
-        self.reprs.get(repr_id).atomic
+    pub fn atomic(&self, repr_id: K) -> bool {
+        self.reprs.get(repr_id.to_index()).atomic
     }
 
     /// Set the class's minimum-monomial node for completion column `col`. Allocates the
     /// class's pool row on first use. Called by `EGraph` after a merge, once it has compared
     /// the two classes' minima with `monomial_cmp`.
-    pub fn set_min_monomial(&mut self, repr_id: T::Index, col: usize, node: T) {
+    pub fn set_min_monomial(&mut self, repr_id: K, col: usize, node: T) {
         debug_assert!(col < self.min_width, "completion column out of range");
         let row = self.ensure_min_row(repr_id);
         self.min_pool.set(row + col, Opt::some(node));
@@ -375,17 +399,18 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
     }
 
     /// Mark the class `atomic` (it has a non-AC node, so `{classid}` is its RHS, §9a).
-    pub fn set_atomic(&mut self, repr_id: T::Index) {
-        let mut data = self.reprs.get(repr_id);
+    pub fn set_atomic(&mut self, repr_id: K) {
+        let raw_id = repr_id.to_index();
+        let mut data = self.reprs.get(raw_id);
         if !data.atomic {
             data.atomic = true;
-            self.reprs.set(repr_id, data);
+            self.reprs.set(raw_id, data);
         }
     }
 
     /// Iterate the use-list of a representative (parent nodes).
-    pub fn iter_uses(&self, repr_id: T::Index) -> impl Iterator<Item = T> + '_ {
-        let list_id = self.reprs.get(repr_id).use_list;
+    pub fn iter_uses(&self, repr_id: K) -> impl Iterator<Item = T> + '_ {
+        let list_id = self.reprs.get(repr_id.to_index()).use_list;
         self.uses.iter(list_id)
     }
 
@@ -410,7 +435,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
         self.uf.find_const(x)
     }
 
-    pub fn repr_id(&self, idx: T) -> Option<T::Index> {
+    pub fn repr_id(&self, idx: T) -> Option<K> {
         self.entries.get(idx).repr_id()
     }
 
@@ -421,7 +446,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
     pub fn merge(&mut self, a: T, b: T) -> Option<MergeInfo<T, L>> {
         let (survivor, absorbed) = self.uf.union(a, b)?;
         let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
-        let absorbed_data = self.reprs.get(absorbed_repr);
+        let absorbed_data = self.reprs.get(absorbed_repr.to_index());
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
             survivor,
@@ -435,7 +460,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
     pub fn merge_justified(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
         let (survivor, absorbed) = self.uf.union_justified(a, b, just)?;
         let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
-        let absorbed_data = self.reprs.get(absorbed_repr);
+        let absorbed_data = self.reprs.get(absorbed_repr.to_index());
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
             survivor,
@@ -464,7 +489,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
         let prefer_a = self.prefer_a_by_uses(a, b);
         let (survivor, absorbed) = self.uf.union_directed(a, b, prefer_a)?;
         let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
-        let absorbed_data = self.reprs.get(absorbed_repr);
+        let absorbed_data = self.reprs.get(absorbed_repr.to_index());
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
             survivor,
@@ -480,7 +505,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
         let prefer_a = self.prefer_a_by_uses(a, b);
         let (survivor, absorbed) = self.uf.union_justified_directed(a, b, just, prefer_a)?;
         let absorbed_repr = self.entries.get(absorbed).repr_id_unchecked();
-        let absorbed_data = self.reprs.get(absorbed_repr);
+        let absorbed_data = self.reprs.get(absorbed_repr.to_index());
         self.splice_classes((survivor, absorbed));
         Some(MergeInfo {
             survivor,
@@ -505,7 +530,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
         absorbed_entry.set_absent();
         self.entries.set(absorbed, absorbed_entry);
 
-        self.reprs.remove(abs_repr);
+        self.reprs.remove(abs_repr.to_index());
     }
 
     // -- Proofs -------------------------------------------------------------
@@ -516,7 +541,7 @@ impl<T: DenseId, L: DenseId, N: DenseId, J: Tagged, const TRACK: bool, const PRO
 
     // -- Iteration ----------------------------------------------------------
 
-    pub fn iter_class(&self, start_idx: T) -> ClassIter<'_, T, TRACK> {
+    pub fn iter_class(&self, start_idx: T) -> ClassIter<'_, T, K, TRACK> {
         ClassIter {
             entries: &self.entries,
             start_idx,
@@ -559,14 +584,16 @@ pub struct EClassesToken {
 // Iterators
 // ---------------------------------------------------------------------------
 
-pub struct ClassIter<'a, T: DenseId, const TRACK: bool> {
-    entries: &'a containers::VecI<EClassEntry<T>, T::Index, TRACK>,
+pub struct ClassIter<'a, T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool> {
+    entries: &'a containers::VecI<EClassEntry<T, K>, T::Index, TRACK>,
     start_idx: T,
     current_idx: T,
     done: bool,
 }
 
-impl<T: DenseId, const TRACK: bool> Iterator for ClassIter<'_, T, TRACK> {
+impl<T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool> Iterator
+    for ClassIter<'_, T, K, TRACK>
+{
     type Item = T;
     fn next(&mut self) -> Option<T> {
         if self.done {
@@ -587,10 +614,11 @@ mod tests {
     use crate::union_find::NoJust;
 
     crate::define_id31! { pub struct ENodeId / StoredENodeId, "e"; }
+    crate::define_id31! { pub struct EClassKey / StoredEClassKey, "ec"; }
     crate::define_id31! { pub struct UseListId / StoredUseListId, "ul"; }
     crate::define_id31! { pub struct UseNodeId / StoredUseNodeId, "un"; }
 
-    type EC = EClasses<ENodeId, UseListId, UseNodeId, NoJust, false, false>;
+    type EC = EClasses<ENodeId, EClassKey, UseListId, UseNodeId, NoJust, false, false>;
 
     #[test]
     fn eclasses_with_use_lists() {
@@ -709,7 +737,7 @@ mod tests {
         );
 
         // Now splice: absorbed's use-list into survivor's
-        let surv_list = ec2.reprs.get(surv_repr).use_list;
+        let surv_list = ec2.reprs.get(surv_repr.to_index()).use_list;
         ec2.uses.splice(surv_list, absorbed_list);
 
         eprintln!("\nAfter splice_uses:");
@@ -722,6 +750,23 @@ mod tests {
         );
 
         eprintln!("\n✓ All checks passed");
+    }
+
+    crate::define_id7! { pub struct TinyNodeId / StoredTinyNodeId, "te"; }
+    crate::define_id7! { pub struct TinyClassKey / StoredTinyClassKey, "tec"; }
+
+    type TinyEC = EClasses<TinyNodeId, TinyClassKey, UseListId, UseNodeId, NoJust, false, false>;
+
+    #[test]
+    fn bit7_eclasses_hold_the_full_node_id_range() {
+        let mut ec = TinyEC::new();
+        for i in 0..128 {
+            let id = TinyNodeId::try_new(i).expect("7-bit node id");
+            let key = ec.add_singleton(id);
+            assert_eq!(key.to_usize(), i);
+        }
+        assert_eq!(ec.len().as_usize(), 128);
+        assert_eq!(ec.num_classes().as_usize(), 128);
     }
 
     #[test]

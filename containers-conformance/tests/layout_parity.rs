@@ -5,12 +5,16 @@ use semi_persistent_containers_verus as verus;
 
 verus::define_id31! { pub struct VE / SVE, "e"; }
 verus::define_id31! { pub struct VN / SVN, "n"; }
+verus::define_id31! { pub struct VK / SVK, "k"; }
 verus::define_id63! { pub struct VN64 / SVN64, "n64"; }
+verus::define_id63! { pub struct VK64 / SVK64, "k64"; }
 
 // The production-side ids for the ring-cell parity check. Both id families, so the
 // claim is checked at each `EGraphConfig::Index` width rather than only at `u32`.
 prod::define_id31! { pub struct PN31 / SPN31, "p"; }
+prod::define_id31! { pub struct PK31 / SPK31, "pk"; }
 prod::define_id63! { pub struct PN63 / SPN63, "p64"; }
+prod::define_id63! { pub struct PK63 / SPK63, "pk64"; }
 
 #[test]
 fn node_size_matches_production() {
@@ -84,9 +88,9 @@ fn head_size_matches_production() {
 
 /// The e-class ring cell used by `egraph/src/classes.rs`.
 ///
-/// The verified `CircularList<Opt<T::Index>, T, TRACK>` cell and the independent
-/// `EClassEntry` reference cell compose the same way: a `BoolTagged` payload
-/// word pair plus one niche-tagged successor word. The
+/// The verified `CircularList<Opt<K>, T, TRACK>` cell and the retained
+/// `EClassEntry` reference cell compose the same way: one niche-tagged class
+/// key word plus one niche-tagged successor word. The
 /// cell is what multiplies by class count, and it is also what the diff log
 /// records per captured write, so equality covers both live and retained-history
 /// footprint.
@@ -101,47 +105,37 @@ fn head_size_matches_production() {
 /// mode there is silent memory growth, not a compile error. Both sides are generic
 /// over the id, so both instantiations are just type arguments.
 ///
-/// Both payload words are written `<Id as DenseId>::Index`, never `u32`/`u64`: the
-/// cell's payload width follows its id family by construction (that is what
-/// `ClassRing<T, TRACK>` is), and hard-coding the word would let this test keep
-/// passing while asserting about a type the consumer no longer instantiates. Only
-/// the *expected size* is a literal, and only once — at 31 bits, where it is the
-/// documented budget; the 63-bit rows compare against production's cell instead.
+/// Both IDs store their configured-width `Tagged::Repr`, never a hard-coded
+/// `u32`/`u64`: the cell follows its node and class-key families by
+/// construction. Only the expected 31-bit size is literal; the 63-bit rows
+/// compare against the retained cell.
 #[test]
 fn class_ring_cell_size_matches_production() {
     // Former production cell retained in the reference containers crate.
     use prod::eclasses::EClassEntry;
 
     // The verified cell at each id family, payload word derived from the id.
-    type Cell31 =
-        verus::circular_list::CircularListNode<verus::Opt<<VN as verus::opt::DenseId>::Index>, VN>;
-    type Repr31 =
-        verus::circular_list::CircularNodeRepr<verus::Opt<<VN as verus::opt::DenseId>::Index>, VN>;
-    type Cell63 = verus::circular_list::CircularListNode<
-        verus::Opt<<VN64 as verus::opt::DenseId>::Index>,
-        VN64,
-    >;
-    type Repr63 = verus::circular_list::CircularNodeRepr<
-        verus::Opt<<VN64 as verus::opt::DenseId>::Index>,
-        VN64,
-    >;
+    type Cell31 = verus::circular_list::CircularListNode<verus::Opt<VK>, VN>;
+    type Repr31 = verus::circular_list::CircularNodeRepr<verus::Opt<VK>, VN>;
+    type Cell63 = verus::circular_list::CircularListNode<verus::Opt<VK64>, VN64>;
+    type Repr63 = verus::circular_list::CircularNodeRepr<verus::Opt<VK64>, VN64>;
 
-    // 31-bit family: 4-byte `next` word + 8-byte BoolTagged<u32> payload.
+    // 31-bit family: one 4-byte successor word + one 4-byte optional-key word.
     assert_eq!(
-        core::mem::size_of::<EClassEntry<PN31>>(),
-        12,
-        "reference ring cell is 12 bytes at 31-bit ids"
+        core::mem::size_of::<EClassEntry<PN31, PK31>>(),
+        8,
+        "reference ring cell is two words at 31-bit ids"
     );
     assert_eq!(
         core::mem::size_of::<Cell31>(),
-        core::mem::size_of::<EClassEntry<PN31>>(),
+        core::mem::size_of::<EClassEntry<PN31, PK31>>(),
         "verified ring cell must match the reference cell"
     );
     // The *stored* form is what occupies the store's backing vector; the logical
-    // node above is only ever a temporary. Both must be 12 for the claim to hold.
+    // node above is only ever a temporary. Both must be 8 for the claim to hold.
     assert_eq!(
         core::mem::size_of::<Repr31>(),
-        core::mem::size_of::<EClassEntry<PN31>>(),
+        core::mem::size_of::<EClassEntry<PN31, PK31>>(),
         "verus ring cell's inline-stored repr must match production's cell"
     );
 
@@ -150,12 +144,12 @@ fn class_ring_cell_size_matches_production() {
     // a cross-implementation equality rather than a second layout specification.
     assert_eq!(
         core::mem::size_of::<Cell63>(),
-        core::mem::size_of::<EClassEntry<PN63>>(),
+        core::mem::size_of::<EClassEntry<PN63, PK63>>(),
         "verus ring cell must match production's cell at 63-bit ids too"
     );
     assert_eq!(
         core::mem::size_of::<Repr63>(),
-        core::mem::size_of::<EClassEntry<PN63>>(),
+        core::mem::size_of::<EClassEntry<PN63, PK63>>(),
         "verus ring cell's stored repr must match production's cell at 63-bit ids"
     );
 }

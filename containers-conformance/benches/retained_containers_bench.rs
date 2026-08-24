@@ -12,8 +12,9 @@
 //! - `list/append_iter`: build many small lists, iterate them — the use-list
 //!   build + walk pattern.
 //! - `list/splice`: repeated list concatenation — the merge pattern.
-//! - `class_ring/*`: untracked splice, traversal, and tracked merge/restore for
-//!   the ring implementation replaced by the verified class layer.
+//! - `class_ring/*`: isolated untracked splice/traversal and tracked
+//!   merge/restore for the ring protocol inside the class layer. Aggregate
+//!   retained-vs-verified measurements live in `eclasses_bench`.
 //!
 //! Criterion supplies warm-up, adaptive iteration counts, outlier analysis,
 //! and bootstrap confidence intervals. Results remain host- and revision-bound:
@@ -38,6 +39,7 @@ verus::define_id31! { pub struct VElem / StoredVElem, "e"; }
 verus::define_id31! { pub struct VList / StoredVList, "l"; }
 verus::define_id31! { pub struct VNode / StoredVNode, "n"; }
 verus::define_id31! { pub struct VRingNode / StoredVRingNode, "r"; }
+verus::define_id31! { pub struct VRingKey / StoredVRingKey, "rk"; }
 
 const VEC_N: usize = 100_000;
 const VEC_TOUCHES: usize = 50_000;
@@ -50,8 +52,7 @@ const RING_WALK_PASSES: usize = 8;
 
 type VerusTrackedVec =
     verus::vec::Vec<u64, u32, verus::parallel_store::ParallelStore<u64, u32>, true>;
-type VerusRing<const TRACK: bool> =
-    verus::CircularList<verus::Opt<<VRingNode as verus::opt::DenseId>::Index>, VRingNode, TRACK>;
+type VerusRing<const TRACK: bool> = verus::CircularList<verus::Opt<VRingKey>, VRingNode, TRACK>;
 
 // ---------------------------------------------------------------------------
 // vec/try_extend
@@ -416,7 +417,7 @@ fn prod_ring_build<const TRACK: bool>() -> pring::ProdRing<TRACK> {
 fn verus_ring_build<const TRACK: bool>() -> VerusRing<TRACK> {
     let mut ring = VerusRing::new();
     for i in 0..RING_N {
-        ring.try_add_singleton(verus::Opt::some(VRingNode::from_usize(i).to_index()))
+        ring.try_add_singleton(verus::Opt::some(VRingKey::from_usize(i)))
             .expect("ring id space");
     }
     ring

@@ -16,7 +16,9 @@
 //! the reference implementation. It reports estimates and confidence intervals;
 //! it is not a CI gate or a proof of current production parity.
 
-/// A simple inline-capture e-class ring used as a differential reference model.
+/// An isolated inline-capture ring model used only for ring layout/history
+/// accounting and microbenchmarks. Aggregate behavior and performance use the
+/// retained `semi_persistent_containers::eclasses::EClasses` implementation.
 pub mod prod_class_ring;
 
 /// Deterministic xorshift64* generator: fixed seeds, exact replay.

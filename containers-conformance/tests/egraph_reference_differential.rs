@@ -8,9 +8,11 @@ use semi_persistent_containers as reference;
 use semi_persistent_containers_verus as verified;
 
 reference::define_id31! { pub struct RefNode / StoredRefNode, "rn"; }
+reference::define_id31! { pub struct RefClassKey / StoredRefClassKey, "rc"; }
 reference::define_id31! { pub struct RefList / StoredRefList, "rl"; }
 reference::define_id31! { pub struct RefLink / StoredRefLink, "rk"; }
 verified::define_id31! { pub struct VerNode / StoredVerNode, "vn"; }
+verified::define_id31! { pub struct VerClassKey / StoredVerClassKey, "vc"; }
 verified::define_id31! { pub struct VerList / StoredVerList, "vl"; }
 verified::define_id31! { pub struct VerLink / StoredVerLink, "vk"; }
 
@@ -18,6 +20,7 @@ type RefUf = reference::union_find::UnionFind<RefNode, reference::union_find::No
 type VerUf = verified::union_find::UnionFind<VerNode, verified::union_find::NoJust, true, false>;
 type RefClasses = reference::eclasses::EClasses<
     RefNode,
+    RefClassKey,
     RefList,
     RefLink,
     reference::union_find::NoJust,
@@ -26,6 +29,7 @@ type RefClasses = reference::eclasses::EClasses<
 >;
 type VerClasses = verified::eclasses::EClasses<
     VerNode,
+    VerClassKey,
     VerList,
     VerLink,
     verified::union_find::NoJust,
@@ -41,11 +45,11 @@ fn vn(i: usize) -> VerNode {
     <VerNode as verified::DenseId>::try_new(i).expect("test id in range")
 }
 
-fn ref_index(i: <RefNode as reference::DenseId>::Index) -> usize {
+fn ref_index<I: reference::IndexLike>(i: I) -> usize {
     reference::IndexLike::as_usize(i)
 }
 
-fn ver_index(i: <VerNode as verified::DenseId>::Index) -> usize {
+fn ver_index<I: verified::IndexLike>(i: I) -> usize {
     verified::IndexLike::as_usize(i)
 }
 
@@ -336,6 +340,86 @@ fn retained_nested_restore_recaptures_a_post_mark_use_list() {
     );
     assert_eq!(v.iter_uses(vr).count(), 2);
     assert_eq!(v.use_list_len(vr), 2);
+}
+
+#[test]
+fn class_keys_recycle_and_restore_with_their_full_typed_identity() {
+    let mut r = RefClasses::new();
+    let mut v = VerClasses::new();
+    r.set_min_width(2);
+    v.set_min_width(2);
+
+    let r_key0 = r.add_singleton(rn(0));
+    let v_key0 = v.add_singleton(vn(0));
+    let r_key1 = r.add_singleton(rn(1));
+    let v_key1 = v.add_singleton(vn(1));
+    assert_eq!(ref_index(r_key0), ver_index(v_key0));
+    assert_eq!(ref_index(r_key1), ver_index(v_key1));
+
+    let outer_r = r.mark(reference::ShrinkPolicy::Never);
+    let outer_v = v.mark(verified::ShrinkPolicy::Never);
+    let rm = r.merge(rn(0), rn(1)).unwrap();
+    let vm = v.merge(vn(0), vn(1)).unwrap();
+    assert_eq!(rm.survivor.to_usize(), vm.survivor.to_usize());
+    assert_eq!(rm.absorbed.to_usize(), vm.absorbed.to_usize());
+
+    let freed_r = if rm.absorbed == rn(0) { r_key0 } else { r_key1 };
+    let freed_v = if vm.absorbed == vn(0) { v_key0 } else { v_key1 };
+    assert_eq!(r.repr_id(rm.absorbed), None);
+    assert_eq!(v.repr_id(vm.absorbed), None);
+
+    let recycled_r = r.add_singleton(rn(2));
+    let recycled_v = v.add_singleton(vn(2));
+    assert_eq!(recycled_r, freed_r);
+    assert_eq!(recycled_v, freed_v);
+    assert_eq!(ref_index(recycled_r), ver_index(recycled_v));
+
+    let inner_r = r.mark(reference::ShrinkPolicy::Never);
+    let inner_v = v.mark(verified::ShrinkPolicy::Never);
+    let r_root0 = r.find_const(rn(0));
+    let v_root0 = v.find_const(vn(0));
+    let r_root2 = r.find_const(rn(2));
+    let v_root2 = v.find_const(vn(2));
+    let r_root0_key = r.repr_id(r_root0).unwrap();
+    let v_root0_key = v.repr_id(v_root0).unwrap();
+    let r_root2_key = r.repr_id(r_root2).unwrap();
+    let v_root2_key = v.repr_id(v_root2).unwrap();
+    let rm2 = r.merge(rn(0), rn(2)).unwrap();
+    let vm2 = v.merge(vn(0), vn(2)).unwrap();
+    assert_eq!(rm2.survivor.to_usize(), vm2.survivor.to_usize());
+    assert_eq!(rm2.absorbed.to_usize(), vm2.absorbed.to_usize());
+
+    let freed_again_r = if rm2.absorbed == r_root0 {
+        r_root0_key
+    } else {
+        assert_eq!(rm2.absorbed, r_root2);
+        r_root2_key
+    };
+    let freed_again_v = if vm2.absorbed == v_root0 {
+        v_root0_key
+    } else {
+        assert_eq!(vm2.absorbed, v_root2);
+        v_root2_key
+    };
+    let second_recycle_r = r.add_singleton(rn(3));
+    let second_recycle_v = v.add_singleton(vn(3));
+    assert_eq!(second_recycle_r, freed_again_r);
+    assert_eq!(second_recycle_v, freed_again_v);
+    assert_classes_equal(&r, &v, 4);
+
+    r.restore(inner_r);
+    v.restore(inner_v);
+    assert_classes_equal(&r, &v, 3);
+    assert_eq!(r.repr_id(rn(2)), Some(recycled_r));
+    assert_eq!(v.repr_id(vn(2)), Some(recycled_v));
+
+    r.restore(outer_r);
+    v.restore(outer_v);
+    assert_classes_equal(&r, &v, 2);
+    assert_eq!(r.repr_id(rn(0)), Some(r_key0));
+    assert_eq!(v.repr_id(vn(0)), Some(v_key0));
+    assert_eq!(r.repr_id(rn(1)), Some(r_key1));
+    assert_eq!(v.repr_id(vn(1)), Some(v_key1));
 }
 
 proptest! {

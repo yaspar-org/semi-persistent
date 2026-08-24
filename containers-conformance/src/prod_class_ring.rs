@@ -8,62 +8,61 @@
 //!
 //! The model is generic over the node id: its storage word is `T::Index`, never
 //! a hard-coded `u32`. The index type is part of the memory contract because a
-//! captured write logs `(cell, T::Index)`, 16 bytes at `u32`, rather than the
-//! 24-byte `(cell, usize)` form.
+//! captured write logs `(cell, T::Index)`, 12 bytes for the 31-bit e-class
+//! instantiation, rather than the 16-byte `(cell, usize)` form.
 //! [`Ring31`]/[`Node31`] name the 31-bit instantiation the harnesses use.
-use prod::Tagged as _;
-use prod::{DenseId, IndexLike};
+use prod::DenseId;
 use semi_persistent_containers as prod;
 
 prod::define_id31! { pub struct PNodeId / StoredPNodeId, "n"; }
+prod::define_id31! { pub struct PClassKey / StoredPClassKey, "k"; }
 
 /// The 31-bit node id used by the default reference-ring tests.
 pub type Node31 = PNodeId;
 
 /// Reference ring cell: the `next` pointer around the class ring (capture bit
 /// stolen from its spare MSB) plus the class's sparse-set key with its own
-/// presence bit. 12 bytes at 31-bit ids — the size the verified
-/// `CircularNodeRepr<Opt<T::Index>, T>` has to match (`tests/layout_parity.rs`).
+/// presence bit. Both are configured-width bit-stealing IDs.
 #[derive(Clone, Copy)]
-pub struct EClassEntry<T: DenseId> {
+pub struct EClassEntry<T: DenseId, K: DenseId<Index = T::Index>> {
     pub next: T,
-    repr_stored: <T::Index as prod::Tagged>::Repr,
+    class_key: prod::Opt<K>,
 }
 
-impl<T: DenseId> Default for EClassEntry<T> {
+impl<T: DenseId, K: DenseId<Index = T::Index>> Default for EClassEntry<T, K> {
     fn default() -> Self {
-        Self::new(T::default(), T::Index::MIN)
+        Self::new(T::default(), K::default())
     }
 }
 
-impl<T: DenseId> EClassEntry<T> {
-    pub fn new(next: T, repr_id: T::Index) -> Self {
+impl<T: DenseId, K: DenseId<Index = T::Index>> EClassEntry<T, K> {
+    pub fn new(next: T, repr_id: K) -> Self {
         Self {
             next,
-            repr_stored: repr_id.into_repr(),
+            class_key: prod::Opt::some(repr_id),
         }
     }
-    pub fn repr_id_unchecked(&self) -> T::Index {
-        <T::Index as prod::Tagged>::from_repr(&self.repr_stored)
+    pub fn repr_id_unchecked(&self) -> K {
+        self.class_key.get_unchecked()
     }
     /// Mark the class key absent — the presence-bit clear an absorbed class gets.
     pub fn set_absent(&mut self) {
-        <T::Index as prod::Tagged>::set_tag(&mut self.repr_stored);
+        self.class_key.set_none();
     }
     pub fn is_absent(&self) -> bool {
-        <T::Index as prod::Tagged>::tag(&self.repr_stored)
+        self.class_key.is_none()
     }
 }
 
-impl<T: DenseId> prod::Tagged for EClassEntry<T> {
-    type Repr = (<T as prod::Tagged>::Repr, <T::Index as prod::Tagged>::Repr);
+impl<T: DenseId, K: DenseId<Index = T::Index>> prod::Tagged for EClassEntry<T, K> {
+    type Repr = (<T as prod::Tagged>::Repr, <K as prod::Tagged>::Repr);
     fn into_repr(self) -> Self::Repr {
-        (self.next.into_repr(), self.repr_stored)
+        (self.next.into_repr(), self.class_key.into_raw())
     }
     fn from_repr(s: &Self::Repr) -> Self {
         Self {
             next: T::from_repr(&s.0),
-            repr_stored: s.1,
+            class_key: prod::Opt::from_raw(s.1),
         }
     }
     fn tag(s: &Self::Repr) -> bool {
@@ -78,29 +77,28 @@ impl<T: DenseId> prod::Tagged for EClassEntry<T> {
 }
 
 /// Reference ring over the inline-capture vector, indexed by the id's
-/// own storage word (so a captured write logs `(cell, T::Index)` = 16 bytes at
-/// 31-bit ids, not `(cell, usize)` = 24 — the same width the verified ring
+/// own storage word (so a captured write logs `(cell, T::Index)` = 12 bytes at
+/// 31-bit ids, not `(cell, usize)` = 16 — the same width the verified ring
 /// keeps).
-pub type ProdRingOf<T, const TRACK: bool> =
-    prod::VecI<EClassEntry<T>, <T as DenseId>::Index, TRACK>;
+pub type ProdRingOf<T, K, const TRACK: bool> =
+    prod::VecI<EClassEntry<T, K>, <T as DenseId>::Index, TRACK>;
 
 /// The 31-bit instantiation the harnesses measure.
-pub type ProdRing<const TRACK: bool> = ProdRingOf<Node31, TRACK>;
+pub type ProdRing<const TRACK: bool> = ProdRingOf<Node31, PClassKey, TRACK>;
 
 /// `n` singleton classes, each its own self-loop.
 pub fn build<const TRACK: bool>(n: usize) -> ProdRing<TRACK> {
-    build_of::<Node31, TRACK>(n)
+    build_of::<Node31, PClassKey, TRACK>(n)
 }
 
 /// [`build`] at an arbitrary id family.
-pub fn build_of<T: DenseId, const TRACK: bool>(n: usize) -> ProdRingOf<T, TRACK> {
-    let mut ring: ProdRingOf<T, TRACK> = ProdRingOf::new();
+pub fn build_of<T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool>(
+    n: usize,
+) -> ProdRingOf<T, K, TRACK> {
+    let mut ring: ProdRingOf<T, K, TRACK> = ProdRingOf::new();
     for i in 0..n {
         let id = T::from_usize(i);
-        ring.push(EClassEntry::new(
-            id,
-            T::Index::try_from_usize(i).expect("id range exhausted"),
-        ));
+        ring.push(EClassEntry::new(id, K::from_usize(i)));
     }
     ring
 }
@@ -109,8 +107,8 @@ pub fn build_of<T: DenseId, const TRACK: bool>(n: usize) -> ProdRingOf<T, TRACK>
 /// with the absorbed class's key marked absent. (The sparse-set `remove` that
 /// followed it in the consumer is not part of the ring, so it is excluded here
 /// and from the verus arm alike.)
-pub fn splice<T: DenseId, const TRACK: bool>(
-    ring: &mut ProdRingOf<T, TRACK>,
+pub fn splice<T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool>(
+    ring: &mut ProdRingOf<T, K, TRACK>,
     survivor: T,
     absorbed: T,
 ) {
@@ -126,14 +124,16 @@ pub fn splice<T: DenseId, const TRACK: bool>(
 }
 
 /// Iterator-shaped ring walk used by the differential oracle.
-pub struct ClassIter<'a, T: DenseId, const TRACK: bool> {
-    entries: &'a ProdRingOf<T, TRACK>,
+pub struct ClassIter<'a, T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool> {
+    entries: &'a ProdRingOf<T, K, TRACK>,
     start_idx: T,
     current_idx: T,
     done: bool,
 }
 
-impl<T: DenseId, const TRACK: bool> Iterator for ClassIter<'_, T, TRACK> {
+impl<T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool> Iterator
+    for ClassIter<'_, T, K, TRACK>
+{
     type Item = T;
 
     fn next(&mut self) -> Option<T> {
@@ -150,10 +150,10 @@ impl<T: DenseId, const TRACK: bool> Iterator for ClassIter<'_, T, TRACK> {
 }
 
 /// Walk `start`'s ring, yielding each node once.
-pub fn iter_class<T: DenseId, const TRACK: bool>(
-    ring: &ProdRingOf<T, TRACK>,
+pub fn iter_class<T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool>(
+    ring: &ProdRingOf<T, K, TRACK>,
     start: T,
-) -> ClassIter<'_, T, TRACK> {
+) -> ClassIter<'_, T, K, TRACK> {
     ClassIter {
         entries: ring,
         start_idx: start,
@@ -163,6 +163,9 @@ pub fn iter_class<T: DenseId, const TRACK: bool>(
 }
 
 /// Class size via [`ClassIter`].
-pub fn walk<T: DenseId, const TRACK: bool>(ring: &ProdRingOf<T, TRACK>, start: T) -> usize {
+pub fn walk<T: DenseId, K: DenseId<Index = T::Index>, const TRACK: bool>(
+    ring: &ProdRingOf<T, K, TRACK>,
+    start: T,
+) -> usize {
     iter_class(ring, start).count()
 }

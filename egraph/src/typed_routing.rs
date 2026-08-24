@@ -121,9 +121,8 @@ impl<G: DenseId<Index = I::Index>, I: NodeIds, const TRACK: bool> TypedRouting<G
         assert!(!self.reserved, "already have a reserved id");
         self.reserved = true;
         // `try_new`, not `from_usize`: the table can hold more entries than the id
-        // space has ids (`I::Index` spans `2 * id_bound()` for a bit-stealing id), and
-        // `from_usize` would mask the excess and hand back an id that already names a
-        // different node.
+        // space has ids (`I::Index` spans `2 * id_bound()` for a bit-stealing id).
+        // Reserve reports exhaustion before mutation instead of panicking.
         G::try_new(self.entries.len().as_usize()).expect("routing table exceeds the id space")
     }
 

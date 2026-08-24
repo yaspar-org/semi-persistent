@@ -30,12 +30,21 @@ The comparison has these explicit boundaries:
 These tests are regression evidence over sampled executions, not a proof that
 the implementations are universally equivalent.
 
+`src/prod_class_ring.rs` is a separate, deliberately minimal ring model used
+only by the ring-cell layout test, exact retained-history accounting trace, and
+the `class_ring/*` microbenchmarks. It isolates the two-cell splice protocol
+from union-find, sparse-set, and use-list costs. It is not a second aggregate
+oracle: aggregate semantic comparisons use the retained
+`containers::eclasses::EClasses` above, and aggregate performance comparisons
+use `benches/eclasses_bench.rs`.
+
 ## Performance methodology
 
 Run the reference suite with Criterion:
 
 ```bash
 cargo bench -p containers-conformance --bench retained_containers_bench
+cargo bench -p containers-conformance --bench eclasses_bench
 ```
 
 Criterion supplies warm-up, adaptive iteration counts, outlier analysis, and
@@ -52,7 +61,23 @@ The retained suite includes:
 - `class_ring/splice_untracked`, `class_ring/walk`, and
   `class_ring/merge_restore`;
 - map/intern, sparse-set churn, and append-only-log workloads; and
-- separate B+, nested-mark, tracked-vector, and aggregate `EClasses` benches.
+- separate B+, nested-mark, and tracked-vector benches.
+
+`eclasses_bench` compares the complete retained and verified `EClasses`
+aggregates for merge cascades, canonical find sweeps, and tracked
+mark/merge/restore cycles. It is the class-layer performance evidence; the
+`class_ring/*` rows above remain intentionally narrower microbenchmarks.
+
+Read every retained-vs-verified row as implementation-vs-implementation, not as
+a measurement of verification overhead. The two sides differ in ways unrelated
+to proof: the verified `DiffStore` has a `raw_len() -> usize` accessor, so its
+`Vec::set` bounds check does not round-trip through a checked narrowing to the
+index type, while the retained `set` calls `len()` and pays that conversion on
+every write; and the retained `Map` uses `hashbrown` with a randomly seeded
+builder where the verified `SpMap` uses a fixed-seed `IndexHasher` over a
+different table. Those are optimizations the reference never received. The
+claim these benches support is that adopting the verified aggregate costs
+nothing measurable — not that verification is free, and not that it is a win.
 
 `restore_replay` excludes capture setup from the timed body.
 `class_ring/splice_untracked` excludes ring construction,

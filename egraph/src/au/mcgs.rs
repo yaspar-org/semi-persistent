@@ -531,11 +531,9 @@ fn checked_pool_span<I: DenseId>(start: usize, len: usize, pool: &str) -> super:
         .unwrap_or_else(|| panic!("{pool} span end exceeds configured index width"));
     let span = super::Span::new(start, len);
     if len != 0 {
-        // prod-parity: the last typed position must be a representable id. Verus's
-        // `DenseId::from_usize` MASKS out-of-range input (so the type invariant
-        // always holds) rather than panicking as production's did, so the
-        // id-range check moves to `try_new`, which returns `None` past the id
-        // bound (e.g. 128 for a 7-bit id, where `from_usize` would wrap to 0).
+        // The last typed position must be a representable id. Keep the
+        // fallible check here so the whole span is rejected before its owning
+        // arena is mutated; `from_usize` would panic at the same boundary.
         I::try_new(end - 1)
             .unwrap_or_else(|| panic!("{pool} span end exceeds configured id width"));
     }
@@ -608,9 +606,7 @@ impl<A: AuIds, O: DenseId> OrStatsArena<A, O> {
         assert_eq!(self.edge_and.len().as_usize(), edge_start);
         assert_eq!(self.edge_bounds.len().as_usize(), edge_start);
         assert_eq!(self.edge_excluded.len().as_usize(), edge_start);
-        // prod-parity: trap when the node id would exceed its width. Production's
-        // `from_usize` panicked on overflow; verus's masks, so the check is
-        // `try_new` (None past the id bound) before mutating any pool.
+        // Reject node-id exhaustion through `try_new` before mutating any pool.
         let id = A::OrStats::try_new(node_len.as_usize())
             .unwrap_or_else(|| panic!("OR-stats node id exceeds configured id width"));
         let edge_span = checked_pool_span::<A::OrEdgeStat>(
@@ -1184,8 +1180,8 @@ impl<A: AuIds, O: DenseId> AndStatsArena<A, O> {
         assert_eq!(self.child_counts.len().as_usize(), child_start);
         assert_eq!(self.child_visits.len().as_usize(), child_start);
         let child_len = data.child_or_stats.len();
-        // prod-parity: trap on node-id overflow (verus `from_usize` masks; use
-        // `try_new`). See the OR-stats `push` for the rationale.
+        // Reject node-id exhaustion through `try_new` before mutating any pool.
+        // See the OR-stats `push` for the rationale.
         let id = A::AndStats::try_new(node_len.as_usize())
             .unwrap_or_else(|| panic!("AND-stats node id exceeds configured id width"));
         let child_span = checked_pool_span::<A::AndChildStat>(

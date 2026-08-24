@@ -37,7 +37,7 @@
 //!
 //! ## Modeling choices (documented divergences)
 //! - `CircularListNode<T, N> { payload, next }` is payload-generic AND
-//!   index-generic, mirroring production's `EClassEntry<T>`: `next` is stored as
+//!   index-generic, mirroring production's `EClassEntry<T, K>`: `next` is stored as
 //!   the `DenseId` index type `N` at its natural width (e.g. 4 bytes at 31-bit
 //!   ids), not a hardcoded `usize`. Its logical position is `next.id_nat()`; the
 //!   ghost `model` stays `Seq<Seq<usize>>` (logical indices), so every merge
@@ -182,11 +182,10 @@ pub open(crate) spec fn rotate(s: Seq<usize>, k: int) -> Seq<usize> {
 pub struct CircularList<T, N: DenseId, const TRACK: bool>
 where T: Sized + Copy + core::default::Default {
     /// Storage is indexed by the id's own **storage word** `N::Index`, not by
-    /// `usize` — production's `VecI<EClassEntry<T>, T::Index>` verbatim. The
-    /// width is what makes the semi-persistent diff-log entry `(node, N::Index)`
-    /// (16 bytes at 31-bit ids) instead of `(node, usize)` (24 bytes): a `usize`
-    /// index would inflate every captured write by 50% for no gain, since the
-    /// node count is already bounded by `N::id_bound()`.
+    /// `usize` — production's `VecI<EClassEntry<T, K>, T::Index>` verbatim. For
+    /// the 31-bit e-class instantiation, this makes a semi-persistent diff entry
+    /// `(node, N::Index)` 12 bytes instead of the 16-byte `(node, usize)` form.
+    /// The node count is already bounded by `N::id_bound()`.
     pub(crate) entries: SpVec<
         CircularListNode<T, N>,
         <N as DenseId>::Index,
@@ -530,10 +529,9 @@ where T: Sized + Copy + core::default::Default {
         // Runtime guard for UNVERIFIED callers on the id-range precondition:
         // the sibling word-headroom clause is already trapped by `Vec::len`'s
         // overflow protocol, but `Index::max_nat()` is one bit wider than
-        // `id_bound()`, and in the window between them `from_usize` masks —
-        // the new node would silently alias node `id - id_bound` and its
-        // self-loop would point into an unrelated ring. Same doctrine and
-        // shape as `ListArena::{new_list,prepend,append}`.
+        // `id_bound()`. Reject through the total API before mutating the ring,
+        // rather than reaching `from_usize`'s panic. Same doctrine and shape
+        // as `ListArena::{new_list,prepend,append}`.
         proof {
             // `n + 1` fits in usize: the word-headroom precondition bounds it by
             // `Index::max_nat()`, and max_nat is at most usize::MAX + 1.
