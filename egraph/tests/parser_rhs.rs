@@ -232,3 +232,23 @@ fn rule_with_set_action() {
         _ => panic!("expected Rule"),
     }
 }
+
+#[test]
+fn rule_rejects_when_instead_of_ignoring_it() {
+    let err = parse_program_v2("(rule ((f x)) ((g x)) :when ((h x)))")
+        .expect_err("rule :when must be rejected");
+    assert!(
+        err.to_string().contains("rule cannot use :when"),
+        "unexpected parse error: {err}"
+    );
+}
+
+#[test]
+fn rule_rejects_subsume_instead_of_ignoring_it() {
+    let err = parse_program_v2("(rule ((f x)) ((g x)) :subsume)")
+        .expect_err("rule :subsume must be rejected");
+    assert!(
+        err.to_string().contains("rule cannot use :subsume"),
+        "unexpected parse error: {err}"
+    );
+}

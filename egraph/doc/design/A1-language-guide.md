@@ -870,10 +870,10 @@ command     = '(' , 'sort' , ident , ')'
             | '(' , 'constructor' , op , '(' , ident* , ')' , ident , decl_tag* , ')'
             | '(' , 'datatype' , ident , variant* , ')'
             | '(' , 'ruleset' , ident , ')'
-            | '(' , 'rewrite' , pattern , rhs , rule_tag* , ')'
-            | '(' , 'birewrite' , pattern , pattern , rule_tag* , ')'
+            | '(' , 'rewrite' , pattern , rhs , rewrite_tag* , ')'
+            | '(' , 'birewrite' , pattern , pattern , birewrite_tag* , ')'
             | '(' , 'rule' , '(' , pattern* , ')' , '(' , action* , ')' ,
-                    rule_tag* , ')'
+                    ruleset_tag* , ')'
             | '(' , 'let' , ident , term , ')'
             | '(' , 'union' , term , term , ')'
             | '(' , 'run' , ident? , int_lit , until? , ')'
@@ -898,7 +898,8 @@ alg_attr    = ':assoc-comm-idem' | ':assoc-comm' | ':assoc-left'
 
 extract_tag = ':cost' , int_lit | ':unextractable' ;
 
-rule_tag    = when_clause | subsume | ruleset_tag ;
+rewrite_tag = when_clause | subsume | ruleset_tag ;
+birewrite_tag = when_clause | ruleset_tag ;
 when_clause = ':when' , '(' , pattern* , ')' ;
 subsume     = ':subsume' ;                                (* not on birewrite *)
 ruleset_tag = ':ruleset' , ident ;
