@@ -200,6 +200,26 @@ fn pop_restores_a_shadowed_global_name() {
 ");
 }
 
+#[test]
+fn check_rebuilds_pending_congruence_after_budgeted_run() {
+    // The one permitted round merges a and b in its apply phase, after the
+    // round's rebuild. Both f-nodes already exist, so a node-growth-only check
+    // would skip the rebuild that makes them congruent.
+    run("
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor f (E) E)
+(constructor seed () E)
+(let fa (f (a)))
+(let fb (f (b)))
+(seed)
+(rule ((seed)) ((union (a) (b))))
+(run 1)
+(check (= fa fb))
+");
+}
+
 // ── Stats ──────────────────────────────────────────────────────────────────
 
 const STATS_PROGRAM: &str = "
