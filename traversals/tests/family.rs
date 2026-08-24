@@ -548,3 +548,33 @@ fn memo_none_fold_on_tree() {
         );
     assert_eq!(result.unwrap_stmt(), "x = (1 + 2); print(x)");
 }
+
+#[test]
+fn memo_none_revisits_a_shared_dag_but_preserves_a_pure_result() {
+    let mut store = LangStore::new_dedup();
+    let one = store.push_expr(ExprNode::Lit(1));
+    let sum = store.push_expr(ExprNode::Add(one, one));
+    let leaf_visits = std::cell::Cell::new(0usize);
+
+    let result = store
+        .with_strategy::<semi_persistent_traversals::memo::None>()
+        .fold(
+            LangStoreRoot::Expr(sum),
+            |_: StmtNodeMapped<(), i64>| (),
+            |expr: ExprNodeMapped<(), i64>| match expr {
+                ExprNodeMapped::Lit(n) => {
+                    leaf_visits.set(leaf_visits.get() + 1);
+                    n
+                }
+                ExprNodeMapped::Add(l, r) => l + r,
+                _ => 0,
+            },
+        );
+
+    assert_eq!(result.unwrap_expr(), 2);
+    assert_eq!(
+        leaf_visits.get(),
+        2,
+        "memo::None must not promise once-per-node evaluation on a DAG"
+    );
+}

@@ -30,11 +30,12 @@ up, across, and back down the tree, reading (`Zipper`), mutating
 in place (`ZipperMut`), or producing a copy-on-write variant
 (`ZipperCow`).
 
-All traversals are iterative, so million-node trees do not overflow the
-stack. All folds are memoized, so shared subtrees are folded once. The
-store can be created plain with `Store::new()` or with hash-consing via
-`Store::new_dedup()`. Memo strategy is configurable with
-`store.with_strategy::<Sparse>().fold(...)`.
+Generated traversals are iterative, so depth does not consume the Rust call
+stack. Dense and sparse fold strategies memoize within one traversal and fold a
+shared subtree once. `memo::None` deliberately skips those reuse checks and may
+evaluate a shared node once per incoming path. The store can be created plain
+with `Store::new()` or with hash-consing via `Store::new_dedup()`. Memo strategy
+is configurable with `store.with_strategy::<Sparse>().fold(...)`.
 
 ## Quick example
 
@@ -132,7 +133,10 @@ default, `Dense`, allocates one memo slot per node in the store and is
 fastest when you fold most of the store. `Sparse` uses a hashmap and
 allocates proportional to the nodes actually visited, which is the
 right choice when you fold a small subtree of a large store.
-`memo::None` skips dedup checks and is only correct for pure trees.
+`memo::None` skips memo-reuse checks. On an acyclic DAG, a pure deterministic
+algebra still computes the same root value, but shared nodes are revisited and
+side effects run more than once. Use it when the reachable input is a tree or
+when that repeated-node behavior is explicitly acceptable.
 
 Dedup controls whether `push_*` deduplicates structurally identical
 nodes. `Store::new()` appends unconditionally; `Store::new_dedup()`

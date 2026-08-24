@@ -20,15 +20,14 @@ confidence interval.
 
 ## Memo strategies
 
-A fold memoizes: when the traversal reaches a node that has already been
-folded (because it is shared between parents in a DAG, or because an
-earlier phase already visited it), the cached result is reused rather
-than recomputed. The memo table is what stores those cached results.
-Three strategies ship with the crate.
+A dense or sparse fold memoizes within that traversal call: when another path
+reaches a node already folded during the same walk, the cached result is reused
+rather than recomputed. Memo tables are not shared between separate traversals
+or pipeline phases. Three strategies ship with the crate.
 
 The default is `Dense`, which allocates a `Vec<Option<A>>` sized to the
-full store. Lookup is an array index, so each memo hit is effectively
-free. The downside is the allocation: if the store has a million nodes
+full store. A memo hit is constant-time array indexing plus the generated
+branch and result clone. The downside is the allocation: if the store has a million nodes
 but a fold only visits a thousand of them, `Dense` still allocates a
 million memo slots.
 
@@ -38,11 +37,12 @@ costs proportional to the subtree, not the store. Each memo operation
 now pays a hash and a probe, so folds that visit most of the store run
 slower than under `Dense`.
 
-`memo::None` keeps the dense vector but skips the "have I seen this
-node?" checks that both other strategies perform. It is only correct for
-trees, not DAGs: a node reached through two parents will be folded
-twice, and any side-effecting algebra will fire twice. On trees the
-saved branch gives a small but consistent speedup.
+`memo::None` keeps the dense result vector needed to assemble parent values but
+skips the "have I already computed this node?" reuse checks. On an acyclic DAG,
+a pure deterministic algebra still produces the same root value, but a node
+reached through two parents is folded twice and any side effect fires twice.
+It therefore does not provide once-per-node semantics. On trees the saved
+branch gives a small speedup in this recorded benchmark.
 
 ### Full-fold time
 
@@ -69,9 +69,10 @@ initializes 1,000,000 memo slots.
 
 The rule of thumb is simple. If the fold visits most of the store, use
 `Dense`. If it visits a small focused region of a large store, use
-`Sparse`. If the input is a pure tree with no shared subterms and
-throughput matters, use `memo::None`. The API is the same in all three
-cases; only the argument to `with_strategy` changes.
+`Sparse`. If the reachable input is a tree, or repeated evaluation of shared
+nodes is semantically acceptable, and throughput matters, consider
+`memo::None`. The API is the same in all three cases; only the argument to
+`with_strategy` changes.
 
 ```rust
 use semi_persistent_traversals::{Sparse, memo};
@@ -171,11 +172,12 @@ If you will fold a small focused region of a much larger store
 (incremental analysis, focused query), use `Sparse` memo. The dedup
 choice is independent and follows the same question as above.
 
-If the input is guaranteed to be a tree (no shared children, no DAG
-structure) and fold throughput is a bottleneck, add
-`.with_strategy::<memo::None>()` to shave off the dedup check. Never
-use `memo::None` on a store built with `new_dedup`, since dedup is
-precisely the source of DAG structure that `memo::None` assumes away.
+If the input is guaranteed to be a tree (no shared children, no DAG structure)
+and fold throughput is a bottleneck, add
+`.with_strategy::<memo::None>()` to skip memo-reuse checks. A deduplicating
+store commonly creates DAG sharing, so `memo::None` may repeat substantial
+work and violates once-per-node or side-effect semantics there. It remains
+value-correct for a pure deterministic fold over an acyclic DAG.
 
 ## Reproducing the numbers
 
