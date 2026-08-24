@@ -7,7 +7,7 @@
 //! - `fold`: cost to fold an already-built store.
 //!   • dense   — default memo strategy
 //!   • sparse  — hashmap-backed, O(reachable) memo
-//!   • none    — no memo, stack-based (incorrect on DAGs)
+//!   • none    — no memo reuse; may repeat shared DAG nodes
 //!
 //! - `build`: cost to construct a tree with lots of structural redundancy,
 //!   comparing plain push vs hash-consed push (`new_dedup`). All leaves are

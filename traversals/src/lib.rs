@@ -3,8 +3,9 @@
 //! Partitioned-arena recursion schemes for mutually recursive type families.
 //!
 //! Declare a family with `rec_family!`, get per-sort arenas with typed IDs
-//! and a full suite of stack-safe, memoized folds, unfolds, transforms,
-//! and zippers. See the crate-level [`rec_family!`] macro for usage.
+//! and a full suite of stack-safe folds, unfolds, transforms, and zippers.
+//! Folds use configurable dense, sparse, or no-reuse memo strategies. See the
+//! crate-level [`rec_family!`] macro for usage.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -29,8 +30,9 @@ pub mod __private {
 /// Memoization strategy selector. Controls how traversals allocate their
 /// internal tables.
 ///
-/// - [`memo::None`]: No memoization — stack-based traversal without dedup
-///   checks. Fastest for trees with no sharing. **Incorrect on DAGs.**
+/// - [`memo::None`]: No memo reuse checks. Fastest for some trees. On an
+///   acyclic DAG, pure deterministic folds retain their root value but revisit
+///   shared nodes and do not provide once-per-node or side-effect semantics.
 /// - [`memo::Vec`]: O(store_size) allocation, O(1) lookup via array index.
 ///   Default. Best when the reachable subtree is a large fraction of the
 ///   store, or when the store is a DAG with sharing.
@@ -49,12 +51,12 @@ pub mod memo {
     //!
     //! ```ignore
     //! use semi_persistent_traversals::memo;
-    //! store.with_strategy::<memo::None>().fold(root, alg);  // no memo, stack-based
+    //! store.with_strategy::<memo::None>().fold(root, alg);  // no memo reuse
     //! store.with_strategy::<memo::Vec>().fold(root, alg);   // dense Vec memo
     //! store.with_strategy::<memo::Map>().fold(root, alg);   // sparse hash-map memo
     //! ```
 
-    /// No memoization — stack-based traversal, no dedup. Fastest for trees.
+    /// No memo reuse checks. Shared DAG nodes may be evaluated more than once.
     pub struct None;
     /// Dense memoization — `Vec`-backed tables sized to the full store.
     pub struct Vec;
