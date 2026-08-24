@@ -53,3 +53,11 @@ restore.
    Packed, layout-parameterized B+ tree set for 31- and 63-bit dense IDs.
    Supports logarithmic insertion and seek, linked-leaf iteration, bulk
    construction, selectable in-node search, and semi-persistent restore.
+
+## Retained E-Graph Aggregates
+
+`src/union_find.rs` and `src/eclasses.rs` retain the former production
+union-find, proof forest, class ring, representative set, and parent use-list
+aggregate. They are reference implementations, not an alternate engine
+backend. The corresponding verified design and invariant set are documented in
+[`containers-verus`'s e-graph class layer](../../../containers-verus/doc/design/egraph-class-layer.md).

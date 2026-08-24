@@ -34,10 +34,12 @@ pub type VecP<T, I, const TRACK: bool = true> = Vec<T, I, ParallelStore<T, I>, T
 // --- Supporting data structures ---
 pub mod bplus;
 pub mod dense_id;
+pub mod eclasses;
 pub mod id;
 pub mod list;
 mod sorted_cursor;
 pub mod sparse_set;
+pub mod union_find;
 
 pub use bplus::{
     BPlusCursor, BPlusNode, BPlusNode64, BPlusNode64U32, BPlusNode128, BPlusNode128U32,

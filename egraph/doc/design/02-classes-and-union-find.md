@@ -37,12 +37,17 @@ pub type UnionFind<T, const TRACK: bool = true, const PROOFS: bool = false> =
 // containers-verus/src/union_find.rs
 pub struct UnionFind<T: DenseId, J, const TRACK: bool = true, const PROOFS: bool = false> {
     parent: SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>,
-    rank: SpVec<u8, T::Index, InlineStore<u8, T::Index>, TRACK>,  // max rank = ⌊log₂(n)⌋ ≤ 63, so u8 suffices
+    rank: SpVec<u8, T::Index, InlineStore<u8, T::Index>, TRACK>,  // saturating survivor heuristic
     parent_proof: Option<SpVec<T, T::Index, InlineStore<T, T::Index>, TRACK>>,
     justification: Option<SpVec<J, T::Index, InlineStore<J, T::Index>, TRACK>>,
     // ghost state (root map, path-length measure, snapshot archives) elided
 }
 ```
+
+Ordinary union by rank keeps the usual logarithmic rank bound. Directed
+survivor selection can violate that hypothesis, so the implementation
+saturates the byte at `u8::MAX`; neither forest correctness nor the verified
+root/path invariants depend on rank remaining an exact height bound.
 
 ### Dual Parent Pointers
 

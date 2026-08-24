@@ -109,8 +109,8 @@ fn head_size_matches_production() {
 /// documented budget; the 63-bit rows compare against production's cell instead.
 #[test]
 fn class_ring_cell_size_matches_production() {
-    // Independent cell from the shared reference module.
-    use containers_conformance::prod_class_ring::EClassEntry;
+    // Former production cell retained in the reference containers crate.
+    use prod::eclasses::EClassEntry;
 
     // The verified cell at each id family, payload word derived from the id.
     type Cell31 =

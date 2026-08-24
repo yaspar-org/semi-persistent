@@ -71,10 +71,13 @@ the option fields remain `None`.
 
 ## Conformance Scope
 
-`containers-conformance` compares the verified kernel with the retained
-unverified reference on finite traces and selected layouts. This is regression
-evidence, not a universal equivalence theorem. The public protocol and known
-semantic differences are in
+`containers-conformance` compares the verified kernel with both transparent
+models and the former production `containers::{union_find,eclasses}`
+implementations on finite traces. The direct graph-structure differential
+covers allocation, rank and directed merges, proof reconstruction, use lists,
+class rings, completion-minimum columns, and nested mark/restore. This is
+regression evidence, not a universal equivalence theorem. The public protocol
+and known semantic differences are in
 [`containers-conformance/BASELINE.md`](../../../containers-conformance/BASELINE.md).
 
 Machine-specific performance comparisons belong in the Criterion benches
