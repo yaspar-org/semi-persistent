@@ -55,22 +55,22 @@ impl<T: DenseId, J: Copy> ProofBuf<T, J> {
 pub struct NoJust;
 
 impl Tagged for NoJust {
-    type Repr = (bool, NoJust);
+    type Repr = crate::BoolTagged<u8>;
 
     fn into_repr(self) -> Self::Repr {
-        (false, self)
+        crate::BoolTagged::new(0)
     }
-    fn from_repr(stored: &Self::Repr) -> Self {
-        stored.1
+    fn from_repr(_stored: &Self::Repr) -> Self {
+        NoJust
     }
     fn tag(stored: &Self::Repr) -> bool {
-        stored.0
+        stored.tagged
     }
     fn set_tag(stored: &mut Self::Repr) {
-        stored.0 = true;
+        stored.tagged = true;
     }
     fn clear_tag(stored: &mut Self::Repr) {
-        stored.0 = false;
+        stored.tagged = false;
     }
 }
 

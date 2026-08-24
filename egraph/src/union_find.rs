@@ -57,22 +57,22 @@ pub enum Justification<G: Copy> {
 }
 
 impl<G: Copy + Clone + core::fmt::Debug + PartialEq + Eq> Tagged for Justification<G> {
-    type Repr = (bool, Justification<G>);
+    type Repr = crate::containers::BoolTagged<Justification<G>>;
 
     fn into_repr(self) -> Self::Repr {
-        (false, self)
+        crate::containers::BoolTagged::new(self)
     }
     fn from_repr(stored: &Self::Repr) -> Self {
-        stored.1
+        stored.value
     }
     fn tag(stored: &Self::Repr) -> bool {
-        stored.0
+        stored.tagged
     }
     fn set_tag(stored: &mut Self::Repr) {
-        stored.0 = true;
+        stored.tagged = true;
     }
     fn clear_tag(stored: &mut Self::Repr) {
-        stored.0 = false;
+        stored.tagged = false;
     }
 }
 
@@ -131,6 +131,21 @@ mod tests {
         assert_eq!(absorbed, a);
         assert_eq!(uf.find(a), b);
         assert_eq!(uf.find(b), b);
+    }
+
+    #[test]
+    fn justification_named_repr_preserves_value_when_tagged() {
+        let just = Justification::<ENodeId>::Congruence {
+            node_a: ENodeId::new(1),
+            node_b: ENodeId::new(2),
+        };
+        let mut repr = just.into_repr();
+        assert!(!Justification::<ENodeId>::tag(&repr));
+        Justification::<ENodeId>::set_tag(&mut repr);
+        assert!(Justification::<ENodeId>::tag(&repr));
+        assert_eq!(Justification::<ENodeId>::from_repr(&repr), just);
+        Justification::<ENodeId>::clear_tag(&mut repr);
+        assert!(!Justification::<ENodeId>::tag(&repr));
     }
 
     #[test]
