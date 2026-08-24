@@ -286,6 +286,59 @@ fn assert_classes_equal(reference: &RefClasses, verified: &VerClasses, n: usize)
     }
 }
 
+#[test]
+fn retained_nested_restore_recaptures_a_post_mark_use_list() {
+    let mut r = RefClasses::new();
+    let mut v = VerClasses::new();
+    r.set_min_width(2);
+    v.set_min_width(2);
+
+    r.add_singleton(rn(0));
+    v.add_singleton(vn(0));
+    let _outer_r = r.mark(reference::ShrinkPolicy::Never);
+    let _outer_v = v.mark(verified::ShrinkPolicy::Never);
+
+    r.add_use(r.repr_id(rn(0)).unwrap(), rn(0));
+    v.add_use(v.repr_id(vn(0)).unwrap(), vn(0));
+    r.add_singleton(rn(1));
+    v.add_singleton(vn(1));
+    r.add_use(r.repr_id(rn(1)).unwrap(), rn(0));
+    v.add_use(v.repr_id(vn(1)).unwrap(), vn(0));
+
+    let rm = r.merge(rn(1), rn(0)).unwrap();
+    let vm = v.merge(vn(1), vn(0)).unwrap();
+    let rr = r.repr_id(rm.survivor).unwrap();
+    let vr = v.repr_id(vm.survivor).unwrap();
+    r.splice_uses(r.use_list_id(rr), rm.absorbed_uses);
+    v.splice_uses(v.use_list_id(vr), vm.absorbed_uses);
+    assert_eq!(r.use_list_len(rr), 2);
+    assert_eq!(v.use_list_len(vr), 2);
+
+    let inner_r = r.mark(reference::ShrinkPolicy::Never);
+    let inner_v = v.mark(verified::ShrinkPolicy::Never);
+    r.add_use(rr, rn(0));
+    v.add_use(vr, vn(0));
+    assert_eq!(r.use_list_len(rr), 3);
+    assert_eq!(v.use_list_len(vr), 3);
+
+    r.restore(inner_r);
+    v.restore(inner_v);
+    let rr = r.repr_id(r.find_const(rn(0))).unwrap();
+    let vr = v.repr_id(v.find_const(vn(0))).unwrap();
+    assert_eq!(
+        r.iter_uses(rr).count(),
+        2,
+        "retained list links must roll back"
+    );
+    assert_eq!(
+        r.use_list_len(rr),
+        2,
+        "retained cached list length must roll back"
+    );
+    assert_eq!(v.iter_uses(vr).count(), 2);
+    assert_eq!(v.use_list_len(vr), 2);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 

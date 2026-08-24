@@ -73,7 +73,8 @@ impl<T: Tagged, N: DenseId> Tagged for ListNode<T, N> {
 }
 
 /// Head/tail pointers plus a cached element count. Head is `Opt<N>` (tag = None).
-/// Tail is raw `N` (tag = VecI capture). Tail is only read when head is Some.
+/// The logical tail is a clean `N`; only the stored `ListHead::Repr` uses its
+/// spare bit as the VecI capture tag. Tail is only read when head is Some.
 ///
 /// `len` is the number of nodes in the list, maintained incrementally on
 /// `prepend`/`append` (+1) and `splice` (dst gains src's count, src resets to 0),
@@ -95,7 +96,7 @@ impl<T: Tagged, N: DenseId> Tagged for ListNode<T, N> {
 #[derive(Clone, Copy)]
 struct ListHead<N: DenseId> {
     head_repr: <N as Tagged>::Repr,
-    tail_repr: <N as Tagged>::Repr,
+    tail: N,
     len: N::Index,
 }
 
@@ -109,7 +110,7 @@ impl<N: DenseId> ListHead<N> {
     fn empty() -> Self {
         Self {
             head_repr: Opt::<N>::none().into_raw(),
-            tail_repr: N::default().into_repr(),
+            tail: N::default(),
             len: N::Index::MIN,
         }
     }
@@ -123,17 +124,21 @@ impl<N: DenseId> ListHead<N> {
     }
 }
 
-/// Tagged delegates to tail_repr (first in Repr tuple). VecI steals that bit.
+/// Tagged delegates to the stored tail word (first in Repr tuple). VecI steals
+/// that word's spare bit; decoding always returns a clean logical `tail: N`.
 /// `len` rides along as a plain `Copy` field; it carries no tag.
 impl<N: DenseId> Tagged for ListHead<N> {
     type Repr = (<N as Tagged>::Repr, <N as Tagged>::Repr, N::Index);
 
     fn into_repr(self) -> Self::Repr {
-        (self.tail_repr, self.head_repr, self.len)
+        (self.tail.into_repr(), self.head_repr, self.len)
     }
     fn from_repr(r: &Self::Repr) -> Self {
         Self {
-            tail_repr: r.0,
+            // `r.0` carries this ListHead's capture tag. Decoding into `N`
+            // strips it, so a splice cannot transfer that tag to another
+            // header and suppress capture at a later nested mark.
+            tail: N::from_repr(&r.0),
             head_repr: r.1,
             len: r.2,
         }
@@ -247,7 +252,7 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         self.nodes.push(ListNode::new(payload, h.head()));
         h.head_repr = Opt::some(slot).into_raw();
         if was_empty {
-            h.tail_repr = slot.into_repr();
+            h.tail = slot;
         }
         h.len = Self::grown(h.len);
         self.heads.set(list.into(), h);
@@ -270,12 +275,12 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         if h.is_empty() {
             h.head_repr = Opt::some(slot).into_raw();
         } else {
-            let old_tail = N::from_repr(&h.tail_repr);
+            let old_tail = h.tail;
             let mut tail_node = self.nodes.get(old_tail.into());
             tail_node.set_next(Opt::some(slot));
             self.nodes.set(old_tail.into(), tail_node);
         }
-        h.tail_repr = slot.into_repr();
+        h.tail = slot;
         h.len = Self::grown(h.len);
         self.heads.set(list.into(), h);
     }
@@ -297,14 +302,14 @@ impl<T: Tagged, L: DenseId, N: DenseId, const TRACK: bool> ListArena<T, L, N, TR
         let mut dst_h = self.heads.get(dst.into());
         if dst_h.is_empty() {
             dst_h.head_repr = src_h.head_repr;
-            dst_h.tail_repr = src_h.tail_repr;
+            dst_h.tail = src_h.tail;
         } else {
             // Link dst's tail → src's head
-            let dst_tail = N::from_repr(&dst_h.tail_repr);
+            let dst_tail = dst_h.tail;
             let mut tail_node = self.nodes.get(dst_tail.into());
             tail_node.set_next(src_h.head());
             self.nodes.set(dst_tail.into(), tail_node);
-            dst_h.tail_repr = src_h.tail_repr;
+            dst_h.tail = src_h.tail;
         }
         dst_h.len = dst_h
             .len
@@ -682,5 +687,52 @@ mod tests {
         a.restore(token);
         assert_eq!(a.iter(l1).map(|e| e.raw()).collect::<Vec<_>>(), vec![1]);
         assert_eq!(a.iter(l2).map(|e| e.raw()).collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
+    fn nested_mark_recaptures_nonempty_splice_created_after_outer_mark() {
+        let mut a = ArenaT::new();
+        let first = a.new_list();
+        let _outer = a.mark(ShrinkPolicy::Never);
+        a.append(first, TestNodeId::new(1));
+
+        let second = a.new_list();
+        a.append(second, TestNodeId::new(2));
+        a.splice(second, first);
+        assert_eq!(a.len(second).as_usize(), 2);
+
+        let inner = a.mark(ShrinkPolicy::Never);
+        a.append(second, TestNodeId::new(3));
+        assert_eq!(a.len(second).as_usize(), 3);
+
+        a.restore(inner);
+        assert_eq!(a.len(second).as_usize(), 2);
+        assert_eq!(
+            a.iter(second).map(|id| id.raw()).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+    }
+
+    #[test]
+    fn nested_mark_recaptures_empty_splice_created_after_outer_mark() {
+        let mut a = ArenaT::new();
+        let source = a.new_list();
+        let _outer = a.mark(ShrinkPolicy::Never);
+        a.append(source, TestNodeId::new(1));
+
+        let destination = a.new_list();
+        a.splice(destination, source);
+        assert_eq!(a.len(destination).as_usize(), 1);
+
+        let inner = a.mark(ShrinkPolicy::Never);
+        a.append(destination, TestNodeId::new(2));
+        assert_eq!(a.len(destination).as_usize(), 2);
+
+        a.restore(inner);
+        assert_eq!(a.len(destination).as_usize(), 1);
+        assert_eq!(
+            a.iter(destination).map(|id| id.raw()).collect::<Vec<_>>(),
+            vec![1]
+        );
     }
 }
