@@ -370,12 +370,11 @@ where
     ///
     /// The one place a full scan should get its ids from. The obvious spelling —
     /// `for i in 0..eg.len() { Cfg::G::from_usize(i) }` — is sound but not *locally*
-    /// sound: `DenseId::from_usize` masks, and the routing table is indexed by
-    /// `Cfg::G::Index`, a word that spans twice the id space for a bit-stealing id. What
-    /// keeps the table inside the id space is that [`TypedRouting::reserve`] mints every
-    /// entry through `try_new`, three modules away. Stating that once here means a new
-    /// scan inherits the argument instead of re-deriving it — or, more likely, not
-    /// noticing it needed one.
+    /// justified: `Cfg::G::Index` spans twice the id space for a bit-stealing id, and
+    /// `from_usize` rejects positions outside the smaller payload range. What keeps the
+    /// routing table inside that range is that [`TypedRouting::reserve`] mints every entry
+    /// through `try_new`, three modules away. Stating that once here means a new scan
+    /// inherits the argument instead of re-deriving it.
     ///
     /// [`TypedRouting::reserve`]: crate::typed_routing::TypedRouting::reserve
     pub fn node_ids(&self) -> impl Iterator<Item = Cfg::G> + '_ {

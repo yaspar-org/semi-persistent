@@ -198,13 +198,11 @@ impl DenseId for DenseId31 {
     // `as_usize` is inherited from the `IndexLike` supertrait (prod-parity).
 
     fn from_usize(n: usize) -> (r: Self) {
-        // Mask the stolen bit off so the type invariant (`raw < 2^31`) holds for
-        // any `n`. For an in-range `n < 2^31` the mask is a no-op, so the view
-        // round-trips; out-of-range `n` is wrapped and carries no guarantee.
-        assert(((n as u32) & 0x7fff_ffffu32) < 0x8000_0000u32) by (bit_vector);
-        assert(forall|x: u32| #![auto] x < 0x8000_0000u32 ==> (x & 0x7fff_ffffu32) == x)
-            by (bit_vector);
-        DenseId31 { raw: (n as u32) & 0x7fff_ffffu32 }
+        if n < 0x8000_0000usize {
+            DenseId31 { raw: n as u32 }
+        } else {
+            crate::guard::refuse("DenseId31 exceeds range");
+        }
     }
 
     fn try_new(n: usize) -> (r: Option<Self>) {
@@ -507,10 +505,12 @@ impl DenseId for DenseId63 {
     // `as_usize` is inherited from the `IndexLike` supertrait (prod-parity).
 
     fn from_usize(n: usize) -> (r: Self) {
-        assert(((n as u64) & 0x7fff_ffff_ffff_ffffu64) < 0x8000_0000_0000_0000u64) by (bit_vector);
-        assert(forall|x: u64| #![auto] x < 0x8000_0000_0000_0000u64
-            ==> (x & 0x7fff_ffff_ffff_ffffu64) == x) by (bit_vector);
-        DenseId63 { raw: (n as u64) & 0x7fff_ffff_ffff_ffffu64 }
+        proof { crate::index_like::lemma_u64_usize_64bit(); }
+        if (n as u64) < 0x8000_0000_0000_0000u64 {
+            DenseId63 { raw: n as u64 }
+        } else {
+            crate::guard::refuse("DenseId63 exceeds range");
+        }
     }
 
     fn try_new(n: usize) -> (r: Option<Self>) {

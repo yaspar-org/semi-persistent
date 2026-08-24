@@ -88,14 +88,13 @@ widths: `define_id7!` (7-bit), `define_id15!` (15-bit), and `define_id63!`
 The generated runtime surface shared with `containers-verus` includes
 `new`/`raw`, `index`/`to_usize`, `DenseId::to_index`,
 `DenseId::try_new`, `IndexLike::min`/`max`, and the tag operations. Use
-`try_new` at a capacity boundary. The plain crate deliberately panics rather
-than aliases IDs when `from_usize` is out of range; portable callers must not
-rely on either implementation's out-of-range `from_usize` behavior.
+`try_new` at a capacity boundary. Both crates reject an out-of-range
+`from_usize` rather than narrowing or aliasing the value.
 
 ## The `Tagged` Trait
 
 This trait is the abstraction for values that carry a tag bit
-that can we queried, set and reset.
+that can be queried, set and reset.
 
 ```rust
 pub trait Tagged: Copy + Default {
@@ -130,6 +129,12 @@ and uses the tag bit to encode `Some`/`None`.
 
 `Opt::none()` creates a repr with the tag set. `Opt::some(val)` stores
 the repr with tag clear. `Opt::get()` checks the tag.
+
+The portable optional-value accessor is `Opt::to_option()`. The historical
+plain `Opt::get()` returns `Option<T>`, while the verified crate's historical
+`get()` unwraps and traps on `None`; those legacy spellings are outside the
+shared source-compatible surface. `get_unchecked()` reads the embedded value
+regardless of the option bit and is shared by both crates.
 
 `Opt<T>` does NOT implement `Tagged` itself.
 If it did, storing `Opt<T>` in an `InlineStore` would try to steal the
@@ -202,9 +207,13 @@ stored representation is the backing integer and is used through the
 
 `containers-conformance/tests/id_macro_parity.rs` instantiates all four widths
 from both crates and applies the same runtime contract plus randomized
-value/tag checks. This establishes a maintained DenseId macro compatibility
-surface. It does not claim that the entire `containers` and
-`containers-verus` crate APIs are dependency-swappable.
+value/tag checks. It also pins out-of-range refusal, tiny-factory exhaustion,
+optional defaults, and the portable checked-arithmetic module. Portable code
+uses the `index_like::checked_*` free functions; the plain crate's same-named
+trait defaults are a legacy convenience not present on the verified trait.
+These tests establish a maintained DenseId macro compatibility surface. They
+do not claim that the entire `containers` and `containers-verus` crate APIs
+are dependency-swappable.
 
 ---
 [← Table of Contents](00-table-of-contents.md) · [Ch 2: Semi-Persistent Vectors →](02-semi-persistent-vectors.md)

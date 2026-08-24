@@ -37,8 +37,8 @@ cargo build --workspace --all-targets --all-features
 cargo test --workspace --all-features
 cargo deny check
 (cd abstract-domains && cargo verus verify)                     # 994 verified, 0 errors
-(cd containers-verus && cargo verus verify)                    # 1719 verified, 0 errors
-(cd containers-verus && cargo verus verify --features literal-types) # 1719 verified, 0 errors
+(cd containers-verus && cargo verus verify)                    # 1701 verified, 0 errors
+(cd containers-verus && cargo verus verify --features literal-types) # 1701 verified, 0 errors
 (cd au-verus && cargo verus verify)                             # 29 verified, 0 errors
 ```
 

@@ -34,13 +34,12 @@ semi_persistent_containers::define_id15! {
 /// Use this wherever an id is derived from a container position. A position and its
 /// id share a word (`D::Index`) but NOT a range: a bit-stealing id reserves the top
 /// bit, so `D::Index` spans twice the id space and a position at or past
-/// `D::id_bound()` has no id at all. [`DenseId::from_usize`] is documented as
-/// unchecked — it masks — so past the bound it returns an id that already names an
-/// earlier entry, and nothing downstream can tell the two apart: two distinct
-/// interned things answer to one id.
+/// `D::id_bound()` has no id at all. [`DenseId::from_usize`] rejects such a
+/// position; this helper centralizes the fallible check and the e-graph-specific
+/// exhaustion message before any owning structure is mutated.
 ///
-/// These cases are reachable in practice: [`RuleId`] and [`AxiomId`] are 15-bit, so
-/// the 32769th registered rule aliased rule 0. This panics instead.
+/// These cases are reachable in practice: [`RuleId`] and [`AxiomId`] are 15-bit,
+/// so the 32769th registered rule has no representable ID.
 #[inline]
 pub fn id_at<D: crate::containers::DenseId>(pos: usize) -> D {
     D::try_new(pos).unwrap_or_else(|| panic!("position {pos} has no id: the id space is exhausted"))
@@ -57,9 +56,8 @@ pub fn id_at_index<D: crate::containers::DenseId>(pos: D::Index) -> D {
 ///
 /// The loop form of [`id_at`]. Scanning a population by position needs one check, not
 /// one per step: positions are contiguous, so only the last can be out of range. This
-/// panics before yielding anything rather than aliasing partway through — the failure
-/// mode `for i in 0..n { D::from_usize(i) }` has, where the tail of a long scan
-/// silently revisits ids the head already used.
+/// panics before yielding anything rather than producing a valid prefix and then
+/// failing partway through a long scan.
 ///
 /// Use this when the caller cannot show `n` is within the id space. When it can — most
 /// often because the container is indexed *by* `D`, so its own capacity guard is the id
@@ -124,8 +122,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the id space is exhausted")]
     fn id_at_rejects_a_position_with_no_id() {
-        // Representable as a `u16` index word, but past `RuleId`'s 15-bit bound:
-        // `from_usize` would mask this to rule 0.
+        // Representable as a `u16` index word, but past `RuleId`'s 15-bit bound.
         let _ = id_at::<RuleId>(1usize << 15);
     }
 

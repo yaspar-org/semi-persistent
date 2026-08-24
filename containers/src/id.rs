@@ -10,7 +10,8 @@
 //!
 //! Range-checked conversions:
 //! - `T::new(raw)` — panics if MSB is set
-//! - `T::raw()` — always returns the clean value
+//! - `T::raw()` — returns the clean value for every constructible runtime ID;
+//!   only the test-only `from_raw_unchecked` can manufacture a tagged value
 //! - `From<T> for u32/u64` — infallible
 //! - `TryFrom<u32/u64> for T` — returns `Err` if MSB is set
 
