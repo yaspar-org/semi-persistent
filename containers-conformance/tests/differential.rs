@@ -5,9 +5,8 @@
 //! Runs identical randomized operation traces against the production
 //! `semi-persistent-containers` crate and this crate, asserting identical
 //! observable results at every step. Conformance is scoped to the shared
-//! behavioral surface: operations intentionally absent
-//! (`get_mut`), bounds intentionally narrowed (Clone vectors), and 32-bit
-//! targets are out of scope.
+//! behavioral surface; bounds intentionally narrowed (Clone vectors) and
+//! 32-bit targets are out of scope.
 //!
 //! Coverage includes:
 //! - Vec with both stores (push/pop/set/get/len/

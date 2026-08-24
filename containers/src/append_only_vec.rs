@@ -16,7 +16,18 @@ const FULL: &str = "append-only vec is full for its index word";
 
 /// Push-only vec with semi-persistent mark/restore.
 ///
-/// `TRACK=false` compiles out all fork history and frame tracking.
+/// `TRACK=false` compiles out const-gated fork/frame execution. The generic
+/// layout still contains empty frame and fork-history fields.
+///
+/// Mutation is intentionally append-only:
+///
+/// ```compile_fail
+/// use semi_persistent_containers::AppendOnlyVec;
+///
+/// let mut log = AppendOnlyVec::<u32>::new();
+/// let index = log.push(1);
+/// *log.get_mut(index) = 2;
+/// ```
 ///
 /// # Index width
 ///
@@ -74,11 +85,6 @@ impl<T, I: IndexLike, const TRACK: bool> AppendOnlyVec<T, I, TRACK> {
     #[inline]
     pub fn get(&self, idx: I) -> &T {
         &self.data[idx.as_usize()]
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self, idx: I) -> &mut T {
-        &mut self.data[idx.as_usize()]
     }
 
     /// Number of stored elements.

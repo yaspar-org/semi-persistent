@@ -22,6 +22,16 @@ pub struct MapToken(VecToken);
 /// On restore, the log truncates and the HashMap rebuilds from survivors.
 /// Rebuild is O(surviving_len) — fine for small maps (registries, globals).
 ///
+/// Stored log entries cannot be mutated behind the transient index:
+///
+/// ```compile_fail
+/// use semi_persistent_containers::Map;
+///
+/// let mut map = Map::<&str, u32>::new();
+/// let index = map.insert("key", 1);
+/// *map.get_mut(index) = 2;
+/// ```
+///
 /// # Index width
 ///
 /// `I` names a log position and so bounds the map, exactly as in
@@ -71,12 +81,6 @@ impl<K: Hash + Eq + Clone, V, I: IndexLike, const TRACK: bool> Map<K, V, I, TRAC
     #[inline]
     pub fn get(&self, idx: I) -> &V {
         &self.log.get(idx).1
-    }
-
-    /// Get a mutable reference to the value at a dense log index.
-    #[inline]
-    pub fn get_mut(&mut self, idx: I) -> &mut V {
-        &mut self.log.get_mut(idx).1
     }
 
     /// Get the key at a dense log index.
