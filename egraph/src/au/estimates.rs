@@ -36,10 +36,11 @@ where
     if l == r {
         (snap.best_size(l), 0)
     } else {
-        let size = snap
-            .best_size(l)
-            .checked_add(snap.best_size(r))
-            .expect("generalize estimate exceeds u32 term-size capacity");
+        // Match `TermPool`'s ranking semantics: expanded result terms at or
+        // above the counter capacity rank at the worst representable value.
+        // Each input `best_size` is below the MAX sentinel, but their sum need
+        // not fit.
+        let size = snap.best_size(l).saturating_add(snap.best_size(r));
         (size, size)
     }
 }
@@ -152,4 +153,43 @@ where
     )?;
     let solution = solve_transport(&problem)?;
     Some(solution.total.0.saturating_add(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::au::egraph_api::AuSnapshot;
+    use crate::egraph::EGraph31;
+    use crate::literal::NiraLitVal;
+
+    #[test]
+    fn generalize_quality_saturates_when_two_admissible_sizes_overflow() {
+        let mut eg = EGraph31::<NiraLitVal, false, false>::new();
+        let sort = eg.intern_sort("S");
+        let leaf_op = eg.register_op0("leaf", sort);
+        let pair_op = eg.register_op2("pair", sort, sort, sort);
+        let left_op = eg.register_op1("left", sort, sort);
+        let right_op = eg.register_op1("right", sort, sort);
+
+        // Expanded size after 30 pair levels is 2^31 - 1, although the
+        // hash-consed e-graph contains only O(depth) nodes. Each wrapper has
+        // admissible size 2^31; adding the two sizes would overflow u32.
+        let mut tree = eg.add(leaf_op, &[]);
+        for _ in 0..30 {
+            tree = eg.add(pair_op, &[tree, tree]);
+        }
+        let left = eg.add(left_op, &[tree]);
+        let right = eg.add(right_op, &[tree]);
+        eg.rebuild();
+
+        let snap = AuSnapshot::new(&eg).unwrap();
+        let left = snap.class_of(left).unwrap();
+        let right = snap.class_of(right).unwrap();
+        assert_eq!(snap.best_size(left), 1u32 << 31);
+        assert_eq!(snap.best_size(right), 1u32 << 31);
+        assert_eq!(
+            static_generalize_quality(&snap, left, right),
+            (u32::MAX, u32::MAX)
+        );
+    }
 }

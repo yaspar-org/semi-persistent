@@ -28,8 +28,9 @@ exported certificate format or verified checker.
 
 ## 1. The problem
 
-Given two e-classes `l` and `r`, find their least general generalization: a
-term `t` with a substitution into each side, minimizing
+Given two e-classes `l` and `r`, find a minimum-quality anti-unifier in the
+supported search domain: a term `t` with a substitution into each side,
+minimizing
 
 ```text
 quality(t) = (size(t), variant_mass(t))     lexicographically, lower is better
@@ -38,8 +39,8 @@ quality(t) = (size(t), variant_mass(t))     lexicographically, lower is better
 Size is the primary objective. At equal size the term with less variant mass
 wins, because mass sits in the variant nodes (the positions where the two sides
 disagree), so less of it means more shared backbone (Appendix C.1). Both
-components saturate rather than wrap: terms too large to count tie at the bottom
-of the order instead of inverting it.
+components saturate rather than wrap: terms too large to count tie at the
+worst representable end of the order instead of inverting it.
 
 The objective's shape constrains everything downstream. Every bound the solver
 computes bounds the FIRST component only; the second has no useful lower bound.
@@ -63,10 +64,12 @@ because a context removes candidates. Their optimization domain is the action
 graph surviving the selected policy (2.3).
 
 Two actions terminate the recursion. If `l == r` the state returns the class's
-best ground term. The **generalize action** builds a variant node holding both
-projections and is always available at exactly `bs(l) + bs(r)`, where `bs(c)` is
-the class's best size (2.4). It is both the incumbent every state starts from
-and the fixed comparison target of the first pruning rule (9.4).
+best admissible ground term. The **generalize action** builds a variant node
+holding both projections and is always available. For distinct classes its
+stored quality is `(bs(l) + bs(r), bs(l) + bs(r))`, subject to the `u32`
+capacity boundary in 2.6.1; `bs(c)` is the snapshot's best admissible size
+(2.4). It is both the incumbent every state starts from and the fixed comparison
+target of the first pruning rule (9.4).
 
 Because states are shared rather than duplicated per path, the structure is a
 graph, not a tree. Section 2.6 is what that costs and how it is paid.
@@ -942,9 +945,10 @@ Three bounds derive from it, each a sum or a flow of admissible parts:
   least as tight as the initial one. Root Exact uses the static arm/transport
   bound because its rounds evaluate all children synchronously.
 
-Saturating arithmetic keeps every accumulation a lower bound, and a saturated
-total still exceeds every representable incumbent, so it discards the arm.
-Discarding is sound: a pair with no finite member admits no valid term at all.
+Saturating arithmetic keeps every accumulation a lower bound. A saturated
+`u32` bound exceeds every incumbent below `u32::MAX`; against a saturated
+incumbent the strict comparison does not prune. A pair with no admissible
+finite member contributes no supported term.
 
 ### 9.3 Why every comparison is strict, and on size alone
 
@@ -961,7 +965,7 @@ Each discards an *arm*, never a term.
 
 | rule | test | argument |
 | --- | --- | --- |
-| generalize dominance | static arm bound > `bs(l) + bs(r)` | the generalize action is always available at exactly that value (2.1), so an arm that cannot come in under it can never be optimal |
+| generalize dominance | static arm bound > stored generalize size | the generalize action is always available at that achieved value (2.1), so an arm that cannot come in under it can never be optimal |
 | live-incumbent exclusion | arm bound > the state's current incumbent | the same argument against a tighter target, valid because the incumbent is achieved (9.1) |
 | interval exclusion | dynamic arm bound > incumbent | the dynamic bound is admissible and monotone (9.2), so it can be tested at any time |
 | root-Exact projection pruning | static arm or transport bound > pair incumbent | the bound is admissible; equality cannot prune because variant mass may still improve (9.3) |
