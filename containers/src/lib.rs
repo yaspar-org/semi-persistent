@@ -14,14 +14,14 @@ mod append_only_vec;
 pub mod bitset;
 mod diff_store;
 mod map;
-mod tagged;
+pub mod tagged;
 pub(crate) mod token;
 mod vec;
 
 pub use self::append_only_vec::AppendOnlyVec;
 pub use self::diff_store::{DiffStore, InlineStore, ParallelStore};
 pub use self::map::{Map, MapToken};
-pub use self::tagged::{BoolTagged, Opt, Tagged};
+pub use self::tagged::{BoolTagged, Opt, Pair, Tagged};
 pub use self::token::{ForkHistory, VecToken};
 pub use self::vec::{ShrinkPolicy, Vec, View, ViewIter};
 
@@ -36,6 +36,7 @@ pub mod bplus;
 pub mod dense_id;
 pub mod eclasses;
 pub mod id;
+pub mod index_like;
 pub mod list;
 mod sorted_cursor;
 pub mod sparse_set;
@@ -48,7 +49,7 @@ pub use bplus::{
     Layout128U64, Layout256, Layout256U32, Layout256U64, Layout512U64, NodeLayout, SearchKind,
 };
 pub use dense_id::{DenseId, IdFactory, IndexLike};
-pub use id::IdRangeError;
+pub use id::{IdRangeError, SparseSetId, UseListId, UseNodeId};
 pub use list::{ListArena, ListArenaToken, ListIter};
 pub use sorted_cursor::SortedCursor;
 pub use sparse_set::{SparseSet, SparseSetToken};

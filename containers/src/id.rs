@@ -101,6 +101,7 @@ macro_rules! define_id_impl {
 
         #[derive(Clone, Copy)]
         #[repr(transparent)]
+        #[allow(dead_code)]
         $vis struct $Stored($Int);
 
         impl $Name {
@@ -114,6 +115,14 @@ macro_rules! define_id_impl {
 
             #[inline(always)]
             pub fn raw(self) -> $Int { self.0 }
+
+            /// The dense index as a `usize`.
+            #[inline(always)]
+            pub fn index(self) -> usize { self.0 as usize }
+
+            /// Inherent spelling shared with the verified generated IDs.
+            #[inline(always)]
+            pub fn to_usize(self) -> usize { self.0 as usize }
 
             /// Construct with an arbitrary raw value, including MSB set.
             /// Only available in tests.
@@ -142,6 +151,9 @@ macro_rules! define_id_impl {
             type Index = $Int;
 
             #[inline(always)]
+            fn to_index(self) -> $Int { self.0 }
+
+            #[inline(always)]
             fn to_usize(self) -> usize { self.0 as usize }
 
             #[inline]
@@ -155,6 +167,14 @@ macro_rules! define_id_impl {
                 <Self as $crate::IndexLike>::try_from_usize(n)
                     .expect(concat!(stringify!($Name), " exceeds range"))
             }
+
+            #[inline(always)]
+            fn try_new(n: usize) -> Option<Self> {
+                <Self as $crate::IndexLike>::try_from_usize(n)
+            }
+
+            #[inline(always)]
+            fn bit_stealing() -> bool { true }
         }
 
         impl $crate::IndexLike for $Name {
@@ -176,17 +196,17 @@ macro_rules! define_id_impl {
         }
 
         impl $crate::Tagged for $Name {
-            type Repr = $Stored;
+            type Repr = $Int;
             #[inline(always)]
-            fn into_repr(self) -> $Stored { $Stored(self.0) }
+            fn into_repr(self) -> $Int { self.0 }
             #[inline(always)]
-            fn from_repr(stored: &$Stored) -> Self { Self(stored.0 & $MASK) }
+            fn from_repr(stored: &$Int) -> Self { Self(*stored & $MASK) }
             #[inline(always)]
-            fn tag(stored: &$Stored) -> bool { stored.0 & $CAP != 0 }
+            fn tag(stored: &$Int) -> bool { *stored & $CAP != 0 }
             #[inline(always)]
-            fn set_tag(stored: &mut $Stored) { stored.0 |= $CAP; }
+            fn set_tag(stored: &mut $Int) { *stored |= $CAP; }
             #[inline(always)]
-            fn clear_tag(stored: &mut $Stored) { stored.0 &= $MASK; }
+            fn clear_tag(stored: &mut $Int) { *stored &= $MASK; }
         }
 
         impl ::core::default::Default for $Name {

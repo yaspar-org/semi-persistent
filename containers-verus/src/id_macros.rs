@@ -25,10 +25,11 @@
 //! masking a clear bit is a no-op), so the verified ordering facts
 //! (`lemma_order_is_as_nat`) speak for these too.
 //!
-//! The `Stored` companion type production generated is NOT generated: the
-//! verus `Tagged` uses the backing integer itself as `Repr` (as `DenseId31`
-//! does), so there is nothing for a newtype wrapper to carry. Consumers that
-//! named `StoredFoo` types migrate to `<Foo as Tagged>::Repr` (= the int).
+//! The plain crate retains its historical `Stored` companion symbol, but no
+//! portable storage type is generated under that name: here the identifier
+//! names the hidden implementation module. Both crates use the backing integer
+//! itself as `Tagged::Repr` (as `DenseId31` does). Code intended to compile
+//! against either crate uses `<Foo as Tagged>::Repr`, never `StoredFoo`.
 
 /// One past the largest clean 7-bit id.
 pub const DENSE7_BOUND: u8 = 0x80;
@@ -82,8 +83,8 @@ macro_rules! define_id_impl {
 
         // Hidden impl module: gives the verus!{} expansion the vstd prelude
         // it needs without polluting the invoker's namespace. Named by the
-        // `$Stored` identifier (production's companion-type slot, unused
-        // here — the verus Tagged Repr is the backing integer itself).
+        // `$Stored` identifier (the legacy companion-symbol slot; the portable
+        // Tagged Repr in both crates is the backing integer itself).
         #[allow(non_snake_case)]
         // `*r = *r | CAP` (not `|=`): the exact form the verus set_tag/clear_tag
         // proofs are stated over (bit_vector asserts mention the full assign).

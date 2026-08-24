@@ -64,22 +64,33 @@ pool-based systems can store per-object metadata in flat `Vec`s rather than
 ## `define_id31!`
 
 The `define_id31!` macro stamps out a `#[repr(transparent)]` newtype
-around `u32` with bit 31 reserved, producing two types:
+around `u32` with bit 31 reserved:
 
-| Type | Repr | Purpose |
-|------|------|---------|
+| Surface | Repr | Purpose |
+|---------|------|---------|
 | `NodeId` | `u32` | Clean user-facing id. MSB always 0. |
-| `StoredNodeId` | `u32` | Internal repr. MSB = capture flag. |
+| `<NodeId as Tagged>::Repr` | `u32` | Stored word. MSB = capture flag. |
 
 Trait impls on the clean `NodeId` all mask out the MSB: `PartialEq`
 compares `(self.0 & 0x7FFF_FFFF)`, and `Ord` and `Hash` apply the
 same mask. `Debug` prints `e42` (prefix + raw value).
 
-The separate `StoredNodeId` representation intentionally does not implement
-`Eq`, `Hash`, or `Ord`; it is interpreted through `Tagged::from_repr`, which
-masks the tag before producing a clean ID. The tag is therefore invisible to
-user-facing ID operations. Variants exist for other widths: `define_id7!`
-(7-bit), `define_id15!` (15-bit), and `define_id63!` (63-bit for large pools).
+The macro syntax still accepts `StoredNodeId` and the plain crate retains that
+legacy companion symbol for existing users. It is not the portable storage
+type: the verified macro uses that identifier for a hidden implementation
+module. Code intended to swap between crates must use
+`<NodeId as Tagged>::Repr`, which is the backing integer in both
+implementations. `Tagged::from_repr` masks the tag before producing a clean ID,
+so the tag is invisible to user-facing ID operations. Variants exist for other
+widths: `define_id7!` (7-bit), `define_id15!` (15-bit), and `define_id63!`
+(63-bit for large pools).
+
+The generated runtime surface shared with `containers-verus` includes
+`new`/`raw`, `index`/`to_usize`, `DenseId::to_index`,
+`DenseId::try_new`, `IndexLike::min`/`max`, and the tag operations. Use
+`try_new` at a capacity boundary. The plain crate deliberately panics rather
+than aliases IDs when `from_usize` is out of range; portable callers must not
+rely on either implementation's out-of-range `from_usize` behavior.
 
 ## The `Tagged` Trait
 
@@ -98,7 +109,7 @@ pub trait Tagged: Copy + Default {
 ```
 
 For `DenseId` types, `Tagged` is implemented by the `define_id!` macro:
-`into_repr` wraps the raw value, `from_repr` masks out the MSB,
+`into_repr` returns the raw word, `from_repr` masks out the MSB,
 `set_tag` ORs in the MSB, `clear_tag` ANDs it out.
 
 Different consumers interpret the tag differently: Semi-persistent vectors
@@ -128,11 +139,10 @@ implements `Tagged` via a *different* field.
 
 ## Out-of-Band Tags
 
-Primitive integers implement `Tagged` with `Repr = (bool, T)`. In that case
-the representation pays padding overhead but still supports inline
-semi-persistence. `BoolTagged<T>` is a named representation helper with the
-same shape; it does not itself provide a blanket `Tagged` implementation for
-arbitrary `T`.
+Primitive integers implement `Tagged` with `Repr = BoolTagged<T>`, a named
+`(bool, T)` shape shared with the verified crate. The representation pays
+padding overhead but still supports inline semi-persistence. There is no
+blanket `Tagged` implementation for arbitrary `T`.
 
 ```rust
 pub struct BoolTagged<T> {
@@ -141,7 +151,7 @@ pub struct BoolTagged<T> {
 }
 ```
 
-For a `(bool, T)` or `BoolTagged<T>` representation, `tag` reads the bool and
+For a `BoolTagged<T>` representation, `tag` reads the bool and
 `set_tag`/`clear_tag` flip it. These representation strategies are distinct
 from the two `DiffStore` backends for the semi-persistent vector:
 
@@ -178,16 +188,23 @@ semi_persistent_containers::define_id31! {
 }
 ```
 
-This produces `NodeId` (clean, MSB always 0) and `StoredNodeId`
-(internal repr, MSB = tag bit). The string `"n"` is the debug prefix:
-`NodeId::new(42)` prints as `n42`. Variants exist for other widths:
+This produces `NodeId` (clean, MSB always 0); the second identifier is a
+legacy compatibility slot and must not be named by portable callers. The
+string `"n"` is the debug prefix: `NodeId::new(42)` prints as `n42`. Variants
+exist for other widths:
 `define_id7!` (7-bit), `define_id15!` (15-bit), `define_id63!`
 (63-bit for large pools).
 
 The generated clean ID implements `DenseId`, `Tagged`, `IndexLike`, `Eq`,
 `Ord`, `Hash`, and `Debug`, with the MSB masked out in comparisons. Its
-generated stored representation is a private-format `Copy` word used through
-the `Tagged` methods and does not directly implement those comparison traits.
+stored representation is the backing integer and is used through the
+`Tagged` methods.
+
+`containers-conformance/tests/id_macro_parity.rs` instantiates all four widths
+from both crates and applies the same runtime contract plus randomized
+value/tag checks. This establishes a maintained DenseId macro compatibility
+surface. It does not claim that the entire `containers` and
+`containers-verus` crate APIs are dependency-swappable.
 
 ---
 [← Table of Contents](00-table-of-contents.md) · [Ch 2: Semi-Persistent Vectors →](02-semi-persistent-vectors.md)

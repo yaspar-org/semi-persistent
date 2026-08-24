@@ -4,7 +4,6 @@
 //! aggregate retained in `semi-persistent-containers`.
 
 use proptest::prelude::*;
-use reference::DenseId as _;
 use semi_persistent_containers as reference;
 use semi_persistent_containers_verus as verified;
 
