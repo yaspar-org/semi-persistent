@@ -238,12 +238,13 @@ macro_rules! define_id_impl {
 
             #[inline(always)]
             fn from_usize(n: usize) -> (r: Self) {
-                // Mask the stolen bit so the type invariant holds for ANY n;
-                // in-range n round-trips (mask is a no-op below the bound).
-                assert(((n as $Int) & $MASK) < $CAP) by (bit_vector);
-                assert(forall|x: $Int| #![auto] x < $CAP ==> (x & $MASK) == x)
-                    by (bit_vector);
-                $Name { raw: (n as $Int) & $MASK }
+                // Match the plain crate: reject before narrowing so an
+                // out-of-range position cannot alias an existing ID.
+                if n < $BOUNDUSIZE {
+                    $Name { raw: n as $Int }
+                } else {
+                    $crate::guard::refuse(concat!(stringify!($Name), " exceeds range"));
+                }
             }
 
             #[inline(always)]

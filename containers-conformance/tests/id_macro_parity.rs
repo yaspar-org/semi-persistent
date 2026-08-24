@@ -46,6 +46,21 @@ macro_rules! assert_id_contract {
             <$id as $containers::IndexLike>::try_from_usize(max + 1),
             None
         );
+        assert!(
+            std::panic::catch_unwind(|| {
+                let _ = <$id as $containers::DenseId>::from_usize(max + 1);
+            })
+            .is_err(),
+            "from_usize must reject the first out-of-range value"
+        );
+        assert!(
+            std::panic::catch_unwind(|| {
+                let _ = <$id>::new((max + 1) as $word);
+            })
+            .is_err(),
+            "new must reject a word with the stolen bit set"
+        );
+        assert!(<$id>::try_from((max + 1) as $word).is_err());
 
         assert_eq!(core::mem::size_of::<$id>(), core::mem::size_of::<$word>());
         assert_eq!(core::mem::align_of::<$id>(), core::mem::align_of::<$word>());
@@ -68,6 +83,11 @@ macro_rules! assert_id_contract {
         opt.set_none();
         assert!(opt.is_none());
         assert_eq!(opt.get_unchecked(), id);
+        let none = $containers::Opt::<$id>::none();
+        assert_eq!(none.to_option(), None);
+        assert!(none.is_none());
+        let default_none: $containers::Opt<$id> = Default::default();
+        assert_eq!(default_none.to_option(), None);
 
         let pair = $containers::Pair { a: id, b: 17u16 };
         let mut pair_repr = <$containers::Pair<$id, u16> as $containers::Tagged>::into_repr(pair);
@@ -82,6 +102,22 @@ macro_rules! assert_id_contract {
             <$containers::Pair<$id, u16> as $containers::Tagged>::from_repr(&pair_repr),
             pair
         );
+
+        let zero = <$id as $containers::DenseId>::try_new(0).unwrap();
+        let one = <$id as $containers::DenseId>::try_new(1).unwrap();
+        let two = <$id as $containers::DenseId>::try_new(2).unwrap();
+        let four = <$id as $containers::DenseId>::try_new(4).unwrap();
+        let max_id = <$id as $containers::DenseId>::try_new(max).unwrap();
+        assert_eq!($containers::index_like::checked_add(one, one), Some(two));
+        assert_eq!($containers::index_like::checked_sub(two, one), Some(one));
+        assert_eq!($containers::index_like::checked_mul(two, two), Some(four));
+        assert_eq!($containers::index_like::checked_incr(one), Some(two));
+        assert_eq!($containers::index_like::checked_decr(one), Some(zero));
+        assert_eq!(
+            $containers::index_like::checked_add_usize(one, 1),
+            Some(two)
+        );
+        assert_eq!($containers::index_like::checked_incr(max_id), None);
 
         assert_eq!(format!("{id}"), format!("{}{value}", $prefix));
     }};
@@ -154,6 +190,40 @@ fn fallback_and_pair_representations_match_layout_and_behavior() {
     assert_eq!(
         core::mem::align_of::<<plain::Pair<PlainId31, u16> as plain::Tagged>::Repr>(),
         core::mem::align_of::<<verified::Pair<VerifiedId31, u16> as verified::Tagged>::Repr>()
+    );
+}
+
+#[test]
+fn tiny_factories_exhaust_at_the_shared_payload_bound() {
+    macro_rules! assert_factory {
+        ($containers:ident, $id:ty) => {{
+            let mut factory = $containers::IdFactory::<$id>::new();
+            for expected in 0..=0x7f {
+                let id = factory.try_alloc().expect("7-bit ID remains in range");
+                assert_eq!(id.index(), expected);
+            }
+            assert_eq!(factory.count(), 0x80);
+            assert_eq!(factory.try_alloc(), None);
+        }};
+    }
+
+    assert_factory!(plain, PlainId7);
+    assert_factory!(verified, VerifiedId7);
+}
+
+#[test]
+fn verified_builtin_bounded_ids_reject_out_of_range_values() {
+    assert!(
+        std::panic::catch_unwind(|| {
+            let _ = <verified::DenseId31 as verified::DenseId>::from_usize(1usize << 31);
+        })
+        .is_err()
+    );
+    assert!(
+        std::panic::catch_unwind(|| {
+            let _ = <verified::DenseId63 as verified::DenseId>::from_usize(1usize << 63);
+        })
+        .is_err()
     );
 }
 

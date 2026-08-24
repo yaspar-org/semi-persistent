@@ -31,9 +31,9 @@ use std::collections::BTreeMap;
 pub struct BasisRule<G, O, M> {
     pub node: G,
     /// The typed op id. This was a `usize` copy of one, which cost the checker a
-    /// masking `Cfg::O::from_usize` on every read to get back what it already had, and
-    /// widened the row past the configured op width for no gain — the field is only ever
-    /// compared for equality and printed.
+    /// `Cfg::O::from_usize` conversion on every read to get back what it already had,
+    /// and widened the row past the configured op width for no gain — the field is only
+    /// ever compared for equality and printed.
     pub op: O,
     pub lhs: Vec<(G, M)>,
     pub rhs: Vec<(G, M)>,

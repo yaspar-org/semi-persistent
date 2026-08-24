@@ -905,8 +905,8 @@ mod tests {
     //
     // `RuleId` is 15-bit while its log's index word is `u16`, so the log can hold a
     // position (up to 65534) that no `RuleId` can name. That gap is why the mint has
-    // to be checked: `DenseId::from_usize` masks, so position 32768 would come back
-    // as rule 0 and two distinct rule names would answer to one id.
+    // to be checked before mutation: position 32768 must be rejected without adding
+    // an unnameable registry entry.
 
     /// `RuleId`'s id bound, asserted rather than assumed: `id_bound()` is a spec
     /// function, so exec code reads the bound off `try_new`'s boundary.

@@ -75,6 +75,11 @@ impl<T: Tagged> Opt<T> {
         Opt(val.into_repr())
     }
 
+    /// Return the optional value.
+    ///
+    /// This is the legacy plain-crate spelling. The verified crate's legacy
+    /// `get` unwraps and traps on `None`; code intended to compile against
+    /// either crate must use [`Opt::to_option`].
     pub fn get(&self) -> Option<T> {
         if T::tag(&self.0) {
             None
@@ -83,7 +88,7 @@ impl<T: Tagged> Opt<T> {
         }
     }
 
-    /// The explicit `Option` spelling shared with the verified crate.
+    /// The portable `Option` spelling shared with the verified crate.
     pub fn to_option(&self) -> Option<T> {
         self.get()
     }

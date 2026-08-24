@@ -25,7 +25,7 @@ Evidence labels:
 
 | claim | evidence | scope |
 | --- | --- | --- |
-| Restore reproduces the marked abstract state | **proved** | `containers-verus`, 1,719 verified conditions, 0 errors; trust boundary in `containers-verus/doc/design/02-trust-boundary.md` |
+| Restore reproduces the marked abstract state | **proved** | `containers-verus`, 1,701 verified conditions, 0 errors; trust boundary in `containers-verus/doc/design/02-trust-boundary.md` |
 | The executable snapshot representation uses frame metadata plus sparse negative diffs rather than a deep copy | code + **proved protocol** | the proof models deep-copy snapshots in ghost state and proves replay equivalence; it does not prove allocator byte counts |
 | `InlineStore::mark` is O(p), where p is the number of cells captured by the previous frame | code + **measured** | `prepare_mark` clears exactly the tags named by that frame's diff |
 | `ParallelStore::mark` is O(w), where w is the number of materialized capture words | code + **measured** | includes high-water words retained after shrink; it is not unconditionally O(1) |

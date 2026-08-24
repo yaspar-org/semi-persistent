@@ -248,10 +248,10 @@ pub trait DenseId:
         self.as_usize()
     }
 
-    /// Exec: construct from a `usize`. Round-trips with `as_usize` for any
-    /// representable index (`n < id_bound()`); out-of-range `n` has no
-    /// guarantee (a bounded id may mask). `DenseUsize`'s bound is `usize::MAX +
-    /// 1`, so it round-trips unconditionally.
+    /// Exec: construct from a `usize`. Bounded IDs panic when
+    /// `n >= id_bound()` rather than narrowing or aliasing; use [`Self::try_new`]
+    /// at an untrusted capacity boundary. `DenseUsize` spans every `usize`, so
+    /// it round-trips unconditionally.
     fn from_usize(n: usize) -> (r: Self)
         ensures (n as nat) < Self::id_bound() ==> r.id_nat() == n as nat;
 
