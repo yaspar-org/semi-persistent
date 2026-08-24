@@ -95,7 +95,8 @@ that `value_of(into_repr(default()))` round-trips. In practice this is free:
 ### Why composite `Tagged` reprs are also safe
 
 Some types use a tuple/struct `Repr` and delegate the tag to one field
-(`Justification<G>`: `Repr = (bool, Justification<G>)`, tag = the `bool`;
+(`Justification<G>`: `Repr = BoolTagged<Justification<G>>`, tag = the named bool;
+`NoJust`: `Repr = BoolTagged<u8>` with a pinned zero payload;
 `ListNode`/`ListHead`: nested tuple reprs delegating to a sub-field). The same
 theorem applies field-locally: the delegated-to field's `into_repr` clears its
 bit for any value, and the other fields carry data verbatim. So a default for

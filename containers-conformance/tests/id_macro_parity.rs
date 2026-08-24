@@ -191,6 +191,17 @@ fn fallback_and_pair_representations_match_layout_and_behavior() {
         core::mem::align_of::<<plain::Pair<PlainId31, u16> as plain::Tagged>::Repr>(),
         core::mem::align_of::<<verified::Pair<VerifiedId31, u16> as verified::Tagged>::Repr>()
     );
+
+    type PlainNoJustRepr = <plain::union_find::NoJust as plain::Tagged>::Repr;
+    type VerifiedNoJustRepr = <verified::union_find::NoJust as verified::Tagged>::Repr;
+    assert_eq!(
+        core::mem::size_of::<PlainNoJustRepr>(),
+        core::mem::size_of::<VerifiedNoJustRepr>()
+    );
+    assert_eq!(
+        core::mem::align_of::<PlainNoJustRepr>(),
+        core::mem::align_of::<VerifiedNoJustRepr>()
+    );
 }
 
 #[test]
