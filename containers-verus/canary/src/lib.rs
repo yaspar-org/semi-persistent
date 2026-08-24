@@ -353,8 +353,8 @@ mod clone_key_maps {
                 },
             )
             .expect("canary: capacity");
-        // Production get_mut pattern is REMOVED: constructor-ness is decided
-        // at registration; a late change is read-clone-modify-insert (shadow).
+        // Append-only entries have no mutable accessor: constructor-ness is
+        // decided at registration; a late change is read-clone-modify-insert.
         let mut updated = r.ops.get_val(idx).clone();
         updated.is_constructor = true;
         r.ops
