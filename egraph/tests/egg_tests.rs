@@ -608,6 +608,15 @@ egg_test!(
 
 egg_test!(eq_global_only_atom, "eq_global_only_atom.egg");
 
+// The README's autoformalization example is executable documentation. Its
+// `checkau` commands guard the documented size-42 bound before domain
+// saturation, the size-8/9 identity-padding examples, and the size-35
+// Exact/UCT bounds afterward.
+#[test]
+fn readme_au_policy_divergence() {
+    check("examples/au_policy_divergence.egg");
+}
+
 // ── Cross-engine benchmark corpus (`tests/egg/bench/`) ──
 //
 // The same programs `scripts/egglog-compare/compare.py` times against egglog and

@@ -1,0 +1,3 @@
+[env]
+# Stable local/PR seed. Nightly CI overrides this with its replayable run ID.
+PROPTEST_RNG_SEED = { value = "1592614637", force = false }

@@ -188,7 +188,7 @@ impl<T: DenseId, J: Tagged, const TRACK: bool, const PROOFS: bool> UnionFind<T, 
         self.union_inner(a, b, None, Some(prefer_a))
     }
 
-    /// Justified counterpart of [`union_directed`].
+    /// Justified counterpart of [`Self::union_directed`].
     pub fn union_justified_directed(
         &mut self,
         a: T,

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Generate the herbie benchmark's three configurations from egglog's original.
 
 Source: <egglog>/tests/web-demo/herbie.egg at 7b1adf2.

@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # A rerun keeps its run ID and therefore replays the same random cases.
+  PROPTEST_RNG_SEED: ${{ github.run_id }}
+
 jobs:
   # Deep randomized conformance run. Per-PR CI executes the same properties at
   # proptest's default 256 cases (verus.yml, `cargo test -p containers-conformance`);

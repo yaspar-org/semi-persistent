@@ -482,7 +482,7 @@ impl<
         len_a >= len_b
     }
 
-    /// Like [`merge`], but selects the survivor by parent-count (larger use-list survives)
+    /// Like [`Self::merge`], but selects the survivor by parent-count (larger use-list survives)
     /// instead of by union-find rank. Reduces post-merge recanonicalization work, at the cost
     /// of union-by-rank's height optimality (see `UnionFind::union_directed`).
     pub fn merge_directed(&mut self, a: T, b: T) -> Option<MergeInfo<T, L>> {
@@ -500,7 +500,7 @@ impl<
         })
     }
 
-    /// Justified counterpart of [`merge_directed`].
+    /// Justified counterpart of [`Self::merge_directed`].
     pub fn merge_justified_directed(&mut self, a: T, b: T, just: J) -> Option<MergeInfo<T, L>> {
         let prefer_a = self.prefer_a_by_uses(a, b);
         let (survivor, absorbed) = self.uf.union_justified_directed(a, b, just, prefer_a)?;

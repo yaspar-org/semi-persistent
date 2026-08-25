@@ -364,17 +364,14 @@ impl<Cfg: EGraphConfig> Match<Cfg> {
 /// on the `plain7` workload that is the single largest source of allocator
 /// traffic in saturation.
 ///
-/// A pool keeps the matches from the previous query alive and overwrites them:
-/// `len` is the number currently valid, `slots` is however many were ever
-/// allocated. Pushing into a slot that already exists is `Match::clone_from`,
-/// which reuses that slot's nine buffers. Because a saturation round runs many
-/// queries whose match counts are similar, the pool reaches its high-water mark
-/// in the first round and allocates almost nothing afterwards.
+/// A pool stores each query's solutions in one flat, stride-packed `MatchSet`.
+/// Clearing or reshaping resets the vector lengths while retaining their
+/// allocations; pushing appends bindings and rest data into those warm vectors.
+/// Because a saturation round runs many queries of similar shapes and sizes,
+/// the vectors reach their high-water capacities early and then allocate
+/// little or nothing.
 ///
-/// Correctness note: [`Self::matches_mut`] hands out only `&mut [Match]` of
-/// length `len`, so a stale slot beyond `len` is unreachable — its contents are
-/// overwritten before ever being read.
-/// Correctness note 2: the two scratch free-lists ([`Self::take_id_buf`] and
+/// The two scratch free-lists (`Self::take_id_buf` and
 /// friends) are deliberately *not* touched by [`Self::clear`]. They hold no
 /// query state — every borrower fills them from scratch before reading, since
 /// `seq_children`/`set_children`/`mset_children` all begin with `buf.clear()` —
@@ -2047,7 +2044,7 @@ fn decompose_aci_elem<Cfg, L, S: Copy, const TRACK: bool, const PROOFS: bool>(
 /// deterministic tests pin the rule and set equivalence.
 const OP_FILTER_RELATION_PER_CANDIDATE: usize = 512;
 
-/// Ceiling on the fitted threshold; see [`OP_FILTER_RELATION_PER_CANDIDATE`].
+/// Ceiling on the fitted threshold; see `OP_FILTER_RELATION_PER_CANDIDATE`.
 pub const OP_FILTER_MIN_RELATION: usize = 131_072;
 
 /// Relative work bound used to stop filtering when the candidate bucket grows

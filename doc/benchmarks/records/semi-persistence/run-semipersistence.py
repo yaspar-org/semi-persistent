@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Time the E6 semi-persistence programs on both engines.
 
 Writes one CSV row per timed run to semi-persistence.csv and prints the derived

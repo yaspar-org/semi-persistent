@@ -385,7 +385,7 @@ pub trait NodeLayout: Sized {
     /// `leaf_insert_at`'s specialized to `pos == count`, which is `Seq::push`.
     /// `leaf_insert_at` reaches the same *result* here (its shift window is empty
     /// when `pos == count`), but not the same *code*: it re-loads `count`, then
-    /// runs [`arr_shift_up`]'s length dispatch, which `objdump` shows as
+    /// runs `arr_shift_up`'s length dispatch, which `objdump` shows as
     /// `movzbl %bl,%edi; lea; cmp $0x12; jb` per key inside the bulk loader's
     /// innermost loop. The dispatch is provably dead there (`count - pos == 0`, so
     /// the scalar arm always wins) but LLVM cannot fold it away: `pos` and `count`

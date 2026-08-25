@@ -189,7 +189,7 @@ pub struct PreparedRule<O, S, V> {
 // ---------------------------------------------------------------------------
 
 /// Reject a rule whose surface multiplicity literals do not fit the configured
-/// [`EGraphConfig::M`](crate::config::EGraphConfig::M), naming the offending value.
+/// [`EGraphConfig::M`], naming the offending value.
 ///
 /// Multiplicity literals are parsed and resolved at the `u64` surface width, which is
 /// independent of the width a given config stores. The two use sites cannot both fail
@@ -754,7 +754,7 @@ fn mult_expr_bounds(
 
 /// Static safety check for every RHS multiplicity expression in a rule's
 /// actions, against the rule's LHS multiplicity intervals. Rejection here is
-/// what licenses the `expect`s in [`eval_mult_expr`] for underflow and
+/// what licenses the `expect`s in `eval_mult_expr` for underflow and
 /// division by zero; overflow stays a runtime trap because any expression
 /// over an unbounded `k` could overflow and rejecting them all would ban
 /// `k+1`.

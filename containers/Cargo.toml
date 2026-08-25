@@ -1,10 +1,13 @@
 [package]
 name = "semi-persistent-containers"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.97.1"
 license = "Apache-2.0"
 description = "Semi-persistent core data structures with sparse snapshots and diff-proportional restore"
 repository = "https://github.com/yaspar-org/semi-persistent"
+homepage = "https://github.com/yaspar-org/semi-persistent"
+documentation = "https://docs.rs/semi-persistent-containers"
 
 [dependencies]
 hashbrown.workspace = true

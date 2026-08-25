@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Anonymize AU fixture records deterministically.
 
 Input: JSON array. Each record must contain `symbols` (the variable names to anonymize)

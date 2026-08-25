@@ -10,7 +10,8 @@
 //! a hard-coded `u32`. The index type is part of the memory contract because a
 //! captured write logs `(cell, T::Index)`, 12 bytes for the 31-bit e-class
 //! instantiation, rather than the 16-byte `(cell, usize)` form.
-//! [`Ring31`]/[`Node31`] name the 31-bit instantiation the harnesses use.
+//! [`crate::prod_class_ring::ProdRing`]/[`crate::prod_class_ring::Node31`] name
+//! the 31-bit instantiation the harnesses use.
 use prod::DenseId;
 use semi_persistent_containers as prod;
 

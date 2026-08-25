@@ -14,15 +14,15 @@
 //!
 //! Three obligations are discharged here (`doc/design/15-dense-span-map.md`):
 //!
-//!  1. *No wrong-slice reads.* [`DenseSpanMap::wf`] states that the spans tile the
+//!  1. *No wrong-slice reads.* `DenseSpanMap::wf` states that the spans tile the
 //!     pool exactly: first span at 0, each span starting where the previous ends,
 //!     last ending at `pool.len()`. Pairwise disjointness is the derived
-//!     [`lemma_spans_disjoint`], not the invariant, because a pairwise quantified
+//!     `lemma_spans_disjoint`, not the invariant, because a pairwise quantified
 //!     invariant creates quadratic trigger instantiations.
-//!  2. *No invented and no dropped values.* [`DenseSpanMap::refines`] pins the
+//!  2. *No invented and no dropped values.* `DenseSpanMap::refines` pins the
 //!     model against the build stream: `view()[k]` is the order-preserving filter
 //!     of the stream down to key `k`. Nothing else is a legal `pool` content.
-//!  3. *Sortedness transfer.* [`lemma_view_sorted`] carries any ordering of the
+//!  3. *Sortedness transfer.* `lemma_view_sorted` carries any ordering of the
 //!     stream into every per-key slice, because a filter preserves relative order.
 //!
 //! `wf()` is deliberately *structural only* and `refines()` is separate: `get`
@@ -904,7 +904,7 @@ impl<V: Copy + Default> DenseSpanMap<V> {
     /// Total: the postconditions tying the slice to `occupied` are conditioned on
     /// `wf()` rather than required, so no precondition reaches an unverified
     /// caller. The list has no duplicates; that is
-    /// [`lemma_occ_injective`](Self::lemma_occ_injective), on demand, because
+    /// `lemma_occ_injective`, on demand, because
     /// stating it here would put a pairwise quantifier in every caller's context.
     pub fn occupied_keys(&self) -> (r: &[usize])
         ensures

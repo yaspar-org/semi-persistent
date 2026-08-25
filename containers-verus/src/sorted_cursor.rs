@@ -15,7 +15,7 @@
 //! | impl | seek soundness | in-order enumeration |
 //! |---|---|---|
 //! | `BPlusCursor` | `bplus::theorem_seek_never_skips` | `bplus::theorem_traversal_in_order` |
-//! | `SortedVecCursor` | [`sorted_vec_cursor::theorem_seek_never_skips`](crate::sorted_vec_cursor::theorem_seek_never_skips) | [`sorted_vec_cursor::theorem_step_enumerates_tail`](crate::sorted_vec_cursor::theorem_step_enumerates_tail) |
+//! | `SortedVecCursor` | `sorted_vec_cursor::theorem_seek_never_skips` | `sorted_vec_cursor::theorem_step_enumerates_tail` |
 //!
 //! Both prove seek against the *same* spec function
 //! (`bplus::seek_target_idx`), which is what makes them substitutable at this

@@ -15,9 +15,9 @@
 //!
 //! | property | proptest | theorem |
 //! |---|---|---|
-//! | lands on the first key `>= target` | `seek_lands_on_first_ge_*` | [`theorem_seek_lands_on_first_ge`] |
-//! | `pos` never decreases | `seek_sequence_is_monotone_*` | [`theorem_seek_is_monotone`] |
-//! | no key is skipped over | `no_keys_are_skipped_*` | [`theorem_seek_never_skips`] |
+//! | lands on the first key `>= target` | `seek_lands_on_first_ge_*` | `theorem_seek_lands_on_first_ge` |
+//! | `pos` never decreases | `seek_sequence_is_monotone_*` | `theorem_seek_is_monotone` |
+//! | no key is skipped over | `no_keys_are_skipped_*` | `theorem_seek_never_skips` |
 //! | `pos` in bounds, no overflow | `long_gallop_does_not_overflow`, `saturated_ids` | discharged by Verus for [`SortedVecCursor::seek`] |
 //!
 //! The last row is the one a property test can only sample: Verus proves the
@@ -28,8 +28,8 @@
 //! ## Model and the shared seek vocabulary
 //!
 //! The cursor's model is the slice's ids projected to nats, in slice order
-//! ([`nat_model`]). Seek's postcondition is stated with
-//! [`seek_target_idx`](crate::bplus::seek_target_idx) — the *same* spec function
+//! (`nat_model`). Seek's postcondition is stated with
+//! `seek_target_idx` — the *same* spec function
 //! `BPlusCursor::seek` uses — so both cursors on the leapfrog surface have
 //! literally the same seek contract, differing only in that the B+tree's seek is
 //! absolute (it descends from the root) while this one is forward-only from the
@@ -47,7 +47,7 @@
 //! property of the cursor. A cursor positioned past the target stays put.
 //! Forward-only is
 //! exactly what leapfrog requires, and it is what makes
-//! [`theorem_seek_is_monotone`] hold unconditionally.
+//! `theorem_seek_is_monotone` hold unconditionally.
 //!
 //! ## Why the gallop is the interesting part
 //!
@@ -179,7 +179,7 @@ impl<'a, K: DenseId> SortedVecCursor<'a, K> {
     }
 
     /// The cursor's position, as a `usize` — the executable read of
-    /// [`Self::idx`], which is a spec function and so invisible to a plain build.
+    /// `Self::idx`, which is a spec function and so invisible to a plain build.
     ///
     /// Exists so a consumer (and the erased-build test harness) can observe the
     /// position without reaching into the private field. Nothing in the proofs

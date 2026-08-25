@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Deep trace: dump every intermediate value at each recursion level for both
 the non-recursive (plus_bv) and recursive (plus_c) formulations, side by side.
 This is the script that revealed the carry compensation property."""

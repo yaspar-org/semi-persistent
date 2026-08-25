@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Brute-force 4-bit Unum explorer.
 
 Enumerates all valid 4-bit Unums, computes their concrete sets,

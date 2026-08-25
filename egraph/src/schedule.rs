@@ -135,7 +135,7 @@ pub struct IndexStats<O: Eq + Hash> {
     pub op_card: std::collections::HashMap<O, usize>,
     /// Measured mean fan-out of each access path, from the round's index build.
     /// The default is all-unmeasured, which prices every bound key at the fixed
-    /// halving this model replaces; see [`path_selectivity`].
+    /// halving this model replaces; see `path_selectivity`.
     pub fanouts: crate::index::FanOuts<O>,
     /// Per-atom (`atom_id`) driver-scan cardinality, overriding `op_card` for
     /// that atom. Needed for semi-naive: an atom's base cardinality is set by

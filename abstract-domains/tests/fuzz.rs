@@ -3,8 +3,18 @@
 #![allow(dead_code)]
 /// Fuzz testing for abstract domain soundness.
 /// Pure Rust — no Verus. Reimplements the domain ops for testing.
-use rand::Rng;
-use rand::RngExt;
+use rand::rngs::StdRng;
+use rand::{Rng, RngExt, SeedableRng};
+
+const DEFAULT_TEST_SEED: u64 = 0x5eed_5eed;
+
+fn test_rng() -> StdRng {
+    let seed = std::env::var("PROPTEST_RNG_SEED")
+        .ok()
+        .map(|value| value.parse().expect("PROPTEST_RNG_SEED must contain a u64"))
+        .unwrap_or(DEFAULT_TEST_SEED);
+    StdRng::seed_from_u64(seed)
+}
 
 // ================================================================
 // Domain types (mirror the Verus definitions)
@@ -236,7 +246,7 @@ macro_rules! fuzz_binop {
     ($name:ident, $ty:ident, $rand:ident, $sample:ident, $contains:ident, $abs_op:ident, $conc_op:expr) => {
         #[test]
         fn $name() {
-            let mut rng = rand::rng();
+            let mut rng = test_rng();
             for _ in 0..N {
                 let ax = $rand(&mut rng);
                 let ay = $rand(&mut rng);
@@ -267,7 +277,7 @@ macro_rules! fuzz_unop {
     ($name:ident, $rand:ident, $sample:ident, $abs_op:ident, $conc_op:expr) => {
         #[test]
         fn $name() {
-            let mut rng = rand::rng();
+            let mut rng = test_rng();
             for _ in 0..N {
                 let ax = $rand(&mut rng);
                 let ar = ax.$abs_op();
@@ -355,7 +365,7 @@ fuzz_unop!(fuzz_etn_lsh, rand_etn, sample_etn, lsh, |x: u64| x << 1);
 // ExecTnum join
 #[test]
 fn fuzz_etn_join() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let ax = rand_etn(&mut rng);
         let ay = rand_etn(&mut rng);
@@ -386,7 +396,7 @@ fuzz_binop!(
 
 #[test]
 fn fuzz_ean_div() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let ax = rand_ean(&mut rng);
         let d = (rng.random::<u64>() % 255) + 1;
@@ -694,7 +704,7 @@ fn sample_eun(un: &ExecUnum, rng: &mut impl Rng) -> u64 {
 
 #[test]
 fn fuzz_eun_self_contains() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let un = rand_eun(&mut rng);
         for _ in 0..S {
@@ -706,7 +716,7 @@ fn fuzz_eun_self_contains() {
 
 #[test]
 fn fuzz_eun_constant() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let n: u64 = rng.random();
         let un = ExecUnum::constant(n);
@@ -725,7 +735,7 @@ fn fuzz_eun_constant() {
 
 #[test]
 fn fuzz_eun_top() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     let t = ExecUnum::top();
     for _ in 0..N {
         let x: u64 = rng.random();
@@ -735,7 +745,7 @@ fn fuzz_eun_top() {
 
 #[test]
 fn fuzz_eun_min_max() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let un = rand_eun(&mut rng);
         assert!(un.contains(un.min_val()), "doesn't contain min: {:?}", un);
@@ -787,7 +797,7 @@ fn eun_mul_returns_top_when_base_plus_uncertainty_wraps() {
 
 #[test]
 fn fuzz_eun_to_ean_sound() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let un = rand_eun(&mut rng);
         let an = un.to_ean();
@@ -806,7 +816,7 @@ fn fuzz_eun_to_ean_sound() {
 
 #[test]
 fn fuzz_eun_to_etn_sound() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let un = rand_eun(&mut rng);
         let tn = un.to_etn();
@@ -825,7 +835,7 @@ fn fuzz_eun_to_etn_sound() {
 
 #[test]
 fn fuzz_eun_from_ean_sound() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let an = rand_ean(&mut rng);
         let un = ExecUnum::from_ean(&an);
@@ -844,7 +854,7 @@ fn fuzz_eun_from_ean_sound() {
 
 #[test]
 fn fuzz_eun_from_interval_sound() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let iv = rand_interval(&mut rng);
         let un = ExecUnum::from_interval(iv.lo, iv.hi);
@@ -897,7 +907,7 @@ fuzz_binop!(
 
 #[test]
 fn fuzz_eun_neg() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let ax = rand_eun(&mut rng);
         let ar = ax.neg();
@@ -922,7 +932,7 @@ fn fuzz_eun_neg() {
 
 #[test]
 fn fuzz_eun_plus_commutative() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let a = rand_eun(&mut rng);
         let b = rand_eun(&mut rng);
@@ -958,7 +968,7 @@ fn fuzz_eun_plus_commutative() {
 
 #[test]
 fn fuzz_eun_plus_assoc() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let a = rand_eun(&mut rng);
         let b = rand_eun(&mut rng);
@@ -998,7 +1008,7 @@ fn fuzz_eun_plus_assoc() {
 
 #[test]
 fn fuzz_eun_plus_zero_identity() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     let zero = ExecUnum::constant(0);
     for _ in 0..N {
         let a = rand_eun(&mut rng);
@@ -1012,7 +1022,7 @@ fn fuzz_eun_plus_zero_identity() {
 
 #[test]
 fn fuzz_eun_sub_self_contains_zero() {
-    let mut rng = rand::rng();
+    let mut rng = test_rng();
     for _ in 0..N {
         let a = rand_eun(&mut rng);
         let r = a.sub(&a);

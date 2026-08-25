@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Distinct identifier types with bit-packed `Markable` storage.
 //!
-//! [`define_id31!`] and [`define_id63!`] stamp out `#[repr(transparent)]`
+//! [`crate::define_id31!`] and [`crate::define_id63!`] stamp out `#[repr(transparent)]`
 //! newtypes around `u32` / `u64` with the MSB reserved for the capture flag
-//! in [`vec::Inline`](crate::containers::Inline).
+//! in [`crate::InlineStore`].
 //!
 //! Each invocation produces a **distinct** type.
 //!

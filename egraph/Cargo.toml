@@ -1,10 +1,14 @@
 [package]
 name = "semi-persistent-egraph"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.97.1"
 license = "Apache-2.0"
 description = "Semi-persistent equality saturation engine with e-matching, rewrite scheduling, and proof logging"
 repository = "https://github.com/yaspar-org/semi-persistent"
+homepage = "https://github.com/yaspar-org/semi-persistent"
+documentation = "https://docs.rs/semi-persistent-egraph"
+readme = "../README.md"
 
 [lib]
 name = "semi_persistent_egraph"
@@ -27,7 +31,7 @@ phase-timing = []
 seek-stats = []
 
 [dependencies]
-semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.1.0" }
+semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.2.0" }
 vstd = "=0.0.0-2026-08-02-0125"
 clap = { version = "4.6.0", features = ["derive"] }
 num-bigint.workspace = true

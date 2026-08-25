@@ -12,8 +12,10 @@
 //!
 //! The frame-replay invariant says:
 //!
-//!   forall k: snapshots[k] == replay_reverse(view, diff_log[frames[k].diff_start..])
-//!                              .subrange(0, frames[k].saved_len.as_nat())
+//! ```text
+//! forall k: snapshots[k] == replay_reverse(view, diff_log[frames[k].diff_start..])
+//!                            .subrange(0, frames[k].saved_len.as_nat())
+//! ```
 //!
 //! That invariant is `Vec`'s job to maintain; this file just defines the
 //! shape.

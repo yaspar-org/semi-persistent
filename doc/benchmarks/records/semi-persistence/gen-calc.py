@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Cut calc.{egglog,native}.egg into cumulative prefixes, one per push/pop block.
 
 Process-level wall clock cannot time a block inside a program, so block k is

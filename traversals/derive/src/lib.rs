@@ -4869,7 +4869,8 @@ fn gen_zipper(
 
     // COW set_focus: traverse the root-reachable DAG, remap every node into a
     // fresh store, and substitute every occurrence of the focused node ID.
-    // Cost is O(V + E) over that reachable DAG.
+    // Copy work is O(V + E) over that DAG; dense strategy tables additionally
+    // initialize in O(total store nodes), while sparse tables scale with V.
     let cow_set_focus_methods: Vec<TokenStream2> = (0..n).map(|fi| {
         let sn = sort_names[fi];
         let node_name = format_ident!("{}Node", sort_names[fi]);

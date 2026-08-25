@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Stress tests: property-based verification of dedup, mark/restore,
 // and scheme round-trips on randomly-generated inputs.
 #![allow(dead_code)]

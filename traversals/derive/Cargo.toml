@@ -1,10 +1,14 @@
 [package]
 name = "semi-persistent-traversals-derive"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.97.1"
 license = "Apache-2.0"
 description = "Derive macros for semi-persistent-traversals"
 repository = "https://github.com/yaspar-org/semi-persistent"
+homepage = "https://github.com/yaspar-org/semi-persistent"
+documentation = "https://docs.rs/semi-persistent-traversals-derive"
+readme = "../README.md"
 
 [lib]
 proc-macro = true

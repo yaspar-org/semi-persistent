@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Multiplicities for AC multiset nodes.
 //!
-//! The multiplicity width is selected by [`EGraphConfig::M`] and is an axis
+//! The multiplicity width is selected by [`crate::config::EGraphConfig::M`] and is an axis
 //! *independent* of the id width: a 63-bit e-graph does not oblige a 64-bit
 //! multiplicity, and a 31-bit e-graph may still want one. Three widths are
 //! provided — [`Multiplicity16`], [`Multiplicity`], [`Multiplicity64`] — all

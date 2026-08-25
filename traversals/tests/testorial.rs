@@ -1,17 +1,18 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Testorial: worked examples for every rec_family! scheme.
+//! Testorial: worked examples for the principal rec_family! schemes.
 //!
 //! A small imperative language is the running example. Each chapter is a
 //! standalone `#[test]` covering one recursion scheme or technique.
 //!
 //! # API convention
 //!
-//! Every scheme takes **one closure per sort, in declaration order**. With
-//! two sorts (Stmt, Expr), `fold` / `fold_short` / `rewrite` / etc. take two
-//! closures. `fold_with_aux` and `fold_pair` take two closures per sort
-//! (four total). Each sort can return a different type. Results are
-//! sort-tagged via `LangStoreFoldResult<A_stmt, A_expr>`; unwrap with
+//! Most fold and transform schemes take one closure per sort, in declaration
+//! order. `prefold` and `fold_with_aux` group their first per-sort callback
+//! set before their second; `fold_pair` takes its A and B closures together
+//! for each sort. Construction schemes instead use one sort-tagged coalgebra,
+//! with per-sort postprocessors preceding it for `postunfold`. Fold results
+//! are sort-tagged via `LangStoreFoldResult<A_stmt, A_expr>`; unwrap with
 //! `.unwrap_stmt()` / `.unwrap_expr()` when the root sort is known.
 //!
 //! ```text
@@ -861,13 +862,14 @@ mod tests {
     fn ch19_transform_down() {
         let mut s = LangStore::new();
         let five = s.lit(5);
-        let n1 = s.neg(five);
-        let root = s.neg(n1);
+        let neg_five = s.neg(five);
+        let root = s.var("x");
 
         let (s2, r2) = s.rewrite_down(
             LangStoreRoot::Expr(root),
             |stmt: StmtNode| stmt,
             |expr: ExprNode| match expr {
+                ExprNode::Var(name) if name == "x" => ExprNode::Neg(neg_five),
                 ExprNode::Neg(inner) => ExprNode::Mul(inner, inner),
                 other => other,
             },
@@ -878,10 +880,11 @@ mod tests {
             |expr: ExprNodeMapped<i64, i64>| match expr {
                 ExprNodeMapped::Lit(n) => n,
                 ExprNodeMapped::Mul(l, r) => l * r,
+                ExprNodeMapped::Neg(e) => -e,
                 _ => 0,
             },
         );
-        assert_eq!(val.unwrap_expr(), 625);
+        assert_eq!(val.unwrap_expr(), -25);
     }
 
     // ====================================================================
@@ -1120,7 +1123,9 @@ mod tests {
 
     #[test]
     fn ch20_fold_with_original_cost() {
-        let (s, root) = sample();
+        let mut s = LangStore::new();
+        let shared = s.lit(7);
+        let root = LangStoreRoot::Expr(s.add(shared, shared));
         let cost = s.fold_with_original(
             root,
             |orig: &StmtNode, mapped: StmtNodeMapped<usize, usize>| {
@@ -1146,6 +1151,7 @@ mod tests {
                     ExprNodeMapped::Neg(e) | ExprNodeMapped::Block(_, e) => e,
                 };
                 let own = match orig {
+                    ExprNode::Add(l, r) | ExprNode::Mul(l, r) | ExprNode::Eq(l, r) if l == r => 1,
                     ExprNode::Add(..) | ExprNode::Mul(..) | ExprNode::Eq(..) => 2,
                     ExprNode::Neg(..) => 1,
                     _ => 0,
@@ -1153,7 +1159,7 @@ mod tests {
                 child_cost + own
             },
         );
-        assert_eq!(cost.unwrap_stmt(), 8);
+        assert_eq!(cost.unwrap_expr(), 1);
     }
 
     // ====================================================================

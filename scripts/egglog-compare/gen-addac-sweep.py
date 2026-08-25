@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Generate the add-ac width-scaling sweep programs.
 
 For sum width n: left term 1+(2+(...+n)) right-nested, goal term the full reversal

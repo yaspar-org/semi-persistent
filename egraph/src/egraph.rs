@@ -1633,9 +1633,9 @@ where
     /// [`set_cc`](Self::set_cc); it is disabled by default. When enabled, two
     /// closures are interleaved (see `doc/design/ac-congruence-completeness.md`
     /// section 8, rebuild = Kapur's Algorithm 3):
-    /// - [`rebuild_congruence`](Self::rebuild_congruence): ordinary worklist-driven
+    /// - `rebuild_congruence`: ordinary worklist-driven
     ///   congruence closure (substitutes equal *atoms* into recanonicalized nodes);
-    /// - [`cc_round`](Self::cc_round): AC completion (substitutes
+    /// - `cc_round`: AC completion (substitutes
     ///   equal *sub-sums*), which canonization alone misses.
     ///
     /// A completion round may push new merges onto the worklist; we drain them with

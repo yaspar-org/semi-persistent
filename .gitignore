@@ -24,6 +24,10 @@ session*.md
 .claude/
 CLAUDE.md
 
+# Codex
+.codex/
+.codex-worktrees/
+
 # sdd run evidence (ephemeral; distilled into <crate>/doc/verification/)
 runs/
 

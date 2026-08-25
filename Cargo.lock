@@ -229,7 +229,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "containers-conformance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "containers-verus-canary"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "semi-persistent-containers",
  "semi-persistent-containers-verus",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "semi-persistent-containers-verus",
  "semi-persistent-egraph",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent-abstract-domains"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rand 0.10.2",
  "vstd",
@@ -881,14 +881,14 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent-au-verus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "vstd",
 ]
 
 [[package]]
 name = "semi-persistent-containers"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "hashbrown",
@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent-containers-verus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "foldhash",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent-egraph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "criterion",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent-traversals"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -943,7 +943,7 @@ dependencies = [
 
 [[package]]
 name = "semi-persistent-traversals-derive"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "traversals-compile-tests"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "semi-persistent-traversals",
 ]

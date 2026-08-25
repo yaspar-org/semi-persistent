@@ -25,6 +25,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt
+      - run: bash scripts/check-oss-scaffold.sh
       - run: cargo fmt --all -- --check
 
   clippy:
