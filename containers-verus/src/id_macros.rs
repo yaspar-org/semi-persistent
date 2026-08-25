@@ -10,7 +10,7 @@
 //!   - the verified `IndexLike` (identity `as_nat`, type-invariant bound),
 //!   - the verified `DenseId` (`Index` = backing int, `is_bit_stealing`),
 //!
-//! — the exact proof structure of the hand-written [`DenseId31`]
+//! — the exact proof structure of the hand-written `DenseId31`
 //! (`dense_id.rs`), parameterized by width. The crate verifies one WITNESS
 //! instantiation per width (`id_witnesses` module below) in the regular
 //! sweep; consumer invocations expand to textually identical code modulo

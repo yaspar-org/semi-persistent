@@ -35,7 +35,7 @@ pub struct LitValStoreToken(crate::containers::VecToken, usize);
 /// so restore instead deletes the entries for the log suffix it truncates, which
 /// costs one hash removal per value interned since the mark rather than one key
 /// clone per value in the table. `restore` keeps the rebuild as a fallback on the
-/// same terms as the node caches: see [`crate::caches::REBUILD_RATIO`].
+/// same terms as the node caches: see `crate::caches::REBUILD_RATIO`.
 pub struct LitValStore<L: LitVal, V: DenseId, const TRACK: bool> {
     /// Positions in this log ARE literal-value ids, so the log's index word is `V`'s.
     log: crate::containers::AppendOnlyVec<L, V::Index, TRACK>,

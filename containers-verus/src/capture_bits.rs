@@ -7,7 +7,7 @@
 //! never write it, `set_bit` resizes on demand, `prepare_mark` re-zeroes it.
 //! This module reproduces that cost model under a verified view:
 //!
-//! - The abstract flag at position `i` is [`padded_bit`]: bit `i` of the
+//! - The abstract flag at position `i` is `padded_bit`: bit `i` of the
 //!   materialized words when word `i/64` exists, `false` otherwise (the
 //!   "padding"). Production's `is_bit_set` — `w < words.len() && bit != 0` —
 //!   is exactly this spec's exec form.
@@ -15,7 +15,7 @@
 //!   `data.len()`); `CaptureBits` itself is just the materialized words.
 //!   The store's abstract `captured()` is `Seq::new(data.len(), padded_bit)`,
 //!   so a data push EXTENDS the flag sequence with no exec work at all.
-//! - Soundness of that free extension is the [`tail_clear`] invariant:
+//! - Soundness of that free extension is the `tail_clear` invariant:
 //!   every materialized bit at position `>= len` is zero. Then a fresh
 //!   position always reads `false`, whether its word exists (tail-clear) or
 //!   not (padding). `pop`/`truncate` re-establish it by clearing the bits

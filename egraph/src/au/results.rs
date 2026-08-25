@@ -92,7 +92,7 @@ impl<A: AuIds> BestResults<A> {
     /// is a contradiction: `mark_exact` says its contextual action graph is
     /// exhausted. Delegated Exact and MCGS issue the flag only after offering
     /// the result they certify. Pair-mode root Exact uses
-    /// [`Self::offer_global`] and cannot alter this slot.
+    /// `Self::offer_global` and cannot alter this slot.
     pub fn offer(&mut self, or_id: A::Or, term: A::Term, quality: (u32, u32)) -> bool {
         self.ensure_capacity(or_id);
         let idx = Self::index_of(or_id);

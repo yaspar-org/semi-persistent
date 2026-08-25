@@ -10,7 +10,7 @@
 //! the sparse diff log (it is never stored at runtime).
 //!
 //! The well-formedness invariant is the declarative, pointwise `frame_cell_inv`
-//! (see [`frame_cell_inv`]): for each marked cell `j`, its snapshot value lives
+//! (see `frame_cell_inv`): for each marked cell `j`, its snapshot value lives
 //! in exactly one place — the live view if untouched since the mark, or the
 //! diff log if overwritten/popped — with first-write-wins giving at most one
 //! diff entry per cell per frame.

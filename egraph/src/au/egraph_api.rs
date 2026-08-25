@@ -36,9 +36,9 @@ where
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     pub(crate) eg: &'eg EGraph<Cfg, L, T, P>,
-    /// Dense representative -> ClassOf<Cfg> map (representative global ids only).
+    /// Dense representative -> `ClassOf<Cfg>` map (representative global ids only).
     repr_to_au: hashbrown::HashMap<Cfg::G, ClassOf<Cfg>>,
-    /// ClassOf<Cfg> -> representative global id.
+    /// `ClassOf<Cfg>` -> representative global id.
     pub(crate) au_to_repr: Vec<Cfg::G>,
     /// Per-class member list: `members[class]` is a range into `member_pool`.
     member_spans: Vec<Span<<Cfg::Au as AuIds>::SnapshotMember>>,
@@ -275,7 +275,7 @@ where
     /// Whether the canonical node kind of `op` is commutative (SPair, MSet, Set):
     /// result-term children for such operators are sorted into canonical order,
     /// while ordered operators preserve positional order.
-    /// The identity (unit) element's ClassOf<Cfg> for an operator, if the operator
+    /// The identity (unit) element's `ClassOf<Cfg>` for an operator, if the operator
     /// has a declared identity (e.g. `true` for `and`, `false` for `or`, `0` for `+`).
     /// Returns `None` if no identity is declared, the identity node is not in a live
     /// class, or that class has no admissible finite representative. The last check is

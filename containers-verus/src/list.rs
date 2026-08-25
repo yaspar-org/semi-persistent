@@ -104,8 +104,8 @@ impl core::default::Default for NodeRef {
 /// the id's spare MSB — so the node is `payload + one id word` (8 bytes for a
 /// u32-id payload vs 24 with an unpacked `{bool, usize}` pointer; list
 /// traversal is a pointer-chase, so node bytes are cache misses). `NodeRef`
-/// remains the SPEC view via [`ListNode::next_ref`]; exec reads/writes go
-/// through [`ListNode::next`]/[`ListNode::set_next`], whose contracts tie the
+/// remains the SPEC view via `ListNode::next_ref`; exec reads/writes go
+/// through `ListNode::next`/`ListNode::set_next`, whose contracts tie the
 /// packed repr to that view using the verified `Tagged` round-trip laws.
 #[derive(Copy)]
 pub struct ListNode<T, N: DenseId + Tagged> {
@@ -300,7 +300,7 @@ pub struct ListHead<N: DenseId + Tagged> {
     // `set_tag`/`clear_tag`. Same size either way (an id is its own word).
     pub head_repr: <N as Tagged>::Repr,
     pub tail: N,
-    /// Cached element count, in the NODE arena's index type — see [`ListHead::len_spec`].
+    /// Cached element count, in the NODE arena's index type — see `ListHead::len_spec`.
     pub len: N::Index,
 }
 
@@ -453,7 +453,7 @@ impl<N: DenseId + Tagged + core::default::Default> core::default::Default for Li
 /// round-trip.
 ///
 /// `I` is a second type parameter rather than a hardcoded `u32` for the reason
-/// [`ListHead::len_spec`] gives: the stored count follows the node index width, so a
+/// `ListHead::len_spec` gives: the stored count follows the node index width, so a
 /// 63-bit arena is not capped at 4 billion elements per list.
 #[derive(Copy)]
 pub struct ListHeadRepr<NR, I> {
@@ -2470,7 +2470,7 @@ where
 /// physical node at model position `pos`), so each `next` is O(1): read the
 /// node, step the cursor along the verified `next` cache (which `wf`'s
 /// `cache_ok` ties to the model). The invariant `cursor_ok` is exactly
-/// "cur names model[list][pos] (or pos == len and the cursor is exhausted)".
+/// "`cur` names `model[list][pos]` (or `pos == len` and the cursor is exhausted)".
 pub struct ListIter<'a, T, L, N, const TRACK: bool>
 where
     T: Sized + Copy + core::default::Default + Tagged,

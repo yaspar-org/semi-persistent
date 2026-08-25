@@ -1201,6 +1201,17 @@ mod tests {
             ("(f x (g y))", "(f (g y) x)"),     // commute past a g
             ("(g x)", "(f x x)"),               // grow
         ];
+        const NESTED_REASSOCIATE: u8 = 1 << 0;
+        const NESTED_PROJECT: u8 = 1 << 1;
+        const NESTED_GROW: u8 = 1 << 3;
+        const NESTED_EXPLOSIVE: u8 = NESTED_REASSOCIATE | NESTED_PROJECT | NESTED_GROW;
+
+        fn bounded_nested_mask() -> impl Strategy<Value = u8> {
+            (0u8..16).prop_filter(
+                "recursive reassociation/projection/growth has a bounded fixture",
+                |mask| mask & NESTED_EXPLOSIVE != NESTED_EXPLOSIVE,
+            )
+        }
 
         fn build_nested(
             specs: &[u8],
@@ -1243,11 +1254,53 @@ mod tests {
             (eg, rules, n)
         }
 
+        #[test]
+        fn diff_nested_growth_blowup_bounded() {
+            // This is fixed-arity equality saturation, not AC completion or AU.
+            // `:subsume` would change which source enodes remain matchable.
+            // This six-node input grows beyond 200 nodes by round five when
+            // reassociation, nested projection, and duplicating growth interact.
+            // Later rounds accelerate sharply, so compare the two drivers only
+            // at this bounded prefix.
+            let globals = crate::resolve::GlobalCtx::<SortId, crate::id::ENodeId>::new();
+            let specs = [4, 2, 3, 4];
+            let mask = 0b1111;
+            let round_cap = 5;
+
+            let (mut a, rules_a, n) = build_nested(&specs, mask);
+            let ra = saturate::<DefaultConfig, _, _, _, false, false>(
+                &rules_a, &mut a, &NiraModel, round_cap, &globals,
+            );
+            let (mut b, rules_b, _n2) = build_nested(&specs, mask);
+            let rb = saturate_semi::<DefaultConfig, _, _, _, false, false>(
+                &rules_b, &mut b, &NiraModel, round_cap, &globals,
+            );
+
+            assert_eq!(n, 6, "fixture shape");
+            assert!(
+                a.node_count() >= 30 * n,
+                "naive fixture must exhibit growth"
+            );
+            assert!(
+                b.node_count() >= 30 * n,
+                "semi-naive fixture must exhibit growth"
+            );
+            assert!(
+                !ra.saturated && !rb.saturated,
+                "the bounded prefix must not claim a fixpoint"
+            );
+            assert_eq!(
+                partition_over(&a, n),
+                partition_over(&b, n),
+                "bounded nested blowup: partition over original nodes"
+            );
+        }
+
         proptest! {
-            // Fewer cases + a tight iteration cap: the associativity rule makes
-            // saturations blow up combinatorially, and each case runs the same
-            // input twice (naive + semi-naive). The cap keeps wall-clock sane
-            // while still fuzzing the stacked-FullMinusDelta machinery.
+            // Reassociation + projection + duplicating growth can create
+            // exponentially large rounds. The focused test above covers that
+            // interaction at a fixed boundary; this property samples every other
+            // combination while fuzzing the stacked-FullMinusDelta machinery.
             #![proptest_config(ProptestConfig::with_cases(96))]
 
             /// Differential equivalence for NESTED same-op rules. Same oracle
@@ -1257,7 +1310,7 @@ mod tests {
             #[test]
             fn diff_random_nested(
                 specs in proptest::collection::vec(0u8..5, 1..5),
-                mask in 0u8..16,
+                mask in bounded_nested_mask(),
             ) {
                 let globals = crate::resolve::GlobalCtx::<SortId, crate::id::ENodeId>::new();
 

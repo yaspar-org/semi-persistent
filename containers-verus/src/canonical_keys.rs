@@ -49,7 +49,7 @@ const CANONICAL_NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
 /// identity of a canonicalized representation.
 ///
 /// Canonicalization (in [`CanonicalF64::new`], the only constructor):
-/// every NaN → [`CANONICAL_NAN_BITS`]; `-0.0` → `+0.0`; every other value
+/// every NaN → `CANONICAL_NAN_BITS`; `-0.0` → `+0.0`; every other value
 /// keeps its (already unique) IEEE-754 encoding. So distinct reachable
 /// `CanonicalF64`s are distinct mathematical values, and `==` classes are
 /// singletons — vstd key-model requirement (2) by construction.

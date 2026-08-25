@@ -1,13 +1,16 @@
 [package]
 name = "semi-persistent-traversals"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.97.1"
 license = "Apache-2.0"
 description = "Arena-based recursion schemes: stack-safe folds, unfolds, transforms, and zippers"
 repository = "https://github.com/yaspar-org/semi-persistent"
+homepage = "https://github.com/yaspar-org/semi-persistent"
+documentation = "https://docs.rs/semi-persistent-traversals"
 
 [dependencies]
-semi-persistent-traversals-derive = { path = "derive", version = "0.1.0" }
+semi-persistent-traversals-derive = { path = "derive", version = "0.2.0" }
 rustc-hash = "2"
 smallvec = "1"
 

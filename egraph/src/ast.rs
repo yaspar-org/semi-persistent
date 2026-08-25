@@ -22,9 +22,9 @@ macro_rules! typed_var_id {
 typed_var_id! {
     #[doc = "E-node variable (single G binding) — raw flatten namespace."]
     pub struct VarId;
-    #[doc = "Sequence rest variable (A nodes, &[G] slice into pool)."]
+    #[doc = "Sequence rest variable (A nodes, `&[G]` slice into pool)."]
     pub struct SeqVarId;
-    #[doc = "Set rest variable (ACI nodes, &[G] slice into pool)."]
+    #[doc = "Set rest variable (ACI nodes, `&[G]` slice into pool)."]
     pub struct SetVarId;
     #[doc = "Multiset rest variable (AC nodes, &[(G,u32)] slice into pool)."]
     pub struct MsetVarId;

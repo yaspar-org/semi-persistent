@@ -39,7 +39,7 @@ semi_persistent_containers::define_id15! {
 /// Use this wherever an id is derived from a container position. A position and its
 /// id share a word (`D::Index`) but NOT a range: a bit-stealing id reserves the top
 /// bit, so `D::Index` spans twice the id space and a position at or past
-/// `D::id_bound()` has no id at all. [`DenseId::from_usize`] rejects such a
+/// `D::id_bound()` has no id at all. `DenseId::from_usize` rejects such a
 /// position; this helper centralizes the fallible check and the e-graph-specific
 /// exhaustion message before any owning structure is mutated.
 ///
@@ -66,7 +66,7 @@ pub fn id_at_index<D: crate::containers::DenseId>(pos: D::Index) -> D {
 ///
 /// Use this when the caller cannot show `n` is within the id space. When it can — most
 /// often because the container is indexed *by* `D`, so its own capacity guard is the id
-/// bound — the bare [`DenseId::from_usize`] is correct and the reason belongs in a
+/// bound — the bare `DenseId::from_usize` is correct and the reason belongs in a
 /// comment at the loop.
 #[inline]
 pub fn ids_upto<D: crate::containers::DenseId>(n: usize) -> impl Iterator<Item = D> {

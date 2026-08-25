@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Exhaustive simulation: compare plus_bv (non-recursive) vs plus_c (recursive)
 for all 3-bit Tnum additions. Confirms they always agree."""
 

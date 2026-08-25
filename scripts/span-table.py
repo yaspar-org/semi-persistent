@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Measure the index build's span-table term, and gate the prototypes on the corpus.
 
 Two jobs, one script, because they read the same binaries:

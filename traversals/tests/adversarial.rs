@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Adversarial tests: try to break the DEDUP const-generic machinery.
 // These exercise edge cases, interleaving, and boundary conditions
 // that the happy-path tests don't cover.

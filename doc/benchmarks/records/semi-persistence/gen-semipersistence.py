@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Generate the E6 semi-persistence micro-benchmark programs.
 
 Three program families per base size, in both surface syntaxes:

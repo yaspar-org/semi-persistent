@@ -117,7 +117,7 @@ impl<O> Default for FanOuts<O> {
 /// each family with its own arena keeps the table at the size that family needs
 /// instead of thrashing it between a 2 M-key and a 100-key build.
 ///
-/// An arena is handed out by [`IndexStore::build_from`] and comes back through
+/// An arena is handed out by `IndexStore::build_from` and comes back through
 /// [`IndexStore::recycle_into`]. A caller that forgets to recycle loses only the
 /// reuse: the next build allocates a fresh arena and is correct, just slower.
 pub struct IndexScratch<Cfg: EGraphConfig> {

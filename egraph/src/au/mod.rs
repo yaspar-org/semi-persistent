@@ -162,7 +162,7 @@ impl<I: containers::DenseId> Span<I> {
     /// Build a span from usize bounds, panicking if either exceeds the
     /// configured AU capacity.
     ///
-    /// `start` goes through [`DenseId::try_new`], not `from_usize`: the latter is
+    /// `start` goes through `DenseId::try_new`, not `from_usize`: the latter is
     /// documented as unchecked and masks, so a start past `I::id_bound()` would
     /// silently become a position inside the pool and the span would read some other
     /// entry's elements as its own. `I` spans twice the id space (the top bit is the

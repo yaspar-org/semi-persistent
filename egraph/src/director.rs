@@ -831,7 +831,7 @@ fn ceil_div(a: u32, b: u32) -> usize {
 /// The whole matrix lives in one `u64`, so every caller owes `k * n <= 64`, `i < k`,
 /// and `j < n`. These are not checked here — the shifts would be masked rather than
 /// trap in release, so a violation is silently wrong rather than loud. The typed
-/// [`Director<W>`](super::Director) API validates them (see `matrix_bits`) before it
+/// [`Director`] API validates them (see `matrix_bits`) before it
 /// calls in; a direct caller of these functions is on its own.
 pub mod ops {
     /// Mask of the low `n` bits — one row's width.
@@ -941,7 +941,7 @@ pub mod ops {
         }
     }
 
-    /// Permute rows: row i of result = row perm[i] of input.
+    /// Permute rows: row `i` of result = row `perm[i]` of input.
     pub fn permute_rows(bits: u64, perm: &[u8], k: u8, n: u8) -> u64 {
         debug_assert!(perm.len() == k as usize);
         let mut result = 0u64;

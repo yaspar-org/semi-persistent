@@ -5,10 +5,10 @@
 //!
 //! The executable structure is a node arena plus a root id; it *represents* a
 //! ghost recursive [`Tree`](crate::bplus_tree) whose structural invariants
-//! ([`tree_wf`](crate::bplus_tree::tree_wf)) are the textbook B+tree properties.
-//! `wf` ties the two together with a flat per-node binding ([`binds`]); the
+//! (`tree_wf`) are the textbook B+tree properties.
+//! `wf` ties the two together with a flat per-node binding (`binds`); the
 //! abstract model is the ghost tree's in-order keys
-//! ([`tree_keys`](crate::bplus_tree::tree_keys)). This is the
+//! (`tree_keys`). This is the
 //! arena / dynamic-frames method of
 //! [Ch 9](../design/09-arena-aliasing-dynamic-frames.md); see the
 //! [wf-invariant analysis](../../doc/future/bplus-wf-invariant-analysis.md).
@@ -2225,7 +2225,7 @@ impl<K, L, S, const TRACK: bool> BPlusTreeSet<K, L, S, TRACK>
     /// surface). VERIFIED: total, `wf`, and the resulting model's key set is
     /// exactly the input's.
     ///
-    /// A thin wrapper over [`bulk_load`], the bottom-up loader: one pass per
+    /// A thin wrapper over `bulk_load`, the bottom-up loader: one pass per
     /// level into a fresh arena, no per-key `insert` and therefore no split
     /// cycle. The two cases the loader does not cover are handled here — an empty
     /// input (which is `new`, a tree with one empty root leaf) and the model-set
@@ -9991,7 +9991,7 @@ impl<'a, K, L, S, const TRACK: bool> BPlusCursor<'a, K, L, S, TRACK>
     /// Advance to the next key in sorted order (following `link` at a leaf end).
     /// Preserves `cursor_wf` and advances the model index by one (or stays at the
     /// exhausted end). With `key()`, this enumerates the sorted set in order: the
-    /// `step`-by-`step` walk from `seek_first` visits model[0], model[1], ... .
+    /// `step`-by-`step` walk from `seek_first` visits `model[0]`, `model[1]`, ... .
     pub fn step(&mut self)
         requires old(self).cursor_wf(),
         ensures

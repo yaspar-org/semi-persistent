@@ -1,10 +1,11 @@
 # Tutorial: recursion schemes with `rec_family!`
 
 This tutorial walks through the `semi-persistent-traversals` crate by
-building a small compiler pipeline. Each section introduces one scheme,
-explains what problem it solves, and shows a worked example. Every
-example is a real `#[test]` in [`tests/testorial.rs`](tests/testorial.rs),
-so you can run them and step through in your editor as you read.
+building a small compiler pipeline. The numbered scheme examples are
+executable tests in [`tests/testorial.rs`](tests/testorial.rs). Variadic
+storage and traversal behavior is covered separately by
+[`tests/variadic_pool.rs`](tests/variadic_pool.rs), while focused contract
+tests cover marks, cycles, unfolds, and compile-time restrictions.
 
 The running language is a tiny imperative language with statements and
 expressions. We define it once in §1 and reuse it throughout.
@@ -69,11 +70,11 @@ For the family above, the macro produces (abbreviated):
 
 ```rust
 // One newtype per sort, used as a typed arena handle.
-pub struct StmtId(pub usize);
-pub struct ExprId(pub usize);
+struct StmtId(pub usize);
+struct ExprId(pub usize);
 
 // One enum per sort, stored in the arena. Cross-sort fields became typed IDs.
-pub enum StmtNode {
+enum StmtNode {
     Let(String, ExprId),
     Seq(StmtId, StmtId),
     Print(ExprId),
@@ -82,7 +83,7 @@ pub enum StmtNode {
     Noop,
 }
 
-pub enum ExprNode {
+enum ExprNode {
     Var(String),
     Lit(i64),
     Bool(bool),
@@ -94,7 +95,7 @@ pub enum ExprNode {
 }
 
 // One mapped enum per sort. Algebras receive this: child IDs replaced by results.
-pub enum StmtNodeMapped<A_stmt, A_expr> {
+enum StmtNodeMapped<A_stmt, A_expr> {
     Let(String, A_expr),
     Seq(A_stmt, A_stmt),
     Print(A_expr),
@@ -103,7 +104,7 @@ pub enum StmtNodeMapped<A_stmt, A_expr> {
     Noop,
 }
 
-pub enum ExprNodeMapped<A_stmt, A_expr> {
+enum ExprNodeMapped<A_stmt, A_expr> {
     Var(String),
     Lit(i64),
     Bool(bool),
@@ -115,47 +116,62 @@ pub enum ExprNodeMapped<A_stmt, A_expr> {
 }
 
 // Sort-tagged root handle and fold-result enum.
-pub enum LangStoreRoot {
+enum LangStoreRoot {
     Stmt(StmtId),
     Expr(ExprId),
 }
 
-pub enum LangStoreFoldResult<A_stmt, A_expr> {
+enum LangStoreFoldResult<A_stmt, A_expr> {
     Stmt(A_stmt),
     Expr(A_expr),
 }
 
 // The store owns one arena per sort and provides all scheme methods.
-pub struct LangStore { /* ... */ }
+struct LangStore<const DEDUP: bool = false> { /* ... */ }
 
-impl LangStore {
-    pub fn new() -> Self { /* ... */ }
-    pub fn new_dedup() -> Self { /* ... */ }
+impl LangStore<false> {
+    fn new() -> Self { /* ... */ }
+}
 
-    pub fn push_stmt(&mut self, node: StmtNode) -> StmtId { /* ... */ }
-    pub fn push_expr(&mut self, node: ExprNode) -> ExprId { /* ... */ }
-    pub fn get_stmt(&self, id: StmtId) -> &StmtNode { /* ... */ }
-    pub fn get_expr(&self, id: ExprId) -> &ExprNode { /* ... */ }
-    pub fn len_stmt(&self) -> usize { /* ... */ }
-    pub fn len_expr(&self) -> usize { /* ... */ }
+impl LangStore<true> {
+    fn new_dedup() -> Self { /* ... */ }
+}
 
-    pub fn mark(&self) -> LangStoreMark { /* ... */ }
-    pub fn restore(&mut self, mark: &LangStoreMark) { /* ... */ }
+impl<const DEDUP: bool> LangStore<DEDUP> {
+    fn push_stmt(&mut self, node: StmtNode) -> StmtId { /* ... */ }
+    fn push_expr(&mut self, node: ExprNode) -> ExprId { /* ... */ }
+    fn get_stmt(&self, id: StmtId) -> &StmtNode { /* ... */ }
+    fn get_expr(&self, id: ExprId) -> &ExprNode { /* ... */ }
+    fn len_stmt(&self) -> usize { /* ... */ }
+    fn len_expr(&self) -> usize { /* ... */ }
 
-    pub fn fold<A_stmt: Clone, A_expr: Clone>(
+    fn mark(&self) -> LangStoreMark { /* ... */ }
+    fn restore(&mut self, mark: &LangStoreMark) { /* ... */ }
+
+    fn fold<A_stmt: Clone, A_expr: Clone>(
         &self,
         root: LangStoreRoot,
         alg_stmt: impl Fn(StmtNodeMapped<A_stmt, A_expr>) -> A_stmt,
         alg_expr: impl Fn(ExprNodeMapped<A_stmt, A_expr>) -> A_expr,
     ) -> LangStoreFoldResult<A_stmt, A_expr> { /* ... */ }
 
-    // fold_short, fold_with_history, fold_with_aux, fold_with_original,
-    // fold_pair, prefold, unfold, unfold_short, postunfold, transform,
-    // rewrite, rewrite_down, fold_all: all follow the same per-sort pattern.
+    // Fold and transform methods use callbacks grouped by sort. unfold and
+    // unfold_short instead take one sort-tagged coalgebra; postunfold adds
+    // per-sort postprocessors before that coalgebra.
 }
 ```
 
-Four observations about this expansion.
+The declaration used plain `family`, so these generated items and
+methods are module-private. Write `pub family Lang => LangStore;` when
+the generated API should be public; the visibility before `family` is
+applied consistently to the generated types and methods.
+
+The `DEDUP` const parameter records whether structural hash-consing is
+enabled. It defaults to `false`; `new()` constructs `LangStore<false>`
+and `new_dedup()` constructs `LangStore<true>`. Section 15 covers the
+behavioral and API differences.
+
+A few observations about this expansion.
 
 The enum name carries a `Node` suffix. The sort is `Stmt`; the generated
 Rust enum is `StmtNode`. Keeping the two names distinct means a user
@@ -208,12 +224,14 @@ something descriptive for your domain.
 Each `enum` block under the header declares one sort. Two rules govern
 them:
 
-1. The declaration order of sorts is the argument order of every
-   multi-algebra scheme. Because `enum Stmt` appears before `enum Expr`,
-   the `Stmt` algebra comes first in `fold(..., alg_stmt, alg_expr)`.
-   That order also fixes the relative order of the child-sort parameters
+1. Within each per-sort callback group, callbacks follow declaration
+   order. Because `enum Stmt` appears before `enum Expr`, the `Stmt`
+   algebra comes first in `fold(..., alg_stmt, alg_expr)`.
+   `fold_with_aux` groups all aux callbacks before all main callbacks;
+   `fold_pair` groups the A and B callbacks for each sort. Declaration
+   order also fixes the relative order of the child-sort parameters
    present on each mapped enum and the variant order of
-   `LangStoreFoldResult`. Set it once and it cascades everywhere.
+   `LangStoreFoldResult`.
 
 2. A variant's fields are classified by matching their types against
    the sort names. Any type that is not a sort name (`String`, `i64`,
@@ -270,10 +288,11 @@ rec_family! {
 
 With that attribute, the store gains methods like `s.lit(1)`,
 `s.add(l, r)`, `s.let_("x", sum)`, and so on. The method name is the
-variant name lowercased, with a trailing underscore when the result
-would collide with a Rust keyword or generated store method (`let_`,
-`if_`, `mark_`, `fold_`). Standard method names are reserved the same
-way (`clone_`, `clone_from_`, `drop_`). The sample builder becomes:
+variant name converted to snake case, with a trailing underscore when
+the result would collide with a Rust keyword or generated store method
+(`let_`, `if_`, `mark_`, `fold_`). Standard method names are reserved
+the same way (`clone_`, `clone_from_`, `drop_`). The sample builder
+becomes:
 
 ```rust
 fn sample() -> (LangStore, LangStoreRoot) {
@@ -292,9 +311,10 @@ The generated constructors apply two small ergonomic improvements.
 Fields declared `String` become `impl Into<String>` in the method
 signature, so `s.let_("x", sum)` accepts a `&str` directly without
 a `.to_string()` call. Fields declared `Variadic<Sort>` become
-`&[SortId]`, and insertion copies unique lists into the corresponding
-typed pool, so you write `s.call("f", &[a, b, c])` instead of
-`s.alloc_stmt_expr(&[a, b, c])` followed by a `push_stmt`.
+`&[SortId]`, so you write `s.call("f", &[a, b, c])` instead of
+`s.alloc_stmt_expr(&[a, b, c])` followed by a `push_stmt`. A plain-store
+insertion or dedup miss copies the slice into the corresponding typed
+pool; a dedup hit returns before allocating a new span.
 
 Two limitations. First, the macro generates one method per variant
 across all sorts in the family, so any two variants that would share a
@@ -531,25 +551,35 @@ sees the parent first, rewrites it, and then visits the (possibly new)
 children. This ordering is what you want when the rewrite creates new
 children that themselves need rewriting.
 
-A small example: replace every `Neg(x)` with `Mul(x, x)`, top-down.
+A small example uses an existing, initially unreachable `Neg(5)` node as
+the expansion of `Var("x")`. The rule then rewrites that newly introduced
+child from `Neg(5)` to `Mul(5, 5)`:
 
 ```rust
+let five = s.push_expr(ExprNode::Lit(5));
+let neg_five = s.push_expr(ExprNode::Neg(five));
+let root = LangStoreRoot::Expr(
+    s.push_expr(ExprNode::Var("x".into()))
+);
+
 let (s2, r2) = s.rewrite_down(
     root,
     |stmt| stmt,
     |expr| match expr {
+        ExprNode::Var(name) if name == "x" => ExprNode::Neg(neg_five),
         ExprNode::Neg(inner) => ExprNode::Mul(inner, inner),
         other => other,
     },
 );
 ```
 
-Apply this to `Neg(Neg(5))`. The outer `Neg` is visited first and
-rewrites to `Mul(Neg(5), Neg(5))`. Each of the inner `Neg(5)`s is then
-visited and rewrites to `Mul(5, 5)`. The final tree is
-`Mul(Mul(5, 5), Mul(5, 5))`, which evaluates to 625. A bottom-up
-rewrite would miss the inner rewrites, because the outer `Neg` would
-already have been consumed before its children were visited.
+The root becomes `Neg(Neg(5))`. `rewrite_down` then follows the child
+introduced by the root rule and rewrites it, producing
+`Neg(Mul(5, 5))`, which evaluates to -25. A bottom-up rewrite only visits
+the original root-reachable children before invoking a parent rule, so it
+cannot automatically traverse a source node first introduced by that
+parent rule. Rules are applied once per visited source node; the newly
+produced parent constructor itself is not repeatedly rewritten.
 
 The rewritten graph must remain acyclic. A rule may point to existing
 source IDs, but if that introduces a back-edge to a node whose output
@@ -690,16 +720,17 @@ newly overflows.
 
 ## 11. `fold_with_original`: see the unmapped node
 
-Most folds only need the children's results. When the decision at a
-node depends on the node's own *structure*, not just what its children
-folded to, you need access to the original node. `fold_with_original`
-passes both: the algebra receives a reference to the original node
-alongside the mapped node whose children have been replaced by
-results.
+Most folds only need the children's results. The mapped enum still
+preserves the variant and non-child data, so matching on `Add` versus
+`Neg` alone does not require a different scheme. Use
+`fold_with_original` when the algebra also needs the original child IDs
+or, for variadic nodes, the resolved original child list. It passes a
+reference to that original node alongside the mapped node whose
+children have been replaced by results.
 
-A cost model is the standard use. Binary operations cost more than
-unary ones, which cost more than leaves, and the cost of each
-subtree accumulates.
+This cost model uses the original IDs to discount a binary operation
+whose two edges share one child node, information that is no longer
+present when both children fold to equal numeric costs:
 
 ```rust
 let cost = s.fold_with_original(
@@ -707,6 +738,8 @@ let cost = s.fold_with_original(
     |_orig: &StmtNode, mapped: StmtNodeMapped<usize, usize>| { /* ... */ },
     |orig: &ExprNode, mapped: ExprNodeMapped<usize, usize>| {
         let own = match orig {
+            ExprNode::Add(l, r) | ExprNode::Mul(l, r) | ExprNode::Eq(l, r)
+                if l == r => 1,
             ExprNode::Add(..) | ExprNode::Mul(..) | ExprNode::Eq(..) => 2,
             ExprNode::Neg(..) => 1,
             _ => 0,
@@ -717,9 +750,8 @@ let cost = s.fold_with_original(
 );
 ```
 
-The `orig` reference tells the algebra which variant it is looking at
-before the mapping erased the IDs; the `mapped` value provides the
-already-folded child costs to sum up.
+The `orig` reference exposes whether the two child IDs are identical;
+the `mapped` value provides the already-folded child costs to sum up.
 
 ## 12. `unfold` and `unfold_short`: build a tree from a seed
 
@@ -730,6 +762,10 @@ recurses on each child seed, expanding until a coalgebra returns a
 layer with no seeds (a leaf). The number of seeds must exactly equal the
 number of fixed and variadic child positions in the returned node;
 `unfold`, `unfold_short`, and `postunfold` reject mismatched layers.
+The seed and layer enums are sort-tagged, so `unfold` and
+`unfold_short` each take one coalgebra for the whole family; the
+coalgebra matches on `LangStoreSeed::Stmt` versus
+`LangStoreSeed::Expr`.
 
 A generator for balanced expression trees:
 
@@ -753,19 +789,22 @@ child has been unfolded and pushed. This placeholder step is
 unavoidable because the parent has to describe its shape before its
 children exist.
 
-`unfold_short` adds one capability: the coalgebra can return `Done(id)`
-to reuse an existing node instead of continuing to expand. This is how
-you share a precomputed subtree into a generated structure without
-building two copies of it.
+`unfold_short` changes the seed attached to each child hole. A child can
+be `Continue(LangStoreSeed::...)`, which the coalgebra expands, or a
+sort-specific `DoneStmt(id)` / `DoneExpr(id)`, which reuses an existing
+node without expansion. This is how you share a precomputed subtree
+into a generated structure without building another copy. The initial
+root is always a `LangStoreSeed` and is expanded by the coalgebra.
 
 ## 13. `prefold` and `postunfold`: normalize along the way
 
-A fold is most useful when its input is in a known shape. `prefold`
-takes a per-sort rewrite (`Node → Node`) and applies it to every node
-before the algebra sees it. Use it for strength reduction
-("multiplication by 1 is just the operand"), for desugaring before
-evaluation, or for any transform you want to treat as part of the
-fold's input rather than as a separate pass.
+A fold is most useful when its input is in a known shape. `prefold` is
+the convenience composition of a bottom-up `Node → Node` rewrite into a
+fresh store followed by a fold of that store. Use it for operator-local
+normalization or desugaring before evaluation. It is not a fused
+traversal and its callback does not receive the output store; use
+`rewrite` directly when a rule must inspect rewritten children or
+collapse a node to one child.
 
 ```rust
 let result = s.prefold(
@@ -783,11 +822,13 @@ let result = s.prefold(
 The example rewrites every `Mul` to an `Add` before the fold sees it,
 so the fold only needs to handle `Add`.
 
-`postunfold` is the dual on the construction side. It runs a per-sort
-rewrite on each layer the coalgebra produces, after the children have
-been resolved but before the node is pushed. Use it for
-canonicalization: sort commutative operands so that a downstream dedup
-recognizes `Add(1, 2)` and `Add(2, 1)` as the same node.
+`postunfold` is the dual on the construction side. Its arguments are
+one postprocessor per sort, in declaration order, followed by the same
+sort-tagged coalgebra used by `unfold`. It runs the matching
+postprocessor on each layer after the children have been resolved but
+before the node is pushed. Use it for canonicalization: sort
+commutative operands so that a downstream dedup recognizes `Add(1, 2)`
+and `Add(2, 1)` as the same node.
 
 ```rust
 let root = s.postunfold(
@@ -992,9 +1033,12 @@ let r = s.with_strategy::<memo::None>().fold(root, alg_stmt, alg_expr);
 `memo::Map` (alias `Sparse`) uses a hashmap, so allocation is proportional to the nodes
 actually visited rather than the full store. Good for folding a small
 region of a large store; worse than dense when the fold visits almost
-everything. `memo::None` skips dedup checks entirely and assumes the
-input is a pure tree. It is faster than dense on trees but produces
-wrong results on DAGs. The design doc covers the tradeoffs.
+everything. `memo::None` skips memo-reuse checks, but still uses dense
+result storage to assemble parent values. On a tree it evaluates each
+node once; on a DAG it evaluates a shared node once per reachable
+occurrence. A pure deterministic algebra therefore computes the same
+root value as folding the fully unfolded tree, but work and algebra side
+effects repeat. The design doc covers the tradeoffs.
 
 ## 17. Zippers: cursor-based navigation
 
@@ -1039,9 +1083,12 @@ z.set_focus_expr(ExprNode::Lit(42));
 `LangStoreZipperCow` produces a new store containing the updated
 version of the root-reachable DAG, leaving the original untouched. It
 copies each reachable node once into a fresh store and omits
-unreachable source nodes, so the cost is `O(V + E)` over that reachable
-DAG rather than over the full store. Stores do not share backing
-storage.
+unreachable source nodes, so output construction is `O(V + E)` over the
+reachable DAG. The default dense strategy also initializes mapping and
+visit tables for every source node. For a small reachable region of a
+large store, call `set_focus_<sort>_with_strategy::<Sparse>(...)` to keep
+auxiliary state proportional to the reachable region. Stores do not
+share backing storage.
 
 The focus identifies a node ID, not one path occurrence. If that ID is
 shared, replacement affects every reachable reference to it in the new
@@ -1058,9 +1105,10 @@ The new store inherits the dedup mode of the source: calling
 
 ## 18. The full chapter list
 
-[`tests/testorial.rs`](tests/testorial.rs) contains one chapter per
-scheme applied to a realistic piece of a compiler pipeline. Each
-chapter is a standalone `#[test]`.
+[`tests/testorial.rs`](tests/testorial.rs) contains 24 numbered,
+standalone `#[test]` examples for the principal schemes used in this
+guide. Additional tests cover `fold_all`, `fold_with_ids`, `transform`,
+memo strategies, deduplication, variadics, and contract failures.
 
 | Ch | Scheme | Example |
 |----|--------|---------|

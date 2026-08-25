@@ -1011,7 +1011,7 @@ macro_rules! abstract_domain {
                 }
 
                 /// Convert to EAn: widen each field's max to ones_mask.
-                /// Unum fields are contiguous ranges [0,max]; Anum needs
+                /// Unum fields are contiguous ranges `[0, max]`; Anum needs
                 /// per-bit independence, so we round max up to 2^k - 1.
                 pub fn to_ean(&self) -> ExecAnum {
                     // Sound overapproximation: ones_mask(x) >= x for the whole register.

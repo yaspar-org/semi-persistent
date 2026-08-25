@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Layout parity assertions: the packed Verus list types
 // must match production's sizes exactly at equal id widths.
 use semi_persistent_containers as prod;

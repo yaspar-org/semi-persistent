@@ -1,4 +1,4 @@
-# amzn-semi-persistent-traversals
+# semi-persistent-traversals
 
 Partitioned-arena recursion schemes for Rust. Write the algebra, not the
 traversal.
@@ -76,22 +76,28 @@ The word *sort* means "one of the categories in a family of mutually
 recursive definitions". Above, `Stmt` and `Expr` are sorts. Each sort
 produces a small set of Rust types with systematic suffixes. `StmtNode`
 is the enum stored in the arena. `StmtId` is a typed handle into the
-arena. `StmtNodeMapped<A_stmt, A_expr>` is what an algebra receives,
-with each child ID replaced by the algebra's result for that child. Each
-mapped enum includes parameters only for the child sorts it references,
-ordered by the family's sort declaration order.
+arena. `StmtNodeMapped<A_expr>` is what the statement algebra receives
+in this example, with each expression child ID replaced by the
+expression algebra's result. Each mapped enum includes parameters only
+for the child sorts it references, ordered by the family's sort
+declaration order.
 [TUTORIAL §1](TUTORIAL.md) walks through the full macro expansion for
 this example.
 
 ## Calling convention
 
-Every scheme takes one closure per sort, in the order the sorts were
-declared. For a family with two sorts, most schemes take two closures;
-`fold_with_aux` and `fold_pair` take four (two algebras per sort). The
-list of single-closure schemes is `fold`, `fold_short`,
-`fold_with_history`, `fold_with_original`, `prefold`, `rewrite`,
-`rewrite_down`, `transform`, `fold_all`, `unfold`, `unfold_short`, and
-`postunfold`.
+Most fold and transform schemes take one callback per sort, in sort
+declaration order: `fold`, `fold_all`, `fold_with_ids`,
+`fold_with_history`, `fold_with_original`, `fold_short`, `rewrite`,
+`rewrite_down`, and `transform`. `prefold` takes all per-sort
+preprocessors followed by all per-sort fold algebras. `fold_with_aux`
+takes all aux algebras followed by all main algebras; `fold_pair` takes
+the A and B algebras together for each sort.
+
+The construction schemes use sort-tagged seeds and layers. `unfold` and
+`unfold_short` each take one coalgebra for the whole family.
+`postunfold` takes one postprocessor per sort, followed by that tagged
+coalgebra.
 
 Return values are sort-tagged. A fold returns
 `<Store>FoldResult<A_stmt, A_expr, ...>`, an enum with one variant per
@@ -141,15 +147,15 @@ when that repeated-node behavior is explicitly acceptable.
 Dedup controls whether `push_*` deduplicates structurally identical
 nodes. `Store::new()` appends unconditionally; `Store::new_dedup()`
 hashes and reuses. Dedup makes each push more expensive but can shrink
-highly redundant inputs by orders of magnitude; the included synthetic
-benchmark measures a 2.4-4.7× construction cost, depending on size. Use
-it for acyclic term DAGs, canonicalized IRs, and any pipeline where you
-fold the store more than once. Children must be inserted before their
-parents. `push_*` rejects missing or forward child IDs, and `set_*`
-rejects mutations that would introduce a cycle. Top-down rewrites and
-copy-on-write zipper replacements also reject rule-induced cycles. An
-e-graph can store its acyclic terms here, but not its cyclic e-class
-topology.
+highly redundant inputs by orders of magnitude; the retained synthetic
+campaign in the design note measured a 2.4-4.7× construction cost,
+depending on size. Use it for acyclic term DAGs, canonicalized IRs, and
+any pipeline where you fold the store more than once. Children must be
+inserted before their parents. `push_*` rejects missing or forward child
+IDs, and `set_*` rejects mutations that would introduce a cycle.
+Top-down rewrites and copy-on-write zipper replacements also reject
+rule-induced cycles. An e-graph can store its acyclic terms here, but
+not its cyclic e-class topology.
 
 `mark` returns a store-bound append checkpoint, and `restore` truncates
 every arena and variadic pool to that checkpoint. Restoring also prunes
@@ -162,15 +168,17 @@ the full decision guide with benchmark numbers.
 
 ## Crate structure
 
-The workspace has two crates. `semi-persistent-traversals` is the
-core library and contains the memo strategy types, `Variadic`, and
-`Ann`, and re-exports the `rec_family!` proc macro.
+The traversal subsystem has two published crates.
+`semi-persistent-traversals` is the core library and contains the memo
+strategy types, `Variadic`, and `Ann`, and re-exports the `rec_family!`
+proc macro.
 `semi-persistent-traversals-derive` contains the macro implementation.
 
 ## Documentation
 
-[TUTORIAL.md](TUTORIAL.md) is the extended guide and covers every
-scheme with worked examples. [`tests/testorial.rs`](tests/testorial.rs)
-contains 24 chapters that build a complete compiler pipeline (pretty
-printer, constant folder, type checker, interpreter, bytecode
-compiler) using only recursion schemes.
+[TUTORIAL.md](TUTORIAL.md) is the extended guide to the principal
+schemes. [`tests/testorial.rs`](tests/testorial.rs) contains 24 numbered
+examples that build a compiler pipeline (pretty printer, constant
+folder, type checker, interpreter, bytecode compiler) using recursion
+schemes. The remaining generated operations and contract failures have
+focused integration tests.
