@@ -49,9 +49,9 @@ clusters to explain the remaining differences.
 
 ## What you need to know already
 
-> State the assumed background: terms, rewrite rules, first order syntax. State
-> what is explained from scratch: e-graphs, equality saturation, AC canonization,
-> anti-unification.
+We assume that you are familiar with first-order terms and rewrite rules. We do
+not assume any experience with Semper or with e-graphs, equality saturation, AC
+canonization, or anti-unification; we introduce each of them from scratch.
 
 ## The examples
 
