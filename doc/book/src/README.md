@@ -55,11 +55,14 @@ canonization, or anti-unification; we introduce each of them from scratch.
 
 ## The examples
 
-> Carry over from `v1-draft/README.md`. Every program shown is a file in
-> `doc/book/examples/` that the test suite executes, none is written out in prose
-> only, and every quoted number and error string was captured by running it. Say
-> that the example files end in assertions so a change in engine behaviour breaks
-> the test rather than silently invalidating the book.
+Every program shown in this book lives in `doc/book/examples/` and is included
+in its chapter directly from that file. The test suite executes every `.egg`
+file in the directory.
+
+Each example ends with `check` or `checkau` assertions that state the behavior
+the chapter relies on. A change in engine behavior therefore fails a test
+instead of silently invalidating the book. Every number, size, ratio, and error
+message quoted in the book was captured by running the corresponding file.
 
 ## What this book is not
 
