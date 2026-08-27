@@ -411,6 +411,86 @@ Four distinct claims, kept separate throughout:
 
 A budget-exhausted run claims validity, never either optimality assertion.
 
+All four claims are relative to the equality relation the e-graph holds when the
+snapshot is taken. §2.8 states what that excludes.
+
+### 2.8 Optimality is relative to the e-graph, not to the AC theory
+
+Every question the solver asks is a question about the graph as it stands. It
+reads members and child classes through `AuSnapshot` (4.1) and compares child
+positions with `find`. It never asks whether two terms are equal in the AC
+theory. So a reported optimum is optimal for the relation the graph holds, and
+that relation is sound but not complete for `≈_AC`: it is exactly the relation
+`ac-congruence-completeness.md` Part I shows plain recanonicalization plus
+congruence closure computes.
+
+What plain mode does give the solver is every AC fact that is a property of one
+node, because those are representation facts settled at build time: argument
+order, flattening, multiplicity, the count clamp, and the dropped unit
+(`ac-algebraic-properties.md`). AC action generation is then AC-aware in the
+sense of 3.4.4, choosing child pairings by min-cost transport over canonical
+monomials. The gap is narrower than "plain mode is not AC-aware". It is exactly
+the erased class reference of `ac-congruence-completeness.md` §3: an equality
+between two AC nodes that follows from grouping a *known sub-sum* out of one of
+them, where flattening removed the sub-sum's class reference and congruence has
+nothing left to follow.
+
+**The failure is one-sided, and it is the bad direction for the use case.** A
+missing AC consequence puts two AC-equal subterms in different classes, so the
+solver finds no common action at that position and emits `Variants(s, t)` priced
+at the full hidden mass. The reported anti-unifier is therefore LARGER than the
+AC optimum, never smaller: the solver over-reports disagreement and never invents
+an equality, since canonization and congruence only assert real AC consequences.
+For the formalization-diagnosis use (8, `au_formalization.rs`) that is the
+expensive direction. A reported difference that the theory does not have points a
+reader at a part of a formalization that is in fact stable.
+
+**Measured.** The §4a containment case wrapped in one common operator, so the
+anti-unifier has a backbone and the only candidate disagreement is the AC-equal
+pair:
+
+```text
+(union (add a b) c)          ; add is :assoc :comm
+(union (add a b d) n)        ; AC entails n = add(c, d)
+(antiunify (g n) (g (add c d)) :algorithm exact)
+```
+
+| mode | flag | reported |
+| --- | --- | --- |
+| plain | none | `:size 5 :cr 0.7500` — `(g (Variants n (add c d)))` |
+| eager | `--derive-ac-eqs` | `:size 2 :cr 0.0000` — `(g n)` |
+| lazy | `--lazy-ac-eqs` | `:size 5 :cr 0.7500` — identical to plain |
+
+Nothing about the solver differs across the three rows. What differs is the
+equality relation it was handed. `tests/au_ac_completion_modes.rs` pins all three
+sizes exactly, by bracketing each with a `checkau :max_size` that must pass and
+one that must fail, since `checkau` bounds from above only.
+
+**Lazy completion contributes nothing here, and this is structural.** The lazy
+transaction is opened only by `CheckEq` and `CheckNeq`; every other command calls
+`lazy_txn_close()` first (`interpret.rs`, the command loop in `run_checked`),
+which restores the graph and discards the derived nodes. `AntiUnify` and
+`CheckAu` are not equality checks, so the close runs, and only then does
+`AuSnapshot::new` read the graph. The snapshot is the plain graph.
+
+Routing the solver through the lazy path instead is not a small change, and the
+reason is the shape of the search rather than the plumbing. Lazy mode is
+goal-directed: it installs one pair via `set_cc_goal` and stops completion the
+moment that pair joins (`ac-congruence-completeness.md` §13). Root Exact has one
+OR node per reachable ordered class pair (2.1) and no single pair to install,
+because not knowing in advance which pairs matter is the search. A lazy variant
+would be one goal-directed completion search per visited pair, each inside its
+own mark and restore, discarding between pairs exactly the accumulated
+completion state that makes consecutive equality checks cheap. Eager completion
+pays the closure once for the whole graph and hands the solver a snapshot it
+reads with `find`.
+
+**Consequence for reporting.** The three modes are not three points on one
+speed axis. Plain and lazy hand the solver the same relation; eager changes what
+the answer means. Any size, `cr`, or benchmark number for an AC workload must
+therefore name its completion mode, and any claim that a reported difference is
+real needs eager.
+
 ## 3. The two algorithms
 
 ### 3.1 Shared building blocks
