@@ -66,9 +66,13 @@ message quoted in the book was captured by running the corresponding file.
 
 ## What this book is not
 
-> Carry over from `v1-draft/README.md`. It is not the design documentation: the
-> design chapters under `egraph/doc/design/` specify the internals and the book
-> links to them where a reader may want the specification. It is not a paper: no
-> theorems are proved here, and where the implementation rests on an argument
-> rather than a proof the book says so and points at the design chapter that makes
-> the argument.
+This book is not the design documentation. It states what a user needs to run
+and understand the engine. The
+[design chapters](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/00-table-of-contents.md)
+are the source of truth for storage, algorithms, and implementation invariants.
+When more detail is needed, this book links to the relevant design chapter
+instead of restating its specification.
+
+This book is also not a paper. It proves no theorems. When an implementation
+claim rests on a prose argument rather than a machine-checked proof, the book
+states that boundary and links to the design chapter containing the argument.
