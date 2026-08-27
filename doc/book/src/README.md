@@ -33,17 +33,19 @@ disagreements with `Variants` nodes.
 
 ## The four parts
 
-> One short paragraph per part, each naming what the reader can do after it.
-> Part I: build the binary, write and run a program, look up any command or flag.
-> Part II: what the e-graph stores, how saturation runs, how declaring an algebraic
-> property changes the representation, and the three congruence closures.
-> Part III: what anti-unification computes, the two algorithms and their
-> combination, and what the returned term is optimal with respect to.
-> Part IV: the application. Sample a formalizer several times, put every sample in
-> one e-graph, saturate, read off the clusters, and anti-unify across clusters to
-> explain every remaining difference.
->
-> Do not summarize the technical content of the parts here. Name the capability.
+In Part I, we build the binary, write and run a program, and introduce the
+commands and flags available from the command line.
+
+In Part II, we explain what the e-graph stores, how saturation runs, how
+algebraic declarations change operator representations, and how the three
+congruence modes differ.
+
+In Part III, we explain what anti-unification computes, how exact search, graph
+search, and their hybrid work, and what an optimal result is optimal over.
+
+In Part IV, we apply the engine to autoformalization. We sample a formalizer
+several times, cluster the samples by equality saturation, and anti-unify across
+clusters to explain the remaining differences.
 
 ## What you need to know already
 
