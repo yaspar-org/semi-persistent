@@ -82,9 +82,23 @@ Confirm the installation with `verus --version`, then run the proof suites:
 
 ## The crates in the workspace
 
-> Table of crate name, path, and one line of purpose. State that none of them is
-> needed to use the engine and that the list exists to explain the names the reader
-> will see in build output and in stack traces.
+Running Semper does not require working with these crates individually. Cargo
+prints their package names during builds, and the corresponding Rust crate
+names appear in stack traces. This table maps those names to their source paths.
+
+| Package | Path | Purpose |
+| --- | --- | --- |
+| `semi-persistent` | `semi-persistent/` | Published facade that re-exports the containers, e-graph, and traversal libraries. |
+| `semi-persistent-egraph` | `egraph/` | The Semper engine library and the `semi-persistent` command-line binary. |
+| `semi-persistent-containers-verus` | `containers-verus/` | Verus-verified production container layer used by the e-graph. |
+| `semi-persistent-containers` | `containers/` | Independent plain-Rust container implementation retained as a reference and performance baseline. |
+| `containers-conformance` | `containers-conformance/` | Differential, property, layout, and benchmark harness comparing the two container implementations. |
+| `containers-verus-canary` | `containers-verus/canary/` | Compile and smoke tests for the e-graph-shaped uses of the verified container API. |
+| `semi-persistent-traversals` | `traversals/` | Typed arenas and stack-safe folds, unfolds, transforms, and zippers. |
+| `semi-persistent-traversals-derive` | `traversals/derive/` | Procedural macros that generate traversal arenas and supporting types. |
+| `traversals-compile-tests` | `traversals/compile-tests/` | Downstream compile tests for the generated traversal API. |
+| `semi-persistent-abstract-domains` | `abstract-domains/` | Verus-verified bitvector abstract domains and their executable mirrors. |
+| `semi-persistent-au-verus` | `au-verus/` | Machine-checked lemmas for the positional anti-unification model. |
 
 ## Run the test suite
 
