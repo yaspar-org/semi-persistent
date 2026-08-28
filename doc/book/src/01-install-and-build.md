@@ -102,10 +102,60 @@ names appear in stack traces. This table maps those names to their source paths.
 
 ## Run the test suite
 
-> The `cargo test` invocation, the count of tests it runs and how long it takes,
-> and the two suites a reader of this book will care about: the `.egg` file tests
-> under `egraph/tests/egg/`, and `book_examples`, which executes every program in
-> this book. Say that a book example is a test.
->
-> Name the slow suites that are `#[ignore]`d and how to run them, so a reader does
-> not conclude the suite is incomplete.
+From the workspace root, run:
+
+```bash
+cargo test --workspace
+```
+
+At the time of writing, Cargo discovers 1,782 tests. The default run executes
+1,731 and reports 51 as ignored. On the machine used to prepare this chapter,
+the command completed in 6 minutes 2 seconds.
+
+The interpreter's file-based integration fixtures live under
+`egraph/tests/egg/`. The harness in `egraph/tests/egg_tests.rs` sends each
+registered `.egg` program through the parser, sort checker, and interpreter.
+Unless overridden by a fixture directive, it runs the program with both naive
+and semi-naive evaluation.
+
+The same harness defines `book_examples`. It scans `doc/book/examples/` for
+every file with the `.egg` extension and sends each one through the same
+checker. Chapters include those files directly, so every book example is a
+test. Adding an example to that directory does not require separate Rust test
+registration.
+
+The ignored count includes manual diagnostics and measurements rather than one
+unfinished suite. Six entries are child-process cases for hasher configuration;
+their non-ignored driver tests already execute them in fresh processes. The
+slow ignored groups are:
+
+- the `completion_*` diagnostics and the `ac_vs_rules` comparison;
+- the `bench_acgen_*` fixtures in `egg_tests`;
+- the AU measurement and stress tests in the `au_*` test binaries; and
+- the feature-gated, 100-million-element `compat_vec_stress` tests.
+
+List ignored tests without running them:
+
+```bash
+cargo test --workspace -- --ignored --list
+```
+
+Run slow tests by naming their harness rather than running every ignored test
+together. For example:
+
+```bash
+cargo test -p semi-persistent-egraph --release --test egg_tests \
+  bench_acgen -- --ignored --nocapture
+
+cargo test -p semi-persistent-egraph --release --test ac_vs_rules \
+  -- --ignored --nocapture
+
+cargo test -p semi-persistent-egraph --release --test au_hardness \
+  hardness_map -- --ignored --nocapture
+
+cargo test -p semi-persistent-containers-verus --features compat-all \
+  --test compat_vec_stress -- --ignored --test-threads 1 --nocapture
+```
+
+The repository's reproduction guide gives the commands and expected durations
+for the individual AU measurements.
