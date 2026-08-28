@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-28
+
+### Added
+
+- Added the Semper book, with executable examples covering the language,
+  algebraic canonization, saturation, anti-unification, and policy repair.
+
+### Changed
+
+- Made malformed algebraic declarations and rule right-hand sides fail during
+  resolution instead of relying on unchecked representation invariants.
+- Clarified that anti-unification optimality is relative to the equalities
+  materialized in the selected e-graph completion mode.
+- Aligned every workspace package and internal published dependency at
+  version `0.3.0`.
+
+### Fixed
+
+- Honored `:assoc-left` and `:assoc-right` flattening directions during both
+  source-term construction and rewrite right-hand-side construction.
+- Rejected algebraic operators whose argument and result sorts make variadic
+  singleton collapse unsound, as well as conflicting associativity tags.
+- Added lexically scoped right-hand-side comprehension locals without mutating
+  query match shapes or runtime match rows.
+- Enforced collection element sorts, fixed right-hand-side arity, and
+  literal-producing comprehension filters.
+- Rebuilt before every `run :until` observation, including the final
+  observation after exhausting the rule-round budget.
+
 ## [0.2.0] - 2026-08-25
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "semi-persistent-traversals"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "Apache-2.0"
@@ -10,7 +10,7 @@ homepage = "https://github.com/yaspar-org/semi-persistent"
 documentation = "https://docs.rs/semi-persistent-traversals"
 
 [dependencies]
-semi-persistent-traversals-derive = { path = "derive", version = "0.2.0" }
+semi-persistent-traversals-derive = { path = "derive", version = "0.3.0" }
 rustc-hash = "2"
 smallvec = "1"
 

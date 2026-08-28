@@ -1,6 +1,6 @@
 [package]
 name = "semi-persistent"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "Apache-2.0"
@@ -11,6 +11,6 @@ documentation = "https://docs.rs/semi-persistent"
 readme = "../README.md"
 
 [dependencies]
-semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.2.0" }
-semi-persistent-egraph = { path = "../egraph", version = "0.2.0" }
-semi-persistent-traversals = { path = "../traversals", version = "0.2.0" }
+semi-persistent-containers = { package = "semi-persistent-containers-verus", path = "../containers-verus", version = "0.3.0" }
+semi-persistent-egraph = { path = "../egraph", version = "0.3.0" }
+semi-persistent-traversals = { path = "../traversals", version = "0.3.0" }
