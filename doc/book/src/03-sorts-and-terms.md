@@ -1,8 +1,9 @@
 # Sorts and terms
 
-> Chapter contents: the grammar of the declaration and term-building commands, what
-> each one does to the e-graph, how sortchecking rejects a bad term, and the two
-> literal sorts. This is the first half of the language; chapter 4 is the second.
+> Chapter contents: the literal models and their built-in sorts, the grammar of
+> declarations and term-building commands, what each command does to the e-graph,
+> and how sortchecking rejects a bad term. This is the first half of the language;
+> chapter 4 is the second.
 >
 > Example: `examples/03-terms.egg`. Read it before writing and build the chapter
 > around it rather than inventing a new one. Extend it if a section needs a case it
@@ -13,6 +14,30 @@
 >
 > Carry over: `v1-draft/02-first-program.md` sections "Sorts and operators" and
 > "Inserting a term" are accurate and already tied to a running file.
+
+## Literal models
+
+Before declarations are sort-checked, `--types` selects the concrete sorts and
+primitive operations available to the program. The default is `bignum`.
+
+| `--types` value | Predeclared sorts |
+| --- | --- |
+| `bignum` | `bool`, `IBig`, `UBig`, `RBig` |
+| `machine` | `bool`, `i64`, `u64`, `f64`, `usize`, `String` |
+| `machine,bignum` | All sorts from both groups |
+
+Programs use these sort names directly in declarations. The running example
+uses the default model:
+
+```lisp
+{{#include ../examples/03-terms.egg:literal-model-declarations}}
+```
+
+`Expr` and `Name` are introduced by the program, while `IBig` is supplied by
+the selected literal model. Running the same declaration with only
+`--types machine` rejects `IBig` as an unknown sort.
+
+Chapter 6 gives the full `--types` flag reference.
 
 ## The grammar
 
@@ -64,9 +89,23 @@ patterns, rule actions, query and control commands, and every command option.
 
 ## Sorts
 
-> `(sort S)` declares an uninterpreted sort. `(datatype T (C S ...) ...)` declares a
-> sort and its constructors in one command. State that sorts are not related by any
-> subtyping and that a term's sort is fixed by its operator's declaration.
+`(sort S)` registers an uninterpreted sort named `S`. It introduces only the
+sort; it does not create any constants or other terms. The running example
+declares `Expr` and `Name` as separate sorts. Semper has no subtyping or implicit
+coercions between them.
+
+An operator declaration fixes the sort of every term it builds. In the example,
+`(function x () Name)` makes `(x)` a `Name`, while
+`(function f (Name) Expr)` accepts a `Name` and returns an `Expr`. Therefore
+`(f (x))` has sort `Expr`. Each child must have exactly the argument sort
+declared for its position, and the outermost operator determines the term's
+result sort.
+
+`(datatype T (C S1 ... Sn) ...)` combines a sort declaration with constructor
+declarations. It first registers `T`, then treats each variant as
+`(constructor C (S1 ... Sn) T)`. Registering `T` first permits recursive
+variants that use `T` as an argument. Every other argument sort must already
+exist.
 
 ## Operators
 
@@ -96,7 +135,8 @@ patterns, rule actions, query and control commands, and every command option.
 
 ## Literals
 
-> The `bool` and integer literal sorts, what `--types machine` and `--types bignum`
-> select, and where the engine needs a literal for the book's purposes, which is
-> mainly `:identity` units like `(Lit true)`. Keep this short and point at design
+> How literal tokens are classified at the sort expected by an operator, including
+> booleans, numbers, and strings. Do not repeat the literal-model table. For the
+> book's purposes, literals mainly occur as constructor arguments and as
+> `:identity` units such as `(Lit true)`. Keep this short and point at design
 > chapter 13.
