@@ -1,16 +1,5 @@
 # Introduction
 
-> Chapter contents: what the engine is, what the four parts of the book cover,
-> what the reader is assumed to know, and what the book is not.
->
-> Carry over: `v1-draft/README.md` has usable text for "The examples" and "What
-> this book is not". Its framing paragraphs are about a book that opened on the
-> autoformalization problem and must be rewritten: this book opens on the engine
-> and reaches autoformalization in Part IV.
->
-> Keep this chapter short. Two pages. It is the only place in the book that is
-> allowed to describe content instead of delivering it.
-
 ## What this is
 
 Semper is a term rewriting and equality saturation engine. Programs can

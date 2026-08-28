@@ -1,44 +1,185 @@
 ;; EXPECT: ok
 ;; EVAL: both
-;; A first-order model of one fragment of a Dogwood policy.
 
-;; ANCHOR: dogwood-simple
-(sort Formula)
-(sort EventKind)
+;; ANCHOR: dogwood-signature
+(sort PolicySet)
+(sort Effect)
+(sort Scope)
+(sort PScope)
+(sort AScope)
+(sort RScope)
+(sort Action)
+(sort Expr)
+(sort SVal)
+(sort TCond)
+(sort TTerm)
+(sort TAgg)
+(sort ArgSet)
+(sort Path)
+(sort FSeg)
+(sort Win)
+(sort Ty)
+(sort Binders)
+(sort Kind)
 
-(function Lit (bool) Formula)
-(function All (Formula) Formula :assoc-comm-idem :identity (Lit true))
-(function request () EventKind)
-(function response () EventKind)
-(function methodPost () Formula)
-(function pathDeploy () Formula)
-(function successfulHealth (EventKind IBig IBig) Formula)
+(function noPolicies () PolicySet)
+(function rule (Effect Scope Expr) PolicySet)
+(function policies (PolicySet) PolicySet :assoc-comm-idem :identity (noPolicies))
+(function permit () Effect)
+(function forbid () Effect)
 
-(let sampleA
-  (All
-    (methodPost)
-    (pathDeploy)
-    (successfulHealth (response) 200 900)))
+(function head (PScope AScope RScope) Scope)
+(function anyPrincipal () PScope)
+(function anyResource () RScope)
+(function actionEq (Action) AScope)
 
-;; The same conditions, reordered, with one duplicate.
-(let sampleB
-  (All
-    (successfulHealth (response) 200 900)
-    (methodPost)
-    (methodPost)
-    (pathDeploy)))
+(function eTrue () Expr)
+(function eFalse () Expr)
+(function eAnd (Expr) Expr :assoc-comm-idem :identity (eTrue))
+(function eOr (Expr) Expr :assoc-comm-idem :identity (eFalse))
+(function eEq (Expr Expr) Expr :comm)
+(function eCtx (Path) Expr)
+(function eStr (SVal) Expr)
+(function temporal (TCond) Expr)
 
-;; The event kind changes from response to request.
-(let sampleC
-  (All
-    (methodPost)
-    (pathDeploy)
-    (successfulHealth (request) 200 900)))
+(function tTrue () TCond)
+(function tAnd (TCond) TCond :assoc-comm-idem :identity (tTrue))
+(function formerly (Win TCond) TCond)
+(function tp (TTerm) TCond)
+(function pred (Action Kind ArgSet) TCond)
+(function tGte (TTerm TTerm) TCond)
+(function tLte (TTerm TTerm) TCond)
 
-(check (= sampleA sampleB))
-(check (!= sampleA sampleC))
-(check (!= sampleB sampleC))
+(function bvar (IBig) TTerm)
+(function scopePrincipal () TTerm)
+(function tInt (IBig) TTerm)
+(function agg (TAgg) TTerm)
+(function count (Binders TCond) TAgg)
+(function bnil () Binders)
+(function bcons (Ty Binders) Binders)
+(function tyTimepoint () Ty)
 
-(antiunify sampleA sampleC :algorithm exact)
-(checkau sampleA sampleC :max_size 8 :algorithm exact)
-;; ANCHOR_END: dogwood-simple
+(function noArgs () ArgSet)
+(function arg (Path TTerm) ArgSet)
+(function args (ArgSet) ArgSet :assoc-comm-idem :identity (noArgs))
+(function fnil () Path)
+(function fld (FSeg Path) Path)
+(function win (IBig) Win)
+
+(function request () Kind)
+(function response () Kind)
+(function aHttpRequest () Action)
+(function fInput () FSeg)
+(function fOutput () FSeg)
+(function fMethod () FSeg)
+(function fPath () FSeg)
+(function fCallerPrincipal () FSeg)
+(function fStatusCode () FSeg)
+(function vPOST () SVal)
+(function vDeploy () SVal)
+;; ANCHOR_END: dogwood-signature
+
+(let methodIsPost
+  (eEq (eCtx (fld (fInput) (fld (fMethod) (fnil)))) (eStr (vPOST))))
+
+(let methodIsPostFlipped
+  (eEq (eStr (vPOST)) (eCtx (fld (fInput) (fld (fMethod) (fnil))))))
+
+(let pathIsDeploy
+  (eEq (eCtx (fld (fInput) (fld (fPath) (fnil)))) (eStr (vDeploy))))
+
+(let healthArgs
+  (args
+    (arg (fld (fCallerPrincipal) (fnil)) (scopePrincipal))
+    (arg (fld (fOutput) (fld (fStatusCode) (fnil))) (tInt 200))))
+
+(let healthArgsFlipped
+  (args
+    (arg (fld (fOutput) (fld (fStatusCode) (fnil))) (tInt 200))
+    (arg (fld (fCallerPrincipal) (fnil)) (scopePrincipal))))
+
+;; ANCHOR: dogwood-candidates
+(let candA
+  (rule (permit)
+    (head (anyPrincipal) (actionEq (aHttpRequest)) (anyResource))
+    (eAnd
+      methodIsPost
+      pathIsDeploy
+      (temporal
+        (tGte
+          (agg (count (bcons (tyTimepoint) (bnil))
+                 (formerly (win 900)
+                   (tAnd
+                     (pred (aHttpRequest) (request) healthArgs)
+                     (tp (bvar 0))))))
+          (tInt 1))))))
+
+(let candB
+  (rule (permit)
+    (head (anyPrincipal) (actionEq (aHttpRequest)) (anyResource))
+    (eAnd
+      (temporal
+        (tLte
+          (tInt 1)
+          (agg (count (bcons (tyTimepoint) (bnil))
+                 (formerly (win 900)
+                   (tAnd
+                     (tp (bvar 0))
+                     (pred (aHttpRequest) (response) healthArgsFlipped)))))))
+      methodIsPostFlipped)))
+;; ANCHOR_END: dogwood-candidates
+
+(let pickWorst
+  (rule (permit)
+    (head (anyPrincipal) (actionEq (aHttpRequest)) (anyResource))
+    (eAnd
+      (temporal
+        (tGte
+          (agg (count (bcons (tyTimepoint) (bnil))
+                 (formerly (win 900)
+                   (tAnd
+                     (pred (aHttpRequest) (request) healthArgs)
+                     (tp (bvar 0))))))
+          (tInt 1)))
+      methodIsPost)))
+
+(let repaired
+  (rule (permit)
+    (head (anyPrincipal) (actionEq (aHttpRequest)) (anyResource))
+    (eAnd
+      (temporal
+        (tGte
+          (agg (count (bcons (tyTimepoint) (bnil))
+                 (formerly (win 900)
+                   (tAnd
+                     (pred (aHttpRequest) (response) healthArgs)
+                     (tp (bvar 0))))))
+          (tInt 1)))
+      methodIsPost
+      pathIsDeploy)))
+
+;; ANCHOR: dogwood-identity
+(birewrite (tLte a b) (tGte b a))
+(run 4)
+;; ANCHOR_END: dogwood-identity
+
+(check (!= candA candB))
+(check (!= repaired candA))
+(check (!= repaired candB))
+(check (!= pickWorst candA))
+(check (!= pickWorst candB))
+(check (!= repaired pickWorst))
+
+;; ANCHOR: dogwood-main-query
+(antiunify candA candB :algorithm exact)
+(checkau candA candB :max_size 61 :algorithm exact)
+;; ANCHOR_END: dogwood-main-query
+
+(antiunify repaired candA :algorithm exact)
+(checkau repaired candA :max_size 60 :algorithm exact)
+(antiunify repaired candB :algorithm exact)
+(checkau repaired candB :max_size 60 :algorithm exact)
+(antiunify pickWorst candA :algorithm exact)
+(checkau pickWorst candA :max_size 60 :algorithm exact)
+(antiunify pickWorst candB :algorithm exact)
+(checkau pickWorst candB :max_size 51 :algorithm exact)

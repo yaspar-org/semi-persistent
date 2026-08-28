@@ -32,7 +32,7 @@
 - [What autoformalization is](17-what-autoformalization-is.md)
 - [Clustering samples by equality saturation](18-clustering-samples.md)
 - [Explaining the differences between clusters](19-explaining-differences.md)
-- [A simple Dogwood policy](20-dogwood-simple.md)
+- [Repair by disagreement](20-dogwood-simple.md)
 - [A larger Dogwood policy](21-dogwood-larger.md)
 - [General policy conditions](22-policy-conditions.md)
 - [Limits](23-limits.md)

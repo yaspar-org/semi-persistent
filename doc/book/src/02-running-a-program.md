@@ -1,16 +1,5 @@
 # Running a program
 
-> Chapter contents: the invocation, the anatomy of a program file, which stream
-> each kind of output goes to, the exit statuses, and how to run one of this book's
-> examples yourself.
->
-> Carry over: `v1-draft/01-install.md` sections "Run a program" and "Exit status".
->
-> Verify before writing: run the binary on `doc/book/examples/03-terms.egg` and
-> paste what it actually prints, including the closing line on stderr. Verify each
-> exit status by provoking it: a passing file, a failing `check`, a parse error, a
-> sort error.
-
 ## Invocation
 
 The command line takes one positional argument: the path to an `.egg` program.

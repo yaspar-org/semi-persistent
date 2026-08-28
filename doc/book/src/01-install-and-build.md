@@ -1,14 +1,5 @@
 # Install and build
 
-> Chapter contents: the toolchain requirement, the build command, where the binary
-> lands, what the workspace crates are, and how to run the test suite.
->
-> Carry over: `v1-draft/01-install.md` is accurate. Keep its build steps, its crate
-> list and its wording, drop the section openers it still carries in two places.
->
-> Verify before writing: the rust-toolchain file or `Cargo.toml` for the minimum
-> toolchain, and the crate names and paths in the workspace `Cargo.toml`.
-
 ## Build from source
 
 ```bash
