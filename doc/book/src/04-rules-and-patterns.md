@@ -62,10 +62,30 @@ e-class. Although `a` and `inner` are written differently, their union allows
 
 ## rewrite and birewrite
 
-> `rewrite` adds the right side to the matched class in one direction, `birewrite`
-> in both. Show each. State that neither deletes anything: the left side stays in
-> the graph, which is what makes saturation monotone and is why `(check (!= ...))`
-> means what chapter 5 says it means.
+A `rewrite` is directional in what triggers it, not in the equality it
+establishes. When its left-hand side matches, Semper builds the right-hand side
+and merges it with the matched e-class. After that merge the equality is
+symmetric, but an existing right-hand-side shape does not cause the
+left-hand side to be built.
+
+```lisp
+{{#include ../examples/04-rewrite-directions.egg:rewrite-directions}}
+```
+
+The first rule uses `(f a)` to build `(g a)`. It does not use `(g b)` to build
+`(f b)`. A `birewrite` is parser shorthand for two rewrites, one in each
+direction. Consequently, `(f a)` builds `(h a)`, while `(h c)` builds `(f c)`.
+
+Neither form replaces or deletes its input. Ordinary rewrites leave the
+matched left-hand-side node available to later rules, while adding nodes and
+equalities monotonically.
+
+Adding `:subsume` performs the same build and merge, then marks the matched
+left-hand-side e-node so future pattern indexes skip it. The node and its
+equality remain in the e-graph, and subsumption does not prevent extraction
+or hide other nodes in its e-class. Matches already collected for the current
+rule application still run. `birewrite` rejects `:subsume`, since each side
+must remain available to trigger the opposite direction.
 
 ## rule and actions
 
