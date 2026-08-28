@@ -42,13 +42,23 @@ variadic pattern and right-hand-side forms omitted here.
 
 ## What a pattern matches
 
-> The point a reader coming from term rewriting needs: a pattern is matched against
-> the e-graph, so it matches an e-class whenever any e-node in that class matches,
-> and one rule can therefore fire on a term nobody wrote. Show it: insert two terms,
-> union them, and have a rule fire through the union.
->
-> State that a variable binds to an e-class, and that repeating a variable in a
-> pattern requires the same class in both positions rather than the same syntax.
+A Semper pattern matches the e-graph, not a single syntax tree. Each operator
+must be witnessed by an e-node, but its children are e-classes. A nested
+pattern may therefore continue through any e-node in a child class, even when
+the resulting composite term was never inserted.
+
+```lisp
+{{#include ../examples/04-rewrite-rules.egg:pattern-matching}}
+```
+
+The program never inserts `(f (g b))`. It inserts `(f a)` and `(g b)`, then
+places `a` and `(g b)` in the same e-class. The pattern `(f (g x))` can
+therefore match `outer`, binding `x` to `b`'s e-class.
+
+Pattern variables also bind e-classes rather than particular syntax. In
+`(pair x x)`, one occurrence binds `x` and the other requires the same
+e-class. Although `a` and `inner` are written differently, their union allows
+`pair_term` to match.
 
 ## rewrite and birewrite
 

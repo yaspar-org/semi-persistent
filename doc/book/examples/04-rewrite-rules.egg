@@ -1,0 +1,91 @@
+;; EXPECT: ok
+;; Book chapter 4: the three rule forms, guards, and non-linear patterns.
+
+;; ANCHOR: pattern-matching
+(sort Expr)
+(function a () Expr)
+(function b () Expr)
+(function f (Expr) Expr)
+(function g (Expr) Expr)
+(function pair (Expr Expr) Expr)
+(function seen (Expr) Expr)
+(function same_args (Expr) Expr)
+
+(rewrite (f (g x)) (seen x))
+(rewrite (pair x x) (same_args x))
+
+(let outer (f a))
+(let inner (g b))
+(let pair_term (pair a inner))
+(union a inner)
+(run 1)
+
+(check (= outer (seen b)))
+(check (= pair_term (same_args a)))
+;; ANCHOR_END: pattern-matching
+
+(function lit (IBig) Expr)
+(function add (Expr Expr) Expr)
+(function mul (Expr Expr) Expr)
+(function dbl (Expr) Expr)
+
+;; `rewrite` is one direction: every match of the left side is unioned with the
+;; instantiated right side. It does not replace anything. The e-graph now holds
+;; both terms in one class.
+(rewrite (add x x) (dbl x))
+
+;; `birewrite` declares both directions at once. Use it for an equivalence you
+;; want usable either way; two `rewrite` commands would say the same thing.
+(birewrite (mul x (lit 2)) (dbl x))
+
+;; `rule` is the general form: a conjunctive query over the e-graph, then
+;; actions. Several patterns in the query are a join, and a variable shared
+;; between them is the join key. This one says: if some term is known to be a
+;; doubling, and that same term also appears as the left addend of a sum, record
+;; the pair.
+;;
+;; The action is a bare term, which inserts it. Note that it is a term over BOTH
+;; bound variables. A tempting shorter version, `(union (addend v) w)`, is a trap:
+;; `v` occurs with several different `w`, and unioning a single-argument term with
+;; each of them makes all those `w` equal to each other. Recording a relation as
+;; a term keeps the arguments apart.
+(function addend (Expr Expr) Expr)
+(rule ((dbl v) (add v w))
+      ((addend v w)))
+
+;; A repeated variable is non-linear: the first occurrence binds, the rest
+;; constrain. `(add x x)` above already used this, which is why it matches only
+;; terms whose two arguments are in the SAME class, not merely equal-looking.
+(let same (add a a))
+(let diff (add a b))
+(run 3)
+(check (= same (dbl a)))
+(check (!= diff (dbl a)))
+(check (!= diff (dbl b)))
+
+;; The join fired: `(add a a)` is a doubling of `a`, and `a` is the left addend of
+;; both `(add a a)` and `(add a b)`.
+(check (addend a a))
+(check (addend a b))
+
+;; `:when` adds guard patterns that must also match for the rule to fire. The
+;; guard is a conjunction, evaluated under the bindings the left side made.
+(function known (Expr) Expr)
+(function tag () Expr)
+(function tagged (Expr) Expr)
+(rewrite (mul p p) (tagged p) :when ((= (known p) (tag))))
+
+(let sq_a (mul a a))
+(let sq_b (mul b b))
+;; Only `a` is marked, so only its square gets tagged.
+(union (known a) (tag))
+(run 3)
+(check (= sq_a (tagged a)))
+(check (!= sq_b (tagged b)))
+
+;; `birewrite` really does run backwards: nothing built `(mul b (lit 2))`, but
+;; `(dbl b)` exists via the `add` rule, so the reverse direction produces it.
+(let two_b (add b b))
+(run 3)
+(check (= two_b (dbl b)))
+(check (= two_b (mul b (lit 2))))
