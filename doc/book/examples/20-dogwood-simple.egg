@@ -64,7 +64,9 @@
 (function args (ArgSet) ArgSet :assoc-comm-idem :identity (noArgs))
 (function fnil () Path)
 (function fld (FSeg Path) Path)
-(function win (IBig) Win)
+(function secs (IBig) Win)
+(function mins (IBig) Win)
+(function secsTimes (IBig IBig) Win)
 
 (function request () Kind)
 (function response () Kind)
@@ -108,7 +110,7 @@
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (mins 15)
                    (tAnd
                      (pred (aHttpRequest) (request) healthArgs)
                      (tp (bvar 0))))))
@@ -122,7 +124,7 @@
         (tLte
           (tInt 1)
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (tp (bvar 0))
                      (pred (aHttpRequest) (response) healthArgsFlipped)))))))
@@ -136,7 +138,7 @@
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (pred (aHttpRequest) (request) healthArgs)
                      (tp (bvar 0))))))
@@ -150,7 +152,7 @@
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (pred (aHttpRequest) (response) healthArgs)
                      (tp (bvar 0))))))
@@ -159,8 +161,11 @@
       pathIsDeploy)))
 
 ;; ANCHOR: dogwood-identity
+(rewrite (mins x) (secsTimes x 60))
+(rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
+(check (= (mins 15) (secs 900)))
 ;; ANCHOR_END: dogwood-identity
 
 (check (!= candA candB))

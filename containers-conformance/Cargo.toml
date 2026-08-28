@@ -1,6 +1,6 @@
 [package]
 name = "containers-conformance"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
@@ -10,8 +10,8 @@ publish = false
 # This development-only crate is the only package that depends on both.
 
 [dependencies]
-semi-persistent-containers = { path = "../containers", version = "0.2.0" }
-semi-persistent-containers-verus = { path = "../containers-verus", version = "0.2.0" }
+semi-persistent-containers = { path = "../containers", version = "0.3.0" }
+semi-persistent-containers-verus = { path = "../containers-verus", version = "0.3.0" }
 # The Verus `define_id*!` macros expand `::vstd` paths, so a crate invoking them
 # needs `vstd` in scope even though ghost specifications erase at runtime.
 vstd = "=0.0.0-2026-08-02-0125"
