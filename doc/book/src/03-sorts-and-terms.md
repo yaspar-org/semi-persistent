@@ -95,7 +95,7 @@ declares `Expr` and `Name` as separate sorts. Semper has no subtyping or implici
 coercions between them.
 
 An operator declaration fixes the sort of every term it builds. In the example,
-`(function x () Name)` makes `(x)` a `Name`, while
+`(constructor x () Name)` makes `(x)` a `Name`, while
 `(function f (Name) Expr)` accepts a `Name` and returns an `Expr`. Therefore
 `(f (x))` has sort `Expr`. Each child must have exactly the argument sort
 declared for its position, and the outermost operator determines the term's
@@ -109,10 +109,31 @@ exist.
 
 ## Operators
 
-> `(function f (S1 ... Sn) S :tag*)` and `(constructor ...)`, arguments then result.
-> State what `constructor` adds. List the tags that are not algebraic here, namely
-> `:cost` and `:unextractable`, and say they affect `extract` and not equality;
-> point at chapter 12 for the algebraic ones rather than previewing them.
+An operator declaration lists its argument sorts before its result sort:
+
+```lisp
+{{#include ../examples/03-terms.egg:operator-declarations}}
+```
+
+`add` is binary, `neg` is unary, and the empty argument lists make `x`, `y`,
+and `z` nullary operators. For an ordinary operator, the number of declared
+argument sorts fixes its arity.
+
+`function` and `constructor` have the same sortchecking, congruence, matching,
+and canonization behavior. `constructor` additionally marks the operator as a
+term former. Every variant of a `datatype` receives the same marker. The
+current extractor does not otherwise prefer constructors over functions.
+
+Two declaration tags control extraction. `:cost n` assigns each node of the
+operator a cost of `n`, with a default of 1. `:unextractable` excludes those
+nodes from extraction while leaving them in the e-graph and available for
+matching. Both tags are accepted on functions and constructors. They affect
+which representative `extract` selects, not which terms are equal. Chapter 9
+defines the extraction cost model.
+
+The remaining declaration tags assign algebraic properties. Semper enforces
+them through automatic term canonization rather than rewrite rules. Chapter 12
+defines those properties and their legal combinations.
 
 ## Building a term
 

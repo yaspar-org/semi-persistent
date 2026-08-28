@@ -16,13 +16,15 @@
 ;; An operator declares its argument sorts, then its result sort. Arity is fixed
 ;; by that list unless an algebraic attribute makes the operator variadic
 ;; (chapter 12).
+;; ANCHOR: operator-declarations
 (function add (Expr Expr) Expr)
 (function neg (Expr) Expr)
 
 ;; Nullary operators are the leaves. They take an empty argument list.
-(function x () Name)
-(function y () Name)
-(function z () Name)
+(constructor x () Name)
+(constructor y () Name)
+(constructor z () Name)
+;; ANCHOR_END: operator-declarations
 
 ;; `let` builds the term, inserts it, and binds the name to its e-class. The name
 ;; is then usable wherever a term is expected.
