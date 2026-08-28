@@ -176,10 +176,12 @@ operator's axioms.
 
 - **C**: the canonical form sorts the two arguments by class id. Two C-nodes with
   the same sorted pair are equal by commutativity.
-- **A**: the canonical form flattens nested same-operator applications into a
-  sequence (order preserved, no reassociation needed because associativity makes
-  all bracketings equal). Two A-nodes with the same flattened sequence are equal by
-  associativity.
+- **A**: the canonical form is an order-preserving sequence. `AssocDir::Left`
+  flattens the first-child spine (the sequence denotes a left fold),
+  `AssocDir::Right` flattens the last-child spine (a right fold), and
+  `AssocDir::Both` flattens every nested same-op child under full associativity.
+  Flattening a selected spine preserves the fold denoted by the source term;
+  two A-nodes with the same sequence therefore denote the same application.
 - **AC**: the canonical form flattens and represents the arguments as a multiset
   (sorted with multiplicities). Two AC-nodes with the same multiset are equal by
   associativity and commutativity. Flattening on the class summand-form, not the

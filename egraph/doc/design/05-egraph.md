@@ -212,12 +212,19 @@ pub enum OpKind<S> {
 pub enum AssocDir { Left, Right, Both }
 ```
 
-`AssocDir` records whether the source used `:assoc-left`, `:assoc-right`, or
-`:assoc`. It does not currently select different runtime behavior:
-construction flattens every `OpKind::A` to the same order-preserving sequence,
-and matching reads that representation uniformly. Code that requires
-one-sided/directional semantics must not infer it from this field; implementing
-such semantics would require new canonization and matching behavior.
+`AssocDir` controls how nested applications are folded into the
+order-preserving sequence representation:
+
+| Direction | Surface tag | Construction normal form |
+|-----------|-------------|--------------------------|
+| `Left` | `:assoc-left` | flatten the first-child spine |
+| `Right` | `:assoc-right` | flatten the last-child spine |
+| `Both` | `:assoc` | flatten every nested same-op child |
+
+The distinction is semantic for non-associative folds: with `Left`,
+`f(f(a,b),c)` has the flat form `f(a,b,c)`, but `f(a,f(b,c))` retains its
+grouped right child. Both checked ground terms and rewrite RHS terms pass
+through the same `EGraph::add` canonization.
 
 `A { arg_sort, dir }` also carries the element sort for sort-checking
 variadic children.

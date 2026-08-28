@@ -452,7 +452,9 @@ only as aliases that the parser expands into the basic tags (`:assoc :comm` and
 
 | tags                            | OpKind        | representation     | normal-form merge        |
 |---------------------------------|---------------|--------------------|--------------------------|
-| `:assoc-left` / `-right` / `:assoc` | A         | sequence           | flatten                  |
+| `:assoc-left`                   | A             | sequence           | flatten first-child spine |
+| `:assoc-right`                  | A             | sequence           | flatten last-child spine |
+| `:assoc`                        | A             | sequence           | flatten every same-op child |
 | `:comm` (binary)                | C             | pair               | reorder                  |
 | `:assoc :comm`                  | AC            | **multiset** (ℕ)   | union                    |
 | `:assoc :comm :idempotent`      | ACI           | **set** ({0,1})    | union, clamp to 1        |
@@ -467,7 +469,7 @@ derive structurally.
 | property      | parameter                       | baked? | why                                                              |
 |---------------|---------------------------------|--------|------------------------------------------------------------------|
 | `:comm`       | none                            | yes    | structural (reorder children)                                    |
-| `:assoc`      | source spelling retained for A-only | yes | all three spellings currently use the same structural flattening |
+| `:assoc-left` / `:assoc-right` / `:assoc` | direction encoded by the tag | yes | flatten the selected spine during construction |
 | `:idempotent` | none                            | yes    | reduces to the operand itself; clamp count to 1, no external term |
 | `:identity`   | the unit term `e`               | no     | `e` is op-specific (`0` for `+`, `true` for `and`)               |
 | `:nilpotent`  | the unit `e` (+ optional order n, default 2) | no | the emptied monomial `{}` must canonicalize to a real node = the unit |
@@ -519,6 +521,9 @@ mod-n for `Nilpotent`; idempotent is the one `Set` case (dedup IS its clamp).
 
 The resolver (`sortcheck.rs`) rejects an invalid tag set at registration:
 
+- `:assoc`, `:assoc-left`, and `:assoc-right` are mutually exclusive (repeating the same tag
+  is harmless); directional folds cannot be combined with `:comm`, because that would silently
+  strengthen them to full AC.
 - `:idempotent` and `:nilpotent` are mutually exclusive (cannot clamp to 1 and reduce mod 2).
 - `:idempotent` / `:nilpotent` require `:assoc :comm` (the monomial machinery is AC-based).
 - `:nilpotent` requires `:identity` (it needs the unit to reduce to).

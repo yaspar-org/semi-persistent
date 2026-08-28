@@ -1127,28 +1127,33 @@ where
         ));
     }
 
-    // Collect the tag set into flags. Duplicate/conflicting basic tags are folded; direction
-    // and value tags are captured. Order-independent.
+    // Collect the tag set into flags. Duplicate basic tags are folded; incompatible
+    // associativity directions are rejected. The result is independent of tag order.
     let mut comm = false;
     let mut assoc = false;
-    let mut dir: Option<AssocDir> = None; // set by assoc-left/right
+    let mut dir: Option<AssocDir> = None;
     let mut idempotent = false;
     let mut nilpotent: Option<u8> = None;
     let mut identity: Option<Term> = None;
     let mut cancellative = false;
     let mut inverse: Option<String> = None;
+    let mut set_assoc_dir = |next: AssocDir| -> Result<(), SortError> {
+        if dir.is_some_and(|current| current != next) {
+            return Err(serr(
+                ":assoc, :assoc-left, and :assoc-right are mutually exclusive",
+                Span::Dummy,
+            ));
+        }
+        assoc = true;
+        dir = Some(next);
+        Ok(())
+    };
     for tag in tags {
         match tag {
             AlgTag::Comm => comm = true,
-            AlgTag::Assoc => assoc = true,
-            AlgTag::AssocLeft => {
-                assoc = true;
-                dir = Some(AssocDir::Left);
-            }
-            AlgTag::AssocRight => {
-                assoc = true;
-                dir = Some(AssocDir::Right);
-            }
+            AlgTag::Assoc => set_assoc_dir(AssocDir::Both)?,
+            AlgTag::AssocLeft => set_assoc_dir(AssocDir::Left)?,
+            AlgTag::AssocRight => set_assoc_dir(AssocDir::Right)?,
             AlgTag::Idempotent => idempotent = true,
             AlgTag::Nilpotent(order) => nilpotent = Some(order.unwrap_or(2)),
             AlgTag::Identity(term) => identity = Some(term.clone()),
@@ -1158,6 +1163,12 @@ where
     }
 
     // --- Validation (reject at registration; design §"Validation at registration") ---
+    if comm && matches!(dir, Some(AssocDir::Left) | Some(AssocDir::Right)) {
+        return Err(serr(
+            ":assoc-left/:assoc-right cannot be combined with :comm; use :assoc :comm for AC",
+            Span::Dummy,
+        ));
+    }
     if idempotent && nilpotent.is_some() {
         return Err(serr(
             ":idempotent and :nilpotent are mutually exclusive",
@@ -1317,7 +1328,7 @@ where
                 ret,
                 OpKind::A {
                     arg_sort: args[0],
-                    dir: dir.unwrap_or(AssocDir::Left),
+                    dir: dir.unwrap_or(AssocDir::Both),
                 },
                 meta,
             ))

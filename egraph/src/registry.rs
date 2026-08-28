@@ -23,12 +23,10 @@ pub struct OpRegistryToken {
     completion: VecToken,
 }
 
-/// Source spelling retained for associative-only operators.
+/// Flattening direction for variadic sequence operators.
 ///
-/// All three variants currently use the same flat, order-preserving `Seq`
-/// representation and matching semantics. The value records whether the
-/// declaration used `:assoc-left`, `:assoc-right`, or `:assoc`; no production
-/// path branches on it after registration.
+/// `Left` folds and flattens through the first child, `Right` through the last,
+/// and `Both` through every nested same-op child. All preserve child order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssocDir {
     Left,
