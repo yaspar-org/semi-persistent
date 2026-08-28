@@ -176,12 +176,34 @@ ground term is accepted.
 
 ## Sortchecking
 
-> What is checked at declaration time and what at term construction time. Show one
-> rejected program and quote the real error text. The example file for it carries
-> `;; EXPECT: sort-error`.
->
-> State the honest boundary: sortchecking rejects malformed terms and does not check
-> that a declared algebraic attribute is true of anything. Chapter 26 collects that.
+Semper sort-checks the complete program before executing any command.
+Declarations are processed in source order. An operator declaration is rejected
+if an argument or result sort is unknown. Registration also validates the
+supported shapes and combinations of algebraic tags, including identity sorts
+and inverse signatures. Chapter 12 gives those requirements.
+
+Before a ground term is built, Semper resolves its operator and checks its
+arity. It then checks the children from the leaves upward, requiring each child
+to have exactly the sort declared for its position. Names must resolve to an
+earlier `let` binding, a literal, or a nullary operator.
+
+```lisp
+{{#include ../examples/03-sort-error.egg:sort-error}}
+```
+
+`(x)` has sort `N`, so the inner `(f (x))` has sort `E`. The outer application
+of `f` requires an `N`, not an `E`. The program is rejected before execution:
+
+```text
+sort error: sort error at 165..172: argument 1 of 'f': expected sort 'N', got 'E'
+```
+
+These checks establish that declarations have supported forms and terms are
+well-sorted. Algebraic tags remain assertions about the intended
+interpretation. Sortchecking can validate that a tag combination is supported,
+but it does not prove that the intended operator satisfies the declared laws.
+Once accepted, Semper enforces those laws through canonization. Chapter 26
+collects this and the other obligations left to the program author.
 
 ## Literals
 

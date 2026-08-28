@@ -1,0 +1,11 @@
+;; EXPECT: sort-error
+;; Book chapter 3: a term whose child has the wrong sort.
+
+;; ANCHOR: sort-error
+(sort E)
+(sort N)
+(function f (N) E)
+(constructor x () N)
+
+(f (f (x)))
+;; ANCHOR_END: sort-error
