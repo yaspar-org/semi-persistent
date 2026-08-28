@@ -14,7 +14,7 @@ semi-persistent-containers = { path = "../containers", version = "0.3.0" }
 semi-persistent-containers-verus = { path = "../containers-verus", version = "0.3.0" }
 # The Verus `define_id*!` macros expand `::vstd` paths, so a crate invoking them
 # needs `vstd` in scope even though ghost specifications erase at runtime.
-vstd = "=0.0.0-2026-08-02-0125"
+vstd = "=0.0.0-2026-08-09-0044"
 
 [dev-dependencies]
 proptest = { workspace = true }
