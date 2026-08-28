@@ -24,6 +24,22 @@ register sorts and operators; an AC identity declaration also builds its
 ground unit term at this point. Pattern commands are flattened and resolved.
 Ordinary ground terms are classified and sort-checked without being built.
 
+### Algebraic Signature Invariants
+
+Registration rejects algebraic signatures for which canonization would not be
+well sorted:
+
+- `A`, `AC`, and `ACI` operators are closed over one sort. Their sole argument
+  sort equals their return sort because flattening nests results back into
+  argument positions, and singleton canonization returns the child's e-class.
+- A binary commutative operator has equal argument sorts because canonization
+  may exchange the two positions. Its return sort may differ, as in a
+  commutative equality operator `Eq : E x E -> Bool`.
+
+The surface checker reports these as sort errors. `OpRegistry` asserts the same
+invariants for direct Rust callers, making malformed algebraic metadata
+unrepresentable downstream.
+
 ## `flatten_surface` — Op-Kind Validation
 
 Walks `SurfacePattern` tree, assigns synthetic variable names to

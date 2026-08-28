@@ -1,0 +1,6 @@
+;; EXPECT: sort-error
+;; Regression for the alias spelling: an AC operator is variadic and must use the same
+;; argument and return sort.
+(sort A)
+(sort B)
+(function Bad (A) B :assoc-comm)

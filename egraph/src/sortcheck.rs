@@ -1244,6 +1244,17 @@ where
                     Span::Dummy,
                 ));
             }
+            if args[0] != ret {
+                return Err(serr(
+                    format!(
+                        "associative operator '{name}' must use the same argument and return \
+                         sort (argument '{}', return '{}')",
+                        eg.sorts().name(args[0]),
+                        eg.sorts().name(ret),
+                    ),
+                    Span::Dummy,
+                ));
+            }
             // Partition is derived from the clamp (design "storage partition and clamp are
             // independent"): idempotent → Set (dedup is the sound build canonize); plain AC and
             // nilpotent → MSet (nilpotent needs true multiplicities for the build/recanonize
@@ -1323,6 +1334,17 @@ where
             if args.len() != 1 {
                 return Err(serr(":assoc requires 1 argument sort", Span::Dummy));
             }
+            if args[0] != ret {
+                return Err(serr(
+                    format!(
+                        "associative operator '{name}' must use the same argument and return \
+                         sort (argument '{}', return '{}')",
+                        eg.sorts().name(args[0]),
+                        eg.sorts().name(ret),
+                    ),
+                    Span::Dummy,
+                ));
+            }
             Ok(eg.register_kind_meta(
                 name,
                 ret,
@@ -1343,6 +1365,17 @@ where
             }
             if args.len() != 2 {
                 return Err(serr(":comm requires 2 argument sorts", Span::Dummy));
+            }
+            if args[0] != args[1] {
+                return Err(serr(
+                    format!(
+                        "commutative operator '{name}' must use the same sort for both arguments \
+                         (got '{}' and '{}')",
+                        eg.sorts().name(args[0]),
+                        eg.sorts().name(args[1]),
+                    ),
+                    Span::Dummy,
+                ));
             }
             Ok(eg.register_kind_meta(
                 name,

@@ -174,6 +174,13 @@ requires that the canonical form is sound for the axioms: if two argument tuples
 have the same canonical form, the corresponding applications are equal under the
 operator's axioms.
 
+The registry also enforces the typing premises of those axioms. A commutative
+operator's two argument sorts are equal, so exchanging them is well typed.
+Associative operators are closed over one sort: their argument and return sorts
+are equal, so nesting, flattening, and singleton collapse preserve the sort of
+the represented term. Surface declarations violating either premise are
+rejected before an `OpKind` is registered.
+
 - **C**: the canonical form sorts the two arguments by class id. Two C-nodes with
   the same sorted pair are equal by commutativity.
 - **A**: the canonical form is an order-preserving sequence. `AssocDir::Left`

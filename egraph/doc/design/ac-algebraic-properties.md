@@ -524,6 +524,8 @@ The resolver (`sortcheck.rs`) rejects an invalid tag set at registration:
 - `:assoc`, `:assoc-left`, and `:assoc-right` are mutually exclusive (repeating the same tag
   is harmless); directional folds cannot be combined with `:comm`, because that would silently
   strengthen them to full AC.
+- Associative operators use the same argument and return sort. This makes
+  flattening and singleton collapse well sorted.
 - `:idempotent` and `:nilpotent` are mutually exclusive (cannot clamp to 1 and reduce mod 2).
 - `:idempotent` / `:nilpotent` require `:assoc :comm` (the monomial machinery is AC-based).
 - `:nilpotent` requires `:identity` (it needs the unit to reduce to).

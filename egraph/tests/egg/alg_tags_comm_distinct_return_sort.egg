@@ -1,0 +1,8 @@
+;; EXPECT: ok
+;; A commutative operator's arguments must share a sort, but its return sort may differ.
+(sort E)
+(sort R)
+(function A () E)
+(function B () E)
+(function Same (E E) R :comm)
+(Same (A) (B))

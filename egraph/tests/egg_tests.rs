@@ -468,6 +468,25 @@ egg_test!(
     alg_tags_reject_idem_needs_ac,
     "alg_tags_reject_idem_needs_ac.egg"
 );
+// Algebraic canonization must preserve sorts. Associative singleton collapse returns its
+// only child's class, so A/AC operators are closed over one sort. Commutative sorting can
+// exchange argument positions, so both argument sorts must match (the return may differ).
+egg_test!(
+    alg_tags_reject_a_sort_mismatch,
+    "alg_tags_reject_a_sort_mismatch.egg"
+);
+egg_test!(
+    alg_tags_reject_ac_sort_mismatch,
+    "alg_tags_reject_ac_sort_mismatch.egg"
+);
+egg_test!(
+    alg_tags_reject_comm_sort_mismatch,
+    "alg_tags_reject_comm_sort_mismatch.egg"
+);
+egg_test!(
+    alg_tags_comm_distinct_return_sort,
+    "alg_tags_comm_distinct_return_sort.egg"
+);
 // Idempotent + inverse is rejected: an idempotent group is trivial, so `not` is not an
 // `and`-inverse (it is xor-with-true). See design doc "Inverse is a group inverse, not a
 // complement".

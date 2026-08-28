@@ -1,0 +1,6 @@
+;; EXPECT: sort-error
+;; Singleton collapse makes every associative operator closed over one sort:
+;; f : A -> B would assign (f x) sort B while returning x's A-sorted e-class.
+(sort A)
+(sort B)
+(function Bad (A) B :assoc)
