@@ -1,0 +1,14 @@
+;; EXPECT: ok
+
+;; ANCHOR: first-au
+(sort E)
+(function a () E)
+(function b () E)
+(function f (E E) E)
+
+(let left (f (a) (a)))
+(let right (f (a) (b)))
+
+(antiunify left right :algorithm exact)
+(checkau left right :max_size 4 :algorithm exact)
+;; ANCHOR_END: first-au

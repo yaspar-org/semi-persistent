@@ -1,0 +1,10 @@
+;; EXPECT: sort-error
+;; EVAL: both
+;; Set pattern elements cannot carry multiplicity annotations.
+
+;; ANCHOR: illegal-set-multiplicity
+(sort E)
+(function Set (E) E :assoc-comm-idem)
+(function Mark (E) E)
+(rewrite (Set x:1 ..rest) (Mark x))
+;; ANCHOR_END: illegal-set-multiplicity

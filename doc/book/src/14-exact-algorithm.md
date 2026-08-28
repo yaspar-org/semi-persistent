@@ -1,88 +1,132 @@
 # The exact algorithm
 
-> Chapter contents: the search space as an AND/OR graph over class pairs, the actions
-> available at a state, the recursion and what memoizes it, why cycles in the e-graph
-> need a policy and what the three policies are, the bound that prunes, and what the
-> `exact` certificate quantifies over.
->
-> Sources: design `19-anti-unification.md`, sections 2.1 (AND/OR graphs), 2.2 (cycles
-> as finite derivations), 2.3 (one cycle policy for every algorithm), 3.1 (shared
-> building blocks), 3.2 (exact under the selected cycle policy), 3.4 (action
-> generation per node kind), 9.1 to 9.4 (feasibility, bound, pruning). Appendix C for
-> worked examples.
->
-> Examples: `examples/14-exact.egg`, showing a query on a small pair, the same query
-> under `:cycles pair`, and the `:completion exact` line in the output. If a
-> difference between cycle modes is observable on a small program, show it; the
-> adversarial test `cycle_modes_apply_to_exact_uct_and_both_hybrid_paths` in
-> `egraph/tests/au_adversarial_correctness.rs` has a case where side filtering returns
-> size 9 while the finite derivation has quality `(8, 3)`, which can be reduced to an
-> example file.
->
-> Level: enough that a reader understands what is being searched and why the answer is
-> optimal, not enough to reimplement. No pseudocode longer than the recurrence.
+The exact solver searches the finite action graph induced by two e-classes. Its
+answer is exact for a selected cycle policy, the objective from Chapter 12, and
+the e-graph snapshot supplied to it.
 
 ## The search space
 
-> A state is a pair of e-classes: the subproblem "anti-unify these two classes".
-> OR nodes are states and choose among actions; AND nodes are actions and require
-> every child subproblem to be solved. State the two consequences: the space is a
-> graph rather than a tree because the same pair is reached along many paths, and it
-> is finite in pairs even when the classes denote infinitely many terms.
+A search state asks how to anti-unify two e-classes. It is an **OR node**
+because the solver may choose among several compatible representations of
+those classes. Each choice is an **AND node** because all child-class pairs
+induced by that representation must be solved.
+
+The same ordered class pair can be reached from several parents, so the search
+space is a graph rather than a tree. The graph has finitely many ordered pairs
+even when cyclic e-classes represent infinitely many finite terms.
 
 ## The actions at a state
 
-> The action set, per node kind: generalize, which returns a `Variants` node holding
-> the two sides and is always available; and decompose, one action per pair of e-nodes
-> with compatible operators, whose children are the paired argument subproblems. For
-> AC operators the pairing of children is itself a choice, solved as a transport
-> problem, which is where the branching comes from. Cite design 3.4.
->
-> State the property that makes bounding work and that chapter 12's cost model rests
-> on: generalize is always available at a known size, so no state is ever infeasible.
+Every unequal state has a generalize action:
+`Variants(best(left), best(right))`. It provides an achieved result before any
+structural action is examined. Compatible e-nodes provide the other actions:
+
+| node kind | structural action |
+| --- | --- |
+| equal classes | Return the class's smallest admissible term. |
+| ordinary ordered operator | Pair children positionally when operator and arity agree. |
+| commutative binary operator | Consider the positional and crossed pairings. |
+| associative sequence | Pair positions when the two sequences have equal length. |
+| AC multiset | Solve a minimum-cost transport problem between child multiplicities; a declared identity may pad unequal totals. |
+| ACI set | Solve the corresponding all-one transport problem; a declared identity may pad unequal cardinalities. |
+| literal | Pair only equal values; the action then has no children. |
+| no compatible structure | Use the always-available generalize action. |
+
+The transport formulation materializes child-pair cells rather than all
+complete AC pairings. Multiplicity supplies and demands select how many copies
+of each child pair the composed result contains.
+
+The complete action-generation rules are in
+[`19-anti-unification.md`, section 3.4](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
 
 ## The recursion
 
-> The value of a state is the best over its actions, the value of an action is the
-> composition of its children's values. Give the recurrence in four lines, no more.
-> State that memoization on the state key is what turns the exponential recursion into
-> a search over pairs, and that the key is the class pair together with its cycle
-> context.
+Let `G(q)` be the achieved baseline for state `q`: the smallest admissible term
+when the classes agree, and the generalize result otherwise. Pair-mode Exact
+starts with `G` and repeatedly evaluates every structural action from the
+previous round:
+
+```text
+V0(q)     = G(q)
+Vd+1(q)   = min(Vd(q), compose(a, Vd(children(a))) for each action a)
+```
+
+The minimum uses `(size, variant_mass)`. Pair mode interns each reachable
+ordered pair once and performs synchronous rounds until the values stop
+changing. Side-policy Exact instead memoizes contextual states because its
+cycle filter depends on retained left and right ancestors.
 
 ## Cycles
 
-> Why a class can be its own descendant after saturation, and why refusing to revisit
-> a class is not the same as refusing to loop. State the case that settles it: one
-> side may revisit a class while the ordered pair keeps making progress and later
-> reaches a terminal pair, so side-filtering can exclude a valid finite derivation.
->
-> The three policies as a table: `:cycles sides` (the default, tracks left and right
-> classes independently), `sides-current` (also blocks the current classes), `pair`
-> (tracks ordered pairs, blocks only a repeated subproblem). One line each on what it
-> admits.
->
-> Then the honest part, which the design document states and the book must not soften:
-> the side policies are a provenance choice, not an optimality theorem, and they
-> certify only the optimum of their filtered graph. Pair mode gives the snapshot's
-> grammar its full meaning and is what global optimum evidence is stated in. A
-> completion claim has to name its policy.
+Saturation can merge a class with one of its descendants. Recursion must then
+exclude infinite descent without excluding every finite derivation that crosses
+the cycle.
+
+| option | filtering rule |
+| --- | --- |
+| `:cycles sides` | Default. Track left and right ancestors separately and filter a candidate against those side contexts. |
+| `:cycles sides-current` | Apply the side filter to the current classes as well, producing a stricter contextual graph. |
+| `:cycles pair` | Track ordered class pairs and block only a repeated active pair. |
+
+The side policies are provenance choices. They prevent search from using some
+rewrite-created cyclic structure, and an exact result under either policy is
+optimal only in the graph that policy retains. Pair mode admits a side revisit
+when the other side changes; its pair-cycle-erasure argument says that blocking
+a repeated ordered pair still retains a minimum finite derivation.
+
+The fixture below creates the recursive class
+`cycle = {f(a), h(a, cycle)}` and queries the same operands under all three
+policies:
+
+```lisp
+{{#include ../examples/14-exact.egg:exact-cycle-program}}
+```
+
+It prints:
+
+```text
+(anti-unify :size 9 :cr 1.0000 :completion exact
+  (h a (Variants (h (f a) (f a)) (f a))))
+(anti-unify :size 9 :cr 1.0000 :completion exact
+  (Variants (h a (h (f a) (f a))) (f a)))
+(anti-unify :size 8 :cr 0.8571 :completion exact
+  (h a (h (Variants (f a) a) (f a))))
+```
+
+The hidden qualities are `(9,7)` for `sides`, `(9,9)` for `sides-current`,
+and `(8,3)` for `pair`. The size-eight derivation revisits one side class while
+its partner changes, then reaches a finite terminal pair. Both side policies
+filter that route.
 
 ## Pruning
 
-> Two bounds and what each discards, at one paragraph each: an arm whose lower bound
-> exceeds the always-available generalize size can never be optimal, and an arm whose
-> bound exceeds the state's current incumbent can be dropped because the incumbent is
-> achieved. State that every comparison is strict and on size alone, and why: equality
-> cannot prune because variant mass may still improve. Cite design 9.3 and 9.4.
->
-> Say once that pruning discards an arm and never a term, which is the invariant that
-> keeps the result optimal.
+The solver can compute a size lower bound for a structural action by summing
+child-pair bounds, or by solving a transport problem over those bounds. Two
+implemented comparisons use it:
+
+1. If the bound is greater than the achieved generalize size, the action cannot
+   improve the state.
+2. If the bound is greater than the current achieved incumbent, the action
+   cannot improve that incumbent.
+
+Both comparisons are strict and inspect size only. Equality cannot discard an
+action because an equal-size result may still have smaller variant mass. A
+discarded structural action loses no achieved term and cannot contain the
+lexicographic optimum.
+
+The bound and pruning arguments are in
+[`19-anti-unification.md`, sections 9.1-9.4](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
 
 ## What `:completion exact` means
 
-> The certificate: the returned term is optimal under the objective of chapter 12,
-> within the derivations admitted by the selected cycle policy, over the e-graph as it
-> stands. Three qualifiers, each of which matters to a reader who wants to quote the
-> result. Point at chapter 16 for the third and at design 9.6 for the current proof
-> boundary, and state plainly that the pair-mode optimality argument is a prose
-> argument with regression evidence rather than a machine-checked theorem.
+For this algorithm, `:completion exact` says that the returned term is optimal:
+
+1. under Chapter 12's `(size, variant_mass)` objective;
+2. among derivations admitted by the selected cycle policy; and
+3. over the admissible e-nodes and equalities in the current snapshot.
+
+Chapter 16 measures the consequences of these qualifiers. The pair-mode
+cycle-erasure and round-bound argument is a prose argument supported by
+regressions and a finite oracle, not a machine-checked theorem for the Rust
+solver. The current proof boundary is stated in
+[`19-anti-unification.md`, section 9.6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).

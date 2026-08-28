@@ -674,9 +674,9 @@ which is how a search reports time-to-goal rather than time-to-budget:
 (run fast 50 :until (!= a b))
 ```
 
-The goal is checked before every iteration, including the first, so a
-goal that already holds costs no iterations. Its terms are built once,
-before the run: the same nodes a `(check …)` of the goal would add.
+The goal is checked after rebuild and before every iteration, including the
+first, so a goal that already holds costs no iterations. Its terms are built
+once, before the run: the same nodes a `(check …)` of the goal would add.
 
 ## Statistics
 

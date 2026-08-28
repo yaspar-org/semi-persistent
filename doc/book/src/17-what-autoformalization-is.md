@@ -1,70 +1,89 @@
 # What autoformalization is
 
-> Chapter contents: what an autoformalization pipeline produces, why its output
-> cannot be checked against a reference, what validating and testing and reading each
-> leave undetected, the alternative of comparing several samples against each other,
-> and the two ways that alternative fails.
->
-> Carry over: `v1-draft/04-no-ground-truth.md` is most of this chapter and its
-> argument is sound. Two changes. First, it was written as the book's opening and can
-> now assume everything in Parts I to III, so it should name the tool it is going to
-> reach for rather than motivating from zero. Second, it promises a two-candidate
-> comparison, and the method this part actually uses takes three to five samples and
-> clusters them, so its "Run it twice instead" section becomes "Sample it several
-> times" and hands off to chapter 18.
->
-> Do not put any engine mechanism in this chapter. It states a problem. Chapters 18
-> and 19 give the procedure, and 20 to 22 run it.
+Autoformalization turns a natural-language requirement into a formal artifact.
+This chapter defines the review problem, explains what ordinary checks leave
+unsettled, and introduces comparison across several generated samples.
 
-## The problem
+## From a sentence to an enforced artifact
 
-> A pipeline takes a sentence and produces a formal artifact: a policy, a
-> specification, a formula. The sentence is what somebody wanted, the artifact is what
-> will be enforced. Keep the v1 draft's example sentence and its observation that the
-> person who wrote the sentence and the person who can read the artifact are usually
-> not the same person.
+A formalization pipeline may produce a policy, specification, formula, or
+proof obligation. The sentence records what somebody requested. The generated
+artifact is what another system will enforce, check, or prove.
 
-## Why the obvious checks do not settle it
+Consider this requirement:
 
-> Keep the v1 draft's four, each with the specific thing it leaves undetected:
-> comparing against a reference (there is none, and every technique that assumes a
-> gold answer goes with it), validating (accepts every well-formed artifact that says
-> the wrong thing), testing (finds the bug once you have a trace that exposes it,
-> which means you already suspected it), and reading (a 60-node formula presents 60
-> places where a mistake could be and no ranking over them).
->
-> Keep the instruction to do the second and third anyway. The claim is not that they
-> are useless.
+> The agent may POST to `/deploy`, but only if a health check has already come
+> back 200 in the last 15 minutes.
+
+Its policy must represent the request method, path, event kind, response
+status, and time window. A reviewer who knows the formal language may not know
+the intended policy, while the author of the sentence may not know the formal
+language. Comparing syntax does not resolve that division.
+
+## What the ordinary checks leave open
+
+**Compare against a reference.** A correct reference would settle the question,
+but many autoformalization tasks have no such artifact. Accuracy against a gold
+answer and a diff against expected output are unavailable in that case.
+
+**Validate the artifact.** Validation remains required. It rejects malformed
+terms, unknown fields, and sort errors. It also accepts a well-formed artifact
+that expresses the wrong condition.
+
+**Test the artifact.** Tests remain required as well. A replay exposes a
+missing condition only when its trace exercises the behavior that condition
+would have excluded. The test author must first identify the behavior to test.
+
+**Read the artifact.** Direct review can find every category of error, but a
+large formula gives no ordering over its possible error locations. The
+reviewer reads agreed structure and disputed structure with equal attention.
+
+Validation and testing answer questions that comparison cannot. The method in
+this part supplements them by identifying where samples disagree.
 
 ## Sample it several times
 
-> Sample the same sentence three to five times, or use several formalizers, and
-> compare the samples against each other. Keep the v1 draft's account of what the
-> comparison is for: not deciding which sample is right, but finding the positions
-> where a decision exists at all. Where the samples agree there is nothing to review.
->
-> State the output that would serve this, which chapters 18 and 19 produce: a
-> partition of the samples into groups that are provably the same, and
-> for each pair of groups, the shared structure with every difference marked in place
-> and both readings attached to the mark.
+Generate three to five formalizations of the same sentence, or obtain them
+from several formalizers. The comparison does not treat any sample as a
+reference. It produces two intermediate results:
+
+1. a partition whose members are equal under the declared algebra and asserted
+   domain facts;
+2. an anti-unifier for each pair of clusters, with both readings attached at
+   every localized difference.
+
+Agreement means that this comparison localized no disagreement at that
+position. It does not establish that the agreed reading is correct. Chapters
+18 and 19 construct the partition and the pairwise explanations.
 
 ## Presentational noise
 
-> Keep the v1 list of differences that carry no meaning: conjunct order, which side
-> of an equality a literal sits on, `>= 1` against `1 <=`, `15m` against `900s`, one
-> sample expanding a predicate another left folded. Keep the consequence: a textual
-> diff reports all of them alongside the real disagreements and ranks none, and
-> unsuppressed noise trains the reviewer to skim.
->
-> Now that Part II exists, name where each kind of noise is suppressed: order and
-> repetition by the declaration (chapter 4), a folded predicate by a rewrite rule and
-> a run of saturation (chapter 8), and a unit-arity difference by an identity element
-> (chapter 13).
+Several syntactic differences may preserve the intended meaning: reordered or
+repeated conjuncts, reversed equality operands, `>= 1` versus `1 <=`, 15
+minutes versus 900 seconds, or a named predicate versus its expansion. A text
+diff reports these beside changes to event kinds, connectives, and guards.
+
+Different mechanisms remove or localize different kinds of noise:
+
+| difference | treatment |
+| --- | --- |
+| order and repetition | algebraic declarations from Chapter 4 canonize the terms |
+| a named predicate and its expansion | a Chapter 5 rule followed by Chapter 8 saturation can prove them equal |
+| equivalent literal encodings | the encoder or an explicit rule must normalize them |
+| a missing child of an operator with an identity | Chapter 13's AU alignment pairs it with the identity |
+
+Identity alignment does not make the samples equal. It keeps their shared
+children in the skeleton and localizes the missing child.
 
 ## Correlated errors
 
-> Keep the v1 section. Two samples from one model on one prompt make the same mistake
-> more often than two independent authors would, so agreement is weaker evidence than
-> it looks and the method finds uncorrelated errors only. State it as a bound on what
-> the method claims: it is a way to direct a reviewer's attention, not a soundness
-> argument. Cross-reference chapter 23.
+Samples from one model under one prompt can repeat the same interpretation.
+Agreement among those samples is therefore weaker than agreement among
+independent sources. The repository's
+[formalizer pilot](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/tests/au_formalizer_pilot.rs)
+uses one system and explicitly treats its result as an optimistic bound, not a
+population study.
+
+This method directs review toward uncorrelated differences. It is not a
+soundness argument, and Chapter 23 retains that boundary among the engine's
+other limits.

@@ -1,20 +1,5 @@
 # Sorts and terms
 
-> Chapter contents: the literal models and their built-in sorts, the grammar of
-> declarations and term-building commands, what each command does to the e-graph,
-> and how sortchecking rejects a bad term. Chapters 4 and 5 complete the language
-> with algebraic declarations and rules.
->
-> Example: `examples/03-terms.egg`. Read it before writing and build the chapter
-> around it rather than inventing a new one. Extend it if a section needs a case it
-> does not cover.
->
-> Sources: design `10-surface-language.md`, `11-sortcheck-and-resolution.md`,
-> `13-literal-model.md`, `A1-language-guide.md`.
->
-> Carry over: `v1-draft/02-first-program.md` sections "Sorts and operators" and
-> "Inserting a term" are accurate and already tied to a running file.
-
 ## Literal models
 
 Before declarations are sort-checked, `--types` selects the concrete sorts and

@@ -1,57 +1,75 @@
 # A larger Dogwood policy
 
-> Chapter contents: a rule with several conditions, five sampled encodings, a partition
-> with more than two clusters, the pairwise queries that explain it, one difference that
-> a domain rewrite dissolves and one that it cannot, and the decision a reviewer is left
-> with.
->
-> Example: write `examples/21-dogwood-larger.egg`. Five samples. The partition must move
-> when the domain rewrite is asserted, so the file runs the grid twice, and it must
-> retain at least one real disagreement afterwards. Keep it under a screen and a half.
->
-> Sources: same as chapter 20, and the same scope discipline. Reuse chapter 20's
-> signature where it fits and say that you are reusing it, so the reader is reading new
-> material only.
->
-> This is the chapter that shows the method at the size where a diff stops being usable,
-> so the counts are the argument: how many textual differences, how many clusters, how
-> many decisions.
+Five samples produce three clusters and three representative-pair queries.
+This chapter groups recurring alternatives across those queries so the review
+list grows with distinct decisions rather than with cluster pairs.
 
-## The rule
+## The expanded model
 
-> Quote the English. Several conditions, at least one nested implication or conditional,
-> and at least one numeric comparison, since those are where the two most common
-> formalization errors live.
+The fixture retains Chapter 20's deploy and health-check vocabulary. It adds
+`Lte`, `Ite`, `directCopy`, and `multipartCopy` for a shared ground
+conditional. All five samples contain
+`(Ite (Lte 100 100) (directCopy) (multipartCopy))`. It supplies more shared
+structure but creates no disagreement.
 
-## Five samples
+The samples vary along two dimensions:
 
-> The five encodings. Do not narrate all their differences: state the count and let the
-> clustering find them, since the point of the chapter is that reading them is what the
-> method replaces.
+| sample | health event | `/deploy` guard | presentation |
+| --- | --- | --- | --- |
+| `sampleA1` | response | present | baseline |
+| `sampleA2` | response | present | reordered, repeated guard |
+| `sampleB` | request | present | baseline |
+| `sampleC1` | response | absent | baseline |
+| `sampleC2` | response | absent | reordered, repeated method |
 
-## The partition before the domain facts
+## Three clusters
 
-> The check grid, quoted, with the cluster count. Then one sentence per cluster naming
-> what distinguishes it, derived from the queries in the next section rather than
-> asserted here.
+The complete pair grid records the partition:
 
-## Explaining each pair
+```lisp
+{{#include ../examples/21-dogwood-larger.egg:larger-partition}}
+```
 
-> One `checkau` per cluster pair, quoted. For each, the group or groups it reports and
-> what each group means. Group the discussion by disagreement rather than by pair, since
-> the same position will show up in several pairs, and say that it does.
+Its result is
 
-## A domain fact merges two clusters
+```text
+{sampleA1, sampleA2}  {sampleB}  {sampleC1, sampleC2}
+```
 
-> The rewrite rule that expresses the deployment fact, the run, the new grid, and the
-> new query output. Quote the sizes and the `:cr` values before and after. State the
-> general point once, in the words chapter 18 already established: the partition is
-> relative to what you declared and asserted, and this is how a reviewer discharges a
-> difference they know is not a difference.
+The two presentation-only variants join their corresponding classes during
+construction. Event kind and the missing guard remain separate.
 
-## What is left
+## Three pairwise explanations
 
-> The disagreements that survive, each stated as a decision with both readings, and for
-> each one what would settle it: a schema, a test, or a person who knows what the
-> sentence meant. If one of them is settleable mechanically, settle it and show that.
-> If none is, say so plainly rather than manufacturing a resolution.
+One representative from each cluster gives these queries:
+
+```lisp
+{{#include ../examples/21-dogwood-larger.egg:larger-queries}}
+```
+
+The measured results are:
+
+| pair | size | `:cr` | marked alternatives |
+| --- | ---: | ---: | --- |
+| A, B | 14 | 0.0769 | `response` / `request` |
+| A, C | 15 | 0.2308 | `pathDeploy` / `(Lit true)` |
+| B, C | 16 | 0.3077 | both pairs above |
+
+The identity in the second row means that cluster C omitted one conjunct. It
+does not mean that `pathDeploy` and true are equal.
+
+## Deduplicating recurring decisions
+
+Reading each query independently would present four marker occurrences across
+the table. Grouping the same position and alternatives produces two review
+items:
+
+| review item | cluster pairs | what settles it |
+| --- | --- | --- |
+| request versus response event | A/B and B/C | the Dogwood event schema |
+| require `/deploy` versus omit the path guard | A/C and B/C | the requirement and a policy-owner review |
+
+Semper does not compute this aggregate table. The fixture executes all three
+queries, and the reader groups repeated alternative pairs by their position in
+the shared skeleton. Chapter 19's speculative scope can test either resolution;
+this chapter only reduces the repeated outputs to the distinct decisions.

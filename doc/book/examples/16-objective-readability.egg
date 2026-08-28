@@ -1,0 +1,21 @@
+;; EXPECT: ok
+
+;; ANCHOR: objective-readability
+(sort E)
+(function common () E)
+(function Approved (E bool) E)
+(function Rejected (E bool) E)
+(function Wire (E bool) E)
+
+(let left (Approved (common) false))
+(let right (Rejected (common) true))
+
+(antiunify left right :algorithm exact)
+(checkau left right :max_size 6 :algorithm exact)
+
+(union left (Wire (common) false))
+(union right (Wire (common) true))
+
+(antiunify left right :algorithm exact)
+(checkau left right :max_size 4 :algorithm exact)
+;; ANCHOR_END: objective-readability

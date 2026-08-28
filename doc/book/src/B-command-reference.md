@@ -3,10 +3,9 @@
 > Annex contents: every command the interpreter accepts, in seven groups:
 > declaring, building terms, rules, running, asserting, querying, and scoping.
 >
-> Carry over: `v1-draft/10-commands.md` almost verbatim. It is complete against the
-> parser as of this writing and its tables are correct. Two changes are required:
-> delete the seven "This section ..." openers it still carries, and renumber every
-> cross-reference to the new chapter numbers.
+> Use `v1-draft/10-commands.md` only as a checklist of command names. Rebuild the
+> reference as compact signatures and links; do not carry over its full declaration,
+> rule, anti-unification, or scope explanations.
 >
 > Verify before writing: the command names in `egraph/src/parser.rs`. The set is
 > sort, function, constructor, datatype, ruleset, let, union, rewrite,
@@ -29,18 +28,8 @@
 Algebraic properties are attached to operator declarations and individual
 datatype variants as tags. They determine an operator's representation and
 required arity. [Chapter 4](04-declaring-algebra.md) gives their laws, legal
-combinations, and exact arity rules.
-
-```text
-:assoc-comm-idem | :assoc-comm | :assoc | :assoc-left | :assoc-right | :comm
-:idempotent | :nilpotent [unsigned-integer] | :identity term
-:cancellative | :inverse identifier
-:cost unsigned-integer | :unextractable
-```
-
-Square brackets mark an optional argument. Tags may be combined in any order.
-`:assoc-comm` and `:assoc-comm-idem` are aliases for their corresponding basic
-tags. `:cost` and `:unextractable` affect extraction, not equality.
+combinations, and exact arity rules. [Chapter 3](03-sorts-and-terms.md)
+defines the extraction tags. Annex A contains the complete declaration grammar.
 
 ## Building terms
 
@@ -57,10 +46,10 @@ explains term construction in detail.
 
 ## Rules
 
-> Keep every rule form in this one reference section: the three core forms and
-> action grammar; `:when`, `:subsume`, and `:ruleset`; then the rest,
-> multiplicity, splice, and sequence, multiset, and set comprehension syntax.
-> Link chapter 5 for semantics and examples rather than explaining them again.
+> Give one compact signature row for `rewrite`, `birewrite`, and `rule`, followed
+> by links to chapter 5 for semantics and Annex A for the complete pattern,
+> action, multiplicity, splice, and comprehension grammar. Do not reproduce that
+> grammar here.
 
 ## Running
 
@@ -77,10 +66,10 @@ explains term construction in detail.
 ## Querying
 
 > Table of the commands that print: `extract`, `antiunify`, `checkau`,
-> `print-size`, `print-stats`. The shared anti-unification option grammar as a
-> `text` block, with the link to chapters 12 through 15.
+> `print-size`, `print-stats`. Link Annex A for anti-unification option syntax
+> and chapters 12 through 15 for behavior; do not repeat the option grammar.
 
 ## Scoping
 
-> `(push)`, `(push :shrink)`, `(pop)`. One paragraph on what they cost, with the
-> link to chapter 7, which is where the mechanism is explained.
+> Table rows for `(push)`, `(push :shrink)`, and `(pop)`, with a link to chapter
+> 7. Do not repeat the implementation cost model.

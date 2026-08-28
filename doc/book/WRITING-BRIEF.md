@@ -14,6 +14,55 @@ the application the book exists to explain.
 The audience knows what a term rewriting system is and does not know this engine.
 Assume no familiarity with e-graphs, equality saturation, or anti-unification.
 
+## Ownership and reuse
+
+Use a strict define-once, apply-later rule. A later chapter links to the
+authoritative chapter instead of teaching the same mechanism again.
+
+- Chapter 3 owns sorts, literals, declarations, and ground-term construction.
+- Chapter 4 owns algebraic laws, legality, arity, inverse, and cancellativity.
+- Chapter 5 owns every rule, pattern, remainder, multiplicity, and comprehension
+  form. Annex A alone owns the complete formal grammar.
+- Chapter 6 owns e-nodes, e-classes, hash-consing, union-find, generic
+  congruence, and rebuild.
+- Chapter 7 owns push/pop behavior, cost, nesting, and `:shrink`.
+- Chapter 8 owns round ordering, `run`, saturation, extraction, and statistics.
+- Chapter 9 assumes Chapter 8 and explains only the delta optimization and
+  full-index fallback cases.
+- Chapter 10 owns physical child representations and the canonization pipeline.
+  It uses one representation table and one canonization example.
+- Chapter 11 owns the additional equalities obtained in plain, eager, and lazy
+  completion. Use its counterexample and comparison table; detailed limits
+  belong to Chapter 23.
+- Chapter 12 owns the AU definition, `Variants`, output fields, and objective.
+- Chapter 13 measures the effect of declared algebra on AU output without
+  redefining the declarations.
+- Chapter 14 is authoritative for pair-graph search, cycle policies, pruning,
+  and the exact certificate.
+- Chapter 15 explains only UCT playouts, shared-node bookkeeping, closure, and
+  hybrid exact calls. It links to Chapter 14 for cycle and pruning semantics.
+- Chapter 16 measures the consequences of the three optimality qualifiers. It
+  does not redefine the objective, cycle modes, or completion.
+- Chapter 17 owns motivation, presentational noise, and correlated errors.
+- Chapter 18 owns clustering and troubleshooting.
+- Chapter 19 owns pairwise cluster explanations and speculative resolution. It
+  demonstrates Chapter 7 scopes without explaining them again.
+- Chapter 20 is the small end-to-end application.
+- Chapter 21 covers scale, several clusters, and deduplication of recurring
+  disagreements. It does not add another domain-rewrite lesson.
+- Chapter 22 owns the two-unit result, readability, domain-specific resolution,
+  and the UCT cross-check. It does not reteach clustering.
+- Chapter 23 intentionally repeats limits, but each is one short paragraph with
+  a link to its authoritative chapter.
+
+Display a complete program once. A later chapter includes only the new query,
+changed declaration or rule, or resulting output. Chapters 18 and 19 share one
+fixture. Chapters 20 through 22 do not repeat the grid-and-query procedure.
+Delete "What comes next" sections that only summarize the following chapter.
+
+Annex A contains only the complete grammar. Annex B contains compact command
+signatures and links. Annex C contains flag/default/effect tables and links.
+
 ## Where things live
 
 | path | what |
@@ -80,29 +129,6 @@ Every number, size, ratio and error string quoted in the book is captured by
 running the engine. Never write a plausible one. Build the binary once
 (`cargo build --release`) and run the example to get the text.
 
-## The example files that already exist
-
-These were written for the discarded structure, run green, and have been renumbered
-to the new chapters. Their bodies are good. Their header comments still carry v1
-chapter numbers and, in a few files, the old name of a sibling file, so each header
-needs correcting when its chapter is written. Do not renumber them again.
-
-| file | chapter | header says |
-| --- | --- | --- |
-| `03-terms.egg` | 3 | chapter 3, and a forward reference to "chapter 6" that is now chapter 7 |
-| `04-rewrite-rules.egg` | 4 | chapter 4 |
-| `09-saturation.egg` | 9 | chapter 5, and a reference to "chapter 4" that is now 7 |
-| `11-node-kinds.egg` | 11 | chapter 6 |
-| `11-clamping.egg` | 11 | chapter 8 |
-| `11-illegal-clamp.egg` | 11 | chapter 8 |
-| `12-illegal-seq-identity.egg` | 12 | chapter 11, and a reference to "chapter 8" that is now 11 |
-| `13-rules-over-set.egg` | 13 | chapter 9, and a reference to "chapter 10" that is now 13 |
-| `13-rules-over-mset.egg` | 13 | chapter 10 |
-| `13-rules-over-seq.egg` | 13 | chapter 11, plus the old path `11-illegal-seq-identity.egg` |
-| `14-cc-plain.egg`, `14-cc-eager.egg`, `14-cc-lazy.egg` | 14 | chapter 13, plus the old name `13-cc-plain.egg` |
-| `16-identity-arity.egg` | 16 | chapter 3 |
-| `19-au-plain.egg`, `19-au-eager.egg`, `19-au-lazy.egg` | 19 | chapter 14, plus the old name `14-au-plain.egg` |
-
 ## Verification loop
 
 ```bash
@@ -121,7 +147,7 @@ cross-references name the heading in prose as well as linking the file.
 - The untracked `autoformalization/` folder is a scratch experiment. Nothing in
   the book may reference it, include from it, or depend on it. Any example it
   once held gets rewritten as a self-contained file in `examples/`.
-- Book work is committed on `docs/semper-book`, never on `main`.
+- Book work is committed on a feature branch, never directly on `main`.
 - Design documents are the source of truth for internals and are linked as
   `https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/NN-name.md`.
   The book states what a reader needs and points at the design chapter for the

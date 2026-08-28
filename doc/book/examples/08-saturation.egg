@@ -1,104 +1,46 @@
 ;; EXPECT: ok
-;; Book chapter 8: equality saturation and run termination.
-;;
-;; Declaring a rule does not apply it. `(run N)` does, for at most `N` rounds. A
-;; round matches every rule against the whole graph and applies every match it
-;; found, so rules see each other's output only in the next round.
+;; EVAL: naive
+;; Book chapter 8: saturation, statistics, and goal-directed stopping.
 
+;; ANCHOR: saturation
 (sort N)
 (function z () N)
 (function s (N) N)
 (function dbl (N) N)
 
-;; Doubling, by structural recursion on the numeral. Note `(z)` and not `z`: inside
-;; a rule a bare identifier is a pattern VARIABLE, so `(rewrite (dbl z) z)` would
-;; say `dbl` is the identity on everything, and would collapse every numeral into
-;; one class. Chapter 5 has the general statement of this.
 (rewrite (dbl (z)) (z))
 (rewrite (dbl (s x)) (s (s (dbl x))))
 
 (let two (s (s z)))
 (let four (s (s (s (s z)))))
-
-;; ── A bounded run ────────────────────────────────────────────────────────────
-;; One round rewrites `(dbl (s (s z)))` to `(s (s (dbl (s z))))` and no further,
-;; because the inner `(dbl (s z))` did not exist when the round started.
 (let d2 (dbl two))
+
+;; The first iteration exposes another recursive dbl application.
 (run 1)
 (check (!= d2 four))
 
-;; Two more rounds finish it.
+;; Two more iterations finish this input.
 (run 2)
 (check (= d2 four))
 
-;; Three more rounds and the whole rule set has nothing left to match. That is
-;; SATURATION, and it is the state a run wants to reach: every consequence of the
-;; rules is in the graph, so a `!=` check over it is meaningful and not just a
-;; statement that the budget ran out.
+;; This run reaches an action-counter fixpoint before its bound.
 (let d4 (dbl four))
 (let eight (s (s (s (s (s (s (s (s z)))))))))
 (run 10)
 (check (= d4 eight))
-
-;; `(print-stats)` reports the graph as it stands plus the last run's counters,
-;; including whether that run saturated. It is how you tell "no more work" from
-;; "ran out of budget", which the checks above cannot distinguish. This one reports
-;; `saturated: true` after three iterations.
 (print-stats)
+;; ANCHOR_END: saturation
 
-;; ── `:until` stops the moment a goal is met ──────────────────────────────────
-;; Plenty of useful rule sets never saturate. This one generates a fresh numeral
-;; every round and unions it with the previous, so `(run 100)` would run all 100
-;; rounds and mint 100 nodes on the way.
+;; ANCHOR: until-goal
 (function up (N) N)
 (rewrite (up x) (up (s x)))
 
-;; With a goal, the driver polls after every round and returns as soon as the two
-;; terms are in one class. The budget becomes an upper bound rather than a target,
-;; and the run below stops in a handful of rounds.
+;; The rewrite can keep producing larger terms. The equality goal stops this
+;; run before the iteration bound.
 (run 100 :until (= (up z) (up (s (s (s z))))))
 (check (= (up z) (up (s (s (s z))))))
-;; `goal-met: true` and `saturated: false`: it stopped because the question was
-;; answered, not because there was no work left. Neither `!=` nor a node count is
-;; trustworthy over a graph in that state.
 (print-stats)
+;; ANCHOR_END: until-goal
 
-;; ── The three forms of `check` ───────────────────────────────────────────────
-;; `(check (= a b))` and `(check (!= a b))` assert about the equality relation, and
-;; they are the two that can fail. `(check t)` builds `t` and asserts only that it
-;; sort-checks; it is not a presence test, and it inserts the term.
-(check (= (dbl z) z))
-(check (!= (s z) z))
-(check (!= two four))
-(check (dbl (dbl two)))
-
-;; ── push and pop ─────────────────────────────────────────────────────────────
-;; `(push)` marks the graph and `(pop)` restores it. This is the semi-persistence
-;; the engine is named for, and it rewinds three things together: the equality
-;; relation, the nodes minted since the mark, and the rules and `let` bindings
-;; declared since the mark.
-(function p (N) N)
-(function q (N) N)
-
-(check (!= (p z) (q z)))
-
-(push)
-;; A rule declared inside the transaction.
-(rewrite (p x) (q x))
-(run 3)
-(check (= (p z) (q z)))
-;; An assertion made inside the transaction.
-(union (s z) z)
-(check (= (s z) z))
-(pop)
-
-;; Both are gone. The `p`-to-`q` rule is no longer declared, so running again does
-;; not rederive that equality, and the asserted equation is no longer asserted. The
-;; rules from before the mark are untouched and still run.
-(run 3)
-(check (!= (p z) (q z)))
-(check (!= (s z) z))
-
-;; The state from before the mark survived untouched.
-(check (= d2 four))
+;; Keep an assertion after the final diagnostic command.
 (check (= d4 eight))

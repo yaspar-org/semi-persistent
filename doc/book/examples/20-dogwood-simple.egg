@@ -1,0 +1,44 @@
+;; EXPECT: ok
+;; EVAL: both
+;; A first-order model of one fragment of a Dogwood policy.
+
+;; ANCHOR: dogwood-simple
+(sort Formula)
+(sort EventKind)
+
+(function Lit (bool) Formula)
+(function All (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function request () EventKind)
+(function response () EventKind)
+(function methodPost () Formula)
+(function pathDeploy () Formula)
+(function successfulHealth (EventKind IBig IBig) Formula)
+
+(let sampleA
+  (All
+    (methodPost)
+    (pathDeploy)
+    (successfulHealth (response) 200 900)))
+
+;; The same conditions, reordered, with one duplicate.
+(let sampleB
+  (All
+    (successfulHealth (response) 200 900)
+    (methodPost)
+    (methodPost)
+    (pathDeploy)))
+
+;; The event kind changes from response to request.
+(let sampleC
+  (All
+    (methodPost)
+    (pathDeploy)
+    (successfulHealth (request) 200 900)))
+
+(check (= sampleA sampleB))
+(check (!= sampleA sampleC))
+(check (!= sampleB sampleC))
+
+(antiunify sampleA sampleC :algorithm exact)
+(checkau sampleA sampleC :max_size 8 :algorithm exact)
+;; ANCHOR_END: dogwood-simple

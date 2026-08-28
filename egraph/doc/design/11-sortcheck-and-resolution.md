@@ -145,6 +145,25 @@ whether `x` is already bound. In the RHS, a global becomes
 with `eg.find`. The binding array itself is not continuously rewritten to
 canonical representatives.
 
+### RHS Collection Sorts
+
+`ResolvedQuery` records the element sort of every `SeqVarId`, `SetVarId`, and
+`MsetVarId`. Reusing one rest name at two different element sorts is rejected
+while the query is resolved.
+
+RHS resolution uses this metadata in two ways. A direct `..rest` splice must
+have the destination operator's element sort. A comprehension binder has the
+source collection's element sort, while its body has the destination
+operator's element sort. The latter permits a typed map from one sort to
+another, such as `..[(F x) for x in rest]` with `F : A -> B`, without treating
+the source `x` as a `B`.
+
+Splices, comprehensions, and multiplicity annotations are legal only as
+children of variadic operators. Fixed-arity RHS applications must supply their
+declared number of ordinary children. These checks keep malformed child arrays
+from reaching `EGraph::add`, whose sort and arity assertions are debug-only
+invariants rather than user-facing validation.
+
 ## `check_term` — Ground Term Sort-Checking
 
 Walks `Term` bottom-up:

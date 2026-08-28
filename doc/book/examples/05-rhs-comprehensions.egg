@@ -82,3 +82,22 @@
 (run 1)
 (check (= scoped (ScopeSeq (F c) (F marker) (Keep a))))
 ;; ANCHOR_END: comprehension-scope
+
+;; ANCHOR: multiplicity-as-term
+;; A query multiplicity can fill an i64 term or primitive argument.
+(function Count (i64) E)
+(function CountPair (E E) E)
+(function MeasureBag (E) E :assoc-comm)
+(function MeasureBox (E E) E)
+
+(rewrite (MeasureBox (Num offset)
+                     (MeasureBag element:count ..rest))
+         (CountPair
+           (Count count)
+           (Count (i64::+ count offset))))
+
+(let measured
+  (MeasureBox (Num 10) (MeasureBag a a a)))
+(run 1)
+(check (= measured (CountPair (Count 3) (Count 13))))
+;; ANCHOR_END: multiplicity-as-term

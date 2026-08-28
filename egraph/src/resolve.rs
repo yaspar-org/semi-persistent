@@ -607,7 +607,26 @@ pub struct ResolvedQuery<O, S, L> {
     pub atoms: Vec<RAtom<O, S, L>>,
     pub shape: MatchShape,
     pub var_sorts: Vec<Option<S>>,
+    pub seq_sorts: Vec<S>,
+    pub set_sorts: Vec<S>,
+    pub mset_sorts: Vec<S>,
     pub mult_intervals: Vec<(MultVarId, u64, u64)>,
+}
+
+struct RestSorts<S> {
+    seqs: Vec<S>,
+    sets: Vec<S>,
+    msets: Vec<S>,
+}
+
+impl<S> Default for RestSorts<S> {
+    fn default() -> Self {
+        Self {
+            seqs: Vec::new(),
+            sets: Vec::new(),
+            msets: Vec::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -707,6 +726,7 @@ where
 {
     let mut shape = MatchShape::default();
     let mut var_sorts: Vec<Option<S>> = Vec::new();
+    let mut rest_sorts = RestSorts::default();
     let mut resolved = Vec::with_capacity(fq.atoms.len());
 
     for atom in &fq.atoms {
@@ -717,6 +737,7 @@ where
             model,
             &mut var_sorts,
             &mut shape,
+            &mut rest_sorts,
             globals,
         )?);
     }
@@ -729,6 +750,9 @@ where
         atoms: resolved,
         shape,
         var_sorts,
+        seq_sorts: rest_sorts.seqs,
+        set_sorts: rest_sorts.sets,
+        mset_sorts: rest_sorts.msets,
         mult_intervals,
     })
 }
@@ -791,6 +815,37 @@ fn iv<S: Copy>(
     Ok(id)
 }
 
+fn bind_rest_sort<S: DenseId + Copy, const TRACK: bool>(
+    slots: &mut Vec<S>,
+    id: usize,
+    name: &str,
+    kind: &str,
+    actual: S,
+    sorts: &SortRegistry<S, TRACK>,
+    span: Span,
+) -> R<()> {
+    match slots.get(id).copied() {
+        Some(previous) if previous != actual => Err(err(
+            format!(
+                "{kind} rest variable '{name}' is used with element sorts '{}' and '{}'",
+                sorts.name(previous),
+                sorts.name(actual)
+            ),
+            span,
+        )),
+        Some(_) => Ok(()),
+        None => {
+            assert_eq!(
+                id,
+                slots.len(),
+                "rest variable IDs must be allocated densely"
+            );
+            slots.push(actual);
+            Ok(())
+        }
+    }
+}
+
 /// Resolve a child name to PatVar: global if in globals map, else local VarId.
 /// For local vars in concrete sort positions, auto-lifts to LitBind.
 fn resolve_child<O, S, L, const TRACK: bool>(
@@ -849,6 +904,7 @@ fn resolve_atom<O, S, L, M, const TRACK: bool>(
     model: &M,
     var_sorts: &mut Vec<Option<S>>,
     shape: &mut MatchShape,
+    rest_sorts: &mut RestSorts<S>,
     globals: &GlobalCtx<S, impl Copy>,
 ) -> R<Vec<RAtom<O, S, L>>>
 where
@@ -1100,10 +1156,20 @@ where
                 )?;
                 fids.push(pv);
             }
+            let pre = shape.intern_seq(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                pre.idx(),
+                rest,
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::APrefix {
                 node: nid,
                 op: op_id,
-                pre: shape.intern_seq(rest).map_err(|m| err(m, *span))?,
+                pre,
                 fixed: fids,
             }])
         }
@@ -1134,11 +1200,21 @@ where
                 )?;
                 fids.push(pv);
             }
+            let suf = shape.intern_seq(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                suf.idx(),
+                rest,
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ASuffix {
                 node: nid,
                 op: op_id,
                 fixed: fids,
-                suf: shape.intern_seq(rest).map_err(|m| err(m, *span))?,
+                suf,
             }])
         }
         Atom::ABoth {
@@ -1169,12 +1245,32 @@ where
                 )?;
                 fids.push(pv);
             }
+            let pre = shape.intern_seq(pre).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                pre.idx(),
+                shape.seq_name(pre),
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
+            let suf = shape.intern_seq(suf).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.seqs,
+                suf.idx(),
+                shape.seq_name(suf),
+                "sequence",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ABoth {
                 node: nid,
                 op: op_id,
-                pre: shape.intern_seq(pre).map_err(|m| err(m, *span))?,
+                pre,
                 fixed: fids,
-                suf: shape.intern_seq(suf).map_err(|m| err(m, *span))?,
+                suf,
             }])
         }
 
@@ -1210,11 +1306,21 @@ where
             check_ac_mode(&info.kind, op, *span)?;
             unify_var(nid, info.return_sort, var_sorts, &shape.nodes, sorts, *span)?;
             let relems = resolve_ac_elems(elems, s, var_sorts, shape, sorts, *span, globals)?;
+            let rest_id = shape.intern_mset(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.msets,
+                rest_id.idx(),
+                rest,
+                "multiset",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ACSub {
                 node: nid,
                 op: op_id,
                 elems: relems,
-                rest: shape.intern_mset(rest).map_err(|m| err(m, *span))?,
+                rest: rest_id,
             }])
         }
         Atom::ACIExact {
@@ -1277,11 +1383,21 @@ where
                 )?;
                 eids.push(pv);
             }
+            let rest_id = shape.intern_set(rest).map_err(|m| err(m, *span))?;
+            bind_rest_sort(
+                &mut rest_sorts.sets,
+                rest_id.idx(),
+                rest,
+                "set",
+                s,
+                sorts,
+                *span,
+            )?;
             Ok(vec![RAtom::ACISub {
                 node: nid,
                 op: op_id,
                 elems: eids,
-                rest: shape.intern_set(rest).map_err(|m| err(m, *span))?,
+                rest: rest_id,
             }])
         }
     }
@@ -1779,6 +1895,9 @@ enum RhsLocalBinding {
 pub struct RhsResolveCtx<'a, S> {
     pub query_shape: &'a MatchShape,
     query_node_sorts: Vec<Option<S>>,
+    query_seq_sorts: &'a [S],
+    query_set_sorts: &'a [S],
+    query_mset_sorts: &'a [S],
     local_node_scopes: Vec<HashMap<String, RhsLocalVarId>>,
     local_mult_scopes: Vec<HashMap<String, RhsLocalMultVarId>>,
     local_node_sorts: Vec<Option<S>>,
@@ -1788,15 +1907,33 @@ pub struct RhsResolveCtx<'a, S> {
 }
 
 impl<'a, S: DenseId> RhsResolveCtx<'a, S> {
-    pub fn new(query_shape: &'a MatchShape, query_node_sorts: &[Option<S>]) -> Self {
+    pub fn new<O, L>(query: &'a ResolvedQuery<O, S, L>) -> Self {
         assert_eq!(
-            query_shape.num_vars(),
-            query_node_sorts.len(),
+            query.shape.num_vars(),
+            query.var_sorts.len(),
             "query node sorts must match the query shape"
         );
+        assert_eq!(
+            query.shape.seqs.len(),
+            query.seq_sorts.len(),
+            "query sequence sorts must match the query shape"
+        );
+        assert_eq!(
+            query.shape.sets.len(),
+            query.set_sorts.len(),
+            "query set sorts must match the query shape"
+        );
+        assert_eq!(
+            query.shape.msets.len(),
+            query.mset_sorts.len(),
+            "query multiset sorts must match the query shape"
+        );
         Self {
-            query_shape,
-            query_node_sorts: query_node_sorts.to_vec(),
+            query_shape: &query.shape,
+            query_node_sorts: query.var_sorts.clone(),
+            query_seq_sorts: &query.seq_sorts,
+            query_set_sorts: &query.set_sorts,
+            query_mset_sorts: &query.mset_sorts,
             local_node_scopes: Vec::new(),
             local_mult_scopes: Vec::new(),
             local_node_sorts: Vec::new(),
@@ -1804,6 +1941,18 @@ impl<'a, S: DenseId> RhsResolveCtx<'a, S> {
             next_local_node: 0,
             next_local_mult: 0,
         }
+    }
+
+    fn seq_sort(&self, id: SeqVarId) -> S {
+        self.query_seq_sorts[id.idx()]
+    }
+
+    fn set_sort(&self, id: SetVarId) -> S {
+        self.query_set_sorts[id.idx()]
+    }
+
+    fn mset_sort(&self, id: MsetVarId) -> S {
+        self.query_mset_sorts[id.idx()]
     }
 
     pub fn local_shape(&self) -> RhsLocalShape {
@@ -2243,6 +2392,23 @@ pub fn resolve_rhs<
                         span,
                     ));
                 }
+                if !variadic
+                    && matches!(
+                        c,
+                        crate::ast::RhsChild::Splice(..)
+                            | crate::ast::RhsChild::SetComp { .. }
+                            | crate::ast::RhsChild::MsetComp { .. }
+                            | crate::ast::RhsChild::SeqComp { .. }
+                    )
+                {
+                    return Err(err(
+                        format!(
+                            "RHS rest splices and comprehensions require a variadic \
+                             operator; '{op}' has fixed arity"
+                        ),
+                        span,
+                    ));
+                }
                 let cs = child_sorts.get(i).copied();
                 rchildren.push(resolve_rhs_child(c, cs, ops, sorts, model, ctx, globals)?);
             }
@@ -2363,10 +2529,13 @@ fn arg_sorts_for_rhs<S: DenseId + Copy>(
 ) -> R<Vec<S>> {
     match kind {
         OpKind::Normal { arg_sorts } => {
-            // For RHS, allow sugar: don't check arity strictly if variadic children (splices/comps) present
+            check_arity(op, arg_sorts.len(), nchildren, span)?;
             Ok(arg_sorts.clone())
         }
-        OpKind::Commutative { arg_sorts } => Ok(arg_sorts.to_vec()),
+        OpKind::Commutative { arg_sorts } => {
+            check_arity(op, 2, nchildren, span)?;
+            Ok(arg_sorts.to_vec())
+        }
         OpKind::A { arg_sort, .. }
         | OpKind::MSet { arg_sort, .. }
         | OpKind::Set { arg_sort, .. } => {
@@ -2410,7 +2579,7 @@ fn resolve_rhs_child<
                 mult: m,
             })
         }
-        RhsChild::Splice(name, span) => resolve_splice(name, *span, ctx),
+        RhsChild::Splice(name, span) => resolve_splice(name, *span, sort, sorts, ctx),
         RhsChild::SetComp {
             body,
             var,
@@ -2420,9 +2589,10 @@ fn resolve_rhs_child<
             ..
         } => {
             let source_id = lookup_set(source, *span, ctx)?;
+            let source_sort = ctx.set_sort(source_id);
             ctx.push_scope();
             let resolved = (|| {
-                let vid = ctx.alloc_node(var, sort, *span)?;
+                let vid = ctx.alloc_node(var, Some(source_sort), *span)?;
                 let rbody = resolve_rhs(body, sort, ops, sorts, model, ctx, globals)?;
                 let rfilter = filter
                     .as_ref()
@@ -2452,9 +2622,10 @@ fn resolve_rhs_child<
             ..
         } => {
             let source_id = lookup_mset(source, *span, ctx)?;
+            let source_sort = ctx.mset_sort(source_id);
             ctx.push_scope();
             let resolved = (|| {
-                let vid = ctx.alloc_node(var, sort, *span)?;
+                let vid = ctx.alloc_node(var, Some(source_sort), *span)?;
                 let mult_var_id = ctx.alloc_mult(mult_var, *span)?;
                 let rbody = resolve_rhs(body, sort, ops, sorts, model, ctx, globals)?;
                 let resolved_mult = resolve_mult_expr(mult, *span, ctx)?;
@@ -2486,9 +2657,10 @@ fn resolve_rhs_child<
             ..
         } => {
             let source_id = lookup_seq(source, *span, ctx)?;
+            let source_sort = ctx.seq_sort(source_id);
             ctx.push_scope();
             let resolved = (|| {
-                let vid = ctx.alloc_node(var, sort, *span)?;
+                let vid = ctx.alloc_node(var, Some(source_sort), *span)?;
                 let rbody = resolve_rhs(body, sort, ops, sorts, model, ctx, globals)?;
                 let rfilter = filter
                     .as_ref()
@@ -2539,9 +2711,11 @@ fn require_literal_filter<O, S, L>(
 // Rest/mult variable lookup helpers
 // ---------------------------------------------------------------------------
 
-fn resolve_splice<O, S: DenseId, L>(
+fn resolve_splice<O, S: DenseId + Copy, L, const TRACK: bool>(
     name: &str,
     span: Span,
+    expected_sort: Option<S>,
+    sorts: &SortRegistry<S, TRACK>,
     ctx: &RhsResolveCtx<'_, S>,
 ) -> R<RRhsChild<O, S, L>> {
     if let Some(local) = ctx.local_binding(name) {
@@ -2553,28 +2727,47 @@ fn resolve_splice<O, S: DenseId, L>(
             span,
         ));
     }
-    match ctx.query_shape.kinds.get(name).copied() {
-        Some(VarKind::Seq) => Ok(RRhsChild::SpliceSeq(
-            ctx.query_shape
+    let (child, actual_sort) = match ctx.query_shape.kinds.get(name).copied() {
+        Some(VarKind::Seq) => {
+            let id = ctx
+                .query_shape
                 .find_seq(name)
-                .expect("query sequence kind must have an id"),
-        )),
-        Some(VarKind::Set) => Ok(RRhsChild::SpliceSet(
-            ctx.query_shape
+                .expect("query sequence kind must have an id");
+            (RRhsChild::SpliceSeq(id), ctx.seq_sort(id))
+        }
+        Some(VarKind::Set) => {
+            let id = ctx
+                .query_shape
                 .find_set(name)
-                .expect("query set kind must have an id"),
-        )),
-        Some(VarKind::Mset) => Ok(RRhsChild::SpliceMset(
-            ctx.query_shape
+                .expect("query set kind must have an id");
+            (RRhsChild::SpliceSet(id), ctx.set_sort(id))
+        }
+        Some(VarKind::Mset) => {
+            let id = ctx
+                .query_shape
                 .find_mset(name)
-                .expect("query multiset kind must have an id"),
-        )),
+                .expect("query multiset kind must have an id");
+            (RRhsChild::SpliceMset(id), ctx.mset_sort(id))
+        }
         Some(kind) => Err(err(
             format!("'{name}' is a {}, not a rest variable", kind.label()),
             span,
-        )),
-        None => Err(err(format!("unknown rest variable '{name}'"), span)),
+        ))?,
+        None => Err(err(format!("unknown rest variable '{name}'"), span))?,
+    };
+    if let Some(expected_sort) = expected_sort
+        && actual_sort != expected_sort
+    {
+        return Err(err(
+            format!(
+                "rest variable '{name}' has element sort '{}' but this position expects '{}'",
+                sorts.name(actual_sort),
+                sorts.name(expected_sort)
+            ),
+            span,
+        ));
     }
+    Ok(child)
 }
 
 fn local_binding_label(binding: RhsLocalBinding) -> &'static str {
@@ -2740,10 +2933,15 @@ mod tests {
         ops.register("a", &[], e); // nullary
         ops.register("b", &[], e);
         ops.register("p", &[b], b); // for sort-mismatch tests
+        ops.register("to_b", &[e], b);
+        ops.register("box_b", &[b], e);
         ops.register_c("eq", [e, e], e);
         ops.register_a("concat", e, e, AssocDir::Right);
+        ops.register_a("bconcat", b, b, AssocDir::Right);
         ops.register_mset("add", e, e);
+        ops.register_mset("badd", b, b);
         ops.register_set("union", e, e);
+        ops.register_set("bunion", b, b);
         ops.register("ILit", &[ibig], e);
 
         (ops, sorts)
@@ -2985,7 +3183,7 @@ mod tests {
         let root_sort = rq.var_sorts[root_vid.idx()];
         let ri = rhs_src;
         let rhs = crate::test_helpers::parse_rhs(ri);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals)
     }
 
@@ -3009,7 +3207,7 @@ mod tests {
         let root_vid = rq.shape.find_var(&fq.root_vars[0]).unwrap();
         let root_sort = rq.var_sorts[root_vid.idx()];
         let rhs = crate::test_helpers::parse_rhs(rhs_src);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         let resolved = resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals)?;
         let locals = ctx.local_shape();
         drop(ctx);
@@ -3067,6 +3265,80 @@ mod tests {
                 )));
             }
             _ => panic!("expected App"),
+        }
+    }
+
+    #[test]
+    fn rhs_splices_require_the_destination_element_sort() {
+        let cases = [
+            ("(concat x ..rest)", "(box_b (bconcat ..rest))"),
+            ("(union x ..rest)", "(box_b (bunion ..rest))"),
+            ("(add x:1 ..rest)", "(box_b (badd ..rest))"),
+        ];
+        for (lhs, rhs) in cases {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("rest variable 'rest'")
+                    && error.msg.contains("element sort")
+                    && error.msg.contains("IExpr")
+                    && error.msg.contains("BExpr"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
+        }
+    }
+
+    #[test]
+    fn rhs_comprehension_binders_use_the_source_element_sort() {
+        let valid = [
+            (
+                "(concat x ..rest)",
+                "(box_b (bconcat ..[(to_b e) for e in rest]))",
+            ),
+            (
+                "(union x ..rest)",
+                "(box_b (bunion ..{(to_b e) for e in rest}))",
+            ),
+            (
+                "(add x:1 ..rest)",
+                "(box_b (badd ..{(to_b e):k for e:k in rest}))",
+            ),
+        ];
+        for (lhs, rhs) in valid {
+            assert!(
+                do_resolve_rhs(lhs, rhs).is_ok(),
+                "{lhs} -> {rhs} should permit a typed mapping"
+            );
+        }
+
+        let invalid = [
+            ("(concat x ..rest)", "(box_b (bconcat ..[e for e in rest]))"),
+            ("(union x ..rest)", "(box_b (bunion ..{e for e in rest}))"),
+            ("(add x:1 ..rest)", "(box_b (badd ..{e:k for e:k in rest}))"),
+        ];
+        for (lhs, rhs) in invalid {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("sort mismatch"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
+        }
+    }
+
+    #[test]
+    fn lhs_rest_variable_has_one_element_sort() {
+        for patterns in [
+            ["(concat x ..rest)", "(bconcat y ..rest)"],
+            ["(union x ..rest)", "(bunion y ..rest)"],
+            ["(add x:1 ..rest)", "(badd y:1 ..rest)"],
+        ] {
+            let error = do_resolve_multi(&patterns).unwrap_err();
+            assert!(
+                error.msg.contains("rest variable 'rest'") && error.msg.contains("element sorts"),
+                "{patterns:?}: unexpected error: {}",
+                error.msg
+            );
         }
     }
 
@@ -3466,7 +3738,7 @@ mod tests {
         let root_sort = rq.var_sorts[root_vid.idx()];
         let ri = "(f (p x) y)";
         let rhs = crate::test_helpers::parse_rhs(ri);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         let globals = GlobalCtx::<_, ()>::new();
         let r = resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals);
         assert!(r.is_err());
@@ -3490,7 +3762,7 @@ mod tests {
         let root_sort = rq.var_sorts[root_vid.idx()];
         let ri = "(p x)";
         let rhs = crate::test_helpers::parse_rhs(ri);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         let globals = GlobalCtx::<_, ()>::new();
         let r = resolve_rhs(&rhs, root_sort, &ops, &sorts, &model, &mut ctx, &globals);
         assert!(r.is_err());
@@ -3504,10 +3776,26 @@ mod tests {
     #[test]
     fn rhs_plain_arity_mismatch() {
         // f: Int×Int→Int, RHS: (f x) — too few args for a plain op
-        let r = do_resolve_rhs("(f x y)", "(f x)");
-        // RHS doesn't strictly check arity for plain ops (splices may expand).
-        // Document current behavior: this may or may not error.
-        let _ = r;
+        let error = do_resolve_rhs("(f x y)", "(f x)").unwrap_err();
+        assert!(error.msg.contains("expects 2 arguments, got 1"));
+    }
+
+    #[test]
+    fn rhs_fixed_arity_operator_rejects_collection_expansion() {
+        for (lhs, rhs) in [
+            ("(concat x ..rest)", "(g ..rest)"),
+            ("(concat x ..rest)", "(g ..[e for e in rest])"),
+            ("(union x ..rest)", "(g ..{e for e in rest})"),
+            ("(add x:1 ..rest)", "(g ..{e:k for e:k in rest})"),
+            ("(add x:k ..rest)", "(g x:k)"),
+        ] {
+            let error = do_resolve_rhs(lhs, rhs).unwrap_err();
+            assert!(
+                error.msg.contains("fixed arity"),
+                "{lhs} -> {rhs}: unexpected error: {}",
+                error.msg
+            );
+        }
     }
 
     #[test]
@@ -3565,7 +3853,7 @@ mod tests {
             let root_sort = rq.var_sorts[root_vid.idx()];
             let ri = rhs;
             let rhs_ast = crate::test_helpers::parse_rhs(ri);
-            let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+            let mut ctx = RhsResolveCtx::new(&rq);
             let globals = GlobalCtx::<_, ()>::new();
             let e = resolve_rhs(
                 &rhs_ast, root_sort, &ops, &sorts, &model, &mut ctx, &globals,

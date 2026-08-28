@@ -4,9 +4,9 @@
 > saturation, AC completion, scheduling and selectivity, proofs), plus the
 > per-file directives that select the same settings from inside an `.egg` file.
 >
-> Carry over: `v1-draft/11-cli.md` almost verbatim, dropping its five "This section
-> ..." openers and renumbering its cross-references. Add the directives section,
-> which the v1 draft did not have.
+> Use `v1-draft/11-cli.md` only as a checklist of flag names. Verify every default
+> and effect against current code, then write compact tables and links. Add the
+> directives section, which the v1 draft did not have.
 >
 > Verify before writing: `semi-persistent --help` and the flag definitions in
 > `egraph/src/config.rs`, so that no flag is missing and every default is right.
@@ -18,21 +18,20 @@
 
 ## Representation
 
-> `--id-bits`, `--push-pop`, `--types`. Table of flag, default, meaning.
+> `--id-bits`, `--push-pop`, `--types`. Table of flag, default, meaning. List
+> `diff` as the supported push/pop mode.
 
 ## Saturation
 
-> `--use-naive`, `--use-semi-naive`, `--union-by`. State that the two evaluation
-> strategies must produce the same match set and that the test suite runs example
-> files under both, with the link to chapter 9.
+> `--use-naive`, `--use-semi-naive`, `--union-by`. The two evaluation strategies
+> must preserve derivable equalities and check outcomes. Their emitted rows, node
+> counts, iteration counts, and work counts may differ. Link chapter 9.
 
 ## AC completion
 
-> `--derive-ac-eqs`, `--lazy-ac-eqs`, `--check-ac-basis`. Keep the distinction the
-> v1 draft drew: AC matching is always complete because leapfrog matching
-> enumerates sub-multisets, and what these flags turn on is the completion procedure
-> in rebuild. Link chapter 11, which is where the three modes are explained and
-> measured.
+> `--derive-ac-eqs`, `--lazy-ac-eqs`, `--check-ac-basis`. These flags select
+> completion work and do not change Chapter 5's maximum-partition matching
+> relation. Link chapter 11 for the measured mode comparison.
 
 ## Scheduling and selectivity
 

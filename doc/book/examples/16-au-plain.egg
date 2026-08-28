@@ -44,8 +44,7 @@
 (let l (g n))
 (let r (g (add c d)))
 
-;; Prints the answer this mode actually reaches.
+;; ANCHOR: ac-completion-query
 (antiunify l r :algorithm exact)
-
-;; Demands the AC optimum. Plain mode cannot reach it.
 (checkau l r :max_size 2 :algorithm exact)
+;; ANCHOR_END: ac-completion-query

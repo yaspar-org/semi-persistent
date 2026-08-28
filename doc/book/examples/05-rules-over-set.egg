@@ -1,74 +1,48 @@
 ;; EXPECT: ok
-;; Book chapter 5: writing rules whose left side is a `Set` node (ACI).
-;;
-;; The syntax is the ordinary `(Op child ...)`. What changes is the semantics: the
-;; children are a set, so a pattern matches a SUBSET and `..rest` binds whatever
-;; is left over. One pattern therefore has as many matches as the node has
-;; subsets of the right shape, which is the cost you accept for not having to
-;; write associativity and commutativity as rules.
+;; EVAL: both
+;; Set patterns bind distinct members and an optional remainder.
 
 (sort E)
-;; The identity term has to be declared before the operator that names it: the
-;; unit's ground term is built at registration, so it must already resolve.
 (function top () E)
-(function conj (E) E :assoc-comm-idem :identity (top))
 (function a () E)
 (function b () E)
 (function c () E)
 (function d () E)
 
-;; ── `..rest` binds the unmatched children ────────────────────────────────────
-;; `absorb` says: if `a` and `b` are both present in a conjunction, replace them
-;; with `d`, keeping everything else. Note that the rule never mentions where in
-;; the node they sit, because there is no "where".
-(function absorbed (E) E)
-(rewrite (conj (a) (b) ..rest) (absorbed (conj (d) ..rest)))
+;; ANCHOR: set-patterns
+(function Conj (E) E :assoc-comm-idem :identity top)
+(function Absorbed (E) E)
+(rewrite (Conj (a) (b) ..rest)
+         (Absorbed (Conj (d) ..rest)))
 
-(let t1 (conj a b c))
-;; `b` first in the source text, which is not a different term.
-(let t2 (conj b a c))
-(run 3)
-(check (= t1 t2))
-(check (= t1 (absorbed (conj d c))))
+(let ordered (Conj a b c))
+(let permuted (Conj b a c))
+(run 1)
+(check (= ordered permuted))
+(check (= ordered (Absorbed (Conj d c))))
 
-;; `..rest` can come out empty. The node then has one child and collapses to it,
-;; so the right side is `(conj d)` = `d`.
-(let t3 (conj a b))
-(run 3)
-(check (= t3 (absorbed d)))
+(function Pick (E) E :assoc-comm-idem)
+(function Pair (E E) E)
+(function RepeatedSet () E)
+(rewrite (Pick x y ..rest) (Pair x y))
+(rewrite (Pick x x ..rest) (RepeatedSet))
 
-;; ── The rest variable is optional ────────────────────────────────────────────
-;; Without `..rest`, the pattern matches the node's children EXACTLY rather than
-;; as a subset. `(conj c d)` therefore does not fire on `(conj c d a)`.
-(function exactly () E)
-(rewrite (conj (c) (d)) (exactly))
-(let u1 (conj c d))
-(let u2 (conj c d a))
-(run 3)
-(check (= u1 exactly))
-(check (!= u2 exactly))
+(let pair_source (Pick a c))
+(run 1)
+(check (= pair_source (Pair a c)))
+(check (= pair_source (Pair c a)))
+(check (!= pair_source (RepeatedSet)))
 
-;; ── Idempotence means a repeated pattern variable is not a repeated child ────
-;; A `Set` node cannot hold the same child twice, so a pattern asking for two
-;; occurrences of one class can never match: `(conj x x ..r)` would need a count
-;; of 2, and dedup guarantees every count is 1. If you want multiplicities in a
-;; pattern, you want an `MSet` operator (the multiset section of chapter 5).
-;;
-;; What DOES work is two distinct variables, which then bind two distinct
-;; children.
-(function pair2 (E E) E)
-(function marked (E) E)
-(function yes () E)
-(rewrite (conj x y ..r) (pair2 x y) :when ((= (marked x) (yes))))
-(union (marked a) (yes))
-(let v1 (conj a c))
-(run 3)
-;; `x` bound `a` because the guard demanded it; `y` took the other child.
-(check (= v1 (pair2 a c)))
+(function ExactSet (E) E :assoc-comm-idem)
+(function Exactly () E)
+(rewrite (ExactSet (a) (b)) (Exactly))
 
-;; ── The identity element interacts with matching ─────────────────────────────
-;; `top` is the declared unit, so it is dropped from every node. A pattern
-;; mentioning it explicitly matches only where it genuinely survives, which for a
-;; unit is nowhere inside a conjunction.
-(check (= (conj a top) a))
-(check (= (conj top top) top))
+(let exact_pair (ExactSet a b))
+(let exact_triple (ExactSet a b c))
+(run 1)
+(check (= exact_pair (Exactly)))
+(check (!= exact_triple (Exactly)))
+;; ANCHOR_END: set-patterns
+
+(check (= (Conj a top) a))
+(check (= (Conj top top) top))

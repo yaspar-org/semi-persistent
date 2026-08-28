@@ -1,58 +1,102 @@
 # Anti-unification modulo the declared algebra
 
-> Chapter contents: what each declared attribute absorbs before the search starts,
-> one measured pair per attribute, what an AC node's children being a multiset does
-> to the search itself, and where the absorption stops.
->
-> Examples: `examples/13-identity-arity.egg` exists and is measured (a `:size 10 :cr
-> 0.6250` result against a `:size 13 :cr 1.0000` result once the identity is
-> removed). Add `examples/13-order.egg` and `examples/13-repetition.egg` on the same
-> pattern: same two terms, one file with the attribute declared and one without, so
-> every claim in the chapter is a pair of measured numbers rather than an assertion.
->
-> Carry over: `v1-draft/05-anti-unification.md`, the paragraph beginning "It works
-> modulo the declared theory". `v1-draft/08-what-the-algebra-absorbs.md` section "The
-> identity element absorbs a difference of arity" is written and measured: keep it.
->
-> The chapter's claim is that this costs nothing at query time because it is the
-> representation and not search. Each section should end in the number that shows it.
+Chapter 4 defines the algebraic declarations, and Chapter 10 shows their child
+representations. This chapter measures their effect on anti-unification. Order
+and repetition can disappear during term canonization. A declared identity also
+lets the anti-unifier align collection nodes with different cardinalities.
 
 ## Order, absorbed by commutativity
 
-> An AC operator's children are a sorted multiset, so two candidates that differ only
-> in argument order are the same e-node and there is nothing for the search to report.
-> Measured pair, with and without the attribute.
+The two pairs below differ only in whether their operator is declared
+commutative:
+
+```lisp
+{{#include ../examples/13-order.egg:order-comparison}}
+```
+
+The order-sensitive pair reports both positional disagreements. The
+commutative pair was already one canonical e-node before the query:
+
+```text
+(anti-unify :size 5 :cr 0.6667 :completion exact
+  (Pair (Variants a b) (Variants b a)))
+(anti-unify :size 3 :cr 0.0000 :completion exact
+  (PairC a b))
+```
+
+Declaring commutativity changes the measured result from size 5 and ratio
+0.6667 to size 3 and ratio 0.
 
 ## Repetition, absorbed by idempotence
 
-> An ACI operator's children are a set, so a repeated conjunct is not a difference.
-> Measured pair.
+The next comparison gives the left operand two copies of `a` and the right
+operand two copies of `b`. `Bag` preserves those multiplicities, while `SetI`
+is idempotent:
 
-## Arity, absorbed by an identity element
+```lisp
+{{#include ../examples/13-repetition.egg:repetition-comparison}}
+```
 
-> Keep the written section. A unit lets a three-child node align against a two-child
-> node, which is the one case where the anti-unifier can relate operands of different
-> arity. Keep both measured outputs and the account of the aligned result.
->
-> Keep the constraint from chapter 4 that this section runs into: an identity
-> requires a full AC operator, so an experiment cannot weaken `:assoc-comm-idem
-> :identity` to `:assoc` without dropping the unit at the same time. Say what was done
-> instead.
+The multiset result shares one `a` and one `b`, then reports the unmatched
+copies. Canonization removes the duplicate members from both `SetI` terms:
 
-## What the multiset representation does to the search
+```text
+(anti-unify :size 5 :cr 0.2500 :completion exact
+  (Bag a b (Variants a b)))
+(anti-unify :size 3 :cr 0.0000 :completion exact
+  (SetI a b))
+```
 
-> The part that is not free. When both operands are AC nodes, aligning their children
-> is a matching problem over multisets rather than a positional walk, and the solver
-> solves it as a transport problem. State this at the level of what it means for the
-> reader: the number of ways to align two AC nodes grows with their arity, this is
-> where the search cost of an AC-heavy problem comes from, and it is the reason the
-> two algorithms of chapters 14 and 15 exist at all. Cite design 19 section 3.4 for
-> action generation per node kind and its worked AC example in appendix B.
+Idempotence changes the measured result from size 5 and ratio 0.25 to size 3
+and ratio 0.
+
+## Arity, aligned by an identity element
+
+Order and duplicate removal happen while Semper constructs the operands.
+Different cardinalities require an additional AU operation: when an AC or ACI
+operator has an identity, the solver can pad the shorter collection with that
+identity before aligning children.
+
+The next fixture compares a three-condition conjunction with the same
+conjunction missing one condition. `AndU` declares `(Lit true)` as its identity;
+`AndN` has the same ACI properties but no identity:
+
+```lisp
+{{#include ../examples/13-identity-arity.egg:identity-comparison}}
+```
+
+The two measured results are:
+
+```text
+(anti-unify :size 10 :cr 0.6250 :completion exact
+  (AndU
+    (versioningOn src)
+    (encrypted src)
+    (Variants (approvedRegion (regionOf dst)) (Lit true))))
+(anti-unify :size 13 :cr 1.0000 :completion exact
+  (Variants
+    (AndN (versioningOn src) (encrypted src) (approvedRegion (regionOf dst)))
+    (AndN (versioningOn src) (encrypted src))))
+```
+
+With the identity, the absent condition is paired with `true`, while the two
+shared conditions remain in the skeleton. Without it, the unequal-cardinality
+nodes have no structural alignment and both conjunctions are generalized
+whole. Identity padding changes the measured result from size 13 and ratio 1
+to size 10 and ratio 0.625.
 
 ## Where absorption stops
 
-> Positively framed, per the same instruction that governs chapter 4. The
-> declarations absorb order, repetition and arity. A difference that is a domain fact
-> rather than an operator law is absorbed by a rewrite rule you write and a run of
-> saturation, and chapter 22 shows one doing it. A difference that is neither is a real
-> disagreement and is what the output is for.
+The final query in the repetition fixture compares `(SetI a b)` with
+`(SetI a c)`. ACI canonization absorbs order and repetition, but it does not
+equate `b` with `c`:
+
+```text
+(anti-unify :size 4 :cr 0.3333 :completion exact
+  (SetI a (Variants b c)))
+```
+
+This is a genuine replacement under the declared algebra: `a` remains shared
+and the replacement remains visible. A domain equality can still be established
+by a Chapter 5 rule before the query. Part IV covers cases that require a
+reviewer rather than another equality.

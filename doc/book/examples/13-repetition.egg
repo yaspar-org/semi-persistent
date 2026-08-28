@@ -1,0 +1,25 @@
+;; EXPECT: ok
+
+;; ANCHOR: repetition-comparison
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function Bag (E) E :assoc-comm)
+(function SetI (E) E :assoc-comm-idem)
+
+(let bag_left (Bag (a) (a) (b)))
+(let bag_right (Bag (a) (b) (b)))
+(antiunify bag_left bag_right :algorithm exact)
+(checkau bag_left bag_right :max_size 5 :algorithm exact)
+
+(let set_left (SetI (a) (a) (b)))
+(let set_right (SetI (a) (b) (b)))
+(antiunify set_left set_right :algorithm exact)
+(checkau set_left set_right :max_size 3 :algorithm exact)
+
+(let changed_left (SetI (a) (b)))
+(let changed_right (SetI (a) (c)))
+(antiunify changed_left changed_right :algorithm exact)
+(checkau changed_left changed_right :max_size 4 :algorithm exact)
+;; ANCHOR_END: repetition-comparison

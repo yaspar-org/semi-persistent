@@ -1,0 +1,23 @@
+;; EXPECT: ok
+
+;; ANCHOR: exact-cycle-program
+(sort E)
+(function a () E)
+(function f (E) E)
+(function h (E E) E)
+
+(let cycle (f (a)))
+(union cycle (h (a) cycle))
+
+(let left (h (a) (h (f (a)) (f (a)))))
+(let right (h (a) (h (a) (f (a)))))
+
+(antiunify left right :algorithm exact :cycles sides)
+(checkau left right :max_size 9 :algorithm exact :cycles sides)
+
+(antiunify left right :algorithm exact :cycles sides-current)
+(checkau left right :max_size 9 :algorithm exact :cycles sides-current)
+
+(antiunify left right :algorithm exact :cycles pair)
+(checkau left right :max_size 8 :algorithm exact :cycles pair)
+;; ANCHOR_END: exact-cycle-program

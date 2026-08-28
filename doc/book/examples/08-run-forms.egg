@@ -1,0 +1,33 @@
+;; EXPECT: ok
+;; Book chapter 8: default and named runs, plus equality and inequality goals.
+
+;; ANCHOR: run-forms
+(sort E)
+(constructor a () E)
+(constructor b () E)
+(constructor c () E)
+(constructor f (E) E)
+
+(ruleset selected)
+(rewrite (f x) (a))
+(rewrite (f x) (b) :ruleset selected)
+
+(let term (f (c)))
+
+;; A named run selects only rules tagged with that ruleset.
+(run selected 2)
+(check (= term (b)))
+(check (!= term (a)))
+
+;; A bare run selects only untagged rules.
+(run 2)
+(check (= term (a)))
+
+;; Distinct classes satisfy an inequality goal before the first iteration.
+(run 10 :until (!= (a) (c)))
+(check (!= (a) (c)))
+
+;; Equal classes cannot become distinct during saturation.
+(run 1 :until (!= term (a)))
+(check (= term (a)))
+;; ANCHOR_END: run-forms

@@ -1,0 +1,19 @@
+;; EXPECT: ok
+
+;; ANCHOR: order-comparison
+(sort E)
+(function a () E)
+(function b () E)
+(function Pair (E E) E)
+(function PairC (E E) E :comm)
+
+(let ordered_left (Pair (a) (b)))
+(let ordered_right (Pair (b) (a)))
+(antiunify ordered_left ordered_right :algorithm exact)
+(checkau ordered_left ordered_right :max_size 5 :algorithm exact)
+
+(let commutative_left (PairC (a) (b)))
+(let commutative_right (PairC (b) (a)))
+(antiunify commutative_left commutative_right :algorithm exact)
+(checkau commutative_left commutative_right :max_size 3 :algorithm exact)
+;; ANCHOR_END: order-comparison

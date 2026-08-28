@@ -845,7 +845,7 @@ where
                 )
             })?;
             let root_sort = rq.var_sorts[root_vid.idx()];
-            let mut rhs_ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+            let mut rhs_ctx = RhsResolveCtx::new(&rq);
             let resolved_rhs = resolve_rhs(
                 &rhs,
                 root_sort,
@@ -875,7 +875,7 @@ where
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
-            let mut rhs_ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+            let mut rhs_ctx = RhsResolveCtx::new(&rq);
             let mut actions = Vec::with_capacity(head.len());
             for a in &head {
                 let ra = resolve_action(a, eg.ops(), eg.sorts(), model, &mut rhs_ctx, globals)

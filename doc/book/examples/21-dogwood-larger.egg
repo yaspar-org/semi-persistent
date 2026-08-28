@@ -1,0 +1,83 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Five samples expose two recurring decisions across three clusters.
+
+(sort Formula)
+(sort EventKind)
+
+(function Lit (bool) Formula)
+(function All (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function request () EventKind)
+(function response () EventKind)
+(function methodPost () Formula)
+(function pathDeploy () Formula)
+(function successfulHealth (EventKind IBig IBig) Formula)
+
+;; ANCHOR: larger-additions
+(function Lte (IBig IBig) Formula)
+(function Ite (Formula Formula Formula) Formula)
+(function directCopy () Formula)
+(function multipartCopy () Formula)
+;; ANCHOR_END: larger-additions
+
+;; ANCHOR: larger-samples
+(let sampleA1
+  (All
+    (methodPost)
+    (pathDeploy)
+    (successfulHealth (response) 200 900)
+    (Ite (Lte 100 100) (directCopy) (multipartCopy))))
+
+(let sampleA2
+  (All
+    (Ite (Lte 100 100) (directCopy) (multipartCopy))
+    (successfulHealth (response) 200 900)
+    (methodPost)
+    (pathDeploy)
+    (pathDeploy)))
+
+(let sampleB
+  (All
+    (methodPost)
+    (pathDeploy)
+    (successfulHealth (request) 200 900)
+    (Ite (Lte 100 100) (directCopy) (multipartCopy))))
+
+(let sampleC1
+  (All
+    (methodPost)
+    (successfulHealth (response) 200 900)
+    (Ite (Lte 100 100) (directCopy) (multipartCopy))))
+
+(let sampleC2
+  (All
+    (Ite (Lte 100 100) (directCopy) (multipartCopy))
+    (successfulHealth (response) 200 900)
+    (methodPost)
+    (methodPost)))
+;; ANCHOR_END: larger-samples
+
+;; ANCHOR: larger-partition
+;; Partition: {sampleA1, sampleA2}, {sampleB}, {sampleC1, sampleC2}.
+(check (= sampleA1 sampleA2))
+(check (!= sampleA1 sampleB))
+(check (!= sampleA1 sampleC1))
+(check (!= sampleA1 sampleC2))
+(check (!= sampleA2 sampleB))
+(check (!= sampleA2 sampleC1))
+(check (!= sampleA2 sampleC2))
+(check (!= sampleB sampleC1))
+(check (!= sampleB sampleC2))
+(check (= sampleC1 sampleC2))
+;; ANCHOR_END: larger-partition
+
+;; ANCHOR: larger-queries
+(antiunify sampleA1 sampleB :algorithm exact)
+(checkau sampleA1 sampleB :max_size 14 :algorithm exact)
+
+(antiunify sampleA1 sampleC1 :algorithm exact)
+(checkau sampleA1 sampleC1 :max_size 15 :algorithm exact)
+
+(antiunify sampleB sampleC1 :algorithm exact)
+(checkau sampleB sampleC1 :max_size 16 :algorithm exact)
+;; ANCHOR_END: larger-queries

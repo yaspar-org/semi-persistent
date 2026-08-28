@@ -1,75 +1,99 @@
 # Limits
 
-> Chapter contents: each result of the earlier chapters restated as what it does not
-> give you, with the chapter it came from and, where one exists, what to do instead.
->
-> Carry over: `v1-draft/12-limits.md` has eleven sections and most of them survive.
-> Its chapter opening enumerated all eleven, which duplicated eleven headings that are
-> each already a sentence: open with one sentence instead.
->
-> Every entry here is stated somewhere else in the book too, at the point where the
-> reader meets it. That repetition is intended: this chapter is what a reader is
-> pointed at when they ask what the engine does not do, and it should be readable on
-> its own.
->
-> Keep every entry to a short paragraph. If an entry needs more, it belongs in its own
-> chapter and this one links to it.
->
-> Do not add a closing section that summarizes the limits or reassures the reader. The
-> last entry is the end of the chapter.
+This chapter collects the boundaries established by the preceding chapters.
+Each result is relative to declared laws, asserted equations, implemented
+search procedures, and the evidence named below.
 
-## Saturation is a fixpoint of the rules, not of the theory
+## Saturation is a fixpoint of the selected rules
 
-> From chapter 8. A law nobody wrote does not hold, so `(check (!= ...))` reports what
-> was not derived.
+Chapter 8's fixpoint contains what the declarations and selected rules derive.
+An omitted domain law remains unavailable. A passing disequality check says
+that the selected procedure did not derive equality; it is not a theorem of
+semantic inequality.
 
-## A declared attribute is an assertion, not a check
+## An algebraic declaration is an assertion
 
-> From chapter 4. The engine takes `:assoc-comm` as given and does not verify that any
-> intended interpretation satisfies it. Include the specific unchecked case if it is
-> still unchecked: a variadic operator's argument sort is not required to equal its
-> result sort, so a mismatched declaration is accepted and its one-child collapse
-> produces a class of the wrong sort. Verify against `src/sortcheck.rs` first and delete
-> this if it has been fixed.
+Chapter 4's tags cause Semper to enforce the listed laws, but Semper does not
+prove that the modeled operator satisfies them. Structural declaration
+invariants, including equal argument and result sorts for associative
+operators, are checked separately.
 
-## Two attributes are accepted and not finished
+## Inverse and cancellative reasoning are narrow
 
-> From chapter 4. `:cancellative` acts only during AC completion, `:inverse` cancels
-> pairs at build time, and full group reasoning is not implemented.
+Chapter 4 defines the current behavior. `:inverse` cancels represented inverse
+pairs and `:cancellative` contributes inference during AC completion. Pairs
+exposed only after later merges can require completion, and the tags do not
+derive double inverse, inverse distribution, or normalized signed
+coefficients.
 
-## AC completion is off by default, and what that costs the anti-unifier
+## Completion is opt-in and operational
 
-> From chapters 11 and 16. Plain mode leaves AC consequences underived, lazy mode
-> derives them for equality checks and not for the anti-unifier, and the fix is
-> `--derive-ac-eqs`.
+Chapter 11's eager and lazy completion can stop at a growth or alternation
+budget. An unchanged implemented round is an operational fixpoint, not an
+unconditional completeness theorem. Lazy completion serves equality checks
+and restores its transaction before anti-unification; Chapter 16 measures the
+resulting difference.
 
-## Optimality is relative to the e-graph, the cycle policy, and the objective
+## AC matching is maximum-partition matching
 
-> From chapters 14 and 16. Three qualifiers on a certified result, one sentence each.
+Chapter 5's scalar variables bind complete stored children and their
+multiplicities. They do not range over implicit sub-sums or split one stored
+multiplicity among several scalar variables. The implemented relation is a
+specialization of classical AC matching, not a complete implementation of it.
 
-## Some of the argument is prose, not proof
+## AU optimality has three qualifications
 
-> From chapter 16. Name what is machine-checked, what has differential evidence, and
-> what is argued, with the design sections. Keep it factual and do not apologize for it.
+As Chapters 14 and 16 show, `:completion exact` certifies the minimum under the
+`(size, variant_mass)` objective, over the equalities in the current e-graph
+snapshot, and within the derivations admitted by the selected cycle policy.
+Changing any of those three inputs can change the result.
+
+## The production solver is not machine-verified
+
+The `au-verus` crate proves objective and recurrence lemmas, not end-to-end
+refinement of the Rust solver. Pair-cycle erasure, AC and ACI transport, and
+global optimality retain prose arguments plus finite oracle and regression
+evidence. Chapter 16 and the
+[AU correctness plan](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/future/au-correctness-and-validation.md)
+state the boundary.
+
+## `checkau` and `:cr` are measurements
+
+Chapter 12 defines both fields. `checkau` asserts only that the result is no
+larger than `:max_size`; it does not assert an exact size. For e-classes,
+`:cr` compares against independently smallest representatives while search may
+select larger terms, so it can exceed one.
 
 ## Agreement is not evidence of correctness
 
-> From chapters 17 and 19. Correlated errors, and the consequence that the method finds
-> uncorrelated errors only.
+Chapter 17 explains the correlated-error case. Samples can share the same
+mistake, especially when one model and prompt produced all of them. Clustering
+then reports agreement at that position because there is no disagreement to
+localize.
 
-## The smallest anti-unifier is not always the most readable one
+## The smallest result need not be the clearest explanation
 
-> From chapters 16 and 22. The two-identity-element form is the instance.
+Chapter 16 demonstrates the objective's preference for a smaller common
+representation, and Chapter 22 shows one connective change through two identity
+elements. A presentation layer may need to regroup markers into domain-facing
+decisions.
 
-## Clustering is quadratic in the samples, and there is no command for it
+## Surface clustering is quadratic
 
-> From chapter 18. The check grid is what the book uses, it is fine at five samples, and
-> a larger corpus needs the Rust API.
+Chapter 18 uses `n(n - 1) / 2` equality checks because Semper has no
+clustering command. That grid is practical for the three-to-five-sample
+workflow in this book. Larger collections require host code to group e-class
+identifiers.
+
+## The application evidence is limited
+
+The examples in Part IV are constructed cases. The repository's formalizer
+pilot uses one system to produce both readings and explicitly reports an
+optimistic bound. It does not measure independent formalizers or population
+error rates.
 
 ## Anti-unification does not adjudicate
 
-> From chapter 12. It reports where a decision exists. Something else has to make it.
-
-> Add or drop entries as the writing of the earlier chapters demands. Every entry must
-> name the chapter it comes from and must correspond to something the book actually
-> showed. Do not add a limit the book never demonstrated.
+Chapter 12 defines an anti-unifier as a shared skeleton with alternatives.
+Schema validation, tests, domain facts, or a person must decide which
+alternative should be enforced.

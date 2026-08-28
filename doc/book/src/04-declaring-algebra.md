@@ -9,7 +9,7 @@ properties are enforced through automatic term canonization rather than rewrite
 rules. The most familiar example is associativity and commutativity:
 
 ```lisp
-(function Add (Math) Math :assoc-comm)
+{{#include ../examples/04-ac-canonization.egg:ac-canonization}}
 ```
 
 Applications of `Add` are flattened and stored as sorted multisets.
@@ -32,8 +32,8 @@ Compatible attributes may be combined and written in any order.
 | attribute | meaning | canonical representation or effect |
 | --- | --- | --- |
 | `:assoc` | `f(f(x,y),z) = f(x,f(y,z))` | flatten every nested same-operator child into an order-preserving sequence |
-| `:assoc-left` | an application is a left fold | flatten the first-child spine into an order-preserving sequence |
-| `:assoc-right` | an application is a right fold | flatten the last-child spine into an order-preserving sequence |
+| `:assoc-left` | an application is a left fold | flatten nested first children into an order-preserving sequence |
+| `:assoc-right` | an application is a right fold | flatten nested last children into an order-preserving sequence |
 | `:comm` | `f(x,y) = f(y,x)` | binary sorted pair |
 | `:assoc-comm` | associative and commutative (AC) | variadic sorted multiset |
 | `:assoc-comm-idem` | AC and `f(x,x) = x` (ACI) | variadic sorted set |
@@ -88,13 +88,7 @@ not general group reasoning.
 The inverse attribute names a previously declared unary operator:
 
 ```lisp
-(sort E)
-(function Zero () E)
-(function Neg (E) E)
-(function Add (E) E
-  :assoc-comm
-  :identity (Zero)
-  :inverse Neg)
+{{#include ../examples/04-inverse-cancellation.egg:inverse-cancellation}}
 ```
 
 `Neg` must have signature `E -> E`, and `Add` must declare an identity. This
@@ -135,18 +129,10 @@ storing nodes that later need rewriting.
 | `(And)` with `:identity t` | `t`'s e-class |
 | `(And)` without an identity | a sort error |
 
-For an AC or ACI operator without an identity, the last case reports:
-
-```text
-operator 'And' has no :identity — a zero-argument application (the empty monomial) is meaningless; declare an identity or supply at least one argument
-```
-
-An associative-only operator cannot declare an identity, so its empty
-application instead reports:
-
-```text
-operator 'And' requires at least 1 argument
-```
+For an AC or ACI operator without an identity, the last case reports that the
+empty monomial has no meaning without an identity. An associative-only operator
+cannot declare an identity, so its empty application requires at least one
+argument.
 
 Associative operators must therefore be closed over one sort. Their argument
 and result sorts must coincide, both because nested applications feed results
@@ -154,23 +140,7 @@ back as arguments and because singleton collapse returns the child's e-class
 directly. Semper enforces this invariant. For example,
 
 ```lisp
-(sort A)
-(sort B)
-(function Bad (A) B :assoc-comm)
-```
-
-is rejected with:
-
-```text
-associative operator 'Bad' must use the same argument and return sort (argument 'A', return 'B')
-```
-
-Singleton collapse also affects matching. A one-child pattern such as
-`(And a)` never matches because no one-child `And` node exists. To bind one
-child while preserving the others, use a rest variable:
-
-```lisp
-(rewrite (And a ..rest) (mark a))
+{{#include ../examples/04-illegal-variadic-sort.egg:illegal-variadic-sort}}
 ```
 
 ## Which combinations are legal
@@ -204,9 +174,25 @@ associative-but-noncommutative operator.
 
 ## Canonization carries the declared laws, rewrite rules carry the rest
 
-> Keep this section. It is framed positively on the user's instruction: declaring the
-> attributes puts those laws into canonization, and every other law of the domain is a
-> rewrite rule you write. Name the Boolean laws that are rules rather than
-> declarations: distributivity, De Morgan, absorption, double negation. Keep the
-> forward reference to the domain rewrite in Part IV that changes a reported
-> difference.
+An algebraic declaration places its listed laws in term canonization. An AC
+operator therefore needs no rules for reassociation or permutation, and an ACI
+operator needs no additional rule for duplicate removal. Identity, nilpotence,
+and represented inverse pairs are handled by the same construction path when
+their attributes are present.
+
+Every other equation in the modeled domain remains an explicit rule. For a
+Boolean language, distributivity, De Morgan's laws, absorption, and double
+negation are not declaration attributes. A program that needs those equations
+must install the corresponding `rewrite` or `birewrite` forms. Omitting a
+domain rule leaves its equality underived even when all operators have accurate
+AC or ACI declarations.
+
+This separation lets a program choose its equational theory. The declared laws
+always determine how terms are represented. The installed rules determine
+which additional domain equalities saturation can derive. Part IV uses this
+distinction when adding a domain rewrite changes a reported difference between
+two autoformalizations.
+
+The
+[algebraic-properties design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/ac-algebraic-properties.md)
+specifies the canonical representations and completion interactions in detail.

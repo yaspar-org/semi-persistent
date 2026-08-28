@@ -567,9 +567,10 @@ where
                 limit,
                 until,
             } => {
-                // A `:until` goal is over ground terms, so it is built once, before the run,
-                // and only its classes move afterwards. Building it can add nodes, which is
-                // why the graph is rebuilt before the driver sees it.
+                // A `:until` goal is built once. New goal nodes are rebuilt
+                // before timing starts; the driver rebuilds unconditionally
+                // before every goal observation, including when these terms
+                // already existed in a dirty graph.
                 let goal = match until {
                     None => None,
                     Some(g) => {

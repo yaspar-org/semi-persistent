@@ -1,54 +1,97 @@
 # Naive and semi-naive evaluation
 
-> Chapter contents: what the naive strategy recomputes each round, what the
-> semi-naive strategy does instead, the invariant that ties the two together, the
-> extra work semi-naive needs on variadic atoms, and how to select each.
->
-> Sources: design `18-semi-naive-evaluation.md` is the specification.
-> `06-index.md`, `07-leapfrog.md` and `20-index-selectivity-and-delta-suffixes.md`
-> for the index and delta machinery this rests on.
->
-> Example: write `examples/09-eval-strategies.egg` carrying `;; EVAL: both`, whose
-> checks pass identically under either strategy. The value of the file is that the
-> harness runs it twice.
->
-> Audience note: a user does not need this chapter to use the engine, and the
-> chapter should say so in its opening. It is here because the flag exists, because
-> the two strategies are the clearest instance of the engine's differential testing
-> discipline, and because a reader benchmarking the engine will otherwise measure the
-> wrong thing.
+Chapter 8 defines the saturation round. This chapter compares only how the
+naive and semi-naive strategies schedule matches within that round: full
+recomputation, delta variants, and the cases that retain a full-index fallback.
 
-## What naive evaluation does
+## Naive evaluation
 
-> Full re-match every round: every rule is evaluated against the whole graph, so a
-> match found in round 3 is found again in rounds 4 and 5. State the cost in terms
-> of what it repeats, and state its one advantage, which is that it has no delta
-> bookkeeping to get wrong and is therefore the reference.
+Given the post-rebuild snapshot defined in Chapter 8, naive evaluation matches
+every selected rule against all indexed nodes. A match found in iteration 3
+can be found and acted on again in iterations 4 and 5. There is no
+cross-iteration set of previously applied matches.
 
-## What semi-naive evaluation does
+This strategy repeats matching work as the graph grows. Its advantage is a
+simple execution path with no delta bookkeeping, so it serves as the reference
+strategy in differential tests.
 
-> A round only needs matches that use something new, so each rule is evaluated once
-> per atom with that atom restricted to the previous round's delta and the others
-> reading the full relation. State the standard result this rests on and the
-> condition it needs: every match of the new round contains at least one new node.
+## Semi-naive evaluation
 
-## Where the delta argument needs care
+Semi-naive evaluation uses a full match in its first iteration because the
+entire initial graph is new. In later iterations it builds both the full index
+and a delta index. The delta contains nodes touched since the previous full
+index was built:
 
-> The case the implementation had to fix, stated as a property of variadic operators
-> rather than as a bug report: for an AC operator, a parent atom driven from a child
-> that did not change can still have a new match, because the parent's multiset
-> changed. The engine re-joins such atoms against the intersection of the operator
-> index and the representation index to keep the round delta-driven. Verify the
-> current mechanism in `egraph/src/leapfrog/` and design chapter 18 before writing
-> this, and name the indexes it actually intersects.
->
-> State what the reader should take from it: a delta argument over a canonized
-> representation is not the textbook one, which is why the two strategies are
-> differentially tested on every example file rather than argued about.
+- nodes created by rule actions;
+- nodes recanonicalized during rebuild;
+- members recorded when one e-class is absorbed into another.
+
+The delta is not merely a suffix of newly allocated node IDs. A merge can change
+a stored node's canonical children or enlarge a class without allocating a
+node, and either event can enable a match.
+
+For an eligible rule with `k` relation-scanning atoms, Semper evaluates `k`
+variants. Variant `i` restricts atoms before `i` to `full` minus `delta`,
+restricts atom `i` to `delta`, and leaves later atoms on `full`. Every selected
+match belongs to the variant containing its first delta atom, so the variants
+do not duplicate one another.
+
+Equality constraints, primitive predicates, and global comparisons are filters,
+not relation-scanning atoms. Some equality and global-reference shapes can
+become enabled by a merge that no scanning atom represents. Semper evaluates
+those rules against the full index in every iteration rather than applying an
+unsafe delta restriction.
+
+## Delta boundaries
+
+Rule actions performed during an iteration are outside its delta and become
+visible in the next iteration. The four indexed relations, by operator, class
+representative, child position, and variadic containment, all obey each atom's
+`full`, `delta`, or `full` minus `delta` mode.
+
+Variadic matching requires all four relations to share that boundary. An
+associative, AC, or ACI parent can acquire a new canonical representation after
+a child merge, and a class merge can expose new membership without changing the
+surviving representative. Recanonicalized parents and absorbed class members
+are therefore recorded in the touched log. Restricting only the operator scan
+would miss or duplicate matches reached through child and containment indexes.
+
+These rules implement the delta decomposition described in
+[design chapter 18](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/18-semi-naive-evaluation.md).
+The index relations are specified in
+[design chapter 6](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/06-index.md).
+
+## Equivalent outcomes
+
+The user-facing contract is equivalent derivable equalities and check outcomes,
+not identical execution traces. Naive evaluation emits old matches again.
+Semi-naive evaluation emits delta-involving matches and uses full matching for
+the exceptional rule shapes above. The strategies can consequently report
+different emitted matches, node counts, iteration counts, and match-step counts.
+
+The Chapter 9 fixture changes only the harness mode applied to the `dbl`
+program introduced in Chapter 8:
+
+```text
+;; EVAL: both
+```
+
+The harness executes the multi-round program once with each strategy. Its
+equality and disequality checks must pass in both executions.
+
+The repository also differentially compares the resulting equality partition
+over shared input nodes and exercises fresh nodes, recanonicalization, class
+growth, variadic atoms, subsumption, globals, and equality constraints.
+These executable tests support the implementation contract; they are not a
+machine-checked proof of semi-naive completeness.
 
 ## Selecting a strategy
 
-> `--use-naive` and `--use-semi-naive` on the command line, `;; EVAL:` in a file.
-> State the default. State the invariant that makes the choice safe: the two must
-> produce the same match set, so they differ in work and never in result, and the
-> test suite asserts this on every example in this book.
+Naive evaluation is the default. `--use-naive` selects it explicitly, and
+`--use-semi-naive` selects semi-naive evaluation. The flags are mutually
+exclusive.
+
+`EVAL` is a directive understood by the `.egg` test harness, not a Semper
+language command. `;; EVAL: naive` and `;; EVAL: semi` select one strategy.
+`;; EVAL: both` runs the fixture separately under both strategies and checks
+the expected program outcome in each run.

@@ -1,59 +1,84 @@
 # What anti-unification is
 
-> Chapter contents: the definition and its dual, how this engine reports a
-> disagreement, the two commands and their options, every field of the printed
-> output, and the objective the solvers minimize.
->
-> Carry over: `v1-draft/05-anti-unification.md` is this chapter, minus its "What
-> makes this version different" section, whose two halves now belong in chapter 13
-> (modulo the algebra) and chapter 16 (over e-classes, not syntax). Its output-field
-> table and its `:cr` explanation are accurate and measured: keep them.
->
-> Example: the four-node `(f a (Variants a b))` program from the v1 draft, as
-> `examples/12-first-au.egg`.
->
-> Sources: design `19-anti-unification.md` sections 1 and 2.5.
-
 ## The definition
 
-> Unification finds the most general term both operands specialize to.
-> Anti-unification finds the most specific term both operands are specializations of.
-> Name the shared part the skeleton and the placeholders the disagreements. Give
-> `f(a,b)` against `f(a,c)` and its anti-unifier.
+Unification finds a most general substitution that makes two terms identical.
+Anti-unification is the dual: it finds a most specific term of which both
+operands are instances. The common operators form a **skeleton**, and the
+positions where the operands differ are generalized.
 
 ## How a disagreement is reported
 
-> A `Variants` node carrying both sides, rather than a bare placeholder, because the
-> two candidate answers are what a reader of the output needs. Show the smallest
-> program and its real output.
+For `f(a,a)` and `f(a,b)`, the first child belongs to the skeleton and the
+second child differs:
+
+```lisp
+{{#include ../examples/12-first-au.egg:first-au}}
+```
+
+The `antiunify` command prints:
+
+```text
+(anti-unify :size 4 :cr 0.3333 :completion exact
+  (f a (Variants a b)))
+```
+
+Textbook anti-unification would usually put a fresh variable in that position.
+Semper instead writes `(Variants a b)`. Selecting the first child of each
+`Variants` node reconstructs the left operand; selecting the second reconstructs
+the right operand. The output therefore carries the two readings that produced
+each disagreement.
 
 ## The commands
 
-> `antiunify` prints, `checkau` prints and asserts a size bound. The option grammar
-> as a `text` block. State that every example in the book uses `checkau`, since that
-> is what makes an example a regression test, and that both accept inline terms or
-> `let`-bound names.
+`antiunify` computes and prints an anti-unifier. `checkau` computes the same
+result and fails when its size exceeds `:max_size`; it prints no anti-unifier on
+success. Its bound is an upper bound, so `:max_size 4` accepts any result of size
+four or less.
+
+Both commands accept inline terms or names introduced by `let`. Book examples
+use `checkau` to make the measured size an executable regression. The
+[`antiunify` and `checkau` command signatures](B-command-reference.md) are
+collected in Annex B, and [Annex A](A-full-grammar.md) gives their complete
+grammar. Chapters 14 and 15 define the algorithm and cycle options.
 
 ## Reading the output
 
-> Keep the v1 table: `:size`, `:cr`, `:completion`. Keep the two points that a reader
-> gets wrong otherwise: a `Variants` node is priced at the full size of both its
-> sides, so hiding structure in a variant does not make a result look smaller, and
-> `:cr` runs low-is-better with 0 meaning full agreement and 1 the no-sharing
-> endpoint. Keep the note that over e-classes `:cr` is not clamped and can exceed 1,
-> with the reason.
+| field | meaning |
+| --- | --- |
+| `:size` | Concrete-node count of the result. A `Variants` marker costs zero, but both of its complete children count, so placing structure inside it does not hide that structure from the objective. |
+| `:cr` | Linear compression ratio against the smallest representatives of the two operand classes. Lower is better. |
+| `:completion` | `exact` when the selected search space was exhausted, and `budget` when search stopped at its budget. |
+
+If `a` and `b` are the smaller and larger operand sizes, respectively, the
+reported ratio is
+
+```text
+(result_size - a) / b
+```
+
+For a fixed pair of ground terms, zero denotes full agreement and one is the
+no-sharing result that holds both terms in one `Variants` node. The example's
+result has size four over two size-three operands, hence
+`(4 - 3) / 3 = 0.3333`.
+
+For e-classes, `a` and `b` are the independently smallest representatives.
+Search may choose larger represented terms to obtain a common skeleton, so
+`:cr` is not clamped and can exceed one.
 
 ## The objective
 
-> `(size, variant_mass)` lexicographic, lower better on both, `variant_mass` not
-> printed. State what the tie-break buys: between two results of equal size it prefers
-> the one holding less of that size inside variant nodes, which is the one with more
-> shared skeleton. Cite design 2.5 and its normalization requirements rather than
-> restating them.
+Both solvers minimize `(size, variant_mass)` lexicographically. Size is compared
+first. If two results have the same size, the solver chooses the one with fewer
+concrete nodes below `Variants` nodes, leaving more of the result in the common
+skeleton. `variant_mass` is not printed by the surface command.
+
+The exact definitions and the separate floating-point reward used only for UCT
+selection are in
+[`19-anti-unification.md`, section 2.5](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md).
 
 ## What it does not do
 
-> Keep the v1 section. Anti-unification localizes disagreement and does not
-> adjudicate it. Deciding which side is right needs a type checker, a schema, a test
-> or a person. Forward reference Part IV, which is entirely about what to do with a
-> located disagreement.
+Anti-unification localizes a disagreement; it does not decide which side is
+correct. That decision requires a type checker, a schema, a test, or a person.
+Part IV uses the shared skeleton and its `Variants` nodes to direct that review.

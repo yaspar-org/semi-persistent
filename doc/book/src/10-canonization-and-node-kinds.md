@@ -1,77 +1,80 @@
 # Canonization and the node kinds
 
-> Chapter contents: the five child representations an operator can have, what
-> canonization does to the children on the way in, which declaration selects which
-> representation, how multiplicity clamping implements idempotence, nilpotence and
-> identity, and what canonization does not do.
->
-> Chapter 4 gives the user-facing declaration contract. This chapter explains the
-> representations and canonization mechanism that implement it.
->
-> Examples: `examples/10-node-kinds.egg`, `examples/10-clamping.egg`,
-> `examples/04-illegal-clamp.egg` all exist. Read them first and build the chapter
-> around them.
->
-> Sources: design `04-canonization.md` is the specification.
-> `ac-algebraic-properties.md` for the attribute-to-representation mapping.
-> `egraph/src/registry.rs` for `OpKind`, `egraph/src/canon.rs` for the procedure,
-> `egraph/src/multiplicity.rs` and `multiset.rs` for the clamps.
+Chapter 4 defines the algebraic declaration contract. This chapter describes
+the physical child representations selected by those declarations and the
+canonization pipeline that prepares an e-node for hash-consing.
 
 ## The five child representations
 
-> Table with four columns: representation, the `OpKind` variant that carries it,
-> what the children are stored as, and what is consequently not representable.
-> The variants are `Normal`, `Commutative`, `A`, `MSet`, `Set`. Give each a name the
-> book can use in prose (an ordered tuple, an unordered pair, a sequence, a sorted
-> multiset, a sorted set) and use that name consistently everywhere after.
->
-> The column that earns the table is the last one: an unordered pair cannot
-> represent argument order, a multiset cannot represent order, a set cannot represent
-> repetition. State that this is why the corresponding law needs no rule.
+Each operator selects one of five representations for its children. Literal
+nodes are a separate leaf kind that carries a concrete value.
 
-## What canonization does
+| representation | internal kind | stored children | information not represented |
+| --- | --- | --- | --- |
+| ordered tuple | `Normal` | a fixed-arity tuple in argument order | none |
+| unordered pair | `Commutative` | two class ids in sorted order | argument order |
+| sequence | `A` | a variadic sequence of class ids | selected associative nesting |
+| sorted multiset | `MSet` | class-id and multiplicity pairs | order and nesting |
+| sorted set | `Set` | sorted, distinct class ids | order, nesting, and repetition |
 
-> The procedure on the way in, in order: replace each child by its canonical class,
-> then apply the representation's normal form (sort, dedup or clamp), then hash-cons
-> the result. State that it runs on build and again on rebuild after a merge, and
-> that this is the reason two spellings of an AC term are one e-node rather than two
-> nodes plus a rule.
->
-> Show it with `print-size`: build `(Add x y)` and `(Add y x)` and account for the
-> single node.
+Ordinary operators use ordered tuples. Tuples of up to three children have
+dedicated storage, while wider tuples use a pooled slice. `:comm` selects the
+unordered pair. The associative declarations select a sequence,
+`:assoc-comm` selects a multiset, and `:assoc-comm-idem` selects a set.
 
-## Multiplicity clamping
+The missing information in the last column cannot distinguish two e-nodes.
+Chapter 4 defines the corresponding equations and Chapter 5 defines how
+patterns inspect each representation.
 
-> The one mechanism behind three attributes, which is why they share a chapter.
-> Children of an AC operator are stored with multiplicities, and each attribute is a
-> rule on those multiplicities:
->
-> - `:idempotent` bounds every multiplicity at 1, which is the `Set` representation;
-> - `:nilpotent n` takes multiplicities modulo `n`;
-> - `:identity t` drops children equal to `t`.
->
-> Show each with a term whose canonized form the reader can predict, then check it.
-> `examples/10-clamping.egg` already does some of this.
->
-> State what happens when clamping empties a monomial: the term is the unit, which is
-> why `:nilpotent` requires `:identity`, and refer back to chapter 4 for the
-> legality table rather than restating it.
+## The canonization pipeline
 
-## Flattening
+Term construction performs these operations before inserting an e-node:
 
-> Whether a nested application of the same associative operator is flattened into its
-> parent, and if so where. Verify this before writing: build `(And (And a b) c)` and
-> print the sizes. As of the last check, canonization normalized children (find, sort,
-> dedup) without flattening a nested same-operator term, and flattening had to happen
-> when the term is built and when a pattern is compiled. Confirm the current
-> behaviour, state it plainly, and if a nested term is not flattened say what the
-> reader must do about it.
+1. Replace every child id with its current e-class representative.
+2. Flatten eligible nested applications of the same variadic operator.
+3. Normalize the resulting child representation.
+4. Resolve an empty or singleton variadic result when its declaration permits it.
+5. Look up the operator and normalized children in the hash-cons table.
 
-## What canonization does not do
+Normalization sorts an unordered pair. It preserves sequence order. For a
+multiset it sorts children, coalesces equal entries, and applies the configured
+unit, count, and inverse transforms. For a set it sorts and deduplicates
+children and removes a configured unit. The legality and meaning of those
+transforms belong to Chapter 4.
 
-> State positively what the reader gets and where the boundary is. Canonization
-> normalizes the children of one node under the declared representation. It does not
-> derive consequences that need two nodes to interact: that is congruence closure
-> (chapter 6), rewrite rules (chapter 8), or AC completion (chapter 11). Give the
-> smallest instance where the difference shows, which is the pair of AC terms that
-> plain mode leaves distinct in `examples/11-cc-plain.egg`.
+```lisp
+{{#include ../examples/10-node-kinds.egg:node-kinds}}
+```
+
+Both `print-size` commands report `total: 3`. The second spelling replaces its
+children by the same representatives, sorts them to the same pair, and finds
+the existing `eq` node.
+
+Ground-term insertion and rewrite right-hand-side evaluation use this same
+pipeline. The full procedure is specified in
+[`04-canonization.md`](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/04-canonization.md).
+
+## Recanonization during rebuild
+
+A class merge can make a stored child id noncanonical or make two direct
+children equal. Rebuild revisits affected parents, replaces their direct
+children with current representatives, and reapplies the representation's
+sorting, coalescing, deduplication, unit removal, and multiplicity clamp. A
+hash-cons collision then triggers the generic congruence merge described in
+Chapter 6.
+
+Multisets retain the original multiplicities until the configured clamp runs.
+Nilpotent operators therefore remain `MSet` nodes even at order two. Sets store
+no explicit counts because every represented count is one.
+
+Sequence nodes have a narrower rebuild boundary. Rebuild recanonizes the ids
+already present in a sequence span, but it cannot enlarge that span when a
+child class later acquires a same-operator sequence. Chapter 11 describes the
+optional associative inter-reduction work that can add further equalities.
+
+## The boundary
+
+Canonization normalizes one node under its selected representation. It does not
+derive consequences that require equations between separate stored nodes.
+Generic congruence belongs to Chapter 6, domain equations belong to the rules
+of Chapter 5, and optional completion belongs to Chapter 11.

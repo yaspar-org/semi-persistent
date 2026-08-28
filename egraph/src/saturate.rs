@@ -24,8 +24,10 @@ pub struct RunGoal<G> {
 }
 
 impl<G: DenseId> RunGoal<G> {
-    /// Does the goal hold right now? Reads the union-find directly, so it is valid at any
-    /// point — a pending rebuild changes which nodes exist, not which classes are merged.
+    /// Does the goal hold in a rebuilt graph?
+    ///
+    /// Rebuild can merge congruent parent classes, so callers must not use this
+    /// observation while congruence work is pending.
     fn holds<Cfg, L, const T: bool, const P: bool>(&self, eg: &EGraph<Cfg, L, T, P>) -> bool
     where
         Cfg: EGraphConfig<G = G>,
@@ -162,12 +164,12 @@ where
     // Outside the round loop: the pool's whole purpose is to survive rounds.
     let mut pool = MatchPool::new();
     for i in 0..spec.limit {
-        if goal_met(spec, eg) {
-            return sat_result(i, false, true, steps_base);
-        }
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
+        }
+        if goal_met(spec, eg) {
+            return sat_result(i, false, true, steps_base);
         }
         let index = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -194,7 +196,12 @@ where
         }
     }
     // The budget is spent, but a goal met by the last iteration's work should still be
-    // reported as met — the caller's question is whether the goal holds, not when it started.
+    // reported as met. Rebuild first: the final actions may have made parent nodes
+    // congruent without merging their classes directly.
+    if spec.until.is_some() {
+        let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
+        eg.rebuild();
+    }
     let met = goal_met(spec, eg);
     sat_result(spec.limit, false, met, steps_base)
 }
@@ -533,12 +540,12 @@ where
     // round runs one query per (rule, join atom), all of similar match count.
     let mut pool = MatchPool::new();
     for i in 0..limit {
-        if goal_met(spec, eg) {
-            return sat_result(i, false, true, steps_base);
-        }
         {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
             eg.rebuild();
+        }
+        if goal_met(spec, eg) {
+            return sat_result(i, false, true, steps_base);
         }
         let full = {
             let _t = crate::phase_timing::Timer::start(crate::phase_timing::FULL);
@@ -625,6 +632,10 @@ where
         if changes == 0 {
             return sat_result(i + 1, true, false, steps_base);
         }
+    }
+    if spec.until.is_some() {
+        let _t = crate::phase_timing::Timer::start(crate::phase_timing::REBUILD);
+        eg.rebuild();
     }
     let met = goal_met(spec, eg);
     sat_result(limit, false, met, steps_base)

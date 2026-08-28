@@ -1,14 +1,6 @@
 ;; EXPECT: ok
-;; Book chapter 5: writing rules whose left side is an `MSet` node (AC).
-;;
-;; An `MSet` keeps multiplicities, so a pattern can ask about them. That is the one
-;; thing `Set` patterns cannot do, and it is the reason to reach for a plain AC
-;; operator when idempotence is not something you want.
-;;
-;; Each section below declares its own operator. That is not stylistic: a rule
-;; fires on every node of its operator, so sharing one operator across sections
-;; would let a match in one section create equalities another section is trying to
-;; measure.
+;; EVAL: both
+;; Multiset patterns bind complete child multiplicities.
 
 (sort E)
 (function zero () E)
@@ -17,59 +9,41 @@
 (function c () E)
 (function g () E)
 
-;; ── `..rest` binds the unmatched children ────────────────────────────────────
-(function add (E) E :assoc :comm :identity (zero))
-(function got (E E) E)
+;; ANCHOR: multiset-remainder
+(function Add (E) E :assoc-comm :identity zero)
+(function Selected (E E) E)
 
-;; The term `{a:3, b:2}`. Written in any order, it is the same node.
-(let t (add a a a b b))
-(check (= t (add b a b a a)))
+(rewrite (Add x:count>=2 ..rest)
+         (Selected x (Add ..rest)))
 
-;; `k` binds the count of whatever `x` matched, and the `>=2` filters which
-;; children can match at all. Both `a` at 3 and `b` at 2 pass, so this one rule
-;; fires twice on the one node.
-(rewrite (add x:k>=2 ..rest) (got x (add ..rest)))
-(run 3)
-(check (= t (got a (add b b))))
-(check (= t (got b (add a a a))))
+(let sum (Add a a a b b))
+(run 1)
 
-;; ── A variable binding consumes ALL copies ───────────────────────────────────
-;; Look at what the two matches did. Binding `x` to `a` took all THREE copies out,
-;; so `..rest` received `{b:2}` and not `{a:2, b:2}`. A pattern child binds a
-;; distinct element of the multiset together with its full multiplicity. This is
-;; the rule to remember about AC patterns, and it is what keeps them predictable.
+(check (= sum (Selected a (Add b b))))
+(check (= sum (Selected b (Add a a a))))
+;; ANCHOR_END: multiset-remainder
 
-;; ── `x:2` demands an exact multiplicity ──────────────────────────────────────
-(function mul (E) E :assoc :comm :identity (zero))
-(function twice (E) E)
-(rewrite (mul x:2 ..r) (twice x))
+;; ANCHOR: multiplicity-patterns
+(function Mul (E) E :assoc-comm)
+(function Twice (E) E)
+(rewrite (Mul x:2 ..rest) (Twice x))
 
-(let u (mul a a b))
-(run 3)
-;; `a` occurs twice in `u`, so it matches and `..r` takes `{b:1}`.
-(check (= u (twice a)))
-;; `b` occurs once, so no match was ever produced for it, and the class of
-;; `(twice b)` stays a class of its own.
-(check (!= u (twice b)))
+(let exact (Mul a a b))
+(run 1)
+(check (= exact (Twice a)))
+(check (!= exact (Twice b)))
 
-;; ── Non-linear multiplicity: one count variable used twice ───────────────────
-;; `k` mentioned twice constrains the two children to share a count, whatever that
-;; count turns out to be. No guard is needed to say it.
-(function sum (E) E :assoc :comm :identity (zero))
-(function balanced () E)
-(rewrite (sum x:k y:k ..r) (balanced))
+(function Sum (E) E :assoc-comm)
+(function Balanced () E)
+(rewrite (Sum x:count y:count ..rest) (Balanced))
 
-(let v (sum c c g g))
-(let w (sum c c c g g))
-(run 3)
-;; In `v` both counts are 2, so `k = 2` satisfies both occurrences.
-(check (= v (balanced)))
-;; In `w` the counts are 3 and 2. There is no single `k`, so nothing fires.
-(check (!= w (balanced)))
+(let balanced (Sum c c g g))
+(let unbalanced (Sum c c c g g))
+(run 1)
+(check (= balanced (Balanced)))
+(check (!= unbalanced (Balanced)))
+;; ANCHOR_END: multiplicity-patterns
 
-;; ── Identity drops; the clamp is still absent ────────────────────────────────
-;; Plain AC has no count clamp, so nothing collapses repetition. The unit is a
-;; separate axis, and it does drop.
-(check (!= (add a a) a))
-(check (= (add a zero) a))
-(check (= (add a zero zero) a))
+;; Identity removal and multiplicity preservation are independent.
+(check (!= (Add a a) a))
+(check (= (Add a zero) a))

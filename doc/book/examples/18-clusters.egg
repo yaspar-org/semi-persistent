@@ -1,0 +1,94 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Chapters 18 and 19 share this clustering and explanation fixture.
+
+;; ANCHOR: clustering-program
+(sort Formula)
+(sort Region)
+
+(function Lit (bool) Formula)
+(function And (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function Or (Formula) Formula :assoc-comm-idem :identity (Lit false))
+
+(function core () Formula)
+(function destination () Region)
+(function approvedRegion (Region) Formula)
+(function usEast (Region) Formula)
+(function euWest (Region) Formula)
+(function apSouth (Region) Formula)
+
+(let s1
+  (And
+    (core)
+    (approvedRegion (destination))))
+
+;; Reordered, with a duplicate that idempotence removes.
+(let s2
+  (And
+    (approvedRegion (destination))
+    (core)
+    (core)))
+
+(let s3
+  (And
+    (core)
+    (Or
+      (usEast (destination))
+      (euWest (destination)))))
+
+(let s4
+  (And
+    (core)
+    (Or
+      (usEast (destination))
+      (apSouth (destination)))))
+
+;; Initial partition: {s1, s2}, {s3}, {s4}.
+(extract s1)
+(extract s2)
+(extract s3)
+(extract s4)
+(check (= s1 s2))
+(check (!= s1 s3))
+(check (!= s1 s4))
+(check (!= s2 s3))
+(check (!= s2 s4))
+(check (!= s3 s4))
+
+;; This deployment defines the named predicate by two concrete regions.
+(rewrite
+  (approvedRegion r)
+  (Or (usEast r) (euWest r)))
+(run 3)
+
+;; Saturation moves the partition to {s1, s2, s3}, {s4}.
+(extract s1)
+(extract s2)
+(extract s3)
+(extract s4)
+(check (= s1 s2))
+(check (= s1 s3))
+(check (!= s1 s4))
+(check (= s2 s3))
+(check (!= s2 s4))
+(check (!= s3 s4))
+;; ANCHOR_END: clustering-program
+
+;; ANCHOR: cluster-explanation
+(antiunify s1 s4 :algorithm exact)
+(checkau s1 s4 :max_size 9 :algorithm exact)
+;; ANCHOR_END: cluster-explanation
+
+;; ANCHOR: speculative-resolution
+(push)
+(union (euWest (destination)) (apSouth (destination)))
+(check (= s1 s4))
+(check (= s2 s4))
+(check (= s3 s4))
+(pop)
+
+;; Pop restores the two-cluster partition.
+(check (= s1 s3))
+(check (!= s1 s4))
+(check (!= s3 s4))
+;; ANCHOR_END: speculative-resolution

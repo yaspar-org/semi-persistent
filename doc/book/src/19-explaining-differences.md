@@ -1,60 +1,79 @@
 # Explaining the differences between clusters
 
-> Chapter contents: how to turn a set of clusters into a set of anti-unification
-> queries, how to read each returned `Variants` group as a decision a reviewer has to
-> make, how to order the decisions, and how to test a candidate resolution without
-> disturbing the graph.
->
-> Example: write `examples/19-explain-clusters.egg`, continuing the program of chapter
-> 18 so the reader carries one signature through both chapters. It ends with one
-> `checkau` per cluster pair, and with a `push`, a candidate resolution asserted, a
-> check, and a `pop`.
->
-> Sources: chapters 12 to 16 for the query, chapter 7 for the scopes. No new
-> mechanism.
+After clustering, one anti-unification query per cluster pair locates the
+remaining differences. This chapter reads one such result and tests a proposed
+domain resolution inside a temporary scope.
 
 ## One query per pair of clusters
 
-> Pick one representative per cluster, then anti-unify each pair. With k clusters that
-> is k(k-1)/2 queries, and for three clusters it is three lines. Show them and quote
-> the output.
->
-> State why representatives are safe to pick arbitrarily: the operands of `antiunify`
-> are e-classes, so any member of the cluster names the same class and the answer does
-> not depend on which sample you named. This is worth stating explicitly because it is
-> the property that makes the whole procedure well defined.
+For `k` clusters, choose one representative from each and run
+`k(k - 1) / 2` queries. After Chapter 18's rewrite there are two clusters, so
+its fixture needs one query:
 
-## Reading a group as a decision
+```lisp
+{{#include ../examples/18-clusters.egg:cluster-explanation}}
+```
 
-> Each `Variants` group is one position where the samples disagree, carrying both
-> readings. Walk one from the example: what the skeleton around it establishes, what
-> each side says, and what a reviewer would have to know to choose. State that the
-> engine has ranked nothing and that choosing needs a schema, a test or a person, which
-> chapter 12 already said and this chapter has to show.
+It prints:
 
-## Ordering the decisions
+```text
+(anti-unify :size 9 :cr 0.7143 :completion exact
+  (And
+    (Or
+      (usEast destination)
+      (Variants (euWest destination) (apSouth destination)))
+    core))
+```
 
-> What the reader has to work with when there are several groups, stated without
-> inventing a metric the engine does not compute: `:cr` per pair, which says how much
-> of the two operands is shared and therefore how localized the disagreement is; the
-> size of each group's two sides; and how many cluster pairs a given position appears
-> in, since a position that differs across every pair is a position every sample
-> disagreed about.
->
-> Give the practical order the examples in chapters 20 to 22 follow, and say it is a
-> convention, not a result.
+Any of `s1`, `s2`, or `s3` can represent the first cluster. An `antiunify`
+operand resolves to its e-class, so all three names present the same search
+state to the solver.
+
+## Reading the explanation
+
+The skeleton says that both clusters require `core`, use a disjunction of
+regions, and include `usEast`. The marked position carries the remaining
+alternatives:
+
+```text
+(Variants (euWest destination) (apSouth destination))
+```
+
+A reviewer must determine which region belongs in the deployment policy. A
+configuration source, deployment test, or domain owner can settle that
+question. Semper reports the alternatives but does not choose one.
+
+A `Variants` node is a syntactic marker in the selected anti-unifier, not
+necessarily one independent semantic decision. Chapter 22 shows one connective
+change represented by two markers through identity elements.
+
+## Ordering several differences
+
+Semper reports `:cr` for each pair and the terms under each `Variants` node.
+It does not rank review questions or aggregate them across queries. A review
+can use three observable quantities as a convention:
+
+1. inspect pairs with lower `:cr` first because their disagreement is more
+   localized relative to their operands;
+2. inspect smaller alternative subterms before alternatives that replace a
+   complete formula;
+3. group the same field and alternatives when they recur across cluster pairs.
+
+Chapter 21 applies the third convention. These steps organize review; they are
+not part of the AU objective from Chapter 12.
 
 ## Testing a resolution
 
-> The use of scopes from chapter 7, shown on the running example: `push`, assert the
-> reading you believe is right as a union or a rule, re-run the cluster grid to see
-> which clusters merge, `pop`, then try the other reading. Show both and quote both
-> grids. State what this gives a reviewer that reading the formula does not: the
-> consequence of a choice, measured against every other sample.
+A suspected domain equality can be tested without retaining it:
 
-## When the samples agree and are all wrong
+```lisp
+{{#include ../examples/18-clusters.egg:speculative-resolution}}
+```
 
-> The limit of the method, stated here because this is the chapter where a reader
-> starts trusting it. One cluster means no disagreement was found, which is not
-> evidence of correctness: it is evidence that the samples did not disagree, and
-> correlated errors are the common reason. One paragraph, then chapter 23.
+Inside the scope, equating the two region predicates merges `s4` with all three
+members of the other cluster. `pop` restores the two-cluster partition. The
+scope behavior is the mechanism from Chapter 7; the union is only a hypothesis
+being tested.
+
+Even a one-cluster result establishes agreement only under the asserted facts.
+Chapter 17's correlated-error warning still applies.

@@ -1,0 +1,17 @@
+;; EXPECT: ok
+;; Book chapter 8: extraction uses additive costs and excludes unextractable ops.
+
+;; ANCHOR: extraction
+(sort E)
+(constructor unit () E)
+(constructor wrap (E) E)
+(constructor expensive () E :cost 5)
+(constructor hidden () E :unextractable)
+
+(union (expensive) (wrap (unit)))
+(union (expensive) (hidden))
+
+;; Prints (wrap (unit)), whose cost is 2.
+(extract (expensive))
+(check (= (expensive) (wrap (unit))))
+;; ANCHOR_END: extraction

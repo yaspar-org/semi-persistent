@@ -1,0 +1,12 @@
+;; EXPECT: sort-error
+;; EVAL: both
+;; Book chapter 7: a let binding does not survive its scope.
+
+;; ANCHOR: scoped-name-error
+(sort E)
+(function a () E)
+(push)
+(let scoped (a))
+(pop)
+(check (= scoped (a)))
+;; ANCHOR_END: scoped-name-error

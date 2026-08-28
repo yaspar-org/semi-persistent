@@ -1,24 +1,5 @@
 ;; EXPECT: check-failed
-;; Book chapter 11: plain congruence closure, and the equality it does not find.
-;;
-;; This is the DEFAULT mode. Canonization gives you every AC fact that is a
-;; property of a single node: reordering, flattening, multiplicity, the clamp, the
-;; unit. Congruence closure gives you every fact of the form "equal arguments make
-;; equal applications". Those two together are complete for free operators. They
-;; are NOT complete for AC operators, and this file is the smallest case.
-;;
-;; The two asserted equations say that `{a,b}` is `c` and that `{a,b,d}` is `n`.
-;; AC entails `n = c + d`, by grouping the known sub-sum out of `n`:
-;;
-;;   add(a, b, d)  =  add( add(a, b), d )  =  add(c, d)
-;;
-;; Plain recanonicalization cannot take that step. It walks `n`'s children
-;; `{a, b, d}` and calls `find` on each one. All three are unchanged, so nothing
-;; happens. The sub-multiset `{a, b}` is not a child of `n`; flattening erased it,
-;; and with it the class reference that congruence would have followed to `c`.
-;;
-;; The last check therefore FAILS, and the test suite asserts that it fails.
-
+;; ANCHOR: completion-example
 (sort E)
 (function add (E) E :assoc :comm)
 (function a () E)
@@ -30,10 +11,11 @@
 (union (add a b) c)
 (union (add a b d) n)
 
-;; Congruence still works where a class reference survives. `add(a, b)` is a child
-;; of nothing here, but this pair shows the mechanism is present and firing.
+;; Ordinary congruence follows a direct class reference.
 (function f (E) E)
 (check (= (f (add a b)) (f c)))
 
-;; Entailed by AC. Not derived by plain congruence.
+;; Plain rebuild does not substitute the known sub-sum into the larger sum.
+(print-size)
 (check (= n (add c d)))
+;; ANCHOR_END: completion-example

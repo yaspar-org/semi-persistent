@@ -360,7 +360,7 @@ where
         .find_var(root_name)
         .expect("root var must be in shape");
     let root_sort = rq.var_sorts[root_vid.idx()];
-    let mut rhs_ctx = crate::resolve::RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+    let mut rhs_ctx = crate::resolve::RhsResolveCtx::new(&rq);
     let resolved_rhs =
         crate::resolve::resolve_rhs(rhs, root_sort, ops, sorts, model, &mut rhs_ctx, globals)?;
     let compiled_rhs = compile_rhs(&resolved_rhs);
@@ -410,7 +410,7 @@ where
         })?;
     let rq = crate::resolve::resolve(&fq, ops, sorts, model, globals)?;
 
-    let mut rhs_ctx = crate::resolve::RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+    let mut rhs_ctx = crate::resolve::RhsResolveCtx::new(&rq);
     let mut actions = Vec::with_capacity(head.len());
     for a in head {
         let ra = crate::resolve::resolve_action(a, ops, sorts, model, &mut rhs_ctx, globals)?;
@@ -1153,7 +1153,7 @@ mod tests {
         let root_sort = lhs_root_sort(&rq, &fq);
         let ri = rhs_src;
         let rhs_ast = parse_rhs(ri);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         let rhs = resolve_rhs(
             &rhs_ast,
             root_sort,
@@ -1184,7 +1184,7 @@ mod tests {
         let root_sort = lhs_root_sort(&rq, &fq);
         let ri = "x";
         let rhs_ast = parse_rhs(ri);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         let rhs = resolve_rhs(
             &rhs_ast,
             root_sort,
@@ -1225,7 +1225,7 @@ mod tests {
         let root_sort = lhs_root_sort(&rq, &fq);
         let ri = "(f y x)";
         let rhs_ast = parse_rhs(ri);
-        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+        let mut ctx = RhsResolveCtx::new(&rq);
         let rhs = resolve_rhs(
             &rhs_ast,
             root_sort,
@@ -1415,7 +1415,7 @@ mod tests {
             let root_sort = lhs_root_sort(&rq, &fq);
             let ri = rhs_src;
             let rhs_ast = parse_rhs(ri);
-            let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+            let mut ctx = RhsResolveCtx::new(&rq);
             let rhs = resolve_rhs(
                 &rhs_ast,
                 root_sort,

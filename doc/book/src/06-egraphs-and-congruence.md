@@ -1,27 +1,13 @@
 # E-nodes, e-classes, congruence
 
-> Chapter contents: what an e-graph stores, the two structures it is made of, what
-> congruence closure adds to a union, what rebuild is for, and what
-> `(check (= t1 t2))` is actually asking. This is the chapter that lets a reader
-> stop guessing at the model, and everything in Parts II to IV is stated in its
-> vocabulary.
->
-> Sources: design `01-node-storage.md`, `02-classes-and-union-find.md`,
-> `03-hash-consing-caches.md`, `05-egraph.md`.
->
-> Example: write `examples/06-congruence.egg`. It needs to show, with `print-size`
-> and `check`, that one `union` of two arguments makes two parent terms equal
-> without any rule firing.
->
-> Nothing in this chapter is new material for the project: it is the standard model,
-> written for a reader who has not met it. Keep it to five pages and resist
-> restating design chapter 05.
+This chapter defines e-nodes and e-classes, measures structural sharing, and
+explains union-find, congruence closure, rebuild, and equality checks.
 
 ## E-nodes and e-classes
 
 An **e-node** is an operator together with references to its argument
-e-classes. An **e-class** is a collection of e-nodes that Semper currently
-knows to be equal.
+e-classes. An **e-class** is a set of e-nodes that Semper currently knows to
+be equal.
 
 ```lisp
 {{#include ../examples/06-congruence.egg:enodes-and-eclasses}}
@@ -41,47 +27,128 @@ and `Cb` are the classes containing the two leaves. All three nodes are new in
 this example and initially belong to separate e-classes.
 
 The parent stores class arguments, not pointers to fixed syntax-tree children.
-A term is therefore not retained as one tree. Once a child class acquires
-additional members, the same parent e-node represents every equal term in that
-class at that argument position. After insertion there is no unique stored
-syntax tree that `left` names; `left` names the resulting e-class.
+Once a child class acquires additional members, the same parent e-node
+represents applications using any equal member of that child class. After
+insertion, `left` names an e-class rather than one retained syntax tree.
+
+The node arena and the e-class relation are separate structures. Adding a new
+e-node creates a singleton e-class. Later equalities can merge classes without
+deleting their member nodes. This is why `print-size` counts nodes rather than
+equivalence classes.
 
 ## Hash-consing
 
-> Inserting a term that is already present returns the existing class rather than
-> adding a node. Show the node count staying flat across a duplicate insertion.
-> State the identity of an e-node: operator plus canonical argument classes.
+At insertion time, hash-consing maps an operator and canonical argument tuple
+to an existing e-node's class. Inserting the same key again therefore reuses
+that class instead of allocating another node.
+
+```lisp
+{{#include ../examples/06-congruence.egg:hash-consing}}
+```
+
+The second `print-size` has the same output as the first:
+
+```text
+a: 1
+b: 1
+f: 1
+total: 3
+```
+
+Reinserting `(f (a) (b))` reuses both leaves and their parent, so the measured
+node total remains three. The identity test uses e-class representatives for
+the children. If those representatives change after a merge, rebuild updates
+the affected parent keys.
 
 ## Union-find
 
-> How classes are merged and what "canonical" means for a class identifier. State
-> that a merge is not a rewrite: nothing is deleted and no representative choice
-> changes what is equal, which is why `--union-by` changes work and printed
-> representatives and not the equalities. Link Annex C.
+Semper maintains e-class membership with union-find. Every e-node has a class
+identifier. `find` follows parent links to the class's canonical
+representative, and path compression shortens later lookups. A `union` between
+two representatives makes one the survivor and the other a child of it.
+
+The survivor is an implementation choice, not a preferred term. A merge does
+not rewrite or delete either side, and choosing a different survivor does not
+change the asserted equality. The `--union-by` flag changes the survivor
+heuristic and can change operational work and printed representatives, but it
+does not change which input equality was asserted. [Annex C](C-flag-reference.md)
+lists the available policies.
+
+Path compression and union updates are included in push and pop restoration.
+Chapter 7 describes that semi-persistent storage.
 
 ## Congruence
 
-> The rule that makes it a congruence closure: equal arguments make equal
-> applications. Show the case where the reader can see it, namely `union` on two
-> arguments causing two parents to be equal with no rule involved. Quote the
-> `check` that passes.
->
-> State what this buys: a rule that fires once relates every term built over the
-> merged class, which is the reason equality saturation scales to term sets a
-> rewriting engine would enumerate.
+Congruence adds the rule that applications of the same operator to equal
+arguments are equal. The example first creates a second parent and confirms
+that it is distinct from `left`. It then merges only the leaf classes:
+
+```lisp
+{{#include ../examples/06-congruence.egg:congruence}}
+```
+
+After `(union (a) (b))`, both parent nodes have the canonical key
+`f(Cab, Cab)`. Rebuild detects that collision and merges the parent classes, so
+`(check (= left right))` passes without a rewrite rule.
+
+The final `print-size` reports:
+
+```text
+a: 1
+b: 1
+f: 2
+total: 4
+```
+
+The graph still stores four e-nodes. The two leaves now occupy one e-class, and
+the two parents occupy another. Congruence changes class membership, not the
+node count. Hash-consing prevents duplicate allocation for a key when it is
+inserted; rebuild can later make historical nodes collide, in which case it
+merges their classes and retains both arena entries.
+
+A rewrite that merges two classes therefore also affects every application
+whose child points into those classes. Rules match and extend these shared
+classes instead of enumerating a separate rewritten tree for every equivalent
+term.
 
 ## Rebuild
 
-> Why a merge leaves the graph temporarily out of congruence and what rebuild
-> restores. Keep it to what a user can observe: rebuild happens before matching, so
-> a rule never sees a half-merged graph, and node counts printed between commands are
-> counts after rebuild. Point at design chapter 05 for the algorithm and say that
-> canonization runs here, which is where chapter 10 picks up.
+A class merge immediately updates union-find, but parent e-nodes can still
+contain the absorbed representative in their stored keys. Rebuild restores a
+congruence-closed state. It visits parents from the absorbed class's use-list,
+replaces child identifiers with current representatives, canonizes the
+children, and probes the hash-consing cache again. A collision schedules
+another class merge, so the process continues until no pending merges remain.
+
+The `union` and equality-check commands rebuild before returning their result.
+Saturation also rebuilds before constructing each round's matching indexes.
+Rules therefore match against a congruence-closed graph rather than an
+intermediate state with stale parent keys. `print-size` itself only reads the
+node arenas; it does not trigger rebuild.
+
+Chapter 10 describes the operator-specific canonization performed during term
+construction and parent recanonization. The
+[e-graph design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/05-egraph.md)
+specifies the rebuild worklist and use-list algorithm.
 
 ## What an equality check asks
 
-> `(check (= t1 t2))` inserts both terms and asks whether they are in one class.
-> State the two consequences carefully, because Part IV depends on both: an equality
-> holds only if the declared rules and the declared algebra derived it, and a
-> negative answer is a statement about the engine's current knowledge. Forward
-> reference chapter 11 for what a negative answer means under each congruence mode.
+`(check (= t1 t2))` builds both ground terms, rebuilds the e-graph, and asks
+whether their e-nodes have the same union-find representative. It does not
+compare two extracted syntax trees.
+
+A passing check means the asserted unions, fired rules, declared algebraic
+canonization, and active congruence procedure derived the equality. A failing
+check means the terms remain in different classes in the graph as currently
+computed. It is not a proof that the terms are unequal in every model of the
+declared laws.
+
+Likewise, `(check (!= t1 t2))` accepts when the two current representatives are
+different. Chapter 11 explains how plain, eager, and lazy congruence modes
+change the work performed before that decision.
+
+The storage structures are specified in the design chapters for
+[nodes](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/01-node-storage.md),
+[e-classes](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/02-classes-and-union-find.md),
+and
+[hash-consing](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/03-hash-consing-caches.md).

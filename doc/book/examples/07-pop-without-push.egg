@@ -1,0 +1,7 @@
+;; EXPECT: error
+;; EVAL: both
+;; Book chapter 7: an unmatched pop is a runtime error.
+
+;; ANCHOR: pop-without-push
+(pop)
+;; ANCHOR_END: pop-without-push

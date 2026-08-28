@@ -1,77 +1,95 @@
 # Clustering samples by equality saturation
 
-> Chapter contents: the procedure for putting several samples of one sentence into
-> one e-graph and reading off which of them are the same formula, what the partition
-> depends on, how to write it down as a test, and what to do when the partition is
-> not the one you expected.
->
-> Example: write `examples/18-clusters.egg`. Four samples of one small sentence over a
-> Boolean signature with `And` and `Or` declared ACI with units. Two samples differ
-> only in conjunct order, a third differs by an expanded predicate, a fourth has a
-> real difference. Before the domain rewrite there are three clusters, after it two.
-> The file writes the full partition down as checks in both states, so it fails if
-> either partition changes.
->
-> Sources: no new engine mechanism. This chapter composes chapter 8 (saturation),
-> chapter 10 (canonization), chapter 4 (declarations) and chapter 6 (what an equality
-> check asks). Say so in the opening: the procedure is a use of the engine, not a
-> feature of it.
+Clustering composes the declarations, saturation, and equality checks from
+Parts I and II. This chapter builds a partition of four samples, shows how one
+domain fact changes it, and gives checks for diagnosing an unexpected
+partition.
 
 ## The procedure
 
-> Numbered, five steps, each one command form the reader has already met: declare the
-> signature with the algebraic attributes the domain has; insert every sample with
-> `let`, one name per sample; assert the domain facts as rewrite rules; `run` to
-> saturation; then read the partition. Show the whole program.
->
-> State the property that makes this work at all, since it is the reason the e-graph
-> is the right structure here: every sample is inserted into the same graph, so two
-> samples that canonize to the same node were never two things, and two that saturation
-> proves equal become one class without anything being rewritten away.
+For one set of samples:
+
+1. Declare the shared signature and only the algebraic properties valid in the
+   domain.
+2. Insert every sample with a distinct `let` name.
+3. Assert the domain equalities that the comparison may use.
+4. Run the selected rules to saturation.
+5. Check every pair of sample names for equality or non-equality.
+
+The fixture performs the checks both before and after its domain rule:
+
+```lisp
+{{#include ../examples/18-clusters.egg:clustering-program}}
+```
+
+All samples enter one e-graph. `s1` and `s2` canonize to the same node, so no
+later proof is needed to join them. A rewrite can merge other sample classes
+without discarding either representation.
 
 ## Reading the partition
 
-> There is no command that prints the partition, so say what a reader actually does.
-> Two ways, both of which run as written:
->
-> - `(check (= si sj))` and `(check (!= si sj))` over all pairs. For four samples that
->   is six lines, and the file then records the partition and fails if it moves. This
->   is the form every example in this part uses.
-> - `(extract si)` for each sample. Samples in one class extract to the same term,
->   which gives a readable cluster representative for free.
->
-> Show both on the example. State the cost honestly: the check grid is quadratic in
-> the number of samples, which is why this part stays at three to five samples, and a
-> larger corpus needs the Rust API.
+Semper has no surface command that prints a partition. For four samples, the
+six pairwise checks record it directly. Before the rewrite, the checks assert
+
+```text
+{s1, s2}  {s3}  {s4}
+```
+
+`s1` and `s2` differ only by conjunct order and a duplicate `core`. The ACI
+declaration for `And` absorbs both. `s3` expands `approvedRegion` into two
+specific regions, and `s4` names a different second region.
+
+The four initial extractions print:
+
+```text
+(And (core) (approvedRegion (destination)))
+(And (core) (approvedRegion (destination)))
+(And (core) (Or (usEast (destination)) (euWest (destination))))
+(And (core) (Or (usEast (destination)) (apSouth (destination))))
+```
+
+The rule states that this deployment's approved regions are `usEast` and
+`euWest`. After three rounds, the partition is
+
+```text
+{s1, s2, s3}  {s4}
+```
+
+Extraction now prints the `approvedRegion` representative for the first three
+samples. It still prints the `apSouth` disjunction for `s4`.
+
+The check grid uses `n(n - 1) / 2` checks for `n` samples. For a larger
+corpus, host code can group the class identifiers returned through the Rust
+API. There is no separate clustering API.
 
 ## What the partition depends on
 
-> Three things, all already explained, and the section is a table pointing at them:
-> the declared attributes, the rewrite rules asserted, and the number of rounds run.
-> State the consequence: a cluster is not "these samples mean the same thing", it is
-> "these samples are equal under the algebra you declared and the facts you asserted".
->
-> Then show it moving. Assert the domain rewrite in the example file and re-run the
-> grid: two clusters where there were three. This is the demonstration the whole part
-> is built on, so give it the room it needs and quote both grids.
+A cluster means that Semper proved its members equal under this program. It
+does not assert semantic equivalence independently of the program.
 
-## When a cluster is too coarse
+| input to the comparison | effect |
+| --- | --- |
+| declaration attributes | decide which terms canonize during construction |
+| rewrite and union commands | supply the domain equalities available to saturation |
+| selected ruleset and round limit | decide which installed rules run and whether they reach a fixpoint |
+| completion mode | decides whether additional AC or ACI consequences enter the retained graph |
 
-> The failure the reader will hit second: two samples that should be distinguished are
-> in one class because a rule was too strong. State how to find out which rule did it,
-> namely `--proofs` and `--dump-proofs` from Annex C, and say what question that
-> answers. Keep it to a paragraph.
+The first and second partitions differ only because the rewrite was installed
+and run. The samples themselves did not change.
 
 ## When a cluster is too fine
 
-> The failure the reader will hit first: two samples that are the same formula are in
-> different classes. State the checklist, in the order that finds the cause fastest:
-> is the law a declared attribute or an unwritten rule, did the run reach saturation,
-> is the difference an AC consequence that needs `--derive-ac-eqs` (chapter 11). Each
-> item is one sentence and a chapter reference.
+First inspect the unresolved syntax. If it is order or repetition, check the
+Chapter 4 declaration. If it is a domain equation, check that Chapter 8 ran
+the relevant ruleset to saturation. If it is an equality hidden by flattened
+AC structure, Chapter 11 explains when `--derive-ac-eqs` is required.
 
-## What comes next
+## When a cluster is too coarse
 
-> One paragraph. Clustering says which samples are the same. It does not say what the
-> difference between two clusters is, and with three clusters there are three
-> differences to explain. Chapter 19 explains them.
+A rule or union may have asserted more than the domain permits. With
+`--proofs --dump-proofs FILE`, the proof dump records one path from each node
+to its representative, including rewrite identifiers along that path. It can
+identify which merge joined a class, but it does not directly produce a
+named sample-to-sample explanation or enumerate alternative proofs. The
+[proof-logging design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/15-proof-logging.md)
+defines that output and its verification boundary.

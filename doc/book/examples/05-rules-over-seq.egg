@@ -1,15 +1,6 @@
 ;; EXPECT: ok
-;; Book chapter 5: writing rules whose left side is a `Seq` node (associative
-;; only).
-;;
-;; A `Seq` node's children are a flattened LIST. Order is kept, so a pattern picks
-;; out a contiguous window rather than a subset, and a rest variable stands for a
-;; contiguous run rather than a remainder. A pattern may carry at most one rest
-;; before its children and one after, which is exactly what you need to say
-;; "somewhere in the middle", "at the front", or "at the back".
-;;
-;; As in the multiset example, each section declares its own operator so that a
-;; match in one section cannot create an equality another section is measuring.
+;; EVAL: both
+;; Sequence patterns match ordered contiguous windows.
 
 (sort E)
 (function a () E)
@@ -17,97 +8,67 @@
 (function c () E)
 (function d () E)
 
-;; ── The front: one rest, after the children ──────────────────────────────────
-(function fr (E) E :assoc)
-(function firstIs (E) E)
-(rewrite (fr x ..rest) (firstIs x))
+;; ANCHOR: sequence-ends
+(function Front (E) E :assoc)
+(function Back (E) E :assoc)
+(function First (E) E)
+(function Last (E) E)
 
-(let f1 (fr a b c))
-(let f2 (fr b a c))
-(run 3)
-;; `x` bound the FIRST child, not any child. Order is what a `Seq` keeps.
-(check (= f1 (firstIs a)))
-(check (= f2 (firstIs b)))
-(check (!= f1 f2))
-(check (!= f1 (firstIs b)))
+(rewrite (Front x ..rest) (First x))
+(rewrite (Back ..rest x) (Last x))
 
-;; ── The back: one rest, before the children ──────────────────────────────────
-(function bk (E) E :assoc)
-(function lastIs (E) E)
-(rewrite (bk ..rest x) (lastIs x))
+(let front (Front a b c))
+(let back (Back a b c))
+(run 1)
 
-(let g1 (bk a b c))
-(run 3)
-(check (= g1 (lastIs c)))
-(check (!= g1 (lastIs a)))
+(check (= front (First a)))
+(check (= back (Last c)))
+(check (!= front (First b)))
+(check (!= back (Last a)))
+;; ANCHOR_END: sequence-ends
 
-;; ── The middle: a rest on each side is a sliding window ──────────────────────
-;; `(wn ..p x y ..s)` matches every ADJACENT pair. On a four-element sequence that
-;; is three matches, one per position, and no more: `a` and `c` are both in the
-;; sequence but never adjacent.
-(function wn (E) E :assoc)
-(function adj (E E) E)
-(rewrite (wn ..p x y ..s) (adj x y))
+;; ANCHOR: sequence-window
+(function Window (E) E :assoc)
+(function Adjacent (E E) E)
+(rewrite (Window ..prefix x y ..suffix) (Adjacent x y))
 
-(let h (wn a b c d))
-(run 3)
-(check (= h (adj a b)))
-(check (= h (adj b c)))
-(check (= h (adj c d)))
-(check (!= h (adj a c)))
-(check (!= h (adj b a)))
+(let window (Window a b c d))
+(run 1)
 
-;; ── No rest at all means the whole sequence, exactly ─────────────────────────
-(function ex (E) E :assoc)
-(function pairOnly () E)
-(rewrite (ex x y) (pairOnly))
+(check (= window (Adjacent a b)))
+(check (= window (Adjacent b c)))
+(check (= window (Adjacent c d)))
+(check (!= window (Adjacent a c)))
+;; ANCHOR_END: sequence-window
 
-(let k1 (ex a b))
-(let k2 (ex a b c))
-(run 3)
-;; Two children: the pattern accounts for the whole node.
-(check (= k1 (pairOnly)))
-;; Three children and nowhere to put the third, so no match.
-(check (!= k2 (pairOnly)))
+;; Exact patterns account for the complete sequence.
+(function Exact (E) E :assoc)
+(function PairOnly () E)
+(rewrite (Exact x y) (PairOnly))
 
-;; ── Flattening happens before matching ───────────────────────────────────────
-;; A nested term of the same operator is not a different term, so the window rule
-;; sees the flattened children and finds a pair that spans the old bracket.
-(function fl (E) E :assoc)
-(function spans (E E) E)
-(rewrite (fl ..p x y ..s) (spans x y))
+(let exact_pair (Exact a b))
+(let exact_triple (Exact a b c))
+(run 1)
+(check (= exact_pair (PairOnly)))
+(check (!= exact_triple (PairOnly)))
 
-(let n1 (fl (fl a b) (fl c d)))
-(run 3)
-(check (= n1 (fl a b c d)))
-;; `b` and `c` were in different sub-terms in the source text. They are adjacent
-;; in the node, because there are no sub-terms in the node.
-(check (= n1 (spans b c)))
+;; Repeated variables constrain adjacent positions.
+(function Repeated (E) E :assoc)
+(function HasRun () E)
+(rewrite (Repeated ..prefix x x ..suffix) (HasRun))
 
-;; ── A repeated pattern variable means ADJACENT duplicates ────────────────────
-;; This is the sharpest difference from the commutative kinds. In a `Set` a
-;; repeated variable can never match, because every count is 1. In an `MSet` it is
-;; a statement about counts. In a `Seq` it is a statement about POSITIONS: the two
-;; occurrences have to sit next to each other.
-(function dd (E) E :assoc)
-(function hasRun () E)
-(rewrite (dd ..p x x ..s) (hasRun))
+(let adjacent_repeat (Repeated a a b))
+(let separated_repeat (Repeated a b a))
+(run 1)
+(check (= adjacent_repeat (HasRun)))
+(check (!= separated_repeat (HasRun)))
 
-(let r1 (dd a a b))
-(let r2 (dd a b a))
-(run 3)
-;; Two `a` next to each other.
-(check (= r1 (hasRun)))
-;; The same two elements, still two of them, but separated. No match.
-(check (!= r2 (hasRun)))
+;; Construction flattens nested applications before matching.
+(function Flat (E) E :assoc)
+(function Spans (E E) E)
+(rewrite (Flat ..prefix x y ..suffix) (Spans x y))
 
-;; ── What a `Seq` operator cannot have ────────────────────────────────────────
-;; There is no `:identity` on a sequence operator, and no count clamp either.
-;; `:idempotent`, `:nilpotent` and `:identity` all require `:comm` as well as
-;; `:assoc`, because each of them is a statement about a MULTISET of children.
-;; `doc/book/examples/04-illegal-seq-identity.egg` is the rejected declaration,
-;; and the test suite asserts it keeps being rejected.
-;;
-;; What a `Seq` does absorb is bracketing and the one-child wrapper.
-(check (= (fl a (fl b c)) (fl a b c)))
-(check (= (fl a) a))
+(let flat (Flat (Flat a b) (Flat c d)))
+(run 1)
+(check (= flat (Flat a b c d)))
+(check (= flat (Spans b c)))
