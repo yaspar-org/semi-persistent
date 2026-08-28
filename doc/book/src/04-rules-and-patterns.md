@@ -150,7 +150,25 @@ and predicate guards directly in its first list rather than using `:when`.
 
 ## Subsumption and rule sets
 
-> `:subsume` marks the matched term unusable by later rules and is not accepted on
-> `birewrite`. `(ruleset r)` plus `:ruleset r` names a group so that `(run r n)` can
-> run it alone. Show one use of each. State what `:subsume` is for in one sentence
-> and do not develop it: nothing else in the book uses it.
+Subsumption is useful when a rule represents a one-way transition: the old
+e-node remains in the e-graph, but no longer triggers rules in later matching
+indexes.
+
+Rulesets partition rules into explicitly selected groups. A named ruleset must
+be declared before it is used, and `:ruleset name` assigns a `rewrite`,
+`birewrite`, or general `rule` to it. `(run name n)` runs only rules assigned
+to that named set for at most `n` iterations. A bare `(run n)` runs only
+untagged rules, which form the default ruleset.
+
+```lisp
+{{#include ../examples/04-subsumption-rulesets.egg:subsumption-rulesets}}
+```
+
+The first run selects `simplify`, so only the tagged rewrite fires. It merges
+`value` with `(reduced item)` and subsumes the matched `(old item)` node. The
+untagged rewrite to `final` does not participate in that run.
+
+The bare second run selects the default ruleset. It can rewrite
+`(reduced item)` to `(final item)`, but it cannot use the subsumed
+`(old item)` node to produce `(stale item)`. Named rulesets are not implicitly
+included in a default run; each run selects exactly one ruleset.

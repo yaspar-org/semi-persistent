@@ -1,0 +1,27 @@
+;; EXPECT: ok
+;; Book chapter 4: subsumption and ruleset selection.
+
+;; ANCHOR: subsumption-rulesets
+(sort Expr)
+(function item () Expr)
+(function old (Expr) Expr)
+(function reduced (Expr) Expr)
+(function final (Expr) Expr)
+(function stale (Expr) Expr)
+
+(ruleset simplify)
+
+(rewrite (old x) (reduced x) :subsume :ruleset simplify)
+(rewrite (old x) (stale x))
+(rewrite (reduced x) (final x))
+
+(let value (old item))
+
+(run simplify 2)
+(check (= value (reduced item)))
+(check (!= value (final item)))
+
+(run 2)
+(check (= value (final item)))
+(check (!= value (stale item)))
+;; ANCHOR_END: subsumption-rulesets
