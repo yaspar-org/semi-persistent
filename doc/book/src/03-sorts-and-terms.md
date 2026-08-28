@@ -207,8 +207,27 @@ collects this and the other obligations left to the program author.
 
 ## Literals
 
-> How literal tokens are classified at the sort expected by an operator, including
-> booleans, numbers, and strings. Do not repeat the literal-model table. For the
-> book's purposes, literals mainly occur as constructor arguments and as
-> `:identity` units such as `(Lit true)`. Keep this short and point at design
-> chapter 13.
+Literal tokens are typed during sortchecking. When a token appears as an
+operator argument, the declaration supplies its expected sort and the selected
+literal model tries to parse the token at that sort. The example selects both
+literal models so it can use machine and arbitrary-precision sorts together.
+
+```lisp
+{{#include ../examples/03-literals.egg:literals}}
+```
+
+The two occurrences of `42` have the same spelling, but `Big` requires an
+`IBig` while `Machine` requires an `i64`. Similarly, `true` is parsed as
+`bool`, `3.5` as `f64`, and the quoted token `"Semper"` as `String`.
+
+Concrete literal sorts are separate from user-declared sorts. There is no
+implicit coercion from `bool` to `Expr`; `(Lit true)` explicitly constructs an
+`Expr` containing the Boolean value. An algebraic operator returning `Expr`
+can therefore use `(Lit true)` as its identity term, while bare `true` would
+have the wrong sort.
+
+During term construction, Semper interns the concrete value in an internal
+literal node beneath the user-declared constructor. These internal operators
+do not appear in surface syntax. The
+[literal-model design chapter](https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/13-literal-model.md)
+specifies their representation and the primitive-operation interface.
