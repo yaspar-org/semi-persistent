@@ -55,8 +55,31 @@ operators, builds and names terms, and finally checks equalities.
 
 ## Output streams
 
-> Query output goes to stdout, the closing `ok — N nodes` line goes to stderr.
-> Give the redirection that yields only the answers, which is what a script wants.
+Commands that return data, including `extract`, `antiunify`, `print-size`, and
+`print-stats`, write their results to standard output. Successful checks print
+nothing. After the program finishes, Semper writes its closing status to
+standard error:
+
+```text
+ok — N nodes
+```
+
+The example above therefore has no standard output; its only visible line is
+the closing status.
+
+Redirecting standard output gives a script only the query results while leaving
+the status visible on the terminal:
+
+```bash
+./target/release/semi-persistent PROGRAM.egg > answers.txt
+```
+
+To capture both streams separately:
+
+```bash
+./target/release/semi-persistent PROGRAM.egg \
+  > answers.txt 2> status.txt
+```
 
 ## Exit status
 
