@@ -1,4 +1,4 @@
-# What autoformalization is
+# Using e-graphs and anti-unification for semantic comparison in autoformalization
 
 Autoformalization turns a natural-language requirement into a formal artifact.
 This chapter defines the review problem, explains what ordinary checks leave

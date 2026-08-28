@@ -29,7 +29,7 @@
 
 # Part IV. Autoformalization
 
-- [What autoformalization is](17-what-autoformalization-is.md)
+- [Using e-graphs and anti-unification for semantic comparison in autoformalization](17-what-autoformalization-is.md)
 - [Clustering samples by equality saturation](18-clustering-samples.md)
 - [Explaining the differences between clusters](19-explaining-differences.md)
 - [Repair by disagreement](20-dogwood-simple.md)

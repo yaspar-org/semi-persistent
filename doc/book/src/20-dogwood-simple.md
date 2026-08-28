@@ -92,7 +92,7 @@ The candidates also contain six presentational differences:
 | temporal conjunction order | `tAnd :assoc-comm-idem` |
 | predicate field order | `args :assoc-comm-idem` |
 | `method == "POST"` versus `"POST" == method` | `eEq :comm` |
-| `15m` versus `900s` | windows normalized to seconds during encoding |
+| `15m` versus `900s` | rewrite `mins` through `secsTimes`, then constant-fold its product |
 | `count >= 1` versus `1 <= count` | `(birewrite (tLte a b) (tGte b a))` |
 
 ## Encoding Dogwood in Semper
@@ -112,7 +112,8 @@ main correspondences are:
 | `permit (...) when ...` | `rule`, `permit`, and `head` |
 | Cedar conditions and multiple `when` clauses | `Expr` terms under `eAnd` |
 | `when temporal { phi }` | `(temporal phi)` |
-| `formerly within 15m phi` | `(formerly (win 900) phi)` |
+| `formerly within 15m phi` | `(formerly (mins 15) phi)` |
+| `formerly within 900s phi` | `(formerly (secs 900) phi)` |
 | `Action::"..."::response{...}` | `(pred action response args)` |
 | predicate field assignments | `arg` terms collected by `args` |
 | `count for (t: Timepoint)` | `count`, `bcons`, and `(bvar 0)` |
@@ -123,6 +124,18 @@ Here is the complete executable model:
 ```lisp
 {{#include ../examples/20-dogwood-simple.egg}}
 ```
+
+The encoding retains each candidate's original time unit. The rewrite from
+`mins` to `secs` states the conversion inside the comparison theory:
+
+```lisp
+{{#include ../examples/20-dogwood-simple.egg:dogwood-identity}}
+```
+
+The first rule builds `(secsTimes 15 60)`. The second rule binds both operands
+as `IBig` literal values and evaluates the eager `IBig::*` primitive, reducing
+the intermediate term to `(secs 900)`. The equality is therefore derived by
+visible rewrite rules rather than imposed while translating the policies.
 
 The identity of `eAnd` represents an omitted condition. It lets the
 anti-unifier align candidate A's path guard with `eTrue` instead of replacing
@@ -155,7 +168,7 @@ points:
             (count
               (bcons tyTimepoint bnil)
               (formerly
-                (win 900)
+                (mins 15)
                 (tAnd
                   (tp (bvar 0))
                   (pred
