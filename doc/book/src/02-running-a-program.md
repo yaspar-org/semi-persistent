@@ -101,7 +101,28 @@ rather than the presence of output to decide whether the run succeeded.
 
 ## Running the book's examples
 
-> The path the examples live at, the command to run one, and the `cargo test`
-> invocation that runs all of them. Mention the first-six-lines directives exist
-> and that chapter 6 lists them, because a reader who opens an example file will
-> see them immediately.
+Every program displayed in this book lives under `doc/book/examples/`. The
+chapters include those files directly, so the displayed source and the tested
+source are identical.
+
+Run one example from the repository root:
+
+```bash
+./target/release/semi-persistent doc/book/examples/03-terms.egg
+```
+
+Run all book examples through their test harness:
+
+```bash
+cargo test -p semi-persistent-egraph --test egg_tests book_examples
+```
+
+The `book_examples` test scans every `.egg` file in the directory. The first six
+lines of a file may contain directives such as `;; EXPECT: ok` or
+`;; DERIVE_AC_EQS: on`. These lines are comments to the engine binary; the test
+harness reads them to select settings and the expected outcome.
+
+Chapter 6 lists every directive and its corresponding command-line option.
+When running an example manually, pass the matching option for any nondefault
+directive. An `EXPECT` directive can also state that a parse, sort, or check
+failure is the expected test result.
