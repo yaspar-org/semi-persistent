@@ -17,33 +17,62 @@ Reassociation and permutation therefore disappear from the representation: a
 whole family of AC-equivalent terms is compressed into a single e-node rather
 than stored as separate nodes connected by rewrite rules.
 
-Associative operators are variadic. Their declaration contains one argument
-sort, and applications may contain any number of children:
-
-```lisp
-(function And (Formula) Formula :assoc-comm-idem)
-```
+Operators declared with `:assoc`, `:assoc-left`, `:assoc-right`, or an AC
+alias are variadic. Their declaration contains one argument sort, and an
+application may contain one or more children. An application with no children
+is also valid when the operator declares an identity.
 
 ## The attributes
 
-Attributes may be combined and written in any order. `:assoc-comm` is an alias
-for `:assoc :comm`, while `:assoc-comm-idem` expands to
+Compatible attributes may be combined and written in any order.
+`:assoc-comm` is an alias for `:assoc :comm`, while
+`:assoc-comm-idem` expands to
 `:assoc :comm :idempotent`.
 
-| attribute | declared law | canonical representation or effect |
+| attribute | meaning | canonical representation or effect |
 | --- | --- | --- |
-| `:assoc` | `f(f(x,y),z) = f(x,f(y,z))` | variadic flat sequence; order is preserved |
+| `:assoc` | `f(f(x,y),z) = f(x,f(y,z))` | flatten every nested same-operator child into an order-preserving sequence |
+| `:assoc-left` | an application is a left fold | flatten the first-child spine into an order-preserving sequence |
+| `:assoc-right` | an application is a right fold | flatten the last-child spine into an order-preserving sequence |
 | `:comm` | `f(x,y) = f(y,x)` | binary sorted pair |
 | `:assoc-comm` | associative and commutative (AC) | variadic sorted multiset |
 | `:assoc-comm-idem` | AC and `f(x,x) = x` (ACI) | variadic sorted set |
-| `:assoc-left`, `:assoc-right` | associative | variadic flat sequence; the direction is retained as declaration metadata but currently does not change behavior |
 | `:idempotent` | `f(x,x) = x` | duplicate children collapse |
 | `:nilpotent n` | `n` copies of a child cancel to the identity | child multiplicities are reduced modulo `n`; the default is `2` |
 | `:identity t` | `f(x,t) = x` | children equal to `t` are dropped |
 
-These effects are part of canonization and hold without running rewrite rules
-or AC completion. Not every combination is legal; the legality table later in
-this chapter gives the supported combinations.
+`:nilpotent` must be accompanied by `:identity`. The identity is a ground term
+of the result sort, built from declarations available at that point. Reducing
+child multiplicities modulo the nilpotence order can empty the multiset. When
+that happens, Semper canonizes the result directly to the identity's e-class.
+The same rule applies to an explicitly empty application such as `(Xor)`;
+there is no separate empty `Xor` node connected to the identity by a rewrite.
+
+```lisp
+{{#include ../examples/04-nilpotent-identity.egg:nilpotent-identity}}
+```
+
+Semper rejects both a `:nilpotent` declaration without an identity and an
+empty variadic application whose operator has no identity. A nullary operator
+declared with an empty argument list remains an ordinary constant; this
+restriction applies only to empty applications of variadic operators.
+
+`:assoc-left` and `:assoc-right` specify fold direction rather than full
+associativity. For a left fold,
+
+`f(f(a,b),c) = f(a,b,c)`
+
+but `f(a,f(b,c))` retains its grouped right child. A right fold is the
+mirror image. Bare `:assoc` flattens both nestings, so all three terms have
+the same canonical representation.
+
+The three sequence tags are mutually exclusive. A directional fold also
+cannot be combined with `:comm`; an AC declaration uses `:assoc :comm`.
+
+These effects are applied when ground terms are inserted and when rewrite
+rules construct their right-hand sides. They require neither rewrite rules
+nor AC completion. Not every other combination is legal; the legality
+table later in this chapter lists the supported combinations.
 
 ## Two more attributes, not finished
 

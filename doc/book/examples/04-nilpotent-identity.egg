@@ -1,0 +1,10 @@
+;; EXPECT: ok
+;; ANCHOR: nilpotent-identity
+(sort E)
+(function Zero () E)
+(function A () E)
+(function Xor (E) E :assoc :comm :nilpotent 2 :identity (Zero))
+
+(check (= (Xor) (Zero)))
+(check (= (Xor (A) (A)) (Zero)))
+;; ANCHOR_END: nilpotent-identity
