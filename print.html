@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b0ab3174.js";
+            window.path_to_searchindex_js = "searchindex-bf2d2db0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-9b7fe51f.js"></script>
+        <script src="toc-87de0060.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2749,7 +2749,7 @@ state the operational claims, and
 <a href="https://github.com/yaspar-org/semi-persistent/blob/main/egraph/doc/design/19-anti-unification.md"><code>19-anti-unification.md</code>, section 9.6</a>
 states the current proof boundary.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="what-autoformalization-is"><a class="header" href="#what-autoformalization-is">What autoformalization is</a></h1>
+<h1 id="using-e-graphs-and-anti-unification-for-semantic-comparison-in-autoformalization"><a class="header" href="#using-e-graphs-and-anti-unification-for-semantic-comparison-in-autoformalization">Using e-graphs and anti-unification for semantic comparison in autoformalization</a></h1>
 <p>Autoformalization turns a natural-language requirement into a formal artifact.
 This chapter defines the review problem, explains what ordinary checks leave
 unsettled, and introduces comparison across several generated samples.</p>
@@ -3121,7 +3121,7 @@ candidate B permits a <code>POST</code> to <code>/admin/purge-all</code> as well
 <tr><td>temporal conjunction order</td><td><code>tAnd :assoc-comm-idem</code></td></tr>
 <tr><td>predicate field order</td><td><code>args :assoc-comm-idem</code></td></tr>
 <tr><td><code>method == "POST"</code> versus <code>"POST" == method</code></td><td><code>eEq :comm</code></td></tr>
-<tr><td><code>15m</code> versus <code>900s</code></td><td>windows normalized to seconds during encoding</td></tr>
+<tr><td><code>15m</code> versus <code>900s</code></td><td>rewrite <code>mins</code> through <code>secsTimes</code>, then constant-fold its product</td></tr>
 <tr><td><code>count &gt;= 1</code> versus <code>1 &lt;= count</code></td><td><code>(birewrite (tLte a b) (tGte b a))</code></td></tr>
 </tbody>
 </table>
@@ -3144,7 +3144,8 @@ main correspondences are:</p>
 <tr><td><code>permit (...) when ...</code></td><td><code>rule</code>, <code>permit</code>, and <code>head</code></td></tr>
 <tr><td>Cedar conditions and multiple <code>when</code> clauses</td><td><code>Expr</code> terms under <code>eAnd</code></td></tr>
 <tr><td><code>when temporal { phi }</code></td><td><code>(temporal phi)</code></td></tr>
-<tr><td><code>formerly within 15m phi</code></td><td><code>(formerly (win 900) phi)</code></td></tr>
+<tr><td><code>formerly within 15m phi</code></td><td><code>(formerly (mins 15) phi)</code></td></tr>
+<tr><td><code>formerly within 900s phi</code></td><td><code>(formerly (secs 900) phi)</code></td></tr>
 <tr><td><code>Action::"..."::response{...}</code></td><td><code>(pred action response args)</code></td></tr>
 <tr><td>predicate field assignments</td><td><code>arg</code> terms collected by <code>args</code></td></tr>
 <tr><td><code>count for (t: Timepoint)</code></td><td><code>count</code>, <code>bcons</code>, and <code>(bvar 0)</code></td></tr>
@@ -3219,7 +3220,9 @@ main correspondences are:</p>
 (function args (ArgSet) ArgSet :assoc-comm-idem :identity (noArgs))
 (function fnil () Path)
 (function fld (FSeg Path) Path)
-(function win (IBig) Win)
+(function secs (IBig) Win)
+(function mins (IBig) Win)
+(function secsTimes (IBig IBig) Win)
 
 (function request () Kind)
 (function response () Kind)
@@ -3263,7 +3266,7 @@ main correspondences are:</p>
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (mins 15)
                    (tAnd
                      (pred (aHttpRequest) (request) healthArgs)
                      (tp (bvar 0))))))
@@ -3277,7 +3280,7 @@ main correspondences are:</p>
         (tLte
           (tInt 1)
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (tp (bvar 0))
                      (pred (aHttpRequest) (response) healthArgsFlipped)))))))
@@ -3291,7 +3294,7 @@ main correspondences are:</p>
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (pred (aHttpRequest) (request) healthArgs)
                      (tp (bvar 0))))))
@@ -3305,7 +3308,7 @@ main correspondences are:</p>
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (pred (aHttpRequest) (response) healthArgs)
                      (tp (bvar 0))))))
@@ -3314,8 +3317,11 @@ main correspondences are:</p>
       pathIsDeploy)))
 
 ;; ANCHOR: dogwood-identity
+(rewrite (mins x) (secsTimes x 60))
+(rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
+(check (= (mins 15) (secs 900)))
 ;; ANCHOR_END: dogwood-identity
 
 (check (!= candA candB))
@@ -3339,6 +3345,18 @@ main correspondences are:</p>
 (antiunify pickWorst candB :algorithm exact)
 (checkau pickWorst candB :max_size 51 :algorithm exact)
 </code></pre>
+<p>The encoding retains each candidate’s original time unit. The rewrite from
+<code>mins</code> to <code>secs</code> states the conversion inside the comparison theory:</p>
+<pre><code class="language-lisp">(rewrite (mins x) (secsTimes x 60))
+(rewrite (secsTimes x y) (secs (IBig::* x y)))
+(birewrite (tLte a b) (tGte b a))
+(run 4)
+(check (= (mins 15) (secs 900)))
+</code></pre>
+<p>The first rule builds <code>(secsTimes 15 60)</code>. The second rule binds both operands
+as <code>IBig</code> literal values and evaluates the eager <code>IBig::*</code> primitive, reducing
+the intermediate term to <code>(secs 900)</code>. The equality is therefore derived by
+visible rewrite rules rather than imposed while translating the policies.</p>
 <p>The identity of <code>eAnd</code> represents an omitted condition. It lets the
 anti-unifier align candidate A’s path guard with <code>eTrue</code> instead of replacing
 the complete condition with one large variation. Treating Cedar conjunction
@@ -3364,7 +3382,7 @@ points:</p>
             (count
               (bcons tyTimepoint bnil)
               (formerly
-                (win 900)
+                (mins 15)
                 (tAnd
                   (tp (bvar 0))
                   (pred
@@ -3977,6 +3995,8 @@ playout counts, and parsed multiplicities use unsigned 64-bit integers.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="annex-b-command-reference"><a class="header" href="#annex-b-command-reference">Annex B. Command reference</a></h1>
+<p>This annex is a compact index of Semper’s commands. Follow the chapter links
+for semantics and <a href="#annex-a-complete-surface-language-grammar">Annex A</a> for the complete grammar.</p>
 <h2 id="symbol-declarations-and-algebraic-properties"><a class="header" href="#symbol-declarations-and-algebraic-properties">Symbol declarations and algebraic properties</a></h2>
 <div class="table-wrapper">
 <table>
@@ -4014,8 +4034,207 @@ defines the extraction tags. Annex A contains the complete declaration grammar.<
 introduced by <code>let</code> denotes the resulting e-class and may be used wherever a
 ground term is accepted. <a href="#building-a-term">Chapter 3</a>
 explains term construction in detail.</p>
+<h2 id="rules"><a class="header" href="#rules">Rules</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>(rewrite lhs rhs tags...)</code></td><td>Match <code>lhs</code>, build <code>rhs</code>, and merge it with the matched root class.</td></tr>
+<tr><td><code>(birewrite lhs rhs tags...)</code></td><td>Install one rewrite in each direction. Both sides use pattern syntax.</td></tr>
+<tr><td><code>(rule (pattern...) (action...) tags...)</code></td><td>Run a conjunctive query and execute its actions for every match.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Modifier</th><th>Accepted by</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:when (pattern...)</code></td><td><code>rewrite</code>, <code>birewrite</code></td><td>Add conjuncts to the query. A primitive predicate here computes over bound literal values.</td></tr>
+<tr><td><code>:subsume</code></td><td><code>rewrite</code></td><td>After applying the rewrite, hide the matched e-node from future pattern indexes.</td></tr>
+<tr><td><code>:ruleset r</code></td><td>all three forms</td><td>Put the installed rule in declared ruleset <code>r</code> instead of the default ruleset.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Modifiers may appear in any order. <code>birewrite</code> rejects <code>:subsume</code>; a general
+<code>rule</code> puts guards in its query list and accepts only <code>:ruleset</code> as a trailing
+modifier.</p>
+<h3 id="general-rule-actions"><a class="header" href="#general-rule-actions">General-rule actions</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Action</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>(union lhs rhs)</code></td><td>Build both RHS terms and merge their classes.</td></tr>
+<tr><td><code>(f rhs...)</code></td><td>Build and insert an application. RHS splices and comprehensions are accepted in its variadic children.</td></tr>
+<tr><td><code>(set (f rhs...) value)</code></td><td>Reserved syntax. It parses, but execution is not implemented.</td></tr>
+</tbody>
+</table>
+</div>
+<p><a href="#rules-and-patterns">Chapter 5</a> defines pattern matching, multiplicities,
+rest variables, comprehensions, modifiers, and action ordering.</p>
+<h2 id="running-rules-and-scopes"><a class="header" href="#running-rules-and-scopes">Running rules and scopes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>(run n)</code></td><td>Run the untagged default ruleset for at most <code>n</code> iterations.</td></tr>
+<tr><td><code>(run r n)</code></td><td>Run only declared ruleset <code>r</code> for at most <code>n</code> iterations.</td></tr>
+<tr><td><code>(run n :until (= a b))</code></td><td>Stop early when <code>a</code> and <code>b</code> join. A named run may use the same goal.</td></tr>
+<tr><td><code>(run n :until (!= a b))</code></td><td>Stop early when the two terms are in different classes. This does not assert a persistent disequality.</td></tr>
+<tr><td><code>(push)</code></td><td>Record a semi-persistent scope.</td></tr>
+<tr><td><code>(push :shrink)</code></td><td>Reclaim sufficiently overallocated storage, then record a scope.</td></tr>
+<tr><td><code>(pop)</code></td><td>Restore the most recent scope, including e-graph, installed-rule, and runtime-name state.</td></tr>
+</tbody>
+</table>
+</div>
+<p>A run selects exactly one ruleset. <a href="#equality-saturation">Chapter 8</a>
+defines round ordering, stopping, and statistics. <a href="#semi-persistence-push-and-pop">Chapter 7</a>
+defines scope lifetime and <code>:shrink</code>.</p>
+<h2 id="checks-extraction-and-statistics"><a class="header" href="#checks-extraction-and-statistics">Checks, extraction, and statistics</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>(check term)</code></td><td>Build <code>term</code>. This form has no additional truth or equality test.</td></tr>
+<tr><td><code>(check (= a b))</code></td><td>Rebuild and require <code>a</code> and <code>b</code> to belong to the same e-class.</td></tr>
+<tr><td><code>(check (!= a b))</code></td><td>Rebuild and require the terms to belong to different e-classes under the selected completion mode.</td></tr>
+<tr><td><code>(extract term)</code></td><td>Rebuild and print a lowest-cost extractable representative.</td></tr>
+<tr><td><code>(print-size)</code></td><td>Print nonzero per-operator e-node counts and the total.</td></tr>
+<tr><td><code>(print-size f)</code></td><td>Print the e-node count for operator <code>f</code>.</td></tr>
+<tr><td><code>(print-stats)</code></td><td>Print current graph counts and the most recent run’s counters.</td></tr>
+<tr><td><code>(print-stats :file "path.json")</code></td><td>Write the same statistics as JSON.</td></tr>
+</tbody>
+</table>
+</div>
+<p><a href="#equality-saturation">Chapter 8</a> defines extraction and statistics.
+<a href="#three-congruence-closures">Chapter 11</a> explains how the completion mode
+affects equality and disequality checks.</p>
+<h2 id="anti-unification"><a class="header" href="#anti-unification">Anti-unification</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>(antiunify left right options...)</code></td><td>Compute and print an anti-unifier.</td></tr>
+<tr><td><code>(checkau left right options...)</code></td><td>Compute the same result and fail if its size exceeds <code>:max_size</code>; print nothing on success.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Values</th><th>Default</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:algorithm</code></td><td><code>uct</code>, <code>exact</code></td><td><code>uct</code></td><td>Select budgeted graph search or exhaustive exact search.</td></tr>
+<tr><td><code>:playouts</code></td><td>unsigned integer</td><td><code>1000</code></td><td>Set the UCT playout budget. Exact search does not use it.</td></tr>
+<tr><td><code>:cycles</code></td><td><code>sides</code>, <code>sides-current</code>, <code>pair</code></td><td><code>sides</code></td><td>Select the cycle-context policy defined in Chapter 14.</td></tr>
+<tr><td><code>:max_size</code></td><td>unsigned 32-bit integer</td><td><code>u32::MAX</code> (<code>4294967295</code>)</td><td>Set the inclusive upper bound checked by <code>checkau</code>; unavailable on <code>antiunify</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p><a href="#what-anti-unification-is">Chapter 12</a> defines the result and size bound.
+<a href="#the-exact-algorithm">Chapters 14</a> and <a href="#graph-search-and-the-hybrid">15</a> define the
+algorithms, cycle modes, and playout budget.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="annex-c-flag-reference"><a class="header" href="#annex-c-flag-reference">Annex C. Flag reference</a></h1>
+<p>The command-line form is:</p>
+<pre><code class="language-text">semi-persistent [OPTIONS] &lt;FILE&gt;
+</code></pre>
+<p><code>FILE</code> is the required path to one Semper program.</p>
+<h2 id="representation-and-literal-model"><a class="header" href="#representation-and-literal-model">Representation and literal model</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Values</th><th>Default</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--id-bits</code></td><td><code>31</code>, <code>63</code></td><td><code>31</code></td><td>Select 31-bit or 63-bit e-class identifiers.</td></tr>
+<tr><td><code>--push-pop</code></td><td><code>diff</code>, <code>clone</code></td><td><code>diff</code></td><td>Select scope storage. <code>diff</code> uses semi-persistent logs; <code>clone</code> is accepted as a value but currently exits with “not yet implemented.”</td></tr>
+<tr><td><code>--types</code></td><td><code>machine</code>, <code>bignum</code></td><td><code>bignum</code></td><td>Select comma-separated literal groups. <code>machine,bignum</code> enables both groups.</td></tr>
+<tr><td><code>--proofs</code></td><td>flag</td><td>off</td><td>Record merge justifications for proof extraction.</td></tr>
+<tr><td><code>--dump-proofs FILE</code></td><td>path</td><td>none</td><td>Write one proof-path record per e-node after execution. Requires <code>--proofs</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The machine group provides <code>i64</code>, <code>u64</code>, <code>f64</code>, <code>usize</code>, <code>String</code>, and <code>bool</code>;
+the bignum group provides <code>IBig</code>, <code>UBig</code>, <code>RBig</code>, <code>String</code>, and <code>bool</code>.</p>
+<h2 id="saturation-and-completion"><a class="header" href="#saturation-and-completion">Saturation and completion</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--use-naive</code></td><td>selected</td><td>Explicitly select full re-matching each round. Conflicts with <code>--use-semi-naive</code>.</td></tr>
+<tr><td><code>--use-semi-naive</code></td><td>off</td><td>Select delta-driven saturation.</td></tr>
+<tr><td><code>--derive-ac-eqs</code></td><td>off</td><td>Run eager AC completion during rebuild. Conflicts with <code>--lazy-ac-eqs</code>.</td></tr>
+<tr><td><code>--lazy-ac-eqs</code></td><td>off</td><td>Run goal-directed AC completion for equality and disequality checks.</td></tr>
+<tr><td><code>--check-ac-basis</code></td><td>off</td><td>Print expensive reduced-basis invariant checks during eager completion. It has no effect without <code>--derive-ac-eqs</code>.</td></tr>
+<tr><td><code>--count-match-steps</code></td><td>off</td><td>Count and report matching work.</td></tr>
+</tbody>
+</table>
+</div>
+<p><a href="#naive-and-semi-naive-evaluation">Chapters 9</a> and
+<a href="#three-congruence-closures">11</a> define the evaluation and completion
+modes.</p>
+<h2 id="matching-and-union-policies"><a class="header" href="#matching-and-union-policies">Matching and union policies</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Value</th><th>Default</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--runtime-scheduling</code></td><td>flag</td><td>off</td><td>Choose atom order per binding from live bucket lengths. Conflicts with <code>--auto-scheduling</code>.</td></tr>
+<tr><td><code>--auto-scheduling</code></td><td>flag</td><td>off</td><td>Select static or per-binding atom ordering for each rule and round.</td></tr>
+<tr><td><code>--sampled-selectivity</code></td><td>flag</td><td>off</td><td>Estimate bound-key fan-out by sampling the emitter relation.</td></tr>
+<tr><td><code>--sampler-k</code></td><td>nonnegative integer</td><td><code>32</code></td><td>Set emitter nodes drawn per sampled estimate. Relevant with <code>--sampled-selectivity</code>.</td></tr>
+<tr><td><code>--sampler-bootstrap</code></td><td>nonnegative integer</td><td><code>0</code></td><td>Set bootstrap resamples per estimate; zero disables the guard.</td></tr>
+<tr><td><code>--sampler-cv</code></td><td>floating-point number</td><td><code>1.0</code></td><td>Reject a bootstrapped estimate when its coefficient of variation exceeds this threshold.</td></tr>
+<tr><td><code>--union-by</code></td><td><code>rank</code>, <code>size</code>, <code>uses</code>, <code>sum</code></td><td><code>rank</code></td><td>Choose the surviving representative by union-find rank, class size, use-list length, or size plus uses.</td></tr>
+</tbody>
+</table>
+</div>
+<p>These policies change operational work and representative choice, not the
+equalities asserted by the input program.</p>
+<h2 id="help"><a class="header" href="#help">Help</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>-h</code>, <code>--help</code></td><td>Print the generated command-line help.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="feature-gated-diagnostics"><a class="header" href="#feature-gated-diagnostics">Feature-gated diagnostics</a></h2>
+<p>Two environment variables affect binaries built with optional instrumentation
+features; they are not command-line flags:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Build feature and environment</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>phase-timing</code>, <code>EGRAPH_PHASE=1</code></td><td>Print aggregate rebuild, indexing, matching, and application timings at exit.</td></tr>
+<tr><td><code>phase-timing</code>, <code>EGRAPH_PHASE=rounds</code></td><td>Also print one timing line per saturation round.</td></tr>
+<tr><td><code>seek-stats</code>, <code>EGRAPH_SEEK=1</code></td><td>Print leapfrog seek-distance histograms at exit.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Without the corresponding Cargo feature, setting the environment variable has
+no effect.</p>
 
                     </main>
 

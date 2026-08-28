@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b0ab3174.js";
+            window.path_to_searchindex_js = "searchindex-bf2d2db0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-9b7fe51f.js"></script>
+        <script src="toc-87de0060.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -264,7 +264,7 @@ candidate B permits a <code>POST</code> to <code>/admin/purge-all</code> as well
 <tr><td>temporal conjunction order</td><td><code>tAnd :assoc-comm-idem</code></td></tr>
 <tr><td>predicate field order</td><td><code>args :assoc-comm-idem</code></td></tr>
 <tr><td><code>method == "POST"</code> versus <code>"POST" == method</code></td><td><code>eEq :comm</code></td></tr>
-<tr><td><code>15m</code> versus <code>900s</code></td><td>windows normalized to seconds during encoding</td></tr>
+<tr><td><code>15m</code> versus <code>900s</code></td><td>rewrite <code>mins</code> through <code>secsTimes</code>, then constant-fold its product</td></tr>
 <tr><td><code>count &gt;= 1</code> versus <code>1 &lt;= count</code></td><td><code>(birewrite (tLte a b) (tGte b a))</code></td></tr>
 </tbody>
 </table>
@@ -287,7 +287,8 @@ main correspondences are:</p>
 <tr><td><code>permit (...) when ...</code></td><td><code>rule</code>, <code>permit</code>, and <code>head</code></td></tr>
 <tr><td>Cedar conditions and multiple <code>when</code> clauses</td><td><code>Expr</code> terms under <code>eAnd</code></td></tr>
 <tr><td><code>when temporal { phi }</code></td><td><code>(temporal phi)</code></td></tr>
-<tr><td><code>formerly within 15m phi</code></td><td><code>(formerly (win 900) phi)</code></td></tr>
+<tr><td><code>formerly within 15m phi</code></td><td><code>(formerly (mins 15) phi)</code></td></tr>
+<tr><td><code>formerly within 900s phi</code></td><td><code>(formerly (secs 900) phi)</code></td></tr>
 <tr><td><code>Action::"..."::response{...}</code></td><td><code>(pred action response args)</code></td></tr>
 <tr><td>predicate field assignments</td><td><code>arg</code> terms collected by <code>args</code></td></tr>
 <tr><td><code>count for (t: Timepoint)</code></td><td><code>count</code>, <code>bcons</code>, and <code>(bvar 0)</code></td></tr>
@@ -362,7 +363,9 @@ main correspondences are:</p>
 (function args (ArgSet) ArgSet :assoc-comm-idem :identity (noArgs))
 (function fnil () Path)
 (function fld (FSeg Path) Path)
-(function win (IBig) Win)
+(function secs (IBig) Win)
+(function mins (IBig) Win)
+(function secsTimes (IBig IBig) Win)
 
 (function request () Kind)
 (function response () Kind)
@@ -406,7 +409,7 @@ main correspondences are:</p>
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (mins 15)
                    (tAnd
                      (pred (aHttpRequest) (request) healthArgs)
                      (tp (bvar 0))))))
@@ -420,7 +423,7 @@ main correspondences are:</p>
         (tLte
           (tInt 1)
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (tp (bvar 0))
                      (pred (aHttpRequest) (response) healthArgsFlipped)))))))
@@ -434,7 +437,7 @@ main correspondences are:</p>
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (pred (aHttpRequest) (request) healthArgs)
                      (tp (bvar 0))))))
@@ -448,7 +451,7 @@ main correspondences are:</p>
       (temporal
         (tGte
           (agg (count (bcons (tyTimepoint) (bnil))
-                 (formerly (win 900)
+                 (formerly (secs 900)
                    (tAnd
                      (pred (aHttpRequest) (response) healthArgs)
                      (tp (bvar 0))))))
@@ -457,8 +460,11 @@ main correspondences are:</p>
       pathIsDeploy)))
 
 ;; ANCHOR: dogwood-identity
+(rewrite (mins x) (secsTimes x 60))
+(rewrite (secsTimes x y) (secs (IBig::* x y)))
 (birewrite (tLte a b) (tGte b a))
 (run 4)
+(check (= (mins 15) (secs 900)))
 ;; ANCHOR_END: dogwood-identity
 
 (check (!= candA candB))
@@ -482,6 +488,18 @@ main correspondences are:</p>
 (antiunify pickWorst candB :algorithm exact)
 (checkau pickWorst candB :max_size 51 :algorithm exact)
 </code></pre>
+<p>The encoding retains each candidate’s original time unit. The rewrite from
+<code>mins</code> to <code>secs</code> states the conversion inside the comparison theory:</p>
+<pre><code class="language-lisp">(rewrite (mins x) (secsTimes x 60))
+(rewrite (secsTimes x y) (secs (IBig::* x y)))
+(birewrite (tLte a b) (tGte b a))
+(run 4)
+(check (= (mins 15) (secs 900)))
+</code></pre>
+<p>The first rule builds <code>(secsTimes 15 60)</code>. The second rule binds both operands
+as <code>IBig</code> literal values and evaluates the eager <code>IBig::*</code> primitive, reducing
+the intermediate term to <code>(secs 900)</code>. The equality is therefore derived by
+visible rewrite rules rather than imposed while translating the policies.</p>
 <p>The identity of <code>eAnd</code> represents an omitted condition. It lets the
 anti-unifier align candidate A’s path guard with <code>eTrue</code> instead of replacing
 the complete condition with one large variation. Treating Cedar conjunction
@@ -507,7 +525,7 @@ points:</p>
             (count
               (bcons tyTimepoint bnil)
               (formerly
-                (win 900)
+                (mins 15)
                 (tAnd
                   (tp (bvar 0))
                   (pred
