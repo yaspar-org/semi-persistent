@@ -40,10 +40,18 @@ All its checks pass, and the engine finishes with 11 e-nodes.
 
 ## What a program file is
 
-> A text file of S-expression commands executed in order, `;` to end of line for
-> comments, `.egg` by convention. State that declarations must precede their uses:
-> there is no forward reference and no separate declaration pass. This is the first
-> thing a reader trips over, so state it here and again in chapter 3.
+A Semper program is a text file containing S-expression commands. The `.egg`
+extension is a convention rather than a requirement. A semicolon starts a
+comment that continues to the end of the line.
+
+Semper parses the complete file, sort-checks its commands in source order, and
+then executes the checked commands in that same order. Declarations are not
+hoisted: a sort must precede operators that use it, and an operator must precede
+terms or rules that use it. A declaration later in the file cannot satisfy an
+earlier reference.
+
+The example above follows this order: it declares its sorts, declares its
+operators, builds and names terms, and finally checks equalities.
 
 ## Output streams
 
