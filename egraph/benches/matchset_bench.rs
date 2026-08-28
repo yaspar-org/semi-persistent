@@ -71,11 +71,11 @@ fn env_for(shape: &MatchShape, j: usize) -> Match<Cfg> {
 /// The pool arm reads through `clone_match`-free row reconstruction is not
 /// available on `&MatchPool`; post-E17 the pool IS set-backed, so this arm
 /// measures the pooled store (loan buffers included) against the bare set.
-fn consume_pool(pool: &mut MatchPool<Cfg>, shape: &MatchShape) -> u64 {
+fn consume_pool(pool: &MatchPool<Cfg>, shape: &MatchShape) -> u64 {
     let rv = shape.mset_var_ids().next().unwrap();
     let mut acc = 0u64;
     for j in 0..pool.len() {
-        let row = pool.row_mut(j);
+        let row = pool.row(j);
         use semi_persistent_egraph::ematch::MatchView;
         for v in shape.var_ids() {
             acc ^= MatchView::get(&row, v).to_usize() as u64;
@@ -142,7 +142,7 @@ fn bench(c: &mut Criterion) {
             set.push(e);
         }
         g.bench_function("pool/consume", |b| {
-            b.iter(|| black_box(consume_pool(&mut pool, &shape)))
+            b.iter(|| black_box(consume_pool(&pool, &shape)))
         });
         g.bench_function("set/consume", |b| {
             b.iter(|| black_box(consume_set(&set, &shape)))

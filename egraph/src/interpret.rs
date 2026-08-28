@@ -513,6 +513,7 @@ where
             }
             CCommand::Rewrite {
                 query,
+                rhs_locals,
                 rhs,
                 root_vid,
                 subsume,
@@ -523,7 +524,7 @@ where
                 let compiled_rhs = crate::apply::compile_rhs(rhs);
                 let mut actions = vec![crate::apply::CompiledAction::Union(
                     rule_id,
-                    crate::apply::RhsOp::FetchNode(*root_vid),
+                    crate::apply::RhsOp::FetchNode(crate::resolve::RhsNodeRef::Query(*root_vid)),
                     compiled_rhs,
                 )];
                 if *subsume {
@@ -532,6 +533,7 @@ where
                 let rule = PreparedRule {
                     rule_id,
                     query: query.clone(),
+                    rhs_locals: *rhs_locals,
                     actions,
                     ruleset: *ruleset,
                 };
@@ -540,6 +542,7 @@ where
             }
             CCommand::Rule {
                 query,
+                rhs_locals,
                 actions,
                 ruleset,
             } => {
@@ -552,6 +555,7 @@ where
                 let rule = PreparedRule {
                     rule_id,
                     query: query.clone(),
+                    rhs_locals: *rhs_locals,
                     actions: compiled,
                     ruleset: *ruleset,
                 };

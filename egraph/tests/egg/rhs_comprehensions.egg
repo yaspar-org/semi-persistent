@@ -1,0 +1,186 @@
+;; EXPECT: ok
+;; EVAL: both
+;; TYPES: machine
+
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function y () E)
+(function z () E)
+(function marker () E)
+
+(function F (E) E)
+(function G (E) E)
+(function Keep (E) E)
+(function Mark (E) E)
+(function Pair (E E) E)
+(function Outer () E)
+
+;; Each collection kind maps a nonempty source. Sequence order and multiset
+;; source multiplicities are observable in the expected terms.
+(function Seq (E) E :assoc)
+(function Bag (E) E :assoc-comm)
+(function Set (E) E :assoc-comm-idem)
+
+(rewrite (Seq first ..rest)
+         (Seq (F first) ..[(F elem) for elem in rest]))
+(rewrite (Set chosen ..rest)
+         (Set (F chosen) ..{(F elem) for elem in rest}))
+(rewrite (Bag chosen:1 ..rest)
+         (Bag (F chosen) ..{(F elem):count for elem:count in rest}))
+
+(let seq_term (Seq a b c))
+(let set_term (Set a b c))
+(let bag_term (Bag a b b c c c))
+
+;; Output multiplicities are computed while the source count is bound. The
+;; count-one element maps to zero and must not contribute a child.
+(function CountBag (E) E :assoc-comm)
+(function CountF (E) E)
+(rewrite (CountBag (marker):1 ..rest)
+         (CountBag
+           ..{(CountF elem):(u64::- count 1)
+              for elem:count in rest}))
+(let count_term (CountBag marker a b b b))
+
+;; A local source count is also an i64 term and a primitive argument.
+(function CountLit (i64) E)
+(function CountPair (E E) E)
+(function CountUseBag (E) E :assoc-comm)
+(function CountUseBox (E E) E)
+(rewrite (CountUseBox (CountLit offset)
+                      (CountUseBag (marker):1 ..rest))
+         (CountUseBag
+           ..{(CountPair
+                (CountLit count)
+                (CountLit (i64::+ count offset))):1
+              for elem:count in rest}))
+(let count_use_term
+  (CountUseBox (CountLit 10)
+               (CountUseBag marker a a b b b)))
+
+;; Both truth values exercise filter evaluation; a false filter omits its body.
+(function FilterSeq (E) E :assoc)
+(rewrite (FilterSeq first ..rest)
+         (FilterSeq
+           ..[(F elem) for elem in rest if true]
+           ..[(G elem) for elem in rest if false]))
+(let filter_term (FilterSeq a b c))
+
+;; A useful filter computes a concrete Rust literal. It can combine an outer
+;; LHS literal-value binding with the current source multiplicity.
+(function Num (i64) E)
+(function CountFilterBox (E E) E)
+(function CountFilterBag (E) E :assoc-comm)
+(rewrite (CountFilterBox (Num threshold)
+                         (CountFilterBag (marker):1 ..rest))
+         (CountFilterBag
+           ..{(F elem):count
+              for elem:count in rest
+              if (i64::< threshold count)}))
+(let count_filter_term
+  (CountFilterBox (Num 1)
+                  (CountFilterBag marker a b b c c c)))
+
+;; The comprehension's `elem` shadows the query node. Once its scope closes,
+;; the following child resolves to the unchanged query binding.
+(function ShadowBox (E E) E)
+(function ShadowSeq (E) E :assoc)
+(rewrite (ShadowBox elem (ShadowSeq first ..rest))
+         (ShadowSeq
+           ..[(F elem) for elem in rest]
+           (Keep elem)))
+(let node_shadow_term (ShadowBox a (ShadowSeq b c d)))
+
+;; Both binders shadow query bindings of the same names. The local count
+;; preserves the rest element's multiplicity; the trailing term uses the
+;; original query count after the comprehension.
+(function ShadowBag (E) E :assoc-comm)
+(rewrite (ShadowBag (Mark elem):count ..rest)
+         (ShadowBag
+           ..{(F elem):count for elem:count in rest}
+           (Outer):count))
+(let mult_shadow_term
+  (ShadowBag (Mark a) (Mark a) b b b))
+
+;; Sibling comprehensions may reuse binder names and receive distinct local
+;; IDs. Their source and output order are the same in both execution engines.
+(function SiblingSeq (E) E :assoc)
+(rewrite (SiblingSeq first ..rest)
+         (SiblingSeq
+           ..[(F elem) for elem in rest]
+           ..[(G elem) for elem in rest]))
+(let sibling_term (SiblingSeq a b c))
+
+;; The inner `elem` shadows the outer one. After the inner comprehension, the
+;; `(Keep elem)` sibling again denotes the outer iteration's binding.
+(function OuterSeq (E) E :assoc)
+(function InnerSeq (E) E :assoc)
+(function ResultSeq (E) E :assoc)
+(function NestedBox (E E) E)
+(rewrite (NestedBox (OuterSeq a ..outer_rest)
+                    (InnerSeq y ..inner_rest))
+         (ResultSeq
+           ..[(InnerSeq
+                ..[(Pair elem elem) for elem in inner_rest]
+                (Keep elem))
+              for elem in outer_rest]))
+(let nested_term
+  (NestedBox (OuterSeq a b c) (InnerSeq y z d)))
+
+;; One rule produces multiple query rows. Locals from one row must not alter
+;; another row or remain bound when the next row is evaluated.
+(function RowSeq (E) E :assoc)
+(function RowWrap (E) E)
+(rewrite (RowWrap (RowSeq first ..rest))
+         (RowWrap
+           (RowSeq (Keep first) ..[(F elem) for elem in rest])))
+(let row_one (RowWrap (RowSeq a b)))
+(let row_two (RowWrap (RowSeq c d y)))
+
+;; A general rule shares one local-ID allocator across all actions, while each
+;; action's lexical scopes close independently. The same binder names are
+;; therefore legal in both actions.
+(function RuleBag (E) E :assoc-comm)
+(rule ((RuleBag chosen:1 ..rest))
+      ((union (RuleBag chosen ..rest)
+              (RuleBag (F chosen)
+                       ..{(F elem):count for elem:count in rest}))
+       (union (RuleBag chosen ..rest)
+              (RuleBag (G chosen)
+                       ..{(G elem):count for elem:count in rest}))))
+(let rule_term (RuleBag a b b c c c))
+
+(run 1)
+
+(check (= seq_term (Seq (F a) (F b) (F c))))
+(check (= set_term (Set (F a) (F b) (F c))))
+(check (= bag_term (Bag (F a) (F b) (F b) (F c) (F c) (F c))))
+(check (= count_term (CountBag (CountF b) (CountF b))))
+(check (= count_use_term
+          (CountUseBag
+            (CountPair (CountLit 2) (CountLit 12))
+            (CountPair (CountLit 3) (CountLit 13)))))
+(check (= filter_term (FilterSeq (F b) (F c))))
+(check (= count_filter_term
+          (CountFilterBag (F b) (F b) (F c) (F c) (F c))))
+(check (= node_shadow_term
+          (ShadowSeq (F c) (F d) (Keep a))))
+(check (= mult_shadow_term
+          (ShadowBag (F b) (F b) (F b) (Outer) (Outer))))
+(check (= sibling_term
+          (SiblingSeq (F b) (F c) (G b) (G c))))
+(check (= nested_term
+          (ResultSeq
+            (InnerSeq (Pair z z) (Pair d d) (Keep b))
+            (InnerSeq (Pair z z) (Pair d d) (Keep c)))))
+(check (= row_one
+          (RowWrap (RowSeq (Keep a) (F b)))))
+(check (= row_two
+          (RowWrap (RowSeq (Keep c) (F d) (F y)))))
+(check (= rule_term
+          (RuleBag (F a) (F b) (F b) (F c) (F c) (F c))))
+(check (= rule_term
+          (RuleBag (G a) (G b) (G b) (G c) (G c) (G c))))

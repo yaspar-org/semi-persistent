@@ -8,7 +8,7 @@ use crate::ast::*;
 use crate::lit_model::LitModel;
 use crate::literal::LitVal;
 use crate::registry::{OpKind, OpRegistry, SortRegistry};
-use crate::resolve::{GlobalCtx, ResolvedQuery};
+use crate::resolve::{GlobalCtx, ResolvedQuery, RhsResolveCtx};
 use std::hash::Hash;
 
 // ── Error type ──
@@ -66,6 +66,7 @@ pub enum CCommand<O, S, L> {
     Extract(CTerm<O, S, L>),
     Rewrite {
         query: ResolvedQuery<O, S, L>,
+        rhs_locals: crate::resolve::RhsLocalShape,
         rhs: crate::resolve::RRhsTerm<O, S, L>,
         root_vid: crate::ast::VarId,
         subsume: bool,
@@ -73,6 +74,7 @@ pub enum CCommand<O, S, L> {
     },
     Rule {
         query: ResolvedQuery<O, S, L>,
+        rhs_locals: crate::resolve::RhsLocalShape,
         actions: Vec<crate::resolve::ResolvedAction<O, S, L>>,
         ruleset: Option<crate::apply::RulesetId>,
     },
@@ -842,22 +844,22 @@ where
                     lhs_span,
                 )
             })?;
-            let mut vs = rq.var_sorts.clone();
-            let mut shape = rq.shape.clone();
-            let root_sort = vs[root_vid.idx()];
+            let root_sort = rq.var_sorts[root_vid.idx()];
+            let mut rhs_ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
             let resolved_rhs = resolve_rhs(
                 &rhs,
                 root_sort,
                 eg.ops(),
                 eg.sorts(),
                 model,
-                &mut vs,
-                &mut shape,
+                &mut rhs_ctx,
                 globals,
             )
             .map_err(|e| serr(e.to_string(), Span::Dummy))?;
+            let rhs_locals = rhs_ctx.local_shape();
             Ok(CCommand::Rewrite {
                 query: rq,
+                rhs_locals,
                 rhs: resolved_rhs,
                 root_vid,
                 subsume,
@@ -873,17 +875,17 @@ where
             let fq = flatten_surface(&body, eg.ops()).map_err(|e| serr(e, Span::Dummy))?;
             let rq = resolve(&fq, eg.ops(), eg.sorts(), model, globals)
                 .map_err(|e| serr(e.to_string(), Span::Dummy))?;
-            let mut vs = rq.var_sorts.clone();
-            let mut shape = rq.shape.clone();
+            let mut rhs_ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
             let mut actions = Vec::with_capacity(head.len());
             for a in &head {
-                let ra =
-                    resolve_action(a, eg.ops(), eg.sorts(), model, &mut vs, &mut shape, globals)
-                        .map_err(|e| serr(e.to_string(), Span::Dummy))?;
+                let ra = resolve_action(a, eg.ops(), eg.sorts(), model, &mut rhs_ctx, globals)
+                    .map_err(|e| serr(e.to_string(), Span::Dummy))?;
                 actions.push(ra);
             }
+            let rhs_locals = rhs_ctx.local_shape();
             Ok(CCommand::Rule {
                 query: rq,
+                rhs_locals,
                 actions,
                 ruleset,
             })

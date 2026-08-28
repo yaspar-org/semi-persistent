@@ -448,10 +448,8 @@ where
     crate::ematch::run_query_scheduled_into(&rule.query, &plan, eg, vindex, globals, pool);
     let mut changes = 0;
     for j in 0..pool.len() {
-        let mut row = pool.row_mut(j);
-        for action in &rule.actions {
-            changes += crate::apply::apply_action(action, &mut row, eg, model, globals);
-        }
+        let row = pool.row(j);
+        changes += crate::apply::apply_rule_actions(rule, &row, eg, model, globals);
     }
     changes
 }
@@ -661,8 +659,8 @@ where
         for (label, rule) in rules {
             let plan = crate::schedule::schedule_with_stats(&rule.query, &stats);
             let shape = &plan.shape;
-            let mut matches = run_query(&plan, eg, &vindex, globals);
-            for m in &mut matches {
+            let matches = run_query(&plan, eg, &vindex, globals);
+            for m in &matches {
                 // Print node bindings (skip internal ?-prefixed names)
                 let binds: Vec<String> = shape
                     .nodes
@@ -687,9 +685,7 @@ where
                 let all_binds = [binds, lit_binds].concat().join(", ");
                 eprint!("  [{label}] match: {all_binds}");
 
-                for action in &rule.actions {
-                    changes += crate::apply::apply_action(action, m, eg, model, globals);
-                }
+                changes += crate::apply::apply_rule_actions(rule, m, eg, model, globals);
                 eprintln!();
             }
         }

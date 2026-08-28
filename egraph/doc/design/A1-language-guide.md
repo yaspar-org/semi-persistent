@@ -598,12 +598,16 @@ rest variables:
 ;; map F over each element of a set
 (rewrite (Or ..rest) (Or ..{(F x) for x in rest}))
 
-;; filter elements of a multiset
-(rewrite (Add ..rest) (Add ..{x for x in rest if (Positive x)}))
+;; retain multiset elements whose count exceeds an LHS-bound threshold
+(rewrite (Box (N limit) (Add marker:1 ..rest))
+         (Add ..{x:k for x:k in rest if (i64::< limit k)}))
 ```
 
 Set comprehensions use `..{...}`, sequence comprehensions use
-`..[...]`.
+`..[...]`. A filter must compute a concrete literal value, such as the result
+of a Rust literal-model primitive. It is not an e-graph query: an ordinary
+application such as `(Positive x)` is rejected. Bind graph conditions on the
+LHS with a rewrite guard or a general-rule conjunct.
 
 ## Push/Pop Scoping
 

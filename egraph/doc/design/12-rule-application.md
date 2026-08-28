@@ -130,19 +130,26 @@ predicate guards do not intern (Chapter 13).
 ## Filter Guards
 
 Filters inside RHS comprehensions are RHS terms, not LHS `:when` predicates.
-They are evaluated through the same mutating `eval` path as the body and can
-intern literals or build e-nodes before their truth value is tested:
+Resolution accepts only forms guaranteed to produce a concrete literal node:
+literal constants, reconstructed literal or multiplicity values, and primitive
+applications. Ordinary e-node variables, globals, and applications are
+rejected. In particular, `if (Keep x)` is not an existence query over the
+e-graph; that condition belongs in the LHS query.
+
+Accepted filters are evaluated through the same `eval` path as the body and
+may intern their literal result before its truth value is tested:
 
 ```rust
 fn check_filter_truthy(guard: &RhsOp, match, eg, model) → bool {
     let id = eval(guard, match, eg, model);
-    eg.get_lit_val(id).map(|v| model.is_truthy(v)).unwrap_or(false)
+    model.is_truthy(eg.get_lit_val(id).expect("resolved filter is literal"))
 }
 ```
 
 Each sequence, set, or multiset comprehension first clones its source slice
-with `.to_vec()`. This transient copy permits rebinding the loop variable and
-mutating the e-graph while iterating; the implementation is not allocation-free.
+with `.to_vec()`. This transient copy permits rebinding local variables and
+interning filter/body results while iterating; the implementation is not
+allocation-free.
 LHS `:when` guards remain read-only and are described in Chapters 8–9.
 
 ---

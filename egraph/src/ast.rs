@@ -30,6 +30,10 @@ typed_var_id! {
     pub struct MsetVarId;
     #[doc = "Multiplicity variable (single u32 binding)."]
     pub struct MultVarId;
+    #[doc = "RHS-local e-node variable introduced by a comprehension."]
+    pub struct RhsLocalVarId;
+    #[doc = "RHS-local multiplicity variable introduced by a comprehension."]
+    pub struct RhsLocalMultVarId;
     #[doc = "Literal value variable (single LitValId binding from OpKind::Lit nodes)."]
     pub struct LitValVarId;
     #[doc = "Global variable (let-bound, resolved at match time from global bindings)."]

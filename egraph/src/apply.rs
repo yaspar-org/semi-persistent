@@ -6,9 +6,11 @@
 //! for O(1) lookup into Match / MatchSet. The apply function walks
 //! the compiled RHS tree bottom-up, building e-graph terms via `eg.add()`.
 
-use crate::ast::{GlobalVarId, LitValVarId, MsetVarId, MultVarId, SeqVarId, SetVarId, VarId};
+use crate::ast::{
+    GlobalVarId, LitValVarId, MsetVarId, RhsLocalMultVarId, RhsLocalVarId, SeqVarId, SetVarId,
+};
 use crate::containers::DenseId;
-use crate::resolve::{RRhsChild, RRhsTerm};
+use crate::resolve::{RRhsChild, RRhsTerm, RhsMultRef, RhsNodeRef};
 
 // ---------------------------------------------------------------------------
 // Compiled RHS types
@@ -18,13 +20,13 @@ use crate::resolve::{RRhsChild, RRhsTerm};
 #[derive(Clone, Debug)]
 pub enum RhsOp<O, V> {
     /// Fetch bound e-node id from match.
-    FetchNode(VarId),
+    FetchNode(RhsNodeRef),
     /// Create literal node via `eg.add_lit()`.
     Lit(O, V),
     /// Reconstruct `@sort(val)` lit node from a bound LitValVarId.
     LitVar(O, LitValVarId),
     /// Reconstruct an `@i64(k)` lit node from a bound AC multiplicity variable.
-    MultVar(O, MultVarId),
+    MultVar(O, RhsMultRef),
     /// Build `(op args...)` via `eg.add()`. Args may expand to multiple children.
     App { op: O, args: Vec<RhsArg<O, V>> },
     /// Evaluate a prim op on bound lit values or multiplicities, intern result.
@@ -56,7 +58,7 @@ pub enum RhsArg<O, V> {
     /// Set comprehension: map body over set rest.
     SetComp {
         body: Box<RhsOp<O, V>>,
-        var: VarId,
+        var: RhsLocalVarId,
         source: SetVarId,
         filter: Option<Box<RhsOp<O, V>>>,
     },
@@ -64,15 +66,15 @@ pub enum RhsArg<O, V> {
     MsetComp {
         body: Box<RhsOp<O, V>>,
         mult: crate::resolve::ResolvedMultExpr,
-        var: VarId,
-        mult_var: MultVarId,
+        var: RhsLocalVarId,
+        mult_var: RhsLocalMultVarId,
         source: MsetVarId,
         filter: Option<Box<RhsOp<O, V>>>,
     },
     /// Sequence comprehension: map body over seq rest.
     SeqComp {
         body: Box<RhsOp<O, V>>,
-        var: VarId,
+        var: RhsLocalVarId,
         source: SeqVarId,
         filter: Option<Box<RhsOp<O, V>>>,
     },
@@ -178,6 +180,7 @@ pub type RulesetId = u32;
 pub struct PreparedRule<O, S, V> {
     pub rule_id: crate::id::RuleId,
     pub query: crate::resolve::ResolvedQuery<O, S, V>,
+    pub rhs_locals: crate::resolve::RhsLocalShape,
     pub actions: Vec<CompiledAction<O, V>>,
     /// The ruleset this rule belongs to (`:ruleset name`), or `None` for the default one.
     /// The saturation driver runs the rules whose ruleset equals the one asked for.
@@ -356,17 +359,16 @@ where
         .shape
         .find_var(root_name)
         .expect("root var must be in shape");
-    let mut vs = rq.var_sorts.clone();
-    let mut shape = rq.shape.clone();
-    let root_sort = vs[root_vid.idx()];
-    let resolved_rhs = crate::resolve::resolve_rhs(
-        rhs, root_sort, ops, sorts, model, &mut vs, &mut shape, globals,
-    )?;
+    let root_sort = rq.var_sorts[root_vid.idx()];
+    let mut rhs_ctx = crate::resolve::RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
+    let resolved_rhs =
+        crate::resolve::resolve_rhs(rhs, root_sort, ops, sorts, model, &mut rhs_ctx, globals)?;
     let compiled_rhs = compile_rhs(&resolved_rhs);
+    let rhs_locals = rhs_ctx.local_shape();
 
     let mut actions = vec![CompiledAction::Union(
         rule_id,
-        RhsOp::FetchNode(root_vid),
+        RhsOp::FetchNode(RhsNodeRef::Query(root_vid)),
         compiled_rhs,
     )];
     if subsume {
@@ -376,6 +378,7 @@ where
     Ok(PreparedRule {
         rule_id,
         query: rq,
+        rhs_locals,
         actions,
         ruleset: None,
     })
@@ -407,18 +410,18 @@ where
         })?;
     let rq = crate::resolve::resolve(&fq, ops, sorts, model, globals)?;
 
-    let mut vs = rq.var_sorts.clone();
-    let mut shape = rq.shape.clone();
+    let mut rhs_ctx = crate::resolve::RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
     let mut actions = Vec::with_capacity(head.len());
     for a in head {
-        let ra =
-            crate::resolve::resolve_action(a, ops, sorts, model, &mut vs, &mut shape, globals)?;
+        let ra = crate::resolve::resolve_action(a, ops, sorts, model, &mut rhs_ctx, globals)?;
         actions.push(compile_action(&ra, rule_id));
     }
+    let rhs_locals = rhs_ctx.local_shape();
 
     Ok(PreparedRule {
         rule_id,
         query: rq,
+        rhs_locals,
         actions,
         ruleset: None,
     })
@@ -453,6 +456,66 @@ type ChildVec<Cfg> = SmallVec<[<Cfg as EGraphConfig>::G; 16]>;
 /// are arithmetic and comparison, so two covers all of them.
 const PRIM_ARGS: usize = 2;
 
+/// Evaluation environment for one matched query row.
+///
+/// The query match is read-only. Comprehension binders use separate local
+/// arrays indexed by the RHS-only IDs allocated during resolution.
+pub(crate) struct RhsEnv<'a, Cfg: EGraphConfig, Q: ?Sized> {
+    query: &'a Q,
+    local_nodes: Vec<Option<Cfg::G>>,
+    local_mults: Vec<Option<Cfg::M>>,
+}
+
+impl<'a, Cfg, Q> RhsEnv<'a, Cfg, Q>
+where
+    Cfg: EGraphConfig,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+{
+    fn new(query: &'a Q, shape: crate::resolve::RhsLocalShape) -> Self {
+        Self {
+            query,
+            local_nodes: vec![None; shape.node_count],
+            local_mults: vec![None; shape.mult_count],
+        }
+    }
+
+    fn node(&self, node: RhsNodeRef) -> Cfg::G {
+        match node {
+            RhsNodeRef::Query(id) => self.query.get(id),
+            RhsNodeRef::Local(id) => self.local_nodes[id.idx()]
+                .expect("RHS invariant violated: unbound local node reference"),
+        }
+    }
+
+    fn mult(&self, mult: RhsMultRef) -> Cfg::M {
+        match mult {
+            RhsMultRef::Query(id) => self.query.get_mult(id),
+            RhsMultRef::Local(id) => self.local_mults[id.idx()]
+                .expect("RHS invariant violated: unbound local multiplicity reference"),
+        }
+    }
+
+    fn bind_local_node(&mut self, id: RhsLocalVarId, value: Cfg::G) -> Option<Cfg::G> {
+        self.local_nodes[id.idx()].replace(value)
+    }
+
+    fn restore_local_node(&mut self, id: RhsLocalVarId, previous: Option<Cfg::G>) {
+        self.local_nodes[id.idx()] = previous;
+    }
+
+    fn bind_local_mult(&mut self, id: RhsLocalMultVarId, value: Cfg::M) -> Option<Cfg::M> {
+        self.local_mults[id.idx()].replace(value)
+    }
+
+    fn restore_local_mult(&mut self, id: RhsLocalMultVarId, previous: Option<Cfg::M>) {
+        self.local_mults[id.idx()] = previous;
+    }
+
+    fn locals_are_unbound(&self) -> bool {
+        self.local_nodes.iter().all(Option::is_none) && self.local_mults.iter().all(Option::is_none)
+    }
+}
+
 /// A bound AC multiplicity read as an i64 literal value. Resolution only admits
 /// multiplicity variables in i64 positions, so the model must carry an i64
 /// sort; a count above `i64::MAX` cannot arise from a real node's children.
@@ -465,9 +528,9 @@ fn mult_as_lit<L: LitVal, M: crate::lit_model::LitModel<Value = L>>(model: &M, k
     (desc.parse)(&k.to_string()).expect("multiplicity in RHS does not fit i64")
 }
 
-pub fn eval<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
+fn eval<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     op: &RhsOp<Cfg::O, L>,
-    m: &mut V,
+    env: &mut RhsEnv<'_, Cfg, Q>,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -476,29 +539,29 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    V: crate::ematch::MatchView<Cfg>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match op {
-        RhsOp::FetchNode(vid) => eg.find(m.get(*vid)),
+        RhsOp::FetchNode(node) => eg.find(env.node(*node)),
         RhsOp::FetchGlobal(gid) => eg.find(globals.binding(*gid)),
         RhsOp::Lit(op, val) => {
             let id = eg.lits_mut().intern(val.clone());
             eg.add_lit(*op, id)
         }
         RhsOp::LitVar(op, lvid) => {
-            let val_id = m.get_lit_val(*lvid);
+            let val_id = env.query.get_lit_val(*lvid);
             eg.add_lit(*op, val_id)
         }
         RhsOp::MultVar(op, mid) => {
-            let val = mult_as_lit(model, m.get_mult(*mid).to_u64());
+            let val = mult_as_lit(model, env.mult(*mid).to_u64());
             let id = eg.lits_mut().intern(val);
             eg.add_lit(*op, id)
         }
         RhsOp::App { op: o, args } => {
             let mut children = ChildVec::<Cfg>::new();
             for arg in args {
-                eval_arg(arg, m, eg, model, globals, &mut children);
+                eval_arg(arg, env, eg, model, globals, &mut children);
             }
             eg.add(*o, &children)
         }
@@ -508,11 +571,11 @@ where
                 .iter()
                 .map(|arg| match arg {
                     crate::resolve::RPrimArg::LitVal(vid) => {
-                        let lit_val_id = m.get_lit_val(*vid);
+                        let lit_val_id = env.query.get_lit_val(*vid);
                         eg.lits().get(lit_val_id).clone()
                     }
                     crate::resolve::RPrimArg::Mult(mid) => {
-                        mult_as_lit(model, m.get_mult(*mid).to_u64())
+                        mult_as_lit(model, env.mult(*mid).to_u64())
                     }
                 })
                 .collect();
@@ -530,9 +593,9 @@ where
     }
 }
 
-fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
+fn eval_arg<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     arg: &RhsArg<Cfg::O, L>,
-    m: &mut V,
+    env: &mut RhsEnv<'_, Cfg, Q>,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -541,7 +604,7 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    V: crate::ematch::MatchView<Cfg>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match arg {
@@ -549,27 +612,27 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
         // `out` is `EGraph::add`'s child slice and `add` canonicalizes every
         // child itself — which is also why the splice arms below hand it raw
         // match bindings. Going through `eval` would `find` each child twice.
-        RhsArg::One(RhsOp::FetchNode(vid)) => out.push(m.get(*vid)),
+        RhsArg::One(RhsOp::FetchNode(node)) => out.push(env.node(*node)),
         RhsArg::One(RhsOp::FetchGlobal(gid)) => out.push(globals.binding(*gid)),
-        RhsArg::One(inner) => out.push(eval(inner, m, eg, model, globals)),
+        RhsArg::One(inner) => out.push(eval(inner, env, eg, model, globals)),
         RhsArg::OneMult { body, mult } => {
             // Multiplicity 0 omits the child without evaluating it, so an
             // omitted term is never materialized (the k-1 = 0 case of a
             // multiplicity variant). Underflow and division by zero were rejected
             // at install by the interval check; the checked ops here are the
             // second line, like the checked literal primitives.
-            let k = eval_mult_expr::<Cfg, V>(mult, m);
+            let k = eval_mult_expr::<Cfg, Q>(mult, env);
             if k > 0 {
-                let id = eval(body, m, eg, model, globals);
+                let id = eval(body, env, eg, model, globals);
                 for _ in 0..k {
                     out.push(id);
                 }
             }
         }
-        RhsArg::SpliceSeq(sid) => out.extend_from_slice(m.seq_slice(*sid)),
-        RhsArg::SpliceSet(sid) => out.extend_from_slice(m.set_slice(*sid)),
+        RhsArg::SpliceSeq(sid) => out.extend_from_slice(env.query.seq_slice(*sid)),
+        RhsArg::SpliceSet(sid) => out.extend_from_slice(env.query.set_slice(*sid)),
         RhsArg::SpliceMset(mid) => {
-            for c in m.mset_slice(*mid) {
+            for c in env.query.mset_slice(*mid) {
                 let id = Cfg::mset_child_id(c);
                 let mult = Cfg::mset_child_mult(c);
                 // A repetition count, not a stored multiplicity: widening to
@@ -585,18 +648,18 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
             source,
             filter,
         } => {
-            let slice = m.seq_slice(*source).to_vec();
-            for elem in slice {
-                m.set(*var, elem);
-                if let Some(f) = filter {
-                    let g = eval(f, m, eg, model, globals);
-                    if !check_filter_truthy(eg, model, g) {
-                        continue;
-                    }
+            let source = env.query.seq_slice(*source).to_vec();
+            for child in source {
+                let previous = env.bind_local_node(*var, child);
+                let passes = filter.as_ref().is_none_or(|filter| {
+                    let value = eval(filter, env, eg, model, globals);
+                    check_filter_truthy(eg, model, value)
+                });
+                if passes {
+                    out.push(eval(body, env, eg, model, globals));
                 }
-                out.push(eval(body, m, eg, model, globals));
+                env.restore_local_node(*var, previous);
             }
-            m.clear(*var);
         }
         RhsArg::SetComp {
             body,
@@ -604,18 +667,18 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
             source,
             filter,
         } => {
-            let slice = m.set_slice(*source).to_vec();
-            for elem in slice {
-                m.set(*var, elem);
-                if let Some(f) = filter {
-                    let g = eval(f, m, eg, model, globals);
-                    if !check_filter_truthy(eg, model, g) {
-                        continue;
-                    }
+            let source = env.query.set_slice(*source).to_vec();
+            for child in source {
+                let previous = env.bind_local_node(*var, child);
+                let passes = filter.as_ref().is_none_or(|filter| {
+                    let value = eval(filter, env, eg, model, globals);
+                    check_filter_truthy(eg, model, value)
+                });
+                if passes {
+                    out.push(eval(body, env, eg, model, globals));
                 }
-                out.push(eval(body, m, eg, model, globals));
+                env.restore_local_node(*var, previous);
             }
-            m.clear(*var);
         }
         RhsArg::MsetComp {
             body,
@@ -625,34 +688,30 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
             source,
             filter,
         } => {
-            let slice = m.mset_slice(*source).to_vec();
-            for c in &slice {
-                let id = Cfg::mset_child_id(c);
-                let src_mult = Cfg::mset_child_mult(c);
-                m.set(*var, id);
-                m.set_mult(*mult_var, src_mult);
-                if let Some(f) = filter {
-                    let g = eval(f, m, eg, model, globals);
-                    if !check_filter_truthy(eg, model, g) {
-                        continue;
+            let source = env.query.mset_slice(*source).to_vec();
+            for child in source {
+                let previous_node = env.bind_local_node(*var, Cfg::mset_child_id(&child));
+                let previous_mult = env.bind_local_mult(*mult_var, Cfg::mset_child_mult(&child));
+                let passes = filter.as_ref().is_none_or(|filter| {
+                    let value = eval(filter, env, eg, model, globals);
+                    check_filter_truthy(eg, model, value)
+                });
+                if passes {
+                    let count = eval_mult_expr::<Cfg, Q>(out_mult, env);
+                    if count != 0 {
+                        let result = eval(body, env, eg, model, globals);
+                        // Install-time checks guarantee that every emitted
+                        // multiplicity fits the configured storage width.
+                        let count = Cfg::M::try_from_u64(count)
+                            .expect("RHS multiplicity exceeds the configured width");
+                        for _ in 0..count.to_usize() {
+                            out.push(result);
+                        }
                     }
                 }
-                let result = eval(body, m, eg, model, globals);
-                // The surface literal is narrowed to the configured width here
-                // rather than being truncated. Emitting `n` duplicate children
-                // that canonicalisation folds back into a multiplicity of `n`
-                // only makes sense if `n` is representable, so an unrepresentable
-                // literal is a rule error, not a silently smaller multiplicity.
-                // `check_mult_literals` rejects such rules at install time, which
-                // is why this is an `expect` rather than a propagated error.
-                let n = eval_mult_expr::<Cfg, V>(out_mult, m);
-                let n: Cfg::M =
-                    Cfg::M::try_from_u64(n).expect("RHS multiplicity exceeds the configured width");
-                for _ in 0..n.to_usize() {
-                    out.push(result);
-                }
+                env.restore_local_mult(*mult_var, previous_mult);
+                env.restore_local_node(*var, previous_node);
             }
-            m.clear(*var);
         }
     }
 }
@@ -662,18 +721,18 @@ fn eval_arg<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
 /// are rejected statically at rule install ([`check_rhs_mult_exprs`]); the
 /// checked ops here are the second line, and panic like the checked literal
 /// primitives do.
-fn eval_mult_expr<Cfg, V>(e: &crate::resolve::ResolvedMultExpr, m: &V) -> u64
+fn eval_mult_expr<Cfg, Q>(e: &crate::resolve::ResolvedMultExpr, env: &RhsEnv<'_, Cfg, Q>) -> u64
 where
     Cfg: EGraphConfig,
-    V: crate::ematch::MatchView<Cfg>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
 {
     use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
     match e {
         E::Lit(n) => *n,
-        E::Var(v) => m.get_mult(*v).to_u64(),
+        E::Var(v) => env.mult(*v).to_u64(),
         E::Prim { op, args } => {
-            let a = eval_mult_expr::<Cfg, V>(&args[0], m);
-            let b = eval_mult_expr::<Cfg, V>(&args[1], m);
+            let a = eval_mult_expr::<Cfg, Q>(&args[0], env);
+            let b = eval_mult_expr::<Cfg, Q>(&args[1], env);
             match op {
                 P::Add => a
                     .checked_add(b)
@@ -711,11 +770,12 @@ fn mult_expr_bounds(
     use crate::resolve::{MultPrimOp as P, ResolvedMultExpr as E};
     Ok(match e {
         E::Lit(n) => (*n, *n),
-        E::Var(v) => intervals
+        E::Var(RhsMultRef::Query(v)) => intervals
             .iter()
             .find(|(id, _, _)| id == v)
             .map(|(_, lo, hi)| (*lo, *hi))
             .unwrap_or((1, u64::MAX)),
+        E::Var(RhsMultRef::Local(_)) => (1, u64::MAX),
         E::Prim { op, args } => {
             let (lo_a, hi_a) = mult_expr_bounds(&args[0], intervals)?;
             let (lo_b, hi_b) = mult_expr_bounds(&args[1], intervals)?;
@@ -824,15 +884,15 @@ where
     M: crate::lit_model::LitModel<Value = L>,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
-    match eg.get_lit_val(id) {
-        Some(val) => M::is_truthy(val),
-        None => false,
-    }
+    let value = eg
+        .get_lit_val(id)
+        .expect("RHS invariant violated: comprehension filter did not evaluate to a literal node");
+    M::is_truthy(value)
 }
 
-pub fn apply_action<Cfg, L, M, V, S: Copy, const T: bool, const P: bool>(
+fn apply_action<Cfg, L, M, Q, S: Copy, const T: bool, const P: bool>(
     action: &CompiledAction<Cfg::O, L>,
-    m: &mut V,
+    env: &mut RhsEnv<'_, Cfg, Q>,
     eg: &mut EGraph<Cfg, L, T, P>,
     model: &M,
     globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
@@ -841,13 +901,13 @@ where
     Cfg: EGraphConfig,
     L: LitVal,
     M: crate::lit_model::LitModel<Value = L>,
-    V: crate::ematch::MatchView<Cfg>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
     MSetCanon: VarCanon<Cfg::G, Cfg::C>,
 {
     match action {
         CompiledAction::Union(rule_id, a, b) => {
-            let va = eval(a, m, eg, model, globals);
-            let vb = eval(b, m, eg, model, globals);
+            let va = eval(a, env, eg, model, globals);
+            let vb = eval(b, env, eg, model, globals);
             if eg.find(va) != eg.find(vb) {
                 if P {
                     eg.merge_justified(
@@ -864,7 +924,7 @@ where
             }
         }
         CompiledAction::Insert(t) => {
-            eval(t, m, eg, model, globals);
+            eval(t, env, eg, model, globals);
             1
         }
         CompiledAction::Set {
@@ -875,11 +935,39 @@ where
             todo!("lattice set not yet implemented")
         }
         CompiledAction::Subsume(var) => {
-            let node = m.get(*var);
+            let node = env.node(RhsNodeRef::Query(*var));
             eg.subsume(node);
             1
         }
     }
+}
+
+pub(crate) fn apply_rule_actions<Cfg, L, M, Q, S, const T: bool, const P: bool>(
+    rule: &PreparedRule<Cfg::O, S, L>,
+    query: &Q,
+    eg: &mut EGraph<Cfg, L, T, P>,
+    model: &M,
+    globals: &crate::resolve::GlobalCtx<S, Cfg::G>,
+) -> usize
+where
+    Cfg: EGraphConfig,
+    S: Copy,
+    L: LitVal,
+    M: crate::lit_model::LitModel<Value = L>,
+    Q: crate::ematch::MatchView<Cfg> + ?Sized,
+    MSetCanon: VarCanon<Cfg::G, Cfg::C>,
+{
+    let mut env = RhsEnv::new(query, rule.rhs_locals);
+    let changes = rule
+        .actions
+        .iter()
+        .map(|action| apply_action(action, &mut env, eg, model, globals))
+        .sum();
+    debug_assert!(
+        env.locals_are_unbound(),
+        "RHS comprehension locals must not escape action evaluation"
+    );
+    changes
 }
 
 pub fn apply_rule<Cfg, L, M, S, const T: bool, const P: bool>(
@@ -935,10 +1023,8 @@ where
     run_query_scheduled_into(&rule.query, &plan, eg, &vindex, globals, pool);
     let mut changes = 0;
     for j in 0..pool.len() {
-        let mut row = pool.row_mut(j);
-        for action in &rule.actions {
-            changes += apply_action(action, &mut row, eg, model, globals);
-        }
+        let row = pool.row(j);
+        changes += apply_rule_actions(rule, &row, eg, model, globals);
     }
     changes
 }
@@ -952,7 +1038,7 @@ mod tests {
     use crate::literal::{LitValStore, NiraLitVal, NiraModel};
     use crate::nodes::LitValId;
     use crate::registry::{AssocDir, OpRegistry, SortRegistry};
-    use crate::resolve::{resolve, resolve_rhs};
+    use crate::resolve::{RhsResolveCtx, resolve, resolve_rhs};
     use crate::sortcheck::flatten_surface as flatten;
     use crate::test_helpers::{parse_pattern, parse_rhs};
 
@@ -985,6 +1071,64 @@ mod tests {
         )
     }
 
+    #[test]
+    fn rhs_local_multiplicity_interval_is_positive() {
+        use crate::resolve::{MultPrimOp, ResolvedMultExpr};
+
+        let local = ResolvedMultExpr::Var(RhsMultRef::Local(RhsLocalMultVarId::new(0)));
+        assert_eq!(mult_expr_bounds(&local, &[]), Ok((1, u64::MAX)));
+
+        let decrement = ResolvedMultExpr::Prim {
+            op: MultPrimOp::Sub,
+            args: vec![local.clone(), ResolvedMultExpr::Lit(1)],
+        };
+        assert_eq!(mult_expr_bounds(&decrement, &[]), Ok((0, u64::MAX - 1)));
+
+        let unsafe_subtraction = ResolvedMultExpr::Prim {
+            op: MultPrimOp::Sub,
+            args: vec![ResolvedMultExpr::Lit(1), local.clone()],
+        };
+        assert!(mult_expr_bounds(&unsafe_subtraction, &[]).is_err());
+
+        let safe_division = ResolvedMultExpr::Prim {
+            op: MultPrimOp::Div,
+            args: vec![ResolvedMultExpr::Lit(10), local],
+        };
+        assert!(mult_expr_bounds(&safe_division, &[]).is_ok());
+    }
+
+    #[test]
+    fn general_rule_uses_one_local_allocator_across_actions() {
+        let eg = make_eg();
+        let mut rules = crate::registry::RuleRegistry::<false>::new();
+        let body = vec![parse_pattern("(add chosen:1 ..rest)")];
+        let source = parse_rhs("(add chosen ..rest)");
+        let first = parse_rhs("(add ..{(g elem):count for elem:count in rest})");
+        let second = parse_rhs("(add ..{elem:count for elem:count in rest})");
+        let head = vec![
+            crate::ast::Action::Union(source.clone(), first),
+            crate::ast::Action::Union(source, second),
+        ];
+        let rule = compile_rule(
+            "two-actions",
+            &body,
+            &head,
+            eg.ops(),
+            eg.sorts(),
+            &mut rules,
+            &NiraModel,
+            &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            rule.rhs_locals,
+            crate::resolve::RhsLocalShape {
+                node_count: 2,
+                mult_count: 2,
+            }
+        );
+    }
+
     fn lhs_root_sort(
         rq: &crate::resolve::ResolvedQuery<OpId, SortId, NiraLitVal>,
         fq: &crate::compile::FlatQuery,
@@ -1009,16 +1153,14 @@ mod tests {
         let root_sort = lhs_root_sort(&rq, &fq);
         let ri = rhs_src;
         let rhs_ast = parse_rhs(ri);
-        let mut vs = rq.var_sorts.clone();
-        let mut shape = rq.shape.clone();
+        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
         let rhs = resolve_rhs(
             &rhs_ast,
             root_sort,
             &ops,
             &sorts,
             &model,
-            &mut vs,
-            &mut shape,
+            &mut ctx,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
         )
         .unwrap();
@@ -1042,23 +1184,21 @@ mod tests {
         let root_sort = lhs_root_sort(&rq, &fq);
         let ri = "x";
         let rhs_ast = parse_rhs(ri);
-        let mut vs = rq.var_sorts.clone();
-        let mut shape = rq.shape.clone();
+        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
         let rhs = resolve_rhs(
             &rhs_ast,
             root_sort,
             &ops,
             &sorts,
             &model,
-            &mut vs,
-            &mut shape,
+            &mut ctx,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
         )
         .unwrap();
         let c = compile_rhs(&rhs);
         // The compiled term should reference the same VarId the parser assigned to "x"
-        let x_vid = shape.find_var("x").unwrap();
-        assert!(matches!(c, RhsOp::FetchNode(v) if v == x_vid));
+        let x_vid = rq.shape.find_var("x").unwrap();
+        assert!(matches!(c, RhsOp::FetchNode(RhsNodeRef::Query(v)) if v == x_vid));
     }
 
     #[test]
@@ -1085,28 +1225,32 @@ mod tests {
         let root_sort = lhs_root_sort(&rq, &fq);
         let ri = "(f y x)";
         let rhs_ast = parse_rhs(ri);
-        let mut vs = rq.var_sorts.clone();
-        let mut shape = rq.shape.clone();
+        let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
         let rhs = resolve_rhs(
             &rhs_ast,
             root_sort,
             &ops,
             &sorts,
             &model,
-            &mut vs,
-            &mut shape,
+            &mut ctx,
             &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
         )
         .unwrap();
         let c = compile_rhs(&rhs);
 
-        let x_vid = shape.find_var("x").unwrap();
-        let y_vid = shape.find_var("y").unwrap();
+        let x_vid = rq.shape.find_var("x").unwrap();
+        let y_vid = rq.shape.find_var("y").unwrap();
         match c {
             RhsOp::App { args: children, .. } => {
                 // (f y x) — first child is y, second is x
-                assert!(matches!(&children[0], RhsArg::One(RhsOp::FetchNode(v)) if *v == y_vid));
-                assert!(matches!(&children[1], RhsArg::One(RhsOp::FetchNode(v)) if *v == x_vid));
+                assert!(matches!(
+                    &children[0],
+                    RhsArg::One(RhsOp::FetchNode(RhsNodeRef::Query(v))) if *v == y_vid
+                ));
+                assert!(matches!(
+                    &children[1],
+                    RhsArg::One(RhsOp::FetchNode(RhsNodeRef::Query(v))) if *v == x_vid
+                ));
             }
             _ => panic!("expected App"),
         }
@@ -1271,16 +1415,14 @@ mod tests {
             let root_sort = lhs_root_sort(&rq, &fq);
             let ri = rhs_src;
             let rhs_ast = parse_rhs(ri);
-            let mut vs = rq.var_sorts.clone();
-            let mut shape = rq.shape.clone();
+            let mut ctx = RhsResolveCtx::new(&rq.shape, &rq.var_sorts);
             let rhs = resolve_rhs(
                 &rhs_ast,
                 root_sort,
                 &ops,
                 &sorts,
                 &model,
-                &mut vs,
-                &mut shape,
+                &mut ctx,
                 &crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new(),
             )
             .unwrap();
@@ -1297,7 +1439,7 @@ mod tests {
     fn print_rhs(indent: &str, t: &crate::resolve::RRhsTerm<OpId, SortId, NiraLitVal>) {
         use crate::resolve::{RRhsChild as RC, RRhsTerm as R};
         match t {
-            R::Var(v) => println!("{indent}Var(VarId({}))", v.idx()),
+            R::Var(v) => println!("{indent}Var({v:?})"),
             R::Lit { sort, value, .. } => println!("{indent}Lit(sort={sort:?}, val={value:?})"),
             R::App { op, children } => {
                 println!("{indent}App(op={op:?})");
@@ -1351,7 +1493,7 @@ mod tests {
 
     fn print_compiled(indent: &str, op: &RhsOp<OpId, NiraLitVal>) {
         match op {
-            RhsOp::FetchNode(v) => println!("{indent}FetchNode(VarId({}))", v.idx()),
+            RhsOp::FetchNode(v) => println!("{indent}FetchNode({v:?})"),
             RhsOp::Lit(op, id) => println!("{indent}Lit({op:?}, {id:?})"),
             RhsOp::App { op: o, args } => {
                 println!("{indent}App(op={o:?})");
@@ -1621,6 +1763,60 @@ mod tests {
         // (h a b) should exist and be in same e-class as (f a b)
         let hab = eg.add(eg.ops().id_by_name("h").unwrap(), &[a, b]);
         assert_eq!(eg.find(_fab), eg.find(hab));
+    }
+
+    #[test]
+    fn zero_output_multiplicity_does_not_evaluate_the_body() {
+        let mut eg = EG::from_model(&NiraModel);
+        let e = eg.intern_sort("IExpr");
+        let marker_op = eg.register_op0("marker", e);
+        let a_op = eg.register_op0("a", e);
+        let b_op = eg.register_op0("b", e);
+        let count_f = eg.register_op1("CountF", e, e);
+        let count_bag = eg.register_mset("CountBag", e, e);
+
+        let marker = eg.add(marker_op, &[]);
+        let a = eg.add(a_op, &[]);
+        let b = eg.add(b_op, &[]);
+        eg.add(count_bag, &[marker, a, b, b, b]);
+
+        let mut rules = crate::registry::RuleRegistry::<false>::new();
+        let lhs = parse_pattern("(CountBag (marker):1 ..rest)");
+        let rhs = parse_rhs("(CountBag ..{(CountF elem):(u64::- count 1) for elem:count in rest})");
+        let model = NiraModel;
+        let globals = crate::resolve::GlobalCtx::<crate::id::SortId, crate::id::ENodeId>::new();
+        let rule = compile_rewrite(
+            "zero-output",
+            "",
+            "",
+            &lhs,
+            &rhs,
+            &[],
+            false,
+            eg.ops(),
+            eg.sorts(),
+            &mut rules,
+            &model,
+            &globals,
+        )
+        .unwrap();
+
+        let index = IndexStore::build(&eg);
+        assert!(
+            apply_rule(
+                &rule,
+                &mut eg,
+                &index,
+                &crate::schedule::IndexStats::from_index(&index),
+                &model,
+                &globals,
+            ) > 0
+        );
+        assert_eq!(
+            eg.op_node_counts()[count_f.to_usize()],
+            1,
+            "CountF(a) must not be materialized when a's output count is zero"
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -390,6 +390,11 @@ egg_test!(
 );
 egg_test!(rhs_mult_expr, "rhs_mult_expr.egg");
 egg_test!(rhs_mult_expr_underflow, "rhs_mult_expr_underflow.egg");
+egg_test!(rhs_comprehensions, "rhs_comprehensions.egg");
+egg_test!(
+    rhs_comprehension_filter_reject_node,
+    "rhs_comprehension_filter_reject_node.egg"
+);
 egg_test!(a_interreduction_gap, "a_interreduction_gap.egg");
 egg_test!(a_interreduction_eager, "a_interreduction_eager.egg");
 egg_test!(a_interreduction_lazy, "a_interreduction_lazy.egg");
