@@ -1,0 +1,20 @@
+;; EXPECT: sort-error
+;; EVAL: both
+;; Book chapter 5: a comprehension filter must compute a concrete literal.
+
+;; ANCHOR: illegal-comprehension-filter
+(sort E)
+(function a () E)
+(function b () E)
+(function Keep (E) E)
+(function Seq (E) E :assoc)
+
+(rewrite (Seq first ..rest)
+         (Seq first
+              ..[element
+                 for element in rest
+                 if (Keep element)]))
+
+(let term (Seq a b))
+(run 1)
+;; ANCHOR_END: illegal-comprehension-filter

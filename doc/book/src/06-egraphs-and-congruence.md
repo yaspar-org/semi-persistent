@@ -19,12 +19,32 @@
 
 ## E-nodes and e-classes
 
-> Define both. An e-node is an operator applied to e-class arguments. An e-class is
-> a set of e-nodes asserted equal. State the consequence that a reader needs to hold
-> onto: a term is inserted as e-nodes whose arguments are classes, so a term is not
-> stored as a tree and there is no one term to point at afterwards.
->
-> Show it: insert `(f (a) (b))`, print the size, and account for each node.
+An **e-node** is an operator together with references to its argument
+e-classes. An **e-class** is a collection of e-nodes that Semper currently
+knows to be equal.
+
+```lisp
+{{#include ../examples/06-congruence.egg:enodes-and-eclasses}}
+```
+
+The `print-size` command reports:
+
+```text
+a: 1
+b: 1
+f: 1
+total: 3
+```
+
+The term contributes three e-nodes: `a()`, `b()`, and `f(Ca, Cb)`, where `Ca`
+and `Cb` are the classes containing the two leaves. All three nodes are new in
+this example and initially belong to separate e-classes.
+
+The parent stores class arguments, not pointers to fixed syntax-tree children.
+A term is therefore not retained as one tree. Once a child class acquires
+additional members, the same parent e-node represents every equal term in that
+class at that argument position. After insertion there is no unique stored
+syntax tree that `left` names; `left` names the resulting e-class.
 
 ## Hash-consing
 

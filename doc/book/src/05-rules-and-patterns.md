@@ -217,12 +217,109 @@ included in a default run; each run selects exactly one ruleset.
 
 ### Right-hand-side splicing and comprehensions
 
-> Give the exact syntax and one executable rule for each form: sequence/list,
-> multiset, and set comprehension. Explain what each iterates over, how multiset
-> comprehensions preserve or compute counts, and how an optional filter is
-> evaluated. Verify every form against `A1-language-guide.md` and the parser.
+A rest binding can be copied unchanged with `..rest`. Under the same operator,
+this reconstructs the unmatched sequence, multiset, or set without naming its
+elements individually.
+
+Comprehensions transform those elements while splicing their results into the
+surrounding application:
+
+```lisp
+{{#include ../examples/05-rhs-comprehensions.egg:comprehension-forms}}
+```
+
+A sequence comprehension uses `..[...]` and visits its source in order. A set
+comprehension uses `..{...}` and visits each distinct member once. A multiset
+comprehension also uses braces, but requires both multiplicity annotations:
+`body:output-count` and `element:source-count`. It visits each distinct child
+once while exposing that child's complete multiplicity. Using `count` as the
+output count in the example preserves every source multiplicity.
+
+An optional `if` evaluates an RHS term for each source element. The body is
+emitted only when that evaluation returns a literal value which the active
+literal model considers truthy.
+
+```lisp
+{{#include ../examples/05-rhs-comprehensions.egg:comprehension-filter}}
+```
+
+The filter above calls the Rust primitive `i64::<` with `threshold`, a literal
+value bound on the LHS, and `count`, the current source multiplicity. It keeps
+the children whose count is greater than one.
+
+A comprehension filter is not an e-graph query. Semper rejects an ordinary
+application such as `(Keep element)` because it constructs an e-node rather
+than computing a literal:
+
+```lisp
+{{#include ../examples/05-illegal-comprehension-filter.egg:illegal-comprehension-filter}}
+```
+
+To require a graph fact, bind the element on the LHS and add `(Keep element)`
+as a rewrite guard or as a conjunct of a general `rule`.
+
+Comprehension binders are lexical. The source is resolved in the enclosing
+environment. The element and source-count names then shadow outer names inside
+the body, output count, and filter. They disappear afterward, leaving the outer
+bindings unchanged.
+
+```lisp
+{{#include ../examples/05-rhs-comprehensions.egg:comprehension-scope}}
+```
+
+Sibling and nested comprehensions may reuse binder names. Within one multiset
+comprehension, the element and count must have different names: `for k:k` is
+rejected.
+
+Output counts are literals, bound multiplicities, or checked expressions using
+`u64::+`, `u64::-`, `u64::*`, `u64::/`, `u64::%`, `u64::min`, and
+`u64::max`. A local source count lies in `[1, u64::MAX]`, so subtracting one is
+valid:
+
+```lisp
+{{#include ../examples/05-rhs-comprehensions.egg:comprehension-count}}
+```
+
+An output count of zero omits the element without evaluating its body.
+Subtraction that might underflow and division or remainder by a possibly zero
+value are rejected when the rule is installed. LHS constraints such as
+`x:k>=2` narrow query multiplicity intervals and can make otherwise unsafe
+expressions valid. Addition and multiplication remain checked at runtime.
+
+A bound multiplicity can also appear wherever an `i64` term or primitive
+argument is expected. For example, `(Count count)` converts the count to an
+`i64` term, while `(Count (i64::+ count offset))` uses it in a primitive
+calculation.
 
 ### What a variadic rule cannot say
 
-> Name the limits of the pattern surface and the available alternatives. Verify
-> each claim with a rejected program or a zero-match check before writing it.
+Semper's AC matcher uses maximum-partition matching, not unrestricted classical
+AC matching. Each scalar pattern element binds one distinct stored child and
+consumes that child's entire multiplicity. The rest variable receives every
+unbound child, also with its complete multiplicity.
+
+```lisp
+{{#include ../examples/05-variadic-limits.egg:variadic-limits}}
+```
+
+The exact pattern `(Add x:1 y:1)` does not match `Add{a:2}`. The subject has
+one distinct child with multiplicity two, not two children that `x` and `y`
+can bind separately. The multiplicity variant `(Add x:k>=2 ..rest)` handles
+that case.
+
+A pattern also cannot split `a:5`, consuming two copies while leaving three in
+`..rest`. It must bind the complete count and reconstruct the required number
+of copies on the RHS with an expression such as `(u64::- k 2)`.
+
+Scalar variables range over existing e-classes. They do not range over
+implicit sub-sums or arbitrary subsets of a flattened node. Matching
+`(Add x:1 y:1)` against a node containing only `Add(a,b,c)` cannot bind `x`
+to an unmaterialized `Add(a,b)`. Such a subterm must already have an e-class,
+be constructed by another rule, or be expressed by naming individual children
+and a rest variable.
+
+Sequence patterns may have one prefix and one suffix rest variable because
+their fixed children describe a contiguous window. AC and ACI patterns are
+unordered and permit only one remainder. Comprehensions likewise iterate an
+LHS rest binding of the required collection kind; they cannot iterate an
+arbitrary RHS term.

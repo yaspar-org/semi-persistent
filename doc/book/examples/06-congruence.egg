@@ -1,0 +1,29 @@
+;; EXPECT: ok
+;; EVAL: both
+;; Book chapter 6: e-nodes, e-classes, hash-consing, and congruence.
+
+;; ANCHOR: enodes-and-eclasses
+(sort E)
+(function a () E)
+(function b () E)
+(function f (E E) E)
+
+(let left (f (a) (b)))
+(print-size)
+;; ANCHOR_END: enodes-and-eclasses
+
+;; ANCHOR: hash-consing
+;; Repeating the same term reuses all three existing e-nodes.
+(f (a) (b))
+(print-size)
+;; ANCHOR_END: hash-consing
+
+;; ANCHOR: congruence
+;; This parent is distinct until its two argument classes are merged.
+(let right (f (b) (b)))
+(check (!= left right))
+
+(union (a) (b))
+(check (= left right))
+(print-size)
+;; ANCHOR_END: congruence
