@@ -89,9 +89,32 @@ must remain available to trigger the opposite direction.
 
 ## rule and actions
 
-> The general form: a conjunctive query over the e-graph, then actions. Show a rule
-> with two patterns whose shared variable is the join. Give each action form once:
-> `union`, `set`, and a bare term as an insertion.
+A `rule` separates a conjunctive query from the actions performed for each
+match. Every pattern in the first list must match under one shared binding
+environment. A variable appearing in several patterns is a join key. Unlike
+`rewrite`, a `rule` has no distinguished root and performs no implicit merge.
+
+```lisp
+{{#include ../examples/04-rule-actions.egg:rule-actions}}
+```
+
+The shared `y` requires the destination of the first edge and the source of
+the second to belong to the same e-class. For that match, the bare
+`(path x z)` action inserts a term. The following rewrite can fire only
+because that term was inserted. The `union` action builds its two arguments
+and merges their e-classes.
+
+Actions execute in source order:
+
+| Action | Effect |
+| --- | --- |
+| `(union lhs rhs)` | Build both right-hand-side terms and merge their e-classes. |
+| `(operator rhs ...)` | Build and insert a term without merging it. |
+| `(set (operator rhs ...) value)` | Reserved for a lattice-valued update. |
+
+`set` is parsed, sortchecked, and compiled, but its runtime implementation is
+currently a `todo!`. A rule that reaches it stops with an unimplemented-action
+panic, so it is not yet usable in executing programs.
 
 ## Guards
 
