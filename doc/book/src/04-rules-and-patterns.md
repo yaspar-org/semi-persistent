@@ -118,9 +118,35 @@ panic, so it is not yet usable in executing programs.
 
 ## Guards
 
-> `:when` adds patterns that must also match. Show a rule that fires only in the
-> presence of an unrelated fact, since that is the shape a domain assumption takes
-> in Part IV.
+A `:when` clause adds conjuncts to a rewrite's query. Every guard pattern must
+match under the same binding environment as the left-hand side. On a
+`birewrite`, the same guards apply in both directions.
+
+A guard with no shared variables is an independent conjunct. Operationally,
+its matches form a Cartesian product with the left-hand-side matches. The
+existence of one such match therefore enables the rewrite, while several
+matches may cause the actions to be applied more than once. This is useful for
+representing an ambient domain assumption.
+
+The following example uses `--types machine`:
+
+```lisp
+{{#include ../examples/04-guards.egg:guards}}
+```
+
+Before `(assumption)` is inserted, the first rewrite cannot fire. Once that
+unrelated fact exists, it enables the rewrite for `waiting`. A fact inserted
+between runs is visible when the next run builds its matching index; a fact
+produced during a round becomes visible in a later round.
+
+The second guard is a primitive predicate. It is evaluated over literal values
+rather than matched against an e-node. Here `(num n)` binds `n` to an `i64`
+value, and `i64::<` keeps only the match for `3`.
+
+A primitive predicate must be a top-level guard, may read only literal values
+bound by earlier patterns, and must return `bool`. Its result is tested and
+discarded without inserting a node. A general `rule` places the same pattern
+and predicate guards directly in its first list rather than using `:when`.
 
 ## Subsumption and rule sets
 

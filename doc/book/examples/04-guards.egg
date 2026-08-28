@@ -1,0 +1,33 @@
+;; EXPECT: ok
+;; TYPES: machine
+;; Book chapter 4: pattern guards and primitive predicates.
+
+;; ANCHOR: guards
+(sort Expr)
+(sort Fact)
+(function item () Expr)
+(function source (Expr) Expr)
+(function result (Expr) Expr)
+(function assumption () Fact)
+(function num (i64) Expr)
+(function small (Expr) Expr)
+
+(rewrite (source x) (result x)
+  :when ((assumption)))
+
+(rewrite (num n) (small (num n))
+  :when ((i64::< n 5)))
+
+(let waiting (source item))
+(num 3)
+(num 7)
+(run 2)
+
+(check (!= waiting (result item)))
+(check (= (small (num 3)) (num 3)))
+(check (!= (small (num 7)) (num 7)))
+
+(assumption)
+(run 2)
+(check (= waiting (result item)))
+;; ANCHOR_END: guards
