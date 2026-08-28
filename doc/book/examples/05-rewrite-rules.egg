@@ -1,5 +1,5 @@
 ;; EXPECT: ok
-;; Book chapter 4: the three rule forms, guards, and non-linear patterns.
+;; Book chapter 5: the three rule forms, guards, and non-linear patterns.
 
 ;; ANCHOR: pattern-matching
 (sort Expr)

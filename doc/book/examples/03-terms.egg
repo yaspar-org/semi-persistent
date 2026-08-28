@@ -15,7 +15,7 @@
 
 ;; An operator declares its argument sorts, then its result sort. Arity is fixed
 ;; by that list unless an algebraic attribute makes the operator variadic
-;; (chapter 12).
+;; (chapter 4).
 ;; ANCHOR: operator-declarations
 (function add (Expr Expr) Expr)
 (function neg (Expr) Expr)

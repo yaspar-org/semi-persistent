@@ -33,11 +33,12 @@ disagreements with `Variants` nodes.
 
 ## The four parts
 
-In Part I, we build the binary, write and run a program, and introduce the
-commands and flags available from the command line.
+In Part I, we build the binary, write and run a program, declare operators with
+algebraic properties, and write rules over ordinary, sequence, multiset, and
+set operators.
 
 In Part II, we explain what the e-graph stores, how saturation runs, how
-algebraic declarations change operator representations, and how the three
+canonization implements declared algebraic properties, and how the three
 congruence modes differ.
 
 In Part III, we explain what anti-unification computes, how exact search, graph

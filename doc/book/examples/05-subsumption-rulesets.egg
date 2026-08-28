@@ -1,5 +1,5 @@
 ;; EXPECT: ok
-;; Book chapter 4: subsumption and ruleset selection.
+;; Book chapter 5: subsumption and ruleset selection.
 
 ;; ANCHOR: subsumption-rulesets
 (sort Expr)

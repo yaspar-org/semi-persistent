@@ -1,5 +1,5 @@
 ;; EXPECT: ok
-;; Book chapter 4: conjunctive rule queries and actions.
+;; Book chapter 5: conjunctive rule queries and actions.
 
 ;; ANCHOR: rule-actions
 (sort Node)

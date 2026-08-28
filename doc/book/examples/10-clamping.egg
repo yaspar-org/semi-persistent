@@ -1,0 +1,91 @@
+;; EXPECT: ok
+;; Book chapter 10: the count clamp, and why it is a canonization fact.
+;;
+;; There is no `(run ...)` in this file and AC completion is off, which is the
+;; default. Every equality below therefore holds of the STORED node, established
+;; when the node was built or rebuilt. None of it is derived by a rule.
+
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function e () E)
+
+;; ── Clamp::None, plain AC: counts are natural numbers ────────────────────────
+;; Children are a multiset and multiplicity is kept. This is the `MSet` kind.
+(function add (E) E :assoc :comm :identity (e))
+(check (!= (add a a) a))
+(check (!= (add a a a) (add a a)))
+;; Identity is a separate axis from the clamp: the unit is dropped wherever it
+;; occurs, whatever the clamp is.
+(check (= (add a e) a))
+(check (= (add a e e b) (add a b)))
+;; A node whose children all drop becomes the unit itself.
+(check (= (add e e) e))
+
+;; ── Clamp::Idempotent: clamp every count to 1 ────────────────────────────────
+;; The canonization rule is `sort; dedup`, and because the resulting counts are
+;; always 0 or 1 they need not be stored at all. That is what the `Set` kind is:
+;; an `MSet` with multiplicity implicit at 1.
+(function meet (E) E :assoc-comm-idem :identity (e))
+(check (= (meet a a) a))
+(check (= (meet a a a b b) (meet a b)))
+(check (= (meet a e) a))
+
+;; ── Clamp::Nilpotent, order 2: counts mod 2 ──────────────────────────────────
+;; `x` composed with itself reduces to the unit, so this is exclusive or, and a
+;; merge of two nodes is a symmetric difference. Nilpotency REQUIRES an identity,
+;; because the emptied multiset has to reduce to a real node.
+(function xor (E) E :assoc :comm :nilpotent :identity (e))
+(check (= (xor a a) e))
+(check (= (xor a a a) a))
+(check (= (xor a a b) b))
+(check (= (xor a b a b) e))
+(check (!= (xor a b) e))
+
+;; ── Why nilpotent cannot live in the `Set` kind ──────────────────────────────
+;; Its order-2 normal form only ever holds counts 0 and 1, which would "fit" a
+;; `Set`. It is still stored as an `MSet`, and the reason is the canonization
+;; rule rather than the values.
+;;
+;; `Set`'s rule is `dedup`. Applied to `xor(a, a)` it gives `{a}`, which collapses
+;; to `a`. But the correct answer is the unit. That is a false equality, and it
+;; would be asserted at build time, before any completion could review it.
+;; Computing a count modulo 2 requires first HOLDING the count, and the multiset
+;; is the only hash-consed place that holds one. Dedup throws away exactly the
+;; run lengths that parity needs.
+;;
+;; The two rules disagree on the same input, which is the whole argument:
+(check (= (meet a a) a))                      ;; dedup:  {a,a} -> {a} -> a
+(check (= (xor a a) e))                       ;; parity: {a:2} -> {}  -> e
+(check (!= (meet a a) (xor a a)))
+
+;; ── Higher order: counts mod n ───────────────────────────────────────────────
+;; `:nilpotent` takes an order. At 3 the normal form can hold a count of 2, which
+;; a `Set` could not represent at all, so orders above 2 are forced to `MSet` for
+;; a second and simpler reason.
+(function tri (E) E :assoc :comm :nilpotent 3 :identity (e))
+(check (= (tri a a a) e))
+(check (!= (tri a a) e))
+(check (!= (tri a a) a))
+(check (= (tri a a a a) a))
+
+;; ── The clamp runs on rebuild too, not only on build ─────────────────────────
+;; Each node below is well formed when built. A later `union` merges two of its
+;; children, which makes it degenerate, and recanonization applies the same clamp.
+;; This is why the clamp cannot live in a completion pass: the node has to be in
+;; normal form the moment its children change.
+(let x_ab (xor a b))
+(let m_ab (meet a b))
+(let t_ab (tri a b))
+(union a b)
+(check (= x_ab e))                            ;; {a,b} -> {a:2} -> {} = e
+(check (= m_ab a))                            ;; {a,b} -> {a}       = a
+(check (= t_ab (tri a a)))                    ;; {a,b} -> {a:2}, no reduction yet
+
+;; A child merging INTO the unit's class is the same story, on the identity axis.
+(let s_ce (add c e))
+(let s_c2 (add c c))
+(check (= s_ce c))
+(union c e)
+(check (= s_c2 e))                            ;; {c:2} with c = e -> {} = e

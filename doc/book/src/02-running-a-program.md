@@ -122,7 +122,8 @@ lines of a file may contain directives such as `;; EXPECT: ok` or
 `;; DERIVE_AC_EQS: on`. These lines are comments to the engine binary; the test
 harness reads them to select settings and the expected outcome.
 
-Chapter 6 lists every directive and its corresponding command-line option.
+[Annex C](C-flag-reference.md) lists every directive and its corresponding
+command-line option.
 When running an example manually, pass the matching option for any nondefault
 directive. An `EXPECT` directive can also state that a parse, sort, or check
 failure is the expected test result.

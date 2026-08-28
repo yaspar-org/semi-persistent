@@ -1,0 +1,35 @@
+;; EXPECT: ok
+;; DERIVE_AC_EQS: on
+;; Book chapter 11: eager AC congruence closure.
+;;
+;; Same program as `11-cc-plain.egg`, one flag different. `--derive-ac-eqs` makes
+;; every rebuild attempt AC completion, so the equality that plain mode misses is
+;; in the graph by the time anything asks for it.
+;;
+;; What completion adds is the step plain recanonicalization cannot take: it treats
+;; each asserted AC equation as a rewrite rule on multisets, and it closes that
+;; rule set under the two operations that ground AC completion needs. Substituting
+;; a known sub-sum into a node that contains it handles this file. Building the
+;; superposition of two overlapping sums handles the harder case where the term
+;; that exposes the equality is in no node at all.
+;;
+;; The price is that the closure is paid on EVERY rebuild, whether or not anything
+;; needed it, and that it mints nodes: the substituted forms are real nodes that
+;; stay in the graph.
+
+(sort E)
+(function add (E) E :assoc :comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+(function f (E) E)
+(check (= (f (add a b)) (f c)))
+
+;; Derived, where plain mode failed.
+(check (= n (add c d)))

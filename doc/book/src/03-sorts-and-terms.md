@@ -2,8 +2,8 @@
 
 > Chapter contents: the literal models and their built-in sorts, the grammar of
 > declarations and term-building commands, what each command does to the e-graph,
-> and how sortchecking rejects a bad term. This is the first half of the language;
-> chapter 4 is the second.
+> and how sortchecking rejects a bad term. Chapters 4 and 5 complete the language
+> with algebraic declarations and rules.
 >
 > Example: `examples/03-terms.egg`. Read it before writing and build the chapter
 > around it rather than inventing a new one. Extend it if a section needs a case it
@@ -37,7 +37,7 @@ uses the default model:
 the selected literal model. Running the same declaration with only
 `--types machine` rejects `IBig` as an unknown sort.
 
-Chapter 6 gives the full `--types` flag reference.
+[Annex C](C-flag-reference.md) gives the full `--types` flag reference.
 
 ## The grammar
 
@@ -83,7 +83,7 @@ can be written explicitly with parentheses, as in `(x)`. Ground terms contain
 no pattern variables; a bare name must resolve to a literal, a nullary operator,
 or a name introduced by an earlier `let`.
 
-Chapter 12 defines the algebraic declaration options listed above.
+Chapter 4 defines the algebraic declaration options listed above.
 [Annex A](A-full-grammar.md) collects the complete surface grammar, including
 patterns, rule actions, query and control commands, and every command option.
 
@@ -128,11 +128,11 @@ Two declaration tags control extraction. `:cost n` assigns each node of the
 operator a cost of `n`, with a default of 1. `:unextractable` excludes those
 nodes from extraction while leaving them in the e-graph and available for
 matching. Both tags are accepted on functions and constructors. They affect
-which representative `extract` selects, not which terms are equal. Chapter 9
+which representative `extract` selects, not which terms are equal. Chapter 8
 defines the extraction cost model.
 
 The remaining declaration tags assign algebraic properties. Semper enforces
-them through automatic term canonization rather than rewrite rules. Chapter 12
+them through automatic term canonization rather than rewrite rules. Chapter 4
 defines those properties and their legal combinations.
 
 ## Building a term
@@ -180,7 +180,7 @@ Semper sort-checks the complete program before executing any command.
 Declarations are processed in source order. An operator declaration is rejected
 if an argument or result sort is unknown. Registration also validates the
 supported shapes and combinations of algebraic tags, including identity sorts
-and inverse signatures. Chapter 12 gives those requirements.
+and inverse signatures. Chapter 4 gives those requirements.
 
 Before a ground term is built, Semper resolves its operator and checks its
 arity. It then checks the children from the leaves upward, requiring each child
@@ -202,7 +202,7 @@ These checks establish that declarations have supported forms and terms are
 well-sorted. Algebraic tags remain assertions about the intended
 interpretation. Sortchecking can validate that a tag combination is supported,
 but it does not prove that the intended operator satisfies the declared laws.
-Once accepted, Semper enforces those laws through canonization. Chapter 26
+Once accepted, Semper enforces those laws through canonization. Chapter 23
 collects this and the other obligations left to the program author.
 
 ## Literals

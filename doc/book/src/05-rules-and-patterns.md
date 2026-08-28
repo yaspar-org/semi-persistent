@@ -1,13 +1,15 @@
 # Rules and patterns
 
-> Chapter contents: the grammar of the three rule forms, what a pattern matches
-> against, how variables bind, what actions may do, the two modifiers, and rule
-> sets. Variadic patterns over AC operators are chapter 13, not here: this chapter
-> covers ordinary fixed-arity operators only, and should say so once.
+> Chapter contents: the three rule forms, matching and binding over every operator
+> representation, rule actions and modifiers, variadic remainders and
+> multiplicities, and sequence, multiset, and set comprehensions.
 >
-> Example: `examples/04-rewrite-rules.egg`.
+> Examples: `examples/05-rewrite-rules.egg`, the other `05-*.egg` rule fixtures,
+> and one variadic fixture per representation: `05-rules-over-seq.egg`,
+> `05-rules-over-mset.egg`, and `05-rules-over-set.egg`.
 >
 > Sources: design `09-pattern-matching.md`, `12-rule-application.md`,
+> `07-leapfrog.md`, and the "Variadic Pattern Matching" section of
 > `A1-language-guide.md`.
 >
 > Carry over: `v1-draft/02-first-program.md` section "Rewrite rules" and
@@ -15,9 +17,10 @@
 
 ## The grammar
 
-Semper has three surface forms for defining rules. This chapter uses only
-fixed-arity patterns over ordinary operators; chapter 13 introduces variadic
-patterns over operators with algebraic properties.
+Semper has three surface forms for defining rules. The first sections use
+fixed-arity patterns over ordinary operators. The final section applies the
+same forms to sequence, multiset, and set operators and introduces the
+additional variadic pattern and right-hand-side syntax.
 
 ```text
 (rewrite lhs rhs [:when (pattern ...)] [:subsume] [:ruleset name])
@@ -48,7 +51,7 @@ pattern may therefore continue through any e-node in a child class, even when
 the resulting composite term was never inserted.
 
 ```lisp
-{{#include ../examples/04-rewrite-rules.egg:pattern-matching}}
+{{#include ../examples/05-rewrite-rules.egg:pattern-matching}}
 ```
 
 The program never inserts `(f (g b))`. It inserts `(f a)` and `(g b)`, then
@@ -69,7 +72,7 @@ symmetric, but an existing right-hand-side shape does not cause the
 left-hand side to be built.
 
 ```lisp
-{{#include ../examples/04-rewrite-directions.egg:rewrite-directions}}
+{{#include ../examples/05-rewrite-directions.egg:rewrite-directions}}
 ```
 
 The first rule uses `(f a)` to build `(g a)`. It does not use `(g b)` to build
@@ -95,7 +98,7 @@ environment. A variable appearing in several patterns is a join key. Unlike
 `rewrite`, a `rule` has no distinguished root and performs no implicit merge.
 
 ```lisp
-{{#include ../examples/04-rule-actions.egg:rule-actions}}
+{{#include ../examples/05-rule-actions.egg:rule-actions}}
 ```
 
 The shared `y` requires the destination of the first edge and the source of
@@ -131,7 +134,7 @@ representing an ambient domain assumption.
 The following example uses `--types machine`:
 
 ```lisp
-{{#include ../examples/04-guards.egg:guards}}
+{{#include ../examples/05-guards.egg:guards}}
 ```
 
 Before `(assumption)` is inserted, the first rewrite cannot fire. Once that
@@ -161,7 +164,7 @@ to that named set for at most `n` iterations. A bare `(run n)` runs only
 untagged rules, which form the default ruleset.
 
 ```lisp
-{{#include ../examples/04-subsumption-rulesets.egg:subsumption-rulesets}}
+{{#include ../examples/05-subsumption-rulesets.egg:subsumption-rulesets}}
 ```
 
 The first run selects `simplify`, so only the tagged rewrite fires. It merges
@@ -172,3 +175,54 @@ The bare second run selects the default ruleset. It can rewrite
 `(reduced item)` to `(final item)`, but it cannot use the subsumed
 `(old item)` node to produce `(stale item)`. Named rulesets are not implicitly
 included in a default run; each run selects exactly one ruleset.
+
+## Rules over variadic operators
+
+> This section is the complete user-facing reference for rules over associative
+> sequence, associative-commutative multiset, and
+> associative-commutative-idempotent set operators. The three example files named
+> in the chapter metadata are its spine.
+
+### Why a variadic pattern is different
+
+> A fixed-arity pattern binds argument positions. A flattened sequence, multiset,
+> or set has a variable number of children, so a pattern selects part of that
+> collection and must account for the remainder. Explain that one pattern can
+> consequently produce several matches against one node, and show the count.
+
+### Binding the remainder
+
+> `..rest` binds every child the pattern did not name and can be spliced back into
+> the right-hand side. Show a rule that names part of a node and reconstructs it
+> with the remainder intact.
+
+### Patterns over a sequence
+
+> Build on `examples/05-rules-over-seq.egg`. Order is represented, so verify and
+> explain that the fixed children match a contiguous window. Show what prefix and
+> suffix rest variables mean at the front, back, and middle of a sequence.
+
+### Patterns over a multiset
+
+> Build on `examples/05-rules-over-mset.egg`. The full multiplicity surface applies:
+> `x:2` requires exactly two copies, `x:k` binds the count, and `x:k>=2` constrains
+> it. Include a rule that finds a given sub-sum regardless of the other summands,
+> and state that a binding consumes the child's whole multiplicity.
+
+### Patterns over a set
+
+> Build on `examples/05-rules-over-set.egg`. Every multiplicity is one, so explain
+> which qualifiers are meaningless and how two named variables bind distinct
+> children.
+
+### Right-hand-side splicing and comprehensions
+
+> Give the exact syntax and one executable rule for each form: sequence/list,
+> multiset, and set comprehension. Explain what each iterates over, how multiset
+> comprehensions preserve or compute counts, and how an optional filter is
+> evaluated. Verify every form against `A1-language-guide.md` and the parser.
+
+### What a variadic rule cannot say
+
+> Name the limits of the pattern surface and the available alternatives. Verify
+> each claim with a rejected program or a zero-match check before writing it.

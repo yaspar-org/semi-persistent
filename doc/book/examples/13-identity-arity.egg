@@ -1,0 +1,61 @@
+; The identity element is what absorbs a difference of ARITY. Book chapter 13.
+;
+; Order and repetition are absorbed by :assoc-comm and :idempotent. Neither of
+; those can align a 3-conjunct requirement against a 2-conjunct one: no
+; reordering makes those the same shape. A declared unit can, by pairing the
+; absent conjunct against the unit itself.
+;
+; The two halves below are the same two terms under signatures that differ in
+; exactly one attribute. `AndU` has `:identity (Lit true)`; `AndN` does not.
+; Everything else, including :assoc-comm-idem, is shared.
+
+(sort Formula)
+(sort Bucket)
+(sort Region)
+
+(function Lit (bool) Formula)
+(function AndU (Formula) Formula :assoc-comm-idem :identity (Lit true))
+(function AndN (Formula) Formula :assoc-comm-idem)
+
+(function src () Bucket)
+(function dst () Bucket)
+(function regionOf (Bucket) Region)
+(function versioningOn (Bucket) Formula)
+(function encrypted (Bucket) Formula)
+(function approvedRegion (Region) Formula)
+
+; ── with the unit ────────────────────────────────────────────────────────
+; Two conjuncts are reported as agreed and the dropped one is paired against
+; `(Lit true)`, which is the report a reviewer needs: "both candidates require
+; versioning and encryption; one additionally requires an approved region".
+(let fullU
+  (AndU
+    (versioningOn (src))
+    (encrypted (src))
+    (approvedRegion (regionOf (dst)))))
+(let droppedU
+  (AndU
+    (versioningOn (src))
+    (encrypted (src))))
+(antiunify fullU droppedU :algorithm exact)
+(checkau fullU droppedU :max_size 10 :algorithm exact)
+
+; ── without the unit ─────────────────────────────────────────────────────
+; One Variants node holding both conjunctions whole: size 13, and `:cr 1.0000`,
+; which is the no-sharing endpoint of the compression ratio exactly. Nothing is
+; reported as agreed even though two of the three conjuncts are identical.
+(let fullN
+  (AndN
+    (versioningOn (src))
+    (encrypted (src))
+    (approvedRegion (regionOf (dst)))))
+(let droppedN
+  (AndN
+    (versioningOn (src))
+    (encrypted (src))))
+(antiunify fullN droppedN :algorithm exact)
+; `checkau` bounds the size from above only, so this states the size rather
+; than asserting the gap: a result of size 10 would also satisfy it. The bound
+; that carries the contrast is the `:max_size 10` above, which fails if the
+; unit ever stops absorbing the arity difference.
+(checkau fullN droppedN :max_size 13 :algorithm exact)

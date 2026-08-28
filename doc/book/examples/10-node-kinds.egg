@@ -1,0 +1,71 @@
+;; EXPECT: ok
+;; Book chapter 10: the declaration picks the node kind, and the node kind decides
+;; what is absorbed by the representation instead of being proved by a rule.
+;;
+;; No rule is declared anywhere in this file, and there is no `(run ...)`. Every
+;; equality below holds the moment the term is built.
+
+(sort E)
+(function a () E)
+(function b () E)
+(function c () E)
+
+;; ── Plain: ordered, fixed arity, nothing absorbed ────────────────────────────
+;; No attribute. Arity comes from the declared argument list. The engine has
+;; separate kinds for arities 0 to 3 and one for wider nodes, which is a storage
+;; distinction only: `Plain0` through `Plain3` keep children inline, `PlainN`
+;; puts them in the pool. Nothing about matching changes.
+(function pair (E E) E)
+(check (!= (pair a b) (pair b a)))
+
+;; ── SPair: commutative, and binary ───────────────────────────────────────────
+;; `:comm` on its own is the one attribute that keeps the operator BINARY. Its
+;; declaration therefore takes exactly two argument sorts. Children are stored as
+;; a sorted pair, so argument order is gone.
+(function eq (E E) E :comm)
+(check (= (eq a b) (eq b a)))
+
+;; ── Seq: associative, variadic, order kept ───────────────────────────────────
+;; `:assoc` alone makes the operator variadic, so it declares exactly ONE
+;; argument sort however many children a term supplies. Nesting is flattened.
+(function seq (E) E :assoc)
+(check (= (seq (seq a b) c) (seq a b c)))
+(check (= (seq a (seq b c)) (seq a b c)))
+;; A one-child node collapses to that child. There is no wrapper to observe.
+(check (= (seq a) a))
+;; Order survives, because nothing declared this operator commutative.
+(check (!= (seq a b) (seq b a)))
+
+;; ── MSet: associative and commutative, variadic, multiplicity kept ───────────
+;; Children become a sorted multiset. Order and nesting are both gone. How MANY
+;; times a child occurs is still observable.
+(function add (E) E :assoc :comm)
+(check (= (add a b) (add b a)))
+(check (= (add (add a b) c) (add a b c)))
+(check (!= (add a a) (add a)))
+(check (= (add a) a))
+
+;; ── Set: associative, commutative and idempotent, variadic ───────────────────
+;; Children become a sorted set. Repetition goes too, because `dedup` is this
+;; kind's canonization rule.
+(function conj (E) E :assoc-comm-idem)
+(check (= (conj a b) (conj b a)))
+(check (= (conj (conj a b) c) (conj a b c)))
+(check (= (conj a a) a))
+(check (= (conj a a b) (conj a b)))
+
+;; ── Lit: literal leaves ──────────────────────────────────────────────────────
+;; A literal is its own node kind, carrying a value rather than children. It is
+;; how a concrete constant enters a term, and it is what a declared identity
+;; element usually is.
+(function isTrue (bool) E)
+(check (= (isTrue true) (isTrue true)))
+(check (!= (isTrue true) (isTrue false)))
+
+;; ── The point ────────────────────────────────────────────────────────────────
+;; None of the equalities above cost a rule application or a saturation round.
+;; They are true of the stored node. This is why declaring the algebra is cheaper
+;; than axiomatizing it: an associativity rule would generate a term for every
+;; parenthesization, and there is no such term here to generate.
+(check (= (seq a (seq b (seq c a))) (seq a b c a)))
+(check (= (conj a (conj b (conj c a))) (conj a b c)))

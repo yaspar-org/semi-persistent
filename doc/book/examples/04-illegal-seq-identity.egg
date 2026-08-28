@@ -1,0 +1,20 @@
+;; EXPECT: sort-error
+;; Book chapter 4: a sequence operator has no unit.
+;;
+;; `nil` looks like the empty list, and `cat` looks like concatenation, so a unit
+;; looks obviously right. It is rejected, and the reason is the same one behind
+;; chapter 4's rejected clamp: dropping a unit means forcing its multiplicity to
+;; zero, and a multiplicity is a property of a multiset of children. A `Seq` node
+;; holds an ordered list and has no multiplicities to force.
+;;
+;; The engine reports, and exits 1:
+;;   sort error: :idempotent/:nilpotent/:identity/:inverse require :comm (an AC operator)
+
+(sort E)
+(function a () E)
+(function nil () E)
+
+;; `:assoc` alone, so `cat` is a `Seq`, and `:identity` does not apply to it.
+(function cat (E) E :assoc :identity (nil))
+
+(check (= (cat a nil) a))

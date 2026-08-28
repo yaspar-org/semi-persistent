@@ -1,0 +1,49 @@
+;; EXPECT: check-failed
+;; LAZY_AC_EQS: on
+;; Book chapter 16: lazy completion does NOT help anti-unification.
+;;
+;; The same program a third time, run with `--lazy-ac-eqs`. The result is identical
+;; to the plain run, size 5 with the same `Variants` node, and the size-2 assertion
+;; fails exactly as it does there. The test suite asserts that failure, because it is
+;; the point of the file.
+;;
+;; The reason is the trigger. Lazy completion opens its transaction when an equality
+;; check asks a question plain congruence cannot answer, and `(check (= a b))` and
+;; `(check (!= a b))` are the only two commands that count. `antiunify` and `checkau`
+;; are not equality checks. They close any open transaction, which restores the
+;; graph and discards whatever completion had derived, and only then does the solver
+;; take its snapshot. So the snapshot it searches is the plain graph.
+;;
+;; That is not an oversight to route around by making the solver open the transaction
+;; itself. Look at what it would cost. The solver has one node per reachable ordered
+;; class pair, and there is no single pair to install as the completion goal, because
+;; the whole point of the search is that it does not know in advance which pairs
+;; matter. Making it lazy would mean one goal-directed completion search per visited
+;; pair, each inside its own mark-and-restore, and the accumulated state that makes
+;; consecutive equality checks cheap would be thrown away between pairs. Eager
+;; completion pays the closure once for the whole graph and hands the solver a
+;; snapshot it can read with `find`.
+;;
+;; So the three modes are not three points on one speed axis. Plain and lazy give
+;; the solver the same, incomplete, relation. Eager is the one that changes what the
+;; answer means.
+
+(sort E)
+(function add (E) E :assoc :comm)
+(function g (E) E)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+(let l (g n))
+(let r (g (add c d)))
+
+(antiunify l r :algorithm exact)
+
+;; Not reached: the snapshot is the plain graph.
+(checkau l r :max_size 2 :algorithm exact)

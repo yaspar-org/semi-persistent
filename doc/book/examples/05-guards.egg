@@ -1,6 +1,6 @@
 ;; EXPECT: ok
 ;; TYPES: machine
-;; Book chapter 4: pattern guards and primitive predicates.
+;; Book chapter 5: pattern guards and primitive predicates.
 
 ;; ANCHOR: guards
 (sort Expr)

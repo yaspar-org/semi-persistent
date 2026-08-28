@@ -1,0 +1,37 @@
+;; EXPECT: ok
+;; LAZY_AC_EQS: on
+;; Book chapter 11: lazy AC congruence closure.
+;;
+;; Same program again, a third flag. `--lazy-ac-eqs` runs saturation plain and pays
+;; for completion only when an equality check asks a question plain congruence
+;; cannot answer. The search runs inside a semi-persistent transaction: mark the
+;; graph, turn completion on, decide, restore. Every node the decision minted is
+;; discarded, so the graph you keep is the plain one.
+;;
+;; That is the whole shape of the mode, and it has one consequence worth stating
+;; before you rely on it. The trigger is an EQUALITY CHECK. `(check (= a b))` and
+;; `(check (!= a b))` are the only commands that open the transaction, and the
+;; first command that is not one of them closes it and restores. So lazy mode
+;; answers questions you ask in that form, and it does nothing for a computation
+;; that consults equality some other way. Chapter 16 is about exactly one such
+;; computation.
+;;
+;; Consecutive equality checks share one transaction, so a run of them accumulates
+;; completion state instead of each rederiving from nothing.
+
+(sort E)
+(function add (E) E :assoc :comm)
+(function a () E)
+(function b () E)
+(function c () E)
+(function d () E)
+(function n () E)
+
+(union (add a b) c)
+(union (add a b d) n)
+
+(function f (E) E)
+(check (= (f (add a b)) (f c)))
+
+;; Answered by the on-demand search, then rolled back.
+(check (= n (add c d)))

@@ -1,6 +1,6 @@
-# Command reference
+# Annex B. Command reference
 
-> Chapter contents: every command the interpreter accepts, in seven groups:
+> Annex contents: every command the interpreter accepts, in seven groups:
 > declaring, building terms, rules, running, asserting, querying, and scoping.
 >
 > Carry over: `v1-draft/10-commands.md` almost verbatim. It is complete against the
@@ -9,11 +9,11 @@
 > cross-reference to the new chapter numbers.
 >
 > Verify before writing: the command names in `egraph/src/parser.rs`. The set is
-> sort, function, constructor, datatype, ruleset, let, union, set, rewrite,
+> sort, function, constructor, datatype, ruleset, let, union, rewrite,
 > birewrite, rule, run, check, checkau, antiunify, extract, print-size, print-stats,
 > push, pop. If the parser has grown a command since, add it.
 >
-> This chapter is a reference. It states what each command does and links to the
+> This annex is a reference. It states what each command does and links to the
 > chapter that explains it. It does not teach and it does not motivate.
 
 ## Symbol declarations and algebraic properties
@@ -28,7 +28,7 @@
 
 Algebraic properties are attached to operator declarations and individual
 datatype variants as tags. They determine an operator's representation and
-required arity. [Chapter 12](12-declaring-algebra.md) gives their laws, legal
+required arity. [Chapter 4](04-declaring-algebra.md) gives their laws, legal
 combinations, and exact arity rules.
 
 ```text
@@ -57,8 +57,10 @@ explains term construction in detail.
 
 ## Rules
 
-> The three rule forms and the action grammar, `:when`, `:subsume`, `:ruleset`. One
-> sentence naming the variadic pattern surface, with the link to chapter 13.
+> Keep every rule form in this one reference section: the three core forms and
+> action grammar; `:when`, `:subsume`, and `:ruleset`; then the rest,
+> multiplicity, splice, and sequence, multiset, and set comprehension syntax.
+> Link chapter 5 for semantics and examples rather than explaining them again.
 
 ## Running
 
@@ -70,15 +72,15 @@ explains term construction in detail.
 > Table of the four assertion forms and what each passes on. Keep the caution about
 > `(check (!= t1 t2))`: it reports that the engine did not derive equality, which is
 > a statement about the declared rules and the active congruence mode, not about
-> semantic disequality. Link chapter 14.
+> semantic disequality. Link chapter 11.
 
 ## Querying
 
 > Table of the commands that print: `extract`, `antiunify`, `checkau`,
 > `print-size`, `print-stats`. The shared anti-unification option grammar as a
-> `text` block, with the link to chapters 15 through 18.
+> `text` block, with the link to chapters 12 through 15.
 
 ## Scoping
 
 > `(push)`, `(push :shrink)`, `(pop)`. One paragraph on what they cost, with the
-> link to chapter 8, which is where the mechanism is explained.
+> link to chapter 7, which is where the mechanism is explained.

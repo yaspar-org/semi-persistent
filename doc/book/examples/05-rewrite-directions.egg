@@ -1,5 +1,5 @@
 ;; EXPECT: ok
-;; Book chapter 4: directional rewrites and bidirectional rewrites.
+;; Book chapter 5: directional rewrites and bidirectional rewrites.
 
 ;; ANCHOR: rewrite-directions
 (sort Expr)
