@@ -83,9 +83,21 @@ To capture both streams separately:
 
 ## Exit status
 
-> Table of status and cause: success, failed check, parse error, sort error. State
-> that a failed `check` aborting with a nonzero status is the mechanism that makes
-> an example file a regression test.
+Semper exits with status 0 only after the complete program runs successfully.
+Syntax, sort-checking, and failed-check errors exit with status 1.
+
+| Status | Cause | Standard error |
+| --- | --- | --- |
+| 0 | The program ran and every check passed. | `ok — N nodes` |
+| 1 | A `check` or `checkau` assertion failed. | `error: check failed: ...` |
+| 1 | The parser rejected the program. | `parse error: ...` |
+| 1 | A declaration or term failed sort-checking. | `sort error: ...` |
+
+A failed check stops the program immediately. Its nonzero status lets an
+example file act as a regression test: a script or test runner fails when the
+behavior asserted by the file no longer holds. Query output may have been
+written before a later check failed, so callers should use the exit status
+rather than the presence of output to decide whether the run succeeded.
 
 ## Running the book's examples
 
