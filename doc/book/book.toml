@@ -17,8 +17,9 @@ git-repository-url = "https://github.com/yaspar-org/semi-persistent"
 # `{path}` expands to the chapter path prefixed by `src`, relative to the
 # directory holding this file, so the template carries `doc/book/` itself.
 edit-url-template = "https://github.com/yaspar-org/semi-persistent/edit/main/doc/book/{path}"
-default-theme = "rust"
-preferred-dark-theme = "ayu"
+additional-css = ["theme/semper-blue.css"]
+default-theme = "light"
+preferred-dark-theme = "navy"
 
 [output.html.fold]
 enable = true
